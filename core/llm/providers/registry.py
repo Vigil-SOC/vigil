@@ -637,29 +637,20 @@ class ModelRegistry:
         finally:
             session.close()
 
-    def resolve_model_for_component(
-        self, component: str, *, agent_override: Optional[str] = None
-    ) -> Optional[Tuple[str, str]]:
+    def resolve_model_for_component(self, component: str) -> Optional[Tuple[str, str]]:
         """Return (provider_id, model_id) using the fallback chain.
 
         Chain:
-          agent_override (if set) resolves through the default Anthropic provider,
-            since we don't know which provider owns a raw model id
-          → ai_model_configs[component]
+          ai_model_configs[component]
           → ai_model_configs['chat_default']
           → the default active provider of any type (get_default_provider_spec)
             and its default_model
 
+        A custom agent's own model is not an input here. Chat applies that
+        string, on the provider this chain already chose, after this returns.
+
         Returns None when no DB is reachable or no provider is active.
         """
-        if agent_override:
-            # agent-level overrides carry only a model id. Attach it to the
-            # default Anthropic provider — this is the historical assumption
-            # and matches how per-agent models worked before #89.
-            default_anthropic = self._default_anthropic_provider()
-            if default_anthropic is not None:
-                return (default_anthropic["provider_id"], agent_override)
-
         assignments = self.get_all_assignments()
         if component in assignments:
             a = assignments[component]
@@ -674,28 +665,6 @@ class ModelRegistry:
         return None
 
     # ---- provider helpers ------------------------------------------------
-
-    def _default_anthropic_provider(self) -> Optional[Dict[str, str]]:
-        try:
-            from core.storage.connection import get_db_session
-            from core.storage.models import LLMProviderConfig
-        except Exception:
-            return None
-        session = get_db_session()
-        try:
-            row = (
-                session.query(LLMProviderConfig)
-                .filter(
-                    LLMProviderConfig.provider_type == "anthropic",
-                    LLMProviderConfig.is_default.is_(True),
-                )
-                .first()
-            )
-            if row is None:
-                return None
-            return {"provider_id": row.provider_id, "default_model": row.default_model}
-        finally:
-            session.close()
 
     def _active_providers(self) -> List:
         """Return active ``LLMProviderConfig`` rows.

@@ -7,7 +7,7 @@
    each component uses) and still resolves against llm_provider_configs;
    Operations are Vigil runtime knobs.
    ============================================================ */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   EmptyState,
@@ -15,9 +15,11 @@ import {
   NumberInput,
   Select,
   SettingsCard,
+  TextInput,
   Toggle,
   ToggleRow,
 } from '../../shared/ui'
+import { agentsApi } from '../../services/api'
 import AiProvidersPanel from './AiProvidersPanel'
 import AiModelsPanel from './AiModelsPanel'
 import AiBudgetsPanel from './AiBudgetsPanel'
@@ -53,7 +55,12 @@ export default function AiConfigSection({ notify }: SectionProps) {
       </div>
       {tab === 'providers' && <AiProvidersPanel notify={notify} />}
       {tab === 'catalogue' && <AiModelsPanel />}
-      {tab === 'assignment' && <ModelAssignmentPanel notify={notify} />}
+      {tab === 'assignment' && (
+        <>
+          <ModelAssignmentPanel notify={notify} />
+          <CustomAgentModels notify={notify} />
+        </>
+      )}
       {tab === 'keys' && <AiBudgetsPanel notify={notify} />}
       {tab === 'operations' && <OperationsPanel notify={notify} />}
     </>
@@ -174,6 +181,120 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
             </table>
           </div>
         </>
+      )}
+    </SettingsCard>
+  )
+}
+
+const WORKFLOW_MODEL_NOTE =
+  'Workflow runs use the investigation assignment in Settings › AI models.'
+
+interface CustomAgentModelRow {
+  id: string
+  name: string
+  model: string
+  fallback_model: string
+  saved_model: string
+  saved_fallback_model: string
+}
+
+function CustomAgentModels({ notify }: SectionProps) {
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [error, setError] = useState<string | null>(null)
+  const [rows, setRows] = useState<CustomAgentModelRow[]>([])
+
+  const load = useCallback(() => {
+    setPhase('loading')
+    agentsApi
+      .listCustom()
+      .then((res) => {
+        const agents = (res.data?.agents || []) as Array<{
+          id: string
+          name?: string
+          model?: string | null
+          fallback_model?: string | null
+        }>
+        setRows(
+          agents.map((a) => ({
+            id: a.id,
+            name: a.name || a.id,
+            model: a.model || '',
+            fallback_model: a.fallback_model || '',
+            saved_model: a.model || '',
+            saved_fallback_model: a.fallback_model || '',
+          })),
+        )
+        setPhase('ready')
+      })
+      .catch((e) => {
+        setError((e as { message?: string })?.message || 'Couldn’t load custom agents.')
+        setPhase('error')
+      })
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const edit = (id: string, patch: Partial<CustomAgentModelRow>) => {
+    setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+  }
+
+  const save = async (row: CustomAgentModelRow, field: 'model' | 'fallback_model', value: string) => {
+    const next = value.trim()
+    const stored = field === 'model' ? row.saved_model : row.saved_fallback_model
+    if (next === stored.trim()) return
+    const savedKey = field === 'model' ? 'saved_model' : 'saved_fallback_model'
+    try {
+      await agentsApi.updateCustom(row.id, { [field]: next || null })
+      edit(row.id, { [field]: next, [savedKey]: next })
+      notify('ok', `${row.name} saved.`)
+    } catch (e) {
+      notify('err', (e as { message?: string })?.message || `Failed to save ${row.name}.`)
+    }
+  }
+
+  return (
+    <SettingsCard wide title="Custom agents" desc={WORKFLOW_MODEL_NOTE}>
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading custom agents…" />}
+      {phase === 'error' && (
+        <EmptyState error compact icon="alert" title="Couldn’t load custom agents" body={error} primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />
+      )}
+      {phase === 'ready' && rows.length === 0 && (
+        <EmptyState compact icon="sparkle" title="No custom agents" body="Fork or create an agent to set a chat model for it." />
+      )}
+      {phase === 'ready' && rows.length > 0 && (
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead>
+              <tr><th>Agent</th><th>Model</th><th>Fallback model</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td style={{ verticalAlign: 'top' }}>
+                    <div className="font-medium">{row.name}</div>
+                    <div className="text-xs text-tx-3">{row.id}</div>
+                  </td>
+                  <td style={{ minWidth: 200 }}>
+                    <TextInput
+                      value={row.model}
+                      placeholder="Assignment model"
+                      onChange={(e) => edit(row.id, { model: e.target.value })}
+                      onBlur={(e) => save(row, 'model', e.target.value)}
+                    />
+                  </td>
+                  <td style={{ minWidth: 200 }}>
+                    <TextInput
+                      value={row.fallback_model}
+                      placeholder="Optional"
+                      onChange={(e) => edit(row.id, { fallback_model: e.target.value })}
+                      onBlur={(e) => save(row, 'fallback_model', e.target.value)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </SettingsCard>
   )

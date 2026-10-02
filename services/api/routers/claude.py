@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
+from core.agents.builtins import blank_model
 from core.agents.projections import agent_route
 from core.auth import tool_principal
 from core.deps import provide_mcp_registry
@@ -17,8 +18,9 @@ from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
+from core.llm.router.router import get_provider_spec
 from core.llm.system_prompt import validate_system_prompt
-from core.llm.target import model_for, provider_for
+from core.llm.target import can_serve, model_for, provider_for
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
@@ -139,7 +141,7 @@ def _resolve_provider_model_for_request(
         return (None, requested_model)
 
     registry = get_registry()
-    agent_override: Optional[str] = None
+    agent = None
     category: str = "chat_default"
 
     if agent_id:
@@ -148,23 +150,54 @@ def _resolve_provider_model_for_request(
 
             agent = AgentManager().agents.get(agent_id)
             if agent is not None:
-                agent_override = getattr(agent, "model", None)
                 category = getattr(agent, "component_category", None) or "investigation"
         except Exception as exc:  # noqa: BLE001
             logger.debug("agent lookup in model resolution failed: %s", exc)
 
-    if agent_override:
-        resolved = registry.resolve_model_for_component(
-            category, agent_override=agent_override
-        )
-    else:
-        resolved = registry.resolve_model_for_component(category)
+    resolved = registry.resolve_model_for_component(category)
+    if resolved is None:
+        # Hard fallback (no provider/registry hit) — centralised so Ollama-only
+        # deployments can override via DEFAULT_MODEL instead of hardcoding Claude.
+        return (None, DEFAULT_MODEL)
 
-    if resolved is not None:
-        return resolved
-    # Hard fallback (no provider/registry hit) — centralised so Ollama-only
-    # deployments can override via DEFAULT_MODEL instead of hardcoding Claude.
-    return (None, DEFAULT_MODEL)
+    provider_id, assignment_model = resolved
+    return (
+        provider_id,
+        _servable_agent_model(provider_id, assignment_model, agent),
+    )
+
+
+def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -> str:
+    """First of the agent's model, its fallback, and the assignment model
+    that the resolved provider can serve.
+
+    When none of them can, the assignment model is returned unchanged.
+    ``chat_stream`` still runs ``model_for``, which substitutes.
+    """
+    primary = blank_model(getattr(agent, "model", None)) if agent is not None else None
+    fallback = (
+        blank_model(getattr(agent, "fallback_model", None))
+        if agent is not None
+        else None
+    )
+    if not primary and not fallback:
+        return assignment_model
+
+    # The named assignment provider only. provider_for substitutes the default
+    # when this id is missing, which would accept an agent model that provider
+    # never served.
+    try:
+        provider = get_provider_spec(provider_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("assignment provider lookup failed: %s", exc)
+        provider = None
+    if provider is None:
+        return assignment_model
+
+    for candidate in (primary, fallback, assignment_model):
+        if candidate and can_serve(provider, candidate):
+            return candidate
+    return assignment_model
 
 
 class ContentBlock(BaseModel):

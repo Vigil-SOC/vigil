@@ -3062,6 +3062,8 @@ interface CustomAgentDetail {
   recommended_tools?: string[]
   max_tokens?: number
   enable_thinking?: boolean
+  model?: string | null
+  fallback_model?: string | null
   effective_prompt?: string
   forked_from?: string | null
 }
@@ -3079,12 +3081,14 @@ interface AgentForm {
   recommended_tools: string
   max_tokens: string
   enable_thinking: boolean
+  model: string
+  fallback_model: string
 }
 
 const BLANK_AGENT_FORM: AgentForm = {
   name: '', specialization: '', description: '', icon: '', color: '#7d74f3', role: '',
   extra_principles: '', methodology: '', system_prompt_override: '', recommended_tools: '',
-  max_tokens: '', enable_thinking: false,
+  max_tokens: '', enable_thinking: false, model: '', fallback_model: '',
 }
 
 /** AI-assisted drafting;
@@ -3134,6 +3138,8 @@ function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null;
           recommended_tools: (a.recommended_tools || []).join(', '),
           max_tokens: a.max_tokens ? String(a.max_tokens) : '',
           enable_thinking: !!a.enable_thinking,
+          model: a.model || '',
+          fallback_model: a.fallback_model || '',
         })
         setAdvanced(!!a.system_prompt_override)
         setPhase('ready')
@@ -3192,6 +3198,8 @@ function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null;
       recommended_tools: form.recommended_tools.split(',').map((t) => t.trim()).filter(Boolean),
       ...(Number.isFinite(tokens) && tokens > 0 ? { max_tokens: tokens } : {}),
       enable_thinking: form.enable_thinking,
+      model: form.model.trim() || null,
+      fallback_model: form.fallback_model.trim() || null,
     }
     const req = isCreate ? agentsApi.createCustom(payload) : agentsApi.updateCustom(agentId, payload)
     req.then(onSaved).catch((e) => { setError(errMsg(e)); setBusy(false) })
@@ -3269,6 +3277,13 @@ function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null;
           {advanced && (
             <Field label="System prompt (verbatim — replaces the base template)" value={form.system_prompt_override} onChange={(v) => set('system_prompt_override', v)} textarea mono rows={12} />
           )}
+
+          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Model</div>
+          <p className="text-[11.5px] text-tx-3 -mt-2">Workflow runs use the investigation assignment in Settings › AI models.</p>
+          <div className="grid grid-cols-2 gap-3.5">
+            <Field label="Model" value={form.model} onChange={(v) => set('model', v)} mono placeholder="Assignment model" />
+            <Field label="Fallback model" value={form.fallback_model} onChange={(v) => set('fallback_model', v)} mono placeholder="Optional" />
+          </div>
 
           {/* Tools & behavior */}
           <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Tools &amp; behavior</div>

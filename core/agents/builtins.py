@@ -47,6 +47,14 @@ ORCHESTRATOR_ACTOR = "orchestrator"
 ORCHESTRATION_DECISION_ID = "orchestration"
 
 
+def blank_model(value: object) -> Optional[str]:
+    """A model id with surrounding whitespace removed. Blank is unset."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @dataclass
 class AgentProfile:
     id: str
@@ -65,6 +73,9 @@ class AgentProfile:
     # GH #89 — per-agent model override. None = inherit from
     # ai_model_configs[component_category] → ai_model_configs['chat_default'].
     model: Optional[str] = None
+    # Second model chat may use on the same provider when `model` cannot be
+    # served. Built-ins leave it unset.
+    fallback_model: Optional[str] = None
     # GH #89 — which ai_model_configs row to consult when `model` is None.
     # One of: 'triage', 'investigation', 'reporting'. Custom agents default
     # to 'investigation' unless the user picks otherwise in the builder.

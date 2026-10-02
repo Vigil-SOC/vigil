@@ -57,6 +57,7 @@ def test_agent_profile_has_new_fields_with_safe_defaults():
         recommended_tools=[],
     )
     assert p.model is None
+    assert p.fallback_model is None
     assert p.component_category == "investigation"
 
 
@@ -70,6 +71,7 @@ def test_builtin_categories_cover_all_built_ins():
             "reporting",
         }, f"{agent_id} has an invalid category: {agent.component_category}"
         assert agent.component_category == expected_categories[agent_id]
+        assert agent.fallback_model is None
 
 
 def test_triage_agent_is_categorized_as_triage():
@@ -115,10 +117,12 @@ def test_custom_agent_builder_reads_model_and_category():
         "max_tokens": 4096,
         "enable_thinking": False,
         "model": "claude-haiku-4-5-20251001",
+        "fallback_model": "  gemini-flash-latest  ",
         "component_category": "triage",
     }
     profile = SOCAgentLibrary.build_profile(row)
     assert profile.model == "claude-haiku-4-5-20251001"
+    assert profile.fallback_model == "gemini-flash-latest"
     assert profile.component_category == "triage"
 
 
@@ -131,4 +135,5 @@ def test_custom_agent_builder_defaults_category_when_missing():
     }
     profile = SOCAgentLibrary.build_profile(row)
     assert profile.model is None
+    assert profile.fallback_model is None
     assert profile.component_category == "investigation"

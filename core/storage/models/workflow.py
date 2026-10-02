@@ -413,6 +413,7 @@ class CustomAgent(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fallback_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     component_category: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

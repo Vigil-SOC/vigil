@@ -96,6 +96,7 @@ class CustomAgentSchema(ORMSchema):
     max_tokens: Optional[int] = None
     enable_thinking: Optional[bool] = None
     model: Optional[str] = None
+    fallback_model: Optional[str] = None
     component_category: Optional[str] = None
     forked_from: Optional[str] = None
     created_by: Optional[str] = None

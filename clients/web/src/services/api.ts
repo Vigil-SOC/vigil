@@ -539,6 +539,7 @@ export interface CustomAgentPayload {
   max_tokens?: number
   enable_thinking?: boolean
   model?: string | null
+  fallback_model?: string | null
 }
 
 export interface AgentSummary {

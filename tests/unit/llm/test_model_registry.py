@@ -229,21 +229,16 @@ class _StubRegistry(ModelRegistry):
         self,
         *,
         assignments: Optional[Dict[str, ComponentAssignment]] = None,
-        default_anthropic: Optional[Dict[str, str]] = None,
         active_providers=None,
     ):
         super().__init__()
         self._assignments = assignments or {}
-        self._default_anthropic = default_anthropic
         self._active = active_providers or []
 
     def get_all_assignments(  # type: ignore[override]
         self,
     ) -> Dict[str, ComponentAssignment]:
         return self._assignments
-
-    def _default_anthropic_provider(self):  # type: ignore[override]
-        return self._default_anthropic
 
     def _active_providers(self):  # type: ignore[override]
         return self._active
@@ -312,15 +307,10 @@ def test_resolve_falls_back_to_chat_default(default_provider):
 def test_resolve_without_assignments_uses_default_provider_of_any_type(
     default_provider,
 ):
-    # An Anthropic default row must not outrank the provider-agnostic rung (#1005).
+    # The chain is component → chat_default → the default provider, of any
+    # type. It does not pin a model onto Anthropic (#1005, #1325).
     default_provider(OLLAMA_DEFAULT)
-    reg = _StubRegistry(
-        assignments={},
-        default_anthropic={
-            "provider_id": "bifrost-anthropic",
-            "default_model": "claude-sonnet-4-6",
-        },
-    )
+    reg = _StubRegistry(assignments={})
     assert reg.resolve_model_for_component("investigation") == (
         "bifrost-ollama",
         "llama3.1:8b",
@@ -332,19 +322,12 @@ def test_resolve_returns_none_when_no_provider_is_active(default_provider):
     assert reg.resolve_model_for_component("chat_default") is None
 
 
-def test_agent_override_pins_model_but_uses_default_provider():
-    reg = _StubRegistry(
-        assignments={},
-        default_anthropic={
-            "provider_id": "anthropic-default",
-            "default_model": "claude-sonnet-4-5-20250929",
-        },
-    )
-    provider, model = reg.resolve_model_for_component(
-        "triage", agent_override="claude-opus-4-20250514"
-    )
-    assert provider == "anthropic-default"
-    assert model == "claude-opus-4-20250514"
+def test_resolve_model_for_component_has_no_agent_override():
+    # An agent model is applied by chat, on the provider this chain returns.
+    import inspect
+
+    params = inspect.signature(ModelRegistry.resolve_model_for_component).parameters
+    assert "agent_override" not in params
 
 
 # ---------------------------------------------------------------------------

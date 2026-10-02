@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Optional
 
-from core.agents.builtins import BUILTIN_AGENTS, AgentProfile
+from core.agents.builtins import BUILTIN_AGENTS, AgentProfile, blank_model
 from core.agents.prompts import prompt_for_row, render_confidence_bands
 from core.response.config import ResponseConfig
 
@@ -52,7 +52,8 @@ class SOCAgentLibrary:
             ),
             # GH #89 — custom agents can pin a model; falling back to the
             # component_category (default 'investigation') if not set.
-            model=(row.get("model") or None),
+            model=blank_model(row.get("model")),
+            fallback_model=blank_model(row.get("fallback_model")),
             component_category=(row.get("component_category") or "investigation"),
             # GH #476 — built-ins carry their action id; custom agents have no
             # action of their own, so they log under their agent id.

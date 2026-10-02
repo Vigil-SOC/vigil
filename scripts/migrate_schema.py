@@ -429,6 +429,16 @@ def add_intake_trigger_case_id(conn):
 # default it made usage_count NOT NULL with none, so raw SQL that omitted the
 # column failed: every template in 05_case_management_extended.sql did. The seed
 # now names it; this gives tables built before the fix the default a new one has.
+@migration("Add custom_agents.fallback_model")
+def add_custom_agent_fallback_model(conn):
+    if not _table_exists(conn, 'custom_agents'):
+        return
+    conn.execute(text("""
+        ALTER TABLE custom_agents
+            ADD COLUMN IF NOT EXISTS fallback_model TEXT;
+    """))
+
+
 @migration("Set case_templates.usage_count server default to 0")
 def set_case_template_usage_count_default(conn):
     if not _table_exists(conn, 'case_templates'):

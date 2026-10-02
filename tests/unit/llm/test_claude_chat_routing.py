@@ -46,7 +46,8 @@ def _load_claude_module():
     services.api.routers package __init__ (auth/DB). Skip the suite if its imports are
     unavailable in this environment."""
     spec = importlib.util.spec_from_file_location(
-        "claude_api_under_test", str(REPO / "services" / "api" / "routers" / "claude.py")
+        "claude_api_under_test",
+        str(REPO / "services" / "api" / "routers" / "claude.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     try:
@@ -129,6 +130,141 @@ def test_unspecified_model_uses_registry_tuple(monkeypatch):
     assert claude._resolve_provider_model_for_request(None, None) == (
         "ollama-local",
         "llama3.1:8b",
+    )
+
+
+class _ChatAgent:
+    def __init__(
+        self, model=None, fallback_model=None, component_category="investigation"
+    ):
+        self.model = model
+        self.fallback_model = fallback_model
+        self.component_category = component_category
+
+
+def _install_agent(monkeypatch, agent_id: str, agent: _ChatAgent, resolved):
+    seen = {}
+
+    class _Reg:
+        def resolve_model_for_component(self, component):
+            seen["component"] = component
+            return resolved
+
+    class _Mgr:
+        def __init__(self):
+            self.agents = {agent_id: agent}
+
+    monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
+    monkeypatch.setattr("core.agents.manager.AgentManager", _Mgr)
+    monkeypatch.setattr(
+        claude,
+        "get_provider_spec",
+        lambda pid: _spec(provider_id=pid or "unit-ollama"),
+    )
+    return seen
+
+
+def test_chat_uses_agent_model_on_the_assignment_provider(monkeypatch):
+    seen = _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="qwen2.5", fallback_model="mistral"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "qwen2.5",
+    )
+    assert seen["component"] == "investigation"
+
+
+def test_chat_uses_fallback_when_agent_model_is_not_servable(monkeypatch):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="qwen2.5"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "qwen2.5",
+    )
+
+
+def test_chat_returns_assignment_model_when_neither_agent_string_is_servable(
+    monkeypatch,
+):
+    # model_for, called later by chat_stream, is what substitutes. This step
+    # returns the assignment model unchanged.
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="claude-also"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        AN_OLLAMA_MODEL,
+    )
+
+
+def test_chat_without_agent_model_uses_the_assignment(monkeypatch):
+    seen = _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(component_category="triage"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        AN_OLLAMA_MODEL,
+    )
+    assert seen["component"] == "triage"
+
+
+def test_chat_returns_unservable_assignment_model_for_model_for_to_substitute(
+    monkeypatch,
+):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="claude-also"),
+        ("unit-ollama", "claude-assignment"),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "claude-assignment",
+    )
+
+
+def test_missing_assignment_provider_keeps_the_assignment_model(monkeypatch):
+    # A missing assignment provider must not be replaced by the default before
+    # can_serve, or an agent model would be accepted on the wrong provider.
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="qwen2.5", fallback_model="mistral"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    monkeypatch.setattr(claude, "get_provider_spec", lambda pid: None)
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        AN_OLLAMA_MODEL,
+    )
+
+
+def test_explicit_request_model_ignores_the_agent(monkeypatch):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="qwen2.5"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(
+        "gpt-4o-mini", "custom-hunter"
+    ) == (
+        None,
+        "gpt-4o-mini",
     )
 
 
