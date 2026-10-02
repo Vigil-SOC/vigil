@@ -19,7 +19,7 @@ but return ``None``/``False`` for not-found-or-not-owned.
 import logging
 from typing import List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from core.storage.connection import get_db_manager
 from core.storage.models import ChatMessage, Conversation
@@ -61,18 +61,36 @@ def _owned(session, conversation_id: str, user_id: Optional[str]):
 # --------------------------------------------------------------------------- #
 # Write paths invoked from the chat stream — fail-open (never raise).
 # --------------------------------------------------------------------------- #
+def _apply_case_and_page(
+    conv: Conversation, case_id: Optional[str], page_context: Optional[str]
+) -> None:
+    """``None`` means the request omitted the field and the column stays.
+
+    ``case_id`` of ``""`` clears the column. ``page_context`` is written only
+    while the stored value is still null, so a later page does not overwrite
+    the page the conversation was opened from.
+    """
+    if case_id is not None:
+        conv.case_id = case_id.strip() or None
+    if page_context and conv.page_context is None:
+        conv.page_context = page_context.strip() or None
+
+
 def ensure_conversation(
     session_id: str,
     user_id: Optional[str],
     agent_id: Optional[str] = None,
     model: Optional[str] = None,
     first_user_text: Optional[str] = None,
+    case_id: Optional[str] = None,
+    page_context: Optional[str] = None,
 ) -> Optional[str]:
     """Upsert the conversation row for ``session_id``; return its id or None.
 
     On create, the title is derived from ``first_user_text`` and ``user_id`` /
     ``agent_id`` are stamped. On an existing row, only ``model`` / ``agent_id``
-    are refreshed (never the title — the user may have renamed it). Fail-open.
+    are refreshed (never the title — the user may have renamed it). ``case_id``
+    and ``page_context`` follow :func:`_apply_case_and_page`. Fail-open.
     """
     try:
         db_manager = get_db_manager()
@@ -92,6 +110,7 @@ def ensure_conversation(
                     model=model,
                     title=_derive_title(first_user_text),
                 )
+                _apply_case_and_page(conv, case_id, page_context)
                 session.add(conv)
             else:
                 if model:
@@ -100,6 +119,7 @@ def ensure_conversation(
                     conv.agent_id = agent_id
                 if not conv.title and first_user_text:
                     conv.title = _derive_title(first_user_text)
+                _apply_case_and_page(conv, case_id, page_context)
         return session_id
     except Exception as exc:  # noqa: BLE001 — fail-open, must not break chat
         logger.warning("ensure_conversation failed (non-fatal): %s", exc)
@@ -178,16 +198,36 @@ def append_message(
 # --------------------------------------------------------------------------- #
 # User-initiated CRUD — propagate hard errors; None/False for not-found.
 # --------------------------------------------------------------------------- #
+def _like_pattern(q: str) -> str:
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def list_conversations(
     user_id: Optional[str],
     include_archived: bool = False,
     limit: int = 50,
     offset: int = 0,
+    q: Optional[str] = None,
 ) -> List[dict]:
-    """Conversations for ``user_id``, newest activity first (summary dicts)."""
+    """Conversations for ``user_id``, newest activity first (summary dicts).
+
+    ``q`` matches title, case id, or page key. Rows owned by anyone else are
+    never included, even when the text matches.
+    """
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
         stmt = select(Conversation).where(Conversation.user_id == user_id)
+        needle = (q or "").strip()
+        if needle:
+            pattern = _like_pattern(needle)
+            stmt = stmt.where(
+                or_(
+                    Conversation.title.ilike(pattern, escape="\\"),
+                    Conversation.case_id.ilike(pattern, escape="\\"),
+                    Conversation.page_context.ilike(pattern, escape="\\"),
+                )
+            )
         if not include_archived:
             stmt = stmt.where(Conversation.archived.is_(False))
         # Coalesce so conversations with no messages yet still sort sanely.
@@ -222,6 +262,24 @@ def rename(conversation_id: str, user_id: Optional[str], title: str) -> Optional
         if conv is None:
             return None
         conv.title = (title or "").strip()[:200] or None
+        session.flush()
+        return ConversationSummarySchema.dump(conv)
+
+
+def set_case_id(
+    conversation_id: str, user_id: Optional[str], case_id: str
+) -> Optional[dict]:
+    """Attach or clear a case on a conversation that already exists.
+
+    Does not insert a row: an attach before the first turn is held by the
+    client and sent with that turn. ``""`` clears the column.
+    """
+    db_manager = get_db_manager()
+    with db_manager.session_scope() as session:
+        conv = _owned(session, conversation_id, user_id)
+        if conv is None:
+            return None
+        conv.case_id = (case_id or "").strip() or None
         session.flush()
         return ConversationSummarySchema.dump(conv)
 

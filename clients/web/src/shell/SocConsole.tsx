@@ -78,35 +78,7 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   settings: 'settings.read',
 }
 
-const CHAT_MIN_WIDTH = 360
-const CHAT_MAX_WIDTH = 720
-const CHAT_DEFAULT_WIDTH = 420
-const CHAT_WIDTH_STORAGE_KEY = 'soc.chat.width.v1'
-
-function clampChatPreference(width: number): number {
-  return Math.min(CHAT_MAX_WIDTH, Math.max(CHAT_MIN_WIDTH, Math.round(width)))
-}
-
-/** never past half the screen, so the main canvas stays usable */
-function chatMaxForViewport(viewportWidth: number): number {
-  return Math.min(
-    CHAT_MAX_WIDTH,
-    Math.max(CHAT_MIN_WIDTH, Math.floor(viewportWidth * 0.5)),
-  )
-}
-
-function readChatWidth(): number {
-  try {
-    const raw = localStorage.getItem(CHAT_WIDTH_STORAGE_KEY)
-    if (raw) {
-      const parsed = Number.parseInt(raw, 10)
-      if (Number.isFinite(parsed)) return clampChatPreference(parsed)
-    }
-  } catch {
-    /* empty */
-  }
-  return CHAT_DEFAULT_WIDTH
-}
+const CHAT_WIDTH = 400
 
 export default function SocConsole() {
   // the theme provider must wrap the inner shell: that shell both styles
@@ -173,11 +145,9 @@ function SocConsoleInner() {
   const [status, setStatus] = useState<StatusFold | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
   const infoRef = useRef<HTMLDivElement>(null)
-  const [chatWidth, setChatWidth] = useState(readChatWidth)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
-  const [chatResizing, setChatResizing] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
@@ -203,19 +173,6 @@ function SocConsoleInner() {
     const onResize = () => setViewportWidth(window.innerWidth)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  const previewChatWidth = useCallback((width: number) => {
-    setChatWidth(clampChatPreference(width))
-  }, [])
-  const commitChatWidth = useCallback((width: number) => {
-    const next = clampChatPreference(width)
-    setChatWidth(next)
-    try {
-      localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(next))
-    } catch {
-      /* empty */
-    }
   }, [])
 
   const go = useCallback(
@@ -375,16 +332,10 @@ function SocConsoleInner() {
     'soc-console',
     scheme === 'light' ? 'vg-light' : 'vg-dark',
     chatOpen ? 'chat-active' : '',
-    chatResizing ? 'chat-resizing' : '',
   ].filter(Boolean).join(' ')
 
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
-  const chatViewportMax = chatMaxForViewport(viewportWidth)
-  const effectiveChatWidth = viewportWidth <= 600
-    ? viewportWidth
-    : Math.min(chatWidth, chatViewportMax)
-  const resizeMinWidth = viewportWidth <= 600 ? effectiveChatWidth : CHAT_MIN_WIDTH
-  const resizeMaxWidth = viewportWidth <= 600 ? effectiveChatWidth : chatViewportMax
+  const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = {
     ...bgVars(bg.base),
     ...accentVars(accent.a, accent.b),
@@ -521,12 +472,8 @@ function SocConsoleInner() {
           open={chatOpen}
           onClose={closeChat}
           seed={chatSeed}
-          width={effectiveChatWidth}
-          minWidth={resizeMinWidth}
-          maxWidth={resizeMaxWidth}
-          onWidthChange={previewChatWidth}
-          onWidthCommit={commitChatWidth}
-          onResizeStateChange={setChatResizing}
+          pageKey={current}
+          pageTitle={title}
           onSeedConsumed={() => setChatSeed(null)}
         />
         {drawerCase && (

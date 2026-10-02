@@ -486,34 +486,19 @@ describe('SocConsole', () => {
     expect(screen.getByText(/investigate a finding/)).toBeInTheDocument()
   })
 
-  it('restores and persists the preferred chat width', () => {
-    localStorage.setItem('soc.chat.width.v1', '500')
-    // jsdom's 1024 default would cap the dock at half the screen (512), which is
-    // the next test's subject
+  it('keeps the dock at 400px above 600px', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
     renderConsole()
+    expect(document.querySelector('.soc-console')).toHaveStyle({ '--chat-w': '400px' })
     fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-
-    const separator = screen.getByRole('separator', { name: 'Resize Vigil Assistant' })
-    expect(separator).toHaveAttribute('aria-valuenow', '500')
-
-    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
-    expect(separator).toHaveAttribute('aria-valuenow', '516')
-    expect(localStorage.getItem('soc.chat.width.v1')).toBe('516')
+    expect(screen.queryByRole('separator', { name: 'Resize Vigil Assistant' })).toBeNull()
+    expect(localStorage.getItem('soc.chat.width.v1')).toBeNull()
   })
 
-  it('uses the full viewport and disables resizing on narrow screens', () => {
-    localStorage.setItem('soc.chat.width.v1', '700')
+  it('uses the full viewport at 600px and under', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-
-    const separator = screen.getByRole('separator', { name: 'Resize Vigil Assistant' })
-    expect(separator).toHaveAttribute('aria-valuemin', '500')
-    expect(separator).toHaveAttribute('aria-valuemax', '500')
-    expect(separator).toHaveAttribute('aria-valuenow', '500')
-    expect(separator).toHaveAttribute('tabindex', '-1')
-    expect(localStorage.getItem('soc.chat.width.v1')).toBe('700')
+    expect(document.querySelector('.soc-console')).toHaveStyle({ '--chat-w': '500px' })
   })
 
   it('applies an accent + light mode from the Appearance settings page', () => {
@@ -527,16 +512,13 @@ describe('SocConsole', () => {
     expect(light).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('opens chat settings showing status, model and advanced sections', async () => {
+  it('opens the dock on the current page without a per-chat model', () => {
     renderConsole()
     fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Chat settings' }))
-    expect(await screen.findByText('2/2')).toBeInTheDocument()
-    expect(screen.getByText(/Context ~/)).toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/Override default system prompt/)).toBeInTheDocument()
-    // extended thinking went with the harness move: one provider schema through
-    // Bifrost has no thinking blocks, so the control would do nothing
-    expect(screen.queryByRole('switch', { name: 'Extended thinking' })).toBeNull()
+    expect(screen.getByText('Private to you')).toBeInTheDocument()
+    expect(screen.getByText('Using Dashboard')).toBeInTheDocument()
+    expect(screen.queryByTitle('Chat settings')).toBeNull()
+    expect(screen.queryByPlaceholderText(/Override default system prompt/)).toBeNull()
   })
 
   // without the count, a parked run's question sat in a tab nobody opened
@@ -654,6 +636,14 @@ describe('SocConsole', () => {
       '/claude/chat/stream',
       expect.objectContaining({ method: 'POST' }),
     )
+    const body = JSON.parse(
+      (vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body,
+    )
+    expect(body.page_context).toBe('dashboard')
+    expect(body.model).toBeUndefined()
+    expect(body.agent_id).toBeUndefined()
+    expect(body.system_prompt).toBeUndefined()
+    expect(body.max_tokens).toBeUndefined()
   })
 
   it('submits decision feedback through the inline review pane', async () => {

@@ -1,10 +1,22 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { format } from 'date-fns'
 import Chat from './Chat'
-import { mcpApi, reasoningApi } from '../services/api'
+import api, { conversationsApi, reasoningApi, streamFetch } from '../services/api'
+
+const historyState = vi.hoisted(() => ({
+  items: [] as Array<{
+    id: string
+    title: string | null
+    message_count: number
+    last_message_at: string | null
+    updated_at: string | null
+    archived: boolean
+  }>,
+}))
 
 vi.mock('./useConversations', () => ({
-  useConversations: () => ({ items: [], phase: 'ready', error: null, reload: vi.fn() }),
+  useConversations: () => ({ items: historyState.items, phase: 'ready', error: null, reload: vi.fn() }),
 }))
 
 vi.mock('../services/notifications', () => ({
@@ -22,138 +34,143 @@ vi.mock('../services/api', () => ({
     update: vi.fn(),
     importHistory: vi.fn(),
   },
-  mcpApi: { getStatuses: vi.fn(() => new Promise(() => undefined)) },
   reasoningApi: {
     listInteractions: vi.fn(),
     getSessionSummary: vi.fn(),
     getInteraction: vi.fn(),
   },
   streamFetch: vi.fn(),
+  default: { get: vi.fn() },
 }))
 
-beforeAll(() => {
-  if (window.PointerEvent) return
-  class TestPointerEvent extends MouseEvent {
-    pointerId: number
-
-    constructor(type: string, init: PointerEventInit = {}) {
-      super(type, init)
-      this.pointerId = init.pointerId || 0
-    }
-  }
-  Object.defineProperty(window, 'PointerEvent', { configurable: true, value: TestPointerEvent })
+beforeEach(() => {
+  historyState.items = []
+  vi.mocked(api.get).mockReset()
+  vi.mocked(streamFetch).mockReset()
+  vi.mocked(conversationsApi.update).mockReset()
+  vi.mocked(conversationsApi.update).mockResolvedValue({ data: {} } as never)
+  vi.mocked(conversationsApi.get).mockReset()
 })
 
-describe('Vigil Assistant resize controls', () => {
-  it('supports keyboard resizing and exposes a reachable close action', () => {
-    const onClose = vi.fn()
-    const onWidthChange = vi.fn()
-    const onWidthCommit = vi.fn()
-    render(
-      <Chat
-        open
-        onClose={onClose}
-        width={420}
-        minWidth={360}
-        maxWidth={600}
-        onWidthChange={onWidthChange}
-        onWidthCommit={onWidthCommit}
-      />,
-    )
-
-    const separator = screen.getByRole('separator', { name: 'Resize Vigil Assistant' })
-    expect(separator).toHaveAttribute('aria-valuemin', '360')
-    expect(separator).toHaveAttribute('aria-valuemax', '600')
-    expect(separator).toHaveAttribute('aria-valuenow', '420')
-
-    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
-    expect(onWidthChange).toHaveBeenLastCalledWith(436)
-    expect(onWidthCommit).toHaveBeenLastCalledWith(436)
-
-    fireEvent.keyDown(separator, { key: 'End' })
-    expect(onWidthCommit).toHaveBeenLastCalledWith(600)
-
-    fireEvent.keyDown(separator, { key: 'Home' })
-    expect(onWidthCommit).toHaveBeenLastCalledWith(360)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close Vigil Assistant' }))
-    expect(onClose).toHaveBeenCalledTimes(1)
-  })
-
-  it('widens when the left-edge handle is dragged left', () => {
-    const onWidthChange = vi.fn()
-    const onWidthCommit = vi.fn()
-    render(
-      <Chat
-        open
-        onClose={vi.fn()}
-        width={420}
-        minWidth={360}
-        maxWidth={600}
-        onWidthChange={onWidthChange}
-        onWidthCommit={onWidthCommit}
-      />,
-    )
-
-    const separator = screen.getByRole('separator', { name: 'Resize Vigil Assistant' })
-    fireEvent.pointerDown(separator, { pointerId: 7, button: 0, clientX: 420 })
-    fireEvent.pointerMove(separator, { pointerId: 7, clientX: 370 })
-    fireEvent.pointerUp(separator, { pointerId: 7, clientX: 370 })
-
-    expect(onWidthChange).toHaveBeenCalledWith(470)
-    expect(onWidthCommit).toHaveBeenCalledWith(470)
-  })
-})
-
-function renderChat() {
+function renderChat(props: { pageKey?: string; pageTitle?: string } = {}) {
   return render(
-    <Chat
-      open
-      onClose={vi.fn()}
-      width={420}
-      minWidth={360}
-      maxWidth={600}
-      onWidthChange={vi.fn()}
-      onWidthCommit={vi.fn()}
-    />,
+    <Chat open onClose={vi.fn()} pageKey={props.pageKey ?? 'overview'} pageTitle={props.pageTitle ?? 'Overview'} />,
   )
 }
 
-describe('MCP tools chip', () => {
-  it('counts connected sessions over enabled servers', async () => {
-    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
-      data: {
-        statuses: [
-          { name: 'github', status: 'running', enabled: true },
-          { name: 'virustotal', status: 'disconnected', enabled: true, error: 'connection refused' },
-          { name: 'slack', status: 'running', enabled: false },
-        ],
-      },
-    } as never)
+function emptyStream(): Response {
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: () => Promise.resolve({ done: true, value: undefined }),
+      }),
+    },
+  } as unknown as Response
+}
 
+describe('Ask Vigil dock', () => {
+  it('drops the model, prompt, cost, and agent controls', () => {
     renderChat()
-    fireEvent.click(screen.getByTitle('Chat settings'))
-
-    const chip = await screen.findByText('1/2')
-    expect(chip).toHaveClass('ok')
+    expect(screen.getByText('Private to you')).toBeInTheDocument()
+    expect(screen.getByText('Using Overview')).toBeInTheDocument()
+    expect(screen.queryByTitle('Chat settings')).toBeNull()
+    expect(screen.queryByPlaceholderText(/Override default system prompt/)).toBeNull()
+    expect(screen.queryByText(/k tokens/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Default agent/ })).toBeNull()
+    expect(document.querySelector('.model-sel')).toBeNull()
+    expect(document.querySelector('.cm-cost')).toBeNull()
   })
 
-  it('stays off green when no enabled session is connected', async () => {
-    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
-      data: {
-        statuses: [
-          { name: 'virustotal', status: 'disconnected', enabled: true, error: 'connection refused' },
-          { name: 'slack', status: 'disconnected', enabled: false },
-        ],
-      },
+  it('stores a case id from full-text search and ignores a typed id that was not returned', async () => {
+    vi.mocked(api.get).mockImplementation((path: string, config?: { params?: { query?: string } }) => {
+      const query = config?.params?.query
+      if (path === '/cases/search/full-text' && query === 'loader') {
+        return Promise.resolve({
+          data: {
+            cases: [{ case_id: 'CASE-9', title: 'Obfuscated loader' }],
+            comments: [],
+            evidence: [],
+          },
+        })
+      }
+      return Promise.resolve({ data: { cases: [], comments: [], evidence: [] } })
+    })
+    vi.mocked(streamFetch).mockResolvedValue(emptyStream())
+
+    renderChat()
+    const box = screen.getByPlaceholderText(/Ask Vigil/)
+    fireEvent.change(box, { target: { value: '@loader' } })
+    fireEvent.click(await screen.findByRole('option', { name: /CASE-9/ }))
+
+    expect(screen.getByTestId('attached-case')).toHaveTextContent('CASE-9')
+    expect(conversationsApi.update).not.toHaveBeenCalled()
+
+    fireEvent.change(box, { target: { value: '@NOPE-1' } })
+    await screen.findByText('No matching cases')
+    fireEvent.keyDown(box, { key: 'Enter' })
+
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.case_id).toBe('CASE-9')
+    expect(body.page_context).toBe('overview')
+    expect(body.model).toBeUndefined()
+    expect(body.system_prompt).toBeUndefined()
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.agent_id).toBeUndefined()
+    expect(screen.getByTestId('attached-case')).toHaveTextContent('CASE-9')
+    expect(screen.getByTestId('attached-case')).not.toHaveTextContent('NOPE-1')
+  })
+
+  it('patches a case chosen while the reply is still streaming', async () => {
+    let release: (row: { done: boolean; value?: undefined }) => void = () => undefined
+    const gate = new Promise<{ done: boolean; value?: undefined }>((resolve) => {
+      release = resolve
+    })
+    vi.mocked(api.get).mockResolvedValue({
+      data: { cases: [{ case_id: 'CASE-9', title: 'Obfuscated loader' }], comments: [], evidence: [] },
+    })
+    vi.mocked(streamFetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: { getReader: () => ({ read: () => gate }) },
+    } as unknown as Response)
+
+    renderChat()
+    const box = screen.getByPlaceholderText(/Ask Vigil/)
+    fireEvent.change(box, { target: { value: 'hello' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByTitle('Stop')
+
+    fireEvent.change(box, { target: { value: '@loader' } })
+    fireEvent.click(await screen.findByRole('option', { name: /CASE-9/ }))
+    expect(conversationsApi.update).not.toHaveBeenCalled()
+
+    release({ done: true })
+    await waitFor(() =>
+      expect(conversationsApi.update).toHaveBeenCalledWith(expect.any(String), { case_id: 'CASE-9' }),
+    )
+  })
+
+  it('groups history into calendar days and reopens that conversation', async () => {
+    const older = '2026-03-01T15:00:00Z'
+    const newer = '2026-03-02T15:00:00Z'
+    historyState.items = [
+      { id: 'newer', title: 'Monday thread', message_count: 2, last_message_at: newer, updated_at: null, archived: false },
+      { id: 'older', title: 'Sunday thread', message_count: 1, last_message_at: older, updated_at: null, archived: false },
+    ]
+    vi.mocked(conversationsApi.get).mockResolvedValue({
+      data: { id: 'newer', messages: [], case_id: null },
     } as never)
 
     renderChat()
-    fireEvent.click(screen.getByTitle('Chat settings'))
+    fireEvent.click(screen.getByTitle('History'))
 
-    const chip = await screen.findByText('0/1')
-    expect(chip).toHaveClass('danger')
-    expect(chip).not.toHaveClass('ok')
+    expect(screen.getByText(format(new Date(newer), 'MMM d, yyyy'))).toBeInTheDocument()
+    expect(screen.getByText(format(new Date(older), 'MMM d, yyyy'))).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Monday thread'))
+    await waitFor(() => expect(conversationsApi.get).toHaveBeenCalledWith('newer'))
   })
 })
 
@@ -168,17 +185,7 @@ describe('reasoning trace cost', () => {
     })
     vi.mocked(reasoningApi.listInteractions).mockResolvedValue({ interactions: [] })
 
-    render(
-      <Chat
-        open
-        onClose={vi.fn()}
-        width={420}
-        minWidth={360}
-        maxWidth={600}
-        onWidthChange={vi.fn()}
-        onWidthCommit={vi.fn()}
-      />,
-    )
+    render(<Chat open onClose={vi.fn()} pageKey="overview" pageTitle="Overview" />)
 
     fireEvent.click(screen.getByTitle('Reasoning trace'))
 

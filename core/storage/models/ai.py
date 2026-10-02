@@ -258,6 +258,10 @@ class Conversation(Base):
     # a FK would reject those rows. user-admin-default is the seeded dev id.
     user_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # Where the dock was opened, and which case the analyst attached.
+    # No FK: a case can be deleted without taking the conversation with it.
+    case_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    page_context: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     agent_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     archived: Mapped[bool] = mapped_column(

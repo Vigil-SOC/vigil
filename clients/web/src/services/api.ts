@@ -1182,6 +1182,8 @@ export interface ConversationSummary {
   id: string
   user_id: string | null
   title: string | null
+  case_id: string | null
+  page_context: string | null
   agent_id: string | null
   model: string | null
   archived: boolean
@@ -1228,12 +1230,12 @@ export interface ImportConversationInput {
 
 export const conversationsApi = {
   // trailing slash avoids a 307 to the backend root route
-  list: (params?: { archived?: boolean; limit?: number; offset?: number }) =>
+  list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string }) =>
     api.get('/conversations/', { params }),
 
   get: (id: string) => api.get(`/conversations/${encodeURIComponent(id)}`),
 
-  update: (id: string, data: { title?: string; archived?: boolean }) =>
+  update: (id: string, data: { title?: string; archived?: boolean; case_id?: string }) =>
     api.patch(`/conversations/${encodeURIComponent(id)}`, data),
 
   delete: (id: string) => api.delete(`/conversations/${encodeURIComponent(id)}`),

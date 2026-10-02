@@ -176,6 +176,8 @@ class ConversationSummarySchema(ORMSchema):
     id: Optional[str] = None
     user_id: Optional[str] = None
     title: Optional[str] = None
+    case_id: Optional[str] = None
+    page_context: Optional[str] = None
     agent_id: Optional[str] = None
     model: Optional[str] = None
     archived: Optional[bool] = None

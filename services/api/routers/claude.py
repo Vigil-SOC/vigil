@@ -62,6 +62,8 @@ def _persist_chat_turn(
     assistant_thinking: Optional[str],
     tool_calls: list,
     complete: bool,
+    case_id: Optional[str] = None,
+    page_context: Optional[str] = None,
 ) -> None:
     """Fail-open write-through of one chat turn to the conversation store.
 
@@ -82,6 +84,8 @@ def _persist_chat_turn(
             agent_id=agent_id,
             model=model,
             first_user_text=user_text,
+            case_id=case_id,
+            page_context=page_context,
         )
         conversation_service.append_message(
             session_id=session_id,
@@ -207,11 +211,41 @@ class ChatRequest(BaseModel):
     # A run this conversation follows up on. The console does not send one yet
     # (#634); when it does, the turn opens with what that run concluded.
     parent_run_id: Optional[str] = None
+    # Omitted leaves the stored column alone. ``case_id`` of "" clears it.
+    # ``page_context`` is the route key and is stored only while still null.
+    case_id: Optional[str] = None
+    page_context: Optional[str] = None
 
     @field_validator("system_prompt")
     @classmethod
     def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
         return validate_system_prompt(v, source="chat")
+
+
+def _page_case_sentence(page_context: Optional[str], case_id: Optional[str]) -> str:
+    """One sentence naming the page key and case id, when either was sent."""
+    page = (page_context or "").strip()
+    case = (case_id or "").strip()
+    if page and case:
+        return f"The analyst opened this from page {page} about case {case}."
+    if page:
+        return f"The analyst opened this from page {page}."
+    if case:
+        return f"The analyst opened this about case {case}."
+    return ""
+
+
+def _with_page_case(
+    system_prompt: Optional[str], page_context: Optional[str], case_id: Optional[str]
+) -> str:
+    """Append the page/case sentence after whatever prompt was chosen."""
+    sentence = _page_case_sentence(page_context, case_id)
+    base = (system_prompt or "").strip()
+    if not sentence:
+        return base
+    if not base:
+        return sentence
+    return f"{base}\n\n{sentence}"
 
 
 @router.post("/chat/stream")
@@ -237,6 +271,10 @@ async def chat_stream(
         if agent:
             system_prompt = agent.system_prompt
             tools = list(agent.recommended_tools) if agent.recommended_tools else None
+
+    system_prompt = _with_page_case(
+        system_prompt, request.page_context, request.case_id
+    )
 
     active_provider = provider_for(provider_id)
     if active_provider is None:
@@ -394,6 +432,8 @@ async def _relay(
                 assistant_thinking=None,
                 tool_calls=[],
                 complete=finished,
+                case_id=request.case_id,
+                page_context=request.page_context,
             )
         except Exception as exc:  # noqa: BLE001 — history never breaks the chat
             logger.warning("chat history persist failed (non-fatal): %s", exc)

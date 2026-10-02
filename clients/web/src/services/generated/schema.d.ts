@@ -3279,7 +3279,7 @@ export interface paths {
         head?: never;
         /**
          * Update Conversation
-         * @description Rename and/or archive a conversation.
+         * @description Rename, archive, and/or attach a case. Does not create a conversation.
          */
         patch: operations["patch_api_conversations_conversation_id"];
         trace?: never;
@@ -9294,6 +9294,8 @@ export interface components {
         ChatRequest: {
             /** Agent Id */
             agent_id?: string | null;
+            /** Case Id */
+            case_id?: string | null;
             /**
              * Max Tokens
              * @default 4096
@@ -9303,6 +9305,8 @@ export interface components {
             messages: components["schemas"]["ChatMessage"][];
             /** Model */
             model?: string | null;
+            /** Page Context */
+            page_context?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Session Id */
@@ -11732,11 +11736,13 @@ export interface components {
         };
         /**
          * UpdateConversationRequest
-         * @description PATCH body — rename and/or archive (either or both).
+         * @description PATCH body — rename, archive, and/or attach a case.
          */
         UpdateConversationRequest: {
             /** Archived */
             archived?: boolean | null;
+            /** Case Id */
+            case_id?: string | null;
             /** Title */
             title?: string | null;
         };
@@ -17852,6 +17858,8 @@ export interface operations {
                 archived?: boolean;
                 limit?: number;
                 offset?: number;
+                /** @description Match title, case id, or page key */
+                q?: string | null;
             };
             header?: {
                 authorization?: string | null;

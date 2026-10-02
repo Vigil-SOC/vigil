@@ -421,6 +421,19 @@ def add_intake_trigger_case_id(conn):
     """))
 
 
+# The dock records which page it was opened from and which case was attached
+# (#1328). Nullable, no FK: deleting a case must not delete the conversation.
+@migration("Add case_id and page_context to conversations")
+def add_conversation_case_and_page(conn):
+    if not _table_exists(conn, "conversations"):
+        return
+    conn.execute(text("""
+        ALTER TABLE conversations
+            ADD COLUMN IF NOT EXISTS case_id VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS page_context VARCHAR(120);
+    """))
+
+
 # ---------------------------------------------------------------------------
 # case_templates table
 # ---------------------------------------------------------------------------

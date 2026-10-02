@@ -67,7 +67,7 @@
    --shadow: 0 1px 0 #ffffff06 inset, 0 8px 24px -16px #000000cc;
    --rail-w: 60px;
    --rail-w-x: 216px;
-   --chat-w: 380px;
+   --chat-w: 400px;
    --font: "IBM Plex Sans", system-ui, sans-serif;
    --mono: "IBM Plex Mono", ui-monospace, monospace;
 
@@ -198,17 +198,6 @@
 
    .main.chat-open {
       margin-right: var(--chat-w);
-   }
-
-   .chat-resizing,
-   .chat-resizing * {
-      cursor: col-resize !important;
-      user-select: none !important;
-   }
-
-   .chat-resizing .main,
-   .chat-resizing .chat {
-      transition: none;
    }
 
    /* ---------- nav rail ---------- */
@@ -2255,45 +2244,6 @@
       transition: transform .26s cubic-bezier(.4, 0, .2, 1);
    }
 
-   .chat-resize-handle {
-      position: absolute;
-      z-index: 4;
-      top: 0;
-      bottom: 0;
-      left: -7px;
-      width: 14px;
-      border: 0;
-      outline: 0;
-      background: transparent;
-      cursor: col-resize;
-      touch-action: none;
-   }
-
-   .chat-resize-handle::after {
-      content: "";
-      position: absolute;
-      top: 42%;
-      bottom: 42%;
-      left: 6px;
-      width: 2px;
-      min-height: 38px;
-      border-radius: 2px;
-      background: var(--line-strong);
-      opacity: 0;
-      transition: opacity .14s, background .14s;
-   }
-
-   .chat:hover .chat-resize-handle::after,
-   .chat-resize-handle:focus-visible::after,
-   .chat.resizing .chat-resize-handle::after {
-      opacity: 1;
-      background: var(--accent-2);
-   }
-
-   .chat-resize-handle:focus-visible {
-      box-shadow: 0 0 0 2px var(--accent-line);
-   }
-
    .chat.open {
       transform: none;
    }
@@ -2304,6 +2254,42 @@
       gap: 10px;
       padding: 12px 14px;
       border-bottom: 1px solid var(--line);
+   }
+
+   .chat-note {
+      display: flex;
+      gap: 10px;
+      padding: 6px 14px;
+      font-size: 12px;
+      color: var(--tx-3);
+      border-bottom: 1px solid var(--line);
+   }
+
+   .chat-case {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 180px;
+      padding: 2px 4px 2px 8px;
+      border-radius: 8px;
+      background: var(--bg-3);
+      border: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--tx-2);
+   }
+
+   .chat-case span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .chat-case button {
+      border: none;
+      background: none;
+      color: var(--tx-faint);
+      padding: 0 4px;
+      cursor: pointer;
    }
 
    .chat-head .ch-ico {
@@ -2456,6 +2442,7 @@
    }
 
    .chat-input {
+      position: relative;
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -2486,6 +2473,50 @@
 
    .chat-input textarea::placeholder {
       color: var(--tx-faint);
+   }
+
+   .chat-mention {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: calc(100% + 6px);
+      z-index: 5;
+      max-height: 220px;
+      overflow-y: auto;
+      background: var(--bg-1);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      box-shadow: var(--shadow);
+   }
+
+   .chat-mention button {
+      display: flex;
+      width: 100%;
+      gap: 8px;
+      align-items: baseline;
+      text-align: left;
+      background: none;
+      border: none;
+      padding: 8px 10px;
+      color: var(--tx);
+      font-size: 13px;
+      cursor: pointer;
+   }
+
+   .chat-mention button:hover {
+      background: var(--hover);
+   }
+
+   .chat-mention .cm-id {
+      color: var(--tx-3);
+      font-family: var(--mono);
+      font-size: 11.5px;
+   }
+
+   .chat-mention .cm-empty {
+      padding: 8px 10px;
+      color: var(--tx-3);
+      font-size: 12.5px;
    }
 
    .ci-row {
@@ -2740,6 +2771,25 @@
       justify-content: space-between;
       gap: 10px;
       margin-bottom: 8px;
+   }
+
+   .chist-search {
+      flex: 1;
+      min-width: 0;
+      padding: 6px 8px;
+      font-size: 12.5px;
+      color: var(--tx);
+      background: var(--bg-1, var(--bg-2));
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      outline: none;
+   }
+
+   .chist-day {
+      margin: 10px 2px 2px;
+      font-size: 11px;
+      letter-spacing: .02em;
+      color: var(--tx-3);
    }
 
    .chist-archtoggle {
@@ -3668,13 +3718,10 @@
          width: 100vw;
       }
 
-      .chat-resize-handle {
-         display: none;
-      }
    }
 
    /* Cases master-detail + open Vigil dock on smaller screens: the list rail
-     (380px) + chat (380px) leave the detail pane too cramped, so drop the
+     (380px) + chat (400px) leave the detail pane too cramped, so drop the
      list rail while the dock is open. Above 1100px the dock still pushes
      (shrinks) .main, so the detail pane keeps its full remaining width. */
    @media (max-width: 1280px) {
