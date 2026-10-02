@@ -1,6 +1,6 @@
 # Vigil Console, phase 1 — Agents & workflows
 
-Rev 1.1-P1.1 · 2026-10-01 · follow-up to `PRD-phase1.md` (Rev 1.1-P1).
+Rev 1.1-P1.1 · 2026-10-01 · follow-up to `PRD-phase1.md` (Rev 1.1-P1). Checked against `main` at #1377.
 
 ## How to read this
 
@@ -45,7 +45,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 
 ### Workflows tab
 
-- **AW-W1. Workflow list.** Each workflow with its kind, what starts it, its command, runs today and cost per run. Trust is **Not measured yet**.
+- **AW-W1. Workflow list.** Each workflow with its kind, what starts it, its command, runs today and cost per run. Trust is **Not measured yet**. *Runs today, cost per run and Trust shipped (#1366); kind, trigger and command are new.*
 - **AW-W2. Workflow reader.** A selected workflow shows its name, an enable toggle, its description, and "Edited N days ago · version N" ("Built in" for a built-in). Below it, **How it runs** draws the stages of its loop — Start, Frame the case, Gather evidence, Weigh and review, Decide, Hand off — and four panels that follow the selected stage, or describe the whole workflow when none is selected:
   - **Who does it** — the agent acting in that stage (lead, helpers or reviewer), its model, and the skills it is offered.
   - **What it may do on its own** — each capability, marked On its own or Asks you, from the approval rules Vigil already enforces.
@@ -66,13 +66,13 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 ### Agents tab
 
 - **AW-A1. Agent list.** Every built-in and custom agent, what it does, and its model with where that model comes from ("Set for this agent" or the default from Settings).
-- **AW-A2. Agent drawer.** Name, specialization, instructions, model and fallback model, thinking, longest answer, and the tools it may use, each marked On its own or Asks you. The drawer states that workflow runs take their model from Settings › AI models.
+- **AW-A2. Agent drawer.** Name, specialization, instructions, model and fallback model, thinking, longest answer, and the tools it may use, each marked On its own or Asks you. The drawer states that workflow runs take their model from Settings › AI models. *Model, fallback model and that statement shipped (#1376); the rest is the board's layout.*
 - **AW-A3. Editing a built-in agent saves a copy.** "Built in. Saving creates your own editable copy; the original stays available."
 - **AW-A4. Skills on an agent are shown, not assigned.** An agent with skills enabled is offered the whole library; the drawer says so in one line. Assigning single skills: **Later**.
 
 ### Skills tab
 
-- **AW-S1. Skill folders.** Every skill, built-in and the operator's own, with its description, file count, the workflows it is offered to, and "Built in" or "Yours". "Used by N agents" and the sources a skill touches are **Not measured yet**.
+- **AW-S1. Skill folders.** Every skill, built-in and the operator's own, with its description, file count, the workflows it is offered to, and "Built in" or "Yours". *The list and "Offered to" shipped (#1366) for built-in skills.* "Used by N agents" and the sources a skill touches are **Not measured yet**.
 - **AW-S2. Skill drawer.** Name, when to use it, the steps, the files in the skill, Test with a sample, and Save new version.
   - The name and description limits the board states are enforced.
   - Editing a built-in skill saves a copy under a new name; the built-in is never changed.
