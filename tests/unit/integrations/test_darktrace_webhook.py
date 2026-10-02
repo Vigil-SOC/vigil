@@ -31,7 +31,9 @@ sys.modules["darktrace_webhook_under_test"] = _mod
 _spec.loader.exec_module(_mod)
 darktrace_router = _mod.router
 
-from core.integrations.darktrace.ingestion import DarktraceIngestionService  # noqa: E402
+from core.integrations.darktrace.ingestion import (
+    DarktraceIngestionService,
+)  # noqa: E402
 
 SECRET = "unit-test-secret"
 

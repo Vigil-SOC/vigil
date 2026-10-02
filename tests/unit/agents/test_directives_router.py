@@ -54,7 +54,10 @@ def _raises(monkeypatch, error):
 
 
 def _post(client, body=None):
-    return client.post(f"/api/agent-runs/{RUN}/directives", json=body or {"kind": "note", "text": "look at 10.0.0.5"})
+    return client.post(
+        f"/api/agent-runs/{RUN}/directives",
+        json=body or {"kind": "note", "text": "look at 10.0.0.5"},
+    )
 
 
 class TestQueueing:
@@ -74,7 +77,10 @@ class TestQueueing:
 
     def test_carries_the_workflow_fields_through(self, client, monkeypatch):
         _queues(monkeypatch)
-        _post(client, {"kind": "approve", "text": "go on", "fields": {"checkpoint_id": "apr-1"}})
+        _post(
+            client,
+            {"kind": "approve", "text": "go on", "fields": {"checkpoint_id": "apr-1"}},
+        )
         assert _queues.seen["fields"] == {"checkpoint_id": "apr-1"}
 
 
@@ -89,6 +95,8 @@ class TestRefusals:
             (InvalidDirective("unknown directive kind"), 400),
         ],
     )
-    def test_maps_each_refusal_to_its_own_status(self, client, monkeypatch, error, expected):
+    def test_maps_each_refusal_to_its_own_status(
+        self, client, monkeypatch, error, expected
+    ):
         _raises(monkeypatch, error)
         assert _post(client).status_code == expected

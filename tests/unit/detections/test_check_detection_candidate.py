@@ -125,7 +125,12 @@ async def test_matching_event_returns_a_candidate_that_is_not_a_step():
 
     missed = await tools.check_detection_candidate(
         rule_yaml=CANDIDATE_RULE,
-        events=[{"Image": r"C:\Windows\System32\cmd.exe", "CommandLine": "cmd.exe /c ipconfig"}],
+        events=[
+            {
+                "Image": r"C:\Windows\System32\cmd.exe",
+                "CommandLine": "cmd.exe /c ipconfig",
+            }
+        ],
         **STEP,
     )
     assert missed["replay"]["evaluated"] is True
@@ -138,7 +143,13 @@ async def test_matching_event_returns_a_candidate_that_is_not_a_step():
 async def test_environment_keyed_rule_has_no_candidate():
     result = await SecurityDetectionsTools().check_detection_candidate(
         rule_yaml=HOST_IP_USER_RULE,
-        events=[{"DestinationIp": "10.1.2.3", "ComputerName": "dc01.corp.local", "TargetUserName": "jsmith"}],
+        events=[
+            {
+                "DestinationIp": "10.1.2.3",
+                "ComputerName": "dc01.corp.local",
+                "TargetUserName": "jsmith",
+            }
+        ],
         **STEP,
     )
     assert result["lint"]["passed"] is False

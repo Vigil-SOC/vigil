@@ -503,8 +503,6 @@ def test_needs_you_ids_sort_first_and_an_empty_set_keeps_sla_order(session):
     assert _ids(rows) == ["also-waiting", "waiting", "sooner", "no-sla"]
     assert "IN" in first_order
 
-    page, page_total = repo.queue(
-        needs_you_ids={"waiting"}, limit=1, offset=1, now=NOW
-    )
+    page, page_total = repo.queue(needs_you_ids={"waiting"}, limit=1, offset=1, now=NOW)
     assert page_total == 4
     assert _ids(page) == ["sooner"]

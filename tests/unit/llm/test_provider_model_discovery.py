@@ -265,9 +265,7 @@ def test_ollama_extracts_context_from_show():
         lambda **kw: _FakeClient(get_handler=_get, post_handler=_post),
     ):
         out = asyncio.run(
-            discovery.fetch_ollama_models(
-                "http://localhost:11434", allow_loopback=True
-            )
+            discovery.fetch_ollama_models("http://localhost:11434", allow_loopback=True)
         )
 
     by_id = {m.id: m for m in out}
@@ -406,7 +404,10 @@ def test_fetch_provider_models_drops_embedding_by_name_without_live_meta():
     result = asyncio.run(model_registry.fetch_provider_models(_FakeRow("ollama")))
 
     assert result == ["qwen2.5:14b"]
-    assert model_registry._MODEL_LIST_CACHE["p1"] == ["nomic-embed-text:latest", "qwen2.5:14b"]
+    assert model_registry._MODEL_LIST_CACHE["p1"] == [
+        "nomic-embed-text:latest",
+        "qwen2.5:14b",
+    ]
     _reset_registry_state()
 
 

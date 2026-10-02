@@ -145,4 +145,3 @@ def test_root_home_safe_write(monkeypatch, tmp_path):
             target = vigil_path("test.json", write=True)
             assert target == tmp_path / ".vigil" / "test.json"
             assert (tmp_path / ".vigil").is_dir()
-

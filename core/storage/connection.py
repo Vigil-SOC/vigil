@@ -1087,5 +1087,5 @@ def init_database(echo: bool = False, create_tables: bool = True):
         try:
             _stamp_schema_version(db_manager.engine)
         except Exception as e:  # noqa: BLE001
-            # The old stamp stays, so the next upgrade still takes its backup.
+            # The old stamp stays and the next start tries again.
             logger.error("Could not record the schema version: %s", e)

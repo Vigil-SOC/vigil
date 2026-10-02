@@ -159,6 +159,17 @@ def test_nothing_due_takes_no_snapshot(instance, case):
     assert not repo.exists()
 
 
+def test_unusable_destinations_file_fails_instead_of_skipping(instance):
+    env, _, _, state = instance
+    (state / "backups.json").write_text("{not json", encoding="utf-8")
+
+    proc = _pre_upgrade(env, "0.7.0")
+
+    assert proc.returncode != 0
+    assert "no usable destination" in proc.stderr
+    assert SKIP in proc.stderr
+
+
 def test_failed_snapshot_names_the_override_and_the_override_skips_it(instance):
     env, repo, _, _ = instance
     other = repo.parent / "other-pass"

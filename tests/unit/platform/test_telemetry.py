@@ -10,10 +10,10 @@ import sys
 import pytest
 from unittest.mock import patch, MagicMock
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _reload_telemetry():
     """Force-reset telemetry module state to allow re-initialization in tests."""
@@ -28,6 +28,7 @@ def _reload_telemetry():
 # ---------------------------------------------------------------------------
 # core.telemetry — no-op behaviour when disabled
 # ---------------------------------------------------------------------------
+
 
 class TestTelemetryDisabled:
     """When VIGIL_OTEL_ENABLED is not set or false, everything is no-op."""
@@ -160,13 +161,16 @@ class TestMeterProviderReaders:
 # Investigation ID context var
 # ---------------------------------------------------------------------------
 
+
 class TestInvestigationContext:
     def test_default_is_none(self):
         from core.telemetry import get_investigation_id
+
         get_investigation_id()  # must not raise
 
     def test_set_and_get(self):
         from core.telemetry import set_investigation_id, get_investigation_id
+
         set_investigation_id("inv-test-123")
         assert get_investigation_id() == "inv-test-123"
         set_investigation_id(None)
@@ -177,35 +181,36 @@ class TestInvestigationContext:
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
+
 class TestConfigHelpers:
     def test_is_otel_enabled_true(self):
         from core.telemetry import _is_otel_enabled
+
         for val in ("true", "True", "1", "yes", "YES"):
             with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": val}):
                 assert _is_otel_enabled() is True
 
     def test_is_otel_enabled_false(self):
         from core.telemetry import _is_otel_enabled
+
         for val in ("false", "0", "no", ""):
             with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": val}):
                 assert _is_otel_enabled() is False
 
     def test_llm_content_default_off(self):
         from core.telemetry import _should_record_llm_content
+
         env = {
-            k: v
-            for k, v in os.environ.items()
-            if k != "VIGIL_OTEL_RECORD_LLM_CONTENT"
+            k: v for k, v in os.environ.items() if k != "VIGIL_OTEL_RECORD_LLM_CONTENT"
         }
         with patch.dict(os.environ, env, clear=True):
             assert _should_record_llm_content() is False
 
     def test_ioc_values_default_off(self):
         from core.telemetry import _should_record_ioc_values
+
         env = {
-            k: v
-            for k, v in os.environ.items()
-            if k != "VIGIL_OTEL_RECORD_IOC_VALUES"
+            k: v for k, v in os.environ.items() if k != "VIGIL_OTEL_RECORD_IOC_VALUES"
         }
         with patch.dict(os.environ, env, clear=True):
             assert _should_record_ioc_values() is False
@@ -214,6 +219,7 @@ class TestConfigHelpers:
 # ---------------------------------------------------------------------------
 # core.telemetry_sanitizer — SECURITY TESTS
 # ---------------------------------------------------------------------------
+
 
 class TestSensitiveAttributeScrubber:
     """
@@ -225,6 +231,7 @@ class TestSensitiveAttributeScrubber:
     @pytest.fixture
     def scrubber(self):
         from core.telemetry_sanitizer import SensitiveAttributeScrubber
+
         return SensitiveAttributeScrubber()
 
     # ---- Key-based redaction ----
@@ -326,9 +333,12 @@ class TestSensitiveAttributeScrubber:
         assert scrubber._should_redact("http.method", "GET") is False
         assert scrubber._should_redact("http.status_code", 200) is False
         assert scrubber._should_redact("vigil.tool.tier", "safe") is False
-        assert scrubber._should_redact(
-            "gen_ai.request.model", "claude-sonnet-4-5-20250929"
-        ) is False
+        assert (
+            scrubber._should_redact(
+                "gen_ai.request.model", "claude-sonnet-4-5-20250929"
+            )
+            is False
+        )
 
     def test_numeric_values_not_redacted(self, scrubber):
         assert scrubber._should_redact("gen_ai.usage.input_tokens", 1500) is False
@@ -357,9 +367,7 @@ class TestSensitiveAttributeScrubber:
         span.set_attribute("http.method", "POST")
         span.set_attribute("safe.attr", "hello")
         span.set_attribute("my.api_key", "sk-ant-api03-secretstuff1234567890abcdef")
-        span.set_attribute(
-            "finding.description", "User admin logged in from 10.0.0.1"
-        )
+        span.set_attribute("finding.description", "User admin logged in from 10.0.0.1")
         span.set_attribute("gen_ai.usage.input_tokens", 500)
         span.end()
 
@@ -413,6 +421,7 @@ class TestSensitiveAttributeScrubber:
 # Sanitizer stub when SDK not installed
 # ---------------------------------------------------------------------------
 
+
 class TestSanitizerStub:
     def test_stub_methods_exist(self):
         from core.telemetry_sanitizer import SensitiveAttributeScrubber
@@ -427,6 +436,7 @@ class TestSanitizerStub:
 # ---------------------------------------------------------------------------
 # Fallback no-op types
 # ---------------------------------------------------------------------------
+
 
 class TestFallbackNoOps:
     """The fallback types must be fully functional no-ops."""

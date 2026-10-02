@@ -30,7 +30,9 @@ INSUFFICIENT_PRIVILEGE = "42501"
 def _parts():
     return {
         "user": os.getenv("POSTGRES_USER", "deeptempo"),
-        "password": os.getenv("POSTGRES_PASSWORD", "deeptempo_secure_password_change_me"),
+        "password": os.getenv(
+            "POSTGRES_PASSWORD", "deeptempo_secure_password_change_me"
+        ),
         "host": os.getenv("POSTGRES_HOST", "localhost"),
         "port": os.getenv("POSTGRES_PORT", "5432"),
     }

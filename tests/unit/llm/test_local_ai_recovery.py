@@ -10,7 +10,9 @@ def test_local_recovery_requires_dev_mode_and_loopback_gateway(monkeypatch):
     # invalidation; the autouse fixture only clears around the test.
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.setenv("BIFROST_URL", "http://localhost:8080")
-    monkeypatch.setattr(recovery, "get_ai_operations_setting", lambda key, default: True)
+    monkeypatch.setattr(
+        recovery, "get_ai_operations_setting", lambda key, default: True
+    )
     get_settings.cache_clear()
     assert recovery.local_bifrost_recovery_enabled() is True
 
@@ -29,7 +31,9 @@ def test_unset_bifrost_url_still_counts_as_local(monkeypatch):
     # recovery: nothing else sets BIFROST_URL on a bare uvicorn start.
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.delenv("BIFROST_URL", raising=False)
-    monkeypatch.setattr(recovery, "get_ai_operations_setting", lambda key, default: True)
+    monkeypatch.setattr(
+        recovery, "get_ai_operations_setting", lambda key, default: True
+    )
     get_settings.cache_clear()
     assert recovery.local_bifrost_recovery_enabled() is True
 
@@ -56,16 +60,18 @@ def test_connection_error_classifier_recognizes_openai_timeouts():
     assert recovery.is_gateway_connection_error(
         openai.APIConnectionError(request=request)
     )
-    assert recovery.is_gateway_connection_error(
-        openai.APITimeoutError(request=request)
-    )
+    assert recovery.is_gateway_connection_error(openai.APITimeoutError(request=request))
 
 
 @pytest.mark.asyncio
-async def test_recovery_retries_without_restart_when_gateway_is_already_healthy(monkeypatch):
+async def test_recovery_retries_without_restart_when_gateway_is_already_healthy(
+    monkeypatch,
+):
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.setenv("BIFROST_URL", "http://localhost:8080")
-    monkeypatch.setattr(recovery, "get_ai_operations_setting", lambda key, default: True)
+    monkeypatch.setattr(
+        recovery, "get_ai_operations_setting", lambda key, default: True
+    )
 
     async def healthy():
         return True

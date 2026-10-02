@@ -153,9 +153,7 @@ def test_the_development_credential_resolves_to_the_developer():
     a_developer = object()
     with patch("core.config.get_settings") as settings:
         settings.return_value.dev_mode = True
-        with patch(
-            "core.auth.current_user._get_dev_user", return_value=a_developer
-        ):
+        with patch("core.auth.current_user._get_dev_user", return_value=a_developer):
             assert _dev_mode_user(DEV_MODE_TOKEN) is a_developer
 
 

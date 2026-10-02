@@ -54,9 +54,7 @@ def test_should_enforce_false_when_no_vk_configured(monkeypatch):
     omits the x-bf-vk header and Bifrost's no-VK path applies."""
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setenv("LLM_BUDGET_UNLIMITED", "false")
-    with patch(
-        "core.llm.cost.budget._get_settings", return_value={"default_vk": ""}
-    ):
+    with patch("core.llm.cost.budget._get_settings", return_value={"default_vk": ""}):
         from core.llm.cost.budget import should_enforce
 
         assert should_enforce() is False
@@ -157,14 +155,18 @@ def test_stored_cap_and_mode_do_not_change_vk_header(monkeypatch):
 
     vk = "sk-bf-real-key"
     with_key = [
-        attached({"default_vk": vk, "enforcement_mode": mode, "budget_limit_usd": limit})
+        attached(
+            {"default_vk": vk, "enforcement_mode": mode, "budget_limit_usd": limit}
+        )
         for mode in ("warning", "hard_stop")
         for limit in (0.0, 500.0)
     ]
     assert with_key == [vk, vk, vk, vk]
 
     without_key = [
-        attached({"default_vk": "", "enforcement_mode": mode, "budget_limit_usd": limit})
+        attached(
+            {"default_vk": "", "enforcement_mode": mode, "budget_limit_usd": limit}
+        )
         for mode in ("warning", "hard_stop")
         for limit in (0.0, 500.0)
     ]
@@ -179,7 +181,9 @@ def test_stored_cap_and_mode_do_not_change_vk_header(monkeypatch):
 def test_budget_exceeded_carries_tier_and_status():
     from core.llm.cost.budget import BudgetExceeded
 
-    err = BudgetExceeded(tier="virtual_key", message="$10 spent of $10", status_code=402)
+    err = BudgetExceeded(
+        tier="virtual_key", message="$10 spent of $10", status_code=402
+    )
     assert err.tier == "virtual_key"
     assert err.status_code == 402
     assert "10 spent" in str(err)

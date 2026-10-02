@@ -11,7 +11,6 @@ from core.auth.password_validator import (
     validate_password_strength,
 )
 
-
 SAMPLE_BLOCKLIST = frozenset({"password123", "letmein123456", "correcthorse42"})
 
 

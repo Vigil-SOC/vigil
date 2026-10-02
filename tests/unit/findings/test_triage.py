@@ -307,7 +307,9 @@ def test_zero_arrival_day_leaves_the_pickup_share_empty():
 
 def test_source_filter_keeps_an_older_row_the_cap_would_drop():
     """``?source=`` applies before the 200 cap."""
-    _finding("tr-kept-f", "low", data_source="tr-kept", created_at=NOW - timedelta(days=2))
+    _finding(
+        "tr-kept-f", "low", data_source="tr-kept", created_at=NOW - timedelta(days=2)
+    )
     kept = _trigger(
         state="expired",
         finding_id="tr-kept-f",

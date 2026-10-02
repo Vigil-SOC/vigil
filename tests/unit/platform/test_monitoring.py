@@ -34,7 +34,9 @@ def _make_sentry_stub():
         sys.modules[submod] = mod
 
     sys.modules["sentry_sdk.integrations.fastapi"].FastApiIntegration = MagicMock()
-    sys.modules["sentry_sdk.integrations.sqlalchemy"].SqlalchemyIntegration = MagicMock()
+    sys.modules["sentry_sdk.integrations.sqlalchemy"].SqlalchemyIntegration = (
+        MagicMock()
+    )
     sys.modules["sentry_sdk.integrations.logging"].LoggingIntegration = MagicMock()
     return sentry
 
@@ -57,6 +59,7 @@ _monitoring_module = monitoring
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestInitSentry(unittest.TestCase):
     def setUp(self):
         _sentry_stub.init.reset_mock()
@@ -78,14 +81,20 @@ class TestInitSentry(unittest.TestCase):
 
     def test_production_sample_rate(self):
         """Production environment gets 0.1 traces_sample_rate."""
-        with patch.dict(os.environ, {"SENTRY_DSN": "https://x@sentry.io/1", "ENVIRONMENT": "production"}):
+        with patch.dict(
+            os.environ,
+            {"SENTRY_DSN": "https://x@sentry.io/1", "ENVIRONMENT": "production"},
+        ):
             monitoring.init_sentry()
         kwargs = _sentry_stub.init.call_args[1]
         self.assertEqual(kwargs["traces_sample_rate"], 0.1)
 
     def test_dev_sample_rate(self):
         """Non-production environment gets 1.0 traces_sample_rate."""
-        with patch.dict(os.environ, {"SENTRY_DSN": "https://x@sentry.io/1", "ENVIRONMENT": "development"}):
+        with patch.dict(
+            os.environ,
+            {"SENTRY_DSN": "https://x@sentry.io/1", "ENVIRONMENT": "development"},
+        ):
             monitoring.init_sentry()
         kwargs = _sentry_stub.init.call_args[1]
         self.assertEqual(kwargs["traces_sample_rate"], 1.0)
@@ -95,7 +104,9 @@ class TestInitSentry(unittest.TestCase):
         with patch.dict(os.environ, {"SENTRY_DSN": "https://x@sentry.io/1"}):
             monitoring.init_sentry()
         kwargs = _sentry_stub.init.call_args[1]
-        self.assertFalse(kwargs.get("send_default_pii"), "PII must never be sent to Sentry")
+        self.assertFalse(
+            kwargs.get("send_default_pii"), "PII must never be sent to Sentry"
+        )
 
 
 class TestBeforeSendFilter(unittest.TestCase):

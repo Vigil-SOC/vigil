@@ -63,7 +63,7 @@ def test_list_runs_filters_to_agent_source_and_maps_rows(monkeypatch):
         assert body["count"] == 2
         assert body["runs"][0]["run_id"] == "r1"
         assert body["runs"][0]["run_kind"] == "hunt"  # lifted from trigger_context
-        assert body["runs"][1]["run_kind"] is None     # missing → None, not a crash
+        assert body["runs"][1]["run_kind"] is None  # missing → None, not a crash
     finally:
         app.dependency_overrides.pop(get_current_active_user, None)
 

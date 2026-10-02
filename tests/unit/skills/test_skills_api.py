@@ -46,7 +46,12 @@ def operator(tmp_path, monkeypatch):
     return _app(), root
 
 
-def _write(client: TestClient, name: str, description: str = "A saved skill.", body: str = "# Saved\n"):
+def _write(
+    client: TestClient,
+    name: str,
+    description: str = "A saved skill.",
+    body: str = "# Saved\n",
+):
     return client.post(
         "/api/skills",
         json={"name": name, "description": description, "body": body},
@@ -61,7 +66,12 @@ def test_list_returns_loaded_skills_with_source_path(client):
     assert by_name["minimal-skill"]["source_path"] == str(FIXTURES / "minimal-skill")
     assert by_name["minimal-skill"]["description"].startswith("The smallest skill")
     assert by_name["minimal-skill"]["bundled"] is False
-    assert set(by_name["minimal-skill"]) == {"name", "description", "source_path", "bundled"}
+    assert set(by_name["minimal-skill"]) == {
+        "name",
+        "description",
+        "source_path",
+        "bundled",
+    }
 
 
 def test_missing_skill_is_not_found(client):
@@ -159,7 +169,12 @@ def test_write_then_prompt_includes_the_skill(operator):
     client, root = operator
     bundled_before = BUNDLED_FILE.read_bytes()
     description = "Confirm: the next prompt lists a skill just written."
-    resp = _write(client, "desk-check", description=description, body="# Desk check\n\nDo the check.\n")
+    resp = _write(
+        client,
+        "desk-check",
+        description=description,
+        body="# Desk check\n\nDo the check.\n",
+    )
     assert resp.status_code == 200
     assert resp.json()["bundled"] is False
     skill = parse_skill(root / "desk-check")

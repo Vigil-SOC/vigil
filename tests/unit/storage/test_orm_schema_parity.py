@@ -64,7 +64,11 @@ from core.storage.schemas.workflow import (
     WorkflowRunPhaseSchema,
     WorkflowRunSchema,
 )
-from tests.unit.storage.orm_sample_instances import build_empty, build_populated, build_related
+from tests.unit.storage.orm_sample_instances import (
+    build_empty,
+    build_populated,
+    build_related,
+)
 
 pytestmark = pytest.mark.unit
 

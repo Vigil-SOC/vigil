@@ -57,9 +57,12 @@ prepare_backup_mounts() {
 backup_pre_upgrade() {
     [ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0
     prepare_backup_mounts
+    # An old loop would hold the backup lock, and could snapshot mid-upgrade.
+    docker rm -f "$BACKUP_LOOP_CONTAINER" >/dev/null 2>&1 || true
     local -a version_arg=()
     [ "$VERSION" = "dev" ] || version_arg=(--target-version "$VERSION")
-    dc run --rm "${BACKUP_RUN_ARGS[@]}" backup-pre-upgrade ${version_arg[@]+"${version_arg[@]}"} || {
+    # --build: an image from before this command existed would exit 2.
+    dc run --rm --build "${BACKUP_RUN_ARGS[@]}" backup-pre-upgrade ${version_arg[@]+"${version_arg[@]}"} || {
         echo "Pre-upgrade backup failed. Fix the destination in $BACKUPS_FILE," \
             "or set VIGIL_SKIP_PREUPGRADE_BACKUP=1 to start without one." >&2
         return 1

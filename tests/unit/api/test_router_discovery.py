@@ -125,7 +125,7 @@ def test_no_cross_router_path_shadowing():
     exact = [
         (a_p, a_o, b_o)
         for i, (a_p, a_m, a_o) in enumerate(routes)
-        for b_p, b_m, b_o in routes[i + 1:]
+        for b_p, b_m, b_o in routes[i + 1 :]
         if a_p == b_p and a_o != b_o and (a_m & b_m)
     ]
 
@@ -142,10 +142,9 @@ def test_no_cross_router_path_shadowing():
     problems = [f"  identical path {p} in {a} and {b}" for p, a, b in exact] + [
         f"  {pp} ({po}) shadows {lp} ({lo})" for pp, po, lp, lo in swallow
     ]
-    assert not problems, (
-        "Cross-router path shadowing — mount order now matters:\n"
-        + "\n".join(problems)
-    )
+    assert (
+        not problems
+    ), "Cross-router path shadowing — mount order now matters:\n" + "\n".join(problems)
 
 
 GATE_ENV_VARS = ("DARKTRACE_ENABLED", "CLOUDY_INGESTION_ENABLED")

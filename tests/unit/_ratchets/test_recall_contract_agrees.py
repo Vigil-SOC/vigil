@@ -207,10 +207,16 @@ def test_the_arch_asks_for_what_the_grants_declare():
     asked = {}
     for role, body in zip(sections[1::2], sections[2::2]):
         needs = re.search(r"needs: \[([^\]]*)\]", body)
-        asked[role] = frozenset(re.findall(r"[\w-]+", needs.group(1))) if needs else frozenset()
+        asked[role] = (
+            frozenset(re.findall(r"[\w-]+", needs.group(1))) if needs else frozenset()
+        )
 
     holds = {
-        role: (py.RECALL_CAPABILITY,) if py.RECALL_CAPABILITY in asked.get(role, ()) else ()
+        role: (
+            (py.RECALL_CAPABILITY,)
+            if py.RECALL_CAPABILITY in asked.get(role, ())
+            else ()
+        )
         for role in py.RECALL_GRANTS
     }
     assert holds == dict(py.RECALL_GRANTS), (
@@ -277,11 +283,15 @@ def test_every_declared_vocabulary_is_ratcheted(ts: str):
     # reads one (a kind and a payload), and RecallUnavailable is what it journals in
     # place of a result when the read could not be served -- a fact about the run,
     # not about an entity.
-    unshaped = interfaces - frozenset(ROW_SHAPES.values()) - {
-        "RecalledProvenance",
-        "LedgerRecord",
-        "RecallUnavailable",
-    }
+    unshaped = (
+        interfaces
+        - frozenset(ROW_SHAPES.values())
+        - {
+            "RecalledProvenance",
+            "LedgerRecord",
+            "RecallUnavailable",
+        }
+    )
     assert not unshaped, (
         "these row shapes are declared and compared by nothing. Add each to "
         "ROW_SHAPES:\n  " + "\n  ".join(sorted(unshaped))

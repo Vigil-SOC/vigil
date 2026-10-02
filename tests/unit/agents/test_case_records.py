@@ -24,7 +24,9 @@ class _NullWork:
 
 @pytest.mark.asyncio
 async def test_unknown_case_returns_empty_sections_not_an_error(monkeypatch):
-    monkeypatch.setattr("core.cases.case_records_service.list_tasks", lambda case_id: [])
+    monkeypatch.setattr(
+        "core.cases.case_records_service.list_tasks", lambda case_id: []
+    )
     monkeypatch.setattr(
         "core.cases.case_records_service.list_escalations",
         lambda session, case_id: [],
@@ -45,7 +47,9 @@ async def test_unknown_case_returns_empty_sections_not_an_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_store_failure_is_empty_sections_not_refused(monkeypatch):
-    monkeypatch.setattr("core.cases.case_records_service.list_tasks", lambda case_id: [])
+    monkeypatch.setattr(
+        "core.cases.case_records_service.list_tasks", lambda case_id: []
+    )
 
     def _boom():
         raise RuntimeError("database is down")

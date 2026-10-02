@@ -108,9 +108,7 @@ def test_resolve_carries_the_custom_agent_prompt(monkeypatch):
     assert phase["prompt"] == "DISTINCTIVE CUSTOM PROMPT"
     # The profile does not recommend read_skill, so the phase does not gain it.
     assert phase["tools"] == []
-    assert "read_skill" not in [
-        tool["id"] for tool in yaml.safe_load(config)["tools"]
-    ]
+    assert "read_skill" not in [tool["id"] for tool in yaml.safe_load(config)["tools"]]
 
 
 def test_custom_phase_gains_read_skill_when_the_profile_recommends_it(monkeypatch):

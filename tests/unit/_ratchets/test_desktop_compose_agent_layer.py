@@ -28,7 +28,9 @@ def _services() -> dict:
 @pytest.mark.parametrize("name", AGENT_SERVICES)
 def test_agent_service_runs_on_default_up_without_host_port(name: str) -> None:
     spec = _services()[name]
-    assert "profiles" not in spec, f"{name} is behind a profile, so `up` will not start it"
+    assert (
+        "profiles" not in spec
+    ), f"{name} is behind a profile, so `up` will not start it"
     assert "ports" not in spec, f"{name} must not publish a host port"
 
 

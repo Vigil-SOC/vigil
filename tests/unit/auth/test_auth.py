@@ -19,8 +19,8 @@ from core.auth.auth_service import (
     password_matches_any,
 )
 
-
 # ----- Password hashing -----
+
 
 class TestPasswordHashing:
     def test_hash_produces_bcrypt_hash(self):
@@ -42,6 +42,7 @@ class TestPasswordHashing:
 
 
 # ----- JWT -----
+
 
 class _FakeUser:
     user_id = "user-abc"
@@ -93,6 +94,7 @@ class TestJWT:
 
 
 # ----- Password history helper -----
+
 
 class TestPasswordHistoryHelper:
     def test_empty_history_matches_nothing(self):

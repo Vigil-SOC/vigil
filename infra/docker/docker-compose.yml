@@ -251,6 +251,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       VIGIL_BACKUP_OWNER_CONNECTION: "1"
       RESTIC_CACHE_DIR: /tmp/restic-cache
+      # Read by backup-pre-upgrade, which inherits this block.
+      VIGIL_SKIP_PREUPGRADE_BACKUP: ${VIGIL_SKIP_PREUPGRADE_BACKUP:-}
     volumes:
       - ${VIGIL_BACKUP_STATE_DIR:-vigil_home}:/home/vigil/.vigil
       - ${VIGIL_BACKUP_INVESTIGATIONS_DIR:-vigil_investigations}:/app/data/investigations

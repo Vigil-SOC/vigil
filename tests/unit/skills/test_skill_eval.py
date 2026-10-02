@@ -105,18 +105,14 @@ def test_one_miss_is_named_and_the_run_exits_nonzero(monkeypatch, capsys):
     assert "'SEVERITY: high'" in out
 
 
-def test_without_a_key_the_run_exits_nonzero_and_does_not_dispatch(
-    monkeypatch, capsys
-):
+def test_without_a_key_the_run_exits_nonzero_and_does_not_dispatch(monkeypatch, capsys):
     def boom(self, **kwargs):
         raise AssertionError("dispatch must not be called without a key")
 
     monkeypatch.setattr(LLMRouter, "dispatch", boom)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     code = skill_eval.asyncio.run(
-        skill_eval.main(
-            ["--root", str(FIXTURE_LIBRARY), "--provider", "anthropic"]
-        )
+        skill_eval.main(["--root", str(FIXTURE_LIBRARY), "--provider", "anthropic"])
     )
     assert code == 3
     assert "ANTHROPIC_API_KEY" in capsys.readouterr().err

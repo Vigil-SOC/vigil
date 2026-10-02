@@ -43,4 +43,6 @@ def test_build_template_renders_with_auto_responder():
     mod = _load_script_module()
     rendered = mod.build_template("test-auto-responder-wf", ["auto_responder"])
     assert "auto_responder" in rendered, "rendered template omits auto_responder"
-    assert "Auto Responder" in rendered, "rendered template missing Title-cased agent name"
+    assert (
+        "Auto Responder" in rendered
+    ), "rendered template missing Title-cased agent name"

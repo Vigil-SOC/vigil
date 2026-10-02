@@ -19,6 +19,7 @@ from core.backup.schedule import (
     _load_destinations,
     prepared_destination,
 )
+from core.config import vigil_path
 from core.storage.connection import read_schema_version
 from core.version import __version__
 
@@ -64,6 +65,13 @@ def _snapshot(target: str, bifrost_data: str | None) -> str | None:
         return None
     destinations = _load_destinations()
     if not destinations:
+        # A file that holds entries but yields none is a broken config, not "none".
+        path = vigil_path(DESTINATIONS_FILENAME)
+        if path.is_file() and path.read_text(encoding="utf-8").strip() not in (
+            "",
+            "[]",
+        ):
+            raise BackupError(f"{DESTINATIONS_FILENAME} has no usable destination")
         logger.warning(
             "no backup destination in %s; upgrading %s to %s without a backup",
             DESTINATIONS_FILENAME,

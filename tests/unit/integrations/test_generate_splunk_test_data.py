@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "sc
 
 from generate_splunk_test_data import SplunkTestDataGenerator
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -75,7 +74,9 @@ class TestTimestampConversion:
             "index": "main",
             "EventCode": "4625",
         }
-        expected_epoch = datetime(2026, 3, 29, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        expected_epoch = datetime(
+            2026, 3, 29, 12, 0, 0, tzinfo=timezone.utc
+        ).timestamp()
 
         [payload] = _build_payload_lines(generator, [event])
 

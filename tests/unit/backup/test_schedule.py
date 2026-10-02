@@ -216,7 +216,10 @@ def test_must_be_mount_fails_before_create(state, monkeypatch, caplog):
         run_due(bifrost_data=None)
 
     assert "not a mount" in caplog.text
-    assert json.loads((state / "backup_status.json").read_text(encoding="utf-8")) == previous
+    assert (
+        json.loads((state / "backup_status.json").read_text(encoding="utf-8"))
+        == previous
+    )
 
 
 def test_failure_leaves_the_status_file(state, monkeypatch, caplog):
@@ -243,7 +246,10 @@ def test_failure_leaves_the_status_file(state, monkeypatch, caplog):
 
     assert "disk full" in caplog.text
     assert PASSPHRASE not in caplog.text
-    assert json.loads((state / "backup_status.json").read_text(encoding="utf-8")) == previous
+    assert (
+        json.loads((state / "backup_status.json").read_text(encoding="utf-8"))
+        == previous
+    )
 
 
 def test_held_lock_logs_the_skip(state, monkeypatch, caplog):

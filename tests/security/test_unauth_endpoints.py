@@ -30,7 +30,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from services.api import main as backend_main  # noqa: E402
 from core.config import get_settings  # noqa: E402
 from services.api.middleware import auth as auth_module  # noqa: E402
-from core.auth import current_user as current_user_module  # noqa: E402  (DEV_MODE lives here)
+from core.auth import (
+    current_user as current_user_module,
+)  # noqa: E402  (DEV_MODE lives here)
 
 pytestmark = pytest.mark.unit
 

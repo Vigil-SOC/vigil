@@ -64,7 +64,15 @@ def _case():
         created_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
         assignee="ada",
         description="periodic beacon",
-        metadata={"resolution_steps": [{"description": "Block the host", "action_taken": "blocked", "result": "ok"}]},
+        metadata={
+            "resolution_steps": [
+                {
+                    "description": "Block the host",
+                    "action_taken": "blocked",
+                    "result": "ok",
+                }
+            ]
+        },
         findings=[],
     )
 
@@ -73,19 +81,23 @@ def test_export_authenticates_with_resolved_username(monkeypatch):
     captured = {}
 
     def fake_post(url, auth=None, json=None, **_kwargs):
-        captured.setdefault("posts", []).append({"url": url, "auth": auth, "json": json})
+        captured.setdefault("posts", []).append(
+            {"url": url, "auth": auth, "json": json}
+        )
         return _Response({"key": "SEC-1"})
 
     monkeypatch.setattr(
         "services.api.routers.jira_export.resolve",
-        lambda descriptor: {
-            "url": "https://jira.example",
-            "username": "ada",
-            "api_token": "tok",
-            "project_key": "FROM-CONFIG",
-        }
-        if descriptor.id == "jira"
-        else {},
+        lambda descriptor: (
+            {
+                "url": "https://jira.example",
+                "username": "ada",
+                "api_token": "tok",
+                "project_key": "FROM-CONFIG",
+            }
+            if descriptor.id == "jira"
+            else {}
+        ),
     )
     monkeypatch.setattr("services.api.routers.jira_export.httpx.post", fake_post)
     monkeypatch.setattr(
