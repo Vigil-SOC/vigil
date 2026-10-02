@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
+from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.time import utcnow
 
@@ -186,7 +187,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
         """
         try:
             # Generate finding ID
-            finding_id = f"sentinel-{alert.get('id', uuid.uuid4().hex[:12])}"
+            source_id = str(alert.get("id") or uuid.uuid4().hex[:12])
+            finding_id = fit_id("sentinel-", source_id, FINDING_ID_MAX)
 
             # Extract entities
             entities = self.extract_entities(alert.get("properties", {}))
@@ -194,6 +196,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
             # Build finding
             finding = {
                 "finding_id": finding_id,
+                # Same value the federation backfill derives for ids that fit.
+                "external_id": fit_id("", f"sentinel-{source_id}", EXTERNAL_ID_MAX),
                 "title": alert.get("title", "Azure Sentinel Incident"),
                 "description": alert.get("description", ""),
                 "severity": self.normalize_severity(alert.get("severity")),

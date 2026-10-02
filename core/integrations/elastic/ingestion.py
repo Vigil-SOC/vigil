@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
+from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
 from core.integrations.elastic.client import ElasticService
 from core.integrations.elastic.descriptor import ELASTIC
 from core.time import utcnow
@@ -218,12 +219,12 @@ class ElasticIngestion(SIEMIngestionService):
     ) -> Optional[Dict[str, Any]]:
         try:
             source = alert.get("_source", {})
-            alert_id = alert.get("_id", uuid.uuid4().hex[:12])
-            # findings.finding_id is String(50) and Kibana detection alert ids
-            # are 64-char SHA-256 hex, so bound it like the Splunk and
-            # CrowdStrike adapters. The full id stays in external_id and in
+            alert_id = str(alert.get("_id", uuid.uuid4().hex[:12]))
+            # Kibana detection alert ids are 64-char SHA-256 hex, which don't
+            # fit findings.finding_id. Ids that fit are left as they were; the
+            # full id stays in external_id (bounded) and in
             # metadata.elastic_alert_id, which upstream status sync uses.
-            finding_id = f"elastic-{str(alert_id)[:32]}"
+            finding_id = fit_id("elastic-", alert_id, FINDING_ID_MAX)
 
             if is_wazuh_alert(source):
                 return self._wazuh_finding(alert, source, alert_id, finding_id)
@@ -296,7 +297,7 @@ class ElasticIngestion(SIEMIngestionService):
 
             return {
                 "finding_id": finding_id,
-                "external_id": alert_id,
+                "external_id": fit_id("", alert_id, EXTERNAL_ID_MAX),
                 "data_source": "elastic",
                 "timestamp": source.get("@timestamp", utcnow().isoformat()),
                 "severity": severity,
@@ -371,7 +372,7 @@ class ElasticIngestion(SIEMIngestionService):
         parsed_level = _rule_level(level)
         return {
             "finding_id": finding_id,
-            "external_id": alert_id,
+            "external_id": fit_id("", alert_id, EXTERNAL_ID_MAX),
             "data_source": "elastic",
             "timestamp": source.get("@timestamp")
             or source.get("timestamp")

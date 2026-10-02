@@ -97,7 +97,7 @@ class TestTransformAlert:
         assert finding is not None
         # findings.finding_id is String(50)
         assert len(finding["finding_id"]) <= 50
-        assert finding["finding_id"] == f"elastic-{alert_id[:32]}"
+        assert finding["finding_id"].startswith(f"elastic-{alert_id[:20]}")
         # The full id survives for dedup and for upstream status sync.
         assert finding["external_id"] == alert_id
         assert finding["metadata"]["elastic_alert_id"] == alert_id

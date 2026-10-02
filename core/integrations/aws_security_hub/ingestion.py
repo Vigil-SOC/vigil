@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
+from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.time import utcnow
 
@@ -133,7 +134,8 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
         """
         try:
             # Extract finding ID
-            finding_id = f"aws-sh-{alert.get('Id', uuid.uuid4().hex[:12])}"
+            source_id = str(alert.get("Id") or uuid.uuid4().hex[:12])
+            finding_id = fit_id("aws-sh-", source_id, FINDING_ID_MAX)
 
             # Extract severity
             severity_label = alert.get("Severity", {}).get("Label", "MEDIUM")
@@ -174,6 +176,8 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             # Build finding
             finding = {
                 "finding_id": finding_id,
+                # Same value the federation backfill derives for ids that fit.
+                "external_id": fit_id("", f"aws-sh-{source_id}", EXTERNAL_ID_MAX),
                 "title": alert.get("Title", "AWS Security Hub Finding"),
                 "description": alert.get("Description", ""),
                 "severity": severity,
