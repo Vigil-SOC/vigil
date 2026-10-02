@@ -10,5 +10,8 @@
     "firecrawl-mcp": "3.24.0",
     "mcp-remote": "0.1.49",
     "security-detections-mcp": "3.3.0"
+  },
+  "overrides": {
+    "axios": "^1.20.0"
   }
 }
