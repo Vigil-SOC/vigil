@@ -19,6 +19,7 @@ import {
   type StepPayload,
 } from "./proof.js";
 import { finishFrom, recordFrom } from "./tools.js";
+import { showing } from "./trim.js";
 
 export type { NoticePayload, RootCauseKinds, StepPayload };
 
@@ -66,6 +67,7 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
 
   const scoped: Harness<RootCauseKinds> = {
     ...harness,
+    dispatch: showing(harness.dispatch),
     registry: registryOf(
       toolsFrom(spec.tools, {
         record: recordFrom(harness.state, run_id),

@@ -303,6 +303,25 @@ describe("the trace", () => {
     expect(call?.tool).toBe(PROVER_TOOL);
   });
 
+  it("journals and shows the trimmed search, so the proof reads what the model saw", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const results = Array.from({ length: 60 }, (_, n) => ({ _bkt: "b", _cd: `c${n}`, _raw: `line ${n}`, _time: AT, host: "h", file: LINK }));
+    const splunk = { ok: true as const, rows: [{ success: true, query: "q", count: 60, results }], rowCount: 1, capped: false, sourceSystem: "splunk" };
+    const harness = {
+      ...harnessOf([{ calls: [{ tool: PROVER_TOOL, args: "{\"spl_query\":\"q\"}" }] }, { content: "done" }], spec, state),
+      dispatch: { invoke: async (tool: { local: boolean; invoke: (args: Record<string, unknown>) => Promise<unknown> }, args: Record<string, unknown>) => (tool.local ? tool.invoke(args) : splunk) },
+    } as unknown as Parameters<typeof runRootCause>[0];
+    await runRootCause(harness, { run_id: RUN, spec });
+    const dispatch = (await state.read(RUN)).find((event) => event.kind === "dispatch")?.payload as DispatchPayload;
+    const journaled = (dispatch.result as { rows: { count: number; results: Record<string, unknown>[] }[] }).rows[0]!;
+    expect(journaled.count).toBe(60);
+    expect(journaled.results.length).toBeLessThan(60);
+    expect(journaled.results[0]).not.toHaveProperty("_bkt");
+    const seen = JSON.stringify((harness as unknown as { provider: { requests: unknown[] } }).provider.requests);
+    expect(seen).not.toContain("_bkt");
+  });
+
   it("completes at the cost ceiling and names the open step", async () => {
     const spec = specOf(SPLUNK);
     const state = new InProcessState<RootCauseKinds>();
