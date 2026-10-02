@@ -46,13 +46,14 @@ interface SystemTabDef {
   Component: (props: SectionProps) => JSX.Element
 }
 
-const SYSTEM_TABS: SystemTabDef[] = [
+const SYSTEM_TAB_DEFS: SystemTabDef[] = [
   { key: 'services', label: 'Services', Component: ServicesSection },
   { key: 'system', label: 'System', Component: SystemSection },
   { key: 'general', label: 'General', Component: GeneralSection },
   { key: 'dev', label: 'Developer', devOnly: true, Component: DeveloperSection },
   { key: 'users', label: 'Users', Component: UsersSection },
-].filter((tab) => !tab.devOnly || IS_DEV_MODE)
+]
+const SYSTEM_TABS = SYSTEM_TAB_DEFS.filter((tab) => !tab.devOnly || IS_DEV_MODE)
 
 const SYSTEM_KEYS = new Set<string>(SYSTEM_TABS.map((tab) => tab.key))
 
