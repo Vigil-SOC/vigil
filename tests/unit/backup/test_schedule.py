@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from core.backup.create import SKIPPED_MESSAGE, BackupError
-from core.backup.schedule import _latest_snapshot_at, _parse_time, run_due
+from core.backup.schedule import (
+    _latest_snapshot_at,
+    _load_destinations,
+    _parse_time,
+    run_due,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -70,7 +76,7 @@ def test_only_the_due_destination_runs(state, monkeypatch):
     _patch_pass(monkeypatch)
     seen: list[str] = []
 
-    def latest(repo: str, passphrase: Path) -> datetime | None:
+    def latest(repo: str, passphrase: Path, extra=None) -> datetime | None:
         if repo == idle:
             return datetime.now(timezone.utc)
         return None
@@ -89,7 +95,7 @@ def test_only_the_due_destination_runs(state, monkeypatch):
     monkeypatch.setattr("core.backup.schedule.create_snapshot", create)
     monkeypatch.setattr(
         "core.backup.schedule._forget",
-        lambda dest, passphrase: None,
+        lambda dest, passphrase, extra=None: None,
     )
 
     run_due(bifrost_data="/var/lib/vigil/bifrost")
@@ -121,7 +127,7 @@ def test_status_file_does_not_mark_another_destination_not_due(state, monkeypatc
     seen: list[str] = []
     monkeypatch.setattr(
         "core.backup.schedule._latest_snapshot_at",
-        lambda repo, passphrase: None,
+        lambda repo, passphrase, extra=None: None,
     )
     monkeypatch.setattr(
         "core.backup.schedule.create_snapshot",
@@ -129,7 +135,7 @@ def test_status_file_does_not_mark_another_destination_not_due(state, monkeypatc
     )
     monkeypatch.setattr(
         "core.backup.schedule._forget",
-        lambda dest, passphrase: None,
+        lambda dest, passphrase, extra=None: None,
     )
 
     run_due(bifrost_data=None)
@@ -149,7 +155,7 @@ def test_s3_repo_does_not_forget_or_prune(state, monkeypatch):
     created: list[str] = []
     monkeypatch.setattr(
         "core.backup.schedule._latest_snapshot_at",
-        lambda repo, passphrase: None,
+        lambda repo, passphrase, extra=None: None,
     )
     monkeypatch.setattr(
         "core.backup.schedule.create_snapshot",
@@ -177,7 +183,7 @@ def test_local_forget_uses_or_tags(state, monkeypatch):
 
     monkeypatch.setattr(
         "core.backup.schedule._latest_snapshot_at",
-        lambda repo, passphrase: None,
+        lambda repo, passphrase, extra=None: None,
     )
     monkeypatch.setattr(
         "core.backup.schedule.create_snapshot",
@@ -216,7 +222,10 @@ def test_must_be_mount_fails_before_create(state, monkeypatch, caplog):
         run_due(bifrost_data=None)
 
     assert "not a mount" in caplog.text
-    assert json.loads((state / "backup_status.json").read_text(encoding="utf-8")) == previous
+    assert (
+        json.loads((state / "backup_status.json").read_text(encoding="utf-8"))
+        == previous
+    )
 
 
 def test_failure_leaves_the_status_file(state, monkeypatch, caplog):
@@ -230,7 +239,7 @@ def test_failure_leaves_the_status_file(state, monkeypatch, caplog):
     (state / "backup_status.json").write_text(json.dumps(previous), encoding="utf-8")
     monkeypatch.setattr(
         "core.backup.schedule._latest_snapshot_at",
-        lambda repo, passphrase: None,
+        lambda repo, passphrase, extra=None: None,
     )
 
     def create(**kwargs):
@@ -243,7 +252,10 @@ def test_failure_leaves_the_status_file(state, monkeypatch, caplog):
 
     assert "disk full" in caplog.text
     assert PASSPHRASE not in caplog.text
-    assert json.loads((state / "backup_status.json").read_text(encoding="utf-8")) == previous
+    assert (
+        json.loads((state / "backup_status.json").read_text(encoding="utf-8"))
+        == previous
+    )
 
 
 def test_held_lock_logs_the_skip(state, monkeypatch, caplog):
@@ -253,7 +265,7 @@ def test_held_lock_logs_the_skip(state, monkeypatch, caplog):
     _patch_pass(monkeypatch)
     monkeypatch.setattr(
         "core.backup.schedule._latest_snapshot_at",
-        lambda repo, passphrase: None,
+        lambda repo, passphrase, extra=None: None,
     )
 
     def create(**kwargs):
@@ -293,3 +305,126 @@ def test_parse_restic_time_keeps_microseconds():
     parsed = _parse_time("2026-10-02T04:08:01.123456789Z")
     assert parsed == datetime(2026, 10, 2, 4, 8, 1, 123456, tzinfo=timezone.utc)
     assert _parse_time("nope") is None
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        ["AWS_ACCESS_KEY_ID"],
+        {"AWS_ACCESS_KEY_ID": 5},
+        {"AWS_ACCESS_KEY_ID": ""},
+        {"": "key"},
+        {"RESTIC_PASSWORD_FILE": "other"},
+        {"restic_password_command": "other"},
+    ],
+)
+def test_bad_env_skips_the_destination(state, caplog, env):
+    _destinations(state, [_entry("cloud", "s3:bucket/p", env=env)])
+
+    with caplog.at_level(logging.ERROR):
+        assert _load_destinations() == []
+
+    assert "destination cloud" in caplog.text
+
+
+def test_env_is_optional_and_parsed_to_pairs(state):
+    _destinations(
+        state,
+        [
+            _entry("plain", "/r"),
+            _entry("cloud", "s3:b/p", env={"AWS_ACCESS_KEY_ID": "ak"}),
+        ],
+    )
+
+    plain, cloud = _load_destinations()
+
+    assert plain.env == ()
+    assert cloud.env == (("AWS_ACCESS_KEY_ID", "ak"),)
+
+
+def test_env_secrets_reach_restic_only_and_not_os_environ(state, monkeypatch):
+    _destinations(
+        state,
+        [_entry("cloud", "s3:b/p", env={"AWS_ACCESS_KEY_ID": "ak_key"})],
+    )
+    secrets = {"cloud_pass": PASSPHRASE, "ak_key": "AKIA-VALUE"}
+    monkeypatch.setattr("core.backup.schedule.get_secret", secrets.get)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    seen: list[dict] = []
+
+    def capture(args, **kwargs):
+        seen.append(kwargs["env"])
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("core.backup.schedule._run", capture)
+    monkeypatch.setattr(
+        "core.backup.schedule.create_snapshot",
+        lambda **kwargs: seen.append({"extra": kwargs["extra_env"]}) or "snap",
+    )
+
+    run_due(bifrost_data=None)
+
+    assert seen[0]["AWS_ACCESS_KEY_ID"] == "AKIA-VALUE"
+    assert seen[0]["RESTIC_PASSWORD_FILE"]
+    assert seen[1] == {"extra": {"AWS_ACCESS_KEY_ID": "AKIA-VALUE"}}
+    assert "AWS_ACCESS_KEY_ID" not in os.environ
+    assert "AKIA-VALUE" not in (state / "backup_status.json").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_missing_env_secret_names_the_key_and_others_still_run(
+    state, monkeypatch, caplog
+):
+    _destinations(
+        state,
+        [
+            _entry("cloud", "s3:b/p", env={"AWS_ACCESS_KEY_ID": "ak_key"}),
+            _entry("disk", "/backup/disk"),
+        ],
+    )
+    secrets = {"cloud_pass": PASSPHRASE, "disk_pass": PASSPHRASE}
+    monkeypatch.setattr("core.backup.schedule.get_secret", secrets.get)
+    monkeypatch.setattr(
+        "core.backup.schedule._latest_snapshot_at",
+        lambda repo, passphrase, extra=None: None,
+    )
+    created: list[str] = []
+    monkeypatch.setattr(
+        "core.backup.schedule.create_snapshot",
+        lambda **kwargs: created.append(kwargs["repo"]) or "snap",
+    )
+    monkeypatch.setattr(
+        "core.backup.schedule._forget",
+        lambda dest, passphrase, extra=None: None,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        run_due(bifrost_data=None)
+
+    assert "secret ak_key is not set" in caplog.text
+    assert created == ["/backup/disk"]
+
+
+def test_resolved_values_are_scrubbed_from_the_log(state, monkeypatch, caplog):
+    _destinations(
+        state,
+        [_entry("cloud", "s3:b/p", env={"AWS_SECRET_ACCESS_KEY": "sk_key"})],
+    )
+    secrets = {"cloud_pass": PASSPHRASE, "sk_key": "planted-secret-value"}
+    monkeypatch.setattr("core.backup.schedule.get_secret", secrets.get)
+    monkeypatch.setattr(
+        "core.backup.schedule._latest_snapshot_at",
+        lambda repo, passphrase, extra=None: None,
+    )
+
+    def create(**kwargs):
+        raise BackupError("restic backup failed: bad key planted-secret-value")
+
+    monkeypatch.setattr("core.backup.schedule.create_snapshot", create)
+
+    with caplog.at_level(logging.ERROR):
+        run_due(bifrost_data=None)
+
+    assert "bad key" in caplog.text
+    assert "planted-secret-value" not in caplog.text

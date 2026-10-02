@@ -294,3 +294,97 @@ def test_s3_snapshot_matches_counts_and_rejects_wrong_passphrase(
     invocations = marker.read_text(encoding="utf-8") if marker.exists() else ""
     assert "--snapshot" not in invocations
     assert "--format" not in invocations
+
+
+def test_scheduled_pass_takes_s3_credentials_from_secrets_enc(
+    scratch_db, tmp_path: Path
+):
+    if os.environ.get("CI") and not _minio_listening():
+        pytest.fail("MinIO is not listening on 127.0.0.1:9000")
+
+    root = tmp_path / "sched"
+    paths = _layout(root)
+    state = paths["state"]
+    key = (state / "master.key").read_bytes()
+    passphrase = "scheduled-s3-passphrase"
+    (state / "secrets.enc").write_bytes(
+        Fernet(key).encrypt(
+            json.dumps(
+                {
+                    "cloud_pass": passphrase,
+                    "s3_access": MINIO_ACCESS_KEY,
+                    "s3_secret": MINIO_SECRET_KEY,
+                    "s3_region": "us-east-1",
+                }
+            ).encode()
+        )
+    )
+    repo = f"s3:{MINIO_ENDPOINT}/{MINIO_BUCKET}/{uuid.uuid4().hex}"
+    (state / "backups.json").write_text(
+        json.dumps(
+            [
+                {
+                    "name": "broken",
+                    "repo": str(root / "broken-repo"),
+                    "passphrase_secret": "cloud_pass",
+                    "env": {"AWS_ACCESS_KEY_ID": "no_such_secret"},
+                },
+                {
+                    "name": "cloud",
+                    "repo": repo,
+                    "passphrase_secret": "cloud_pass",
+                    "interval_hours": 1,
+                    "env": {
+                        "AWS_ACCESS_KEY_ID": "s3_access",
+                        "AWS_SECRET_ACCESS_KEY": "s3_secret",
+                        "AWS_DEFAULT_REGION": "s3_region",
+                    },
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = _child_env(root, paths)
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION"):
+        env.pop(name, None)
+
+    proc = _run(
+        [
+            sys.executable,
+            "-c",
+            "from core.backup.schedule import run_due; run_due(bifrost_data=None)",
+        ],
+        env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "secret no_such_secret is not set" in proc.stderr
+    phrase = root / "pass"
+    phrase.write_text(passphrase, encoding="utf-8")
+    reader = _restic_env(_child_env(root, paths), phrase)
+    snaps = json.loads(
+        subprocess.check_output(
+            ["restic", "-r", repo, "snapshots", "--json"], env=reader
+        )
+    )
+    assert [snap.get("tags") for snap in snaps] == [["scheduled"]]
+    subprocess.check_call(["restic", "-r", repo, "check"], env=reader)
+    listing = subprocess.check_output(
+        ["restic", "-r", repo, "ls", snaps[0]["id"]], env=reader, text=True
+    )
+    manifest_path = next(
+        line for line in listing.splitlines() if line.endswith("/manifest.json")
+    )
+    manifest = subprocess.check_output(
+        ["restic", "-r", repo, "dump", snaps[0]["id"], manifest_path], env=reader
+    ).decode()
+    assert json.loads(manifest)["kind"] == "scheduled"
+    written = [
+        (state / "backups.json").read_text(encoding="utf-8"),
+        (state / "backup_status.json").read_text(encoding="utf-8"),
+        proc.stdout,
+        proc.stderr,
+        manifest,
+    ]
+    for value in (MINIO_ACCESS_KEY, MINIO_SECRET_KEY):
+        assert not any(value in text for text in written)

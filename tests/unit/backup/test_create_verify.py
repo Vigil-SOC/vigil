@@ -31,7 +31,7 @@ def _install(monkeypatch, verify) -> tuple[list, list]:
     monkeypatch.setattr("core.backup.create._locations", lambda staging, bifrost: [])
 
     def backup(*args):
-        backed.append(args[-1])
+        backed.append(args[4])
         return "deadbeef" * 8
 
     monkeypatch.setattr("core.backup.create._restic_backup", backup)

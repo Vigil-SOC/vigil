@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterable, Mapping
 
 from core.backup.create import (
     SKIPPED_MESSAGE,
@@ -52,6 +53,8 @@ class Destination:
     keep_last: int
     default: bool
     must_be_mount: bool
+    # (restic env var name, secrets.enc key) pairs.
+    env: tuple[tuple[str, str], ...] = ()
 
 
 def run_forever(*, bifrost_data: str | None) -> None:
@@ -132,6 +135,9 @@ def _parse_destination(item: object) -> Destination | None:
             name,
         )
         return None
+    env = _parse_env(item.get("env"), name)
+    if env is None:
+        return None
     return Destination(
         name=name.strip(),
         repo=repo.strip(),
@@ -140,7 +146,29 @@ def _parse_destination(item: object) -> Destination | None:
         keep_last=keep,
         default=item.get("default") is True,
         must_be_mount=item.get("must_be_mount") is True,
+        env=env,
     )
+
+
+def _parse_env(value: object, name: str) -> tuple[tuple[str, str], ...] | None:
+    if value is None:
+        return ()
+    if not isinstance(value, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+        for k, v in value.items()
+    ):
+        logger.error("destination %s: env must be an object of non-empty strings", name)
+        return None
+    pairs = tuple((k.strip(), v.strip()) for k, v in value.items())
+    reserved = [k for k, _ in pairs if k.upper().startswith("RESTIC_PASSWORD")]
+    if reserved:
+        logger.error(
+            "destination %s: env must not set %s; use passphrase_secret",
+            name,
+            ", ".join(reserved),
+        )
+        return None
+    return pairs
 
 
 def _count(value: object, *, minimum: int) -> int | None:
@@ -157,13 +185,19 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
     passphrase = get_secret(dest.passphrase_secret)
     if not passphrase:
         raise BackupError(f"passphrase secret {dest.passphrase_secret} is not set")
+    extra: dict[str, str] = {}
+    for var, key in dest.env:
+        value = get_secret(key)
+        if not value:
+            raise BackupError(f"secret {key} is not set")
+        extra[var] = value
     fd, raw_path = tempfile.mkstemp(prefix="vigil-backup-pass-")
     path = Path(raw_path)
     try:
         os.chmod(path, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(passphrase)
-        if not _is_due(dest, path):
+        if not _is_due(dest, path, extra):
             logger.debug("destination %s is not due", dest.name)
             return
         snapshot_id = create_snapshot(
@@ -172,27 +206,46 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
             bifrost_data=bifrost_data,
             kind="scheduled",
             tags=("scheduled",),
+            extra_env=extra,
         )
-        _forget(dest, path)
+        _forget(dest, path, extra)
         _write_status(dest.name, snapshot_id)
+    except BackupSkipped:
+        raise
+    except BackupError as exc:
+        # restic stderr can echo credentials; scrub before it is logged.
+        message = _scrub(str(exc), extra.values())
+        if message == str(exc):
+            raise
+        raise BackupError(message) from None
     finally:
         path.unlink(missing_ok=True)
 
 
-def _is_due(dest: Destination, passphrase: Path) -> bool:
-    latest = _latest_snapshot_at(dest.repo, passphrase)
+def _scrub(message: str, secrets: Iterable[str]) -> str:
+    for value in sorted(secrets, key=len, reverse=True):
+        message = message.replace(value, "***")
+    return message
+
+
+def _is_due(
+    dest: Destination, passphrase: Path, extra: Mapping[str, str] | None = None
+) -> bool:
+    latest = _latest_snapshot_at(dest.repo, passphrase, extra)
     if latest is None:
         return True
     return datetime.now(timezone.utc) - latest >= timedelta(hours=dest.interval_hours)
 
 
-def _latest_snapshot_at(repo: str, passphrase: Path) -> datetime | None:
+def _latest_snapshot_at(
+    repo: str, passphrase: Path, extra: Mapping[str, str] | None = None
+) -> datetime | None:
     local = _local_repo(repo)
     if local is not None and not (local / "config").is_file():
         return None
     proc = _run(
         _priority_prefix() + ["restic", "-r", repo, "snapshots", "--json"],
-        env=_restic_env(passphrase),
+        env=_restic_env(passphrase, extra),
         check=False,
     )
     if proc.returncode != 0 or not proc.stdout.strip():
@@ -235,7 +288,9 @@ def _parse_time(value: object) -> datetime | None:
     return parsed
 
 
-def _forget(dest: Destination, passphrase: Path) -> None:
+def _forget(
+    dest: Destination, passphrase: Path, extra: Mapping[str, str] | None = None
+) -> None:
     # ``s3:`` / ``gs:`` / ``azure:`` keep whatever the bucket's rules keep.
     if _local_repo(dest.repo) is None:
         return
@@ -259,7 +314,7 @@ def _forget(dest: Destination, passphrase: Path) -> None:
             "--group-by",
             "",
         ],
-        env=_restic_env(passphrase),
+        env=_restic_env(passphrase, extra),
         check=False,
     )
     if proc.returncode != 0:
