@@ -571,7 +571,7 @@ class SecretsManager:
                 if value:
                     return value
 
-        logger.debug(f"Secret '{key}' not found in any backend")
+        logger.debug("Secret not found in any backend")
         return default
 
     def set(self, key: str, value: str) -> bool:
