@@ -157,8 +157,14 @@ def restore_snapshot(
             lines.extend(_swap(cfg, staged_name, pre_name, placed, stamp))
             swapped = True
             created = False
-            # The swap stays even when this fails. --test returned above.
-            lines.extend(_settle_restored(cfg, manifest, snapshot_id, _actor(actor)))
+            # The swap stays even when this fails. --test returned above. The
+            # lines naming what it moved aside go out with the error.
+            try:
+                lines.extend(
+                    _settle_restored(cfg, manifest, snapshot_id, _actor(actor))
+                )
+            except BackupError as exc:
+                raise BackupError("\n".join([*lines, str(exc)])) from exc
             return "\n".join(lines)
     except BackupError as exc:
         error = exc
@@ -746,7 +752,11 @@ def _settle_restored(
     old_key = _stored_jwt_secret()
     new_key = secrets.token_urlsafe(48)
     expired = _reencrypt_and_expire(old_key, new_key, snapshot_id, created_at, actor)
-    _write_jwt_stores(new_key)
+    # No file this install holds has the key, so a deployment sets it. A
+    # jwt_secret written here would never be read.
+    rotated = old_key is not None
+    if rotated:
+        _write_jwt_stores(new_key)
     get_config_service(user_id=actor).record_audit(
         config_type="backup",
         config_key="restore",
@@ -756,8 +766,16 @@ def _settle_restored(
             "snapshot_id": snapshot_id,
             "created_at": created_at,
             "expired_count": expired,
+            "jwt_rotated": rotated,
         },
     )
+    if not rotated:
+        raise BackupError(
+            f"approvals expired: {expired}\n"
+            "JWT_SECRET_KEY is not in secrets.enc, either .env, or jwt_secret, so "
+            "it is set outside this install; old sessions stay valid until it is "
+            "rotated where it is defined"
+        )
     return [
         f"backup date: {created_at}",
         f"approvals expired: {expired}",
@@ -819,8 +837,7 @@ def _reencrypt_and_expire(
         auth_service, auth_cls = _load_auth_service()
         with get_db_manager().session_scope() as session:
             users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
-            if users and not old_key:
-                raise BackupError("JWT secret not found; cannot re-encrypt MFA secrets")
+            # Without the old key there is no rotation, so MFA stays as it is.
             if old_key:
                 auth_service.JWT_SECRET_KEY = old_key
                 plaintext = [
@@ -829,8 +846,6 @@ def _reencrypt_and_expire(
                 auth_service.JWT_SECRET_KEY = new_key
                 for user, secret in zip(users, plaintext):
                     user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
-            else:
-                auth_service.JWT_SECRET_KEY = new_key
             pending = (
                 session.query(ApprovalAction)
                 .filter(ApprovalAction.status == ActionStatus.PENDING.value)

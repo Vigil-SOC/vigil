@@ -183,10 +183,15 @@ def _passphrase(path: Path) -> Path:
     return path
 
 
-def _layout(root: Path, *, secret: str | None) -> dict[str, Path]:
+def _layout(
+    root: Path, *, secret: str | None, signing_key: bool = True
+) -> dict[str, Path]:
     state = root / "state"
     (state / "nested").mkdir(parents=True)
     (state / "nested" / "keep.txt").write_text("sentinel", encoding="utf-8")
+    if signing_key:
+        # The file start.sh mints when JWT_SECRET_KEY is unset.
+        (state / "jwt_secret").write_text("layout-signing-key", encoding="utf-8")
     if secret is not None:
         key = Fernet.generate_key()
         (state / "master.key").write_bytes(key)
@@ -665,9 +670,7 @@ def test_restore_rotates_jwt_and_expires_pending_approvals(
     key = (paths["state"] / "master.key").read_bytes()
     (paths["state"] / "secrets.enc").write_bytes(
         Fernet(key).encrypt(
-            json.dumps(
-                {"token": "sekrit", "JWT_SECRET_KEY": _OLD_KEY}
-            ).encode()
+            json.dumps({"token": "sekrit", "JWT_SECRET_KEY": _OLD_KEY}).encode()
         )
     )
     (paths["state"] / "jwt_secret").write_text(_OLD_KEY, encoding="utf-8")
@@ -752,6 +755,7 @@ def test_restore_rotates_jwt_and_expires_pending_approvals(
     payload = new_value if isinstance(new_value, dict) else json.loads(new_value)
     assert payload["expired_count"] == 2
     assert f"backup date: {payload['created_at']}" in restored.stdout
+    assert payload["jwt_rotated"] is True
     reason = (
         f"expired: restored from backup {payload['snapshot_id']} "
         f"taken {payload['created_at']}"
@@ -762,15 +766,21 @@ def test_restore_rotates_jwt_and_expires_pending_approvals(
         "approved_at IS NOT NULL FROM approval_actions ORDER BY action_id",
     )
     by_id = {row[0]: row for row in approvals}
-    assert by_id["pend-plain"] == ("pend-plain", "rejected", reason, "restore-bot", True)
+    assert by_id["pend-plain"] == (
+        "pend-plain",
+        "rejected",
+        reason,
+        "restore-bot",
+        True,
+    )
     assert by_id["pend-run"] == ("pend-run", "rejected", reason, "restore-bot", True)
     assert by_id["keep-approved"][1] == "approved"
     assert by_id["keep-approved"][2] is None
     assert by_id["keep-executed"][1] == "executed"
     assert by_id["keep-failed"][1] == "failed"
-    assert _rows(live, "SELECT status FROM workflow_runs WHERE run_id = 'run-keep'") == [
-        ("paused",)
-    ]
+    assert _rows(
+        live, "SELECT status FROM workflow_runs WHERE run_id = 'run-keep'"
+    ) == [("paused",)]
     assert _rows(
         "vigil_r_settle",
         "SELECT status FROM approval_actions WHERE action_id = 'pend-plain'",
@@ -826,3 +836,55 @@ def test_restore_rotates_jwt_and_expires_pending_approvals(
     assert "reject_old True" in checked.stdout
     assert "accept_new u-mfa" in checked.stdout
     assert f"mfa {_TOTP}" in checked.stdout
+
+
+def test_key_held_outside_the_install_is_reported_not_faked(
+    scratch_databases, tmp_path: Path
+):
+    root = tmp_path / "outside"
+    root.mkdir()
+    paths = _layout(root, secret=None, signing_key=False)
+    (CORE_REPO_ROOT / ".env").write_text("OTHER_KEY=leave-me\n", encoding="utf-8")
+    _create_database("vigil_r_outside", ledger=True)
+    _install_app_rows("vigil_r_outside", _mfa_ciphertext(_STALE_ENV_KEY, _TOTP))
+    repo = root / "repo"
+    passphrase = _passphrase(root / "pass")
+    # A deployment that injects the key: no file this install holds has it.
+    env = _child_env(root, "vigil_r_outside", **paths)
+    env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
+    created = _create(env, repo, passphrase)
+    assert created.returncode == 0, created.stderr
+
+    dest_root = root / "dest"
+    dest_root.mkdir()
+    dest = _empty_layout(dest_root)
+    _create_database("vigil_r_outside_dst", ledger=False)
+    dest_env = _child_env(dest_root, "vigil_r_outside_dst", **dest)
+    dest_env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
+    dest_env["RESTIC_CACHE_DIR"] = str(root / "cache")
+    restored = _restore(dest_env, repo, passphrase, "--actor", "restore-bot")
+
+    assert restored.returncode != 0
+    pre_name = next(n for n in _names() if "vigil_r_outside_dst_pre_restore_" in n)
+    assert f"previous database: {pre_name}" in restored.stderr
+    assert "approvals expired: 2" in restored.stderr
+    assert "set outside this install" in restored.stderr
+    assert not (dest["state"] / "jwt_secret").exists()
+    live = "vigil_r_outside_dst"
+    statuses = dict(_rows(live, "SELECT action_id, status FROM approval_actions"))
+    assert statuses["pend-plain"] == statuses["pend-run"] == "rejected"
+    audit = _rows(
+        live,
+        "SELECT new_value FROM config_audit_log WHERE config_type = 'backup'",
+    )
+    assert len(audit) == 1
+    payload = audit[0][0] if isinstance(audit[0][0], dict) else json.loads(audit[0][0])
+    assert payload["jwt_rotated"] is False
+    assert payload["expired_count"] == 2
+    # MFA is left wrapped with the key the deployment still uses.
+    assert (
+        _rows(live, "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'")[0][0]
+        == _rows(
+            "vigil_r_outside", "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'"
+        )[0][0]
+    )
