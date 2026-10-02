@@ -403,6 +403,14 @@
             "title": "Investigations",
             "type": "array"
           },
+          "linked_findings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CaseLinkedFinding"
+            },
+            "title": "Linked Findings",
+            "type": "array"
+          },
           "mitre_techniques": {
             "default": [],
             "items": {
@@ -983,6 +991,42 @@
           "run_id"
         ],
         "title": "CaseInvestigationRef",
+        "type": "object"
+      },
+      "CaseLinkedFinding": {
+        "description": "One finding the case already links, and the source door when one exists.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "finding_id": {
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "source_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Link"
+          }
+        },
+        "required": [
+          "finding_id"
+        ],
+        "title": "CaseLinkedFinding",
         "type": "object"
       },
       "CaseListResponse": {
