@@ -1,7 +1,7 @@
 {
   "name": "vigil-mcp-connectors",
   "private": true,
-  "description": "npx connectors from mcp-config.json, baked into the backend image at the exact versions it pins. tests/unit/_ratchets/test_mcp_runtime_pins.py keeps the two in step.",
+  "description": "npx connectors from mcp-config.json, baked into the backend image at the exact versions it pins. tests/unit/_ratchets/test_mcp_runtime_pins.py keeps the two in step. overrides lift axios and the MCP SDK past advisories their pinned parents still allow.",
   "dependencies": {
     "@burtthecoder/mcp-shodan": "1.0.22",
     "@burtthecoder/mcp-virustotal": "1.0.25",
@@ -10,5 +10,9 @@
     "firecrawl-mcp": "3.24.0",
     "mcp-remote": "0.1.49",
     "security-detections-mcp": "3.3.0"
+  },
+  "overrides": {
+    "axios": "1.20.0",
+    "@modelcontextprotocol/sdk": "1.30.1"
   }
 }
