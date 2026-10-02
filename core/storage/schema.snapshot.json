@@ -1232,6 +1232,10 @@
       "data_type": "boolean",
       "nullable": false
     },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
     "created_at": {
       "data_type": "timestamp without time zone",
       "nullable": false
@@ -1250,6 +1254,10 @@
     },
     "model": {
       "data_type": "character varying(80)",
+      "nullable": true
+    },
+    "page_context": {
+      "data_type": "character varying(120)",
       "nullable": true
     },
     "title": {

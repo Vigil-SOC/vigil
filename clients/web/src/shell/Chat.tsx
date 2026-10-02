@@ -74,10 +74,7 @@ interface TraceDetail {
   tool_results?: Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>
 }
 
-const newSessionId = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `sess-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+const newSessionId = () => crypto.randomUUID()
 
 interface Conversation {
   id: string
