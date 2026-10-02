@@ -185,6 +185,32 @@ def test_mttd_is_first_activity_over_every_case(session):
     assert result["mttd_by_priority"] == {"high": pytest.approx(5.5 / 3)}
 
 
+@pytest.mark.parametrize(
+    "bad_stamp",
+    ["2026-02-30T10:00:00", "2026-06-01T10:00:00garbage", "2026-06-01T10:00:00+99"],
+)
+def test_malformed_activity_timestamp_is_skipped_not_fatal(session, bad_stamp):
+    _case(
+        session,
+        "good",
+        status="closed",
+        closed_at=T0 + 2 * HOUR,
+        first_activity=T0 + HOUR,
+    )
+    _case(session, "bad", status="closed", closed_at=T0 + 2 * HOUR)
+    session.query(Case).filter(Case.case_id == "bad").update(
+        {"activities": [{"timestamp": bad_stamp}]}
+    )
+    session.commit()
+
+    mttd = _run(get_mttd, session, priority=None)
+    mttr = _run(get_mttr, session, priority=None)
+
+    assert mttd["total_cases"] == 2
+    assert mttd["average_mttd_hours"] == pytest.approx(1.0)
+    assert mttr["average_mttr_hours"] == pytest.approx(2.0)
+
+
 def test_no_measured_case_reports_null_not_zero(session):
     _case(session, "o-only", status="open")
     session.commit()

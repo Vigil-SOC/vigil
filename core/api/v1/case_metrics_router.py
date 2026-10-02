@@ -51,9 +51,11 @@ _BETA = {"openapi_extra": {"x-vigil-beta": True}}
 _CLOSED_STATUSES = ("resolved", "closed")
 
 # A first-activity timestamp is only cast when it looks like an ISO-8601 date
-# and time, so one malformed entry cannot fail the whole aggregate. Writers
-# store naive UTC, some with a trailing "Z"; a cast to ``timestamp`` ignores the
-# zone suffix, which is what lines them up with the naive ``created_at``.
+# and time and Postgres accepts it as a ``timestamp`` (``pg_input_is_valid``,
+# PG16+, which every shipped Postgres is), so one malformed entry -- "Feb 30",
+# trailing junk -- cannot fail the whole aggregate. Writers store naive UTC,
+# some with a trailing "Z"; a cast to ``timestamp`` ignores the zone suffix,
+# which is what lines them up with the naive ``created_at``.
 _ISO_DATETIME = (
     r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])[T ]([01]\d|2[0-3]):[0-5]\d"
 )
@@ -88,7 +90,10 @@ def _first_activity_at() -> ColumnElement:
     return (
         select(func.min(cast(stamp, Case.created_at.type)))
         .select_from(entry)
-        .where(stamp.op("~")(_ISO_DATETIME))
+        .where(
+            stamp.op("~")(_ISO_DATETIME),
+            func.pg_input_is_valid(stamp, "timestamp"),
+        )
         .scalar_subquery()
     )
 
