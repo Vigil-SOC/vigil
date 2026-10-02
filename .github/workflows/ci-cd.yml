@@ -625,6 +625,36 @@ jobs:
           restic version
           pg_dump --version
 
+      # restic talks to S3 with the process AWS credentials. The image's default
+      # command is not `server`, so name it. minio/minio left Docker Hub; this
+      # tag is a community build of the same server.
+      - name: Start MinIO
+        run: |
+          set -euo pipefail
+          docker rm -f vigil-minio >/dev/null 2>&1 || true
+          docker run -d --name vigil-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=vigilbackup \
+            -e MINIO_ROOT_PASSWORD=vigilbackupsecret \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z \
+            server /data
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs vigil-minio >&2 || true
+            echo "MinIO did not answer on port 9000" >&2
+            exit 1
+          fi
+          docker exec vigil-minio \
+            mc alias set local http://127.0.0.1:9000 vigilbackup vigilbackupsecret
+          docker exec vigil-minio mc mb --ignore-existing local/vigil-backup
+
       - name: Run integration tests
         run: |
           pytest tests/integration/ -v --cov=services --cov=core --cov-report=xml
