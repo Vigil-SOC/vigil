@@ -1457,3 +1457,50 @@ describe('the evidence table', () => {
     expect(screen.getByText(/^weakens/).textContent?.replace(/\s+/g, ' ').trim()).toBe('weakens H2 H3')
   })
 })
+
+describe('a root-cause trace in flight', () => {
+  const projection = (over = {}) => ({
+    kind: 'root_cause',
+    cost_usd: 1.2345,
+    steps: [
+      { step_id: 's1', event: 'invoice.lnk opened', who: 'alice', at: '2024-01-02T03:00:00Z', link_status: 'unproven', origin_status: 'none', proven: false },
+      { step_id: 's2', event: 'macro ran', who: 'bob', at: '2024-01-02T02:59:00Z', link_status: 'proven', origin_status: 'proven', proven: true },
+    ],
+    searches: [
+      { tool: 'splunk_execute', arguments: 'index=main <b>x</b>', row_count: 7, failure: null },
+      { tool: 'splunk_execute', arguments: 'bad', row_count: null, failure: 'timeout' },
+    ],
+    search_count: 60,
+    notices: ['No prover is bound'],
+    ...over,
+  })
+
+  it('shows the steps, searches and notices as text, and the live cost, before there is a summary', () => {
+    renderPanel({ status: 'running', total_cost_usd: 0, projection: projection() })
+
+    expect(screen.getByText('invoice.lnk opened')).toBeInTheDocument()
+    expect(screen.getByText('open')).toBeInTheDocument()
+    expect(screen.getAllByText('proven')).toHaveLength(3)
+    expect(screen.getByText('Searches (60)')).toBeInTheDocument()
+    expect(screen.getByText(/index=main <b>x<\/b>/)).toBeInTheDocument()
+    expect(screen.getByText(/7 rows/)).toBeInTheDocument()
+    expect(screen.getByText(/failed: timeout/)).toBeInTheDocument()
+    expect(screen.getByText(/Showing the latest 2 of 60/)).toBeInTheDocument()
+    expect(screen.getByText('No prover is bound')).toBeInTheDocument()
+    expect(screen.getByText('$1.23')).toBeInTheDocument()
+  })
+
+  it('keeps the finalized cost and the summary on a finished run', () => {
+    renderPanel({ total_cost_usd: 2.5, result_summary: 'the report', projection: projection() })
+
+    expect(screen.getByText('$2.50')).toBeInTheDocument()
+    expect(screen.getByText('the report')).toBeInTheDocument()
+    expect(screen.getByText('invoice.lnk opened')).toBeInTheDocument()
+  })
+
+  it('ignores a projection that is not a root-cause one', () => {
+    renderPanel({ projection: { steps: [{ step_id: 'x', event: 'not ours' }] } })
+
+    expect(screen.queryByTestId('root-cause-panel')).not.toBeInTheDocument()
+  })
+})

@@ -272,6 +272,21 @@ describe("replaying what the hunt lead was shown", () => {
   });
 });
 
+describe("reading a root-cause run's projection", () => {
+  it("answers 200 for root_cause and still 404s chat", async () => {
+    await listen([{ content: "ok" }]);
+    await state.append(HUNT, [
+      { run_id: HUNT, run_kind: "root_cause", kind: "spend", payload: { cost_usd: 0.4 } },
+    ] as never);
+    await post(asked()).then((res) => res.text());
+
+    const traced = await get(`/runs/${HUNT}/projection`);
+    expect(traced.status).toBe(200);
+    expect(await traced.json()).toMatchObject({ kind: "root_cause", status: "running", cost_usd: 0.4 });
+    expect((await get(`/runs/${RUN}/projection`)).status).toBe(404);
+  });
+});
+
 describe("reading a run's ledger", () => {
   it("omits snapshots unless the caller asks", async () => {
     await listen([]);

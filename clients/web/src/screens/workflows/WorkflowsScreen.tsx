@@ -1399,10 +1399,41 @@ interface HuntView {
    *  never asked -- older runs, and runs whose beliefs named no entity. */
   recall?: HuntRecall | null
 }
+/** A root-cause trace's live view, folded from its ledger. Unredacted: for the operator
+ *  watching, never for the IR case. `kind` is what tells it apart from other folds. */
+interface RootCauseStep {
+  step_id: string
+  event: string
+  who: string
+  at: string
+  link_status: string
+  origin_status: string
+  proven: boolean
+}
+interface RootCauseSearch {
+  tool: string
+  arguments: string
+  row_count: number | null
+  failure: string | null
+}
+interface RootCauseView {
+  kind: 'root_cause'
+  cost_usd: number | null
+  steps: RootCauseStep[]
+  searches: RootCauseSearch[]
+  /** The true count; `searches` is capped. */
+  search_count: number
+  notices: string[]
+}
+function isRootCause(p: unknown): p is RootCauseView {
+  return typeof p === 'object' && p !== null && (p as { kind?: unknown }).kind === 'root_cause'
+}
+
 interface WfRunDetail extends WfRun {
   result_summary?: string | null
   phases?: WfPhase[]
   hunt?: HuntView | null
+  projection?: RootCauseView | Record<string, unknown> | null
 }
 
 const RUN_POLL_MS = 5_000
@@ -1584,7 +1615,10 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
         </div>
       )}
       {hunt ? <HuntTabs d={d} hunt={hunt} onReload={onSteered} /> : (
-        <RunWithoutHunt d={d} inFlight={IN_FLIGHT.includes(d.status)} />
+        <>
+          {isRootCause(d.projection) && <RootCausePanel view={d.projection} />}
+          <RunWithoutHunt d={d} inFlight={IN_FLIGHT.includes(d.status)} traced={isRootCause(d.projection)} />
+        </>
       )}
       {IN_FLIGHT.includes(d.status) && <Steer runId={d.run_id} hunt={hunt !== null} onSteered={onSteered} />}
     </div>
@@ -1594,7 +1628,9 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
 /** What the run is doing, and Stop. It sits with the status rather than among the
  *  steering directives, which are only notes the lead reads at its next turn. */
 function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null; onSteered: () => void }) {
-  const cost = hunt?.cost_usd ?? d.total_cost_usd
+  // total_cost_usd stays 0 until the run is finalized, so 0 reads as "not set" and the
+  // projection's running total takes over while the run is in flight.
+  const cost = hunt?.cost_usd ?? (d.total_cost_usd || (isRootCause(d.projection) ? d.projection.cost_usd : null) || d.total_cost_usd)
   const budgets = hunt?.budgets
   const ceiling = budgets?.max_cost_usd
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
@@ -2466,7 +2502,60 @@ function useInvestigateReplay(runId: string, inFlight: boolean): ReplayRead {
   return read
 }
 
-function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) {
+/** Steps, searches and notices of a trace, for both a run in flight and a finished one.
+ *  All of it is the run's own text and renders as plain text. */
+function RootCausePanel({ view }: { view: RootCauseView }) {
+  return (
+    <div className="modal-section" data-testid="root-cause-panel">
+      <h4>Trace</h4>
+      {view.steps.length === 0 ? (
+        <div className="muted text-[12.5px]">No steps recorded yet.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead><tr><th>Event</th><th>Who</th><th>At</th><th>Link</th><th>Origin</th><th>Proof</th></tr></thead>
+            <tbody>
+              {view.steps.map((s) => (
+                <tr key={s.step_id}>
+                  <td>{s.event}</td>
+                  <td className="mono">{s.who || '—'}</td>
+                  <td className="muted tight">{s.at || '—'}</td>
+                  <td className="muted tight">{s.link_status}</td>
+                  <td className="muted tight">{s.origin_status}</td>
+                  <td className="tight" style={{ color: s.proven ? undefined : 'var(--med)' }}>{s.proven ? 'proven' : 'open'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <h4 className="mt-3">Searches ({view.search_count})</h4>
+      {view.search_count === 0 ? (
+        <div className="muted text-[12.5px]">No searches yet.</div>
+      ) : (
+        <ul className="text-[12px] mt-1 mb-0" style={{ paddingLeft: 18 }}>
+          {view.searches.map((q, at) => (
+            <li key={at}>
+              <span className="font-mono">{q.tool}</span>
+              <span className="muted"> {q.arguments}</span>
+              {q.failure !== null
+                ? <span style={{ color: 'var(--crit)' }}> — failed: {q.failure}</span>
+                : q.row_count !== null && <span className="muted"> — {q.row_count} {q.row_count === 1 ? 'row' : 'rows'}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {view.search_count > view.searches.length && (
+        <div className="muted text-[11.5px] mt-1">Showing the latest {view.searches.length} of {view.search_count}.</div>
+      )}
+      {view.notices.map((n, at) => (
+        <div key={at} className="muted text-[12px] mt-2">{n}</div>
+      ))}
+    </div>
+  )
+}
+
+function RunWithoutHunt({ d, inFlight, traced = false }: { d: WfRunDetail; inFlight: boolean; traced?: boolean }) {
   const replay = useInvestigateReplay(d.run_id, inFlight)
   return (
     <>
@@ -2476,7 +2565,7 @@ function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) 
           Couldn’t read decisions — {replay.message}
         </div>
       )}
-      <ComposeDetail d={d} suppressEmpty={replay.kind === 'pending' || replay.kind === 'investigate'} />
+      <ComposeDetail d={d} suppressEmpty={traced || replay.kind === 'pending' || replay.kind === 'investigate'} />
     </>
   )
 }
