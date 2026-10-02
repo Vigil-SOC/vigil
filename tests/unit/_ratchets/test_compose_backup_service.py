@@ -104,7 +104,7 @@ def test_start_sh_overrides_the_loop_with_one_create_or_restore() -> None:
     assert (
         "\n".join(
             [
-                "--entrypoint python backup -m core.backup \"$cmd\"",
+                "--entrypoint python backup -m core.backup \"$sub\"",
                 "        --repo /backup/repo --passphrase-file /backup/passphrase",
                 "        --bifrost-data /var/lib/vigil/bifrost",
             ]

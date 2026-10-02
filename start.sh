@@ -77,7 +77,9 @@ prepare_backup_run() {
         BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
     fi
     [ "$pass_jwt" -eq 1 ] && BACKUP_RUN_ARGS+=(-e JWT_SECRET_KEY)
-    BACKUP_RUN_ARGS+=(--entrypoint python backup -m core.backup "$cmd"
+    local sub="$cmd"
+    [ "$cmd" = "backup" ] && sub="create"
+    BACKUP_RUN_ARGS+=(--entrypoint python backup -m core.backup "$sub"
         --repo /backup/repo --passphrase-file /backup/passphrase
         --bifrost-data /var/lib/vigil/bifrost)
 }
