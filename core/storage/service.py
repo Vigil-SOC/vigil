@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
 from core.storage.case_repository import CaseRepository
@@ -52,6 +52,16 @@ def _set_mitre_prediction_rows(finding: Finding, mitre_predictions: Any) -> None
         )
 
 
+# ``Finding.cases`` is mapped ``lazy="selectin"``, so without an override every
+# Finding load also SELECTs each linked case row (all of its JSONB) and then
+# drops it: no read path or ``FindingSchema`` uses it (#1439). Read paths that
+# hand back detached findings or dumps opt out with ``noload``.
+_FINDING_READ_OPTIONS = (
+    selectinload(Finding.mitre_prediction_rows),
+    noload(Finding.cases),
+)
+
+
 def findings_by_technique_stmt(
     technique_id: str, limit: Optional[int] = None, exclusions: str = "include"
 ):
@@ -64,7 +74,7 @@ def findings_by_technique_stmt(
         )
         .where(FindingMitrePrediction.technique_id == technique_id)
         .order_by(FindingMitrePrediction.confidence.desc())
-        .options(selectinload(Finding.mitre_prediction_rows))
+        .options(*_FINDING_READ_OPTIONS)
     )
     exclusion_filter = exclusion_view_filter(exclusions)
     if exclusion_filter is not None:
@@ -183,11 +193,7 @@ class DatabaseService:
             Finding object or None if not found
         """
         with self.db_manager.session_scope() as session:
-            finding = session.get(
-                Finding,
-                finding_id,
-                options=(selectinload(Finding.mitre_prediction_rows),),
-            )
+            finding = session.get(Finding, finding_id, options=_FINDING_READ_OPTIONS)
             if finding:
                 # Detach from session to avoid lazy loading issues
                 session.expunge(finding)
@@ -233,7 +239,7 @@ class DatabaseService:
             List of Finding objects
         """
         with self.db_manager.session_scope() as session:
-            query = select(Finding).options(selectinload(Finding.mitre_prediction_rows))
+            query = select(Finding).options(*_FINDING_READ_OPTIONS)
 
             filters = []
             if severity:
@@ -306,7 +312,7 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
-                .options(selectinload(Finding.mitre_prediction_rows))
+                .options(*_FINDING_READ_OPTIONS)
                 .where(
                     or_(
                         Finding.ai_enrichment.is_(None),
@@ -387,10 +393,15 @@ class DatabaseService:
             True if successful, False otherwise
         """
         with self.db_manager.session_scope() as session:
+            # lazyload, not noload: the session stays open, so a caller that
+            # does touch ``cases`` still gets the real collection.
             finding = session.get(
                 Finding,
                 finding_id,
-                options=(selectinload(Finding.mitre_prediction_rows),),
+                options=(
+                    selectinload(Finding.mitre_prediction_rows),
+                    lazyload(Finding.cases),
+                ),
             )
             if not finding:
                 logger.warning(f"Finding not found: {finding_id}")

@@ -4,7 +4,7 @@
 postgres service's user. It mounts the same state, workdir, and Bifrost
 volumes as the API. It is not on the daemon profile. The command is the
 schedule loop and the restart policy brings it back if the process exits.
-`start.sh backup` overrides that command with one create.
+`start.sh backup` and `start.sh restore` override that command with one run.
 """
 
 from __future__ import annotations
@@ -99,26 +99,20 @@ def test_backup_mounts_state_workdirs_and_owner_user() -> None:
     assert f"--bifrost-data {BIFROST_DIR}" in command
 
 
-def test_start_sh_backup_overrides_the_loop_with_one_create() -> None:
+def test_start_sh_overrides_the_loop_with_one_create_or_restore() -> None:
     text = (REPO / "start.sh").read_text(encoding="utf-8")
     assert (
         "\n".join(
             [
-                "--entrypoint python",
-                "        backup",
-                "        -m",
-                "        core.backup",
-                "        create",
-                "        --repo",
-                "        /backup/repo",
-                "        --passphrase-file",
-                "        /backup/passphrase",
-                "        --bifrost-data",
-                "        /var/lib/vigil/bifrost",
+                '--entrypoint python backup -m core.backup "$sub"',
+                "        --repo /backup/repo --passphrase-file /backup/passphrase",
+                "        --bifrost-data /var/lib/vigil/bifrost",
             ]
         )
         in text
     )
+    assert "prepare_backup_run backup " in text
+    assert "prepare_backup_run restore " in text
 
 
 def test_pre_upgrade_one_shot_gates_everything_that_provisions_the_schema() -> None:

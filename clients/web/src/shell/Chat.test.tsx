@@ -84,8 +84,8 @@ describe('Ask Vigil dock', () => {
   })
 
   it('stores a case id from full-text search and ignores a typed id that was not returned', async () => {
-    vi.mocked(api.get).mockImplementation((path: string, config?: { params?: { query?: string } }) => {
-      const query = config?.params?.query
+    vi.mocked(api.get).mockImplementation((path: string, config?: { params?: unknown }) => {
+      const query = (config?.params as { query?: string } | undefined)?.query
       if (path === '/cases/search/full-text' && query === 'loader') {
         return Promise.resolve({
           data: {

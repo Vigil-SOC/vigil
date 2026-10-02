@@ -160,6 +160,12 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
     db_config_check_interval: float = 5.0
+    # Server-side session timeouts in milliseconds, sent as libpq `options`
+    # on every platform-engine connection; 0 (or less) disables one. Statement
+    # timeout is off by default so long maintenance queries keep working; an
+    # idle-in-transaction session is always a leak, so it is bounded. See #1443.
+    db_statement_timeout_ms: int = 0
+    db_idle_in_transaction_timeout_ms: int = 300000
     # Refuse to start when the schema cannot serve the models. Off by
     # default: a missing nullable column should not take a running SOC
     # offline. See #562.

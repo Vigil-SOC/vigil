@@ -123,9 +123,10 @@ def test_warns_that_the_natural_language_tool_cannot_set_a_range(monkeypatch):
 @pytest.mark.parametrize("rows,service", [(None, object()), ([], object()), ([], None)])
 def test_leaves_the_plain_description_when_it_cannot_look(monkeypatch, rows, service):
     """A server answering no tools is worse than one whose description is thin."""
-    described = _describe(_load(monkeypatch, rows, service=service))
+    module = _load(monkeypatch, rows, service=service)
+    described = _describe(module)
 
-    assert described["splunk_execute"] == "Execute SPL query"
+    assert described["splunk_execute"] == module._RESULT_SIZE_GUIDANCE
     assert len(described) == 5
 
 
@@ -143,10 +144,24 @@ def test_looks_again_after_a_deployment_that_was_not_configured_yet(monkeypatch)
             return _ROWS
 
     monkeypatch.setattr(module, "get_splunk_service", lambda: _Service())
-    assert _describe(module)["splunk_execute"] == "Execute SPL query"
+    assert _describe(module)["splunk_execute"] == module._RESULT_SIZE_GUIDANCE
 
     unreachable["still"] = False
     assert "index=botsv3" in _describe(module)["splunk_execute"]
+
+
+# Present with or without the index map, so a deployment Splunk could not be read from
+# still steers the model toward counts and chosen fields.
+@pytest.mark.parametrize("rows", [_ROWS, None])
+def test_steers_toward_small_results_with_or_without_a_summary(monkeypatch, rows):
+    tools = asyncio.run(_load(monkeypatch, rows).handle_list_tools())
+    execute = next(tool for tool in tools if tool.name == "splunk_execute")
+
+    assert "full events" in execute.description
+    assert "stats" in execute.description and "fields <list>" in execute.description
+    assert "default 100" in execute.description
+    assert "full" in execute.input_schema["properties"]["max_results"]["description"]
+    assert execute.input_schema["properties"]["max_results"]["default"] == 100
 
 
 def test_asks_splunk_once_however_often_the_tools_are_listed(monkeypatch):

@@ -18,7 +18,7 @@ import re
 import secrets
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -29,6 +29,8 @@ from psycopg2 import sql
 
 from core.backup.connection import backup_database_config
 from core.backup.create import (
+    PRE_RESTORE_PREFIX,
+    STAGE_PREFIX,
     BackupError,
     _checked,
     _child_env,
@@ -83,6 +85,18 @@ class _Placed:
     name: str
     staged: Path
     target: Path
+    # A directory is swapped entry by entry and a file is rewritten in place.
+    # Neither is ever renamed: under Compose they are mount points.
+    is_dir: bool
+
+
+@dataclass
+class _Swapped:
+    item: _Placed
+    previous: Path | None = None
+    aside: list[str] = field(default_factory=list)
+    moved_in: list[str] = field(default_factory=list)
+    created: bool = False
 
 
 def restore_snapshot(
@@ -92,6 +106,7 @@ def restore_snapshot(
     snapshot: str,
     test: bool,
     actor: str | None = None,
+    bifrost_data: str | None = None,
 ) -> str:
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
@@ -106,8 +121,9 @@ def restore_snapshot(
     if not test:
         _assert_no_other_clients(cfg)
 
+    restic = _restic(repo, test)
     manifest, dump_in_snapshot, snapshot_id = _load_manifest(
-        repo, passphrase, snapshot, priority
+        restic, passphrase, snapshot, priority
     )
     _assert_compatible(manifest)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -127,8 +143,7 @@ def restore_snapshot(
         with tempfile.TemporaryDirectory(prefix="vigil-restore-") as raw:
             root = Path(raw)
             _checked(
-                priority
-                + ["restic", "-r", repo, "restore", snapshot, "--target", str(root)],
+                priority + [*restic, "restore", snapshot, "--target", str(root)],
                 env=_restic_env(passphrase),
                 what="restic restore",
             )
@@ -141,7 +156,7 @@ def restore_snapshot(
                 raise BackupError("manifest has no table counts")
             _check_rows(cfg, staged_name, tables)
             _check_ledger(cfg, staged_name)
-            _stage_locations(root, manifest, stamp, placed, created_dirs)
+            _stage_locations(root, manifest, stamp, placed, created_dirs, bifrost_data)
             secrets = _check_secrets(placed)
             _check_schema(cfg, staged_name)
             lines = [
@@ -242,12 +257,17 @@ def _other_clients(
     return cur.fetchall()
 
 
+def _restic(repo: str, test: bool) -> list[str]:
+    # --test only reads, so it takes no lock and a read-only repository works.
+    return ["restic", "-r", repo, *(["--no-lock"] if test else [])]
+
+
 def _load_manifest(
-    repo: str, passphrase: Path, snapshot: str, priority: list[str]
+    restic: list[str], passphrase: Path, snapshot: str, priority: list[str]
 ) -> tuple[dict, str, str]:
     env = _restic_env(passphrase)
     listed = _checked(
-        priority + ["restic", "-r", repo, "ls", snapshot],
+        priority + [*restic, "ls", snapshot],
         env=env,
         what="restic ls",
     )
@@ -265,7 +285,7 @@ def _load_manifest(
         if manifest_path not in present:
             continue
         raw = _checked(
-            priority + ["restic", "-r", repo, "dump", snapshot, manifest_path],
+            priority + [*restic, "dump", snapshot, manifest_path],
             env=env,
             what="manifest",
         )
@@ -285,7 +305,7 @@ def _load_manifest(
             found.append((dump, payload))
     if len(found) != 1:
         raise BackupError("snapshot does not contain one Vigil manifest")
-    return found[0][1], found[0][0], _snapshot_id(repo, env, snapshot, priority)
+    return found[0][1], found[0][0], _snapshot_id(restic, env, snapshot, priority)
 
 
 def _assert_compatible(manifest: dict) -> None:
@@ -417,6 +437,7 @@ def _stage_locations(
     stamp: str,
     placed: list[_Placed],
     created_dirs: list[Path],
+    bifrost_data: str | None,
 ) -> None:
     # Append as each location is moved. A later failure must still see the
     # siblings already staged, or the caller cannot delete them.
@@ -435,13 +456,23 @@ def _stage_locations(
         src = _under_target(root, original)
         if not src.exists():
             raise BackupError(f"{name} is missing from the snapshot")
-        target = _target_for(name, original, settings)
-        _remember_created(target.parent, created_dirs)
-        dest = target.parent / f"{target.name}.vigil-restore-stage-{stamp}"
+        target = _target_for(name, settings, bifrost_data)
+        is_dir = src.is_dir()
+        if target.exists() and target.is_dir() != is_dir:
+            kind = "directory" if is_dir else "file"
+            raise BackupError(f"{name}: {target} is not a {kind}")
+        if not is_dir:
+            # Copied from the restic target, which outlives the swap.
+            _remember_created(target.parent, created_dirs)
+            placed.append(_Placed(name, src, target, is_dir=False))
+            continue
+        # Staged inside the target so every later rename stays on its filesystem.
+        _remember_created(target, created_dirs)
+        dest = target / f"{STAGE_PREFIX}{stamp}"
         if dest.exists():
             raise BackupError(f"staging path already exists: {dest}")
         shutil.move(str(src), str(dest))
-        placed.append(_Placed(name, dest, target))
+        placed.append(_Placed(name, dest, target, is_dir=True))
 
 
 def _remember_created(parent: Path, created: list[Path]) -> None:
@@ -456,7 +487,7 @@ def _remember_created(parent: Path, created: list[Path]) -> None:
             created.append(path)
 
 
-def _target_for(name: str, original: str, settings) -> Path:
+def _target_for(name: str, settings, bifrost_data: str | None) -> Path:
     if name == "state_directory":
         return vigil_path()
     if name == "orchestrator_workdir":
@@ -471,8 +502,13 @@ def _target_for(name: str, original: str, settings) -> Path:
     if name == "env":
         return (REPO_ROOT / ".env").resolve()
     if name == "bifrost":
-        # No setting for this directory. The manifest records where it lived.
-        return Path(original)
+        # The manifest path is a temporary staging copy, so the live directory
+        # has to come from the caller.
+        if not bifrost_data:
+            raise BackupError(
+                "the snapshot includes bifrost; pass --bifrost-data with its directory"
+            )
+        return Path(bifrost_data)
     raise BackupError(f"unknown location {name}")
 
 
@@ -606,43 +642,98 @@ def _rollback_database(cfg: DatabaseConfig, staged_name: str, pre_name: str) -> 
 
 
 def _swap_files(placed: list[_Placed], stamp: str) -> list[str]:
-    done: list[tuple[_Placed, Path | None]] = []
+    done: list[_Swapped] = []
     lines: list[str] = []
+    pre_root = vigil_path() / f"{PRE_RESTORE_PREFIX}{stamp}"
     try:
         for item in placed:
-            previous: Path | None = None
-            moved_aside = False
-            try:
-                if item.target.exists() or item.target.is_symlink():
-                    previous = (
-                        item.target.parent / f"{item.target.name}_pre_restore_{stamp}"
-                    )
-                    if previous.exists():
-                        raise BackupError(f"previous copy already exists: {previous}")
-                    item.target.rename(previous)
-                    moved_aside = True
-                item.staged.rename(item.target)
-            except Exception:
-                if moved_aside and previous is not None and not item.target.exists():
-                    previous.rename(item.target)
-                raise
-            done.append((item, previous))
-            if previous is not None:
-                lines.append(f"previous {item.name}: {previous}")
+            # Recorded before the first rename so a failure undoes what moved.
+            swapped = _Swapped(item)
+            done.append(swapped)
+            if item.is_dir:
+                _swap_dir(swapped, stamp)
+            else:
+                _swap_file(swapped, pre_root)
+            if swapped.previous is not None:
+                lines.append(f"previous {item.name}: {swapped.previous}")
             else:
                 lines.append(f"restored {item.name}: {item.target}")
+        # Kept until now so an undo has somewhere to put the staged entries.
+        for swapped in done:
+            if swapped.item.is_dir:
+                swapped.item.staged.rmdir()
         return lines
     except Exception:
         _undo_files(done)
         raise
 
 
-def _undo_files(done: list[tuple[_Placed, Path | None]]) -> None:
-    for item, previous in reversed(done):
-        if item.target.exists() and not item.staged.exists():
-            item.target.rename(item.staged)
-        if previous is not None and previous.exists() and not item.target.exists():
-            previous.rename(item.target)
+def _is_restore_artifact(name: str) -> bool:
+    return name.startswith((STAGE_PREFIX, PRE_RESTORE_PREFIX))
+
+
+def _swap_dir(swapped: _Swapped, stamp: str) -> None:
+    item = swapped.item
+    previous = item.target / f"{PRE_RESTORE_PREFIX}{stamp}"
+    if previous.exists():
+        raise BackupError(f"previous copy already exists: {previous}")
+    previous.mkdir()
+    swapped.previous = previous
+    for entry in sorted(item.target.iterdir()):
+        if _is_restore_artifact(entry.name):
+            continue
+        entry.rename(previous / entry.name)
+        swapped.aside.append(entry.name)
+    for entry in sorted(item.staged.iterdir()):
+        entry.rename(item.target / entry.name)
+        swapped.moved_in.append(entry.name)
+    if not swapped.aside:
+        previous.rmdir()
+        swapped.previous = None
+
+
+def _swap_file(swapped: _Swapped, pre_root: Path) -> None:
+    item = swapped.item
+    if item.target.is_file():
+        previous = pre_root / item.name
+        if previous.exists():
+            raise BackupError(f"previous copy already exists: {previous}")
+        pre_root.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(item.target, previous)
+        swapped.previous = previous
+    else:
+        swapped.created = True
+    # In place, never a rename over the target: a bind-mounted file refuses it.
+    shutil.copyfile(item.staged, item.target)
+    if swapped.created:
+        shutil.copymode(item.staged, item.target)
+
+
+def _undo_files(done: list[_Swapped]) -> None:
+    for swapped in reversed(done):
+        item = swapped.item
+        if not item.is_dir:
+            if swapped.previous is not None:
+                shutil.copyfile(swapped.previous, item.target)
+                swapped.previous.unlink()
+            elif swapped.created:
+                item.target.unlink(missing_ok=True)
+            if swapped.previous is not None:
+                try:
+                    swapped.previous.parent.rmdir()
+                except OSError:
+                    pass
+            continue
+        for name in reversed(swapped.moved_in):
+            (item.target / name).rename(item.staged / name)
+        if swapped.previous is None:
+            continue
+        for name in reversed(swapped.aside):
+            (swapped.previous / name).rename(item.target / name)
+        try:
+            swapped.previous.rmdir()
+        except OSError:
+            pass
 
 
 def _close_our_backends(cfg: DatabaseConfig, datnames: list[str]) -> None:
@@ -712,12 +803,12 @@ def _remove_path(path: Path) -> None:
 
 
 def _snapshot_id(
-    repo: str, env: dict[str, str], snapshot: str, priority: list[str]
+    restic: list[str], env: dict[str, str], snapshot: str, priority: list[str]
 ) -> str:
     # `restic ls` prints a short id. The audit and the rejection reason use
     # the full id `restic snapshots` returns, which is what `create` prints.
     raw = _checked(
-        priority + ["restic", "-r", repo, "snapshots", "--json", snapshot],
+        priority + [*restic, "snapshots", "--json", snapshot],
         env=env,
         what="restic snapshots",
     )
@@ -750,13 +841,19 @@ def _settle_restored(
         raise BackupError("manifest has no created_at")
     _point_at_live(cfg)
     old_key = _stored_jwt_secret()
+    # Under Compose the backend takes the key from the environment, which the
+    # operator also passes to this process. No store holds it.
+    env_key = os.environ.get("JWT_SECRET_KEY")  # noqa: ENV001
+    from_env = old_key is None and bool(env_key)
+    if from_env:
+        old_key = env_key
     new_key = secrets.token_urlsafe(48)
     expired = _reencrypt_and_expire(old_key, new_key, snapshot_id, created_at, actor)
-    # No file this install holds has the key, so a deployment sets it. A
+    # With no key anywhere, a deployment outside this install sets it. A
     # jwt_secret written here would never be read.
     rotated = old_key is not None
     if rotated:
-        _write_jwt_stores(new_key)
+        _write_jwt_stores(new_key, secrets_only=from_env)
     get_config_service(user_id=actor).record_audit(
         config_type="backup",
         config_key="restore",
@@ -776,11 +873,19 @@ def _settle_restored(
             "it is set outside this install; old sessions stay valid until it is "
             "rotated where it is defined"
         )
-    return [
+    lines = [
         f"backup date: {created_at}",
         f"approvals expired: {expired}",
         "integration credentials and user accounts date from the backup",
     ]
+    if from_env:
+        lines.append(
+            "the new JWT_SECRET_KEY is in "
+            f"{EncryptedFileBackend(data_dir=vigil_path()).secrets_path}; clear or "
+            "replace JWT_SECRET_KEY in the environment Compose reads before `up`, "
+            "because an environment value outranks secrets.enc"
+        )
+    return lines
 
 
 def _point_at_live(cfg: DatabaseConfig) -> None:
@@ -880,12 +985,17 @@ def _load_auth_service():
     return auth_service, AuthService
 
 
-def _write_jwt_stores(new_key: str) -> None:
+def _write_jwt_stores(new_key: str, *, secrets_only: bool = False) -> None:
     state = vigil_path()
     backend = EncryptedFileBackend(data_dir=state)
-    if backend.secrets_path.is_file() and backend.get("JWT_SECRET_KEY"):
+    # A key that came from the environment has no entry here yet, and no other
+    # store held it, so the new one goes to secrets.enc alone.
+    holds_key = backend.secrets_path.is_file() and backend.get("JWT_SECRET_KEY")
+    if holds_key or secrets_only:
         if not backend.set("JWT_SECRET_KEY", new_key):
             raise BackupError("could not rotate JWT_SECRET_KEY in secrets.enc")
+    if secrets_only:
+        return
     seen: set[Path] = set()
     for path in (REPO_ROOT / ".env", vigil_path(".env")):
         key = path.resolve() if path.exists() else path

@@ -132,6 +132,16 @@ _WHY_THE_SPAN_MATTERS = (
     "form (08/19/2018:00:00:00), which returns nothing here. There is no `latest` "
     "parameter; the window always ends now, which covers any past span."
 )
+# Without this a bare `index=x term` search returns whole events, and nothing else the
+# model sees says a count would usually do. stats/count stay the endorsed shape.
+_RESULT_SIZE_GUIDANCE = (
+    "Execute SPL query.\n"
+    "A search with no shaping returns up to max_results (default 100) full events, "
+    "including _raw and Splunk's internal fields. When a count, distinct values, a "
+    "time range or a few columns would answer the question, ask for that with stats, "
+    "tstats, top, dedup, table, fields <list> or head. Pull raw events only when the "
+    "event text itself is the evidence, and then keep head and max_results small."
+)
 # Splunk's own all-time earliest: a narrower default is a silent zero on any data
 # older than it.
 _ALL_TIME = "0"
@@ -248,13 +258,18 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="splunk_execute",
-            description="Execute SPL query" + telemetry,
+            description=_RESULT_SIZE_GUIDANCE + telemetry,
             inputSchema={
                 "type": "object",
                 "properties": {
                     "spl_query": {"type": "string"},
                     "earliest": {"type": "string", "default": "0"},
-                    "max_results": {"type": "integer", "default": 100},
+                    "max_results": {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Events returned. The default is 100 full "
+                        "events; use a smaller number when you need raw events.",
+                    },
                 },
                 "required": ["spl_query"],
             },

@@ -7,6 +7,7 @@ Handles database connections, session management, and connection pooling.
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -221,6 +222,44 @@ def _load_connection_string_secret() -> Optional[str]:
         return None
 
 
+def _session_timeout_options(config: "DatabaseConfig") -> str:
+    """libpq ``options`` carrying the server-side session timeouts (#1443).
+
+    Only positive values are sent; 0 leaves the server default in place.
+    """
+    timeouts = (
+        ("statement_timeout", getattr(config, "statement_timeout_ms", 0)),
+        (
+            "idle_in_transaction_session_timeout",
+            getattr(config, "idle_in_transaction_timeout_ms", 0),
+        ),
+    )
+    return " ".join(f"-c {name}={int(ms)}" for name, ms in timeouts if int(ms) > 0)
+
+
+def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
+    """DBAPI connect args for the platform engine.
+
+    ``connect_timeout`` and ``options`` are libpq parameters, so they are only
+    sent to a PostgreSQL URL; any other dialect gets none.
+    """
+    if make_url(url).get_backend_name() != "postgresql":
+        return {}
+    # Bounded so validating an unreachable host fails in seconds rather than
+    # hanging a worker thread for the OS TCP timeout (~75s).
+    args: Dict[str, Any] = {"connect_timeout": 5}
+    options = _session_timeout_options(config)
+    if options:
+        # An explicit ``options`` replaces libpq's PGOPTIONS fallback, which is
+        # how an eval process selects a memory snapshot (core/memory/snapshot.py).
+        # Carry it through, after ours: the last -c for a setting wins, so an
+        # operator's PGOPTIONS still overrides these defaults.
+        env_options = os.environ.get("PGOPTIONS", "")  # noqa: ENV001 - libpq var
+        env_options = env_options.strip()
+        args["options"] = f"{options} {env_options}" if env_options else options
+    return args
+
+
 class DatabaseConfig:
     def __init__(self, *, connection_string: Optional[str] = None):
         """Initialize from the encrypted-store DSN, else POSTGRES_*.
@@ -254,6 +293,8 @@ class DatabaseConfig:
         self.max_overflow = settings.db_max_overflow
         self.pool_timeout = settings.db_pool_timeout
         self.pool_recycle = settings.db_pool_recycle
+        self.statement_timeout_ms = settings.db_statement_timeout_ms
+        self.idle_in_transaction_timeout_ms = settings.db_idle_in_transaction_timeout_ms
         try:
             self.proxy = _load_platform_db_proxy()
         except Exception as e:  # noqa: BLE001
@@ -411,17 +452,16 @@ class DatabaseManager:
                 port,
             )
 
+        url = config.get_database_url(host=host, port=port)
         engine = create_engine(
-            config.get_database_url(host=host, port=port),
+            url,
             echo=echo,
             pool_size=config.pool_size,
             max_overflow=config.max_overflow,
             pool_timeout=config.pool_timeout,
             pool_recycle=config.pool_recycle,
             pool_pre_ping=True,  # Verify connections before using them
-            # Bounded so validating an unreachable host fails in seconds rather
-            # than hanging a worker thread for the OS TCP timeout (~75s).
-            connect_args={"connect_timeout": 5},
+            connect_args=_engine_connect_args(config, url),
         )
 
         return engine, proxy
