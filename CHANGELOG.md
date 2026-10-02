@@ -3,6 +3,7 @@
 ## Upgrade notes (unreleased)
 
 * **compose:** the State Directory (`master.key`, `secrets.enc`) and `data/investigations` now live in the `vigil_home` and `vigil_investigations` named volumes, shared by `backend`, `soc-daemon` and `llm-worker` ([#1263](https://github.com/Vigil-SOC/vigil/issues/1263)). The first `up` after this change recreates those containers and drops whatever is still in their writable layers. Save the backend's copy first: `docker cp deeptempo-backend:/home/vigil/.vigil ./vigil-state-backup`. After the upgrade, copy it into the volume and restart: `docker cp ./vigil-state-backup/. deeptempo-backend:/home/vigil/.vigil/ && docker exec -u 0 deeptempo-backend chown -R 1000:1000 /home/vigil/.vigil && docker compose restart backend soc-daemon llm-worker`.
+* **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 
 ## [0.6.0](https://github.com/Vigil-SOC/vigil/compare/v0.5.0...v0.6.0) (2026-09-24)
 

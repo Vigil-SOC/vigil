@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.unit._ratchets.test_compose_state_volumes import _named_volume_at
+
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parents[3]
@@ -37,3 +39,27 @@ def test_agent_service_runs_on_default_up_without_host_port(name: str) -> None:
 def test_backend_points_at_agent_serve() -> None:
     env = _services()["backend"]["environment"]
     assert "AGENT_URL=http://agent-serve:6989" in env
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        REPO / "infra" / "docker" / "docker-compose.yml",
+        COMPOSE_PATH,
+    ],
+    ids=["server", "desktop"],
+)
+def test_bifrost_keeps_runtime_config_in_a_named_volume(path: Path) -> None:
+    """Bifrost's config.db (keys, virtual keys, budgets) lives in /app/data (#1452)."""
+    compose = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    bifrost = [
+        name
+        for name, spec in compose["services"].items()
+        if "maximhq/bifrost" in str(spec.get("image", ""))
+    ]
+    assert bifrost, f"{path} runs no maximhq/bifrost service"
+    for name in bifrost:
+        assert _named_volume_at(compose, name, "/app/data"), (
+            f"{name} in {path.name} has no named volume at /app/data, so its "
+            "settings are lost when the container is removed"
+        )
