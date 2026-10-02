@@ -1245,10 +1245,10 @@ def get_approval_svc():
     from core.response.approval_service import (
         ActionStatus,
         ActionType,
-        get_approval_service,
+        ApprovalService,
     )
 
-    return get_approval_service(), ActionType, ActionStatus
+    return ApprovalService(), ActionType, ActionStatus
 
 
 @mcp.tool()
