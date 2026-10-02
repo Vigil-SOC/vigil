@@ -118,6 +118,34 @@ describe("a link is a value both events carry", () => {
     expect(proveOrigin(LINK, [], AT, [longer])).toBe("unproven");
   });
 
+  // What invoke journals for splunk_execute: the tool's envelope, with the
+  // `| stats count` row inside `results`.
+  function wrapped(args: string, inner: readonly unknown[]): Observation {
+    return observation(PROVER_TOOL, args, [{ success: true, query: args, count: inner.length, results: inner }]);
+  }
+
+  it("reads the count inside the splunk envelope, not the envelope's row count", () => {
+    const zero = wrapped(`index=main "${LINK}" latest=1704164400 | stats count`, [{ count: "0" }]);
+    expect(proveLink(LINK, [], AT, [...BOTH, zero])).toBe("proven");
+    expect(proveLink(LINK, [], AT, [hit(LINK), zero])).toBe("unproven");
+    expect(proveOrigin(LINK, [], AT, [zero])).toBe("proven");
+  });
+
+  it("rejects a count above zero inside the envelope", () => {
+    const seen = wrapped(`index=main "${LINK}" latest=1704164400 | stats count`, [{ count: "58" }]);
+    expect(proveLink(LINK, [], AT, [...BOTH, seen])).toBe("rejected");
+    expect(proveOrigin(LINK, [], AT, [seen])).toBe("rejected");
+  });
+
+  it("leaves an envelope with no rows, another second, or a longer number unproven", () => {
+    const none = wrapped(`index=main "${LINK}" latest=1704164400`, []);
+    const hourLater = wrapped(`"${LINK}" latest=1704168000 | stats count`, [{ count: "0" }]);
+    const longer = wrapped(`"${LINK}" latest=17041644001 | stats count`, [{ count: "0" }]);
+    expect(proveOrigin(LINK, [], AT, [none])).toBe("unproven");
+    expect(proveOrigin(LINK, [], AT, [hourLater])).toBe("unproven");
+    expect(proveOrigin(LINK, [], AT, [longer])).toBe("unproven");
+  });
+
   it("does not let any other telemetry tool prove the count", () => {
     const other = count("splunk_execute", LINK, AT, 0);
     const elastic = count("elastic_search_logs", LINK, AT, 0);

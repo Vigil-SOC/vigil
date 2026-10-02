@@ -156,9 +156,9 @@ function carriers(observations: readonly Observation[], link: string): Observati
   return observations.filter((obs) => obs.rows.length > 0 && containsValue(obs.rows, link));
 }
 
-// Only the in-repo splunk tool can record this count. Invoke unwraps that tool's
-// envelope and journals `results`, so an empty search is no rows — not a count of
-// zero — and `| stats count` arrives as the inner row. A count above zero rejects.
+// Only the in-repo splunk tool can record this count. Its result is journaled as
+// the tool's envelope, `{count: <rows>, query, results}`, so `| stats count` arrives
+// inside `results`. A count above zero rejects.
 function countBefore(link: string, causeTime: string, observations: readonly Observation[]): Proof {
   const counts: number[] = [];
   for (const obs of observations) {
@@ -206,8 +206,11 @@ function walk(node: unknown, found: number[]): void {
     return;
   }
   if (node === null || typeof node !== "object") return;
+  // The envelope's own `count` is how many rows came back, not a count of events.
+  // An envelope with no rows is not a zero.
+  const envelope = Array.isArray((node as Record<string, unknown>).results);
   for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-    if (key === "count") {
+    if (key === "count" && !envelope) {
       const count = asCount(value);
       if (count !== null) found.push(count);
     }
