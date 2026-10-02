@@ -466,13 +466,16 @@ class CaseRepository:
         state: Optional[str] = None,
         closed: Optional[bool] = None,
         now: Optional[datetime] = None,
+        needs_you_ids: Optional[set[str]] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
-        """One page of the queue, soonest resolution first, no SLA last.
+        """One page of the queue.
 
-        The tie-break is last activity descending: the later of
+        Ids in ``needs_you_ids`` sort first, then soonest resolution, no SLA
+        last. The tie-break is last activity descending: the later of
         ``cases.updated_at`` and the latest investigation's
-        ``last_activity_at``. Closed cases are omitted unless ``closed`` is
-        set or ``state`` names one.
+        ``last_activity_at``. An empty set keeps that SLA order and does not
+        emit ``IN ()``. Closed cases are omitted unless ``closed`` is set or
+        ``state`` names one.
         """
         now = now or utcnow()
         latest = _latest_investigations()
@@ -557,16 +560,20 @@ class CaseRepository:
         total = self.session.execute(
             select(func.count()).select_from(stmt.subquery())
         ).scalar_one()
-        stmt = (
-            stmt.order_by(
+        # Membership is a 0/1 key so an empty set can omit it. ``IN ()`` is
+        # invalid SQL, and a constant key would not change today's order.
+        order = []
+        if needs_you_ids:
+            order.append(case((Case.case_id.in_(sorted(needs_you_ids)), 0), else_=1))
+        order.extend(
+            (
                 has_sla.desc(),
                 time_left.asc().nulls_last(),
                 last_activity.desc().nulls_last(),
                 Case.case_id.asc(),
             )
-            .limit(limit)
-            .offset(offset)
         )
+        stmt = stmt.order_by(*order).limit(limit).offset(offset)
         rows = []
         for record in self.session.execute(stmt).mappings():
             created_at = record["created_at"]

@@ -301,7 +301,10 @@ function CasesTable({
               display.map((c) => (
                 <tr key={c.id} className="clickable" onClick={() => onSelect(c.id)}>
                   <td><span className="id-cell">{c.id}</span></td>
-                  <td className="case-title" title={c.title}>{c.title}</td>
+                  <td className="case-title" title={c.title}>
+                    {c.needsYou && <span className="tag">Needs you</span>}
+                    {c.title}
+                  </td>
                   <td><span className={`status ${c.status}`}>{c.status}</span></td>
                   <td><span className={`prio ${c.prio}`}>{cap(c.prio)}</span></td>
                   <td><span className="assignee"><span className="avatar">{c.owner}</span><span className="muted">{c.ownerName}</span></span></td>

@@ -106,6 +106,7 @@ export interface QueueCase {
   updated_at?: string | null
   sla_seconds_left?: number | null
   health_status?: string | null
+  needs_you?: boolean | null
   mitre_techniques?: string[] | null
 }
 
@@ -155,6 +156,7 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     maxCostUsd: c.max_cost_usd,
     budgetHealth: c.budget_health,
     comments: c.comment_count ?? undefined,
+    needsYou: c.needs_you === true,
   }
 }
 

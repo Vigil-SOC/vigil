@@ -178,6 +178,21 @@ describe('server queue', () => {
     expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
   })
 
+  it('labels needs-you rows and leaves the others unlabeled', async () => {
+    testState.cases = [
+      { ...CASE, case_id: 'needs', title: 'Waiting on a person', needs_you: true },
+      { ...CASE, case_id: 'sla', title: 'Closer to SLA', needs_you: false },
+    ]
+    renderCases()
+
+    const needsRow = (await screen.findByText('Waiting on a person')).closest('tr')
+    const slaRow = screen.getByText('Closer to SLA').closest('tr')
+    expect(needsRow).not.toBeNull()
+    expect(slaRow).not.toBeNull()
+    expect(within(needsRow as HTMLElement).getByText('Needs you')).toBeInTheDocument()
+    expect(within(slaRow as HTMLElement).queryByText('Needs you')).not.toBeInTheDocument()
+  })
+
   it('sends a closed filter to the server', async () => {
     renderCases()
     await screen.findByText(CASE.title)

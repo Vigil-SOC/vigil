@@ -53,6 +53,7 @@ class CaseQueueItem(BaseModel):
     age_seconds: float
     sla_seconds_left: Optional[float] = None
     health_status: Optional[str] = None
+    needs_you: bool = False
 
 
 class CaseQueueStrip(BaseModel):

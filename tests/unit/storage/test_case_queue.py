@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import event
 
 from core.cases.combined_state import queue_item
 from core.storage.case_repository import CaseRepository
@@ -135,6 +136,27 @@ def _inv(
 
 def _ids(rows) -> list[str]:
     return [row.case_id for row in rows]
+
+
+def _sql(session, fn):
+    captured = []
+
+    def before(conn, cursor, statement, parameters, context, executemany):
+        captured.append(statement)
+
+    conn = session.connection()
+    event.listen(conn, "before_cursor_execute", before)
+    try:
+        fn()
+    finally:
+        event.remove(conn, "before_cursor_execute", before)
+    return captured
+
+
+def _order_by(statements) -> str:
+    pages = [statement for statement in statements if "ORDER BY" in statement]
+    assert pages, statements
+    return pages[-1].rsplit("ORDER BY", 1)[1]
 
 
 def _shown(rows, now=NOW):
@@ -429,3 +451,60 @@ def test_row_reads_the_latest_investigation_and_the_strip(session):
     assert strip.sla_at_risk == 0
     assert strip.closed_today == 2
     assert strip.agent_closure_share == 0.5
+
+
+def test_needs_you_ids_sort_first_and_an_empty_set_keeps_sla_order(session):
+    _policy(session)
+    _case(session, "sooner", updated_at=NOW - timedelta(hours=3))
+    _sla(
+        session,
+        "sooner",
+        created_at=NOW - timedelta(hours=4),
+        resolution_due=NOW + timedelta(minutes=5),
+    )
+    _case(session, "also-waiting", updated_at=NOW - timedelta(hours=1))
+    _sla(
+        session,
+        "also-waiting",
+        created_at=NOW - timedelta(hours=4),
+        resolution_due=NOW + timedelta(hours=1),
+    )
+    _case(session, "waiting", updated_at=NOW - timedelta(hours=3))
+    _sla(
+        session,
+        "waiting",
+        created_at=NOW - timedelta(hours=4),
+        resolution_due=NOW + timedelta(hours=10),
+    )
+    _case(session, "no-sla", updated_at=NOW)
+
+    repo = CaseRepository(session)
+    sla_order = ["sooner", "also-waiting", "waiting", "no-sla"]
+    plain, plain_total = repo.queue(now=NOW)
+    held = {}
+
+    def _empty():
+        held["empty"] = repo.queue(needs_you_ids=set(), now=NOW)
+
+    empty_order = _order_by(_sql(session, _empty))
+    empty, empty_total = held["empty"]
+    assert plain_total == empty_total == 4
+    assert _ids(plain) == _ids(empty) == sla_order
+    assert "IN" not in empty_order
+
+    def _first():
+        held["first"] = repo.queue(
+            needs_you_ids={"waiting", "also-waiting", "missing"}, now=NOW
+        )
+
+    first_order = _order_by(_sql(session, _first))
+    rows, total = held["first"]
+    assert total == 4
+    assert _ids(rows) == ["also-waiting", "waiting", "sooner", "no-sla"]
+    assert "IN" in first_order
+
+    page, page_total = repo.queue(
+        needs_you_ids={"waiting"}, limit=1, offset=1, now=NOW
+    )
+    assert page_total == 4
+    assert _ids(page) == ["sooner"]

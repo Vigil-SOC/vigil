@@ -89,6 +89,8 @@ export interface CaseRow {
   /** display strings can't sort */
   updatedTs?: number
   createdTs?: number
+  /** True when this queue row is in the same needs-you set that sorted it first. */
+  needsYou?: boolean
 }
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {

@@ -1235,9 +1235,10 @@ export interface paths {
          * Get Cases
          * @description One page of the case queue, plus the strip.
          *
-         *     Default is cases that are not closed. Sort is resolution time left
-         *     ascending, rows with no SLA last, then last activity descending. Page
-         *     size defaults to the repository limit.
+         *     Default is cases that are not closed. One ``needs_you()`` read supplies
+         *     the case ids that sort first; then resolution time left ascending, rows
+         *     with no SLA last, then last activity descending. The same set marks
+         *     ``needs_you`` on each row. Page size defaults to the repository limit.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -6734,9 +6735,10 @@ export interface paths {
          * Get Cases
          * @description One page of the case queue, plus the strip.
          *
-         *     Default is cases that are not closed. Sort is resolution time left
-         *     ascending, rows with no SLA last, then last activity descending. Page
-         *     size defaults to the repository limit.
+         *     Default is cases that are not closed. One ``needs_you()`` read supplies
+         *     the case ids that sort first; then resolution time left ascending, rows
+         *     with no SLA last, then last activity descending. The same set marks
+         *     ``needs_you`` on each row. Page size defaults to the repository limit.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -9011,6 +9013,11 @@ export interface components {
             last_activity?: string | null;
             /** Max Cost Usd */
             max_cost_usd?: number | null;
+            /**
+             * Needs You
+             * @default false
+             */
+            needs_you: boolean;
             /** Priority */
             priority?: string | null;
             /** Sla Seconds Left */

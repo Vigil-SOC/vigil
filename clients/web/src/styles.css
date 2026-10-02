@@ -3772,6 +3772,10 @@
       white-space: nowrap;
    }
 
+   .cases-tbl td.case-title .tag {
+      margin-right: 8px;
+   }
+
    @media (max-width: 1100px) {
       .main.chat-open {
          margin-right: 0;

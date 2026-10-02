@@ -29,6 +29,7 @@ from core.cases.case_state import detail_fields
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.cases.combined_state import queue_item
 from core.findings.source_link import resolve_source_link
+from core.response.approval_service import needs_you
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
 from core.storage.database_data_service import DatabaseDataService
@@ -255,6 +256,16 @@ def _blank(value: Optional[str]) -> Optional[str]:
     return value or None
 
 
+def _needs_you_case_ids() -> set[str]:
+    """Case ids from one uncapped ``needs_you()`` read. Blank ids are dropped."""
+    found: set[str] = set()
+    for item in needs_you()["items"]:
+        case_id = item.get("case_id") if isinstance(item, dict) else None
+        if isinstance(case_id, str) and case_id:
+            found.add(case_id)
+    return found
+
+
 def _empty_queue(limit: int, offset: int) -> dict:
     """Demo mode, and a database that is not connected, have nothing to page."""
     return {
@@ -287,14 +298,16 @@ async def get_cases(
 ):
     """One page of the case queue, plus the strip.
 
-    Default is cases that are not closed. Sort is resolution time left
-    ascending, rows with no SLA last, then last activity descending. Page
-    size defaults to the repository limit.
+    Default is cases that are not closed. One ``needs_you()`` read supplies
+    the case ids that sort first; then resolution time left ascending, rows
+    with no SLA last, then last activity descending. The same set marks
+    ``needs_you`` on each row. Page size defaults to the repository limit.
     """
     if not data_service.is_using_database():
         return _empty_queue(limit, offset)
 
     now = utcnow()
+    needs_you_ids = _needs_you_case_ids()
     with unit_of_work() as session:
         repo = CaseRepository(session)
         rows, total = repo.queue(
@@ -309,10 +322,14 @@ async def get_cases(
             state=_blank(state),
             closed=closed,
             now=now,
+            needs_you_ids=needs_you_ids,
         )
         strip = repo.strip(now=now)
     return {
-        "cases": [asdict(queue_item(row, now)) for row in rows],
+        "cases": [
+            asdict(queue_item(row, now, needs_you=row.case_id in needs_you_ids))
+            for row in rows
+        ],
         "total": total,
         "limit": limit,
         "offset": offset,

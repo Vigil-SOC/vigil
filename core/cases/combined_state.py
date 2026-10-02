@@ -126,9 +126,10 @@ class QueueItem:
     age_seconds: float
     sla_seconds_left: Optional[float]
     health_status: Optional[str]
+    needs_you: bool = False
 
 
-def queue_item(row, now: datetime) -> QueueItem:
+def queue_item(row, now: datetime, *, needs_you: bool = False) -> QueueItem:
     """Apply combined state and the 75 / 90 health words to one SQL row."""
     health, seconds_left = sla_clock(
         now=now,
@@ -157,4 +158,5 @@ def queue_item(row, now: datetime) -> QueueItem:
         age_seconds=row.age_seconds,
         sla_seconds_left=seconds_left,
         health_status=health,
+        needs_you=needs_you,
     )
