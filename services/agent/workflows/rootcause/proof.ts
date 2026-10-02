@@ -163,7 +163,7 @@ function countBefore(link: string, causeTime: string, observations: readonly Obs
   const counts: number[] = [];
   for (const obs of observations) {
     if (obs.tool !== PROVER_TOOL || obs.rows.length === 0) continue;
-    if (!mentions(obs, link) || !mentions(obs, causeTime)) continue;
+    if (!mentions(obs, link) || !mentionsTime(obs, causeTime)) continue;
     counts.push(...countsIn(obs.rows));
   }
   if (counts.some((count) => count > 0)) return "rejected";
@@ -174,6 +174,24 @@ function countBefore(link: string, causeTime: string, observations: readonly Obs
 function mentions(obs: Observation, needle: string): boolean {
   if (needle === "") return false;
   return obs.args.includes(needle) || containsValue(obs.rows, needle);
+}
+
+// Splunk refuses an ISO time in latest=, so the count the model can actually run
+// names the cause time in epoch seconds. Either spelling of the same second counts.
+function mentionsTime(obs: Observation, at: string): boolean {
+  if (mentions(obs, at)) return true;
+  const seconds = epochOf(at);
+  if (seconds === null) return false;
+  return new RegExp(`(?<!\\d)${seconds}(?!\\d)`).test(obs.args);
+}
+
+// A time with no zone is read as UTC rather than as this process's local time.
+function epochOf(at: string): number | null {
+  const text = at.trim();
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(text)) return null;
+  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`;
+  const ms = Date.parse(zoned);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
 function countsIn(node: unknown): number[] {
