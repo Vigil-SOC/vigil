@@ -282,7 +282,7 @@ export const casesApi = {
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
-  getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),
+  getById: (id: string) => api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`),
 
   create: (data: Schema<'CaseCreate'>) =>
     api.post<Schema<'CaseSchema'>>('/cases', data),

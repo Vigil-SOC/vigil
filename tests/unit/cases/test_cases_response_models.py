@@ -41,5 +41,6 @@ def test_get_case_documents_ids_not_inlined_findings():
     assert model is not CaseWithFindingsSchema
     assert "finding_ids" in model.model_fields
     assert "findings" not in model.model_fields
+    assert "linked_findings" in model.model_fields
     assert "combined_state" in model.model_fields
     assert "investigations" in model.model_fields

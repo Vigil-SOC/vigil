@@ -1875,7 +1875,8 @@ export interface paths {
          *
          *     ``combined_state`` is the one function the header pill reads. Investigations
          *     are newest first; the audit run is ``run_id_for`` of the latest, never the
-         *     shadow adjudication.
+         *     shadow adjudication. ``linked_findings`` is one entry per linked finding
+         *     that still exists, with ``source_link`` when the resolver can fill one.
          *
          *     Args:
          *         case_id: The case ID
@@ -7105,7 +7106,8 @@ export interface paths {
          *
          *     ``combined_state`` is the one function the header pill reads. Investigations
          *     are newest first; the audit run is ``run_id_for`` of the latest, never the
-         *     shadow adjudication.
+         *     shadow adjudication. ``linked_findings`` is one entry per linked finding
+         *     that still exists, with ``source_link`` when the resolver can fill one.
          *
          *     Args:
          *         case_id: The case ID
@@ -8642,6 +8644,11 @@ export interface components {
              */
             investigations: components["schemas"]["CaseInvestigationRef"][];
             /**
+             * Linked Findings
+             * @default []
+             */
+            linked_findings: components["schemas"]["CaseLinkedFinding"][];
+            /**
              * Mitre Techniques
              * @default []
              */
@@ -8866,6 +8873,18 @@ export interface components {
             status: string;
             /** Workflow Id */
             workflow_id: string;
+        };
+        /**
+         * CaseLinkedFinding
+         * @description One finding the case already links, and the source door when one exists.
+         */
+        CaseLinkedFinding: {
+            /** Description */
+            description?: string | null;
+            /** Finding Id */
+            finding_id: string;
+            /** Source Link */
+            source_link?: string | null;
         };
         /** CaseListResponse */
         CaseListResponse: {

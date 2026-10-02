@@ -15,7 +15,7 @@ import {
   type RecordChip,
   type RunFold,
 } from './caseFold'
-import type { CaseClosureView, CaseInvestigationRef, Phase } from './useCases'
+import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -52,6 +52,22 @@ function detailOf(error: unknown, fallback: string): string {
   return (error as { message?: string })?.message || fallback
 }
 
+function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
+  if (items.length === 0) return null
+  return (
+    <ul className="case-linked">
+      {items.map((item) => (
+        <li key={item.finding_id}>
+          <span>{item.description || item.finding_id}</span>
+          {item.source_link && (
+            <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   const calls = fold?.calls.length ?? 0
   const memory = (fold?.recall ? 1 : 0) + recallEntityCalls(fold).length + visibilityGaps(fold).length
@@ -83,6 +99,7 @@ export function CasePage({
   combinedState,
   investigations,
   closure,
+  linkedFindings,
   phase,
   error,
   openChat,
@@ -99,6 +116,7 @@ export function CasePage({
   combinedState: string
   investigations: CaseInvestigationRef[]
   closure: CaseClosureView | null
+  linkedFindings: CaseLinkedFinding[]
   phase: Phase
   error: string | null
   openChat: (prompt?: string) => void
@@ -308,6 +326,7 @@ export function CasePage({
                   {sla?.health ? ` · ${sla.health}` : ''}
                 </span>
               </div>
+              <LinkedFindings items={linkedFindings} />
               <div className="case-trust">Not measured yet</div>
             </div>
             <div className="dh-actions">

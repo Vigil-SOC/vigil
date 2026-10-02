@@ -28,6 +28,7 @@ from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_state import detail_fields
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.cases.combined_state import queue_item
+from core.findings.source_link import resolve_source_link
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
 from core.storage.database_data_service import DatabaseDataService
@@ -45,6 +46,7 @@ from core.storage.schemas.case_api import (
     CaseIOCBulkResponse,
     CaseIOCExportResponse,
     CaseIOCListResponse,
+    CaseLinkedFinding,
     CaseListResponse,
     CaseMergeResponse,
     CaseSearchResponse,
@@ -319,6 +321,43 @@ async def get_cases(
     }
 
 
+def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
+    """Rows that still exist for the ids already on the case, in that order.
+
+    One query. An id with no row is omitted. ``source_link`` is the same
+    resolver Overview uses, and ``configs`` is the per-source cache it passes.
+    """
+    ids = (
+        [item for item in finding_ids if isinstance(item, str)]
+        if isinstance(finding_ids, list)
+        else []
+    )
+    rows = {
+        row.finding_id: row for row in CaseRepository(session).resolve_findings(ids)
+    }
+    configs: Dict[str, Dict[str, str]] = {}
+    entries: List[CaseLinkedFinding] = []
+    for finding_id in ids:
+        row = rows.get(finding_id)
+        if row is None:
+            continue
+        entries.append(
+            CaseLinkedFinding(
+                finding_id=row.finding_id,
+                description=row.description,
+                source_link=resolve_source_link(
+                    {
+                        "evidence_links": list(row.evidence_links or []),
+                        "data_source": row.data_source,
+                        "external_id": row.external_id,
+                    },
+                    configs=configs,
+                ),
+            )
+        )
+    return entries
+
+
 @router.get("/{case_id}", response_model=CaseDetailResponse)
 async def get_case(case_id: str, session: UnitOfWorkSession):
     """
@@ -326,7 +365,8 @@ async def get_case(case_id: str, session: UnitOfWorkSession):
 
     ``combined_state`` is the one function the header pill reads. Investigations
     are newest first; the audit run is ``run_id_for`` of the latest, never the
-    shadow adjudication.
+    shadow adjudication. ``linked_findings`` is one entry per linked finding
+    that still exists, with ``source_link`` when the resolver can fill one.
 
     Args:
         case_id: The case ID
@@ -342,6 +382,7 @@ async def get_case(case_id: str, session: UnitOfWorkSession):
     investigations = case_records_service.list_case_investigations(session, case_id)
     closure = session.get(CaseClosureInfo, case_id)
     case.update(detail_fields(case.get("status"), investigations, closure))
+    case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 
 

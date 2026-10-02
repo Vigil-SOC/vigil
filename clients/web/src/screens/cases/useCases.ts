@@ -26,6 +26,12 @@ export interface CaseClosureView {
   verdict: string
 }
 
+export interface CaseLinkedFinding {
+  finding_id: string
+  description: string | null
+  source_link: string | null
+}
+
 /** Matches ``CaseRepository`` page size. */
 export const CASE_PAGE_LIMIT = 100
 
@@ -144,6 +150,20 @@ function asInvestigations(raw: unknown): CaseInvestigationRef[] {
   })
 }
 
+function asLinkedFindings(raw: unknown): CaseLinkedFinding[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    if (typeof o.finding_id !== 'string' || !o.finding_id) return []
+    return [{
+      finding_id: o.finding_id,
+      description: typeof o.description === 'string' ? o.description : null,
+      source_link: typeof o.source_link === 'string' && o.source_link ? o.source_link : null,
+    }]
+  })
+}
+
 function asClosure(raw: unknown): CaseClosureView | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
@@ -162,6 +182,7 @@ export function useCaseDetail(id: string | null) {
   const [combinedState, setCombinedState] = useState('')
   const [investigations, setInvestigations] = useState<CaseInvestigationRef[]>([])
   const [closure, setClosure] = useState<CaseClosureView | null>(null)
+  const [linkedFindings, setLinkedFindings] = useState<CaseLinkedFinding[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -176,6 +197,7 @@ export function useCaseDetail(id: string | null) {
     setCombinedState('')
     setInvestigations([])
     setClosure(null)
+    setLinkedFindings([])
     casesApi
       .getById(id)
       .then((res) => {
@@ -184,11 +206,13 @@ export function useCaseDetail(id: string | null) {
           combined_state?: unknown
           investigations?: unknown
           closure?: unknown
+          linked_findings?: unknown
         }
         setRow(mapApiCase(data))
         setCombinedState(typeof data.combined_state === 'string' ? data.combined_state : '')
         setInvestigations(asInvestigations(data.investigations))
         setClosure(asClosure(data.closure))
+        setLinkedFindings(asLinkedFindings(data.linked_findings))
         const d = data.created_at ? new Date(data.created_at) : null
         setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
         setPhase('ready')
@@ -203,5 +227,5 @@ export function useCaseDetail(id: string | null) {
     }
   }, [id, reloadKey])
 
-  return { row, created, combinedState, investigations, closure, phase, error, reload }
+  return { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload }
 }

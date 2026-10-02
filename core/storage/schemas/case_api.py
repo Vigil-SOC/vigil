@@ -97,12 +97,21 @@ class CaseClosureView(BaseModel):
     verdict: str = ""
 
 
+class CaseLinkedFinding(BaseModel):
+    """One finding the case already links, and the source door when one exists."""
+
+    finding_id: str
+    description: Optional[str] = None
+    source_link: Optional[str] = None
+
+
 class CaseDetailResponse(CaseSchema):
     """``GET /cases/{id}`` — the case, its combined state, and the runs on it."""
 
     combined_state: str
     investigations: list[CaseInvestigationRef] = []
     closure: Optional[CaseClosureView] = None
+    linked_findings: list[CaseLinkedFinding] = []
 
 
 class CaseRecordRow(BaseModel):

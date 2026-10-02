@@ -211,6 +211,41 @@ describe('case page', () => {
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
   })
 
+  it('lists linked findings under the count on every tab', async () => {
+    testState.cases = [{
+      case_id: 'case-links',
+      title: 'Linked case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: ['f1', 'gone', 'f2'],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-links')],
+      linked_findings: [
+        { finding_id: 'f1', description: 'console alert', source_link: 'https://example.test/alert/1' },
+        { finding_id: 'f2', description: 'no door', source_link: null },
+      ],
+    }]
+    testState.runs['run-links'] = { hunt: HUNT }
+    renderCase('case-links')
+
+    const header = (await screen.findByRole('heading', { name: 'Linked case' })).closest('.detail-head') as HTMLElement
+    expect(within(header).getByText('3 alerts combined')).toBeInTheDocument()
+    expect(within(header).getByText('console alert')).toBeInTheDocument()
+    expect(within(header).getByText('no door')).toBeInTheDocument()
+    expect(within(header).queryByText('gone')).not.toBeInTheDocument()
+    const link = within(header).getByRole('link', { name: 'Open in source' })
+    expect(link).toHaveAttribute('href', 'https://example.test/alert/1')
+    expect(within(header).getAllByRole('link', { name: 'Open in source' })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('no login')).toBeInTheDocument()
+    expect(within(header).getByRole('link', { name: 'Open in source' })).toBeInTheDocument()
+    const evidence = screen.getByText('no login').closest('table') ?? screen.getByText('no login').closest('section')
+    expect(evidence).toBeTruthy()
+    expect(within(evidence as HTMLElement).queryByRole('link', { name: 'Open in source' })).not.toBeInTheDocument()
+  })
+
   it('shows a failed record read', async () => {
     testState.recordError = 'the agent layer answered 502'
     testState.cases = [{

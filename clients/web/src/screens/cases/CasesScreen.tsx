@@ -873,7 +873,7 @@ export function CasesDetail({
   openChat: (prompt?: string) => void
   reloadList: () => void
 }) {
-  const { row, created, combinedState, investigations, closure, phase, error, reload: reloadDetail } =
+  const { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail } =
     useCaseDetail(id)
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
@@ -940,6 +940,7 @@ export function CasesDetail({
         combinedState={combinedState}
         investigations={investigations}
         closure={closure}
+        linkedFindings={linkedFindings}
         phase={phase}
         error={error}
         openChat={openChat}
