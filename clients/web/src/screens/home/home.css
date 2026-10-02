@@ -6,6 +6,13 @@
   letter-spacing: -0.02em;
 }
 
+.home-screen .home-share {
+  margin: 6px 0 0;
+  padding: 0 22px;
+  color: var(--tx-3);
+  font-size: 13px;
+}
+
 .home-screen .home-head {
   display: flex;
   align-items: baseline;

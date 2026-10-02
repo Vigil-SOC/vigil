@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomeScreen, { parseCreatedAt } from './HomeScreen'
-import { approvalsApi, configApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   approvalsApi: {
@@ -13,6 +13,9 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getSetupSteps: vi.fn(),
     setDemoMode: vi.fn(),
+  },
+  triageApi: {
+    get: vi.fn(),
   },
 }))
 
@@ -56,6 +59,9 @@ beforeEach(() => {
   vi.mocked(configApi.getSetupSteps).mockResolvedValue({
     data: { steps: doneSteps, alerts_exist: 3, demo_enabled: false },
   } as never)
+  vi.mocked(triageApi.get).mockResolvedValue({
+    data: { strip: { picked_up: { share: null } } },
+  } as never)
 })
 
 afterEach(() => {
@@ -68,6 +74,36 @@ describe('Home', () => {
   it('reads a zone-less created_at as UTC', () => {
     expect(parseCreatedAt('2026-10-01T23:00:00')).toBe(Date.UTC(2026, 9, 1, 23, 0, 0))
     expect(parseCreatedAt('2026-10-01T23:00:00Z')).toBe(Date.UTC(2026, 9, 1, 23, 0, 0))
+  })
+
+  it('shows the pickup share under the headline and omits it when the share is null', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(triageApi.get).mockResolvedValue({
+      data: { strip: { picked_up: { share: 0.423 } } },
+    } as never)
+    const { unmount } = render(
+      <MemoryRouter>
+        <HomeScreen {...props} />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('42.3% of alerts picked up automatically today')).toBeInTheDocument()
+    expect(screen.getByText('Board clear.')).toBeInTheDocument()
+
+    unmount()
+    vi.mocked(triageApi.get).mockResolvedValue({
+      data: { strip: { picked_up: { share: null } } },
+    } as never)
+    renderHome()
+    expect(await screen.findByText('Board clear.')).toBeInTheDocument()
+    expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
+  })
+
+  it('omits the pickup line when the triage read fails', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [item()] } } as never)
+    vi.mocked(triageApi.get).mockRejectedValue(new Error('triage down'))
+    renderHome()
+    expect(await screen.findByText('1 decision waits on you. Everything else is running.')).toBeInTheDocument()
+    expect(screen.queryByText(/picked up automatically today/)).not.toBeInTheDocument()
   })
 
   it('says the board is clear when nothing is waiting', async () => {

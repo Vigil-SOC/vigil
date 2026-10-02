@@ -24,6 +24,7 @@ export interface NavGate {
 /** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
  *  made it vanish confusingly. */
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
+  ['home', 'Home', 'home'],
   ['graph', 'Overview', 'overview'],
   ['clock', 'Triage', 'triage'],
   ['grid', 'Dashboard', 'dashboard'],

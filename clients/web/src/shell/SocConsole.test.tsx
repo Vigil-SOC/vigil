@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, beforeAll, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
@@ -15,12 +15,25 @@ vi.mock('../contexts/AuthContext', () => ({
 }))
 
 // The theme provider bridges ColorSchemeContext, so it needs a real one above it.
+function ConsoleAt() {
+  const location = useLocation()
+  return (
+    <>
+      <div data-testid="console-location" data-path={location.pathname} data-search={location.search} />
+      <SocConsole />
+    </>
+  )
+}
+
 function renderConsole(path = '/dashboard') {
   return render(
     <ColorSchemeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/:screen" element={<SocConsole />} />
+          <Route path="/">
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path=":screen" element={<ConsoleAt />} />
+          </Route>
         </Routes>
       </MemoryRouter>
     </ColorSchemeProvider>,
@@ -169,6 +182,7 @@ vi.mock('../services/api', () => ({
   },
   approvalsApi: {
     listPending: vi.fn(() => Promise.resolve({ data: { actions: [] } })),
+    needsYou: vi.fn(() => Promise.resolve({ data: { count: 0, items: [] } })),
     approve: vi.fn(() => Promise.resolve({})),
     reject: vi.fn(() => Promise.resolve({})),
   },
@@ -181,6 +195,9 @@ vi.mock('../services/api', () => ({
       data: { auto_response_enabled: true, force_manual_approval: false },
     })),
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
+    getSetupSteps: vi.fn(() => Promise.resolve({
+      data: { steps: [], alerts_exist: 1, demo_enabled: false },
+    })),
   },
   orchestratorApi: {
     getStatus: () => Promise.resolve({ data: { enabled: false } }),
@@ -283,6 +300,7 @@ afterEach(() => {
     data: { auto_response_enabled: true, force_manual_approval: false },
   } as never)
   vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
+  vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
 })
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
@@ -303,6 +321,42 @@ describe('SocConsole', () => {
     renderConsole()
     expect(title()).toBe('Dashboard')
     expect(screen.getByText('Security operations overview')).toBeInTheDocument()
+  })
+
+  it('puts Home first on the primary nav and still opens Dashboard at /', async () => {
+    renderConsole('/')
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Dashboard')
+    const nav = screen.getByRole('navigation', { name: 'Primary' })
+    const names = within(nav).getAllByRole('button').map((button) => button.getAttribute('aria-label'))
+    expect(names.slice(0, 4)).toEqual(['Home', 'Cases', 'Agents & workflows', 'Settings'])
+    expect(screen.getByRole('button', { name: 'Home' }).querySelector('.vg-nav-count')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cases' }).querySelector('.vg-nav-count')).toBeNull()
+  })
+
+  it('paints the needs-you count on Home and Cases without opening the approvals tab', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 120, items: [] } } as never)
+    vi.mocked(approvalsApi.listPending).mockResolvedValue({
+      data: {
+        actions: [
+          { action_id: 'a', action_type: 'isolate_host', title: 'isolate_host: host1', target: 'host1' },
+        ],
+      },
+    } as never)
+
+    renderConsole()
+
+    const cases = await screen.findByRole('button', { name: 'Cases (120 waiting)' })
+    expect(cases.querySelector('.vg-nav-count')).toHaveTextContent('99+')
+    expect(screen.getByRole('button', { name: 'Home (120 waiting)' }).querySelector('.vg-nav-count')).toHaveTextContent('99+')
+    fireEvent.click(cases)
+    expect(title()).toBe('Cases')
+    expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '')
+
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'AI Decisions (1 waiting)' }))
+    expect(await screen.findByRole('tab', { name: 'Pending Approvals (1)' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '?tab=approvals')
+    vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   })
 
   it('shows one demo banner only while demo mode is on', async () => {

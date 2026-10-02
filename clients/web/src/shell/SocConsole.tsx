@@ -4,7 +4,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
+import { approvalsApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
@@ -45,7 +45,7 @@ import {
   type StatusFold,
 } from './statusLine'
 
-const PRIMARY_KEYS = ['cases', 'workflows', 'settings']
+const PRIMARY_KEYS = ['home', 'cases', 'workflows', 'settings']
 const MORE_KEYS = ['overview', 'triage', 'dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
 const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
@@ -164,6 +164,8 @@ function SocConsoleInner() {
   // the rail is the only thing on screen from every other view; without this
   // badge a parked run sat in a tab nobody opened
   const parked = usePendingApprovals().actions.length
+  // needs-you is uncapped; the decisions badge stays on the pending list
+  const [needsYou, setNeedsYou] = useState(0)
   const canReadRoutability = hasPermission('settings.write')
 
   const openChat = useCallback((prompt?: string) => {
@@ -201,6 +203,26 @@ function SocConsoleInner() {
     setViewFull(false)
     setWallMode(false)
   }, [current])
+
+  useEffect(() => {
+    let live = true
+    const pollNeedsYou = () => {
+      approvalsApi
+        .needsYou()
+        .then((res) => {
+          if (live) setNeedsYou(res.data.count)
+        })
+        .catch(() => {
+          /* keep the previous count */
+        })
+    }
+    pollNeedsYou()
+    const id = setInterval(pollNeedsYou, 20_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [])
 
   useEffect(() => {
     const pollStatus = () =>
@@ -310,7 +332,7 @@ function SocConsoleInner() {
     const [icon, rawLabel, key] = item
     if (!key) return null
     const label = key === 'workflows' ? 'Agents & workflows' : rawLabel
-    const waiting = key === 'decisions' ? parked : 0
+    const count = key === 'decisions' ? parked : key === 'home' || key === 'cases' ? needsYou : 0
     const active = valid && key === current
     return (
       <button
@@ -318,15 +340,15 @@ function SocConsoleInner() {
         type="button"
         className={`vg-nav-btn${active ? ' active' : ''}`}
         aria-current={active ? 'page' : undefined}
-        aria-label={waiting ? `${label} (${waiting} waiting)` : label}
+        aria-label={count ? `${label} (${count} waiting)` : label}
         onClick={() => {
           setMoreOpen(false)
-          go(key, waiting ? { search: '?tab=approvals' } : undefined)
+          go(key, key === 'decisions' && parked > 0 ? { search: '?tab=approvals' } : undefined)
         }}
       >
         <Icon name={icon} size={16} />
         <span>{label}</span>
-        {waiting > 0 && <span className="vg-nav-count">{waiting > 99 ? '99+' : waiting}</span>}
+        {count > 0 && <span className="vg-nav-count">{count > 99 ? '99+' : count}</span>}
       </button>
     )
   }

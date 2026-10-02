@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -199,6 +199,7 @@ function DecisionCard({
 export default function HomeScreen(_props: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [count, setCount] = useState<number | null>(null)
+  const [share, setShare] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -212,16 +213,27 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
 
   const load = useCallback(async () => {
     const ticket = ++loadTicket.current
-    try {
-      const res = await approvalsApi.needsYou()
-      if (ticket !== loadTicket.current) return
-      setItems(res.data.items)
-      setCount(res.data.count)
-      setError(null)
-    } catch (err) {
-      if (ticket !== loadTicket.current) return
-      setError(errorText(err, 'Could not load what needs you'))
+    const needs = approvalsApi.needsYou().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
+    const shareRead = triageApi.get().then(
+      (res) => {
+        const value = res.data.strip.picked_up.share
+        return typeof value === 'number' ? value : null
+      },
+      () => null,
+    )
+    const [needsResult, shareValue] = await Promise.all([needs, shareRead])
+    if (ticket !== loadTicket.current) return
+    setShare(shareValue)
+    if (!needsResult.ok) {
+      setError(errorText(needsResult.err, 'Could not load what needs you'))
+      return
     }
+    setItems(needsResult.data.items)
+    setCount(needsResult.data.count)
+    setError(null)
   }, [])
 
   useEffect(() => {
@@ -290,6 +302,9 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
   return (
     <div className="home-screen">
       {count !== null && <p className="home-headline">{headline(count)}</p>}
+      {share !== null && (
+        <p className="home-share">{(share * 100).toFixed(1)}% of alerts picked up automatically today</p>
+      )}
       {error && (
         <p className="section" role="alert">
           {error}
