@@ -12,6 +12,8 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -151,7 +153,9 @@ def _count(value: object, *, minimum: int) -> int | None:
     return value
 
 
-def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
+@contextmanager
+def prepared_destination(dest: Destination) -> Iterator[Path]:
+    """Check the mount, then yield a temp file holding the passphrase."""
     if dest.must_be_mount and not os.path.ismount(dest.repo):
         raise BackupError(f"{dest.repo} is not a mount")
     passphrase = get_secret(dest.passphrase_secret)
@@ -163,6 +167,13 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
         os.chmod(path, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(passphrase)
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
+    with prepared_destination(dest) as path:
         if not _is_due(dest, path):
             logger.debug("destination %s is not due", dest.name)
             return
@@ -175,8 +186,6 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
         )
         _forget(dest, path)
         _write_status(dest.name, snapshot_id)
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def _is_due(dest: Destination, passphrase: Path) -> bool:

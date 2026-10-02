@@ -143,6 +143,8 @@ services:
       # postgres-only depends_on would not.
       backend:
         condition: service_started
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: "no"
     networks:
       - deeptempo-network
@@ -223,6 +225,8 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
@@ -235,7 +239,7 @@ services:
   # unless-stopped. `start.sh backup` runs this service once, overrides the
   # command with a one-shot create, and overrides the state/workdir/repo
   # mounts for the host.
-  backup:
+  backup: &backup
     image: vigil-backend:local
     build: *backend-build
     environment:
@@ -265,9 +269,31 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - deeptempo-network
+
+  # Runs once per `up`, before anything that provisions the schema (backend,
+  # soc-daemon, llm-worker, db-seed, backup all wait on it). Takes a snapshot of
+  # the default destination only when the database's stamped major.minor differs
+  # from this image's; otherwise it exits 0 at once. Same definition as `backup`,
+  # so depends_on, entrypoint and restart are restated: the merged-in depends_on
+  # would make it wait on itself.
+  backup-pre-upgrade:
+    <<: *backup
+    entrypoint:
+      - python
+      - -m
+      - core.backup
+      - pre-upgrade
+      - --bifrost-data
+      - /var/lib/vigil/bifrost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   # ─── Daemon layer (--profile daemon) ──────────────────────────────────────
   # Default `up` is the investigation set: postgres, db-seed, redis, bifrost,
@@ -383,6 +409,8 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
@@ -434,6 +462,8 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
