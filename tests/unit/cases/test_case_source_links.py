@@ -30,8 +30,7 @@ def _descriptor(source: str):
     return _DESCRIPTOR if source == "tr-link-src" else None
 
 
-@pytest.mark.asyncio
-async def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
+def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
     from core.api.v1 import cases_router as cases
 
     rows = [
@@ -100,7 +99,7 @@ async def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch
     session = MagicMock()
     session.get.return_value = None
 
-    result = await cases.get_case("c1", session)
+    result = cases.get_case("c1", session)
     parsed = CaseDetailResponse.model_validate(result).model_dump()
 
     assert parsed["finding_ids"] == ["f-http", "missing", "f-tpl", "f-tpl-2", "f-empty"]

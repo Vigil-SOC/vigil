@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 pytestmark = pytest.mark.unit
 
@@ -42,8 +42,7 @@ def _patch_data_service(monkeypatch, *, case, update=None):
     return cases, captured
 
 
-@pytest.mark.asyncio
-async def test_patch_appends_a_note_entry(monkeypatch):
+def test_patch_appends_a_note_entry(monkeypatch):
     from core.api.v1.cases_router import CaseUpdate
 
     existing = {
@@ -52,8 +51,8 @@ async def test_patch_appends_a_note_entry(monkeypatch):
     }
     cases, captured = _patch_data_service(monkeypatch, case=existing)
 
-    result = await cases.update_case(
-        "c1", CaseUpdate(notes="analyst comment"), SESSION, ANALYST
+    result = cases.update_case(
+        "c1", CaseUpdate(notes="analyst comment"), SESSION, BackgroundTasks(), ANALYST
     )
 
     assert result == {"success": True}
@@ -64,31 +63,35 @@ async def test_patch_appends_a_note_entry(monkeypatch):
     assert set(notes[1]) == {"timestamp", "content"}
 
 
-@pytest.mark.asyncio
-async def test_patch_notes_starts_a_list_when_case_has_none(monkeypatch):
+def test_patch_notes_starts_a_list_when_case_has_none(monkeypatch):
     from core.api.v1.cases_router import CaseUpdate
 
     cases, captured = _patch_data_service(
         monkeypatch, case={"case_id": "c1", "notes": None}
     )
 
-    await cases.update_case("c1", CaseUpdate(notes="first"), SESSION, ANALYST)
+    cases.update_case(
+        "c1", CaseUpdate(notes="first"), SESSION, BackgroundTasks(), ANALYST
+    )
 
     notes = captured["updates"]["notes"]
     assert len(notes) == 1
     assert notes[0]["content"] == "first"
 
 
-@pytest.mark.asyncio
-async def test_patch_keeps_other_fields_when_appending_notes(monkeypatch):
+def test_patch_keeps_other_fields_when_appending_notes(monkeypatch):
     from core.api.v1.cases_router import CaseUpdate
 
     cases, captured = _patch_data_service(
         monkeypatch, case={"case_id": "c1", "notes": []}
     )
 
-    await cases.update_case(
-        "c1", CaseUpdate(title="retitled", notes="wrapped"), SESSION, ANALYST
+    cases.update_case(
+        "c1",
+        CaseUpdate(title="retitled", notes="wrapped"),
+        SESSION,
+        BackgroundTasks(),
+        ANALYST,
     )
 
     updates = captured["updates"]
@@ -97,8 +100,7 @@ async def test_patch_keeps_other_fields_when_appending_notes(monkeypatch):
     assert updates["notes"][0]["content"] == "wrapped"
 
 
-@pytest.mark.asyncio
-async def test_patch_notes_404_when_case_missing(monkeypatch):
+def test_patch_notes_404_when_case_missing(monkeypatch):
     from core.api.v1 import cases_router as cases
     from core.api.v1.cases_router import CaseUpdate
 
@@ -106,7 +108,9 @@ async def test_patch_notes_404_when_case_missing(monkeypatch):
     monkeypatch.setattr(cases.data_service, "update_case", MagicMock())
 
     with pytest.raises(HTTPException) as exc:
-        await cases.update_case("missing", CaseUpdate(notes="nope"), SESSION, ANALYST)
+        cases.update_case(
+            "missing", CaseUpdate(notes="nope"), SESSION, BackgroundTasks(), ANALYST
+        )
 
     assert exc.value.status_code == 404
     cases.data_service.update_case.assert_not_called()

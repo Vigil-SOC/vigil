@@ -24,8 +24,7 @@ class _Rows:
         return default
 
 
-@pytest.mark.asyncio
-async def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
+def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeypatch):
     rows = _Rows({"enabled": True})
     monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: rows)
     base = DaemonConfig()
@@ -36,7 +35,7 @@ async def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeyp
         "services.api.routers.config.DaemonConfig.from_env", lambda: base
     )
 
-    forced = await get_autonomy_config()
+    forced = get_autonomy_config()
     assert forced.auto_response_enabled is True
     assert forced.force_manual_approval is True
     # the overlay returns a copy; the env value itself stays put
@@ -46,7 +45,7 @@ async def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeyp
         auto_response_enabled=False, force_manual_approval=False
     )
     rows.row = None
-    plain = await get_autonomy_config()
+    plain = get_autonomy_config()
     assert plain.auto_response_enabled is False
     assert plain.force_manual_approval is False
 
@@ -54,8 +53,7 @@ async def test_autonomy_config_reads_both_flags_and_the_db_force_overlay(monkeyp
     assert "force_manual_approval" not in OrchestratorSettingsConfig.model_fields
 
 
-@pytest.mark.asyncio
-async def test_disabled_db_row_does_not_force_manual(monkeypatch):
+def test_disabled_db_row_does_not_force_manual(monkeypatch):
     rows = _Rows({"enabled": False})
     monkeypatch.setattr("services.daemon.intent.get_config_service", lambda: rows)
     base = DaemonConfig()
@@ -63,6 +61,6 @@ async def test_disabled_db_row_does_not_force_manual(monkeypatch):
         "services.api.routers.config.DaemonConfig.from_env", lambda: base
     )
 
-    result = await get_autonomy_config()
+    result = get_autonomy_config()
     assert result.auto_response_enabled is True
     assert result.force_manual_approval is False

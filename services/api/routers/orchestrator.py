@@ -74,7 +74,7 @@ class InvestigationCreateRequest(BaseModel):
 
 
 @router.get("/status")
-async def get_orchestrator_status():
+def get_orchestrator_status():
     """Get orchestrator status: enabled state, active agents, stats, cost."""
     try:
         orch = _get_orchestrator()
@@ -172,7 +172,7 @@ def _persist_orchestrator_enabled(enabled: bool, user_id: str) -> None:
 
 
 @router.post("/enable")
-async def enable_orchestrator(
+def enable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
     """Enable the orchestrator at runtime."""
@@ -187,7 +187,7 @@ async def enable_orchestrator(
 
 
 @router.post("/disable")
-async def disable_orchestrator(
+def disable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
     """Gracefully disable the orchestrator. Running agents finish their current step."""
@@ -246,7 +246,7 @@ async def purge_investigations():
 
 
 @router.get("/investigations")
-async def list_investigations(status: Optional[str] = Query(None)):
+def list_investigations(status: Optional[str] = Query(None)):
     """List all investigations with optional status filter."""
     try:
         orch = _get_orchestrator()
@@ -267,7 +267,7 @@ _INTAKE_LIST_MAX = 1000
 
 
 @router.get("/intake")
-async def list_intake_triggers(
+def list_intake_triggers(
     state: Optional[str] = Query(None),
     limit: int = Query(_INTAKE_LIST_DEFAULT, ge=1, le=_INTAKE_LIST_MAX),
 ):
@@ -292,7 +292,7 @@ async def list_intake_triggers(
 
 
 @router.get("/investigations/{investigation_id}")
-async def get_investigation(investigation_id: str):
+def get_investigation(investigation_id: str):
     """Get detailed information about a specific investigation."""
     try:
         orch = _get_orchestrator()
@@ -324,7 +324,7 @@ async def get_investigation(investigation_id: str):
 
 
 @router.get("/investigations/{investigation_id}/files/{filename:path}")
-async def get_investigation_file(investigation_id: str, filename: str):
+def get_investigation_file(investigation_id: str, filename: str):
     """Read a file from an investigation's working directory."""
     try:
         orch = _get_orchestrator()
@@ -352,7 +352,7 @@ async def get_investigation_file(investigation_id: str, filename: str):
 
 
 @router.post("/investigations/{investigation_id}/wake")
-async def wake_investigation(investigation_id: str):
+def wake_investigation(investigation_id: str):
     """Wake a sleeping investigation for further work."""
     try:
         orch = _get_orchestrator()
@@ -389,7 +389,7 @@ async def wake_investigation(investigation_id: str):
 
 
 @router.post("/investigations/{investigation_id}/kill")
-async def kill_investigation(investigation_id: str):
+def kill_investigation(investigation_id: str):
     """Kill a specific running investigation."""
     try:
         orch = _get_orchestrator()
@@ -420,7 +420,7 @@ class ReviewRequest(BaseModel):
 
 
 @router.post("/investigations/{investigation_id}/review")
-async def review_investigation(investigation_id: str, request: ReviewRequest):
+def review_investigation(investigation_id: str, request: ReviewRequest):
     """Human review of an investigation: approve or request rework."""
     if request.action not in ("approve", "rework"):
         raise HTTPException(
@@ -484,7 +484,7 @@ async def review_investigation(investigation_id: str, request: ReviewRequest):
 
 
 @router.post("/investigations")
-async def create_investigation(request: InvestigationCreateRequest):
+def create_investigation(request: InvestigationCreateRequest):
     """Manually create a new investigation."""
     try:
         from services.daemon.orchestrator import insert_intake_trigger
@@ -522,7 +522,7 @@ class ScanFindingsRequest(BaseModel):
 
 
 @router.post("/scan-findings")
-async def scan_existing_findings(request: ScanFindingsRequest):
+def scan_existing_findings(request: ScanFindingsRequest):
     """Insert detection trigger rows for matching findings not already investigated.
 
     A scan is a rerun of Gate 1 by hand, not a Human Ask, so the row merges
@@ -599,7 +599,7 @@ async def scan_existing_findings(request: ScanFindingsRequest):
 
 
 @router.get("/cost")
-async def get_cost_summary():
+def get_cost_summary():
     """Get cost breakdown across all investigations."""
     try:
         orch = _get_orchestrator()
@@ -715,7 +715,7 @@ def _assemble_chain_of_custody(investigation_id: str) -> Dict[str, Any]:
 
 
 @router.get("/investigations/{investigation_id}/chain-of-custody")
-async def get_chain_of_custody(investigation_id: str):
+def get_chain_of_custody(investigation_id: str):
     """Return a unified audit document for an investigation.
 
     Includes investigation metadata, chronological InvestigationLog rows,
@@ -731,7 +731,7 @@ async def get_chain_of_custody(investigation_id: str):
 
 
 @router.get("/investigations/{investigation_id}/export")
-async def export_investigation(investigation_id: str):
+def export_investigation(investigation_id: str):
     """Export the complete chain-of-custody package as a downloadable JSON file."""
     try:
         payload = _assemble_chain_of_custody(investigation_id)

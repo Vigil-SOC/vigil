@@ -83,7 +83,7 @@ metrics_service = CaseMetricsService()
 
 
 @router.get("/dashboard", **_BETA)
-async def get_dashboard(
+def get_dashboard(
     start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
 ):
     """
@@ -101,7 +101,7 @@ async def get_dashboard(
 
 
 @router.get("/sla-compliance", **_BETA)
-async def get_sla_compliance(
+def get_sla_compliance(
     start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
 ):
     """
@@ -120,7 +120,7 @@ async def get_sla_compliance(
 
 
 @router.get("/analyst/{analyst_id}", **_BETA)
-async def get_analyst_performance(
+def get_analyst_performance(
     analyst_id: str,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
@@ -141,7 +141,7 @@ async def get_analyst_performance(
 
 
 @router.get("/mttr", response_model=MttrResponse)
-async def get_mttr(
+def get_mttr(
     session: UnitOfWorkSession,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
@@ -234,7 +234,7 @@ async def get_mttr(
 
 
 @router.get("/velocity", **_BETA)
-async def get_velocity(days: int = 30):
+def get_velocity(days: int = 30):
     """
     Get case velocity (opened vs closed).
 
@@ -249,7 +249,7 @@ async def get_velocity(days: int = 30):
 
 
 @router.post("/calculate/{case_id}", **_BETA)
-async def calculate_case_metrics(case_id: str):
+def calculate_case_metrics(case_id: str):
     """
     Calculate/update metrics for a case.
 
@@ -266,7 +266,7 @@ async def calculate_case_metrics(case_id: str):
 
 
 @router.get("/breached", response_model=BreachedCasesResponse)
-async def get_breached_cases():
+def get_breached_cases():
     """
     Get all cases with SLA breaches.
 
@@ -279,7 +279,7 @@ async def get_breached_cases():
 
 
 @router.get("/summary", response_model=CaseMetricsSummaryResponse)
-async def get_summary(
+def get_summary(
     start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
 ):
     """
@@ -304,7 +304,7 @@ async def get_summary(
 
 
 @router.get("/mttd", response_model=MttdResponse)
-async def get_mttd(
+def get_mttd(
     session: UnitOfWorkSession,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
@@ -370,7 +370,7 @@ async def get_mttd(
 
 
 @router.get("/by-priority", response_model=ByPriorityResponse)
-async def get_by_priority(
+def get_by_priority(
     session: UnitOfWorkSession,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
@@ -421,7 +421,7 @@ async def get_by_priority(
 
 
 @router.get("/by-status", response_model=ByStatusResponse)
-async def get_by_status(
+def get_by_status(
     session: UnitOfWorkSession,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
@@ -462,7 +462,7 @@ async def get_by_status(
 
 
 @router.get("/analyst-performance", **_BETA)
-async def get_all_analyst_performance(
+def get_all_analyst_performance(
     session: UnitOfWorkSession,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,

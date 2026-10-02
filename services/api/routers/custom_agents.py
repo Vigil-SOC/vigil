@@ -121,13 +121,13 @@ def _with_effective_prompt(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/agents/custom")
-async def list_custom_agents() -> Dict[str, Any]:
+def list_custom_agents() -> Dict[str, Any]:
     agents = service.list_agents()
     return {"agents": agents}
 
 
 @router.get("/agents/custom/_meta/tools")
-async def list_available_tools(
+def list_available_tools(
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> Dict[str, Any]:
     """Return MCP tool names grouped by server prefix for the UI multiselect.
@@ -213,7 +213,7 @@ async def generate_custom_agent(
 
 
 @router.get("/agents/custom/{agent_id}")
-async def get_custom_agent(agent_id: str) -> Dict[str, Any]:
+def get_custom_agent(agent_id: str) -> Dict[str, Any]:
     row = service.get_agent(agent_id)
     if not row:
         raise HTTPException(
@@ -223,7 +223,7 @@ async def get_custom_agent(agent_id: str) -> Dict[str, Any]:
 
 
 @router.post("/agents/{source_agent_id}/fork", status_code=201)
-async def fork_agent(
+def fork_agent(
     source_agent_id: str,
     request: Optional[ForkAgentRequest] = None,
     current_user: User = Depends(get_current_active_user),
@@ -261,7 +261,7 @@ async def fork_agent(
 
 
 @router.post("/agents/custom", status_code=201)
-async def create_custom_agent(
+def create_custom_agent(
     request: CustomAgentCreate,
     current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
@@ -284,7 +284,7 @@ async def create_custom_agent(
 
 
 @router.patch("/agents/custom/{agent_id}")
-async def update_custom_agent(
+def update_custom_agent(
     agent_id: str,
     request: CustomAgentUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -313,7 +313,7 @@ async def update_custom_agent(
 
 
 @router.delete("/agents/custom/{agent_id}", status_code=204)
-async def delete_custom_agent(
+def delete_custom_agent(
     agent_id: str,
     current_user: User = Depends(get_current_active_user),
 ):

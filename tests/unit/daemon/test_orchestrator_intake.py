@@ -205,8 +205,7 @@ async def test_failed_attach_does_not_count_dedup():
     assert orch.stats["dedup_prevented"] == 0
 
 
-@pytest.mark.asyncio
-async def test_failed_attach_on_resolve_is_not_launchable():
+def test_failed_attach_on_resolve_is_not_launchable():
     orch = _orchestrator()
     orch.shared_intel.check_overlap.return_value = ["inv-1"]
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
@@ -234,8 +233,7 @@ async def test_overlap_with_caseless_run_is_not_a_merge():
     assert orch.stats["dedup_prevented"] == 0
 
 
-@pytest.mark.asyncio
-async def test_caseless_overlap_on_resolve_stays_launchable():
+def test_caseless_overlap_on_resolve_stays_launchable():
     orch = _orchestrator()
     orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.LAUNCH, None))
@@ -327,7 +325,7 @@ async def test_post_investigations_inserts_a_human_ask_the_tick_launches(
         lambda **kwargs: captured.append(kwargs) or 1,
     )
 
-    result = await create_investigation(
+    result = create_investigation(
         InvestigationCreateRequest(
             workflow_id="threat-hunt",
             hypothesis="T1071 on FYODOR-L",
@@ -442,8 +440,7 @@ def _scan_session(investigations, findings):
     return Session()
 
 
-@pytest.mark.asyncio
-async def test_scan_findings_inserts_detection_rows(monkeypatch):
+def test_scan_findings_inserts_detection_rows(monkeypatch):
     from types import SimpleNamespace
 
     from services.api.routers.orchestrator import (
@@ -465,7 +462,7 @@ async def test_scan_findings_inserts_detection_rows(monkeypatch):
     db.session_scope.return_value = _scan_session([inv], [finding_new, finding_done])
     monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
 
-    result = await scan_existing_findings(
+    result = scan_existing_findings(
         ScanFindingsRequest(severities=["critical", "high"])
     )
 
@@ -481,8 +478,7 @@ async def test_scan_findings_inserts_detection_rows(monkeypatch):
     ]
 
 
-@pytest.mark.asyncio
-async def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
+def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
     from types import SimpleNamespace
 
     from services.api.routers.orchestrator import (
@@ -503,8 +499,8 @@ async def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
     db.session_scope.return_value = _scan_session([], [finding])
     monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
 
-    first = await scan_existing_findings(ScanFindingsRequest())
-    second = await scan_existing_findings(ScanFindingsRequest())
+    first = scan_existing_findings(ScanFindingsRequest())
+    second = scan_existing_findings(ScanFindingsRequest())
 
     assert first["queued"] == 1
     assert second["queued"] == 0
@@ -513,8 +509,7 @@ async def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
     assert all(call["finding_id"] == "f-new" for call in captured)
 
 
-@pytest.mark.asyncio
-async def test_scan_row_merges_into_live_case():
+def test_scan_row_merges_into_live_case():
     orch = _orchestrator()
     orch.shared_intel.check_overlap.return_value = ["inv-1"]
     orch._hydrate_detection_finding = MagicMock(return_value=HIGH)

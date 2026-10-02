@@ -51,7 +51,7 @@ class SLAPolicyUpdate(BaseModel):
 
 
 @router.get("/")
-async def list_sla_policies(
+def list_sla_policies(
     session: UnitOfWorkSession,
     active_only: bool = False,
     priority_level: Optional[str] = None,
@@ -85,7 +85,7 @@ async def list_sla_policies(
 
 
 @router.get("/{policy_id}")
-async def get_sla_policy(policy_id: str, session: UnitOfWorkSession):
+def get_sla_policy(policy_id: str, session: UnitOfWorkSession):
     """
     Get a specific SLA policy by ID.
 
@@ -104,7 +104,7 @@ async def get_sla_policy(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.post("/")
-async def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
+def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
     """
     Create a new SLA policy.
 
@@ -180,7 +180,7 @@ async def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
 
 
 @router.put("/{policy_id}")
-async def update_sla_policy(
+def update_sla_policy(
     policy_id: str,
     data: SLAPolicyUpdate,
     session: UnitOfWorkSession,
@@ -283,7 +283,7 @@ def _still_referenced(policy_id: str, count: int | None = None) -> str:
 
 
 @router.delete("/{policy_id}")
-async def delete_sla_policy(
+def delete_sla_policy(
     policy_id: str,
     session: UnitOfWorkSession,
 ):
@@ -328,7 +328,7 @@ async def delete_sla_policy(
 
 
 @router.post("/{policy_id}/set-default")
-async def set_default_policy(policy_id: str, session: UnitOfWorkSession):
+def set_default_policy(policy_id: str, session: UnitOfWorkSession):
     """
     Set a policy as the default for its priority level.
 
@@ -362,7 +362,7 @@ async def set_default_policy(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.get("/{policy_id}/usage")
-async def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
+def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
     """
     Get usage statistics for an SLA policy.
 
@@ -418,7 +418,7 @@ async def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.get("/{policy_id}/cases")
-async def get_policy_cases(
+def get_policy_cases(
     policy_id: str,
     session: UnitOfWorkSession,
     status: Optional[str] = None,

@@ -44,14 +44,13 @@ def db():
         ).delete(synchronize_session=False)
 
 
-@pytest.mark.asyncio
-async def test_mixed_session_sums_priced_rows_only(db):
+def test_mixed_session_sums_priced_rows_only(db):
     session_id = f"sess-mixed-{uuid.uuid4().hex[:8]}"
     db.extend(
         _insert(session_id, [("triage", 0.42), ("free", 0.0), ("hunter", None)])
     )
 
-    out = await get_session_summary(session_id)
+    out = get_session_summary(session_id)
 
     assert out["total_cost_usd"] == pytest.approx(0.42)
     assert out["unpriced_calls"] == 1
@@ -64,12 +63,11 @@ async def test_mixed_session_sums_priced_rows_only(db):
     assert out["agents"]["hunter"]["unpriced_calls"] == 1
 
 
-@pytest.mark.asyncio
-async def test_all_unpriced_session_cost_is_null(db):
+def test_all_unpriced_session_cost_is_null(db):
     session_id = f"sess-none-{uuid.uuid4().hex[:8]}"
     db.extend(_insert(session_id, [("triage", None)]))
 
-    out = await get_session_summary(session_id)
+    out = get_session_summary(session_id)
 
     assert out["total_cost_usd"] is None
     assert out["unpriced_calls"] == 1
@@ -77,9 +75,8 @@ async def test_all_unpriced_session_cost_is_null(db):
     assert out["agents"]["triage"]["unpriced_calls"] == 1
 
 
-@pytest.mark.asyncio
-async def test_empty_session_stays_zero(db):
-    out = await get_session_summary(f"sess-empty-{uuid.uuid4().hex[:8]}")
+def test_empty_session_stays_zero(db):
+    out = get_session_summary(f"sess-empty-{uuid.uuid4().hex[:8]}")
 
     assert out["total_interactions"] == 0
     assert out["total_cost_usd"] == 0.0

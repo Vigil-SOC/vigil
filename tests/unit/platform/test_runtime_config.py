@@ -220,8 +220,7 @@ class TestAIOperationsSettingsModel:
         with pytest.raises(ValidationError):
             AIOperationsSettingsConfig(local_ollama_recovery_retry_limit=-1)
 
-    @pytest.mark.asyncio
-    async def test_get_omits_stale_stored_keys(self):
+    def test_get_omits_stale_stored_keys(self):
         from services.api.routers.config import (
             AI_OPERATIONS_DEFAULTS,
             get_ai_operations_config,
@@ -237,7 +236,7 @@ class TestAIOperationsSettingsModel:
             "tool_response_budget_default": 100,
         }
         with patch("services.api.routers.config.get_config_service", return_value=svc):
-            body = await get_ai_operations_config()
+            body = get_ai_operations_config()
         assert body["local_ollama_recovery_enabled"] is False
         assert body["local_ollama_recovery_retry_limit"] == 3
         assert body["local_ollama_recovery_restart_gateway"] is True

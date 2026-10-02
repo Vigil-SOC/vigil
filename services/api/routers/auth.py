@@ -4,6 +4,7 @@ Authentication API - User authentication endpoints.
 Handles login, logout, token refresh, password management, and MFA.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Annotated, List, Optional
@@ -180,6 +181,10 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     user.password_changed_at = utcnow()
 
 
+def _get_user(session: Session, user_id: str) -> Optional[User]:
+    return session.query(User).filter(User.user_id == user_id).first()
+
+
 def _has_any_user(session: Session) -> bool:
     return session.query(User.user_id).first() is not None
 
@@ -194,7 +199,7 @@ def _user_payload(user: User, session: Session) -> dict:
 
 
 @router.get("/bootstrap", response_model=BootstrapStatusResponse)
-async def bootstrap_status(session: UnitOfWorkSession):
+def bootstrap_status(session: UnitOfWorkSession):
     """Report whether this instance has no account yet.
 
     There is no self-service signup and creating a user needs users.write, so
@@ -206,7 +211,7 @@ async def bootstrap_status(session: UnitOfWorkSession):
 
 @router.post("/bootstrap", status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
-async def bootstrap_admin(
+def bootstrap_admin(
     request: Request,
     payload: BootstrapRequest,
     session: UnitOfWorkSession,
@@ -262,7 +267,7 @@ async def bootstrap_admin(
 
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute")
-async def login(
+def login(
     request: Request,
     response: Response,
     payload: LoginRequest,
@@ -471,8 +476,7 @@ async def refresh_token(
             detail="Refresh token has been revoked",
         )
 
-    # Get user
-    user = session.query(User).filter(User.user_id == payload["user_id"]).first()
+    user = await asyncio.to_thread(_get_user, session, payload["user_id"])
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -497,12 +501,12 @@ async def refresh_token(
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        user=_user_payload(user, session),
+        user=await asyncio.to_thread(_user_payload, user, session),
     )
 
 
 @router.get("/me")
-async def get_current_user_info(
+def get_current_user_info(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
@@ -517,6 +521,36 @@ async def get_current_user_info(
         User information with permissions
     """
     return _user_payload(current_user, session)
+
+
+def _apply_profile_update(
+    session: Session, user: User, full_name: Optional[str], email: Optional[str]
+) -> tuple[bool, dict]:
+    """Apply a profile edit; return whether the email changed and the new payload."""
+    email_changed = False
+    if full_name:
+        user.full_name = full_name
+
+    if email:
+        existing = (
+            session.query(User)
+            .filter(User.email == email, User.user_id != user.user_id)
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already in use",
+            )
+        user.email = email
+        user.is_verified = False
+        email_changed = True
+
+    # Flush so the read-back sees server defaults; the request's unit
+    # of work commits.
+    session.flush()
+    session.refresh(user)
+    return email_changed, UserSchema.dump(user)
 
 
 @router.put("/me")
@@ -540,32 +574,9 @@ async def update_current_user(
         Updated user information
     """
     try:
-        email_changed = False
-        if full_name:
-            current_user.full_name = full_name
-
-        if email:
-            # Check if email is already taken
-            existing = (
-                session.query(User)
-                .filter(User.email == email, User.user_id != current_user.user_id)
-                .first()
-            )
-
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already in use",
-                )
-
-            current_user.email = email
-            current_user.is_verified = False
-            email_changed = True
-
-        # Flush so the read-back sees server defaults; the request's unit
-        # of work commits.
-        session.flush()
-        session.refresh(current_user)
+        email_changed, payload = await asyncio.to_thread(
+            _apply_profile_update, session, current_user, full_name, email
+        )
 
         if email_changed:
             try:
@@ -578,7 +589,7 @@ async def update_current_user(
                 )
 
         logger.info(f"User profile updated: {current_user.username}")
-        return UserSchema.dump(current_user)
+        return payload
 
     except HTTPException:
         raise
@@ -611,9 +622,9 @@ async def change_password(
     Returns:
         Success message
     """
-    # Verify current password
-    if not AuthService.verify_password(
-        body.current_password, current_user.password_hash
+    # bcrypt and the strength check are CPU-bound; only the Redis revoke awaits.
+    if not await asyncio.to_thread(
+        AuthService.verify_password, body.current_password, current_user.password_hash
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -623,7 +634,8 @@ async def change_password(
     # Validate new password against the strength policy. Penalize passwords
     # built from the account's own identifiers.
     try:
-        validate_password_strength(
+        await asyncio.to_thread(
+            validate_password_strength,
             body.new_password,
             user_inputs=[current_user.username, current_user.email],
         )
@@ -635,7 +647,7 @@ async def change_password(
 
     try:
         # Enforce no-reuse + hash + history rotation
-        _apply_new_password(current_user, body.new_password)
+        await asyncio.to_thread(_apply_new_password, current_user, body.new_password)
 
         # Invalidate every outstanding token for this user. The current
         # session is effectively logged out; the client should re-login.
@@ -662,7 +674,7 @@ async def change_password(
 
 
 @router.post("/mfa/setup", response_model=MFASetupResponse)
-async def setup_mfa(
+def setup_mfa(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
@@ -696,8 +708,10 @@ async def setup_mfa(
 
 
 @router.post("/mfa/verify", response_model=RecoveryCodesResponse)
-async def verify_mfa(
-    request: MFAVerifyRequest,
+@limiter.limit("5/minute")
+def verify_mfa(
+    request: Request,
+    body: MFAVerifyRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
@@ -705,14 +719,15 @@ async def verify_mfa(
     Verify the first TOTP code and enable MFA.
 
     Args:
-        request: MFA code
+        request: FastAPI request (used by the rate limiter).
+        body: MFA code
         current_user: Current authenticated user
         session: Database session
 
     Returns:
         Success message and one-time recovery codes (shown only once).
     """
-    codes = AuthService.enable_mfa(current_user.user_id, request.code, session)
+    codes = AuthService.enable_mfa(current_user.user_id, body.code, session)
 
     if codes is None:
         raise HTTPException(
@@ -725,7 +740,9 @@ async def verify_mfa(
 
 
 @router.post("/mfa/recovery-codes", response_model=RecoveryCodesResponse)
-async def regenerate_recovery_codes(
+@limiter.limit("5/minute")
+def regenerate_recovery_codes(
+    request: Request,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
@@ -747,7 +764,7 @@ async def regenerate_recovery_codes(
 
 
 @router.delete("/mfa")
-async def disable_mfa(
+def disable_mfa(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: UnitOfWorkSession,
 ):
@@ -783,7 +800,7 @@ async def disable_mfa(
 
 @router.post("/password-reset/request")
 @limiter.limit("3/hour")
-async def password_reset_request(
+def password_reset_request(
     request: Request,
     body: PasswordResetRequest,
     session: UnitOfWorkSession,
@@ -852,7 +869,7 @@ async def password_reset_confirm(
             detail="Invalid or expired reset token",
         )
 
-    user = session.query(User).filter(User.user_id == user_id).first()
+    user = await asyncio.to_thread(_get_user, session, user_id)
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -860,7 +877,8 @@ async def password_reset_confirm(
         )
 
     try:
-        validate_password_strength(
+        await asyncio.to_thread(
+            validate_password_strength,
             body.new_password,
             user_inputs=[user.username, user.email],
         )
@@ -871,7 +889,7 @@ async def password_reset_confirm(
         )
 
     try:
-        _apply_new_password(user, body.new_password)
+        await asyncio.to_thread(_apply_new_password, user, body.new_password)
         # Clear any active lockout so the user can immediately log in.
         user.failed_login_count = 0
         user.locked_until = None

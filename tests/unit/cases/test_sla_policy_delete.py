@@ -55,61 +55,56 @@ def _session(*, in_use: int, flush_raises: bool = False) -> MagicMock:
     return session
 
 
-@pytest.mark.asyncio
-async def test_an_unused_policy_is_deleted():
+def test_an_unused_policy_is_deleted():
     from core.cases import sla_policies_router as router
 
     session = _session(in_use=0)
 
-    result = await router.delete_sla_policy(POLICY_ID, session=session)
+    result = router.delete_sla_policy(POLICY_ID, session=session)
 
     assert result["success"] is True
     session.delete.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_a_missing_policy_is_a_404():
+def test_a_missing_policy_is_a_404():
     from core.cases import sla_policies_router as router
 
     session = MagicMock()
     session.query.return_value.filter.return_value.first.return_value = None
 
     with pytest.raises(HTTPException) as exc:
-        await router.delete_sla_policy(POLICY_ID, session=session)
+        router.delete_sla_policy(POLICY_ID, session=session)
 
     assert exc.value.status_code == 404
 
 
-@pytest.mark.asyncio
-async def test_a_policy_in_use_is_refused_and_says_how_many():
+def test_a_policy_in_use_is_refused_and_says_how_many():
     from core.cases import sla_policies_router as router
 
     session = _session(in_use=3)
 
     with pytest.raises(HTTPException) as exc:
-        await router.delete_sla_policy(POLICY_ID, session=session)
+        router.delete_sla_policy(POLICY_ID, session=session)
 
     assert exc.value.status_code == 409
     assert "3" in exc.value.detail
     session.delete.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_the_refusal_does_not_promise_an_escape_that_cannot_work():
+def test_the_refusal_does_not_promise_an_escape_that_cannot_work():
     """`force=true` could never delete a referenced policy; saying so was the bug."""
     from core.cases import sla_policies_router as router
 
     session = _session(in_use=3)
 
     with pytest.raises(HTTPException) as exc:
-        await router.delete_sla_policy(POLICY_ID, session=session)
+        router.delete_sla_policy(POLICY_ID, session=session)
 
     assert "force" not in exc.value.detail.lower()
     assert "deactivat" in exc.value.detail.lower()
 
 
-@pytest.mark.asyncio
-async def test_a_reference_that_arrived_after_the_count_is_still_an_answer():
+def test_a_reference_that_arrived_after_the_count_is_still_an_answer():
     """Counting and deleting are two statements, so a case_slas row can land
     between them: the policy reads as unused and is referenced by the time this
     commits. Flushing here makes the constraint speak while there is still
@@ -120,7 +115,7 @@ async def test_a_reference_that_arrived_after_the_count_is_still_an_answer():
     session = _session(in_use=0, flush_raises=True)
 
     with pytest.raises(HTTPException) as exc:
-        await router.delete_sla_policy(POLICY_ID, session=session)
+        router.delete_sla_policy(POLICY_ID, session=session)
 
     assert exc.value.status_code == 409
     assert "deactivat" in exc.value.detail.lower()

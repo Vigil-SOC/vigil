@@ -1,5 +1,6 @@
 """Detection Rules API endpoints for managing detection rule sources."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -35,7 +36,7 @@ class AddSourceRequest(BaseModel):
 
 
 @router.get("/sources")
-async def list_sources(
+def list_sources(
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -49,7 +50,7 @@ async def list_sources(
 
 
 @router.get("/sources/{source_id}")
-async def get_source(
+def get_source(
     source_id: str,
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
@@ -69,7 +70,7 @@ async def get_source(
 
 
 @router.post("/sources")
-async def add_source(
+def add_source(
     request: AddSourceRequest,
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
@@ -101,7 +102,7 @@ async def add_source(
 
 
 @router.delete("/sources/{source_id}")
-async def remove_source(
+def remove_source(
     source_id: str,
     delete_files: bool = False,
     service: DetectionRulesService = Depends(provide_detection_rules),
@@ -139,7 +140,8 @@ async def update_source(
         Updated source details
     """
     try:
-        source = service.update_source(source_id)
+        # git pull runs up to 120s; keep it off the event loop.
+        source = await asyncio.to_thread(service.update_source, source_id)
 
         # After updating, restart the security-detections MCP server to rebuild index
         await _restart_security_detections_mcp(mcp_client, service, registry)
@@ -164,7 +166,7 @@ async def update_all_sources(
     Returns:
         Results for each source update
     """
-    results = service.update_all()
+    results = await asyncio.to_thread(service.update_all)
 
     # After updating all, restart the security-detections MCP server
     await _restart_security_detections_mcp(mcp_client, service, registry)
@@ -173,7 +175,7 @@ async def update_all_sources(
 
 
 @router.get("/stats")
-async def get_stats(
+def get_stats(
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -187,7 +189,7 @@ async def get_stats(
 
 
 @router.get("/mcp-env")
-async def get_mcp_env(
+def get_mcp_env(
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -213,12 +215,12 @@ async def reload_service(
     Returns:
         Success status with updated stats
     """
-    service.reload()
+    await asyncio.to_thread(service.reload)
 
     # Restart the MCP server
     await _restart_security_detections_mcp(mcp_client, service, registry)
 
-    stats = service.get_stats()
+    stats = await asyncio.to_thread(service.get_stats)
     return {"success": True, "stats": stats}
 
 

@@ -55,15 +55,14 @@ def test_leftover_auto_assign_severities_is_dropped():
     assert dumped["enabled"] is True
 
 
-@pytest.mark.asyncio
-async def test_get_omits_stale_auto_assign_severities():
+def test_get_omits_stale_auto_assign_severities():
     svc = MagicMock()
     svc.get_system_config.return_value = {
         "enabled": True,
         "auto_assign_severities": ["critical", "high", "medium"],
     }
     with patch("services.api.routers.config.get_config_service", return_value=svc):
-        result = await get_orchestrator_config()
+        result = get_orchestrator_config()
     assert "auto_assign_severities" not in result
     assert result["enabled"] is True
 
@@ -91,8 +90,7 @@ def _settings(force: bool, auto: bool):
     return settings
 
 
-@pytest.mark.asyncio
-async def test_get_profiles_and_post_keeps_the_flat_config():
+def test_get_profiles_and_post_keeps_the_flat_config():
     saved, svc = _store()
     body = OrchestratorSettingsConfig.model_validate(
         {
@@ -106,8 +104,8 @@ async def test_get_profiles_and_post_keeps_the_flat_config():
         patch("services.api.routers.config.get_config_service", return_value=svc),
         patch("services.api.routers.orchestrator._get_orchestrator", return_value=None),
     ):
-        await set_orchestrator_config(body, current_user=MagicMock())
-        result = await get_orchestrator_config()
+        set_orchestrator_config(body, current_user=MagicMock())
+        result = get_orchestrator_config()
 
     stored = saved["orchestrator.settings"]
     assert "profiles" not in stored
@@ -131,8 +129,7 @@ async def test_get_profiles_and_post_keeps_the_flat_config():
     assert result["max_concurrent_agents"] == 2
 
 
-@pytest.mark.asyncio
-async def test_assist_and_act_write_only_the_approval_flag():
+def test_assist_and_act_write_only_the_approval_flag():
     saved, svc = _store()
     saved["orchestrator.settings"] = {"enabled": True, "max_concurrent_agents": 3}
     user = MagicMock()
@@ -143,14 +140,12 @@ async def test_assist_and_act_write_only_the_approval_flag():
             return_value=_settings(False, True),
         ),
     ):
-        missing = await get_force_manual_approval()
+        missing = get_force_manual_approval()
         svc.set_system_config.assert_not_called()
-        assist = await set_force_manual_approval(
+        assist = set_force_manual_approval(
             ForceManualApprovalConfig(enabled=True), user
         )
-        act = await set_force_manual_approval(
-            ForceManualApprovalConfig(enabled=False), user
-        )
+        act = set_force_manual_approval(ForceManualApprovalConfig(enabled=False), user)
 
     assert missing.enabled is False
     assert missing.environment_wins is False
@@ -164,8 +159,7 @@ async def test_assist_and_act_write_only_the_approval_flag():
     assert "tier" not in saved["orchestrator.settings"]
 
 
-@pytest.mark.asyncio
-async def test_a_failed_approval_read_is_an_error_not_act():
+def test_a_failed_approval_read_is_an_error_not_act():
     svc = MagicMock()
     svc.get_system_config.side_effect = RuntimeError("db down")
     with (
@@ -176,17 +170,16 @@ async def test_a_failed_approval_read_is_an_error_not_act():
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await get_force_manual_approval()
+        get_force_manual_approval()
 
     assert exc.value.status_code == 503
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("force", "auto"),
     [(True, True), (False, False), (True, False)],
 )
-async def test_act_is_refused_when_the_environment_wins(force, auto):
+def test_act_is_refused_when_the_environment_wins(force, auto):
     saved, svc = _store()
     saved[APPROVAL_CONFIG_KEY] = {"enabled": True}
     user = MagicMock()
@@ -197,14 +190,12 @@ async def test_act_is_refused_when_the_environment_wins(force, auto):
             return_value=_settings(force, auto),
         ),
     ):
-        seen = await get_force_manual_approval()
+        seen = get_force_manual_approval()
         svc.set_system_config.reset_mock()
         with pytest.raises(HTTPException) as exc:
-            await set_force_manual_approval(
-                ForceManualApprovalConfig(enabled=False), user
-            )
+            set_force_manual_approval(ForceManualApprovalConfig(enabled=False), user)
         svc.set_system_config.assert_not_called()
-        assist = await set_force_manual_approval(
+        assist = set_force_manual_approval(
             ForceManualApprovalConfig(enabled=True), user
         )
 

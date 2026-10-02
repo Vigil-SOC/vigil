@@ -99,8 +99,7 @@ def test_launch_cas_rolls_back_a_second_investigation():
         assert session.get(Investigation, "inv-918-b") is None
 
 
-@pytest.mark.asyncio
-async def test_intake_list_returns_an_inserted_row():
+def test_intake_list_returns_an_inserted_row():
     from services.api.routers.orchestrator import list_intake_triggers
 
     trigger_id = insert_intake_trigger(
@@ -109,7 +108,7 @@ async def test_intake_list_returns_an_inserted_row():
         payload={"workflow_id": "threat-hunt"},
     )
 
-    result = await list_intake_triggers(state=None, limit=100)
+    result = list_intake_triggers(state=None, limit=100)
 
     assert result["count"] >= 1
     assert any(row["id"] == trigger_id for row in result["triggers"])

@@ -1061,7 +1061,8 @@ export interface paths {
          * @description Verify the first TOTP code and enable MFA.
          *
          *     Args:
-         *         request: MFA code
+         *         request: FastAPI request (used by the rate limiter).
+         *         body: MFA code
          *         current_user: Current authenticated user
          *         session: Database session
          *

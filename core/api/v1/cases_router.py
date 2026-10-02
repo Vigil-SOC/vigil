@@ -18,7 +18,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.current_user import get_current_user
@@ -284,7 +284,7 @@ def _empty_queue(limit: int, offset: int) -> dict:
 
 
 @router.get("", response_model=CaseListResponse)
-async def get_cases(
+def get_cases(
     state: Optional[str] = None,
     workflow: Optional[str] = None,
     priority: Optional[str] = None,
@@ -376,7 +376,7 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
 
 
 @router.get("/{case_id}", response_model=CaseDetailResponse)
-async def get_case(case_id: str, session: UnitOfWorkSession):
+def get_case(case_id: str, session: UnitOfWorkSession):
     """
     Get a specific case by ID.
 
@@ -404,7 +404,7 @@ async def get_case(case_id: str, session: UnitOfWorkSession):
 
 
 @router.post("", response_model=CaseSchema)
-async def create_case(case_data: CaseCreate):
+def create_case(case_data: CaseCreate):
     """
     Create a new case.
 
@@ -451,10 +451,11 @@ async def create_case(case_data: CaseCreate):
 
 
 @router.patch("/{case_id}", response_model=CaseSuccessResponse)
-async def update_case(
+def update_case(
     case_id: str,
     case_data: CaseUpdate,
     session: UnitOfWorkSession,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -509,15 +510,13 @@ async def update_case(
 
     # Fire upstream SIEM status sync when status changes
     if case_data.status is not None:
-        import asyncio
-
-        asyncio.ensure_future(_sync_upstream_status(case_id, case_data.status))
+        background_tasks.add_task(_sync_upstream_status, case_id, case_data.status)
 
     return {"success": True}
 
 
 @router.post("/{case_id}/findings/{finding_id}", response_model=CaseSchema)
-async def add_finding_to_case(case_id: str, finding_id: str):
+def add_finding_to_case(case_id: str, finding_id: str):
     """
     Add a finding to a case.
 
@@ -538,7 +537,7 @@ async def add_finding_to_case(case_id: str, finding_id: str):
 
 
 @router.delete("/{case_id}/findings/{finding_id}", response_model=CaseSchema)
-async def remove_finding_from_case(case_id: str, finding_id: str):
+def remove_finding_from_case(case_id: str, finding_id: str):
     """
     Remove a finding from a case.
 
@@ -559,7 +558,7 @@ async def remove_finding_from_case(case_id: str, finding_id: str):
 
 
 @router.get("/stats/summary", response_model=CaseSummaryResponse)
-async def get_cases_summary():
+def get_cases_summary():
     """
     Get summary statistics for cases.
 
@@ -588,7 +587,7 @@ async def get_cases_summary():
 
 
 @router.post("/{case_id}/evidence", response_model=CaseEvidenceSchema)
-async def add_evidence(case_id: str, data: EvidenceAdd):
+def add_evidence(case_id: str, data: EvidenceAdd):
     """Add evidence to case."""
     evidence_service = CaseEvidenceService()
     evidence = evidence_service.add_evidence(
@@ -607,7 +606,7 @@ async def add_evidence(case_id: str, data: EvidenceAdd):
 
 
 @router.get("/{case_id}/evidence", response_model=CaseEvidenceListResponse)
-async def get_evidence(case_id: str, evidence_type: Optional[str] = None):
+def get_evidence(case_id: str, evidence_type: Optional[str] = None):
     """Get all evidence for case."""
     evidence_service = CaseEvidenceService()
     evidence_list = evidence_service.get_case_evidence(case_id, evidence_type)
@@ -615,7 +614,7 @@ async def get_evidence(case_id: str, evidence_type: Optional[str] = None):
 
 
 @router.post("/{case_id}/iocs", response_model=CaseIOCSchema)
-async def add_ioc(case_id: str, data: IOCAdd):
+def add_ioc(case_id: str, data: IOCAdd):
     """Add IOC to case."""
     ioc_service = CaseIOCService()
     ioc = ioc_service.add_ioc(
@@ -634,7 +633,7 @@ async def add_ioc(case_id: str, data: IOCAdd):
 
 
 @router.get("/{case_id}/iocs", response_model=CaseIOCListResponse)
-async def get_iocs(case_id: str, ioc_type: Optional[str] = None):
+def get_iocs(case_id: str, ioc_type: Optional[str] = None):
     """Get all IOCs for case."""
     ioc_service = CaseIOCService()
     iocs = ioc_service.get_case_iocs(case_id, ioc_type)
@@ -642,7 +641,7 @@ async def get_iocs(case_id: str, ioc_type: Optional[str] = None):
 
 
 @router.post("/{case_id}/iocs/bulk", response_model=CaseIOCBulkResponse)
-async def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
+def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
     """Bulk add IOCs to case."""
     ioc_service = CaseIOCService()
     count = ioc_service.bulk_add_iocs(case_id, data.iocs)
@@ -650,7 +649,7 @@ async def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
 
 
 @router.get("/{case_id}/iocs/export", response_model=CaseIOCExportResponse)
-async def export_iocs(case_id: str, format: str = "json"):
+def export_iocs(case_id: str, format: str = "json"):
     """Export IOCs (json, csv, or stix)."""
     ioc_service = CaseIOCService()
 
@@ -666,10 +665,11 @@ async def export_iocs(case_id: str, format: str = "json"):
 
 
 @router.post("/{case_id}/close", response_model=CaseCloseResponse)
-async def close_case(
+def close_case(
     case_id: str,
     data: ClosureInfo,
     session: UnitOfWorkSession,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
     """Close case with closure metadata."""
@@ -696,14 +696,12 @@ async def close_case(
     # this one never did: a Case closed here, by either MCP tool or by a merge,
     # stayed open in the SIEM that raised it. Best-effort and fire-and-forget, as
     # it is there -- the close is recorded either way.
-    import asyncio
-
-    asyncio.ensure_future(_sync_upstream_status(case_id, "closed"))
+    background_tasks.add_task(_sync_upstream_status, case_id, "closed")
     return {"success": True, "closure": CaseClosureInfoSchema.dump(closure)}
 
 
 @router.post("/{case_id}/merge", response_model=CaseMergeResponse)
-async def merge_cases(case_id: str, data: MergeRequest):
+def merge_cases(case_id: str, data: MergeRequest):
     """Merge source case into target case.
 
     Moves all findings, timeline entries, activities, IOCs, evidence, tasks,
@@ -732,7 +730,7 @@ async def merge_cases(case_id: str, data: MergeRequest):
 
 
 @router.post("/search", response_model=CaseSearchResponse)
-async def search_cases(data: SearchRequest):
+def search_cases(data: SearchRequest):
     """Advanced case search."""
     from core.cases.case_search_service import CaseSearchService
 

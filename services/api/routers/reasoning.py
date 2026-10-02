@@ -22,7 +22,7 @@ ROUTER_META = RouterMeta(
 
 
 @router.get("/{session_id}")
-async def get_session_summary(session_id: str):
+def get_session_summary(session_id: str):
     """Summary rollup for a chat session or agent session.
 
     Returns total interactions, cumulative cost of priced calls, how many
@@ -105,7 +105,7 @@ async def get_session_summary(session_id: str):
 
 
 @router.get("/{session_id}/interactions")
-async def list_interactions(
+def list_interactions(
     session_id: str,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -140,7 +140,7 @@ async def list_interactions(
 
 
 @router.get("/{session_id}/interactions/{interaction_id}")
-async def get_interaction(session_id: str, interaction_id: str):
+def get_interaction(session_id: str, interaction_id: str):
     """Full detail for a single interaction (thinking, tools, messages)."""
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
@@ -160,7 +160,7 @@ async def get_interaction(session_id: str, interaction_id: str):
 
 
 @router.get("/investigation/{investigation_id}/interactions")
-async def list_investigation_interactions(
+def list_investigation_interactions(
     investigation_id: str,
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),

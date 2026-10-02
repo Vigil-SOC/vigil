@@ -4,6 +4,7 @@ User Management API - Admin endpoints for managing users.
 Handles user CRUD operations, role assignment, and user administration.
 """
 
+import asyncio
 import logging
 from typing import Annotated, Optional
 
@@ -70,7 +71,7 @@ def _can_assign_role(current_user: User, target_role: Role, session: Session) ->
 
 
 @router.get("/")
-async def list_users(
+def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     role_id: Optional[str] = None,
@@ -142,7 +143,7 @@ async def list_users(
 
 
 @router.get("/{user_id}")
-async def get_user(
+def get_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
@@ -186,7 +187,7 @@ async def get_user(
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_user(
+def create_user(
     request: CreateUserRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
@@ -255,6 +256,64 @@ async def create_user(
     return UserSchema.dump(user)
 
 
+def _apply_user_update(
+    session: Session, current_user: User, user_id: str, request: UpdateUserRequest
+) -> tuple[User, bool, dict]:
+    """Sync half of update_user. Returns the user, whether its email changed, and the payload."""
+    if not AuthService.check_permission(current_user.user_id, "users.write"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: users.write required",
+        )
+
+    user = session.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+
+    email_changed = False
+    if request.full_name is not None:
+        user.full_name = request.full_name
+
+    if request.email is not None:
+        existing = (
+            session.query(User)
+            .filter(User.email == request.email, User.user_id != user_id)
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already in use",
+            )
+        user.email = request.email
+        user.is_verified = False
+        email_changed = True
+
+    if request.role_id is not None:
+        role = session.query(Role).filter(Role.role_id == request.role_id).first()
+        if not role:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
+            )
+        if not _can_assign_role(current_user, role, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot assign a role with more privileges than your own",
+            )
+        user.role_id = request.role_id
+
+    if request.is_active is not None:
+        user.is_active = request.is_active
+
+    # Flush so the read-back sees server defaults; the request's unit
+    # of work commits.
+    session.flush()
+    session.refresh(user)
+    return user, email_changed, UserSchema.dump(user)
+
+
 @router.put("/{user_id}")
 async def update_user(
     user_id: str,
@@ -274,65 +333,10 @@ async def update_user(
     Returns:
         Updated user information
     """
-    # Check permission
-    if not AuthService.check_permission(current_user.user_id, "users.write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required",
-        )
-
-    # Get user
-    user = session.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
     try:
-        # Update fields
-        email_changed = False
-        if request.full_name is not None:
-            user.full_name = request.full_name
-
-        if request.email is not None:
-            # Check if email is already taken
-            existing = (
-                session.query(User)
-                .filter(User.email == request.email, User.user_id != user_id)
-                .first()
-            )
-
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already in use",
-                )
-
-            user.email = request.email
-            user.is_verified = False
-            email_changed = True
-
-        if request.role_id is not None:
-            # Verify role exists
-            role = session.query(Role).filter(Role.role_id == request.role_id).first()
-            if not role:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
-                )
-            if not _can_assign_role(current_user, role, session):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot assign a role with more privileges than your own",
-                )
-            user.role_id = request.role_id
-
-        if request.is_active is not None:
-            user.is_active = request.is_active
-
-        # Flush so the read-back sees server defaults; the request's unit
-        # of work commits.
-        session.flush()
-        session.refresh(user)
+        user, email_changed, payload = await asyncio.to_thread(
+            _apply_user_update, session, current_user, user_id, request
+        )
 
         if email_changed:
             try:
@@ -345,7 +349,7 @@ async def update_user(
                 )
 
         logger.info(f"User updated by {current_user.username}: {user.username}")
-        return UserSchema.dump(user)
+        return payload
 
     except HTTPException:
         raise
@@ -358,7 +362,7 @@ async def update_user(
 
 
 @router.delete("/{user_id}")
-async def delete_user(
+def delete_user(
     user_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
@@ -410,6 +414,43 @@ async def delete_user(
         )
 
 
+def _apply_role_change(
+    session: Session, current_user: User, user_id: str, role_id: str
+) -> tuple[User, str, dict]:
+    """Sync half of change_user_role. Returns the user, its previous role id, and the payload."""
+    if not AuthService.check_permission(current_user.user_id, "users.write"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: users.write required",
+        )
+
+    user = session.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+
+    role = session.query(Role).filter(Role.role_id == role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
+        )
+
+    if not _can_assign_role(current_user, role, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot assign a role with more privileges than your own",
+        )
+
+    old_role_id = user.role_id
+    user.role_id = role_id
+    # Flush so the read-back sees server defaults; the request's unit
+    # of work commits.
+    session.flush()
+    session.refresh(user)
+    return user, old_role_id, UserSchema.dump(user)
+
+
 @router.put("/{user_id}/role")
 async def change_user_role(
     user_id: str,
@@ -429,47 +470,15 @@ async def change_user_role(
     Returns:
         Updated user information
     """
-    # Check permission
-    if not AuthService.check_permission(current_user.user_id, "users.write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required",
-        )
-
-    # Get user
-    user = session.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-    # Verify role exists
-    role = session.query(Role).filter(Role.role_id == request.role_id).first()
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
-        )
-
-    if not _can_assign_role(current_user, role, session):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot assign a role with more privileges than your own",
-        )
-
     try:
-        old_role_id = user.role_id
-        user.role_id = request.role_id
-        # Flush so the read-back sees server defaults; the request's unit
-        # of work commits.
-        session.flush()
-        session.refresh(user)
+        user, old_role_id, payload = await asyncio.to_thread(
+            _apply_role_change, session, current_user, user_id, request.role_id
+        )
 
         # Invalidate the target user's existing tokens so the new
         # permissions take effect on their next request, not whenever their
         # cached token happens to expire.
         try:
-            from core.auth.token_blacklist import revoke_all_for_user
-
             await revoke_all_for_user(user.user_id)
         except Exception as exc:
             logger.error(
@@ -482,8 +491,10 @@ async def change_user_role(
         logger.info(
             f"User role changed by {current_user.username}: {user.username} from {old_role_id} to {request.role_id}"
         )
-        return UserSchema.dump(user)
+        return payload
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Change role error: {e}")
         raise HTTPException(
@@ -493,7 +504,7 @@ async def change_user_role(
 
 
 @router.get("/roles/list")
-async def list_roles(
+def list_roles(
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
 ):
