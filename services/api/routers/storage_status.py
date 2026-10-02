@@ -9,6 +9,7 @@ import threading
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from core.backup.status import read_last_success_at
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_manager
 from core.storage.models import User
@@ -93,11 +94,16 @@ def _get_recommendations(backend_info: dict) -> list:
         )
 
     if backend == "postgresql":
+        when = read_last_success_at()
         recommendations.append(
             {
                 "title": "Database Running",
                 "description": "PostgreSQL is active and ready for production use.",
-                "action": "Set up automated backups for data protection",
+                "action": (
+                    f"Last successful backup at {when.isoformat()}"
+                    if when is not None
+                    else "Set up automated backups for data protection"
+                ),
                 "priority": "low",
             }
         )

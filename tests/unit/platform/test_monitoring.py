@@ -149,6 +149,19 @@ class TestGetMetricsResponse(unittest.TestCase):
         self.assertIn(b"# TYPE vigil_test_scrape_total counter", resp.body)
         self.assertRegex(resp.body, rb"vigil_test_scrape_total(\{[^}]*\})? 3\.0")
 
+    def test_reimport_does_not_duplicate_the_backup_series(self):
+        """A second import must replace the collector instead of raising."""
+        importlib.reload(monitoring)
+        importlib.reload(monitoring)
+        resp = monitoring.get_metrics_response()
+        self.assertEqual(resp.status_code, 200)
+        samples = [
+            line
+            for line in resp.body.splitlines()
+            if line.startswith(b"vigil_backup_last_success_timestamp_seconds ")
+        ]
+        self.assertLessEqual(len(samples), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

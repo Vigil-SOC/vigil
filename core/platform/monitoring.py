@@ -13,11 +13,13 @@ from typing import Any, Optional
 
 import sentry_sdk
 from fastapi.responses import Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
+from prometheus_client.core import GaugeMetricFamily
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
+from core.backup.status import read_last_success_at
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -184,3 +186,35 @@ def get_metrics_response() -> Response:
     FastAPIInstrumentation, not from anything declared here.
     """
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# A Gauge constructed at import always emits a number, including 0 when no
+# backup has succeeded. This collector yields the family only when the status
+# file has a parseable timestamp, so a missing file exports no sample.
+_BACKUP_METRIC = "vigil_backup_last_success_timestamp_seconds"
+_BACKUP_METRIC_HELP = "Unix time of the last successful backup."
+
+
+class _BackupLastSuccessCollector:
+    def describe(self):
+        yield GaugeMetricFamily(_BACKUP_METRIC, _BACKUP_METRIC_HELP)
+
+    def collect(self):
+        when = read_last_success_at()
+        if when is None:
+            return
+        yield GaugeMetricFamily(
+            _BACKUP_METRIC, _BACKUP_METRIC_HELP, value=when.timestamp()
+        )
+
+
+def _register_backup_collector() -> None:
+    # tests/unit/platform/test_monitoring.py reimports this module. The
+    # previous collector still owns the series name on the default registry.
+    previous = REGISTRY._names_to_collectors.get(_BACKUP_METRIC)
+    if previous is not None:
+        REGISTRY.unregister(previous)
+    REGISTRY.register(_BackupLastSuccessCollector())
+
+
+_register_backup_collector()
