@@ -10,8 +10,9 @@ import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type Gener
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
+import { COMMANDS } from '../../shell/commandBar'
 
-type WfTab = 'workflows' | 'agents' | 'skills'
+type WfTab = 'workflows' | 'agents' | 'skills' | 'commands'
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
@@ -23,6 +24,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
     ['workflows', 'Workflows'],
     ['agents', 'Agents'],
     ['skills', 'Skills'],
+    ['commands', 'Commands'],
   ]
   return (
     <>
@@ -33,10 +35,12 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
               key={k}
               role="tab"
               aria-selected={tab === k}
+              aria-label={k === 'commands' ? `${label} ${COMMANDS.length}` : label}
               className={`tab${tab === k ? ' active' : ''}`}
               onClick={() => setTab(k)}
             >
               {label}
+              {k === 'commands' && <span className="mono text-[10.5px] text-tx-3 ml-1.5">{COMMANDS.length}</span>}
             </button>
           ))}
         </div>
@@ -44,7 +48,37 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
       {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
+      {tab === 'commands' && <CommandsTab />}
     </>
+  )
+}
+
+/** The command bar's rows, read from COMMANDS. Later rows are marked and carry
+ *  nothing focusable; nothing in the table runs a command. */
+function CommandsTab() {
+  return (
+    <div className="px-[22px] py-5">
+      <div className="table-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Arguments</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {COMMANDS.map((command) => (
+              <tr key={command.id} aria-disabled={command.later || undefined} className={command.later ? 'opacity-60' : undefined}>
+                <td className="font-semibold">{command.name}</td>
+                <td className="muted">{command.hint}</td>
+                <td>{command.later ? 'Later' : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 

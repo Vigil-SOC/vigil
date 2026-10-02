@@ -143,4 +143,38 @@ describe('workflow catalog table', () => {
     expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Import' })).toHaveAttribute('title', 'Coming in a later release')
   })
+
+  it('lists every command, marks the later rows, and runs nothing', () => {
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Commands 9' }))
+    const table = screen.getByRole('table')
+    const row = (name: string) => within(table).getByText(name).closest('tr') as HTMLElement
+
+    for (const name of ['/investigate', '/hunt', '/replay', '/ask', '/ticket']) {
+      const live = row(name)
+      expect(live).not.toHaveAttribute('aria-disabled')
+      expect(within(live).queryByText('Later')).toBeNull()
+      live.focus()
+      expect(document.activeElement).not.toBe(live)
+    }
+    for (const name of ['/hold', '/isolate', '/phish', 'Custom commands']) {
+      const later = row(name)
+      expect(later).toHaveAttribute('aria-disabled', 'true')
+      expect(later).not.toHaveAttribute('tabindex')
+      expect(within(later).getByText('Later')).toBeInTheDocument()
+      later.focus()
+      expect(document.activeElement).not.toBe(later)
+    }
+    expect(within(row('Custom commands')).getAllByRole('cell')[1]).toHaveTextContent('')
+    expect(within(table).queryByRole('button')).toBeNull()
+    expect(within(table).queryByRole('link')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Workflows' })).toHaveTextContent('Workflows')
+    expect(screen.getByRole('tab', { name: 'Agents' })).toHaveTextContent('Agents')
+    expect(screen.getByRole('tab', { name: 'Skills' })).toHaveTextContent('Skills')
+  })
 })
