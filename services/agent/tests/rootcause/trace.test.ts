@@ -12,6 +12,9 @@ import { PROVER_TOOL, proveLink, proveOrigin, redact, type Observation, type Ste
 import { finishFrom, recordFrom } from "../../workflows/rootcause/tools.js";
 import { runRootCause, type RootCauseKinds } from "../../workflows/rootcause/workflow.js";
 import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
+import { ZERO_TOKENS } from "../../contracts/budget.js";
+import type { Provider, ProviderEvent, TurnRequest } from "../../core/provider.js";
+import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 
 const RUN = "5a2c2d3e-0000-4000-8000-000000000c38";
 const AT = "2024-01-02T03:00:00Z";
@@ -280,12 +283,62 @@ describe("the trace", () => {
     const report = await runRootCause(harness, { run_id: RUN, spec });
     expect(report.status).toBe("completed");
     const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
-    expect((terminal?.payload as TerminalPayload).summary).toBe("alice delivered invoice.lnk; [unlinked] was nearby");
+    const summary = (terminal?.payload as TerminalPayload).summary ?? "";
+    expect(summary).toContain("alice delivered invoice.lnk; [unlinked] was nearby");
+    expect(summary).toContain("Still unproven: step-2");
     const steps = (await state.read(RUN)).filter((event) => event.kind === "step").map((event) => event.payload as StepPayload);
     expect(steps[0]?.origin_status).toBe("proven");
     const seen = harness.provider.requests.map((request) => JSON.stringify(request)).join("\n");
     expect(seen).toContain("finish refused");
     expect(seen).toContain("step-1");
+  });
+
+  it("names the open steps when the model stops in prose before they are proven", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const harness = harnessOf(
+      [
+        { calls: [{ tool: "record", args: JSON.stringify({ event: "phishing mail opened", who: "bob", at: AT, link: LINK, origin: true }) }] },
+        { content: "The attacker came in through phishing." },
+      ],
+      spec,
+      state,
+    );
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    expect(report.reason).toMatch(/still open/);
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    const summary = (terminal?.payload as TerminalPayload).summary ?? "";
+    expect(summary).toContain("The attacker came in through phishing.");
+    expect(summary).toContain("Still unproven: step-1 (phishing mail opened)");
+    expect(summary).not.toContain("bob");
+  });
+
+  it("says nothing was recorded when the model stops in prose without a step", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const report = await runRootCause(harnessOf([{ content: "Nothing to trace." }], spec, state), { run_id: RUN, spec });
+    expect(report.reason).toMatch(/still open/);
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    expect((terminal?.payload as TerminalPayload).summary).toContain("Still unproven: nothing was recorded.");
+  });
+
+  it("reports a prose stop as finished when every step is proven", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [runEvent(spec), dispatch("d1", PROVER_TOOL, `search ${LINK} before ${AT}`, [{ count: 0 }])]);
+    const harness = harnessOf(
+      [
+        { calls: [{ tool: "record", args: JSON.stringify({ event: "file landed", who: "alice", at: AT, link: LINK, origin: true, artifact: LINK }) }] },
+        { content: "alice delivered invoice.lnk" },
+      ],
+      spec,
+      state,
+    );
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.reason).toBe("the trace finished");
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    expect((terminal?.payload as TerminalPayload).summary).toBe("alice delivered invoice.lnk");
   });
 
   it("journals a remote result and does not prove from a paraphrase", async () => {
@@ -403,6 +456,78 @@ describe("the trace", () => {
     });
     expect(report.status).toBe("completed");
     expect(permitted.provider.requests).toHaveLength(1);
+  });
+});
+
+describe("an operator's stop", () => {
+  const ABORT = { directive_id: "dir-abort", actor: "sam", kind: "abort" as const, text: "enough evidence", created_at: AT };
+
+  // A model call that never answers: it ends only when its signal is aborted.
+  const hanging: Provider = {
+    model: "scripted/model",
+    provider_type: "scripted",
+    stream: async function* (request: TurnRequest): AsyncGenerator<ProviderEvent> {
+      await new Promise((_, reject) => {
+        const signal = request.signal;
+        if (signal === undefined) return;
+        if (signal.aborted) reject(signal.reason);
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+      yield { type: "usage", tokens: ZERO_TOKENS };
+    },
+  };
+
+  async function terminalsOf(state: InProcessState<RootCauseKinds>): Promise<TerminalPayload[]> {
+    return (await state.read(RUN)).filter((event) => event.kind === "terminal").map((event) => event.payload as TerminalPayload);
+  }
+
+  it("ends the run aborted before a model call when a stop is already queued", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const queue = new InProcessDirectiveQueue();
+    await queue.enqueue(RUN, ABORT);
+    const harness = harnessOf([], spec, state);
+    const report = await runRootCause(harness, { run_id: RUN, spec, queue });
+    expect(report.status).toBe("aborted");
+    expect(report.reason).toContain("enough evidence");
+    expect(harness.provider.requests).toHaveLength(0);
+    expect(await terminalsOf(state)).toHaveLength(1);
+    expect((await state.read(RUN)).some((event) => event.kind === "directive")).toBe(true);
+  });
+
+  it("stops a model call in flight within a poll of the stop being queued", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const queue = new InProcessDirectiveQueue();
+    const harness = { ...harnessOf([], spec, state), provider: hanging };
+    const started = Date.now();
+    const running = runRootCause(harness, { run_id: RUN, spec, queue });
+    setTimeout(() => void queue.enqueue(RUN, ABORT), 50);
+    const report = await running;
+    expect(report.status).toBe("aborted");
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const terminals = await terminalsOf(state);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.outcome).toBe("aborted");
+  }, 5_000);
+
+  it("does not journal a second terminal when the ledger was ended under it", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const backstop: Provider = {
+      model: "scripted/model",
+      provider_type: "scripted",
+      stream: async function* (): AsyncGenerator<ProviderEvent> {
+        await state.append(RUN, [
+          { run_id: RUN, run_kind: "root_cause", kind: "terminal", payload: { outcome: "aborted", reason: "stopped (did not stop on request)" } },
+        ]);
+        yield { type: "text_delta", text: "still tracing" };
+        yield { type: "usage", tokens: ZERO_TOKENS };
+      },
+    };
+    const report = await runRootCause({ ...harnessOf([], spec, state), provider: backstop }, { run_id: RUN, spec });
+    expect(report.status).toBe("aborted");
+    expect(await terminalsOf(state)).toHaveLength(1);
   });
 });
 

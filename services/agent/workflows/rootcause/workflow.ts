@@ -8,9 +8,13 @@ import { SpecError, type RunSpec } from "../../core/spec.js";
 import { streamTurn, type StreamEvent } from "../../core/stream.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { grantsOf } from "../lead/workflow.js";
+import { link } from "../hunt/adapters.js";
+import type { DirectiveQueue } from "../hunt/ports.js";
+import type { Directive } from "../hunt/types.js";
 import {
   latestSteps,
   observationsOf,
+  openSteps,
   openSummary,
   redact,
   PROVER_TOOL,
@@ -29,6 +33,9 @@ export interface RootCauseOptions {
   answers?: Answers;
   announce?: Announce;
   signal?: AbortSignal;
+  // Where an operator's stop is queued. Read before the trace starts and polled
+  // while it runs, so a cancel lands here rather than at the backend's backstop.
+  queue?: DirectiveQueue;
 }
 
 export interface RootCauseReport {
@@ -45,6 +52,10 @@ const UNPROVABLE =
 
 type Event = NewEvent<RootCauseKinds>;
 
+// How often the queue is read while the trace runs. Bounds how long a stop waits
+// on a model call or a search already in flight.
+const ABORT_POLL_MS = 500;
+
 // One investigator, one streamTurn. The ledger holds the steps; a resume reads
 // those and continues, and does not replay the transcript.
 export async function runRootCause(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<RootCauseReport> {
@@ -55,6 +66,9 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
 
   const done = await terminalOf(harness.state, run_id);
   if (done !== null) return { status: done.outcome, reason: done.reason, pending: null };
+
+  const queued = await abortOf(options);
+  if (queued !== null) return stopped(harness, options, queued);
 
   const parked = await permit(harness, options);
   if (parked !== null) return parked;
@@ -75,15 +89,28 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
     ),
   };
 
-  const stream = streamTurn<string, RootCauseKinds>(turnFor(options, await brief(harness.state, options)), scoped);
+  // The lease and the operator's stop both end the turn.
+  const watch = watchForAbort(options);
+  const linked = link(options.signal, watch.signal);
+  const turn = turnFor({ ...options, ...(linked.signal === undefined ? {} : { signal: linked.signal }) }, await brief(harness.state, options));
+  const stream = streamTurn<string, RootCauseKinds>(turn, scoped);
   let outcome: Outcome<string> | undefined;
-  for (;;) {
-    const next = await stream.next();
-    if (next.done) {
-      outcome = next.value;
-      break;
+  try {
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) {
+        outcome = next.value;
+        break;
+      }
+      await journalRemote(harness, options, next.value);
     }
-    await journalRemote(harness, options, next.value);
+  } catch (error) {
+    const directive = watch.directive();
+    if (directive !== null) return stopped(harness, options, directive);
+    throw error;
+  } finally {
+    watch.stop();
+    linked.release();
   }
   if (outcome === undefined) return end(harness, options, "failed", "the trace produced no outcome");
 
@@ -104,7 +131,13 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
   if (outcome.status === "failed" || outcome.value === null) {
     return end(harness, options, "failed", outcome.reason);
   }
-  return end(harness, options, "completed", "the trace finished", deliver(outcome.value, steps, notices));
+  // The turn ends when the model answers in prose, whether or not it called
+  // finish. A report over steps still open says so, as the ceiling's does.
+  if (steps.length > 0 && openSteps(steps).length === 0) {
+    return end(harness, options, "completed", "the trace finished", deliver(outcome.value, steps, notices));
+  }
+  const summary = deliver(`${outcome.value}\n\n${openSummary(steps)}`, steps, notices);
+  return end(harness, options, "completed", "the investigator stopped with steps still open", summary);
 }
 
 async function permit(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<RootCauseReport | null> {
@@ -141,6 +174,47 @@ function asks(spec: RunSpec): boolean {
   const declared = spec.sections["checkpoints"];
   if (declared === null || typeof declared !== "object" || Array.isArray(declared)) return false;
   return (declared as Record<string, unknown>)["hypothesis_approval"] === "ask";
+}
+
+async function abortOf(options: RootCauseOptions): Promise<Directive | null> {
+  if (options.queue === undefined) return null;
+  const pending = await options.queue.pending(options.run_id, []);
+  return pending.find((directive) => directive.kind === "abort") ?? null;
+}
+
+// Aborts its signal the moment a stop appears in the queue. At most one read in
+// flight, so a slow query does not stack ticks behind it.
+function watchForAbort(options: RootCauseOptions): { signal: AbortSignal; directive: () => Directive | null; stop: () => void } {
+  const halt = new AbortController();
+  let found: Directive | null = null;
+  let checking = false;
+  const poll = setInterval(() => {
+    if (checking || options.queue === undefined) return;
+    checking = true;
+    void abortOf(options)
+      .then((directive) => {
+        if (directive === null || halt.signal.aborted) return;
+        found = directive;
+        halt.abort(new Error("an operator stopped the trace"));
+      })
+      .catch(() => {})
+      .finally(() => {
+        checking = false;
+      });
+  }, ABORT_POLL_MS);
+  poll.unref?.();
+  return { signal: halt.signal, directive: () => found, stop: () => clearInterval(poll) };
+}
+
+// The stop goes on the record, then the run ends naming what was still open.
+async function stopped(harness: Harness<RootCauseKinds>, options: RootCauseOptions, directive: Directive): Promise<RootCauseReport> {
+  await append(harness.state, options.run_id, [
+    { run_id: options.run_id, run_kind: "root_cause", kind: "directive", payload: directive },
+  ]);
+  const events = await harness.state.read(options.run_id);
+  const steps = latestSteps(events);
+  const reason = directive.text.trim() === "" ? "an operator stopped the trace" : `an operator stopped the trace: ${directive.text.trim()}`;
+  return end(harness, options, "aborted", reason, deliver(openSummary(steps), steps, noticeText(events)));
 }
 
 async function noticeOnce(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<void> {
@@ -265,6 +339,10 @@ async function end(
   reason: string,
   summary?: string,
 ): Promise<RootCauseReport> {
+  // The backend's backstop may have ended the run while a call was in flight. Its
+  // terminal stands; a second one would give the run two endings.
+  const ended = await terminalOf(harness.state, options.run_id);
+  if (ended !== null) return { status: ended.outcome, reason: ended.reason, pending: null };
   const payload = summary === undefined ? { outcome, reason } : { outcome, reason, summary };
   await append(harness.state, options.run_id, [
     { run_id: options.run_id, run_kind: "root_cause", kind: "terminal", payload },

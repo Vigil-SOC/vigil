@@ -1,28 +1,49 @@
-"""Evidence ``file_path`` comes from the request body and must stay in the store."""
+"""Evidence file paths stay inside the evidence store."""
+
+import hashlib
+import os
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.cases.case_evidence_service import CaseEvidenceService
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.fixture
 def service(tmp_path):
-    store = tmp_path / "evidence"
-    (store / "case-1").mkdir(parents=True)
-    (store / "case-1" / "pcap.bin").write_bytes(b"pcap")
-    (tmp_path / "secret.txt").write_text("not evidence")
-    return CaseEvidenceService(storage_path=str(store))
+    return CaseEvidenceService(storage_path=str(tmp_path / "evidence"))
 
 
-def test_a_file_in_the_store_resolves(service):
-    path = service._stored_file("case-1/pcap.bin")
-    assert path is not None and path.read_bytes() == b"pcap"
+def test_hashes_a_file_inside_the_store(service):
+    (service.storage_path / "dump.raw").write_bytes(b"memory")
+
+    evidence = service.add_evidence(
+        "case-1", "file", "dump", "analyst", file_path="dump.raw", session=MagicMock()
+    )
+
+    assert evidence.file_hash_sha256 == hashlib.sha256(b"memory").hexdigest()
+    assert evidence.file_size == 6
 
 
 @pytest.mark.parametrize(
-    "escape", ["../secret.txt", "case-1/../../secret.txt", "/etc/passwd"]
+    "escape", ["../secret.txt", "/etc/passwd", "a/../../secret.txt"]
 )
-def test_a_path_out_of_the_store_is_refused(service, escape):
-    assert service._stored_file(escape) is None
+def test_refuses_paths_outside_the_store(service, escape):
+    (service.storage_path.parent / "secret.txt").write_text("x")
+    session = MagicMock()
+
+    with pytest.raises(ValueError):
+        service.add_evidence(
+            "case-1", "file", "x", "analyst", file_path=escape, session=session
+        )
+    session.add.assert_not_called()
+
+
+def test_refuses_symlink_out_of_the_store(service):
+    (service.storage_path.parent / "secret.txt").write_text("x")
+    os.symlink(
+        service.storage_path.parent / "secret.txt", service.storage_path / "link"
+    )
+
+    with pytest.raises(ValueError):
+        service.resolve_stored_file("link")

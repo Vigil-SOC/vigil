@@ -52,17 +52,19 @@ class CaseEvidenceService:
 
         return {"md5": md5_hash.hexdigest(), "sha256": sha256_hash.hexdigest()}
 
-    def _stored_file(self, file_path: str) -> Optional[Path]:
-        """The stored file ``file_path`` names, or None if it escapes the store.
+    def resolve_stored_file(self, file_path: str) -> Path:
+        """
+        Resolve a caller-supplied path against the evidence store.
 
-        ``file_path`` comes from the request body, so ``../`` or an absolute path
-        must not let a caller hash and size arbitrary files on the host.
+        Raises:
+            ValueError: if the path escapes the store (absolute, ``..``, or a symlink out)
         """
         root = os.path.realpath(self.storage_path)
         full_path = os.path.realpath(os.path.join(root, file_path))
         if not full_path.startswith(root + os.sep):
-            logger.warning("Evidence file path escapes the store: %r", file_path)
-            return None
+            raise ValueError(
+                f"file_path must be inside the evidence store: {file_path!r}"
+            )
         return Path(full_path)
 
     def add_evidence(
@@ -93,7 +95,11 @@ class CaseEvidenceService:
 
         Returns:
             Created CaseEvidence or None
+
+        Raises:
+            ValueError: if file_path points outside the evidence store
         """
+        full_path = self.resolve_stored_file(file_path) if file_path else None
         try:
             with unit_of_work(session) as session:
                 # Calculate file hashes if file exists
@@ -101,12 +107,12 @@ class CaseEvidenceService:
                 file_hash_sha256 = None
                 file_size = None
 
-                full_path = self._stored_file(file_path) if file_path else None
-                if full_path is not None and full_path.exists():
-                    hashes = self.calculate_file_hashes(full_path)
-                    file_hash_md5 = hashes["md5"]
-                    file_hash_sha256 = hashes["sha256"]
-                    file_size = full_path.stat().st_size
+                if full_path is not None:
+                    if full_path.is_file():
+                        hashes = self.calculate_file_hashes(full_path)
+                        file_hash_md5 = hashes["md5"]
+                        file_hash_sha256 = hashes["sha256"]
+                        file_size = full_path.stat().st_size
 
                 # Initialize chain of custody
                 chain_of_custody = [
