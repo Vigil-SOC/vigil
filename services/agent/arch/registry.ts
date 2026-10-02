@@ -10,6 +10,8 @@ import { huntProjection } from "../workflows/hunt/projection.js";
 import { huntNotes } from "../workflows/hunt/recall.js";
 import { leadProjection } from "../workflows/lead/projection.js";
 import type { LeadKinds } from "../workflows/lead/workflow.js";
+import { rootCauseProjection } from "../workflows/rootcause/projection.js";
+import type { RootCauseKinds } from "../workflows/rootcause/proof.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
 // than switched on in the worker: an agent type is a file and an entry, not a branch.
@@ -68,6 +70,7 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     actions: [],
     halts: [],
     owned: { config: ["checkpoints"] },
+    projection: (runId, events) => rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),
   },
   // adjudicate is a hunt run as a second opinion: the lead is shown a finding
   // intake admitted and the workflow intake chose, tests the stated intent against

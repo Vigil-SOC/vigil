@@ -1403,6 +1403,59 @@ interface WfRunDetail extends WfRun {
   result_summary?: string | null
   phases?: WfPhase[]
   hunt?: HuntView | null
+  /** What the agent layer folds for a run that is not a hunt. Its shape is the kind's. */
+  projection?: unknown
+}
+
+/** One step of a root-cause trace as last written. A name on a step that is not
+ *  proven arrives already as [unlinked]. */
+interface RootCauseStep {
+  step_id: string
+  event: string
+  who: string
+  at: string
+  link: string
+  artifact: string
+  cause_id: string | null
+  origin: boolean
+  link_status: string
+  origin_status: string
+  proven: boolean
+}
+interface RootCauseSearch {
+  tool: string
+  args: string
+  rows: number
+  failed: boolean
+}
+/** A root-cause run's projection. `recent_searches` is capped; `searches` is the total. */
+interface RootCauseView {
+  run_kind: 'root_cause'
+  status: string
+  cost_usd: number | null
+  max_cost_usd: number | null
+  steps: RootCauseStep[]
+  proven: number
+  notices: string[]
+  searches: number
+  recent_searches: RootCauseSearch[]
+}
+
+function rootCauseOf(projection: unknown): RootCauseView | null {
+  if (typeof projection !== 'object' || projection === null) return null
+  const view = projection as Partial<RootCauseView>
+  if (view.run_kind !== 'root_cause' || !Array.isArray(view.steps)) return null
+  return {
+    run_kind: 'root_cause',
+    status: typeof view.status === 'string' ? view.status : '',
+    cost_usd: typeof view.cost_usd === 'number' ? view.cost_usd : null,
+    max_cost_usd: typeof view.max_cost_usd === 'number' ? view.max_cost_usd : null,
+    steps: view.steps,
+    proven: typeof view.proven === 'number' ? view.proven : 0,
+    notices: Array.isArray(view.notices) ? view.notices : [],
+    searches: typeof view.searches === 'number' ? view.searches : 0,
+    recent_searches: Array.isArray(view.recent_searches) ? view.recent_searches : [],
+  }
 }
 
 const RUN_POLL_MS = 5_000
@@ -1565,12 +1618,13 @@ function HuntActions({ hunt }: { hunt: HuntView }) {
  *  operator, and driving the screen down to it would test the History modal instead. */
 export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => void }) {
   const hunt = d.hunt ?? null
+  const trace = hunt === null ? rootCauseOf(d.projection) : null
   // A hunt already answers its wait through OpenCheckpoint. A phase gate is an
   // approval row, and only a phase-walking run has one.
   const phaseGated = hunt === null && (d.phases ?? []).some((p) => p.status === 'pending_approval')
   return (
     <div className="run-detail">
-      <RunBar d={d} hunt={hunt} onSteered={onSteered} />
+      <RunBar d={d} hunt={hunt} trace={trace} onSteered={onSteered} />
       {hunt && <OpenCheckpoint hunt={hunt} />}
       {phaseGated && <PhaseGate runId={d.run_id} onAnswered={onSteered} />}
       {hunt && <Parked hunt={hunt} />}
@@ -1583,6 +1637,7 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
           <pre className="font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap m-0" style={{ color: 'var(--crit)' }}>{d.error}</pre>
         </div>
       )}
+      {trace && <RootCauseTrace trace={trace} />}
       {hunt ? <HuntTabs d={d} hunt={hunt} onReload={onSteered} /> : (
         <RunWithoutHunt d={d} inFlight={IN_FLIGHT.includes(d.status)} />
       )}
@@ -1593,10 +1648,11 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
 
 /** What the run is doing, and Stop. It sits with the status rather than among the
  *  steering directives, which are only notes the lead reads at its next turn. */
-function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null; onSteered: () => void }) {
-  const cost = hunt?.cost_usd ?? d.total_cost_usd
+function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView | null; trace: RootCauseView | null; onSteered: () => void }) {
+  // The row's total is written only when the run ends; a projection prices it as it goes.
+  const cost = hunt?.cost_usd ?? trace?.cost_usd ?? d.total_cost_usd
   const budgets = hunt?.budgets
-  const ceiling = budgets?.max_cost_usd
+  const ceiling = budgets?.max_cost_usd ?? trace?.max_cost_usd ?? undefined
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
     ? Math.min(100, (cost / ceiling) * 100)
     : null
@@ -1626,6 +1682,66 @@ function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null;
       )}
     </div>
   )
+}
+
+/** What a root-cause trace has recorded and asked so far, off the same poll as the
+ *  run. The checked summary below it is still the report; this is how it got there. */
+function RootCauseTrace({ trace }: { trace: RootCauseView }) {
+  const steps = trace.steps.length
+  return (
+    <div className="modal-section">
+      <h4>Trace</h4>
+      <div className="muted text-[11.5px] mb-2">
+        {steps} {steps === 1 ? 'step' : 'steps'} · {trace.proven} proven · {trace.searches} {trace.searches === 1 ? 'search' : 'searches'}
+      </div>
+      {trace.notices.map((text) => (
+        <div key={text} className="muted text-[12px] leading-[1.5] mb-2">{text}</div>
+      ))}
+      {steps === 0 ? (
+        <div className="muted text-[12.5px]">No step recorded yet.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead><tr><th>Step</th><th>Event</th><th>Tied by</th><th>Proof</th></tr></thead>
+            <tbody>
+              {trace.steps.map((s) => (
+                <tr key={s.step_id}>
+                  <td className="mono tight" style={{ fontSize: 11 }}>{s.step_id}</td>
+                  <td>
+                    {s.event}
+                    <div className="muted text-[11px]">{s.at}{s.who && ` · ${s.who}`}</div>
+                  </td>
+                  <td className="muted">{tiedBy(s)}</td>
+                  <td className="tight"><span style={{ color: s.proven ? 'var(--ok)' : 'var(--med)' }}>{s.proven ? 'proven' : 'unproven'}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {trace.recent_searches.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <h4>Latest searches</h4>
+          <ul className="text-[12px] mt-1 mb-0" style={{ paddingLeft: 18 }}>
+            {trace.recent_searches.map((q, at) => (
+              <li key={at}>
+                <span className="font-mono">{q.args || q.tool}</span>{' '}
+                <span className="muted">{q.failed ? 'failed' : `${q.rows} ${q.rows === 1 ? 'row' : 'rows'}`}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** What a step claims ties it into the trace, and where that claim stands. */
+function tiedBy(s: RootCauseStep): string {
+  const claims: string[] = []
+  if (s.cause_id) claims.push(`link ${s.link || '—'} to ${s.cause_id}: ${s.link_status}`)
+  if (s.origin) claims.push(`origin: ${s.origin_status}`)
+  return claims.join(' · ') || 'nothing yet'
 }
 
 /** Ending a run cannot be undone, so it asks first. Goes through cancel, not steer:

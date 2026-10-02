@@ -1457,3 +1457,90 @@ describe('the evidence table', () => {
     expect(screen.getByText(/^weakens/).textContent?.replace(/\s+/g, ' ').trim()).toBe('weakens H2 H3')
   })
 })
+
+describe('a root-cause trace while it runs', () => {
+  const step = (over = {}) => ({
+    step_id: 'step-1',
+    event: 'beacon to 45.77.53.176',
+    who: '',
+    at: '2018-08-20T10:01:41Z',
+    link: '',
+    artifact: '',
+    cause_id: null,
+    origin: false,
+    link_status: 'none',
+    origin_status: 'none',
+    proven: false,
+    ...over,
+  })
+  const trace = (over = {}) => ({
+    run_id: 'run-1',
+    run_kind: 'root_cause',
+    status: 'running',
+    outcome: null,
+    reason: '',
+    cost_usd: 0.4213,
+    max_cost_usd: 15,
+    steps: [
+      step({ step_id: 'step-1', event: 'stager fetched /images/logos.png', link: '7756', cause_id: 'step-2', link_status: 'unproven' }),
+      step({ step_id: 'step-2', event: 'BRUCE BIRTHDAY HAPPY HOUR PICS.lnk opened', origin: true, origin_status: 'proven', proven: true }),
+    ],
+    proven: 1,
+    notices: ['A link or an origin cannot be proved on this deployment.'],
+    searches: 23,
+    recent_searches: [
+      { tool: 'splunk-selfhosted_splunk_execute', args: '{"spl_query":"index=botsv3 7756 | head 20"}', rows: 14, failed: false },
+      { tool: 'splunk-selfhosted_splunk_execute', args: '{"spl_query":"| makeresults"}', rows: 0, failed: true },
+    ],
+    open_checkpoint: null,
+    ...over,
+  })
+
+  it('shows the cost the ledger has priced so far against the ceiling, not $0.00', () => {
+    renderPanel({ status: 'running', total_cost_usd: 0, projection: trace() })
+
+    expect(screen.getByText('$0.42')).toBeInTheDocument()
+    expect(screen.getByText(/of \$15\.00/)).toBeInTheDocument()
+  })
+
+  it('lists each step as last written, with whether it is proven', () => {
+    renderPanel({ status: 'running', projection: trace() })
+
+    expect(screen.getByRole('heading', { name: /Trace/ })).toBeInTheDocument()
+    expect(screen.getByText(/2 steps · 1 proven · 23 searches/)).toBeInTheDocument()
+    const rows = screen.getAllByRole('row').filter((row) => within(row).queryByText(/^step-\d$/))
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]!).getByText('unproven')).toBeInTheDocument()
+    expect(within(rows[0]!).getByText(/link 7756/)).toBeInTheDocument()
+    expect(within(rows[1]!).getByText('proven')).toBeInTheDocument()
+    expect(within(rows[1]!).getByText(/origin/)).toBeInTheDocument()
+  })
+
+  it('shows the notices and the latest searches, with a failed one marked', () => {
+    renderPanel({ status: 'running', projection: trace() })
+
+    expect(screen.getByText('A link or an origin cannot be proved on this deployment.')).toBeInTheDocument()
+    expect(screen.getByText(/index=botsv3 7756/)).toBeInTheDocument()
+    expect(screen.getByText('14 rows')).toBeInTheDocument()
+    expect(screen.getByText('failed')).toBeInTheDocument()
+  })
+
+  it('says so before anything is recorded', () => {
+    renderPanel({ status: 'running', projection: trace({ steps: [], proven: 0, searches: 0, recent_searches: [], notices: [], cost_usd: null }) })
+
+    expect(screen.getByText(/No step recorded yet/)).toBeInTheDocument()
+  })
+
+  it('keeps the checked summary below the trace once the run has ended', () => {
+    renderPanel({ status: 'completed', result_summary: 'Still unproven: step-1', projection: trace({ status: 'terminal', outcome: 'completed' }) })
+
+    expect(screen.getByRole('heading', { name: /Trace/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Result summary' })).toBeInTheDocument()
+  })
+
+  it('draws no trace for a run whose projection is some other kind', () => {
+    renderPanel({ status: 'completed', result_summary: 'done', projection: { run_id: 'run-1', results: [] } })
+
+    expect(screen.queryByRole('heading', { name: /Trace/ })).toBeNull()
+  })
+})
