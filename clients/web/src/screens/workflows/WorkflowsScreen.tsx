@@ -10,8 +10,9 @@ import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type Gener
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
+import { COMMANDS } from '../../shell/commandBar'
 
-type WfTab = 'workflows' | 'agents' | 'skills'
+type WfTab = 'workflows' | 'agents' | 'skills' | 'commands'
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
@@ -23,6 +24,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
     ['workflows', 'Workflows'],
     ['agents', 'Agents'],
     ['skills', 'Skills'],
+    ['commands', 'Commands'],
   ]
   return (
     <>
@@ -33,10 +35,12 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
               key={k}
               role="tab"
               aria-selected={tab === k}
+              aria-label={k === 'commands' ? `${label} ${COMMANDS.length}` : label}
               className={`tab${tab === k ? ' active' : ''}`}
               onClick={() => setTab(k)}
             >
               {label}
+              {k === 'commands' && <span className="mono text-[10.5px] text-tx-3 ml-1.5">{COMMANDS.length}</span>}
             </button>
           ))}
         </div>
@@ -44,7 +48,37 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
       {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
+      {tab === 'commands' && <CommandsTab />}
     </>
+  )
+}
+
+/** The command bar's rows, read from COMMANDS. Later rows are marked and carry
+ *  nothing focusable; nothing in the table runs a command. */
+function CommandsTab() {
+  return (
+    <div className="px-[22px] py-5">
+      <div className="table-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Arguments</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {COMMANDS.map((command) => (
+              <tr key={command.id} aria-disabled={command.later || undefined} className={command.later ? 'opacity-60' : undefined}>
+                <td className="font-semibold">{command.name}</td>
+                <td className="muted">{command.hint}</td>
+                <td>{command.later ? 'Later' : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
@@ -1548,7 +1582,9 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
           <pre className="font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap m-0" style={{ color: 'var(--crit)' }}>{d.error}</pre>
         </div>
       )}
-      {hunt ? <HuntTabs d={d} hunt={hunt} onReload={onSteered} /> : <ComposeDetail d={d} />}
+      {hunt ? <HuntTabs d={d} hunt={hunt} onReload={onSteered} /> : (
+        <RunWithoutHunt d={d} inFlight={IN_FLIGHT.includes(d.status)} />
+      )}
       {IN_FLIGHT.includes(d.status) && <Steer runId={d.run_id} hunt={hunt !== null} onSteered={onSteered} />}
     </div>
   )
@@ -2343,11 +2379,170 @@ function RejectPhaseGate({
   )
 }
 
-/** A run that walks phases has steps and a summary; there is nothing to tab between. */
-function ComposeDetail({ d }: { d: WfRunDetail }) {
+/** What replay already returns for an investigate run. Compose and root cause 404
+ *  here; that is not a failure, and the phase view stays as it was. */
+interface InvestigateDecisionView {
+  iteration: number
+  action: string
+  rationale: string
+  cost_usd: number
+  calls: unknown[]
+}
+
+type ReplayRead =
+  | { kind: 'pending' }
+  | { kind: 'absent' }
+  | { kind: 'failed'; message: string }
+  | { kind: 'investigate'; decisions: InvestigateDecisionView[] }
+
+function statusOf(e: unknown): number | undefined {
+  return (e as { response?: { status?: number } }).response?.status
+}
+
+function decisionsOf(raw: unknown[]): InvestigateDecisionView[] {
+  return raw.map((item, at) => {
+    const row = (typeof item === 'object' && item !== null ? item : {}) as Partial<InvestigateDecisionView>
+    return {
+      iteration: typeof row.iteration === 'number' ? row.iteration : at + 1,
+      action: typeof row.action === 'string' ? row.action : '',
+      rationale: typeof row.rationale === 'string' ? row.rationale : '',
+      cost_usd: typeof row.cost_usd === 'number' ? row.cost_usd : 0,
+      calls: Array.isArray(row.calls) ? row.calls : [],
+    }
+  })
+}
+
+function pullReplay(runId: string, live: () => boolean, setRead: (next: ReplayRead) => void) {
+  workflowApi
+    .replayRun(runId)
+    .then((res) => {
+      if (!live()) return
+      const body = res.data as { run_kind?: unknown; decisions?: unknown }
+      if (body?.run_kind !== 'investigate' || !Array.isArray(body.decisions)) {
+        setRead({ kind: 'absent' })
+        return
+      }
+      setRead({ kind: 'investigate', decisions: decisionsOf(body.decisions) })
+    })
+    .catch((e: unknown) => {
+      if (!live()) return
+      setRead(statusOf(e) === 404 ? { kind: 'absent' } : { kind: 'failed', message: errMsg(e) })
+    })
+}
+
+/** Own request, not folded into getRun. Polled on the same interval while the
+ *  detail is open and the run is in flight; a finished run is read once.
+ *  A slower earlier response cannot overwrite a later one. */
+function useInvestigateReplay(runId: string, inFlight: boolean): ReplayRead {
+  const [read, setRead] = useState<ReplayRead>({ kind: 'pending' })
+  const req = useRef(0)
+
+  const pull = useCallback(() => {
+    const mine = ++req.current
+    pullReplay(runId, () => req.current === mine, setRead)
+  }, [runId])
+
+  useEffect(() => {
+    setRead({ kind: 'pending' })
+    pull()
+    return () => { req.current += 1 }
+  }, [pull])
+
+  useEffect(() => {
+    if (!inFlight) return
+    const timer = setInterval(pull, RUN_POLL_MS)
+    return () => clearInterval(timer)
+  }, [inFlight, pull])
+
+  // getRun can observe terminal before the next replay tick. One more read then,
+  // so the decision that ended the run is on the open panel.
+  const wasLive = useRef(inFlight)
+  useEffect(() => {
+    if (wasLive.current && !inFlight) pull()
+    wasLive.current = inFlight
+  }, [inFlight, pull])
+
+  return read
+}
+
+function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) {
+  const replay = useInvestigateReplay(d.run_id, inFlight)
+  return (
+    <>
+      {replay.kind === 'investigate' && <InvestigateDecisions decisions={replay.decisions} />}
+      {replay.kind === 'failed' && (
+        <div className="text-[12.5px] py-2" style={{ color: 'var(--crit)' }}>
+          Couldn’t read decisions — {replay.message}
+        </div>
+      )}
+      <ComposeDetail d={d} suppressEmpty={replay.kind === 'pending' || replay.kind === 'investigate'} />
+    </>
+  )
+}
+
+function InvestigateDecisions({ decisions }: { decisions: InvestigateDecisionView[] }) {
+  return (
+    <div className="modal-section">
+      <h4>Decisions</h4>
+      {decisions.length === 0 ? (
+        <div className="muted text-[12.5px]">No decisions recorded.</div>
+      ) : (
+        decisions.map((decision) => (
+          <div key={decision.iteration} className="mb-3">
+            <div className="flex gap-2 items-baseline flex-wrap">
+              <span className="muted text-[11.5px]">Iteration {decision.iteration}</span>
+              <span className="font-mono text-[12px]">{decision.action}</span>
+              <span className="muted text-[11.5px]"><Cost usd={decision.cost_usd} digits={3} /></span>
+            </div>
+            <div className="text-[12.5px] text-tx-2 leading-[1.5] mt-1">
+              <span className="muted text-[11px] uppercase tracking-[0.06em] mr-1.5">model text</span>
+              {decision.rationale || '—'}
+            </div>
+            <DecisionCalls calls={decision.calls} />
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
+function callLine(call: unknown): { tool: string; rest: string } {
+  if (typeof call !== 'object' || call === null) return { tool: 'call', rest: String(call) }
+  const rec = call as { tool?: unknown; arguments?: unknown; result?: unknown }
+  const tool = typeof rec.tool === 'string' && rec.tool !== '' ? rec.tool : 'call'
+  const args = rec.arguments
+  const argText = typeof args === 'string' ? args : args === undefined ? '' : JSON.stringify(args)
+  const result = typeof rec.result === 'string' ? rec.result : ''
+  const clipped = result.length > 160 ? `${result.slice(0, 160)}…` : result
+  const rest = [argText !== '' && argText !== '{}' ? argText : '', clipped].filter(Boolean).join(' — ')
+  return { tool, rest }
+}
+
+function DecisionCalls({ calls }: { calls: unknown[] }) {
+  if (calls.length === 0) return <div className="muted text-[11.5px] mt-1">No calls followed.</div>
+  return (
+    <ul className="text-[12px] mt-1 mb-0" style={{ paddingLeft: 18 }}>
+      {calls.map((call, at) => {
+        const line = callLine(call)
+        return (
+          <li key={at}>
+            <span className="font-mono">{line.tool}</span>
+            {line.rest !== '' && <span className="muted"> {line.rest}</span>}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** A run that walks phases has steps and a summary; there is nothing to tab between.
+ *  `suppressEmpty` holds the placeholder while a replay read is still out, and while
+ *  an investigate body is already showing its decisions. */
+function ComposeDetail({ d, suppressEmpty = false }: { d: WfRunDetail; suppressEmpty?: boolean }) {
   const agentMeta = useAgentMeta()
   if (!d.result_summary && !d.phases?.length) {
-    return d.error ? null : <div className="muted" style={{ padding: '10px 4px' }}>No additional detail recorded for this run.</div>
+    if (d.error || suppressEmpty) return null
+    return <div className="muted" style={{ padding: '10px 4px' }}>No additional detail recorded for this run.</div>
   }
   return (
     <>

@@ -1,8 +1,8 @@
 /* The hunt panel. Everything asserted here is data the projection already
    carried and the console used to throw away: gaps, checkpoints, escalations
    and the report itself were reachable only as prose, and only after terminal. */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 
 vi.mock('../../services/api', () => ({
@@ -10,6 +10,9 @@ vi.mock('../../services/api', () => ({
     steer: vi.fn(() => Promise.resolve({ data: {} })),
     cancelRun: vi.fn(() => Promise.resolve({ data: {} })),
     getReplay: vi.fn(() => Promise.resolve({ data: { hunt_id: 'run-1', decisions: [], reproduced: 0, inexact: 0, recalled: [] } })),
+    // Hangs unless a test settles it. A rejection here updates the panel after a
+    // synchronous assertion and trips an act() warning.
+    replayRun: vi.fn(() => new Promise(() => undefined)),
   },
   approvalsApi: {
     list: vi.fn(() => Promise.resolve({ data: { actions: [] } })),
@@ -1301,6 +1304,117 @@ describe('answering a phase gate from the run', () => {
 
     expect(screen.queryByText('Waiting on approval')).toBeNull()
     expect(approvalsApi.list).not.toHaveBeenCalled()
+  })
+})
+
+describe('investigate decisions from replay', () => {
+  const decision = {
+    iteration: 2,
+    action: 'EXAMINE',
+    rationale: 'the login is worth a look',
+    worker: 'lead',
+    cost_usd: 0.05,
+    calls: [{ tool: 'case_records', arguments: '{"id":"c-1"}', result: 'benign' }],
+  }
+
+  beforeEach(async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockReset()
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404, data: { detail: 'Nothing to replay' } } })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('lists each decision, labelled as model text, and keeps the result summary', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({
+      data: { run_id: 'run-1', run_kind: 'investigate', decisions: [decision] },
+    } as never)
+    renderPanel({ result_summary: 'benign traffic' })
+
+    expect(await screen.findByText('EXAMINE')).toBeInTheDocument()
+    expect(screen.getByText('Iteration 2')).toBeInTheDocument()
+    expect(screen.getByText('model text')).toBeInTheDocument()
+    expect(screen.getByText('the login is worth a look')).toBeInTheDocument()
+    expect(screen.getByText('$0.050')).toBeInTheDocument()
+    expect(screen.getByText('case_records')).toBeInTheDocument()
+    expect(screen.getByText(/\{"id":"c-1"\}/)).toBeInTheDocument()
+    expect(screen.getByText('Result summary')).toBeInTheDocument()
+    expect(screen.getByText('benign traffic')).toBeInTheDocument()
+    expect(workflowApi.replayRun).toHaveBeenCalledWith('run-1')
+  })
+
+  it('says there are none when the replay decisions are empty', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({
+      data: { run_id: 'run-1', run_kind: 'investigate', decisions: [] },
+    } as never)
+    renderPanel({ result_summary: 'still here' })
+
+    expect(await screen.findByText('No decisions recorded.')).toBeInTheDocument()
+    expect(screen.getByText('still here')).toBeInTheDocument()
+  })
+
+  it('keeps the empty compose placeholder when replay 404s', async () => {
+    renderPanel({})
+
+    expect(await screen.findByText('No additional detail recorded for this run.')).toBeInTheDocument()
+    expect(screen.queryByText('Decisions')).toBeNull()
+  })
+
+  it('leaves phases and the summary alone when replay 404s', async () => {
+    renderPanel({
+      result_summary: 'phases all ran',
+      phases: [{ phase_id: 'assess', phase_order: 1, agent_id: 'triage', status: 'completed', duration_ms: 10, cost_usd: 0.1 }],
+    })
+
+    expect(await screen.findByText('Phases')).toBeInTheDocument()
+    expect(screen.getByText('phases all ran')).toBeInTheDocument()
+    expect(screen.getByText('Triage')).toBeInTheDocument()
+    expect(screen.queryByText('Decisions')).toBeNull()
+    expect(screen.queryByText(/Couldn’t read decisions/)).toBeNull()
+  })
+
+  it('shows a failure that is not a 404, and still shows phases', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 502, data: { detail: 'ledger down' } } })
+    renderPanel({
+      phases: [{ phase_id: 'assess', phase_order: 1, agent_id: 'triage', status: 'completed' }],
+    })
+
+    expect(await screen.findByText('Couldn’t read decisions — ledger down')).toBeInTheDocument()
+    expect(screen.getByText('Phases')).toBeInTheDocument()
+  })
+
+  it('does not ask a hunt for this replay', async () => {
+    const { workflowApi } = await import('../../services/api')
+    renderPanel({ hunt: hunt() })
+
+    expect(screen.getByRole('tab', { name: /Hypotheses/ })).toBeInTheDocument()
+    expect(workflowApi.replayRun).not.toHaveBeenCalled()
+  })
+
+  it('refreshes the replay while the run is in flight, and stops when it ends', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({
+      data: { run_id: 'run-1', run_kind: 'investigate', decisions: [decision] },
+    } as never)
+    const view = render(<RunDetail d={detail({ status: 'running' })} onSteered={() => {}} />)
+
+    expect(await screen.findByText('EXAMINE')).toBeInTheDocument()
+    const opened = vi.mocked(workflowApi.replayRun).mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(vi.mocked(workflowApi.replayRun).mock.calls.length).toBe(opened + 1)
+
+    const beforeEnd = vi.mocked(workflowApi.replayRun).mock.calls.length
+    view.rerender(<RunDetail d={detail({ status: 'completed' })} onSteered={() => {}} />)
+    await waitFor(() => expect(vi.mocked(workflowApi.replayRun).mock.calls.length).toBe(beforeEnd + 1))
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    expect(vi.mocked(workflowApi.replayRun).mock.calls.length).toBe(beforeEnd + 1)
+    expect(screen.getByText('EXAMINE')).toBeInTheDocument()
   })
 })
 
