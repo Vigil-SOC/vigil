@@ -111,47 +111,48 @@ def create_snapshot(
 
 
 _PG_MIN_MAJOR = 16
+# Set when a client >= 16 is found off PATH. Child processes see it via
+# _child_env; resolving it must not execute the binary.
+_pg_bindir: str | None = None
 
 
 def _require_tool(name: str) -> None:
     if name in ("pg_dump", "pg_restore"):
-        resolved = _prefer_pg_client(name)
+        resolved = _pg_client(name)
     else:
         resolved = shutil.which(name)
     if resolved is None:
         raise BackupError(f"{name} is not installed")
 
 
-def _prefer_pg_client(name: str) -> str | None:
-    """A pg_dump/pg_restore whose major is at least 16.
+def _pg_client(name: str) -> str | None:
+    """A pg_dump/pg_restore whose major is at least 16, without running it.
 
     postgresql-client-16 installs under /usr/lib/postgresql/16/bin, which is
-    not on PATH. That client wins over an older one already on PATH, and its
-    directory is prepended so later ``shutil.which`` calls find it.
+    not on PATH. The directory name is the major, so an older client already
+    on PATH does not win. When that directory is absent, whatever ``which``
+    finds is used and ``_require_pg_dump_version`` still rejects one older
+    than the server.
     """
-    found = shutil.which(name)
-    found_major = _binary_major(found) if found else None
-    best_path = (
-        found if found_major is not None and found_major >= _PG_MIN_MAJOR else None
-    )
-    best_major = found_major if best_path else -1
+    global _pg_bindir
     root = Path("/usr/lib/postgresql")
+    best: tuple[int, Path] | None = None
     if root.is_dir():
         for path in root.glob(f"*/bin/{name}"):
             if not os.access(path, os.X_OK):
                 continue
-            major = _binary_major(str(path))
-            if major is None or major < _PG_MIN_MAJOR or major <= best_major:
+            major_text = path.relative_to(root).parts[0]
+            if not major_text.isdigit():
                 continue
-            best_path = str(path)
-            best_major = major
-    if best_path is None:
-        return None
-    bindir = str(Path(best_path).parent)
-    parts = os.environ.get("PATH", "").split(os.pathsep)
-    if bindir not in parts:
-        os.environ["PATH"] = bindir + os.pathsep + os.environ.get("PATH", "")
-    return best_path
+            major = int(major_text)
+            if major < _PG_MIN_MAJOR:
+                continue
+            if best is None or major > best[0]:
+                best = (major, path)
+    if best is not None:
+        _pg_bindir = str(best[1].parent)
+        return str(best[1])
+    return shutil.which(name)
 
 
 def _pg_major(text: str) -> int | None:
@@ -162,13 +163,6 @@ def _pg_major(text: str) -> int | None:
     if not head.isdigit():
         return None
     return int(head)
-
-
-def _binary_major(path: str) -> int | None:
-    proc = subprocess.run([path, "--version"], capture_output=True, text=True)
-    if proc.returncode != 0:
-        return None
-    return _pg_major(proc.stdout)
 
 
 def _priority_prefix() -> list[str]:
@@ -481,6 +475,7 @@ def _restore_list(
             raise BackupError(f"verification failed: restic dump: {detail}")
         restore = subprocess.run(
             priority + ["pg_restore", "--list", str(copy)],
+            env=_child_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -519,7 +514,10 @@ def _restic_backup(
 
 def _child_env() -> dict[str, str]:
     # pg_dump and restic need PATH and locale. Config is not read from here.
-    return os.environ.copy()  # noqa: ENV001 - child process env
+    env = os.environ.copy()  # noqa: ENV001 - child process env
+    if _pg_bindir:
+        env["PATH"] = _pg_bindir + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def _restic_env(passphrase: Path) -> dict[str, str]:
