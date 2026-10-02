@@ -215,26 +215,39 @@ def _contained(root: Path, path: Path) -> bool:
     return path != root and path.is_relative_to(root)
 
 
-def _skill_dir(root: Path, name: str) -> Path:
-    """``root/name`` resolved, or a refusal when it would leave the operator root.
+def _direct_child(root: Path, name: str) -> Path:
+    """``root/name`` as a real path, refused when it would leave ``root``.
 
-    A symlink is refused before anything is written. Resolving it would let a
-    link named ``alias`` overwrite another skill, or a link that points outside
-    the root.
+    ``realpath`` then ``startswith`` is the containment check: a name with a
+    separator or ``..`` cannot land outside ``root``. A symlink is refused
+    before that, so a link named ``alias`` cannot overwrite another skill.
     """
-    if not name or name != Path(name).name or name in {".", ".."}:
+    if (
+        not name
+        or name != Path(name).name
+        or name in {".", ".."}
+        or not _NAME_RE.match(name)
+        or len(name) > _NAME_MAX
+    ):
         raise SkillError(f"invalid skill name {name!r}")
     link = root / name
     if link.is_symlink():
         raise SkillError("refusing to follow a symlink")
-    candidate = link.resolve()
-    if (
-        candidate.parent != root
-        or candidate.name != name
-        or not _contained(root, candidate)
-    ):
+    base = os.path.realpath(root)
+    candidate = os.path.realpath(os.path.join(base, name))
+    prefix = base if base.endswith(os.sep) else base + os.sep
+    if not candidate.startswith(prefix):
         raise SkillError("resolved path leaves the operator skills root")
-    library = LIBRARY_ROOT.resolve()
+    path = Path(candidate)
+    if path.parent != Path(base) or path.name != name:
+        raise SkillError("resolved path leaves the operator skills root")
+    return path
+
+
+def _skill_dir(root: Path, name: str) -> Path:
+    """The operator directory for ``name``, never the bundled library."""
+    candidate = _direct_child(root, name)
+    library = Path(os.path.realpath(LIBRARY_ROOT))
     if candidate == library or candidate.is_relative_to(library):
         raise SkillError("refusing to write into the bundled library")
     return candidate
@@ -271,7 +284,7 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
 def _accepts_skill(name: str, content: str) -> None:
     """Parse a rendered file in a throwaway directory before touching the root."""
     with tempfile.TemporaryDirectory() as tmp:
-        skill_dir = Path(tmp) / name
+        skill_dir = _direct_child(Path(tmp), name)
         try:
             skill_dir.mkdir()
         except OSError as exc:
