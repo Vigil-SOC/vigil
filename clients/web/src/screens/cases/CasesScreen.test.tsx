@@ -58,6 +58,11 @@ vi.mock('../../services/api', () => ({
     getInteraction: vi.fn(),
   },
   streamFetch: vi.fn(),
+  approvalsApi: {
+    needsYou: vi.fn(() => Promise.resolve({ data: { count: 0, items: [] } })),
+    approve: vi.fn(() => Promise.resolve({})),
+    reject: vi.fn(() => Promise.resolve({})),
+  },
 }))
 
 const CASE = {

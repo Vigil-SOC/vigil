@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { casesApi, orchestratorApi, workflowApi, type CaseRecordRow } from '../../services/api'
+import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { HoldApprove } from '../../shared/HoldApprove'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
@@ -20,6 +21,7 @@ import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } 
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
+const NEEDS_POLL_MS = 20_000
 
 const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
 const CHAINED = 'Only the run’s rows are hash-chained. Case audit rows are not.'
@@ -66,6 +68,89 @@ function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+function CaseNeeds({
+  items,
+  busy,
+  error,
+  onApprove,
+  onReject,
+}: {
+  items: NeedsYouItem[]
+  busy: boolean
+  error: string | null
+  onApprove: (id: string) => void
+  onReject: (id: string, reason: string) => void
+}) {
+  if (items.length === 0) return null
+  return (
+    <section className="case-needs" aria-label="Needs you">
+      {error && <p role="alert">{error}</p>}
+      {items.map((item) => (
+        <CaseNeed key={item.source_id} item={item} busy={busy} onApprove={onApprove} onReject={onReject} />
+      ))}
+    </section>
+  )
+}
+
+function CaseNeed({
+  item,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  item: NeedsYouItem
+  busy: boolean
+  onApprove: (id: string) => void
+  onReject: (id: string, reason: string) => void
+}) {
+  const [rejecting, setRejecting] = useState(false)
+  const [reason, setReason] = useState('')
+
+  return (
+    <article>
+      <h3>{item.title}</h3>
+      <p className="case-needs-meta">{item.kind} · {item.reversibility}</p>
+      {item.reason && <p className="case-needs-reason">{item.reason}</p>}
+      <div className="case-needs-actions">
+        {item.reversibility === 'reversible' ? (
+          <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item.source_id)}>
+            Approve
+          </button>
+        ) : (
+          <HoldApprove disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+        )}
+        {rejecting ? (
+          <form
+            className="case-needs-reject"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const text = reason.trim()
+              if (!text) return
+              onReject(item.source_id, text)
+            }}
+          >
+            <textarea
+              className="feedback-box"
+              aria-label="Rejection reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why is this being rejected?"
+              autoFocus
+            />
+            <button type="submit" className="btn danger" disabled={busy || !reason.trim()}>
+              Reject
+            </button>
+          </form>
+        ) : (
+          <button type="button" className="btn danger" disabled={busy} onClick={() => setRejecting(true)}>
+            Reject
+          </button>
+        )}
+      </div>
+    </article>
   )
 }
 
@@ -142,6 +227,43 @@ export function CasePage({
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
+  const [needsCount, setNeedsCount] = useState(0)
+  const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
+  const [decisionError, setDecisionError] = useState<string | null>(null)
+  const decisionBusyRef = useRef<string | null>(null)
+  const needsTicket = useRef(0)
+  const seenCase = useRef(id)
+  if (seenCase.current !== id) {
+    seenCase.current = id
+    needsTicket.current += 1
+    decisionBusyRef.current = null
+    setNeedsItems([])
+    setNeedsCount(0)
+    setDecisionBusy(null)
+    setDecisionError(null)
+  }
+
+  const loadNeeds = useCallback(async () => {
+    const ticket = ++needsTicket.current
+    const forCase = id
+    try {
+      const res = await approvalsApi.needsYou(forCase)
+      if (ticket !== needsTicket.current || forCase !== seenCase.current) return
+      setNeedsItems(res.data.items)
+      setNeedsCount(res.data.count)
+    } catch {
+      if (ticket !== needsTicket.current || forCase !== seenCase.current) return
+    }
+  }, [id])
+
+  useEffect(() => {
+    void loadNeeds()
+    const timer = window.setInterval(() => {
+      void loadNeeds()
+    }, NEEDS_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [loadNeeds])
 
   useEffect(() => {
     setTab('Summary')
@@ -290,6 +412,25 @@ export function CasePage({
     }
   }
 
+  const decide = async (sourceId: string, act: () => Promise<unknown>) => {
+    if (decisionBusyRef.current) return
+    const forCase = id
+    decisionBusyRef.current = sourceId
+    setDecisionBusy(sourceId)
+    setDecisionError(null)
+    try {
+      await act()
+      if (seenCase.current === forCase) await loadNeeds()
+    } catch (e) {
+      if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
+    } finally {
+      if (seenCase.current === forCase && decisionBusyRef.current === sourceId) {
+        decisionBusyRef.current = null
+        setDecisionBusy(null)
+      }
+    }
+  }
+
   const reopen = async () => {
     setBusy(true)
     setNote('')
@@ -305,6 +446,15 @@ export function CasePage({
 
   const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
+  const needsBlock = (
+    <CaseNeeds
+      items={needsItems}
+      busy={decisionBusy !== null}
+      error={decisionError}
+      onApprove={(sourceId) => void decide(sourceId, () => approvalsApi.approve(sourceId))}
+      onReject={(sourceId, reason) => void decide(sourceId, () => approvalsApi.reject(sourceId, reason))}
+    />
+  )
 
   return (
     <div className="detail-pane">
@@ -359,12 +509,18 @@ export function CasePage({
           </button>
         ))}
       </nav>
+      {needsCount > 0 && tab !== 'Summary' && (
+        <button type="button" className="case-needs-strip" onClick={() => setTab('Summary')}>
+          Needs you
+        </button>
+      )}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
           {tab === 'Summary' && (
             closed ? (
               <>
+                {needsBlock}
                 <section>
                   <h3>Verdict</h3>
                   <p>{closure?.verdict || '—'}</p>
@@ -385,6 +541,7 @@ export function CasePage({
               </>
             ) : (
               <>
+                {needsBlock}
                 <section>
                   <h3>Now · phase {fold?.kind === 'hunt' ? fold.iteration : fold?.iterations ?? 0}</h3>
                   <p>

@@ -65,6 +65,11 @@ vi.mock('../services/api', () => ({
     execute: (id: string, params: unknown) => execute(id, params),
     getRun: vi.fn(() => Promise.resolve({ data: {} })),
   },
+  approvalsApi: {
+    needsYou: vi.fn(() => Promise.resolve({ data: { count: 0, items: [] } })),
+    approve: vi.fn(() => Promise.resolve({})),
+    reject: vi.fn(() => Promise.resolve({})),
+  },
   default: {
     get: (path: string, config?: unknown) => apiGet(path, config),
     post: vi.fn(),

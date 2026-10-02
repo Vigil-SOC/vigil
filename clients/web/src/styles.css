@@ -1972,6 +1972,61 @@
       font-weight: 500;
    }
 
+   .case-needs-strip {
+      display: block;
+      width: 100%;
+      padding: 8px 24px;
+      border: none;
+      border-bottom: 1px solid var(--line);
+      background: var(--accent-dim);
+      color: var(--accent-2);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+      flex-shrink: 0;
+   }
+
+   .detail-body .case-needs {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+   }
+
+   .detail-body .case-needs h3 {
+      margin: 0;
+      font-size: 15px;
+   }
+
+   .detail-body .case-needs-meta {
+      margin: 6px 0 0;
+      color: var(--tx-3);
+      font-size: 12px;
+   }
+
+   .detail-body .case-needs-reason {
+      margin: 8px 0 0;
+   }
+
+   .detail-body .case-needs-actions,
+   .detail-body .case-needs-reject {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: flex-start;
+   }
+
+   .detail-body .case-needs-actions {
+      margin-top: 12px;
+      align-items: center;
+   }
+
+   .detail-body .case-needs-reject textarea {
+      min-width: 220px;
+      flex: 1;
+   }
+
    .detail-body {
       flex: 1;
       min-height: 0;
