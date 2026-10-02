@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     demo_mode: Optional[bool] = None
     autostart_services: Optional[str] = None
     max_upload_size_mb: int = 500
+    # os.pathsep-separated roots beyond the home directory that local detection
+    # rule sources may live under.
+    vigil_detection_local_roots: str = ""
     vigil_context_path: str = ""
     vigil_frontend_url: str = ""
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
