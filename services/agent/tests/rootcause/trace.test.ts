@@ -280,12 +280,62 @@ describe("the trace", () => {
     const report = await runRootCause(harness, { run_id: RUN, spec });
     expect(report.status).toBe("completed");
     const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
-    expect((terminal?.payload as TerminalPayload).summary).toBe("alice delivered invoice.lnk; [unlinked] was nearby");
+    const summary = (terminal?.payload as TerminalPayload).summary ?? "";
+    expect(summary).toContain("alice delivered invoice.lnk; [unlinked] was nearby");
+    expect(summary).toContain("Still unproven: step-2");
     const steps = (await state.read(RUN)).filter((event) => event.kind === "step").map((event) => event.payload as StepPayload);
     expect(steps[0]?.origin_status).toBe("proven");
     const seen = harness.provider.requests.map((request) => JSON.stringify(request)).join("\n");
     expect(seen).toContain("finish refused");
     expect(seen).toContain("step-1");
+  });
+
+  it("names the open steps when the model stops in prose before they are proven", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const harness = harnessOf(
+      [
+        { calls: [{ tool: "record", args: JSON.stringify({ event: "phishing mail opened", who: "bob", at: AT, link: LINK, origin: true }) }] },
+        { content: "The attacker came in through phishing." },
+      ],
+      spec,
+      state,
+    );
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    expect(report.reason).toMatch(/still open/);
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    const summary = (terminal?.payload as TerminalPayload).summary ?? "";
+    expect(summary).toContain("The attacker came in through phishing.");
+    expect(summary).toContain("Still unproven: step-1 (phishing mail opened)");
+    expect(summary).not.toContain("bob");
+  });
+
+  it("says nothing was recorded when the model stops in prose without a step", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const report = await runRootCause(harnessOf([{ content: "Nothing to trace." }], spec, state), { run_id: RUN, spec });
+    expect(report.reason).toMatch(/still open/);
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    expect((terminal?.payload as TerminalPayload).summary).toContain("Still unproven: nothing was recorded.");
+  });
+
+  it("reports a prose stop as finished when every step is proven", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [runEvent(spec), dispatch("d1", PROVER_TOOL, `search ${LINK} before ${AT}`, [{ count: 0 }])]);
+    const harness = harnessOf(
+      [
+        { calls: [{ tool: "record", args: JSON.stringify({ event: "file landed", who: "alice", at: AT, link: LINK, origin: true, artifact: LINK }) }] },
+        { content: "alice delivered invoice.lnk" },
+      ],
+      spec,
+      state,
+    );
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.reason).toBe("the trace finished");
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    expect((terminal?.payload as TerminalPayload).summary).toBe("alice delivered invoice.lnk");
   });
 
   it("journals a remote result and does not prove from a paraphrase", async () => {

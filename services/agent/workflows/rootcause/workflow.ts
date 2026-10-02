@@ -11,6 +11,7 @@ import { grantsOf } from "../lead/workflow.js";
 import {
   latestSteps,
   observationsOf,
+  openSteps,
   openSummary,
   redact,
   PROVER_TOOL,
@@ -104,7 +105,13 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
   if (outcome.status === "failed" || outcome.value === null) {
     return end(harness, options, "failed", outcome.reason);
   }
-  return end(harness, options, "completed", "the trace finished", deliver(outcome.value, steps, notices));
+  // The turn ends when the model answers in prose, whether or not it called
+  // finish. A report over steps still open says so, as the ceiling's does.
+  if (steps.length > 0 && openSteps(steps).length === 0) {
+    return end(harness, options, "completed", "the trace finished", deliver(outcome.value, steps, notices));
+  }
+  const summary = deliver(`${outcome.value}\n\n${openSummary(steps)}`, steps, notices);
+  return end(harness, options, "completed", "the investigator stopped with steps still open", summary);
 }
 
 async function permit(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<RootCauseReport | null> {
