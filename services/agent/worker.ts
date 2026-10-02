@@ -182,7 +182,7 @@ async function drive(
   }
   if (entry.workflow === "rootcause") {
     const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
-    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal });
+    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
     return;
   }
   if (kind === "hunt" || kind === "investigate") {
