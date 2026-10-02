@@ -71,4 +71,6 @@ export interface Skill {
   desc: string
   /** path of the skill file when the API provides it */
   source?: string
+  /** true when the directory is under the bundled library */
+  bundled: boolean
 }

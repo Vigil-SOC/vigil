@@ -397,5 +397,6 @@ export function mapApiSkill(s: ApiSkill): Skill {
     name: s.name,
     desc: s.description,
     source: s.source_path,
+    bundled: s.bundled,
   }
 }

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import WorkflowsScreen from './WorkflowsScreen'
+import { skillsApi } from '../../services/skillsApi'
 
 vi.mock('../../services/api', () => ({
   workflowApi: {
@@ -84,8 +85,23 @@ vi.mock('../../services/api', () => ({
 vi.mock('../../services/skillsApi', () => ({
   skillsApi: {
     list: vi.fn(() => Promise.resolve([
-      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary' },
+      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
     ])),
+    get: vi.fn(() => Promise.resolve({
+      name: 'executive-summary',
+      description: 'Write the brief.',
+      source_path: 'skills/executive-summary',
+      bundled: true,
+      body: '# Brief\n',
+      operator_root_set: false,
+    })),
+    save: vi.fn(() => Promise.resolve({
+      name: 'executive-summary-copy',
+      description: 'Write the brief.',
+      source_path: 'skills/executive-summary-copy',
+      bundled: false,
+    })),
+    delete: vi.fn(() => Promise.resolve({ deleted: 'desk-check' })),
   },
 }))
 
@@ -125,7 +141,7 @@ describe('workflow catalog table', () => {
     expect(await screen.findByText('No runs yet')).toBeInTheDocument()
   })
 
-  it('names workflows whose listed agents recommend read_skill, and disables import and edit', async () => {
+  it('names workflows whose listed agents recommend read_skill, and keeps import disabled', async () => {
     render(
       <MemoryRouter>
         <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
@@ -139,9 +155,56 @@ describe('workflow catalog table', () => {
     expect(screen.queryByText('Phase tools only')).toBeNull()
     expect(screen.queryByText('Orphan flow')).toBeNull()
     expect(screen.getByRole('button', { name: 'The grant offers the whole library.' })).toBeInTheDocument()
+    expect(screen.getByText('Bundled')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Import' })).toHaveAttribute('title', 'Coming in a later release')
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(await screen.findByText(/path is unset/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('saves a bundled skill under a new name and deletes an operator skill after confirm', async () => {
+    vi.mocked(skillsApi.get).mockResolvedValueOnce({
+      name: 'executive-summary',
+      description: 'Write the brief.',
+      source_path: 'skills/executive-summary',
+      bundled: true,
+      body: '# Brief\n',
+      operator_root_set: true,
+    })
+    vi.mocked(skillsApi.list)
+      .mockResolvedValueOnce([
+        { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
+      ])
+      .mockResolvedValueOnce([
+        { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
+        { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+      ])
+
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    const name = await screen.findByDisplayValue('executive-summary')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(name, { target: { value: 'desk-check' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(skillsApi.save).toHaveBeenCalledWith({
+      name: 'desk-check',
+      description: 'Write the brief.',
+      body: '# Brief\n',
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete skill' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(skillsApi.delete).toHaveBeenCalledWith('desk-check')
   })
 
   it('lists every command, marks the later rows, and runs nothing', () => {

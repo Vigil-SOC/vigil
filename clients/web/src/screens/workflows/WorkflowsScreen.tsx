@@ -4,10 +4,11 @@ import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
-import { type Workflow, type AgentTemplate } from '../../data/appData'
+import { type Workflow, type AgentTemplate, type Skill } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered } from './useWorkflowsData'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
+import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS } from '../../shell/commandBar'
@@ -3567,6 +3568,8 @@ function SkillsTab() {
   const { rows, phase, error, reload } = useSkills()
   const workflows = useWorkflows()
   const agents = useAgents()
+  const [editName, setEditName] = useState<string | null>(null)
+  const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
     : null
@@ -3575,10 +3578,9 @@ function SkillsTab() {
     <>
       <div className="flex items-start gap-4 flex-wrap px-[22px] pt-5 pb-[6px]">
         <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">Skills</h2>
-          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Capabilities loaded as files from the repository or a mounted skills directory. Edit them there; this list is read-only.</p></div>
+          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Capabilities loaded from the bundled library and the operator skills directory.</p></div>
         <div className="flex items-center gap-2.5 flex-wrap">
           <span title={LATER_RELEASE}><button className="btn ghost" disabled title={LATER_RELEASE}>Import</button></span>
-          <span title={LATER_RELEASE}><button className="btn ghost" disabled title={LATER_RELEASE}>Edit</button></span>
           <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
         </div>
       </div>
@@ -3589,7 +3591,10 @@ function SkillsTab() {
         <div className="grid gap-4 px-[22px] pt-[14px] pb-6 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
           {rows.map((s) => (
             <div className="flex flex-col gap-[9px] bg-panel border border-line rounded-lg p-[18px] shadow-panel" key={s.id}>
-              <h3 className="text-base min-w-0">{s.name}</h3>
+              <div className="flex items-center gap-2 min-w-0">
+                <h3 className="text-base min-w-0">{s.name}</h3>
+                {s.bundled && <span className="tmpl-badge">Bundled</span>}
+              </div>
               {s.source && <div className="text-[11.5px] text-tx-3 mono break-all">{s.source}</div>}
               <p className="text-[13px] text-tx-2 leading-[1.5] flex-1">{s.desc}</p>
               <div className="text-[12.5px] text-tx-2">
@@ -3601,9 +3606,27 @@ function SkillsTab() {
                 </span>
                 <div>{offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')}</div>
               </div>
+              <div className="flex justify-end gap-2">
+                <button className="btn ghost" onClick={() => setEditName(s.name)}>Edit</button>
+                {!s.bundled && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
+              </div>
             </div>
           ))}
         </div>
+      )}
+      {editName && (
+        <SkillDrawer
+          name={editName}
+          onClose={() => setEditName(null)}
+          onSaved={() => { setEditName(null); reload() }}
+        />
+      )}
+      {deleteSkill && (
+        <SkillDeleteModal
+          skill={deleteSkill}
+          onClose={() => setDeleteSkill(null)}
+          onDeleted={() => { setDeleteSkill(null); reload() }}
+        />
       )}
     </>
   )

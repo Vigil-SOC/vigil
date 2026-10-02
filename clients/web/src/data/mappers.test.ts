@@ -31,11 +31,17 @@ describe('mapApiCase priority', () => {
 
 describe('mapApiSkill', () => {
   it('keys the loaded skill by name and surfaces its source path', () => {
-    expect(mapApiSkill({ name: 'triage', description: 'Triage a finding.', source_path: 'skills/triage' })).toEqual({
+    expect(mapApiSkill({
+      name: 'triage',
+      description: 'Triage a finding.',
+      source_path: 'skills/triage',
+      bundled: true,
+    })).toEqual({
       id: 'triage',
       name: 'triage',
       desc: 'Triage a finding.',
       source: 'skills/triage',
+      bundled: true,
     })
   })
 })

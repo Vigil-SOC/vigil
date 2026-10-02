@@ -1,33 +1,33 @@
-import axios from 'axios'
-import { basePath } from '../config/basePath'
+import api from './api'
 
 /**
- * Read-only client for the Skills API.
- *
- * Skills are files loaded from the repository or a mounted directory; the
- * console lists them and nothing more (epic #882, decision 7).
+ * Skills API. The list is loaded from disk. Saves and deletes go to the
+ * operator root (`VIGIL_SKILLS_PATH`); the bundled library is never written.
  */
 
-/** Wire row from GET /api/skills: a skill loaded from disk (#928). */
+/** Wire row from GET /api/skills: a skill loaded from disk (#928, #1387). */
 export interface ApiSkill {
   name: string
   description: string
   source_path: string
+  bundled: boolean
 }
 
-const client = axios.create({
-  baseURL: `${basePath}/api/skills`,
-  headers: { 'Content-Type': 'application/json' },
-})
+/** GET /api/skills/{name}: the Markdown body, without frontmatter. */
+export interface ApiSkillDetail extends ApiSkill {
+  body: string
+  operator_root_set: boolean
+}
 
-client.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+export interface SkillWrite {
+  name: string
+  description: string
+  body: string
+}
 
 export const skillsApi = {
-  list: () => client.get<ApiSkill[]>('').then((r) => r.data),
+  list: () => api.get<ApiSkill[]>('/skills').then((r) => r.data),
+  get: (name: string) => api.get<ApiSkillDetail>(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
+  save: (skill: SkillWrite) => api.post<ApiSkill>('/skills', skill).then((r) => r.data),
+  delete: (name: string) => api.delete(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
 }
