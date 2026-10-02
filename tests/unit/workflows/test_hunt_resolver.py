@@ -290,13 +290,16 @@ def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
     assert "read_skill" in config_ids
     assert config_ids.count("read_skill") == 1
 
+    # The roster names capabilities. Compose grants tool ids, so _drop_missing
+    # drops those names; resolve_hunt never reads the list. read_skill still
+    # lands because the profile recommends it.
     playbook, config_text = resolve("threat-hunt")
     intel = next(
         phase
         for phase in yaml.safe_load(playbook)["phases"]
         if phase["id"] == "threat_intel"
     )
-    assert intel["tools"] == ["lookup_indicators", "read_skill"]
+    assert intel["tools"] == ["read_skill"]
     assert "# IOC enrichment" not in intel["prompt"]
     config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
     assert "read_skill" in config_ids

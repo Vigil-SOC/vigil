@@ -104,7 +104,7 @@ phases:
   - id: threat_hunter
     agent: threat_hunter
     name: "Behavioural hunting"
-    tools: [search_findings, telemetry_search]
+    tools: [findings_search, telemetry_search, entity_recall]
     instructions: |
       Broad behavioural hunting across the signal detection already scored and the
       telemetry behind it. "Nothing matched" is a finding about visibility, not a
@@ -113,7 +113,7 @@ phases:
   - id: network_analyst
     agent: network_analyst
     name: "Traffic shape"
-    tools: [telemetry_search, search_findings]
+    tools: [telemetry_search, findings_search, entity_recall]
     instructions: |
       Beaconing intervals, jitter, volume asymmetry, DNS and HTTP. Quantify: a
       regular interval with low variance is the signal, a busy host is not.
@@ -121,7 +121,7 @@ phases:
   - id: threat_intel
     agent: threat_intel
     name: "Observable enrichment"
-    tools: [lookup_indicators]
+    tools: [indicator_lookup, entity_recall]
     instructions: |
       Reputation and attribution for observables, against the indicator database
       and whatever intel integrations are connected. A miss is not exoneration:

@@ -12246,6 +12246,10 @@ export interface components {
             agents?: string[];
             /** Body */
             body: string;
+            /** Checkpoints */
+            checkpoints?: {
+                [key: string]: string;
+            };
             /**
              * Description
              * @default
@@ -12257,6 +12261,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Objectives */
+            objectives?: string[];
             /** Phases */
             phases?: {
                 [key: string]: unknown;

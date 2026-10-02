@@ -82,7 +82,7 @@ function StateMsg({ children }: { children: React.ReactNode }) {
   )
 }
 
-function AgentSequence({ agents }: { agents: string[] }) {
+function AgentSequence({ agents, ordered }: { agents: string[]; ordered: boolean }) {
   const agentMeta = useAgentMeta()
   return (
     <div className="agent-seq">
@@ -94,7 +94,7 @@ function AgentSequence({ agents }: { agents: string[] }) {
               <span className="ad" style={{ background: meta.color }} />
               {meta.label}
             </span>
-            {i < agents.length - 1 && (
+            {ordered && i < agents.length - 1 && (
               <span className="seq-arrow"><Icon name="chevR" /></span>
             )}
           </Fragment>
@@ -167,10 +167,18 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
                 {list.map((w) => (
                   <tr key={w.id}>
                     <td>
-                      <div className="font-semibold">{w.name}</div>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="font-semibold cursor-pointer"
+                        onClick={() => setModal({ kind: 'details', wf: w })}
+                        onKeyDown={activateOnKey(() => setModal({ kind: 'details', wf: w }))}
+                      >
+                        {w.name}
+                      </div>
                       {w.desc && <div className="text-[12px] text-tx-3 mt-0.5">{w.desc}</div>}
                     </td>
-                    <td>{w.agents.length > 0 ? <AgentSequence agents={w.agents} /> : '—'}</td>
+                    <td>{w.agents.length > 0 ? <AgentSequence agents={w.agents} ordered={!w.huntLike} /> : '—'}</td>
                     <td>{w.runsToday}</td>
                     <td>{w.meanCostUsd == null ? '—' : <Cost usd={w.meanCostUsd} />}</td>
                     <td>{fmtEdited(w.updatedAt)}</td>
@@ -201,7 +209,7 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
           </div>
         </div>
       )}
-      {modal?.kind === 'details' && <DetailsModal wf={modal.wf} onClose={close} />}
+      {modal?.kind === 'details' && <WorkflowReader wf={modal.wf} onClose={close} />}
       {modal?.kind === 'run' && <RunModal wf={modal.wf} onClose={close} onStarted={() => setModal({ kind: 'history', wf: modal.wf })} />}
       {modal?.kind === 'history' && <HistoryModal wf={modal.wf} onClose={close} />}
       {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); reload() }} />}
@@ -301,12 +309,161 @@ function ComboField({ label, value, onChange, placeholder, options, hint }: {
   )
 }
 
-interface WfDetail {
-  tools_used?: string[]
-  body?: string
+interface WfPhase {
+  id?: string
+  phase_id?: string
+  agent?: string
+  agent_id?: string
+  name?: string
+  tools?: string[]
+  approval_required?: boolean
 }
 
-function DetailsModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
+interface WfDetail {
+  run_kind?: string
+  hunt_like?: boolean
+  objectives?: unknown
+  checkpoints?: unknown
+  phases?: WfPhase[] | null
+}
+
+type ReaderKind = 'roster' | 'single' | 'ordered'
+
+function readerKind(huntLike: boolean, runKind: string): ReaderKind {
+  if (huntLike) return 'roster'
+  if (runKind === 'investigate' || runKind === 'root_cause') return 'single'
+  return 'ordered'
+}
+
+function phasesOf(detail: WfDetail): WfPhase[] {
+  return Array.isArray(detail.phases) ? detail.phases : []
+}
+
+function phaseAgent(phase: WfPhase): string {
+  return phase.agent || phase.agent_id || ''
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+}
+
+function checkpointEntries(value: unknown): [string, string][] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return []
+  return Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">{children}</span>
+}
+
+function PhaseTools({ tools }: { tools: string[] }) {
+  if (tools.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {tools.map((tool) => (
+        <span key={tool} className="font-mono text-[11.5px] text-tx-2 bg-bg border border-line-soft rounded-[6px] px-2 py-1">{tool}</span>
+      ))}
+    </div>
+  )
+}
+
+function Roster({ detail }: { detail: WfDetail }) {
+  const agentMeta = useAgentMeta()
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-[13px] text-tx-2">The lead dispatches among these.</p>
+      {phasesOf(detail).map((phase, i) => {
+        const agent = phaseAgent(phase)
+        const meta = agentMeta(agent)
+        return (
+          <div key={phase.id || phase.phase_id || `${agent}-${i}`}>
+            <span className="agent-chip">
+              <span className="ad" style={{ background: meta.color }} />
+              {meta.label}
+            </span>
+            <PhaseTools tools={phase.tools || []} />
+            {phase.approval_required && <div className="text-[12px] text-tx-2 mt-1">Approval required</div>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SingleAgent({ detail }: { detail: WfDetail }) {
+  const objectives = stringList(detail.objectives)
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[13px] text-tx-2">This workflow runs as one agent.</p>
+      {objectives.length > 0 && (
+        <ul className="list-disc pl-5 text-[13px] text-tx-2 flex flex-col gap-1">
+          {objectives.map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function OrderedPhases({ detail }: { detail: WfDetail }) {
+  const agentMeta = useAgentMeta()
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[13px] text-tx-2">Phases run in this order.</p>
+      <ol className="flex flex-col gap-3 list-decimal pl-5">
+        {phasesOf(detail).map((phase, i) => {
+          const agent = phaseAgent(phase)
+          const meta = agentMeta(agent)
+          return (
+            <li key={phase.id || phase.phase_id || `${agent}-${i}`} className="text-[13px] text-tx-2">
+              <span className="font-semibold">{meta.label}</span>
+              {phase.name ? <span className="text-tx-3"> · {phase.name}</span> : null}
+              {phase.approval_required ? <span> · Approval required</span> : null}
+              <PhaseTools tools={phase.tools || []} />
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
+function ReaderShape({ detail }: { detail: WfDetail }) {
+  const kind = readerKind(detail.hunt_like === true, detail.run_kind || 'compose')
+  switch (kind) {
+    case 'roster':
+      return <Roster detail={detail} />
+    case 'single':
+      return <SingleAgent detail={detail} />
+    case 'ordered':
+      return <OrderedPhases detail={detail} />
+    default: {
+      const _exhaustive: never = kind
+      return _exhaustive
+    }
+  }
+}
+
+function Pauses({ detail }: { detail: WfDetail }) {
+  const policies = checkpointEntries(detail.checkpoints)
+  const approval = phasesOf(detail).some((phase) => phase.approval_required)
+  if (policies.length === 0 && !approval) {
+    return <p className="text-[13px] text-tx-2">This definition declares no pause.</p>
+  }
+  if (policies.length === 0) return null
+  return (
+    <div className="flex flex-col gap-1.5">
+      <SectionLabel>Checkpoints</SectionLabel>
+      {policies.map(([name, policy]) => (
+        <div key={name} className="text-[13px] text-tx-2">
+          <span className="font-mono">{name}</span> {policy}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function WorkflowReader({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
   const [detail, setDetail] = useState<WfDetail | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
 
@@ -319,55 +476,21 @@ function DetailsModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
     return () => { cancelled = true }
   }, [wf.id])
 
-  const tools = detail?.tools_used || []
-
   return (
     <Popup open onClose={onClose} title={wf.name} width={820}>
       <div className="flex flex-col gap-4">
-        {wf.agents.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">Agent sequence</span>
-            <AgentSequence agents={wf.agents} />
-          </div>
-        )}
-
-        {phase === 'ready' && tools.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">Tools used</span>
-            <div className="flex flex-wrap gap-1.5">
-              {tools.map((t) => (
-                <span key={t} className="font-mono text-[11.5px] text-tx-2 bg-bg border border-line-soft rounded-[6px] px-2 py-1">{t}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-2">
-          <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">Description</span>
-          {phase === 'loading' && <div className="muted text-[12.5px]">Loading…</div>}
-          {phase === 'error' && <p className="text-[13px] text-tx-2 leading-[1.55]">{wf.desc || 'No description available.'}</p>}
-          {phase === 'ready' && (
-            detail?.body
-              ? <div className="text-[13px] text-tx-2 leading-[1.6] [&_h1]:text-[15px] [&_h1]:font-semibold [&_h2]:text-[13.5px] [&_h2]:font-semibold [&_h1]:mt-1 [&_h2]:mt-2"><Markdown>{detail.body}</Markdown></div>
-              : <p className="text-[13px] text-tx-2 leading-[1.55]">{wf.desc || 'No description available.'}</p>
-          )}
-        </div>
-
-        {wf.cmds.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">Example commands</span>
+        {phase === 'loading' && <div className="muted text-[12.5px]">Loading…</div>}
+        {phase === 'error' && <p className="text-[13px] text-tx-2">Couldn’t load this workflow.</p>}
+        {phase === 'ready' && detail && (
+          <>
+            <ReaderShape detail={detail} />
+            <Pauses detail={detail} />
             <div className="flex flex-col gap-1.5">
-              {wf.cmds.map((c, i) => (
-                <div className="font-mono text-[11.5px] text-tx-3 bg-bg border border-line-soft rounded-[7px] px-2.5 py-1.5" key={i}>{c}</div>
-              ))}
+              <SectionLabel>Per-stage stops</SectionLabel>
+              <p className="text-[13px] text-tx-2">Not measured yet</p>
             </div>
-          </div>
+          </>
         )}
-
-        <div className="flex items-center gap-2 text-[11.5px] text-tx-3">
-          <span className="mono">{wf.id}</span>
-          <span className="chip" style={{ fontSize: 11, padding: '1px 8px' }}>{wf.source === 'custom' ? 'custom' : 'built-in'}</span>
-        </div>
       </div>
     </Popup>
   )

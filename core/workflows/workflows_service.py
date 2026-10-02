@@ -31,6 +31,13 @@ def is_hunt_like(run_kind: Optional[str]) -> bool:
     return run_kind in HUNT_LIKE_RUN_KINDS
 
 
+def _objectives(metadata: Dict[str, Any]) -> List[str]:
+    raw = metadata.get("objectives") or []
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
 # None rather than a number, so a caller that says nothing leaves the definition's
 # count rather than pinning every run to whatever this file thinks.
 def _asked_iterations(parameters: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -268,6 +275,10 @@ class WorkflowDefinition:
             # hypothesis loop rather than listing the kinds that do. A new
             # hunt-like kind joins HUNT_LIKE_RUN_KINDS and every client follows.
             "hunt_like": is_hunt_like(self.run_kind),
+            # The reader shows these. None is an empty list and an empty map,
+            # the same shapes the resolver already reads.
+            "objectives": _objectives(self.metadata),
+            "checkpoints": self._checkpoints_on_wire(),
         }
         if self.source == "custom":
             result["updated_at"] = self.updated_at
@@ -277,6 +288,15 @@ class WorkflowDefinition:
         if "phases" in self.metadata:
             result["phases"] = self.metadata["phases"]
         return result
+
+    # Class to "ask" or "auto", validated the same way a run resolves them.
+    # An empty declaration is {}, not an omitted key.
+    def _checkpoints_on_wire(self) -> Dict[str, Any]:
+        from core.workflows.playbook_resolver import _checkpoints
+
+        if not self.metadata.get("checkpoints"):
+            return {}
+        return _checkpoints(self)
 
 
 def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:

@@ -34,12 +34,23 @@ vi.mock('../../services/api', () => ({
             id: 'threat-hunt',
             name: 'Threat hunt',
             description: 'Hunt',
-            agents: ['hunt_lead'],
+            agents: ['hunt_lead', 'threat_hunter'],
             source: 'file',
             run_kind: 'hunt',
             hunt_like: true,
             runs_today: 4,
             mean_cost_usd: 1.5,
+          },
+          {
+            id: 'cloud-incident',
+            name: 'Cloud incident',
+            description: 'One agent',
+            agents: [],
+            source: 'file',
+            run_kind: 'investigate',
+            hunt_like: false,
+            runs_today: 0,
+            mean_cost_usd: null,
           },
           {
             id: 'phase-tools',
@@ -63,6 +74,50 @@ vi.mock('../../services/api', () => ({
         ],
       },
     })),
+    get: vi.fn((id: string) => {
+      if (id === 'threat-hunt') {
+        return Promise.resolve({
+          data: {
+            hunt_like: true,
+            run_kind: 'hunt',
+            objectives: ['State a hypothesis'],
+            checkpoints: {},
+            phases: [
+              { id: 'threat_hunter', agent: 'threat_hunter', name: 'Behavioural hunting', tools: ['findings_search', 'telemetry_search', 'entity_recall'] },
+              { id: 'threat_intel', agent: 'threat_intel', tools: ['indicator_lookup', 'entity_recall'] },
+            ],
+          },
+        })
+      }
+      if (id === 'cloud-incident') {
+        return Promise.resolve({
+          data: {
+            hunt_like: false,
+            run_kind: 'investigate',
+            objectives: ['Establish blast radius'],
+            checkpoints: {},
+            phases: [],
+          },
+        })
+      }
+      if (id === 'ransom') {
+        return Promise.resolve({
+          data: {
+            hunt_like: false,
+            run_kind: 'compose',
+            objectives: [],
+            checkpoints: { hypothesis_approval: 'ask' },
+            phases: [
+              { agent_id: 'reporter', name: 'Write', tools: ['get_case'] },
+              { agent_id: 'triage', name: 'Check', tools: ['get_finding'], approval_required: true },
+            ],
+          },
+        })
+      }
+      return Promise.resolve({
+        data: { hunt_like: false, run_kind: 'compose', objectives: [], checkpoints: {}, phases: [] },
+      })
+    }),
     listRuns: vi.fn(() => Promise.resolve({ data: { runs: [] } })),
     preflight: vi.fn(() => Promise.resolve({ data: {} })),
     getRun: vi.fn(() => new Promise(() => undefined)),
@@ -142,5 +197,48 @@ describe('workflow catalog table', () => {
     expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Import' })).toHaveAttribute('title', 'Coming in a later release')
+  })
+
+  it('opens a reader for the run kind and draws arrows only when the roster is an order', async () => {
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Beacon hunt')
+    expect(cells('Beacon hunt')[1].querySelector('.seq-arrow')).not.toBeNull()
+    expect(cells('Threat hunt')[1].querySelector('.seq-arrow')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Threat hunt' }))
+    const hunt = await screen.findByRole('dialog')
+    expect(within(hunt).getByText('The lead dispatches among these.')).toBeInTheDocument()
+    expect(within(hunt).getByText('findings_search')).toBeInTheDocument()
+    expect(within(hunt).getByText('This definition declares no pause.')).toBeInTheDocument()
+    expect(within(hunt).getByText('Per-stage stops')).toBeInTheDocument()
+    expect(within(hunt).getByText('Not measured yet')).toBeInTheDocument()
+    expect(within(hunt).queryByText('This workflow runs as one agent.')).toBeNull()
+    expect(within(hunt).queryByText(/\$/)).toBeNull()
+    expect(within(hunt).queryByText(/iteration/i)).toBeNull()
+    fireEvent.click(within(hunt).getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cloud incident' }))
+    const one = await screen.findByRole('dialog')
+    expect(within(one).getByText('This workflow runs as one agent.')).toBeInTheDocument()
+    expect(within(one).getByText('Establish blast radius')).toBeInTheDocument()
+    expect(within(one).queryByText('findings_search')).toBeNull()
+    expect(within(one).queryByText('The lead dispatches among these.')).toBeNull()
+    fireEvent.click(within(one).getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ransom reply' }))
+    const compose = await screen.findByRole('dialog')
+    expect(within(compose).getByText('Phases run in this order.')).toBeInTheDocument()
+    expect(within(compose).getByText(/Approval required/)).toBeInTheDocument()
+    expect(within(compose).getByText('hypothesis_approval')).toBeInTheDocument()
+    expect(within(compose).queryByText('This definition declares no pause.')).toBeNull()
+    const order = within(compose).getByRole('list')
+    expect(within(order).getAllByRole('listitem')[0]).toHaveTextContent('Write')
+    expect(within(order).getAllByRole('listitem')[1]).toHaveTextContent('Check')
+    expect(within(compose).queryByText(/\$/)).toBeNull()
   })
 })

@@ -49,6 +49,10 @@ class WorkflowDetailResponse(BaseModel):
     source: str
     run_kind: str
     hunt_like: bool
+    # None is an empty list. The console reader shows these for a single agent.
+    objectives: List[str] = Field(default_factory=list)
+    # Checkpoint class to "ask" or "auto". None is an empty mapping.
+    checkpoints: Dict[str, str] = Field(default_factory=dict)
     body: str
     # Structured phases, carried by custom workflows for the builder UI.
     phases: Optional[List[Dict[str, Any]]] = None

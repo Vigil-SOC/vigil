@@ -199,6 +199,40 @@ def test_the_definition_rosters_the_workers_the_arch_carries(arch_name, workflow
     assert set(rostered) == set(arch["roles"]["workers"])
 
 
+# The markdown tools are what the reader shows. The arch's needs are what a run
+# grants. Same worker, same names, same order — resolve_hunt never reads the list.
+@pytest.mark.parametrize(("arch_name", "workflow_id"), HUNT_LIKE)
+def test_a_rostered_workers_tools_are_its_needs_in_order(arch_name, workflow_id):
+    import yaml
+
+    from core.workflows.workflows_service import WorkflowsService
+
+    arch = yaml.safe_load(
+        (ROOT / "services" / "agent" / "arch" / arch_name).read_text()
+    )
+    workers = arch["roles"]["workers"]
+    phases = WorkflowsService().get_workflow(workflow_id).phases
+    by_agent: Dict[str, List[List[str]]] = {}
+    for phase in phases:
+        agent = (phase or {}).get("agent") or (phase or {}).get("agent_id")
+        by_agent.setdefault(agent, []).append(list((phase or {}).get("tools") or []))
+
+    mismatches = []
+    for name, spec in workers.items():
+        needs = list(spec.get("needs") or [])
+        stated = by_agent.get(name)
+        if stated is None:
+            mismatches.append(f"{name}: in the arch and missing from the roster")
+            continue
+        mismatches += [
+            f"{name}: tools {tools} are not needs {needs}"
+            for tools in stated
+            if tools != needs
+        ]
+
+    assert not mismatches, "\n".join(mismatches)
+
+
 # The two sides state the per-turn call cost independently, and the agent layer
 # raises max_calls by its own copy. If they drift, the resolver hands over a call
 # ceiling the agent layer immediately overrides, and the number an operator sees

@@ -3330,6 +3330,13 @@
             "title": "Body",
             "type": "string"
           },
+          "checkpoints": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Checkpoints",
+            "type": "object"
+          },
           "description": {
             "default": "",
             "title": "Description",
@@ -3346,6 +3353,13 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "objectives": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Objectives",
+            "type": "array"
           },
           "phases": {
             "anyOf": [

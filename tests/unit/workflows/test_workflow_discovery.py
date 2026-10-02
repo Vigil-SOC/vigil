@@ -61,6 +61,31 @@ def test_cloud_incident_in_list_workflows():
     assert cloud_wf["agents"] == []
 
 
+def test_to_dict_sends_objectives_and_checkpoints():
+    from core.workflows.workflows_service import WorkflowDefinition
+
+    bare = WorkflowDefinition("bare", None, {"name": "bare"}, "")
+    assert bare.to_dict()["objectives"] == []
+    assert bare.to_dict()["checkpoints"] == {}
+
+    stated = WorkflowDefinition(
+        "stated",
+        None,
+        {
+            "name": "stated",
+            "objectives": ["Find it"],
+            "checkpoints": {"hypothesis_approval": "ask"},
+        },
+        "",
+    )
+    assert stated.to_dict()["objectives"] == ["Find it"]
+    assert stated.to_dict()["checkpoints"] == {"hypothesis_approval": "ask"}
+
+    hunt = WorkflowsService().get_workflow_dict("threat-hunt")
+    assert hunt["objectives"]
+    assert hunt["checkpoints"] == {}
+
+
 def test_cloud_incident_workflow_dict():
     """get_workflow_dict should return serializable metadata and body."""
     service = WorkflowsService()
