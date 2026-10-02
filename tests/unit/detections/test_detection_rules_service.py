@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from core.config import get_settings
 from core.detections.detection_rules_service import DetectionRulesService
 
 
@@ -87,3 +88,30 @@ def test_same_directory_different_format_is_distinct(service, rules_dir):
     )
     assert other["name"] == "KQL"
     assert len([s for s in service.sources if s["type"] == "local"]) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("url", ["https://example.com/..", "https://example.com/.git"])
+def test_git_url_cannot_name_a_clone_outside_base_dir(service, url):
+    with pytest.raises(ValueError):
+        service.add_source("Bad", "git", "sigma", url=url)
+
+
+@pytest.mark.unit
+def test_subdirectory_cannot_climb_out_of_the_source(service, rules_dir):
+    with pytest.raises(ValueError):
+        service.add_source(
+            "Bad", "local", "sigma", path=str(rules_dir.parent), subdirectory="../.."
+        )
+
+
+@pytest.mark.unit
+def test_local_path_must_sit_under_an_allowed_root(service, tmp_path, monkeypatch):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    with pytest.raises(ValueError, match="VIGIL_DETECTION_LOCAL_ROOTS"):
+        service.add_source("Outside", "local", "sigma", path=str(outside))
+
+    monkeypatch.setenv("VIGIL_DETECTION_LOCAL_ROOTS", str(outside))
+    get_settings.cache_clear()
+    assert service.add_source("Outside", "local", "sigma", path=str(outside))

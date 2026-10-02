@@ -24,7 +24,9 @@ WORKER_TIMEOUT_S = 60
 
 
 def _database_url() -> str:
-    return os.environ.get("DATABASE_URL", "postgresql://vigil:vigil@localhost:5432/vigil_test")
+    return os.environ.get(
+        "DATABASE_URL", "postgresql://vigil:vigil@localhost:5432/vigil_test"
+    )
 
 
 def _redis_url() -> str:
@@ -180,7 +182,10 @@ def _events(engine, run_id: str) -> list[Dict[str, Any]]:
             ),
             {"run_id": run_id},
         ).all()
-    return [{"seq": r.seq, "run_kind": r.run_kind, "kind": r.kind, "payload": r.payload} for r in rows]
+    return [
+        {"seq": r.seq, "run_kind": r.run_kind, "kind": r.kind, "payload": r.payload}
+        for r in rows
+    ]
 
 
 def _terminal(engine, run_id: str) -> Optional[Dict[str, Any]]:
@@ -195,17 +200,23 @@ class TestWalkingSkeleton:
         self, engine, run_id, model_url
     ):
         job_id = _enqueue(run_id)
-        assert job_id == run_id, "jobId must be the run_id so a double POST dedupes in BullMQ"
+        assert (
+            job_id == run_id
+        ), "jobId must be the run_id so a double POST dedupes in BullMQ"
 
         result = _run_worker_once(model_url)
-        assert result.returncode == 0, f"worker failed: {result.stdout}\n{result.stderr}"
+        assert (
+            result.returncode == 0
+        ), f"worker failed: {result.stdout}\n{result.stderr}"
 
     def test_the_worker_opens_the_ledger_and_marks_the_run_terminal(
         self, engine, run_id, model_url
     ):
         _enqueue(run_id)
         result = _run_worker_once(model_url)
-        assert result.returncode == 0, f"worker failed: {result.stdout}\n{result.stderr}"
+        assert (
+            result.returncode == 0
+        ), f"worker failed: {result.stdout}\n{result.stderr}"
 
         # The seam, not the loop's shape: the run opens at 0, the ledger has one
         # writer so its positions are contiguous, and it ends terminal. How many
@@ -273,7 +284,9 @@ class TestWalkingSkeleton:
         seqs = [e["seq"] for e in events]
         assert seqs == list(range(len(events))), "resume must not collide on seq 0"
         assert events[-1]["kind"] == "terminal"
-        assert events[0]["payload"]["started_by"] == "crashed-worker", "the original run event survives"
+        assert (
+            events[0]["payload"]["started_by"] == "crashed-worker"
+        ), "the original run event survives"
 
     def test_the_composite_key_rejects_a_second_writer(self, engine, run_id):
         from sqlalchemy.exc import IntegrityError

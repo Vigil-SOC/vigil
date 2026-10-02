@@ -38,6 +38,12 @@ pkill -f "mcp_servers.*_server" 2>/dev/null || true
 lsof -ti:6987 | xargs kill -9 2>/dev/null || true
 lsof -ti:6988 | xargs kill -9 2>/dev/null || true
 
+# The backup schedule loop start.sh launches runs in Docker but is Vigil's own
+# process, so it stops with the rest whether or not -d is given.
+if command -v docker &>/dev/null; then
+    docker rm -f vigil-backup-loop >/dev/null 2>&1 || true
+fi
+
 # Docker
 if [ "$DOCKER_STOP" -eq 1 ]; then
     if command -v docker &>/dev/null; then

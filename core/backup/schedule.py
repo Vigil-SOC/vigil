@@ -12,6 +12,8 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -179,7 +181,11 @@ def _count(value: object, *, minimum: int) -> int | None:
     return value
 
 
-def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
+@contextmanager
+def prepared_destination(
+    dest: Destination,
+) -> Iterator[tuple[Path, dict[str, str]]]:
+    """Check the mount, resolve secrets, then yield the passphrase file and restic env."""
     if dest.must_be_mount and not os.path.ismount(dest.repo):
         raise BackupError(f"{dest.repo} is not a mount")
     passphrase = get_secret(dest.passphrase_secret)
@@ -197,6 +203,21 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
         os.chmod(path, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(passphrase)
+        yield path, extra
+    except BackupSkipped:
+        raise
+    except BackupError as exc:
+        # restic stderr can echo credentials; scrub before it is logged.
+        message = _scrub(str(exc), extra.values())
+        if message == str(exc):
+            raise
+        raise BackupError(message) from None
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
+    with prepared_destination(dest) as (path, extra):
         if not _is_due(dest, path, extra):
             logger.debug("destination %s is not due", dest.name)
             return
@@ -210,16 +231,6 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
         )
         _forget(dest, path, extra)
         _write_status(dest.name, snapshot_id)
-    except BackupSkipped:
-        raise
-    except BackupError as exc:
-        # restic stderr can echo credentials; scrub before it is logged.
-        message = _scrub(str(exc), extra.values())
-        if message == str(exc):
-            raise
-        raise BackupError(message) from None
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def _scrub(message: str, secrets: Iterable[str]) -> str:

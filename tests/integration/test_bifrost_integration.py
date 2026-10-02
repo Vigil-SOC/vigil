@@ -38,9 +38,9 @@ async def test_bifrost_health_endpoint():
     url = os.environ["BIFROST_URL"].rstrip("/")
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.get(f"{url}/health")
-    assert resp.status_code == 200, (
-        f"Bifrost health check failed: {resp.status_code} {resp.text}"
-    )
+    assert (
+        resp.status_code == 200
+    ), f"Bifrost health check failed: {resp.status_code} {resp.text}"
 
 
 @pytest.mark.asyncio
@@ -69,6 +69,6 @@ async def test_bifrost_chat_completion_via_ollama():
     )
     assert result["path"] == "bifrost"
     assert result["provider"] == "ollama"
-    assert isinstance(result.get("content"), str) and result["content"].strip(), (
-        "Bifrost→Ollama returned empty content"
-    )
+    assert (
+        isinstance(result.get("content"), str) and result["content"].strip()
+    ), "Bifrost→Ollama returned empty content"

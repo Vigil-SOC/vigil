@@ -5,6 +5,8 @@ source "$(dirname "$0")/scripts/lib.sh"
 
 # Version shown in the startup banner, read from the repo VERSION file.
 VERSION="$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")"
+BACKUPS_FILE="backups.json"
+BACKUP_LOOP_CONTAINER="vigil-backup-loop"
 
 usage() {
     cat <<EOF
@@ -26,6 +28,64 @@ Usage: $0 [--daemon|-d] [--with <profile>] [--all]
 Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
 postgres redis bifrost ollama). --with/--all are additive to that list.
 EOF
+}
+
+# Host State Directory, the path `backups.json` is read from.
+host_state_dir() {
+    local state="${VIGIL_DIR:-$HOME/.vigil}"
+    mkdir -p "$state"
+    (cd "$state" && pwd)
+}
+
+# Host paths and `docker compose run` flags every backup container shares: the
+# create/restore one-shot, the pre-upgrade one-shot, and the schedule loop.
+# Exports the State Directory and investigation workdir the compose `backup`
+# service mounts and sets BACKUP_RUN_ARGS (host user, plus the repo-root .env
+# when present, mounted $1: ro by default).
+prepare_backup_mounts() {
+    local env_mode="${1:-ro}"
+    local investigations="${ORCHESTRATOR_WORKDIR:-$REPO_ROOT/data/investigations}"
+    case "$investigations" in
+        /*) ;;
+        *) investigations="$REPO_ROOT/$investigations" ;;
+    esac
+    mkdir -p "$investigations"
+    export VIGIL_BACKUP_STATE_DIR="$(host_state_dir)"
+    export VIGIL_BACKUP_INVESTIGATIONS_DIR="$(cd "$investigations" && pwd)"
+    BACKUP_RUN_ARGS=(--user "$(id -u):$(id -g)")
+    if [ -f "$REPO_ROOT/.env" ]; then
+        BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
+    fi
+}
+
+# Before the schema is touched: snapshot the default destination if this
+# release's major.minor differs from the database's. Only when backups.json
+# exists, so an install with no destination starts as before.
+backup_pre_upgrade() {
+    [ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0
+    prepare_backup_mounts
+    # An old loop would hold the backup lock, and could snapshot mid-upgrade.
+    docker rm -f "$BACKUP_LOOP_CONTAINER" >/dev/null 2>&1 || true
+    local -a version_arg=()
+    [ "$VERSION" = "dev" ] || version_arg=(--target-version "$VERSION")
+    # --build: an image from before this command existed would exit 2.
+    dc run --rm --build "${BACKUP_RUN_ARGS[@]}" backup-pre-upgrade ${version_arg[@]+"${version_arg[@]}"} || {
+        echo "Pre-upgrade backup failed. Fix the destination in $BACKUPS_FILE," \
+            "or set VIGIL_SKIP_PREUPGRADE_BACKUP=1 to start without one." >&2
+        return 1
+    }
+}
+
+# The schedule loop, detached, once the schema is ready. Replaces a loop left by
+# an earlier start; shutdown_all.sh stops it by the same name.
+start_backup_loop() {
+    [ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0
+    prepare_backup_mounts
+    docker rm -f "$BACKUP_LOOP_CONTAINER" >/dev/null 2>&1 || true
+    dc run -d --no-deps --name "$BACKUP_LOOP_CONTAINER" "${BACKUP_RUN_ARGS[@]}" backup >/dev/null \
+        || { echo "Warning: backup schedule failed to start." >&2; return 0; }
+    # `compose run` starts it without a restart policy; give it the service's.
+    docker update --restart unless-stopped "$BACKUP_LOOP_CONTAINER" >/dev/null || true
 }
 
 # One shot of the compose `backup` service, for `backup` and `restore`. That
@@ -61,25 +121,11 @@ prepare_backup_run() {
     fi
     repo="$(cd "$repo" && pwd)"
     passfile="$(cd "$(dirname "$passfile")" && pwd)/$(basename "$passfile")"
-    local state="${VIGIL_DIR:-$HOME/.vigil}"
-    mkdir -p "$state"
-    state="$(cd "$state" && pwd)"
-    local investigations="${ORCHESTRATOR_WORKDIR:-$REPO_ROOT/data/investigations}"
-    case "$investigations" in
-        /*) ;;
-        *) investigations="$REPO_ROOT/$investigations" ;;
-    esac
-    mkdir -p "$investigations"
-    investigations="$(cd "$investigations" && pwd)"
     export VIGIL_BACKUP_REPO="$repo"
     export VIGIL_BACKUP_PASSPHRASE_FILE="$passfile"
-    export VIGIL_BACKUP_STATE_DIR="$state"
-    export VIGIL_BACKUP_INVESTIGATIONS_DIR="$investigations"
+    prepare_backup_mounts "$env_mode"
     # `--rm` removes this one-shot; the service restart policy stays on `up`.
-    BACKUP_RUN_ARGS=(run --rm --user "$(id -u):$(id -g)")
-    if [ -f "$REPO_ROOT/.env" ]; then
-        BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
-    fi
+    BACKUP_RUN_ARGS=(run --rm "${BACKUP_RUN_ARGS[@]}")
     [ -n "$caller_jwt" ] && BACKUP_RUN_ARGS+=(-e JWT_SECRET_KEY)
     local sub="$cmd"
     [ "$cmd" = "backup" ] && sub="create"
@@ -206,10 +252,12 @@ for svc in $EXTRA_SERVICES; do
 done
 
 # --- Database init ---
+backup_pre_upgrade || exit 1
 python3 scripts/init_schema.py || { echo "Schema init failed."; exit 1; }
 # Seed roles/reference data so first-run bootstrap can assign role-admin. No
 # default admin is seeded — the empty user table triggers the bootstrap screen.
 python3 scripts/seed_reference_data.py || true
+start_backup_loop
 
 # --- Frontend deps ---
 if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && [ ! -d "clients/web/node_modules" ]; then

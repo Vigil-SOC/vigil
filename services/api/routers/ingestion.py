@@ -486,12 +486,14 @@ def ingest_s3_file(request: S3FileIngestRequest):
         Ingestion statistics
     """
     key = request.key
-    ext = Path(key).suffix.lower()
-    fmt = EXTENSION_FORMATS.get(ext)
-    if fmt is None:
+    requested_ext = Path(key).suffix.lower()
+    # Take the temp-file suffix from the allowlist, never from the key itself.
+    ext = next((e for e in EXTENSION_FORMATS if e == requested_ext), None)
+    fmt = EXTENSION_FORMATS.get(ext) if ext else None
+    if ext is None or fmt is None:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file extension '{ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}",
+            detail=f"Unsupported file extension '{requested_ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}",
         )
 
     s3 = _get_s3_service()

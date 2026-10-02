@@ -7,6 +7,8 @@ Provides CRUD operations, git pull updates, and builds env vars for Security-Det
 
 import json
 import logging
+import os
+import re
 import subprocess
 import uuid
 from collections import defaultdict
@@ -14,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.config import _safe_home, vigil_path
+from core.config import _safe_home, get_settings, vigil_path
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,11 @@ DEFAULT_SOURCES = [
         "clone_name": "Hunting-Queries-Detection-Rules",
     },
 ]
+
+# Names a git clone may take under base_dir (derived from the repo URL).
+_CLONE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+LOCAL_ROOTS_ENV = "VIGIL_DETECTION_LOCAL_ROOTS"
 
 # File extensions per format
 FORMAT_EXTENSIONS = {
@@ -122,12 +129,16 @@ class DetectionRulesService:
                 continue
             local_dir = Path(local_path)
             if local_dir.exists():
-                status = "ready"
-                count = self._count_rules(
-                    local_dir,
-                    source.get("format", "auto"),
-                    source.get("subdirectory", ""),
-                )
+                try:
+                    count = self._count_rules(
+                        local_dir,
+                        source.get("format", "auto"),
+                        source.get("subdirectory", ""),
+                    )
+                    status = "ready"
+                except ValueError:
+                    # A stored subdirectory that leaves the source is not scanned.
+                    status, count = "error", 0
             else:
                 # A git source can still be cloned; a local path that vanished cannot.
                 status = "not_cloned" if source.get("type") == "git" else "error"
@@ -194,9 +205,40 @@ class DetectionRulesService:
         except Exception as e:
             logger.error(f"Error saving detection sources config: {e}")
 
+    @staticmethod
+    def _under(base: str, rel: str = "") -> str:
+        """Real path of ``rel`` under ``base``; ValueError if it leaves ``base``.
+
+        The check stays inline so every caller gets a path that is known to
+        be contained, whatever the source of ``rel``.
+        """
+        root = os.path.realpath(base)
+        full = os.path.realpath(os.path.join(root, rel))
+        if full == root:
+            return root
+        if not full.startswith(root + os.sep):
+            raise ValueError(f"Path must stay inside {base}: {rel}")
+        return full
+
+    def _local_roots(self) -> List[str]:
+        extra = get_settings().vigil_detection_local_roots
+        return [str(_safe_home())] + [r for r in extra.split(os.pathsep) if r]
+
+    def _local_root(self, path: str) -> str:
+        """Real path of a local source directory, which must sit under an allowed root."""
+        for root in self._local_roots():
+            try:
+                return self._under(root, os.path.expanduser(path))
+            except ValueError:
+                continue
+        raise ValueError(
+            f"Local path must be under your home directory or a root listed in "
+            f"{LOCAL_ROOTS_ENV}: {path}"
+        )
+
     def _count_rules(self, base_path: Path, fmt: str, subdirectory: str = "") -> int:
         """Count rule files in a directory by format."""
-        target = base_path / subdirectory if subdirectory else base_path
+        target = Path(self._under(str(base_path), subdirectory))
         if not target.exists():
             return 0
 
@@ -236,8 +278,7 @@ class DetectionRulesService:
 
     def _rules_dir_key(self, local_path: str, subdirectory: str) -> str:
         """Resolved rules directory: a source's identity together with its format."""
-        base = Path(local_path)
-        return str((base / subdirectory if subdirectory else base).resolve())
+        return self._under(local_path, subdirectory)
 
     def _find_existing(
         self, local_path: str, subdirectory: str, format: str
@@ -284,14 +325,20 @@ class DetectionRulesService:
                 raise ValueError("Git URL is required for type 'git'")
             # Derive clone name from URL
             clone_name = url.rstrip("/").split("/")[-1].replace(".git", "")
-            local_path = str(self.base_dir / clone_name)
+            if not _CLONE_NAME_RE.match(clone_name):
+                raise ValueError(f"Cannot derive a clone directory from URL: {url}")
+            local_path = self._under(str(self.base_dir), clone_name)
         elif source_type == "local":
             if not path:
                 raise ValueError("Path is required for type 'local'")
-            local_path = path
-            clone_name = Path(path).name
+            local_path = self._local_root(path)
+            clone_name = Path(local_path).name
         else:
             raise ValueError(f"Invalid source type: {source_type}")
+
+        # Reject subdirectories that climb out of the source before they are stored.
+        self._under(local_path, subdirectory)
+        self._under(local_path, story_subdirectory)
 
         # Idempotent on (resolved rules directory, format): re-registering the same
         # directory refreshes the existing entry instead of appending a duplicate.
@@ -376,8 +423,14 @@ class DetectionRulesService:
         if delete_files and source["type"] == "git":
             import shutil
 
-            clone_dir = Path(source["local_path"])
-            if clone_dir.exists():
+            try:
+                clone_dir = Path(self._under(str(self.base_dir), source["local_path"]))
+            except ValueError:
+                logger.error(
+                    f"Refusing to delete {source['local_path']}: outside {self.base_dir}"
+                )
+                clone_dir = None
+            if clone_dir and clone_dir.exists():
                 try:
                     shutil.rmtree(clone_dir)
                     logger.info(f"Deleted cloned directory: {clone_dir}")

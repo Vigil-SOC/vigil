@@ -16,8 +16,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from core.llm.router.router import (LLMRouter, ProviderSpec,
-                                    provider_spec_from_row)
+from core.llm.router.router import LLMRouter, ProviderSpec, provider_spec_from_row
 
 pytestmark = pytest.mark.unit
 

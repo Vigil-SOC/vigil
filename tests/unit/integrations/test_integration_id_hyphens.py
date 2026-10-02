@@ -216,8 +216,12 @@ def test_poller_skips_cloud_siems_when_only_underscore_ids_enabled():
             side_effect=lambda integration_id: integration_id in enabled,
         ),
         patch("core.config.get_integration_config", return_value={}),
-        patch("core.integrations.azure_sentinel.ingestion.AzureSentinelIngestion") as azure,
-        patch("core.integrations.aws_security_hub.ingestion.AWSSecurityHubIngestion") as aws,
+        patch(
+            "core.integrations.azure_sentinel.ingestion.AzureSentinelIngestion"
+        ) as azure,
+        patch(
+            "core.integrations.aws_security_hub.ingestion.AWSSecurityHubIngestion"
+        ) as aws,
         patch(
             "core.integrations.microsoft_defender.ingestion.MicrosoftDefenderIngestion"
         ) as defender,

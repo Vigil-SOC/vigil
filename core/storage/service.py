@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
@@ -27,6 +29,17 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 _UNSET = object()
+
+# Failures that mean the database itself is unreachable, not that a row is bad.
+# Retrying a batch row by row against them would only repeat the failure (and
+# any pool timeout) once per row.
+_CONNECTION_ERRORS = (OperationalError, InterfaceError, PoolTimeoutError)
+
+
+def _is_connection_error(e: Exception) -> bool:
+    return isinstance(e, _CONNECTION_ERRORS) or bool(
+        getattr(e, "connection_invalidated", False)
+    )
 
 
 def _numeric_prediction_items(mitre_predictions: Any) -> List[tuple[str, float]]:
@@ -141,45 +154,83 @@ class DatabaseService:
 
     def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, int]:
         """Dedup + insert many findings in one transaction; per-row create_finding
-        doesn't scale to hundred-thousand-row parquet files."""
+        doesn't scale to hundred-thousand-row parquet files.
+
+        If the batch transaction fails, it is rolled back and the batch is
+        retried one row per transaction, so one bad row (an over-length
+        column, a constraint violation) costs only itself and not every
+        valid row beside it.
+        """
         if not rows:
             return {"imported": 0, "skipped": 0}
 
         by_id = {r["finding_id"]: r for r in rows}
-        ids = list(by_id.keys())
+        # Rows repeating a finding_id inside the batch are skipped either way.
+        in_batch_dupes = len(rows) - len(by_id)
         try:
-            with self.db_manager.session_scope() as session:
-                existing = {
-                    row_id
-                    for (row_id,) in session.execute(
-                        select(Finding.finding_id).where(Finding.finding_id.in_(ids))
-                    )
-                }
-                new_ids = [i for i in ids if i not in existing]
-                for finding_id in new_ids:
-                    r = by_id[finding_id]
-                    finding = Finding(
-                        finding_id=finding_id,
-                        anomaly_score=r.get("anomaly_score"),
-                        timestamp=r.get("timestamp"),
-                        data_source=r.get("data_source", "imported"),
-                        external_id=r.get("external_id"),
-                        description=r.get("description"),
-                        entity_context=r.get("entity_context"),
-                        evidence_links=r.get("evidence_links"),
-                        cluster_id=r.get("cluster_id"),
-                        severity=r.get("severity"),
-                        status=r.get("status", "new"),
-                    )
-                    _set_mitre_prediction_rows(
-                        finding, r.get("mitre_predictions") or {}
-                    )
-                    session.add(finding)
-                session.flush()
-                return {"imported": len(new_ids), "skipped": len(rows) - len(new_ids)}
+            imported = self._insert_new_findings(list(by_id.values()))
+            return {"imported": imported, "skipped": len(rows) - imported}
         except Exception as e:
-            logger.error(f"Error bulk-creating findings: {e}")
-            return {"imported": 0, "skipped": 0, "errors": len(rows)}
+            if _is_connection_error(e):
+                logger.error(f"Error bulk-creating findings: {e}")
+                return {"imported": 0, "skipped": 0, "errors": len(rows)}
+            logger.warning(
+                "Bulk insert of %d findings failed (%s); retrying row by row",
+                len(by_id),
+                e,
+            )
+
+        imported = skipped = errors = 0
+        for finding_id, r in by_id.items():
+            try:
+                if self._insert_new_findings([r]):
+                    imported += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.error(f"Error creating finding {finding_id!r}: {e}")
+                if _is_connection_error(e):
+                    # Count this row and every row not yet tried.
+                    errors += len(by_id) - imported - skipped - errors
+                    break
+                errors += 1
+        return {
+            "imported": imported,
+            "skipped": skipped + in_batch_dupes,
+            "errors": errors,
+        }
+
+    def _insert_new_findings(self, rows: List[Dict[str, Any]]) -> int:
+        """Insert the rows whose finding_id is not stored yet, in one
+        transaction. Returns how many were inserted; raises on failure, and
+        the session scope rolls the whole transaction back."""
+        ids = [r["finding_id"] for r in rows]
+        with self.db_manager.session_scope() as session:
+            existing = {
+                row_id
+                for (row_id,) in session.execute(
+                    select(Finding.finding_id).where(Finding.finding_id.in_(ids))
+                )
+            }
+            new_rows = [r for r in rows if r["finding_id"] not in existing]
+            for r in new_rows:
+                finding = Finding(
+                    finding_id=r["finding_id"],
+                    anomaly_score=r.get("anomaly_score"),
+                    timestamp=r.get("timestamp"),
+                    data_source=r.get("data_source", "imported"),
+                    external_id=r.get("external_id"),
+                    description=r.get("description"),
+                    entity_context=r.get("entity_context"),
+                    evidence_links=r.get("evidence_links"),
+                    cluster_id=r.get("cluster_id"),
+                    severity=r.get("severity"),
+                    status=r.get("status", "new"),
+                )
+                _set_mitre_prediction_rows(finding, r.get("mitre_predictions") or {})
+                session.add(finding)
+            session.flush()
+            return len(new_rows)
 
     @default_on_error(None)
     def get_finding(self, finding_id: str) -> Optional[Finding]:

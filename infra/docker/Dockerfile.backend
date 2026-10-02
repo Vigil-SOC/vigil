@@ -66,7 +66,7 @@ RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
-ARG VIGIL_VERSION=dev
+ARG VIGIL_VERSION=
 ARG TARGETARCH
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
@@ -158,9 +158,10 @@ COPY --from=web-builder --chown=vigil:vigil /build/web/build ./clients/web/build
 RUN mkdir -p /app/data/investigations /home/vigil/.vigil \
     && chown -R vigil:vigil /app/data /home/vigil
 
-# Bake version into the image so `backend.__version__` resolves at import time
-# (core/version.py reads VERSION from disk)
-RUN echo "${VIGIL_VERSION}" > /app/VERSION
+# core/version.py reads VERSION from disk. The COPY above already ships the repo
+# version; only an explicit --build-arg overrides it (an empty default keeps a
+# plain `docker compose build` from clobbering it).
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 
 USER vigil
 

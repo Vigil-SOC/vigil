@@ -35,10 +35,12 @@ _FINDINGS_SPEC.loader.exec_module(findings_api)
 def test_legacy_loglm_events_and_sequence_become_generic_evidence():
     evidence = source_evidence_from_loglm_row(
         {
-            "events_json": json.dumps([
-                {"timestamp": "2026-07-21T12:00:00Z", "event_type": "request"},
-                {"timestamp": "2026-07-21T12:00:01Z", "event_type": "response"},
-            ]),
+            "events_json": json.dumps(
+                [
+                    {"timestamp": "2026-07-21T12:00:00Z", "event_type": "request"},
+                    {"timestamp": "2026-07-21T12:00:01Z", "event_type": "response"},
+                ]
+            ),
             "sequence": "request -> response",
         }
     )

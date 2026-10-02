@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
-ARG VIGIL_VERSION=dev
+ARG VIGIL_VERSION=
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -66,7 +66,7 @@ COPY --chown=vigil:vigil INTENT.md    ./INTENT.md
 RUN mkdir -p /app/data/investigations /home/vigil/.vigil \
     && chown -R vigil:vigil /app/data /home/vigil
 
-RUN echo "${VIGIL_VERSION}" > /app/VERSION
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 
 USER vigil
 

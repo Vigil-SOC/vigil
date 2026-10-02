@@ -155,7 +155,9 @@ def test_search_logs_negative_offset_clamped_to_zero():
 def test_recalculate_cost_posts_filters_and_limit():
     cm, client = _client_returning(
         "post",
-        _ok_response({"total_matched": 50, "updated": 50, "skipped": 0, "remaining": 0}),
+        _ok_response(
+            {"total_matched": 50, "updated": 50, "skipped": 0, "remaining": 0}
+        ),
     )
     with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
         from core.llm.bifrost.costs import recalculate_cost
@@ -172,7 +174,9 @@ def test_recalculate_cost_posts_filters_and_limit():
 
 
 def test_recalculate_cost_limit_clamped_to_1000():
-    cm, client = _client_returning("post", _ok_response({"updated": 1000, "remaining": 0}))
+    cm, client = _client_returning(
+        "post", _ok_response({"updated": 1000, "remaining": 0})
+    )
     with patch("core.llm.bifrost.costs.httpx.Client", return_value=cm):
         from core.llm.bifrost.costs import recalculate_cost
 

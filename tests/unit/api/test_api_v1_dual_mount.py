@@ -38,7 +38,7 @@ def test_every_v1_path_is_also_served_at_its_legacy_prefix():
 
     missing = []
     for p in v1_paths:
-        legacy = norm("/api/" + p[len("/api/v1/"):])
+        legacy = norm("/api/" + p[len("/api/v1/") :])
         if legacy not in served:
             missing.append(f"{p} has no legacy alias {legacy}")
     assert not missing, "dual-mount incomplete:\n" + "\n".join(missing)

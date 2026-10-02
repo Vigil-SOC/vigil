@@ -46,9 +46,7 @@ def db():
 
 def test_mixed_session_sums_priced_rows_only(db):
     session_id = f"sess-mixed-{uuid.uuid4().hex[:8]}"
-    db.extend(
-        _insert(session_id, [("triage", 0.42), ("free", 0.0), ("hunter", None)])
-    )
+    db.extend(_insert(session_id, [("triage", 0.42), ("free", 0.0), ("hunter", None)]))
 
     out = get_session_summary(session_id)
 

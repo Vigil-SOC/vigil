@@ -82,7 +82,9 @@ def create_snapshot(
     kind: str = "manual",
     tags: tuple[str, ...] = (),
     extra_env: Mapping[str, str] | None = None,
+    version: str | None = None,
 ) -> str:
+    """``version`` is what the manifest records; default is the running code's."""
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
         raise BackupError(f"passphrase file not found: {passphrase_file}")
@@ -110,7 +112,7 @@ def create_snapshot(
                 snap_conn.close()
             locations = _locations(staging, bifrost_data)
             manifest_path = staging / "manifest.json"
-            _write_manifest(manifest_path, locations, counts, kind)
+            _write_manifest(manifest_path, locations, counts, kind, version)
             paths = [str(manifest_path)]
             paths.extend(loc.path for loc in locations if loc.path)
             snap = _restic_backup(repo, passphrase, paths, priority, tags, extra_env)
@@ -432,10 +434,14 @@ def _sqlite_backup(src: Path, dest: Path) -> None:
 
 
 def _write_manifest(
-    path: Path, locations: list[Location], counts: dict[str, int], kind: str
+    path: Path,
+    locations: list[Location],
+    counts: dict[str, int],
+    kind: str,
+    version: str | None = None,
 ) -> None:
     payload = {
-        "version": __version__,
+        "version": version or __version__,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "kind": kind,
         "locations": [loc.as_dict() for loc in locations],

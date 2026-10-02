@@ -7,7 +7,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.api.v1.approvals_router import router as approvals_router
-from core.storage.models import ApprovalAction, Case, IntakeTrigger, Investigation, WorkflowRun
+from core.storage.models import (
+    ApprovalAction,
+    Case,
+    IntakeTrigger,
+    Investigation,
+    WorkflowRun,
+)
 from core.storage.unit_of_work import unit_of_work
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
@@ -156,7 +162,9 @@ def test_needs_you_is_oldest_pending_approvals_only(client, seeded):
         "ny-from-inv",
         "ny-none",
     ]
-    assert "ny-intake-should-not-appear" not in {item["title"] for item in body["items"]}
+    assert "ny-intake-should-not-appear" not in {
+        item["title"] for item in body["items"]
+    }
     assert all("expires_at" not in item for item in mine)
 
     direct, from_run, from_inv, none = mine
@@ -170,11 +178,19 @@ def test_needs_you_is_oldest_pending_approvals_only(client, seeded):
 
 
 def test_case_id_filter_uses_the_resolved_id(client, seeded):
-    direct = _mine(client.get("/api/approvals/needs-you", params={"case_id": "ny-direct-case"}).json())
+    direct = _mine(
+        client.get(
+            "/api/approvals/needs-you", params={"case_id": "ny-direct-case"}
+        ).json()
+    )
     assert [item["source_id"] for item in direct] == ["ny-direct"]
 
-    from_run = _mine(client.get("/api/approvals/needs-you", params={"case_id": "ny-from-run"}).json())
+    from_run = _mine(
+        client.get("/api/approvals/needs-you", params={"case_id": "ny-from-run"}).json()
+    )
     assert [item["source_id"] for item in from_run] == ["ny-from-run"]
 
-    from_inv = _mine(client.get("/api/approvals/needs-you", params={"case_id": "ny-case-inv"}).json())
+    from_inv = _mine(
+        client.get("/api/approvals/needs-you", params={"case_id": "ny-case-inv"}).json()
+    )
     assert [item["source_id"] for item in from_inv] == ["ny-from-inv"]

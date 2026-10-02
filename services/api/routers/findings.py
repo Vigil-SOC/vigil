@@ -266,7 +266,9 @@ def export_findings(output_format: str = "json"):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"findings_export_{timestamp}.{output_format}"
+    # Extension from the allowlist, not the request, so the caller picks no part of the path.
+    ext = next(f for f in EXPORT_FORMATS if f == output_format)
+    output_path = output_dir / f"findings_export_{timestamp}.{ext}"
 
     success = data_service.export_findings(output_path, fmt=output_format)
 

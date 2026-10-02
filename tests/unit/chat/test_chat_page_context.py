@@ -31,7 +31,9 @@ async def test_turn_without_a_model_names_the_page_and_uses_chat_default(monkeyp
 
     monkeypatch.setattr(claude, "get_registry", lambda: _Registry())
     monkeypatch.setattr(
-        claude, "provider_for", lambda _provider: SimpleNamespace(provider_type="gemini")
+        claude,
+        "provider_for",
+        lambda _provider: SimpleNamespace(provider_type="gemini"),
     )
     monkeypatch.setattr(claude, "model_for", lambda _provider, model: model)
     monkeypatch.setattr(claude, "live_mcp_tools", lambda _registry: [])

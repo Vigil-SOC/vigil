@@ -40,14 +40,14 @@ def _services() -> dict:
 @pytest.mark.parametrize("name", INVESTIGATION_SET)
 def test_investigation_service_runs_on_default_up(name: str) -> None:
     spec = _services()[name]
-    assert "profiles" not in spec, (
-        f"{name} is behind a profile, so `docker compose up` will not start it"
-    )
+    assert (
+        "profiles" not in spec
+    ), f"{name} is behind a profile, so `docker compose up` will not start it"
 
 
 @pytest.mark.parametrize("name", DAEMON_SET)
 def test_daemon_service_is_behind_daemon_profile_only(name: str) -> None:
     spec = _services()[name]
-    assert spec.get("profiles") == ["daemon"], (
-        f"{name} must be `profiles: [daemon]` exactly, got {spec.get('profiles')!r}"
-    )
+    assert spec.get("profiles") == [
+        "daemon"
+    ], f"{name} must be `profiles: [daemon]` exactly, got {spec.get('profiles')!r}"

@@ -5,6 +5,7 @@ Handles database connections, session management, and connection pooling.
 """
 
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -15,8 +16,9 @@ from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from core.storage.db_proxy import ProxyConfig
@@ -66,6 +68,7 @@ from core.storage.models import (  # noqa: F401
     UserPreference,
 )
 from core.storage.reference_seed import seed_empty_tables
+from core.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -991,6 +994,7 @@ def reset_reference_seed_check() -> None:
     with _reference_seed_lock:
         _reference_seed_done.clear()
         _reference_seed_failed_at.clear()
+    _schema_stamped.clear()
 
 
 def seed_reference_tables(db_manager: Optional["DatabaseManager"] = None) -> None:
@@ -1038,6 +1042,60 @@ def seed_reference_tables(db_manager: Optional["DatabaseManager"] = None) -> Non
         logger.error("Could not seed the default rows of %s: %s", table, error)
 
 
+SCHEMA_VERSION_KEY = "schema_version"
+
+_schema_stamped: set[str] = set()
+
+
+def _read_stamp(conn: Connection) -> Optional[str]:
+    """The stamped version, or None for a database with no ``system_config``
+    table or no row. Every other failure raises: it must not read as "no stamp"."""
+    if conn.execute(text("SELECT to_regclass('system_config')")).scalar() is None:
+        return None
+    value = conn.execute(
+        text("SELECT value FROM system_config WHERE key = :key"),
+        {"key": SCHEMA_VERSION_KEY},
+    ).scalar()
+    return value["version"] if value else None
+
+
+def read_schema_version(config: "DatabaseConfig") -> Optional[str]:
+    """The schema version a database was last provisioned at, on its own connection."""
+    engine = create_engine(
+        config.get_database_url(),
+        poolclass=NullPool,
+        connect_args={"connect_timeout": 5},
+    )
+    try:
+        with engine.connect() as conn:
+            return _read_stamp(conn)
+    finally:
+        engine.dispose()
+
+
+def _stamp_schema_version(engine: Engine) -> None:
+    """Record ``__version__`` as the schema version, if it is not already."""
+    key = engine.url.render_as_string(hide_password=True)
+    if key in _schema_stamped:
+        return
+    with engine.begin() as conn:
+        if _read_stamp(conn) != __version__:
+            conn.execute(
+                text(
+                    "INSERT INTO system_config (key, value, description, config_type)"
+                    " VALUES (:key, CAST(:value AS jsonb), :description, 'system')"
+                    " ON CONFLICT (key) DO UPDATE"
+                    " SET value = EXCLUDED.value, updated_at = now()"
+                ),
+                {
+                    "key": SCHEMA_VERSION_KEY,
+                    "value": json.dumps({"version": __version__}),
+                    "description": "Vigil version this schema was last provisioned at",
+                },
+            )
+    _schema_stamped.add(key)
+
+
 def init_database(echo: bool = False, create_tables: bool = True):
     """
     Initialize the database.
@@ -1064,3 +1122,10 @@ def init_database(echo: bool = False, create_tables: bool = True):
     # the backend can create these tables, and marks it applied for good.
     if create_tables:
         seed_reference_tables(db_manager)
+        # Only once create_all and the drift check have returned: a stamp
+        # the schema never reached would hide the version it is really at.
+        try:
+            _stamp_schema_version(db_manager.engine)
+        except Exception as e:  # noqa: BLE001
+            # The old stamp stays and the next start tries again.
+            logger.error("Could not record the schema version: %s", e)

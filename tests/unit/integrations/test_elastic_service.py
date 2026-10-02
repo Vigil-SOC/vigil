@@ -8,7 +8,6 @@ import respx
 
 from core.integrations.elastic.client import ElasticService
 
-
 ES_URL = "https://es.test:9200"
 KIBANA_URL = "https://kibana.test:5601"
 
@@ -53,6 +52,7 @@ def service_basic_auth():
 # Client construction
 # ------------------------------------------------------------------
 
+
 class TestClientConstruction:
 
     def test_api_key_auth_header(self, service):
@@ -77,14 +77,13 @@ class TestClientConstruction:
 # Connection test
 # ------------------------------------------------------------------
 
+
 class TestConnectionTest:
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_success_es_only(self):
-        svc = ElasticService(
-            elasticsearch_url=ES_URL, api_key="k", verify_ssl=False
-        )
+        svc = ElasticService(elasticsearch_url=ES_URL, api_key="k", verify_ssl=False)
         respx.get(f"{ES_URL}/").mock(
             return_value=httpx.Response(
                 200,
@@ -114,9 +113,7 @@ class TestConnectionTest:
             )
         )
         respx.get(f"{KIBANA_URL}/api/status").mock(
-            return_value=httpx.Response(
-                200, json={"version": {"number": "8.14.0"}}
-            )
+            return_value=httpx.Response(200, json={"version": {"number": "8.14.0"}})
         )
 
         ok, msg = await service.test_connection()
@@ -139,9 +136,7 @@ class TestConnectionTest:
     @respx.mock
     @pytest.mark.asyncio
     async def test_failure_connection_error(self, service):
-        respx.get(f"{ES_URL}/").mock(
-            side_effect=httpx.ConnectError("refused")
-        )
+        respx.get(f"{ES_URL}/").mock(side_effect=httpx.ConnectError("refused"))
 
         ok, msg = await service.test_connection()
         assert ok is False
@@ -151,6 +146,7 @@ class TestConnectionTest:
 # ------------------------------------------------------------------
 # Elasticsearch search
 # ------------------------------------------------------------------
+
 
 class TestSearch:
 
@@ -200,6 +196,7 @@ class TestSearch:
 # ------------------------------------------------------------------
 # IOC search helpers
 # ------------------------------------------------------------------
+
 
 class TestIOCSearch:
 
@@ -262,9 +259,17 @@ class TestIOCSearch:
         route = respx.post(f"{ES_URL}/wazuh-alerts-4.x-*/_search").mock(
             return_value=httpx.Response(
                 200,
-                json={"hits": {"total": {"value": 1}, "hits": [
-                    {"_index": "wazuh-alerts-4.x-2026.09.28", "_source": WAZUH_ALERT}
-                ]}},
+                json={
+                    "hits": {
+                        "total": {"value": 1},
+                        "hits": [
+                            {
+                                "_index": "wazuh-alerts-4.x-2026.09.28",
+                                "_source": WAZUH_ALERT,
+                            }
+                        ],
+                    }
+                },
             )
         )
         for lookup, value in [
@@ -282,6 +287,7 @@ class TestIOCSearch:
 # ------------------------------------------------------------------
 # get_indices
 # ------------------------------------------------------------------
+
 
 class TestGetIndices:
 
@@ -309,14 +315,13 @@ class TestGetIndices:
 # Kibana Detections API
 # ------------------------------------------------------------------
 
+
 class TestDetectionAlerts:
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_fetch_alerts(self, service):
-        respx.post(
-            f"{KIBANA_URL}/api/detection_engine/signals/search"
-        ).mock(
+        respx.post(f"{KIBANA_URL}/api/detection_engine/signals/search").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -339,9 +344,9 @@ class TestDetectionAlerts:
     @respx.mock
     @pytest.mark.asyncio
     async def test_update_alert_status(self, service):
-        respx.post(
-            f"{KIBANA_URL}/api/detection_engine/signals/status"
-        ).mock(return_value=httpx.Response(200, json={}))
+        respx.post(f"{KIBANA_URL}/api/detection_engine/signals/status").mock(
+            return_value=httpx.Response(200, json={})
+        )
 
         ok = await service.update_alert_status(["a1", "a2"], "closed")
         assert ok is True
@@ -350,9 +355,9 @@ class TestDetectionAlerts:
     @respx.mock
     @pytest.mark.asyncio
     async def test_update_alert_status_failure(self, service):
-        respx.post(
-            f"{KIBANA_URL}/api/detection_engine/signals/status"
-        ).mock(return_value=httpx.Response(403, text="Forbidden"))
+        respx.post(f"{KIBANA_URL}/api/detection_engine/signals/status").mock(
+            return_value=httpx.Response(403, text="Forbidden")
+        )
 
         ok = await service.update_alert_status(["a1"], "closed")
         assert ok is False
@@ -362,6 +367,7 @@ class TestDetectionAlerts:
 # ------------------------------------------------------------------
 # Kibana Cases API
 # ------------------------------------------------------------------
+
 
 class TestCasesAPI:
 
@@ -406,6 +412,7 @@ class TestCasesAPI:
 # close()
 # ------------------------------------------------------------------
 
+
 class TestClose:
 
     @pytest.mark.asyncio
@@ -423,9 +430,7 @@ class TestClose:
             )
         )
         respx.get(f"{KIBANA_URL}/api/status").mock(
-            return_value=httpx.Response(
-                200, json={"version": {"number": "8.14.0"}}
-            )
+            return_value=httpx.Response(200, json={"version": {"number": "8.14.0"}})
         )
 
         await service.test_connection()

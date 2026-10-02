@@ -166,10 +166,14 @@ def test_root_cause_resolves_off_the_hunt_grant():
     from core.workflows.playbooks_router import _resolver_for
 
     workflows = WorkflowsService()
-    assert _resolver_for(workflows, "root-cause-analysis").__name__ == "resolve_root_cause"
+    assert (
+        _resolver_for(workflows, "root-cause-analysis").__name__ == "resolve_root_cause"
+    )
     assert _resolver_for(workflows, "threat-hunt").__name__ == "resolve_hunt"
 
-    playbook, config_text = resolve_root_cause("root-cause-analysis", workflows=workflows)
+    playbook, config_text = resolve_root_cause(
+        "root-cause-analysis", workflows=workflows
+    )
     document = yaml.safe_load(playbook)
     config = yaml.safe_load(config_text)
     assert "hypotheses" not in document

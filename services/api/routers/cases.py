@@ -1,6 +1,7 @@
 """Cases API endpoints."""
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -214,9 +215,16 @@ async def generate_case_report(case_id: str):
 
     # Generate report filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{case_id}_report_{timestamp}.pdf"
-    output_path = Path("TestOutputs") / filename
-    output_path.parent.mkdir(exist_ok=True)
+    output_dir = os.path.realpath("TestOutputs")
+    resolved = os.path.realpath(
+        os.path.join(output_dir, f"{case_id}_report_{timestamp}.pdf")
+    )
+    # Kept inline so the case ID cannot steer the report outside the output dir.
+    if not resolved.startswith(output_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid case ID")
+    output_path = Path(resolved)
+    filename = output_path.name
+    os.makedirs(output_dir, exist_ok=True)
 
     # Generate the report
     success = report_service.generate_case_report(output_path, case, findings)
@@ -227,7 +235,7 @@ async def generate_case_report(case_id: str):
     return {
         "success": True,
         "filename": filename,
-        "path": str(output_path),
+        "path": os.path.join("TestOutputs", filename),
         "case_id": case_id,
     }
 

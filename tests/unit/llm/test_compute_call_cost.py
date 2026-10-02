@@ -43,9 +43,9 @@ def _mock_registry(
                 "cache_read": cache_read_rate,
                 "cache_write": cache_creation_rate,
                 "pricing_source": source,
-                "rates_fetched_at": None
-                if source == "unknown"
-                else "2026-01-01T00:00:00+00:00",
+                "rates_fetched_at": (
+                    None if source == "unknown" else "2026-01-01T00:00:00+00:00"
+                ),
             }
 
     return _R()

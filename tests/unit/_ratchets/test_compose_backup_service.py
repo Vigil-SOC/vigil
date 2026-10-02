@@ -104,7 +104,7 @@ def test_start_sh_overrides_the_loop_with_one_create_or_restore() -> None:
     assert (
         "\n".join(
             [
-                "--entrypoint python backup -m core.backup \"$sub\"",
+                '--entrypoint python backup -m core.backup "$sub"',
                 "        --repo /backup/repo --passphrase-file /backup/passphrase",
                 "        --bifrost-data /var/lib/vigil/bifrost",
             ]
@@ -113,3 +113,37 @@ def test_start_sh_overrides_the_loop_with_one_create_or_restore() -> None:
     )
     assert "prepare_backup_run backup " in text
     assert "prepare_backup_run restore " in text
+
+
+def test_pre_upgrade_one_shot_gates_everything_that_provisions_the_schema() -> None:
+    services = _compose()["services"]
+    for name in ("backend", "soc-daemon", "llm-worker", "db-seed", "backup"):
+        depends = services[name]["depends_on"]
+        assert depends["backup-pre-upgrade"] == {
+            "condition": "service_completed_successfully"
+        }, name
+
+    one_shot = services["backup-pre-upgrade"]
+    # Waiting on itself would deadlock `up`: only postgres may gate it.
+    assert list(one_shot["depends_on"]) == ["postgres"]
+    assert one_shot.get("restart") == "no"
+    assert "profiles" not in one_shot
+    assert "python\n-m\ncore.backup\npre-upgrade" in _command(one_shot)
+    assert _mounts(one_shot) == _mounts(services["backup"])
+    one_shot_env = _env(one_shot)
+    assert one_shot_env["POSTGRES_USER"] == _env(services["postgres"])["POSTGRES_USER"]
+    assert one_shot_env["VIGIL_BACKUP_OWNER_CONNECTION"] == "1"
+
+
+def test_start_sh_backs_up_before_schema_init_and_shutdown_stops_the_loop() -> None:
+    text = (REPO / "start.sh").read_text(encoding="utf-8")
+    pre = text.index("backup_pre_upgrade || exit 1")
+    init = text.index("python3 scripts/init_schema.py")
+    loop = text.index("\nstart_backup_loop\n")
+    assert pre < init < loop
+    assert '--target-version "$VERSION"' in text
+    assert "backup-pre-upgrade" in text
+    shutdown = (REPO / "shutdown_all.sh").read_text(encoding="utf-8")
+    loop_name = "vigil-backup-loop"
+    assert f'BACKUP_LOOP_CONTAINER="{loop_name}"' in text
+    assert f"docker rm -f {loop_name}" in shutdown

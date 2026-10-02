@@ -6,8 +6,9 @@ import argparse
 import sys
 
 from core.backup.create import BackupError, BackupSkipped, create_snapshot
+from core.backup.preupgrade import pre_upgrade_snapshot
 from core.backup.restore import restore_snapshot
-from core.backup.schedule import run_forever
+from core.backup.schedule import _configure_logging, run_forever
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -45,6 +46,14 @@ def _parser() -> argparse.ArgumentParser:
         "--bifrost-data",
         help="Bifrost data directory passed to each scheduled snapshot",
     )
+    pre = sub.add_parser(
+        "pre-upgrade",
+        help="snapshot the default destination if the database is a release behind",
+    )
+    pre.add_argument(
+        "--target-version", help="release being installed (default: this code's)"
+    )
+    pre.add_argument("--bifrost-data", help="Bifrost data directory to include")
     return parser
 
 
@@ -74,6 +83,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "run":
             run_forever(bifrost_data=args.bifrost_data)
+            return 0
+        if args.command == "pre-upgrade":
+            _configure_logging()
+            pre_upgrade_snapshot(
+                target_version=args.target_version, bifrost_data=args.bifrost_data
+            )
             return 0
     except BackupSkipped as exc:
         print(str(exc), file=sys.stderr)

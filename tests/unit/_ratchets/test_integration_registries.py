@@ -239,9 +239,7 @@ def test_splunk_selfhosted_mcp_config_declares_no_required_env_placeholders():
     servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
     splunk = servers["splunk-selfhosted"]
     env = {
-        k: str(v)
-        for k, v in (splunk.get("env") or {}).items()
-        if not k.startswith("_")
+        k: str(v) for k, v in (splunk.get("env") or {}).items() if not k.startswith("_")
     }
     assert extract_required_env_vars(env, list(splunk.get("args") or [])) == []
 
@@ -254,8 +252,6 @@ def test_atomic_red_team_mcp_config_declares_no_required_env_placeholders():
     servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
     art = servers["atomic-red-team"]
     env = {
-        k: str(v)
-        for k, v in (art.get("env") or {}).items()
-        if not k.startswith("_")
+        k: str(v) for k, v in (art.get("env") or {}).items() if not k.startswith("_")
     }
     assert extract_required_env_vars(env, list(art.get("args") or [])) == []

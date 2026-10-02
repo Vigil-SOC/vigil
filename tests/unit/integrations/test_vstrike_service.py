@@ -314,7 +314,8 @@ def test_malformed_json_body_returns_none_not_raise(method, path):
     _seed_jwt(svc)
     respx.get(f"https://vstrike.example.com{path}").mock(
         return_value=httpx.Response(
-            200, text="<html>gateway</html>",
+            200,
+            text="<html>gateway</html>",
             headers={"Content-Type": "application/json"},
         )
     )
@@ -763,9 +764,7 @@ def test_storyline_list_unwraps_vstrike_structured_content():
         "result": {
             "content": [],
             "structuredContent": {
-                "storylineSets": [
-                    {"storylineSetId": "ss1", "label": "Exfil"}
-                ],
+                "storylineSets": [{"storylineSetId": "ss1", "label": "Exfil"}],
                 "count": 1,
             },
             "isError": False,
@@ -834,9 +833,7 @@ def test_legend_run_list_unwraps_vstrike_structured_content():
         "result": {
             "content": [],
             "structuredContent": {
-                "legends": [
-                    {"legendId": "lg1", "label": "Vendor"}
-                ],
+                "legends": [{"legendId": "lg1", "label": "Vendor"}],
                 "count": 1,
             },
             "isError": False,

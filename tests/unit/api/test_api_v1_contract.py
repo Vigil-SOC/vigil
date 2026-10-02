@@ -29,7 +29,11 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-prod")
 
 pytestmark = pytest.mark.unit
 
-from scripts.generate_api_v1_contract import SNAPSHOT, build_contract, serialize  # noqa: E402
+from scripts.generate_api_v1_contract import (
+    SNAPSHOT,
+    build_contract,
+    serialize,
+)  # noqa: E402
 
 
 def _live_contract() -> dict:

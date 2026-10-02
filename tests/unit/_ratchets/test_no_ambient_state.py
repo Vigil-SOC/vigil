@@ -92,7 +92,10 @@ def _callee_name(node: ast.AST):
 def _env_reads(rel_path: Path):
     lines, tree = _parse(rel_path)
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Attribute) or node.attr not in ("getenv", "environ"):
+        if not isinstance(node, ast.Attribute) or node.attr not in (
+            "getenv",
+            "environ",
+        ):
             continue
         if not (isinstance(node.value, ast.Name) and node.value.id == "os"):
             continue

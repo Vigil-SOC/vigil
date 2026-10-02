@@ -212,7 +212,6 @@ class TestTheDestructiveGateReadsBareNames:
             assert _is_destructive_mcp(name) is True, name
 
 
-
 # --- A tool both sides carry is described by the side that answers it --------
 #
 # Vigil's own tools are registered unprefixed, so thirteen of their names are

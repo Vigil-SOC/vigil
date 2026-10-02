@@ -63,22 +63,14 @@ class CustomIntegrationService:
         rejected.
         """
         integration_id = _validate_integration_id(integration_id)
-        base = self.custom_integrations_dir
-        candidate = (base / f"{integration_id}_server.py").resolve()
-        # ``Path.is_relative_to`` (3.9+) handles ``..`` and symlink
-        # traversal cleanly. We add a startswith check too in case the
-        # base path itself is a symlink target on macOS.
-        try:
-            candidate.relative_to(base)
-        except ValueError as exc:
-            raise InvalidIntegrationIdError(
-                "integration path escapes custom_integrations directory"
-            ) from exc
-        if not str(candidate).startswith(str(base) + os.sep):
+        base = os.path.realpath(self.custom_integrations_dir)
+        candidate = os.path.realpath(os.path.join(base, f"{integration_id}_server.py"))
+        # The check stays inline so static analysis sees it guard the path.
+        if not candidate.startswith(base + os.sep):
             raise InvalidIntegrationIdError(
                 "integration path escapes custom_integrations directory"
             )
-        return candidate
+        return Path(candidate)
 
     async def generate_integration(
         self,

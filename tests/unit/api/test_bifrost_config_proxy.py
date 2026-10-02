@@ -102,7 +102,9 @@ def test_vertex_service_account_is_not_mirrored_to_value(monkeypatch):
     # nothing of the real cause.
     monkeypatch.setattr(proxy, "get_secret", lambda ref: None)
     sa = '{"type": "service_account", "project_id": "p"}'
-    body = {"vertex_key_config": {"project_id": "p", "region": "us", "auth_credentials": sa}}
+    body = {
+        "vertex_key_config": {"project_id": "p", "region": "us", "auth_credentials": sa}
+    }
     proxy._resolve_key_value(body, None)
     assert "value" not in body
     assert body["vertex_key_config"]["auth_credentials"] == sa

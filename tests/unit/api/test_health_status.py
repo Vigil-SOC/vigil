@@ -110,7 +110,9 @@ def test_connected_database_stays_healthy_when_schema_is_not_ok(client, monkeypa
     assert "priority" not in response.text
 
 
-def test_storage_check_failure_is_degraded_and_does_not_leak(client, monkeypatch, caplog):
+def test_storage_check_failure_is_degraded_and_does_not_leak(
+    client, monkeypatch, caplog
+):
     from core.storage.connection import SchemaDriftError
 
     monkeypatch.setenv("DEV_MODE", "true")

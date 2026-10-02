@@ -14,9 +14,12 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from core.llm.router.router import (LLMRouter, ProviderSpec,  # noqa: E402
-                                    _pre_dispatch_sanitize,
-                                    _wrap_tool_results_in_messages)
+from core.llm.router.router import (
+    LLMRouter,
+    ProviderSpec,  # noqa: E402
+    _pre_dispatch_sanitize,
+    _wrap_tool_results_in_messages,
+)
 from core.llm.security import PromptInjectionBlocked  # noqa: E402
 
 pytestmark = pytest.mark.unit

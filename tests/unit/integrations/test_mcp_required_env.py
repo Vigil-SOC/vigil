@@ -17,9 +17,9 @@ from core.integrations.mcp.service import MCPServer, extract_required_env_vars
 
 class TestExtractRequiredEnvVars:
     def test_scans_env_values(self):
-        assert extract_required_env_vars(
-            {"API_KEY": "${VIRUSTOTAL_API_KEY}"}, []
-        ) == ["VIRUSTOTAL_API_KEY"]
+        assert extract_required_env_vars({"API_KEY": "${VIRUSTOTAL_API_KEY}"}, []) == [
+            "VIRUSTOTAL_API_KEY"
+        ]
 
     def test_scans_args(self):
         assert extract_required_env_vars(
@@ -49,14 +49,15 @@ class TestExtractRequiredEnvVars:
 
     def test_ignores_workspaceFolder(self):
         # Not all ${...} references are credentials — path sentinels shouldn't be flagged.
-        assert extract_required_env_vars(
-            {"CWD": "${workspaceFolder}/data"}, []
-        ) == []
+        assert extract_required_env_vars({"CWD": "${workspaceFolder}/data"}, []) == []
 
     def test_returns_empty_when_no_placeholders(self):
-        assert extract_required_env_vars(
-            {"LITERAL_VALUE": "just-a-string"}, ["--flag", "value"]
-        ) == []
+        assert (
+            extract_required_env_vars(
+                {"LITERAL_VALUE": "just-a-string"}, ["--flag", "value"]
+            )
+            == []
+        )
 
     def test_returns_empty_on_none_inputs(self):
         assert extract_required_env_vars({}, []) == []
@@ -113,9 +114,7 @@ class TestCredentialGate:
         with patch("os.environ.get", return_value=None), patch(
             "core.secrets_manager.get_secret", return_value=None
         ):
-            assert client._missing_credentials_for(server) == [
-                "VIRUSTOTAL_API_KEY"
-            ]
+            assert client._missing_credentials_for(server) == ["VIRUSTOTAL_API_KEY"]
 
     def test_secrets_manager_satisfies_requirement(self):
         # A user who saved a credential via the integration wizard (which
@@ -190,9 +189,7 @@ class TestSubstituteEnvVars:
         from core.integrations.mcp.service import MCPService
 
         service = MCPService()
-        assert (
-            service._substitute_env_vars("${A:-${B:-fallback}}") == "fallback"
-        )
+        assert service._substitute_env_vars("${A:-${B:-fallback}}") == "fallback"
 
     def test_an_explicit_setting_beats_a_nested_default(self, monkeypatch):
         """Both branches of one line, on a variable a spawned server really gets.
@@ -317,9 +314,7 @@ class TestRetryDormantIfReady:
         ):
             result = await client.retry_dormant_if_ready()
         assert result == {"virustotal": True}
-        client.connect_to_server.assert_awaited_once_with(
-            "virustotal", persistent=True
-        )
+        client.connect_to_server.assert_awaited_once_with("virustotal", persistent=True)
 
     @pytest.mark.asyncio
     async def test_rate_limits_repeated_retries(self):

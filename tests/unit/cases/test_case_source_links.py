@@ -78,9 +78,7 @@ def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
 
     monkeypatch.setattr(cases.CaseRepository, "resolve_findings", resolve_findings)
     monkeypatch.setattr("core.findings.source_link.get_descriptor", _descriptor)
-    monkeypatch.setattr(
-        "core.integrations._base.config.get_integration_config", config
-    )
+    monkeypatch.setattr("core.integrations._base.config.get_integration_config", config)
     monkeypatch.setattr(
         cases.data_service,
         "get_case",

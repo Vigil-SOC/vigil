@@ -1,5 +1,6 @@
 """Unit tests for services/elastic_ingestion.py."""
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -78,6 +79,33 @@ class TestTransformAlert:
         assert finding["finding_id"] == "elastic-sparse-1"
         assert finding["title"] == "Elastic Security Alert"
         assert finding["severity"] == "medium"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"kibana.alert.rule.name": "Kibana rule"},
+            {"rule": {"level": 10, "description": "Wazuh rule"}},
+        ],
+        ids=["kibana", "wazuh"],
+    )
+    def test_long_alert_id_fits_finding_id_column(self, ingestion, source):
+        """Kibana detection alert _ids are 64-char SHA-256 hex (#1434)."""
+        alert_id = hashlib.sha256(b"x").hexdigest()
+        finding = ingestion.transform_alert_to_finding(
+            {"_id": alert_id, "_source": source}
+        )
+        assert finding is not None
+        # findings.finding_id is String(50)
+        assert len(finding["finding_id"]) <= 50
+        assert finding["finding_id"] == f"elastic-{alert_id[:32]}"
+        # The full id survives for dedup and for upstream status sync.
+        assert finding["external_id"] == alert_id
+        assert finding["metadata"]["elastic_alert_id"] == alert_id
+
+    def test_short_alert_id_is_unchanged(self, ingestion):
+        finding = ingestion.transform_alert_to_finding({"_id": "abc", "_source": {}})
+        assert finding["finding_id"] == "elastic-abc"
+        assert finding["external_id"] == "abc"
 
     def test_handles_transform_error(self, ingestion):
         # Pass completely invalid data

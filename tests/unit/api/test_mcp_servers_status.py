@@ -58,7 +58,11 @@ def test_status_route_reads_the_stubbed_client(client):
         "missing_credentials": ["VT_API_KEY"],
         "error": "connection refused",
     }
-    assert rows["slack"] == {"name": "slack", "status": "disconnected", "enabled": False}
+    assert rows["slack"] == {
+        "name": "slack",
+        "status": "disconnected",
+        "enabled": False,
+    }
     stub.retry_dormant_if_ready.assert_not_called()
 
 
