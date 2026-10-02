@@ -718,6 +718,11 @@ def _undo_files(done: list[_Swapped]) -> None:
                 swapped.previous.unlink()
             elif swapped.created:
                 item.target.unlink(missing_ok=True)
+            if swapped.previous is not None:
+                try:
+                    swapped.previous.parent.rmdir()
+                except OSError:
+                    pass
             continue
         for name in reversed(swapped.moved_in):
             (item.target / name).rename(item.staged / name)
@@ -838,11 +843,10 @@ def _settle_restored(
     old_key = _stored_jwt_secret()
     # Under Compose the backend takes the key from the environment, which the
     # operator also passes to this process. No store holds it.
-    from_env = old_key is None and bool(
-        os.environ.get("JWT_SECRET_KEY")
-    )  # noqa: ENV001
+    env_key = os.environ.get("JWT_SECRET_KEY")  # noqa: ENV001
+    from_env = old_key is None and bool(env_key)
     if from_env:
-        old_key = os.environ["JWT_SECRET_KEY"]  # noqa: ENV001
+        old_key = env_key
     new_key = secrets.token_urlsafe(48)
     expired = _reencrypt_and_expire(old_key, new_key, snapshot_id, created_at, actor)
     # With no key anywhere, a deployment outside this install sets it. A

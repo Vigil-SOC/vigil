@@ -38,15 +38,19 @@ prepare_backup_run() {
     local cmd="$1" repo="$2" passfile="$3" env_mode="$4"
     [ -f "$passfile" ] || { echo "passphrase file not found: $passfile" >&2; exit 1; }
     ensure_docker || exit 1
-    # Compose operators pass JWT_SECRET_KEY from their shell. The .env sourced
-    # below must not turn into one.
-    local pass_jwt=0
-    [ -n "${JWT_SECRET_KEY:-}" ] && pass_jwt=1
+    # Compose operators pass JWT_SECRET_KEY from their shell. It outranks .env,
+    # and the .env sourced below must not turn into one.
+    local caller_jwt="${JWT_SECRET_KEY:-}"
     if [ -f "$REPO_ROOT/.env" ]; then
         set -a
         # shellcheck disable=SC1091
         source "$REPO_ROOT/.env"
         set +a
+    fi
+    if [ -n "$caller_jwt" ]; then
+        export JWT_SECRET_KEY="$caller_jwt"
+    else
+        unset JWT_SECRET_KEY
     fi
     # A restore reads a repository that must already exist.
     if [ "$cmd" = "backup" ]; then
@@ -76,7 +80,7 @@ prepare_backup_run() {
     if [ -f "$REPO_ROOT/.env" ]; then
         BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
     fi
-    [ "$pass_jwt" -eq 1 ] && BACKUP_RUN_ARGS+=(-e JWT_SECRET_KEY)
+    [ -n "$caller_jwt" ] && BACKUP_RUN_ARGS+=(-e JWT_SECRET_KEY)
     local sub="$cmd"
     [ "$cmd" = "backup" ] && sub="create"
     BACKUP_RUN_ARGS+=(--entrypoint python backup -m core.backup "$sub"
