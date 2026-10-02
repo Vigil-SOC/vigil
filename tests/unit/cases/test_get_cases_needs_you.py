@@ -1,6 +1,5 @@
 """GET /cases reads needs_you once and marks rows from that same set."""
 
-import asyncio
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -82,7 +81,7 @@ def test_get_cases_passes_one_needs_you_read_into_the_page(monkeypatch):
     monkeypatch.setattr(cases_router, "CaseRepository", Repo)
     monkeypatch.setattr(cases_router, "unit_of_work", uow)
 
-    body = asyncio.run(cases_router.get_cases(limit=1, offset=1))
+    body = cases_router.get_cases(limit=1, offset=1)
 
     assert seen["calls"] == 1
     assert seen["ids"] == {"waiting", "sooner"}

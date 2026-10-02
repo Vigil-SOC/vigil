@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -171,9 +170,7 @@ def test_endpoint_uses_the_existing_reads():
         patch.setattr(config_module, "findings_data_service", findings)
         patch.setattr(config_module, "assigned_model_ids", lambda _session: set())
 
-        body = asyncio.run(
-            config_module.get_setup_steps(session=object(), detection_rules=rules)
-        )
+        body = config_module.get_setup_steps(session=object(), detection_rules=rules)
 
     assert _step(body, "connect_tools")["state_line"] == "2 of 2 integrations connected"
     assert _step(body, "connect_tools")["done"] is True

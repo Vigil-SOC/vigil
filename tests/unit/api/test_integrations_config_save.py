@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -44,9 +43,7 @@ def _run(payload, *, set_secret, config_saved=True):
         patch.object(config_module, "set_secret", set_secret),
         patch.object(config_module, "get_config_service", return_value=config_service),
     ):
-        return asyncio.run(
-            config_module.set_integrations_config(payload, current_user=_User())
-        )
+        return config_module.set_integrations_config(payload, current_user=_User())
 
 
 def test_failed_secret_write_is_not_success():
