@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { EmptyState, TextInput } from '../../shared/ui'
 import { useMcpServers, useIntegrationsConfig } from './useSettings'
@@ -29,8 +30,19 @@ const TABS: [IntegrationsTab, string][] = [
   ['detection', 'Detection Rules'],
 ]
 
+function tabFromQuery(value: string | null): IntegrationsTab {
+  if (value === 'servers' || value === 'surface' || value === 'ingestion' || value === 'detection') return value
+  return 'servers'
+}
+
 export default function IntegrationsSection({ notify }: SectionProps) {
-  const [tab, setTab] = useState<IntegrationsTab>('servers')
+  const [searchParams] = useSearchParams()
+  const requested = tabFromQuery(searchParams.get('tab'))
+  const [tab, setTab] = useState<IntegrationsTab>(requested)
+
+  useEffect(() => {
+    setTab(requested)
+  }, [requested])
   return (
     <>
       <div className="tabs" style={{ gap: 4 }}>

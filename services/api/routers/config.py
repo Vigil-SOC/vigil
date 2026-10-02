@@ -7,13 +7,22 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.api.v1.findings_router import data_service as findings_data_service
 from core.config import (
     get_settings,
+    is_demo_mode,
     load_integrations_config,
     state_dir_status,
     vigil_path,
 )
-from core.deps import provide_demo_data, provide_integration_bridge, provide_mcp_client
+from core.deps import (
+    provide_demo_data,
+    provide_detection_rules,
+    provide_integration_bridge,
+    provide_mcp_client,
+)
+from core.detections.detection_rules_service import DetectionRulesService
+from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
     redact_secrets,
@@ -23,11 +32,11 @@ from core.integrations.integration_secrets import (
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
 from core.response.approval_service import APPROVAL_CONFIG_KEY
-from core.routing import Auth, RouterMeta
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
-from core.storage.models import User
+from core.storage.models import AIModelConfig, CustomAgent, User
 from core.time import utcnow
 from services.api.middleware.auth import (
     get_current_active_user,
@@ -152,8 +161,6 @@ async def get_demo_mode():
         Demo mode status
     """
     try:
-        from core.config import is_demo_mode
-
         demo_enabled = is_demo_mode()
         env_set = get_settings().demo_mode is not None  # supplied at all, true or false
 
@@ -664,6 +671,118 @@ async def set_theme_config(
     _mirror_to_file("theme_config.json", config_data)
 
     return {"success": True, "message": "Theme saved"}
+
+
+def assigned_model_ids(session) -> set[str]:
+    """Distinct models actually assigned. ``fallback_model`` is not one of them."""
+    found: set[str] = set()
+    columns = (AIModelConfig.model_id, CustomAgent.model)
+    for column in columns:
+        for (value,) in session.query(column).all():
+            text = value.strip() if isinstance(value, str) else ""
+            if text:
+                found.add(text)
+    return found
+
+
+def _step(step_id: str, title: str, state_line: str, done: bool, href: str) -> dict:
+    return {
+        "id": step_id,
+        "title": title,
+        "state_line": state_line,
+        "done": done,
+        "href": href,
+    }
+
+
+def build_setup_steps(
+    *,
+    loaded: dict,
+    secrets_set: dict,
+    sources: list,
+    model_ids: set[str],
+    descriptor_count: int,
+    alerts_exist: int,
+    demo_enabled: bool,
+) -> dict:
+    """Four setup steps from config that already exists. No ranking, no dismissal."""
+    integrations = loaded.get("integrations") or {}
+    connected = len(integrations)
+    slack = (secrets_set.get("slack") or {}).get("bot_token") is True
+    pagerduty = (secrets_set.get("pagerduty") or {}).get("api_token") is True
+    notify_done = slack or pagerduty
+    rules_done = any(
+        source.get("status") == "ready" and (source.get("rule_count") or 0) > 0
+        for source in sources
+    )
+    distinct = len(model_ids)
+    if distinct == 0:
+        model_line = "No model assigned"
+    elif distinct == 1:
+        model_line = "All agents use one model"
+    else:
+        model_line = "Agents use more than one model"
+    integrations_href = "/settings?section=integrations"
+    return {
+        "steps": [
+            _step(
+                "connect_tools",
+                "Connect more tools",
+                f"{connected} of {descriptor_count} integrations connected",
+                connected >= 1,
+                integrations_href,
+            ),
+            _step(
+                "notify",
+                "Where Vigil pings you",
+                (
+                    "Slack or PagerDuty route is set"
+                    if notify_done
+                    else "No Slack or PagerDuty route yet"
+                ),
+                notify_done,
+                integrations_href,
+            ),
+            _step(
+                "rules",
+                "Link detection rules",
+                (
+                    "Detection rules are on disk"
+                    if rules_done
+                    else "No detection rules on disk"
+                ),
+                rules_done,
+                "/settings?section=integrations&tab=detection",
+            ),
+            _step(
+                "per_agent",
+                "Pick a model per agent",
+                model_line,
+                distinct >= 2,
+                "/settings?section=ai-config",
+            ),
+        ],
+        "alerts_exist": alerts_exist,
+        "demo_enabled": demo_enabled,
+    }
+
+
+@router.get("/setup-steps")
+async def get_setup_steps(
+    session: UnitOfWorkSession,
+    detection_rules: DetectionRulesService = Depends(provide_detection_rules),
+):
+    """Home's setup list: tools, a notify route, rules on disk, and model variety."""
+    loaded = load_integrations_config(get_config_service())
+    return build_setup_steps(
+        loaded=loaded,
+        secrets_set=_secrets_set_map(loaded.get("integrations") or {}),
+        sources=detection_rules.list_sources(),
+        model_ids=assigned_model_ids(session),
+        descriptor_count=len(iter_descriptors()),
+        alerts_exist=findings_data_service.count_findings(),
+        demo_enabled=is_demo_mode(),
+    )
 
 
 def _secrets_set_map(integrations: dict) -> dict:

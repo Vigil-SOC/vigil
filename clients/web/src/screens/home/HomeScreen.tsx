@@ -1,12 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, type NeedsYouItem } from '../../services/api'
 import './home.css'
 
 const POLL_MS = 20_000
 const HOLD_MS = 1600
 const VISIBLE = 4
+const HIDDEN_KEY = 'vigil.home.setup.hidden'
+
+type SetupStep = {
+  id: string
+  title: string
+  state_line: string
+  done: boolean
+  href: string
+}
+
+type SetupSteps = {
+  steps: SetupStep[]
+  alerts_exist: number
+  demo_enabled: boolean
+}
+
+const STEP_ACTION: Record<string, string> = {
+  connect_tools: 'Set up',
+  notify: 'Set up',
+  rules: 'Link',
+  per_agent: 'Pick',
+}
+
+function readHidden(): string[] {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(HIDDEN_KEY) || '[]')
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 function headline(count: number): string {
   if (count === 0) return 'Board clear.'
@@ -171,6 +202,11 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const [setup, setSetup] = useState<SetupSteps | null>(null)
+  const [setupError, setSetupError] = useState<string | null>(null)
+  const [hidden, setHidden] = useState<string[]>(() => readHidden())
+  const [demoMessage, setDemoMessage] = useState<string | null>(null)
+  const [demoBusy, setDemoBusy] = useState(false)
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
 
@@ -196,6 +232,41 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
     return () => window.clearInterval(id)
   }, [load])
 
+  useEffect(() => {
+    let cancelled = false
+    configApi
+      .getSetupSteps()
+      .then((res) => {
+        if (!cancelled) setSetup(res.data)
+      })
+      .catch((err) => {
+        if (!cancelled) setSetupError(errorText(err, 'Could not load setup steps'))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const dismiss = (id: string) => {
+    const next = hidden.includes(id) ? hidden : [...hidden, id]
+    sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(next))
+    setHidden(next)
+  }
+
+  const exploreDemo = async () => {
+    setDemoBusy(true)
+    try {
+      const res = await configApi.setDemoMode(true)
+      const message = res.data?.message
+      setDemoMessage(typeof message === 'string' ? message : '')
+      setSetup((current) => (current ? { ...current, demo_enabled: true } : current))
+    } catch (err) {
+      setSetupError(errorText(err, 'Could not enable demo mode'))
+    } finally {
+      setDemoBusy(false)
+    }
+  }
+
   const run = async (id: string, act: () => Promise<unknown>) => {
     if (busyRef.current) return
     busyRef.current = id
@@ -212,7 +283,9 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
   }
 
   const visible = showAll ? items : items.slice(0, VISIBLE)
-  const hidden = items.length - visible.length
+  const moreWaiting = items.length - visible.length
+  const openSteps = (setup?.steps ?? []).filter((step) => !step.done && !hidden.includes(step.id))
+  const noAlerts = setup !== null && setup.alerts_exist === 0
 
   return (
     <div className="home-screen">
@@ -222,8 +295,46 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
           {error}
         </p>
       )}
-      {/* The setup list lands later; this slot stays empty until then. */}
-      <section className="home-setup" aria-label="Setup" />
+      <section className="home-setup section" aria-label="Setup">
+        <div className="home-head">
+          <h2>Get more from Vigil</h2>
+          <Link to="/settings?section=integrations">Browse integrations →</Link>
+        </div>
+        {setupError && <p role="alert">{setupError}</p>}
+        {openSteps.length > 0 && (
+          <ul className="home-steps">
+            {openSteps.map((step) => (
+              <li key={step.id} className="home-step">
+                <div>
+                  <h3>{step.title}</h3>
+                  <p>{step.state_line}</p>
+                </div>
+                <div className="home-step-actions">
+                  <Link className="btn primary" to={step.href}>
+                    {STEP_ACTION[step.id] ?? 'Open'}
+                  </Link>
+                  <button type="button" className="btn ghost" onClick={() => dismiss(step.id)}>
+                    Not now
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {noAlerts && (
+          <div className="home-alerts">
+            <Link className="btn primary" to="/settings?section=integrations">
+              Connect data
+            </Link>
+            {!setup.demo_enabled && (
+              <button type="button" className="btn" disabled={demoBusy} onClick={() => void exploreDemo()}>
+                Explore with demo data
+              </button>
+            )}
+            {demoMessage && <p className="home-meta">{demoMessage}</p>}
+          </div>
+        )}
+      </section>
       <section className="section" aria-label="Needs your attention">
         <div className="home-head">
           <h2>Needs your attention</h2>
@@ -240,9 +351,9 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
             />
           ))}
         </div>
-        {hidden > 0 && (
+        {moreWaiting > 0 && (
           <button type="button" className="btn ghost" style={{ marginTop: 12 }} onClick={() => setShowAll(true)}>
-            {hidden} more waiting
+            {moreWaiting} more waiting
           </button>
         )}
       </section>

@@ -593,6 +593,12 @@ export const configApi = {
   
   getDemoMode: () => api.get('/config/demo-mode'),
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
+  getSetupSteps: () =>
+    api.get<{
+      steps: { id: string; title: string; state_line: string; done: boolean; href: string }[]
+      alerts_exist: number
+      demo_enabled: boolean
+    }>('/config/setup-steps'),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),

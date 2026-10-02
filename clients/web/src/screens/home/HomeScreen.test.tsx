@@ -1,14 +1,18 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomeScreen, { parseCreatedAt } from './HomeScreen'
-import { approvalsApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, type NeedsYouItem } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   approvalsApi: {
     needsYou: vi.fn(),
     approve: vi.fn(),
     reject: vi.fn(),
+  },
+  configApi: {
+    getSetupSteps: vi.fn(),
+    setDemoMode: vi.fn(),
   },
 }))
 
@@ -40,9 +44,24 @@ function renderHome() {
   )
 }
 
+const doneSteps = [
+  { id: 'connect_tools', title: 'Connect more tools', state_line: '1 of 2 integrations connected', done: true, href: '/settings?section=integrations' },
+  { id: 'notify', title: 'Where Vigil pings you', state_line: 'Slack or PagerDuty route is set', done: true, href: '/settings?section=integrations' },
+  { id: 'rules', title: 'Link detection rules', state_line: 'Detection rules are on disk', done: true, href: '/settings?section=integrations&tab=detection' },
+  { id: 'per_agent', title: 'Pick a model per agent', state_line: 'Agents use more than one model', done: true, href: '/settings?section=ai-config' },
+]
+
+beforeEach(() => {
+  sessionStorage.clear()
+  vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+    data: { steps: doneSteps, alerts_exist: 3, demo_enabled: false },
+  } as never)
+})
+
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
+  sessionStorage.clear()
 })
 
 describe('Home', () => {
@@ -57,7 +76,69 @@ describe('Home', () => {
     expect(await screen.findByText('Board clear.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Needs your attention' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Cases →' })).toHaveAttribute('href', '/cases')
-    expect(screen.getByRole('region', { name: 'Setup' })).toBeEmptyDOMElement()
+    expect(screen.getByRole('heading', { name: 'Get more from Vigil' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Browse integrations →' })).toHaveAttribute(
+      'href',
+      '/settings?section=integrations',
+    )
+    expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+  })
+
+  it('hides a step for this tab and drops the demo action when demo is on', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: {
+        steps: [
+          {
+            id: 'connect_tools',
+            title: 'Connect more tools',
+            state_line: '0 of 4 integrations connected',
+            done: false,
+            href: '/settings?section=integrations',
+          },
+          doneSteps[1],
+        ],
+        alerts_exist: 0,
+        demo_enabled: true,
+      },
+    } as never)
+    renderHome()
+
+    const step = (await screen.findByRole('heading', { name: 'Connect more tools' })).closest('li')
+    expect(step).not.toBeNull()
+    expect(within(step as HTMLElement).getByRole('link', { name: 'Set up' })).toHaveAttribute(
+      'href',
+      '/settings?section=integrations',
+    )
+    expect(screen.getByRole('link', { name: 'Connect data' })).toHaveAttribute(
+      'href',
+      '/settings?section=integrations',
+    )
+    expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+
+    fireEvent.click(within(step as HTMLElement).getByRole('button', { name: 'Not now' }))
+    expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
+    expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
+    expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('shows the demo-mode message and leaves the action once demo is on', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    vi.mocked(configApi.setDemoMode).mockResolvedValue({
+      data: { message: 'Demo mode enabled. Restart the server for changes to take effect.' },
+    } as never)
+    renderHome()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore with demo data' }))
+    expect(configApi.setDemoMode).toHaveBeenCalledWith(true)
+    expect(
+      await screen.findByText('Demo mode enabled. Restart the server for changes to take effect.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
   })
 
   it('approves a reversible row on one press, and an irreversible row only after a hold', async () => {

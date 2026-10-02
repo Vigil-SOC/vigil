@@ -81,3 +81,44 @@
 .home-hold .label {
   position: relative;
 }
+
+.home-screen .home-steps {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-screen .home-step {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home-screen .home-step h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.home-screen .home-step p {
+  margin: 4px 0 0;
+  color: var(--tx-3);
+  font-size: 12px;
+}
+
+.home-screen .home-step-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.home-screen .home-alerts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}

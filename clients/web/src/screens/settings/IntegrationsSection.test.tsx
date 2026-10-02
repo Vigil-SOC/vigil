@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import IntegrationsSection from './IntegrationsSection'
 import { configApi, mcpApi } from '../../services/api'
 
@@ -11,7 +12,10 @@ vi.mock('../../services/api', () => ({
     getIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
     setIntegrations: vi.fn(),
   },
-  detectionRulesApi: {},
+  detectionRulesApi: {
+    listSources: vi.fn(() => Promise.resolve({ data: { sources: [] } })),
+    getStats: vi.fn(() => Promise.resolve({ data: {} })),
+  },
   federationApi: {},
   ingestionApi: {},
   kafkaApi: {},
@@ -24,6 +28,14 @@ vi.mock('../../services/api', () => ({
   orchestratorApi: {},
   storageApi: {},
 }))
+
+function renderSection(path = '/settings?section=integrations') {
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <IntegrationsSection notify={vi.fn()} />
+    </MemoryRouter>,
+  )
+}
 
 function card(name: string) {
   const title = screen.getByText(name)
@@ -60,7 +72,7 @@ describe('MCP server cards', () => {
   })
 
   it('shows Running only for a connected session, and surfaces a failure', async () => {
-    render(<IntegrationsSection notify={vi.fn()} />)
+    renderSection()
 
     expect(await screen.findByText('1 Running')).toBeInTheDocument()
     expect(screen.getByText('2 Enabled')).toBeInTheDocument()
@@ -76,5 +88,16 @@ describe('MCP server cards', () => {
     const disabled = card('Security Detections')
     expect(disabled.getByText('Off')).toBeInTheDocument()
     expect(disabled.queryByText('Running')).toBeNull()
+  })
+
+  it('opens Detection Rules when the query asks for it', () => {
+    renderSection('/settings?section=integrations&tab=detection')
+    expect(screen.getByRole('button', { name: 'Detection Rules' })).toHaveClass('active')
+  })
+
+  it('stays on MCP Servers for any other tab value', () => {
+    renderSection('/settings?section=integrations&tab=nope')
+    expect(screen.getByRole('button', { name: 'MCP Servers' })).toHaveClass('active')
+    expect(screen.getByRole('button', { name: 'Detection Rules' })).not.toHaveClass('active')
   })
 })
