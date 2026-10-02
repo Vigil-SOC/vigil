@@ -25,6 +25,10 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--passphrase-file", required=True)
     restore.add_argument("--snapshot", default="latest")
     restore.add_argument(
+        "--bifrost-data",
+        help="Bifrost data directory to restore into; required when the snapshot has one",
+    )
+    restore.add_argument(
         "--test",
         action="store_true",
         help="run the checks, then drop the stage without renaming",
@@ -64,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
                     snapshot=args.snapshot,
                     test=args.test,
                     actor=args.actor,
+                    bifrost_data=args.bifrost_data,
                 )
             )
             return 0

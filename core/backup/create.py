@@ -31,6 +31,11 @@ LOCK_CLASSID = 1287
 LOCK_OBJID = 1
 SKIPPED_MESSAGE = "skipped: a backup is already running"
 
+PRE_RESTORE_PREFIX = ".vigil-pre-restore-"
+STAGE_PREFIX = ".vigil-restore-stage-"
+_RESTORE_ARTIFACT_PREFIXES = (PRE_RESTORE_PREFIX, STAGE_PREFIX)
+_RESTORE_ARTIFACTS = tuple(f"{prefix}*" for prefix in _RESTORE_ARTIFACT_PREFIXES)
+
 _ORDINARY_TABLES = """
 SELECT n.nspname, c.relname
 FROM pg_catalog.pg_class c
@@ -380,7 +385,9 @@ def _stage_bifrost(src: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     for path in sorted(src.rglob("*")):
         rel = path.relative_to(src)
-        if _skip_bifrost(rel.name):
+        if _skip_bifrost(rel.name) or any(
+            part.startswith(_RESTORE_ARTIFACT_PREFIXES) for part in rel.parts
+        ):
             continue
         target = dest / rel
         if path.is_dir():
@@ -517,8 +524,12 @@ def _restic_backup(
     tagged: list[str] = []
     for tag in tags:
         tagged.extend(["--tag", tag])
+    # A restore leaves its previous copies inside each location, old master.key
+    # included. Patterns without a slash match at any depth.
+    excluded = [arg for pattern in _RESTORE_ARTIFACTS for arg in ("--exclude", pattern)]
     proc = _run(
-        priority + ["restic", "-r", repo, "backup", "--json", *tagged, *paths],
+        priority
+        + ["restic", "-r", repo, "backup", "--json", *excluded, *tagged, *paths],
         env=_restic_env(passphrase),
         check=False,
     )

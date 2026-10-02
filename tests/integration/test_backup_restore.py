@@ -87,13 +87,6 @@ def _preserve_repo_env():
     original = path.read_bytes() if existed else None
     mode = path.stat().st_mode if existed else None
     yield
-    for leftover in list(CORE_REPO_ROOT.glob(".env_pre_restore_*")):
-        leftover.unlink()
-    for leftover in list(CORE_REPO_ROOT.glob(".env.vigil-restore-stage-*")):
-        if leftover.is_dir() and not leftover.is_symlink():
-            shutil.rmtree(leftover)
-        else:
-            leftover.unlink()
     if existed:
         path.write_bytes(original)
         path.chmod(mode)
@@ -329,8 +322,30 @@ def test_round_trip_serves_restored_database(scratch_databases, tmp_path: Path):
     dest_oid = _oid("vigil_r_round_dst")
     dest_env = _child_env(dest_root, "vigil_r_round_dst", **dest)
     dest_env["RESTIC_CACHE_DIR"] = str(root / "cache")
-    restored = _restore(dest_env, repo, passphrase)
+    dest_bifrost = dest_root / "bifrost"
+    dest_bifrost.mkdir()
+    (dest_bifrost / "old.txt").write_text("old-bifrost", encoding="utf-8")
+    (dest["state"] / "old-state.txt").write_text("old-state", encoding="utf-8")
+    targets = {**dest, "bifrost": dest_bifrost}
+    inodes = {
+        name: os.stat(path).st_ino for name, path in targets.items() if path.is_dir()
+    }
+    restored = _restore(dest_env, repo, passphrase, "--bifrost-data", str(dest_bifrost))
     assert restored.returncode == 0, restored.stderr
+    # Directories are emptied and refilled, never renamed (mount points under Compose).
+    assert inodes == {
+        name: os.stat(path).st_ino for name, path in targets.items() if path.is_dir()
+    }
+    assert (dest_bifrost / "note.txt").read_text(encoding="utf-8") == "hello-bifrost"
+    assert not (dest_bifrost / "old.txt").exists()
+    (bifrost_pre,) = dest_bifrost.glob(".vigil-pre-restore-*")
+    assert (bifrost_pre / "old.txt").read_text(encoding="utf-8") == "old-bifrost"
+    assert f"previous bifrost: {bifrost_pre}" in restored.stdout
+    (state_pre,) = dest["state"].glob(".vigil-pre-restore-*")
+    assert (state_pre / "old-state.txt").read_text(encoding="utf-8") == "old-state"
+    assert (state_pre / "intent").read_text(encoding="utf-8") == ""
+    assert not list(dest_root.rglob(".vigil-restore-stage-*"))
+    assert dest["intent"].read_text(encoding="utf-8") == "intent"
     assert "rows: ok" in restored.stdout
     assert "ledger: ok" in restored.stdout
     assert "schema: ok" in restored.stdout
@@ -352,34 +367,18 @@ def test_round_trip_serves_restored_database(scratch_databases, tmp_path: Path):
     )
     assert token == {"token": "sekrit"}
 
+    # The next snapshot must not carry the previous copies, old master.key included.
+    again = _create(dest_env, repo, passphrase, "--bifrost-data", str(dest_bifrost))
+    assert again.returncode == 0, again.stderr
     listing = subprocess.check_output(
         ["restic", "-r", str(repo), "ls", "latest"],
-        env={**env, "RESTIC_PASSWORD_FILE": str(passphrase)},
+        env={**dest_env, "RESTIC_PASSWORD_FILE": str(passphrase)},
         text=True,
     )
-    manifest_path = next(
-        line for line in listing.splitlines() if line.endswith("/manifest.json")
-    )
-    manifest = json.loads(
-        subprocess.check_output(
-            ["restic", "-r", str(repo), "dump", "latest", manifest_path],
-            env={**env, "RESTIC_PASSWORD_FILE": str(passphrase)},
-        )
-    )
-    bifrost_path = Path(
-        next(
-            item["path"] for item in manifest["locations"] if item["name"] == "bifrost"
-        )
-    )
-    try:
-        assert (bifrost_path / "note.txt").read_text(
-            encoding="utf-8"
-        ) == "hello-bifrost"
-    finally:
-        if bifrost_path.exists():
-            shutil.rmtree(bifrost_path)
-        if bifrost_path.parent.name.startswith("vigil-backup-"):
-            shutil.rmtree(bifrost_path.parent, ignore_errors=True)
+    assert ".vigil-pre-restore-" not in listing
+    assert ".vigil-restore-stage-" not in listing
+    assert "/state/nested/keep.txt" in listing
+    assert "note.txt" in listing
 
     served = subprocess.run(
         [sys.executable, "-c", _SERVE, RUN_ID],
@@ -575,8 +574,7 @@ def test_failed_location_removes_staging_siblings(scratch_databases, tmp_path: P
     assert proc.returncode != 0
     assert "VIGIL_SKILLS_PATH is unset" in proc.stderr
     assert {name: _files(path) for name, path in dest.items()} == before
-    staged = list(dest_root.rglob("*.vigil-restore-stage-*"))
-    assert staged == []
+    assert list(dest_root.rglob(".vigil-*")) == []
 
 
 _CHECK_TOKENS = """
@@ -838,7 +836,7 @@ def test_restore_rotates_jwt_and_expires_pending_approvals(
     assert f"mfa {_TOTP}" in checked.stdout
 
 
-def test_key_held_outside_the_install_is_reported_not_faked(
+def test_key_held_outside_the_install_rotates_into_secrets(
     scratch_databases, tmp_path: Path
 ):
     root = tmp_path / "outside"
@@ -846,10 +844,11 @@ def test_key_held_outside_the_install_is_reported_not_faked(
     paths = _layout(root, secret=None, signing_key=False)
     (CORE_REPO_ROOT / ".env").write_text("OTHER_KEY=leave-me\n", encoding="utf-8")
     _create_database("vigil_r_outside", ledger=True)
-    _install_app_rows("vigil_r_outside", _mfa_ciphertext(_STALE_ENV_KEY, _TOTP))
+    ciphertext = _mfa_ciphertext(_STALE_ENV_KEY, _TOTP)
+    _install_app_rows("vigil_r_outside", ciphertext)
     repo = root / "repo"
     passphrase = _passphrase(root / "pass")
-    # A deployment that injects the key: no file this install holds has it.
+    # Compose: no file this install holds has the key, only the process env.
     env = _child_env(root, "vigil_r_outside", **paths)
     env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
     created = _create(env, repo, passphrase)
@@ -864,12 +863,25 @@ def test_key_held_outside_the_install_is_reported_not_faked(
     dest_env["RESTIC_CACHE_DIR"] = str(root / "cache")
     restored = _restore(dest_env, repo, passphrase, "--actor", "restore-bot")
 
-    assert restored.returncode != 0
-    pre_name = next(n for n in _names() if "vigil_r_outside_dst_pre_restore_" in n)
-    assert f"previous database: {pre_name}" in restored.stderr
-    assert "approvals expired: 2" in restored.stderr
-    assert "set outside this install" in restored.stderr
+    assert restored.returncode == 0, restored.stderr
+    secrets_path = dest["state"] / "secrets.enc"
+    assert "approvals expired: 2" in restored.stdout
+    assert str(secrets_path) in restored.stdout
+    assert "clear or replace JWT_SECRET_KEY in the environment" in restored.stdout
+    stored = json.loads(
+        Fernet((dest["state"] / "master.key").read_bytes()).decrypt(
+            secrets_path.read_bytes()
+        )
+    )
+    new_key = stored["JWT_SECRET_KEY"]
+    assert new_key != _STALE_ENV_KEY
+    assert new_key not in restored.stdout
+    assert _STALE_ENV_KEY not in restored.stdout
+    # Only secrets.enc takes the key: no other store held it.
     assert not (dest["state"] / "jwt_secret").exists()
+    assert (CORE_REPO_ROOT / ".env").read_text(encoding="utf-8") == (
+        "OTHER_KEY=leave-me\n"
+    )
     live = "vigil_r_outside_dst"
     statuses = dict(_rows(live, "SELECT action_id, status FROM approval_actions"))
     assert statuses["pend-plain"] == statuses["pend-run"] == "rejected"
@@ -879,12 +891,74 @@ def test_key_held_outside_the_install_is_reported_not_faked(
     )
     assert len(audit) == 1
     payload = audit[0][0] if isinstance(audit[0][0], dict) else json.loads(audit[0][0])
-    assert payload["jwt_rotated"] is False
+    assert payload["jwt_rotated"] is True
     assert payload["expired_count"] == 2
-    # MFA is left wrapped with the key the deployment still uses.
+    mfa = _rows(live, "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'")[0][0]
+    assert mfa != ciphertext
     assert (
-        _rows(live, "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'")[0][0]
-        == _rows(
-            "vigil_r_outside", "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'"
-        )[0][0]
+        Fernet(
+            base64.urlsafe_b64encode(hashlib.sha256(new_key.encode()).digest())
+        ).decrypt(mfa.encode())
+        == _TOTP.encode()
     )
+
+
+_FAIL_SECOND_DIRECTORY = """
+import sys
+from core.backup import __main__, restore
+
+real = restore._swap_dir
+calls = []
+
+def flaky(swapped, stamp):
+    if calls:
+        raise OSError("injected failure")
+    calls.append(swapped.item.name)
+    real(swapped, stamp)
+
+restore._swap_dir = flaky
+sys.exit(__main__.main(sys.argv[1:]))
+"""
+
+
+def test_failure_after_first_location_restores_every_original(
+    scratch_databases, tmp_path: Path
+):
+    root = tmp_path / "undo"
+    root.mkdir()
+    paths = _layout(root, secret=None)
+    _create_database("vigil_r_undo", ledger=True)
+    repo = root / "repo"
+    passphrase = _passphrase(root / "pass")
+    created = _create(_child_env(root, "vigil_r_undo", **paths), repo, passphrase)
+    assert created.returncode == 0, created.stderr
+
+    dest_root = root / "dest"
+    dest_root.mkdir()
+    dest = _empty_layout(dest_root)
+    (dest["state"] / "old-state.txt").write_text("old-state", encoding="utf-8")
+    (dest["workdir"] / "old-work.txt").write_text("old-work", encoding="utf-8")
+    _create_database("vigil_r_undo_dst", ledger=False)
+    dest_oid = _oid("vigil_r_undo_dst")
+    before = {name: _files(path) for name, path in dest.items()}
+    before_names = _names()
+    proc = _run(
+        [
+            sys.executable,
+            "-c",
+            _FAIL_SECOND_DIRECTORY,
+            "restore",
+            "--repo",
+            str(repo),
+            "--passphrase-file",
+            str(passphrase),
+        ],
+        _child_env(dest_root, "vigil_r_undo_dst", **dest),
+    )
+    assert proc.returncode != 0
+    assert "injected failure" in proc.stderr
+    # The state directory was swapped first and is back, with its own inodes.
+    assert {name: _files(path) for name, path in dest.items()} == before
+    assert list(dest_root.rglob(".vigil-*")) == []
+    assert _oid("vigil_r_undo_dst") == dest_oid
+    assert _names() == before_names

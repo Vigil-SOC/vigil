@@ -251,7 +251,7 @@ services:
       - ${VIGIL_BACKUP_STATE_DIR:-vigil_home}:/home/vigil/.vigil
       - ${VIGIL_BACKUP_INVESTIGATIONS_DIR:-vigil_investigations}:/app/data/investigations
       - bifrost_data:/var/lib/vigil/bifrost
-      - ${VIGIL_BACKUP_REPO:-backup_repo}:/backup/repo
+      - ${VIGIL_BACKUP_REPO:-backup_repo}:/backup/repo:${VIGIL_BACKUP_REPO_MODE:-rw}
       - ${VIGIL_BACKUP_PASSPHRASE_FILE:-/etc/hostname}:/backup/passphrase:ro
     entrypoint:
       - /bin/sh

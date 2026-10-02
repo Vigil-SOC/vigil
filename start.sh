@@ -10,6 +10,7 @@ usage() {
     cat <<EOF
 Usage: $0 [--daemon|-d] [--with <profile>] [--all]
        $0 backup --repo PATH --passphrase-file PATH
+       $0 restore --repo PATH --passphrase-file PATH [--snapshot ID] [--test]
 
   -d, --daemon      Run in the background (logs/ + pidfiles)
       --with NAME   Also start a profiled service (splunk, kafka, pgadmin,
@@ -17,45 +18,43 @@ Usage: $0 [--daemon|-d] [--with <profile>] [--all]
       --all         Also start every profiled service
       backup        Run one snapshot in the backend image and exit. Does not
                     start the API, frontend, or agent layer.
+      restore       Swap a snapshot in from the backup image and exit. Stop the
+                    Bifrost container first. --test runs the checks and leaves
+                    live state untouched. Pass JWT_SECRET_KEY in the shell when
+                    Compose, not .env, holds it.
 
 Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
 postgres redis bifrost ollama). --with/--all are additive to that list.
 EOF
 }
 
-# One shot of the compose `backup` service. That service's command is the
-# schedule loop, so the entrypoint is overridden with a single create.
+# One shot of the compose `backup` service, for `backup` and `restore`. That
+# service's command is the schedule loop, so the entrypoint is overridden.
 # Mounts the host State Directory, investigation workdir, and (when present)
 # repo-root .env into that image. Skills and intent stay unset so a missing
-# path is skipped.
-run_backup() {
-    local repo="" passfile=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --repo)
-                [ -n "${2:-}" ] || { echo "backup: --repo requires a path" >&2; exit 1; }
-                repo="$2"; shift 2 ;;
-            --passphrase-file)
-                [ -n "${2:-}" ] || { echo "backup: --passphrase-file requires a path" >&2; exit 1; }
-                passfile="$2"; shift 2 ;;
-            -h|--help) usage; exit 0 ;;
-            *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
-        esac
-    done
-    if [ -z "$repo" ] || [ -z "$passfile" ]; then
-        echo "backup requires --repo and --passphrase-file" >&2
-        usage >&2
-        exit 1
-    fi
+# path is skipped. Sets BACKUP_RUN_ARGS for the caller to hand to `dc`.
+#   $1 command (backup|restore)  $2 repo  $3 passphrase file  $4 .env mount mode
+prepare_backup_run() {
+    local cmd="$1" repo="$2" passfile="$3" env_mode="$4"
     [ -f "$passfile" ] || { echo "passphrase file not found: $passfile" >&2; exit 1; }
     ensure_docker || exit 1
+    # Compose operators pass JWT_SECRET_KEY from their shell. The .env sourced
+    # below must not turn into one.
+    local pass_jwt=0
+    [ -n "${JWT_SECRET_KEY:-}" ] && pass_jwt=1
     if [ -f "$REPO_ROOT/.env" ]; then
         set -a
         # shellcheck disable=SC1091
         source "$REPO_ROOT/.env"
         set +a
     fi
-    mkdir -p "$repo"
+    # A restore reads a repository that must already exist.
+    if [ "$cmd" = "backup" ]; then
+        mkdir -p "$repo"
+    elif [ ! -d "$repo" ]; then
+        echo "restore: repository not found: $repo" >&2
+        exit 1
+    fi
     repo="$(cd "$repo" && pwd)"
     passfile="$(cd "$(dirname "$passfile")" && pwd)/$(basename "$passfile")"
     local state="${VIGIL_DIR:-$HOME/.vigil}"
@@ -72,32 +71,79 @@ run_backup() {
     export VIGIL_BACKUP_PASSPHRASE_FILE="$passfile"
     export VIGIL_BACKUP_STATE_DIR="$state"
     export VIGIL_BACKUP_INVESTIGATIONS_DIR="$investigations"
-    local -a args=(run --rm --user "$(id -u):$(id -g)")
-    if [ -f "$REPO_ROOT/.env" ]; then
-        args+=(-v "$REPO_ROOT/.env:/app/.env:ro")
-    fi
     # `--rm` removes this one-shot; the service restart policy stays on `up`.
-    args+=(
-        --entrypoint python
-        backup
-        -m
-        core.backup
-        create
-        --repo
-        /backup/repo
-        --passphrase-file
-        /backup/passphrase
-        --bifrost-data
-        /var/lib/vigil/bifrost
-    )
-    dc "${args[@]}"
+    BACKUP_RUN_ARGS=(run --rm --user "$(id -u):$(id -g)")
+    if [ -f "$REPO_ROOT/.env" ]; then
+        BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
+    fi
+    [ "$pass_jwt" -eq 1 ] && BACKUP_RUN_ARGS+=(-e JWT_SECRET_KEY)
+    BACKUP_RUN_ARGS+=(--entrypoint python backup -m core.backup "$cmd"
+        --repo /backup/repo --passphrase-file /backup/passphrase
+        --bifrost-data /var/lib/vigil/bifrost)
 }
 
-if [ "${1:-}" = "backup" ]; then
-    shift
-    run_backup "$@"
-    exit $?
-fi
+# Sets repo, passfile, snapshot and test from `backup`/`restore` arguments.
+parse_backup_args() {
+    local cmd="$1"; shift
+    repo="" passfile="" snapshot="" test=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repo)
+                [ -n "${2:-}" ] || { echo "$cmd: --repo requires a path" >&2; exit 1; }
+                repo="$2"; shift 2 ;;
+            --passphrase-file)
+                [ -n "${2:-}" ] || { echo "$cmd: --passphrase-file requires a path" >&2; exit 1; }
+                passfile="$2"; shift 2 ;;
+            --snapshot)
+                [ "$cmd" = "restore" ] || { echo "Unknown argument: $1" >&2; usage >&2; exit 1; }
+                [ -n "${2:-}" ] || { echo "$cmd: --snapshot requires an id" >&2; exit 1; }
+                snapshot="$2"; shift 2 ;;
+            --test)
+                [ "$cmd" = "restore" ] || { echo "Unknown argument: $1" >&2; usage >&2; exit 1; }
+                test=1; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+        esac
+    done
+    if [ -z "$repo" ] || [ -z "$passfile" ]; then
+        echo "$cmd requires --repo and --passphrase-file" >&2
+        usage >&2
+        exit 1
+    fi
+}
+
+run_backup() {
+    local repo passfile snapshot test
+    parse_backup_args backup "$@"
+    prepare_backup_run backup "$repo" "$passfile" ro
+    dc "${BACKUP_RUN_ARGS[@]}"
+}
+
+# Restore swaps the contents of each location, so it needs .env writable (the
+# JWT rotation edits it) and Bifrost stopped (its SQLite files are replaced).
+# --test leaves live state alone, so Bifrost may keep running for it.
+run_restore() {
+    local repo passfile snapshot test
+    parse_backup_args restore "$@"
+    if [ "$test" -eq 0 ]; then
+        ensure_docker || exit 1
+        if docker ps --format '{{.Names}}' | grep -qx "$(service_container bifrost)"; then
+            echo "restore: stop $(service_container bifrost) first; restore replaces its data" >&2
+            exit 1
+        fi
+    fi
+    # A read-only repository is enough to check a snapshot.
+    [ "$test" -eq 1 ] && export VIGIL_BACKUP_REPO_MODE=ro
+    prepare_backup_run restore "$repo" "$passfile" rw
+    [ -n "$snapshot" ] && BACKUP_RUN_ARGS+=(--snapshot "$snapshot")
+    [ "$test" -eq 1 ] && BACKUP_RUN_ARGS+=(--test)
+    dc "${BACKUP_RUN_ARGS[@]}"
+}
+
+case "${1:-}" in
+    backup) shift; run_backup "$@"; exit $? ;;
+    restore) shift; run_restore "$@"; exit $? ;;
+esac
 
 DAEMON=0
 EXTRA_SERVICES=""
