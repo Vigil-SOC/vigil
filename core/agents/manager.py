@@ -81,41 +81,47 @@ class AgentManager:
     def refresh_custom_agents(self) -> int:
         """Reload custom agents from the DB.
 
-        Clears only entries with the custom- prefix so built-ins are never touched.
+        Replaces only entries with the custom- prefix so built-ins are never touched.
         Returns the number of custom agents loaded. Failures (e.g. DB unavailable
         at import time) are logged and swallowed so the built-in set remains usable.
-        """
-        # Drop existing custom agents first
-        custom_keys = [k for k in self.agents if k.startswith(CUSTOM_AGENT_ID_PREFIX)]
-        for k in custom_keys:
-            del self.agents[k]
 
+        CRUD routes call this from threadpool workers, so the new map is built
+        aside and swapped in with one assignment: readers never see it half-built.
+        """
+        customs: Dict[str, AgentProfile] = {}
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import CustomAgent
             from core.storage.schemas import CustomAgentSchema
         except Exception as e:
             logger.warning(f"CustomAgent model unavailable, skipping refresh: {e}")
+            self._swap_customs(customs)
             return 0
 
         try:
             db_manager = get_db_manager()
             with db_manager.session_scope() as session:
-                rows = session.query(CustomAgent).all()
-                loaded = 0
-                for row in rows:
+                for row in session.query(CustomAgent).all():
                     try:
                         profile = SOCAgentLibrary.build_profile(
                             CustomAgentSchema.dump(row)
                         )
-                        self.agents[profile.id] = profile
-                        loaded += 1
+                        customs[profile.id] = profile
                     except Exception as e:
                         logger.error(f"Failed to load custom agent {row.id}: {e}")
-                return loaded
         except Exception as e:
             logger.warning(f"Unable to refresh custom agents from DB: {e}")
-            return 0
+            customs = {}
+        self._swap_customs(customs)
+        return len(customs)
+
+    def _swap_customs(self, customs: Dict[str, AgentProfile]) -> None:
+        builtins = {
+            k: v
+            for k, v in list(self.agents.items())
+            if not k.startswith(CUSTOM_AGENT_ID_PREFIX)
+        }
+        self.agents = {**builtins, **customs}
 
     def get_agent_list(self) -> List[Dict]:
         return [
