@@ -1294,6 +1294,10 @@
       "data_type": "text",
       "nullable": false
     },
+    "fallback_model": {
+      "data_type": "text",
+      "nullable": true
+    },
     "forked_from": {
       "data_type": "text",
       "nullable": true
