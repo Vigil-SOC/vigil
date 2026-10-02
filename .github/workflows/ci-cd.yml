@@ -429,6 +429,27 @@ jobs:
         working-directory: services/agent
         run: npm ci
 
+      # Goldens are the output of the implementation being replaced, at a commit
+      # that is not an ancestor of main and is absent from a depth-1 checkout.
+      # Pin that SHA. Do not follow the threat-hunt branch tip, and do not
+      # vendor its ai/ tree into this checkout. The generator loads that tree
+      # by path; its modules need yaml, which this job already installed.
+      # Run from the repo root: git archive pathspecs are relative to the cwd,
+      # and `ai/` exists only at the root of that commit.
+      - name: Check fold goldens against the original implementation
+        env:
+          FOLD_GOLDEN_SOURCE: 2051232ab97e95da8f081a616a843977db937abd
+        run: |
+          root="$(mktemp -d)"
+          git fetch --depth 1 origin "$FOLD_GOLDEN_SOURCE"
+          git archive "$FOLD_GOLDEN_SOURCE" ai | tar -x -C "$root"
+          mkdir -p "$root/node_modules"
+          ln -s "$PWD/services/agent/node_modules/yaml" "$root/node_modules/yaml"
+          ./services/agent/node_modules/.bin/tsx services/agent/scripts/generate-fold-goldens.ts \
+            --original "$root" \
+            --ledgers services/agent/tests/fixtures/runs \
+            --check services/agent/tests/fixtures/runs
+
       - name: Apply agent-layer schema
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d agent_test \
