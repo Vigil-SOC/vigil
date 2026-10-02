@@ -23,9 +23,11 @@ postgres redis bifrost ollama). --with/--all are additive to that list.
 EOF
 }
 
-# One shot of the compose `backup` service. Mounts the host State Directory,
-# investigation workdir, and (when present) repo-root .env into that image.
-# Skills and intent stay unset so a missing path is skipped.
+# One shot of the compose `backup` service. That service's command is the
+# schedule loop, so the entrypoint is overridden with a single create.
+# Mounts the host State Directory, investigation workdir, and (when present)
+# repo-root .env into that image. Skills and intent stay unset so a missing
+# path is skipped.
 run_backup() {
     local repo="" passfile=""
     while [ $# -gt 0 ]; do
@@ -74,7 +76,20 @@ run_backup() {
     if [ -f "$REPO_ROOT/.env" ]; then
         args+=(-v "$REPO_ROOT/.env:/app/.env:ro")
     fi
-    args+=(backup)
+    # `--rm` removes this one-shot; the service restart policy stays on `up`.
+    args+=(
+        --entrypoint python
+        backup
+        -m
+        core.backup
+        create
+        --repo
+        /backup/repo
+        --passphrase-file
+        /backup/passphrase
+        --bifrost-data
+        /var/lib/vigil/bifrost
+    )
     dc "${args[@]}"
 }
 

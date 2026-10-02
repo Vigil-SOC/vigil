@@ -1,8 +1,8 @@
 """Read the last successful snapshot time from the state directory.
 
-The schedule that writes ``backup_status.json`` is separate. This module
-only reads it. A missing file, bad JSON, or an unparseable ``last_success_at``
-is no timestamp.
+``core.backup.schedule`` writes one ``backup_status.json`` object. This
+module only reads ``last_success_at``. A missing file, bad JSON, or an
+unparseable timestamp is no timestamp.
 """
 
 import json

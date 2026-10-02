@@ -1,4 +1,4 @@
-"""``python -m core.backup create`` and ``python -m core.backup restore``."""
+"""``python -m core.backup`` create, restore, and the schedule loop."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import sys
 
 from core.backup.create import BackupError, BackupSkipped, create_snapshot
 from core.backup.restore import restore_snapshot
+from core.backup.schedule import run_forever
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,6 +34,13 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="recorded as changed_by on the restore audit row (default: the OS user)",
     )
+    run = sub.add_parser(
+        "run", help="snapshot destinations in backups.json that are due"
+    )
+    run.add_argument(
+        "--bifrost-data",
+        help="Bifrost data directory passed to each scheduled snapshot",
+    )
     return parser
 
 
@@ -58,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
                     actor=args.actor,
                 )
             )
+            return 0
+        if args.command == "run":
+            run_forever(bifrost_data=args.bifrost_data)
             return 0
     except BackupSkipped as exc:
         print(str(exc), file=sys.stderr)

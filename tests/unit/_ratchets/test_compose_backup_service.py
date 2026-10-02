@@ -1,9 +1,10 @@
-"""The backup one-shot is on the default project and uses the cluster owner.
+"""The backup schedule is on the default project and uses the cluster owner.
 
-Issue #1351. `vigil_app` cannot CREATE DATABASE, so the service must connect
-as the postgres service's user. It mounts the same state, workdir, and Bifrost
-volumes as the API. It is not on the daemon profile: `up` starts it, and the
-command exits 0 until a repository and passphrase are configured.
+`vigil_app` cannot CREATE DATABASE, so the service must connect as the
+postgres service's user. It mounts the same state, workdir, and Bifrost
+volumes as the API. It is not on the daemon profile. The command is the
+schedule loop and the restart policy brings it back if the process exits.
+`start.sh backup` overrides that command with one create.
 """
 
 from __future__ import annotations
@@ -91,8 +92,30 @@ def test_backup_mounts_state_workdirs_and_owner_user() -> None:
     assert backup_env["POSTGRES_DB"] == _env(services["postgres"])["POSTGRES_DB"]
     assert backup_env["HOME"] == "/home/vigil"
     assert "deeptempo-network" in (backup.get("networks") or [])
-    assert backup.get("restart") == "no"
+    assert backup.get("restart") == "unless-stopped"
+    assert (backup.get("healthcheck") or {}).get("disable") is True
     command = _command(backup)
-    assert "exit 0" in command
-    assert "python -m core.backup create" in command
+    assert "python -m core.backup run" in command
     assert f"--bifrost-data {BIFROST_DIR}" in command
+
+
+def test_start_sh_backup_overrides_the_loop_with_one_create() -> None:
+    text = (REPO / "start.sh").read_text(encoding="utf-8")
+    assert (
+        "\n".join(
+            [
+                "--entrypoint python",
+                "        backup",
+                "        -m",
+                "        core.backup",
+                "        create",
+                "        --repo",
+                "        /backup/repo",
+                "        --passphrase-file",
+                "        /backup/passphrase",
+                "        --bifrost-data",
+                "        /var/lib/vigil/bifrost",
+            ]
+        )
+        in text
+    )

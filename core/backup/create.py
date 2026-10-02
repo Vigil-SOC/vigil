@@ -69,7 +69,12 @@ class Location:
 
 
 def create_snapshot(
-    *, repo: str, passphrase_file: str, bifrost_data: str | None
+    *,
+    repo: str,
+    passphrase_file: str,
+    bifrost_data: str | None,
+    kind: str = "manual",
+    tags: tuple[str, ...] = (),
 ) -> str:
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
@@ -98,13 +103,29 @@ def create_snapshot(
                 snap_conn.close()
             locations = _locations(staging, bifrost_data)
             manifest_path = staging / "manifest.json"
-            _write_manifest(manifest_path, locations, counts)
+            _write_manifest(manifest_path, locations, counts, kind)
             paths = [str(manifest_path)]
             paths.extend(loc.path for loc in locations if loc.path)
-            snap = _restic_backup(repo, passphrase, paths, priority)
-            _verify(
-                repo, passphrase, snap, dump_path, manifest_path, locations, priority
-            )
+            snap = _restic_backup(repo, passphrase, paths, priority, tags)
+            try:
+                _verify(
+                    repo,
+                    passphrase,
+                    snap,
+                    dump_path,
+                    manifest_path,
+                    locations,
+                    priority,
+                )
+            except BackupError as exc:
+                # restic tag rewrites the snapshot id, so the tag is set on
+                # backup and a failed verify removes that snapshot instead.
+                detail = _forget_snapshot(repo, passphrase, snap, priority)
+                if detail:
+                    raise BackupError(
+                        f"{exc}; failed to remove snapshot {snap}: {detail}"
+                    ) from exc
+                raise
             return snap
     finally:
         lock.close()
@@ -396,12 +417,12 @@ def _sqlite_backup(src: Path, dest: Path) -> None:
 
 
 def _write_manifest(
-    path: Path, locations: list[Location], counts: dict[str, int]
+    path: Path, locations: list[Location], counts: dict[str, int], kind: str
 ) -> None:
     payload = {
         "version": __version__,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "kind": "manual",
+        "kind": kind,
         "locations": [loc.as_dict() for loc in locations],
         "tables": counts,
     }
@@ -487,10 +508,17 @@ def _restore_list(
 
 
 def _restic_backup(
-    repo: str, passphrase: Path, paths: list[str], priority: list[str]
+    repo: str,
+    passphrase: Path,
+    paths: list[str],
+    priority: list[str],
+    tags: tuple[str, ...],
 ) -> str:
+    tagged: list[str] = []
+    for tag in tags:
+        tagged.extend(["--tag", tag])
     proc = _run(
-        priority + ["restic", "-r", repo, "backup", "--json", *paths],
+        priority + ["restic", "-r", repo, "backup", "--json", *tagged, *paths],
         env=_restic_env(passphrase),
         check=False,
     )
@@ -510,6 +538,20 @@ def _restic_backup(
     if not snapshot_id:
         raise BackupError("restic backup did not report a snapshot id")
     return snapshot_id
+
+
+def _forget_snapshot(
+    repo: str, passphrase: Path, snapshot_id: str, priority: list[str]
+) -> str | None:
+    """Remove one snapshot. The detail is None when restic succeeded."""
+    proc = _run(
+        priority + ["restic", "-r", repo, "forget", snapshot_id],
+        env=_restic_env(passphrase),
+        check=False,
+    )
+    if proc.returncode != 0:
+        return _output(proc) or "restic forget failed"
+    return None
 
 
 def _child_env() -> dict[str, str]:
