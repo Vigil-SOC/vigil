@@ -318,7 +318,9 @@ async def handle_call_tool(name: str, arguments: dict | None):
         if not splunk:
             return result({"error": "Splunk not configured", "spl": spl})
         try:
-            results = splunk.search(
+            # search() polls the job with time.sleep; keep it off the MCP loop.
+            results = await asyncio.to_thread(
+                splunk.search,
                 spl,
                 args.get("earliest", _ALL_TIME),
                 "now",
@@ -347,7 +349,9 @@ async def handle_call_tool(name: str, arguments: dict | None):
         if not splunk:
             return result({"error": "Splunk not configured"})
         try:
-            results = splunk.search_by_ip(ip, args.get("hours") or _ALL_TIME_HOURS)
+            results = await asyncio.to_thread(
+                splunk.search_by_ip, ip, args.get("hours") or _ALL_TIME_HOURS
+            )
             if results is None:
                 return result({"error": "Splunk search failed or timed out", "ip": ip})
             return result(
@@ -364,8 +368,8 @@ async def handle_call_tool(name: str, arguments: dict | None):
         if not splunk:
             return result({"error": "Splunk not configured"})
         try:
-            results = splunk.search_by_hostname(
-                host, args.get("hours") or _ALL_TIME_HOURS
+            results = await asyncio.to_thread(
+                splunk.search_by_hostname, host, args.get("hours") or _ALL_TIME_HOURS
             )
             if results is None:
                 return result(
@@ -393,8 +397,12 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 {"error": "Splunk not configured", "generated_spl": spl_result}
             )
         try:
-            results = splunk.search(
-                spl_result["spl_query"], _ALL_TIME, "now", args.get("max_results", 100)
+            results = await asyncio.to_thread(
+                splunk.search,
+                spl_result["spl_query"],
+                _ALL_TIME,
+                "now",
+                args.get("max_results", 100),
             )
             if results is None:
                 return result(
