@@ -67,7 +67,7 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
 
   const scoped: Harness<RootCauseKinds> = {
     ...harness,
-    dispatch: showing(harness.dispatch),
+    dispatch: showing(harness.dispatch, spec.runtime.result_cap),
     registry: registryOf(
       toolsFrom(spec.tools, {
         record: recordFrom(harness.state, run_id),

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ToolResult } from "../../contracts/tool.js";
-import { SHOWN_EVENTS, shown } from "../../workflows/rootcause/trim.js";
+import { SHOWN_EVENTS, shown as shownAt } from "../../workflows/rootcause/trim.js";
+
+const CAP = 20_000;
+const shown = (result: ToolResult) => shownAt(result, CAP);
 
 function envelope(results: unknown[]): ToolResult {
   const row = { success: true, query: "index=botsv3 x", count: results.length, results };
@@ -57,6 +60,24 @@ describe("what a search shows the investigator", () => {
     const raw = String(first!["_raw"]);
     expect(raw.length).toBeLessThan(1_100);
     expect(raw.endsWith("[cut]")).toBe(true);
+  });
+
+  it("drops events off the end until the result fits the cap, so nothing is clamped", () => {
+    const wide = (n: number) => Object.fromEntries(Array.from({ length: 12 }, (_, f) => [`field${f}`, `${n}-${"v".repeat(900)}`]));
+    const result = shown(envelope(Array.from({ length: 25 }, (_, n) => wide(n))));
+    if (!result.ok) throw new Error("expected ok");
+    const kept = inner(result);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(25);
+    expect(JSON.stringify(result.rows, null, 2).length).toBeLessThanOrEqual(CAP);
+    expect(kept[0]!["field0"]).toMatch(/^0-/);
+    expect(result.rows[0]).toMatchObject({ count: 25 });
+    expect(result.capped).toBe(true);
+  });
+
+  it("keeps the first event even when it alone is over the cap", () => {
+    const huge = Object.fromEntries(Array.from({ length: 40 }, (_, f) => [`field${f}`, "v".repeat(900)]));
+    expect(inner(shown(envelope([huge, huge])))).toHaveLength(1);
   });
 
   it("leaves a stats row, an error row, and a non-splunk result alone", () => {

@@ -33,31 +33,46 @@ function trimEvent(event: unknown): unknown {
   );
 }
 
+// Room for the row-count line and the tool_result tags wrap puts around the rows.
+const WRAP_ROOM = 500;
+
+// Measured as wrap renders it, so a result that fits here is never clamped.
+function rendered(row: unknown): number {
+  return JSON.stringify([row], null, 2).length;
+}
+
 // Only the splunk envelope, `{count, query, results}`, is trimmed. Its own count
 // stays the number of events the search found, so the model knows it saw a prefix.
-function trimRow(row: unknown): { row: unknown; cut: boolean } {
+// Events come off the end until the envelope fits the cap; the first always stays.
+function trimRow(row: unknown, budget: number): { row: unknown; cut: boolean } {
   if (row === null || typeof row !== "object" || Array.isArray(row)) return { row, cut: false };
   const results = (row as Record<string, unknown>)["results"];
   if (!Array.isArray(results)) return { row, cut: false };
-  return {
-    row: { ...(row as Record<string, unknown>), results: results.slice(0, SHOWN_EVENTS).map(trimEvent) },
-    cut: results.length > SHOWN_EVENTS,
-  };
+  const events = results.slice(0, SHOWN_EVENTS).map(trimEvent);
+  let fitted = { ...(row as Record<string, unknown>), results: events };
+  while (events.length > 1 && rendered(fitted) > budget) {
+    events.pop();
+    fitted = { ...fitted, results: events };
+  }
+  return { row: fitted, cut: events.length < results.length };
 }
 
-export function shown(result: ToolResult): ToolResult {
+// The cap is the run's result_cap, so the journaled result is the whole of what
+// the model reads: nothing past it is clamped away from the model but kept for proof.
+export function shown(result: ToolResult, cap: number): ToolResult {
   if (!result.ok) return result;
-  const rows = result.rows.map(trimRow);
+  const budget = Math.max(cap - WRAP_ROOM, 0);
+  const rows = result.rows.map((row) => trimRow(row, budget));
   if (rows.every(({ row }, index) => row === result.rows[index])) return result;
   return { ...result, rows: rows.map(({ row }) => row), capped: result.capped || rows.some(({ cut }) => cut) };
 }
 
 // Every remote call goes through here; record and finish answer in-process.
-export function showing(dispatch: ToolDispatch): ToolDispatch {
+export function showing(dispatch: ToolDispatch, cap: number): ToolDispatch {
   return {
     invoke: async (tool, args, signal) => {
       const result = await dispatch.invoke(tool, args, signal);
-      return tool.local ? result : shown(result);
+      return tool.local ? result : shown(result, cap);
     },
   };
 }
