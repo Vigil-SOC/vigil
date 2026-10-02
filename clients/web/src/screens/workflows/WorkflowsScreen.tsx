@@ -309,7 +309,7 @@ function ComboField({ label, value, onChange, placeholder, options, hint }: {
   )
 }
 
-interface WfPhase {
+interface ReaderPhase {
   id?: string
   phase_id?: string
   agent?: string
@@ -324,7 +324,7 @@ interface WfDetail {
   hunt_like?: boolean
   objectives?: unknown
   checkpoints?: unknown
-  phases?: WfPhase[] | null
+  phases?: ReaderPhase[] | null
 }
 
 type ReaderKind = 'roster' | 'single' | 'ordered'
@@ -335,11 +335,11 @@ function readerKind(huntLike: boolean, runKind: string): ReaderKind {
   return 'ordered'
 }
 
-function phasesOf(detail: WfDetail): WfPhase[] {
+function phasesOf(detail: WfDetail): ReaderPhase[] {
   return Array.isArray(detail.phases) ? detail.phases : []
 }
 
-function phaseAgent(phase: WfPhase): string {
+function phaseAgent(phase: ReaderPhase): string {
   return phase.agent || phase.agent_id || ''
 }
 
