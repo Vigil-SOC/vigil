@@ -91,7 +91,7 @@ def test_not_cloned_source_stays_open_until_rules_are_ready():
     assert open_step["state_line"] == "No detection rules on disk"
     assert empty_ready["done"] is False
     assert ready["done"] is True
-    assert ready["href"] == "/settings?section=integrations&tab=detection"
+    assert ready["href"] == "/settings?section=data&tab=detection"
 
 
 def test_per_agent_needs_two_distinct_models():

@@ -323,7 +323,7 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
         )}
         {noAlerts && (
           <div className="home-alerts">
-            <Link className="btn primary" to="/settings?section=integrations">
+            <Link className="btn primary" to="/settings?section=data">
               Connect data
             </Link>
             {!setup.demo_enabled && (

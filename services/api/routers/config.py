@@ -752,7 +752,7 @@ def build_setup_steps(
                     else "No detection rules on disk"
                 ),
                 rules_done,
-                "/settings?section=integrations&tab=detection",
+                "/settings?section=data&tab=detection",
             ),
             _step(
                 "per_agent",

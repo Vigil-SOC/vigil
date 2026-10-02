@@ -12,26 +12,22 @@ import {
   WIP_SERVERS,
   prettyServerName,
 } from './integrationsData'
-import DataIngestionPanel from './DataIngestion'
-import DetectionRulesPanel from './DetectionRulesPanel'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { SectionProps } from './types'
 
-type IntegrationsTab = 'servers' | 'surface' | 'ingestion' | 'detection'
+type IntegrationsTab = 'servers' | 'surface'
 const TABS: [IntegrationsTab, string][] = [
   // "Connector" is the page extension (CONTEXT.md); these are the MCP servers
   // Vigil calls out to, and the next tab is the one Vigil is.
   ['servers', 'MCP Servers'],
   ['surface', 'Vigil’s MCP Server'],
-  ['ingestion', 'Manual Upload'],
-  ['detection', 'Detection Rules'],
 ]
 
 function tabFromQuery(value: string | null): IntegrationsTab {
-  if (value === 'servers' || value === 'surface' || value === 'ingestion' || value === 'detection') return value
+  if (value === 'servers' || value === 'surface') return value
   return 'servers'
 }
 
@@ -54,8 +50,6 @@ export default function IntegrationsSection({ notify }: SectionProps) {
       </div>
       {tab === 'servers' && <ServersPanel notify={notify} />}
       {tab === 'surface' && <McpSurfacePanel notify={notify} />}
-      {tab === 'ingestion' && <DataIngestionPanel notify={notify} />}
-      {tab === 'detection' && <DetectionRulesPanel notify={notify} />}
     </>
   )
 }

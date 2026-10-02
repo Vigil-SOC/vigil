@@ -90,14 +90,17 @@ describe('MCP server cards', () => {
     expect(disabled.queryByText('Running')).toBeNull()
   })
 
-  it('opens Detection Rules when the query asks for it', () => {
+  it('stays on MCP Servers when the query asks for a tab that lives elsewhere', () => {
     renderSection('/settings?section=integrations&tab=detection')
-    expect(screen.getByRole('button', { name: 'Detection Rules' })).toHaveClass('active')
+    expect(screen.getByRole('button', { name: 'MCP Servers' })).toHaveClass('active')
+    expect(screen.queryByRole('button', { name: 'Manual Upload' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Detection Rules' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Build Custom/ })).toBeInTheDocument()
   })
 
   it('stays on MCP Servers for any other tab value', () => {
     renderSection('/settings?section=integrations&tab=nope')
     expect(screen.getByRole('button', { name: 'MCP Servers' })).toHaveClass('active')
-    expect(screen.getByRole('button', { name: 'Detection Rules' })).not.toHaveClass('active')
+    expect(screen.queryByRole('button', { name: 'Detection Rules' })).not.toBeInTheDocument()
   })
 })
