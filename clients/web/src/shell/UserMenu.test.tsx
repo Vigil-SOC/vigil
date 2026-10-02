@@ -30,14 +30,14 @@ vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => auth,
 }))
 
-function renderMenu(path = '/cases') {
+function renderMenu(path = '/cases', onShowTour = vi.fn()) {
   return render(
     <ColorSchemeProvider>
       <SocThemeProvider>
         <MemoryRouter initialEntries={[path]}>
           <Routes>
             <Route path="/setup" element={<div>setup-route</div>} />
-            <Route path="/:screen" element={<UserMenu />} />
+            <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} />} />
           </Routes>
         </MemoryRouter>
       </SocThemeProvider>
@@ -64,6 +64,15 @@ describe('UserMenu', () => {
     expect(url.searchParams.get('labels')).toBe('console-feedback')
     expect(url.searchParams.get('body')).toContain('Screen: cases')
     expect(url.searchParams.get('body')).toContain('Version: 9.9.9')
+  })
+
+  it('starts the console tour from the account menu', () => {
+    const onShowTour = vi.fn()
+    renderMenu('/cases', onShowTour)
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Console tour' }))
+    expect(onShowTour).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu', { name: 'Account' })).not.toBeInTheDocument()
   })
 
   it('opens setup from the account menu', () => {

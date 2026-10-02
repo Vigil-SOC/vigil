@@ -16,6 +16,8 @@ import Chat from './Chat'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
+import ConsoleTour, { type TourStopId } from './ConsoleTour'
+import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
@@ -155,6 +157,14 @@ function SocConsoleInner() {
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
   const [wallMode, setWallMode] = useState(false)
+  const homePerm = SCREEN_PERMS.home
+  const canTourHome = !homePerm || hasPermission(homePerm)
+  const tourStops = useMemo<readonly TourStopId[]>(
+    () => (canTourHome ? ['nav', 'attention', 'ask'] : ['nav', 'ask']),
+    [canTourHome],
+  )
+  const [tourOn, setTourOn] = useState(() => !readConsoleTourSeen())
+  const [tourIndex, setTourIndex] = useState(0)
   // from ExtensionProvider, so a connector configured in Settings reaches the
   // rail without a refresh
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
@@ -197,6 +207,42 @@ function SocConsoleInner() {
     },
     [navigate],
   )
+
+  // The nav is unmounted in wall mode, and Ask Vigil is unmounted while the
+  // dock or a full-bleed view is open. Mount the target before that stop.
+  const prepareStop = useCallback((index: number) => {
+    const stop = tourStops[Math.min(index, Math.max(tourStops.length - 1, 0))]
+    if (stop === 'attention') go('home')
+    if (stop === 'nav' || stop === 'ask') setWallMode(false)
+    if (stop === 'ask') {
+      setChatOpen(false)
+      setViewFull(false)
+    }
+  }, [tourStops, go])
+
+  const showStop = useCallback((index: number) => {
+    if (index < 0 || index >= tourStops.length) return
+    prepareStop(index)
+    setTourIndex(index)
+  }, [prepareStop, tourStops])
+
+  const startTour = useCallback(() => {
+    setChatOpen(false)
+    setViewFull(false)
+    setWallMode(false)
+    setTourIndex(0)
+    setTourOn(true)
+  }, [])
+
+  const dismissTour = useCallback(() => {
+    markConsoleTourSeen()
+    setTourOn(false)
+  }, [])
+
+  useEffect(() => {
+    if (!tourOn) return
+    prepareStop(tourIndex)
+  }, [tourOn, tourIndex, prepareStop, wallMode, chatOpen, viewFull])
 
   // screens that deep-link a detail re-assert viewFull from their own URL state
   useEffect(() => {
@@ -409,7 +455,7 @@ function SocConsoleInner() {
                 )}
               </div>
             )}
-            <UserMenu />
+            <UserMenu onShowTour={startTour} />
           </div>
         </header>}
         {!wallMode && <nav className="vg-nav" aria-label="Primary">
@@ -525,6 +571,14 @@ function SocConsoleInner() {
           <Icon name="brain" />
           <span>Ask Vigil</span>
         </button>
+      )}
+      {tourOn && (
+        <ConsoleTour
+          stops={tourStops}
+          index={tourIndex}
+          onIndex={showStop}
+          onDismiss={dismissTour}
+        />
       )}
       </ToastProvider>
     </div>

@@ -17,7 +17,7 @@ function feedbackHref(screen: string, version: string): string {
   return url.toString()
 }
 
-export default function UserMenu() {
+export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { screen } = useParams<{ screen?: string }>()
@@ -128,6 +128,9 @@ export default function UserMenu() {
           <Icon name="sun" size={15} /> Light
         </button>
         <div className="user-pop-sep" />
+        <button role="menuitem" onClick={() => { setOpen(false); onShowTour() }}>
+          <Icon name="info" size={15} /> Console tour
+        </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/setup') }}>
           <Icon name="flow" size={15} /> Setup
         </button>

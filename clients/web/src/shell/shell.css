@@ -439,3 +439,64 @@
   font-size: 12.5px;
   color: var(--tx-2);
 }
+
+.console-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+}
+
+.console-tour-ring {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  outline: 2px solid var(--ac);
+  pointer-events: none;
+}
+
+.console-tour-card {
+  position: fixed;
+  width: 300px;
+  padding: 14px 14px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln2);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+  color: var(--tx1);
+  font-family: var(--font-ui);
+  pointer-events: auto;
+}
+
+.console-tour-card h2 {
+  margin: 0 0 6px;
+  color: var(--tx0);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.console-tour-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.console-tour-step {
+  margin-bottom: 6px;
+  color: var(--tx2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.console-tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.console-tour-spacer {
+  flex: 1;
+}

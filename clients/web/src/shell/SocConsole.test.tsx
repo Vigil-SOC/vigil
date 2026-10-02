@@ -1,16 +1,21 @@
-import { afterEach, describe, it, expect, beforeAll, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
+import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi } from '../services/api'
+
+const authState = vi.hoisted(() => ({
+  allow: (_permission: string): boolean => true,
+}))
 
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { full_name: 'Test User', email: 'test@vigil.local', role_id: 'role-admin', mfa_enabled: false },
     logout: vi.fn(),
-    hasPermission: () => true,
+    hasPermission: (permission: string) => authState.allow(permission),
   }),
 }))
 
@@ -289,6 +294,7 @@ beforeAll(() => {
 const defaultViewportWidth = window.innerWidth
 
 afterEach(() => {
+  authState.allow = () => true
   localStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
   vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
@@ -316,7 +322,25 @@ function clickScreen(name: string) {
   fireEvent.click(screen.getByRole('button', { name }))
 }
 
+function domRect(top: number, left: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    top,
+    left,
+    width,
+    height,
+    bottom: top + height,
+    right: left + width,
+    toJSON() { return {} },
+  } as DOMRect
+}
+
 describe('SocConsole', () => {
+  beforeEach(() => {
+    localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
+  })
+
   it('mounts on the Dashboard', () => {
     renderConsole()
     expect(title()).toBe('Dashboard')
@@ -820,5 +844,101 @@ describe('SocConsole', () => {
     expect(createUrl).toHaveBeenCalledTimes(1)
     expect(captured?.type).toBe('text/csv;charset=utf-8')
     clickSpy.mockRestore()
+  })
+
+  describe('console tour', () => {
+    let rectSpy: { mockRestore: () => void }
+
+    beforeEach(() => {
+      localStorage.removeItem(CONSOLE_TOUR_SEEN_KEY)
+      rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        const label = this.getAttribute('aria-label')
+        if (label === 'Primary') return domRect(40, 10, 500, 46)
+        if (label === 'Needs your attention') return domRect(200, 24, 640, 180)
+        if (this.classList.contains('chat-fab')) return domRect(620, 800, 148, 44)
+        return domRect(0, 0, 0, 0)
+      })
+    })
+
+    afterEach(() => {
+      rectSpy.mockRestore()
+    })
+
+    it('points at the primary nav until Skip, then stays hidden on reload', () => {
+      const first = renderConsole()
+      const ring = document.querySelector('.console-tour-ring')
+      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toHaveTextContent('primary nav')
+      expect(ring).toHaveAttribute('data-stop', 'nav')
+      expect(ring).toHaveStyle({ top: '34px', left: '4px', width: '512px', height: '58px' })
+      expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
+
+      first.unmount()
+      renderConsole()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('walks Home then Ask Vigil, and Done writes the seen flag', async () => {
+      renderConsole('/cases')
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
+      expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
+      const attention = document.querySelector('.console-tour-ring')
+      expect(attention).toHaveAttribute('data-stop', 'attention')
+      expect(attention).toHaveStyle({ top: '194px', left: '18px' })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toHaveTextContent('Ask Vigil')
+      const ask = document.querySelector('.console-tour-ring')
+      expect(ask).toHaveAttribute('data-stop', 'ask')
+      expect(ask).toHaveStyle({ top: '614px', left: '794px' })
+      expect(screen.getByRole('button', { name: 'Ask Vigil chat assistant' })).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
+    })
+
+    it('closes the dock and leaves wall mode so the stop target is mounted', async () => {
+      renderConsole('/overview')
+      await screen.findByRole('button', { name: 'Wall' })
+      fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Ask Vigil chat assistant' })).toBeInTheDocument()
+      expect(document.querySelector('.console-tour-ring')).toHaveAttribute('data-stop', 'ask')
+    })
+
+    it('skips Home for an operator who cannot open it', () => {
+      authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+      renderConsole('/dashboard')
+      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toBeInTheDocument()
+      expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/dashboard')
+      expect(screen.queryByText(/Access denied/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Needs your attention' })).not.toBeInTheDocument()
+    })
+
+    it('starts again at the primary nav from the account menu', () => {
+      localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
+      renderConsole()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Console tour' }))
+      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      expect(screen.queryByRole('menu', { name: 'Account' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
+    })
   })
 })
