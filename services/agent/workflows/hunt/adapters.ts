@@ -1,7 +1,7 @@
 import { setMaxListeners } from "node:events";
 import { drain, streamTurn } from "../../core/stream.js";
 import type { Attempt, Harness, Outcome } from "../../core/loop.js";
-import { clamp } from "../../core/security.js";
+import { clamp, isVisibilityGap } from "../../core/security.js";
 import type { RunKind } from "../../contracts/events.js";
 import type { RoleSpec, RunSpec } from "../../core/spec.js";
 import { SpecError } from "../../core/spec.js";
@@ -20,6 +20,7 @@ import type {
   RestsOn,
   StoppedBy,
   ToolCall,
+  ToolGap,
   WorkerEvidence,
 } from "./types.js";
 
@@ -377,6 +378,7 @@ export function workerDispatcher(options: AdapterOptions): WorkerDispatcher {
           dispatch_id: request.dispatch_id,
           evidence: salvaged(outcome.calls),
           calls: callsOf(outcome.calls),
+          tool_gaps: gapsOf(outcome.calls),
           failed: true,
           failure_reason: outcome.reason,
           stopped_by: stoppedBy(outcome),
@@ -388,6 +390,7 @@ export function workerDispatcher(options: AdapterOptions): WorkerDispatcher {
         dispatch_id: request.dispatch_id,
         evidence: evidenceFrom(outcome.value),
         calls: callsOf(outcome.calls),
+        tool_gaps: gapsOf(outcome.calls),
         ...(questions.length === 0 ? {} : { questions }),
         failed: false,
         failure_reason: "",
@@ -395,6 +398,18 @@ export function workerDispatcher(options: AdapterOptions): WorkerDispatcher {
       };
     },
   };
+}
+
+// Only timeout and unavailable: a refused or malformed call is a defect in the call.
+export function gapsOf(attempts: readonly Attempt[]): ToolGap[] {
+  const seen = new Map<string, ToolGap>();
+  for (const { tool, wrapped } of attempts) {
+    const failure = wrapped.failure;
+    if (failure === null || !isVisibilityGap(failure)) continue;
+    const kind = failure.kind as ToolGap["kind"];
+    seen.set(`${tool} ${kind}`, { tool, kind });
+  }
+  return [...seen.values()];
 }
 
 // Total characters of tool output one dispatch may journal. Shared rather than

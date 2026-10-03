@@ -484,9 +484,18 @@ export type WorkerEvidence = Omit<
   "evidence_id" | "dispatch_id" | "iteration" | "entities" | "captured_at"
 > & { supports?: string[]; weakens?: string[] };
 
+// A tool call the environment could not answer (timeout or unavailable), kept by tool
+// id and kind rather than parsed back out of the rendered call text.
+export interface ToolGap {
+  tool: string;
+  kind: "timeout" | "unavailable";
+}
+
 export interface DispatchResult {
   dispatch_id: string;
   evidence: WorkerEvidence[];
+  // Distinct visibility gaps inside the dispatch, whether or not the worker still answered.
+  tool_gaps?: ToolGap[];
   // New threads the work opened up — the frontier of the search.
   questions?: string[];
   failed: boolean;

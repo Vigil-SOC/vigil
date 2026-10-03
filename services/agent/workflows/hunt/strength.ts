@@ -29,7 +29,7 @@ export function isGap(record: EvidenceRecord): boolean {
 
 // What went unanswered, not how many times it failed: three retries of one query
 // are one blind spot. The intent is the key when no lead owns the dispatch.
-function gapKey(dispatch: DispatchRecord): string {
+export function gapKey(dispatch: DispatchRecord): string {
   return dispatch.question_id ?? dispatch.query_intent;
 }
 
@@ -38,10 +38,17 @@ function gapKey(dispatch: DispatchRecord): string {
 export function openGaps(projection: Projection, hypothesisId: string): number {
   const answered = new Set<string>();
   const unanswered = new Set<string>();
+  // The latest completed dispatch per key: a call-level gap (a tool that timed out under
+  // a worker that still answered) stays open until a later dispatch on the same key
+  // completes without it. Dispatches fold in creation order, so a replay agrees.
+  const latest = new Map<string, string>();
 
   for (const dispatch of projection.dispatches.values()) {
     if (dispatch.target_hypothesis_id !== hypothesisId) continue;
-    if (dispatch.status === "complete") answered.add(gapKey(dispatch));
+    if (dispatch.status === "complete") {
+      answered.add(gapKey(dispatch));
+      latest.set(gapKey(dispatch), dispatch.dispatch_id);
+    }
     // Counting our own ceiling would mean a hunt that ran out of money also loses the
     // ability to conclude once it is extended, and counting an operator's stop would
     // do the same to a hunt somebody paused. A worker that could not shape its answer
@@ -51,7 +58,15 @@ export function openGaps(projection: Projection, hypothesisId: string): number {
     }
   }
 
+  // Counted per (key, tool): two kinds of failure from one tool are one blind spot.
+  const callGaps = new Set<string>();
+
   for (const record of projection.evidence.values()) {
+    const { tool, gap_key } = record.payload;
+    if (record.provenance === "tool_failure" && typeof tool === "string" && typeof gap_key === "string") {
+      if (record.dispatch_id !== null && latest.get(gap_key) === record.dispatch_id) callGaps.add(`${gap_key}\0${tool}`);
+      continue;
+    }
     if (!declaredGap(record)) continue;
     // A blind spot the hunt cannot attribute is one it carries into every claim, so
     // an unattributed gap floors open_gaps for the whole run.
@@ -60,7 +75,7 @@ export function openGaps(projection: Projection, hypothesisId: string): number {
     unanswered.add(record.summary);
   }
 
-  return [...unanswered].filter((key) => !answered.has(key)).length;
+  return [...unanswered].filter((key) => !answered.has(key)).length + callGaps.size;
 }
 
 // Read off the appended record rather than the critic's return value, so a

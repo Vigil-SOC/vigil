@@ -54,6 +54,7 @@ import {
   OPERATOR_GAP_PROVENANCE,
   UNDECLARED_SOURCE,
   sensorAttested,
+  gapKey,
   unmetPredicates, pairKey, unclassified } from "./strength.js";
 import {
   ACTIONS_REQUIRING_CITATION,
@@ -1982,7 +1983,29 @@ export class HuntController {
           ]
         : result.evidence;
 
-    const appended = this.appendEvidence(records, iteration, result.dispatch_id);
+    // A call the estate could not answer is a blind spot even when the worker went on to
+    // answer. Skipped when the dispatch-level record above already says a query failed.
+    const dispatch = this.ledger.projection.dispatches.get(result.dispatch_id)!;
+    const callGaps: WorkerEvidence[] =
+      result.failed && !ours
+        ? []
+        : (result.tool_gaps ?? []).map(({ tool, kind }) => ({
+            source_system: "dispatcher",
+            summary: "a query the hunt wanted could not be run",
+            payload: {
+              tool,
+              kind,
+              gap_key: gapKey(dispatch),
+              hypothesis_id: dispatch.target_hypothesis_id,
+            },
+            salience: "routine" as const,
+            why_notable: "a blind spot in what this run could see, not a finding",
+            provenance: TOOL_FAILURE,
+            attacker_influenceable: false,
+            instruction_like: false,
+          }));
+
+    const appended = this.appendEvidence([...callGaps, ...records], iteration, result.dispatch_id);
 
     for (const question of result.questions ?? []) {
       this.raise(sanitizeQuestion(question), {
