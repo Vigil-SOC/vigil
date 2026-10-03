@@ -723,7 +723,6 @@ config:
   DAEMON_WEBHOOK_PORT: "8081"
   DAEMON_AUTO_TRIAGE: "true"
   DAEMON_AUTO_ENRICH: "true"
-  DAEMON_BATCH_SIZE: "10"
   DAEMON_AUTO_RESPONSE: "true"
   DAEMON_CONFIDENCE_THRESHOLD: "0.90"
   DAEMON_REVIEW_THRESHOLD: "0.85"
@@ -761,7 +760,6 @@ config:
   VIGIL_OTEL_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
   OTEL_TRACES_SAMPLER: "parentbased_always_on"
-  VIGIL_OTEL_RECORD_LLM_CONTENT: "false"
 
   # Kafka — disabled by default
   KAFKA_ENABLED: "false"

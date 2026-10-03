@@ -4,8 +4,8 @@ Settings uses extra="ignore", so a chart key nothing reads lands in the pod
 environment and is dropped without an error. The chart shipped
 ORCHESTRATOR_MAX_CONCURRENT_AGENTS, VIGIL_OTEL_LOG_LLM_CONTENT and
 ELASTIC_{HOST,API_KEY,...} for releases while the code read
-ORCHESTRATOR_MAX_AGENTS, VIGIL_OTEL_RECORD_LLM_CONTENT and ELASTIC_SIEM_*, and
-operators who set them got no limit, no opt-in and no Elastic connection.
+ORCHESTRATOR_MAX_AGENTS and ELASTIC_SIEM_*, and operators who set them got no
+limit and no Elastic connection.
 
 Static parse of values.yaml, values-dev.yaml and the templates; no helm binary.
 """
@@ -61,10 +61,11 @@ OTHER_CONSUMERS = {
     "VIGIL_TOOLS_URL": "agent layer",
 }
 
-# Old chart names, and what the code reads instead. Kept in step with the
-# retired-key warning in templates/NOTES.txt.
+# Old chart names, and what the code reads instead (None: nothing, the setting
+# is gone). Kept in step with the retired-key warning in templates/NOTES.txt.
 RETIRED = {
-    "VIGIL_OTEL_LOG_LLM_CONTENT": "VIGIL_OTEL_RECORD_LLM_CONTENT",
+    "VIGIL_OTEL_LOG_LLM_CONTENT": None,
+    "VIGIL_OTEL_RECORD_LLM_CONTENT": None,
     "ORCHESTRATOR_MAX_CONCURRENT_AGENTS": "ORCHESTRATOR_MAX_AGENTS",
     "ELASTIC_HOST": "ELASTIC_SIEM_ELASTICSEARCH_URL",
     "ELASTIC_KIBANA_URL": "ELASTIC_SIEM_KIBANA_URL",
@@ -136,7 +137,7 @@ def test_reintroducing_a_retired_name_fails_the_check() -> None:
 def test_retired_names_map_to_names_the_code_reads() -> None:
     read = _read_names()
     assert not set(RETIRED) & read, "a RETIRED name is read again; drop it"
-    assert set(RETIRED.values()) <= read
+    assert {v for v in RETIRED.values() if v} <= read
 
 
 def test_notes_warn_about_every_retired_name() -> None:

@@ -7,6 +7,11 @@ The dump is restored into a new database. ``agent_events_assign_hashes`` is a
 BEFORE INSERT trigger and would re-hash rows if the dump landed in a schema
 that already had it. Checks run before any rename. A failure before the swap
 drops the stage and leaves the live database and files where they were.
+
+Bifrost's request log (``logs.db`` and its ``-wal``/``-shm`` files) lives in the
+Bifrost data directory but is never in a snapshot. The swap moves the live one
+aside with the rest of that directory, into ``.pre-restore-<stamp>``, and
+Bifrost starts a fresh, empty log. Copy it back from there to keep the history.
 """
 
 from __future__ import annotations

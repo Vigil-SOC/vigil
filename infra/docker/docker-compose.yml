@@ -343,8 +343,6 @@ services:
       # Polling intervals (seconds)
       DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
-      # Processing
-      DAEMON_BATCH_SIZE: ${DAEMON_BATCH_SIZE:-10}
       # Response
       DAEMON_DRY_RUN: ${DAEMON_DRY_RUN:-false}
       # Escalation

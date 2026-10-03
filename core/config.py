@@ -242,8 +242,6 @@ class Settings(BaseSettings):
     # Observability
     sentry_dsn: str = ""
     vigil_otel_enabled: bool = False
-    vigil_otel_record_llm_content: bool = False
-    vigil_otel_record_ioc_values: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 
     # Daemon
@@ -254,7 +252,6 @@ class Settings(BaseSettings):
     daemon_webhook_port: int = 8081
     daemon_auto_triage: bool = True
     daemon_auto_enrich: bool = True
-    daemon_batch_size: int = 10
     daemon_triage_timeout: int = 60
     daemon_enrich_max_inflight: int = 50
     daemon_enrich_backfill: bool = True

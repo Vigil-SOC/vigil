@@ -57,7 +57,8 @@ of your choosing; it closes as soon as one account exists.
 
 {{- /* Names this chart used to render that nothing reads. Keep in step with RETIRED in tests/unit/_ratchets/test_helm_env_names_are_read.py. */ -}}
 {{- $retiredConfig := dict
-  "VIGIL_OTEL_LOG_LLM_CONTENT" "VIGIL_OTEL_RECORD_LLM_CONTENT"
+  "VIGIL_OTEL_LOG_LLM_CONTENT" ""
+  "VIGIL_OTEL_RECORD_LLM_CONTENT" ""
   "ORCHESTRATOR_MAX_CONCURRENT_AGENTS" "ORCHESTRATOR_MAX_AGENTS"
   "ELASTIC_HOST" "ELASTIC_SIEM_ELASTICSEARCH_URL"
   "ELASTIC_KIBANA_URL" "ELASTIC_SIEM_KIBANA_URL"
@@ -75,7 +76,11 @@ of your choosing; it closes as soon as one account exists.
 {{- if or (hasKey $.Values.config $old) (hasKey $.Values.extraConfig $old) }}
 
 ⚠️  WARNING: {{ $old }} is set but Vigil never reads it, so it has no effect.
+   {{- if $new }}
    Set {{ $new }} instead.
+   {{- else }}
+   The setting was removed; span content is always redacted.
+   {{- end }}
 {{- end }}
 {{- end }}
 {{- if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled }}

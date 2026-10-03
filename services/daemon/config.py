@@ -25,7 +25,6 @@ class PollingConfig:
 class ProcessingConfig:
     auto_triage_enabled: bool = True
     auto_enrich_enabled: bool = True
-    batch_size: int = 10
     max_concurrent_tasks: int = 5
     triage_timeout: int = 60  # seconds
     enrich_max_inflight: int = (
@@ -152,7 +151,6 @@ class DaemonConfig:
 
         config.processing.auto_triage_enabled = settings.daemon_auto_triage
         config.processing.auto_enrich_enabled = settings.daemon_auto_enrich
-        config.processing.batch_size = settings.daemon_batch_size
         config.processing.triage_timeout = settings.daemon_triage_timeout
         config.processing.enrich_max_inflight = settings.daemon_enrich_max_inflight
         config.processing.enrich_backfill_enabled = settings.daemon_enrich_backfill

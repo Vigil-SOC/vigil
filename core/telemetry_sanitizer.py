@@ -10,8 +10,7 @@ Unrecognised attributes pass through. This is defence-in-depth; rely on
 careful attribute naming conventions to prevent accidental leakage.
 
 Note: LLM content (prompts/responses) and raw finding/IOC values are always
-redacted unless the operator has explicitly opted in via environment variables
-VIGIL_OTEL_RECORD_LLM_CONTENT and VIGIL_OTEL_RECORD_IOC_VALUES respectively.
+redacted; there is no opt-in.
 """
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ _CONTENT_KEY_SUBSTRINGS: frozenset[str] = frozenset(
         "finding.description",
         "finding.raw",
         "finding.payload",
-        "finding.entity_context",
+        "finding.entity",
         "llm.prompt",
         "llm.response",
         "gen_ai.prompt",
@@ -168,49 +167,10 @@ class SensitiveAttributeScrubber(SpanProcessor):  # type: ignore[misc]
             if not attrs:
                 return
 
-            # Check operator opt-in flags for LLM content and IOC values
-            from core.telemetry_config import (
-                _should_record_ioc_values,
-                _should_record_llm_content,
-            )
-
-            record_llm = _should_record_llm_content()
-            record_ioc = _should_record_ioc_values()
-
             new_attrs: dict[str, Any] = {}
             modified = False
 
             for key, value in attrs.items():
-                key_lower = key.lower()
-
-                # LLM prompt/response: redact unless operator opted in
-                if not record_llm and any(
-                    k in key_lower
-                    for k in (
-                        "llm.prompt",
-                        "llm.response",
-                        "gen_ai.prompt",
-                        "gen_ai.completion",
-                    )
-                ):
-                    new_attrs[key] = "[REDACTED]"
-                    modified = True
-                    continue
-
-                # Raw finding / IOC values: redact unless operator opted in
-                if (
-                    not record_ioc
-                    and "finding." in key_lower
-                    and any(
-                        k in key_lower
-                        for k in ("raw", "payload", "description", "entity")
-                    )
-                ):
-                    new_attrs[key] = "[REDACTED]"
-                    modified = True
-                    continue
-
-                # General blocklist check
                 if self._should_redact(key, value):
                     new_attrs[key] = "[REDACTED]"
                     modified = True
