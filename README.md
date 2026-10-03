@@ -291,9 +291,11 @@ cd clients/web && npm run dev
 
 ```bash
 ./shutdown_all.sh              # Stop native processes only (Docker keeps running)
-./shutdown_all.sh -d           # Stop native processes + Docker containers
-./shutdown_all.sh -d --full    # Stop + remove containers and volumes
+./shutdown_all.sh -d           # Normal stop; leaves data in place
+./shutdown_all.sh -d --full    # Permanently deletes all data volumes
 ```
+
+`-d` is the normal way to stop everything and leaves data in place. `-d --full` permanently deletes all Vigil data volumes. `down -v` removes every named volume declared in the compose file, including optional-profile volumes: `postgres_data` (database contents and settings), `bifrost_data` (Bifrost config and keys), `vigil_home` (the Compose State Directory at `/home/vigil/.vigil`, including `master.key`), `vigil_investigations` (investigation files), `redis_data` (Redis), and `backup_repo` (the default on-box backup repository). Postgres, Redis, and Bifrost for a native install also come from this compose file and are wiped; the host State Directory `~/.vigil` survives. `--full` without `-d` does not delete volumes. A backup has to be stored outside the compose volumes (a host path in `VIGIL_BACKUP_REPO`, or a copy taken off the box) or this command deletes it too.
 
 ### Access
 
