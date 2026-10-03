@@ -611,5 +611,6 @@ def test_strict_mode_is_not_swallowed_on_schema_drift(
         raising=True,
     )
 
+    service = dds.DatabaseDataService()  # connects lazily, on first use
     with pytest.raises(SchemaDriftError):
-        dds.DatabaseDataService()
+        service._db_available
