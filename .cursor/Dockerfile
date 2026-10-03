@@ -69,6 +69,24 @@ RUN ARCH="$(dpkg --print-architecture)" \
               "/tmp/linux-${ARCH}" \
     && helm version --short
 
+# helm-chart.yml downloads kubeconform v0.6.7 and runs
+# `kubeconform -strict -ignore-missing-schemas` over the default, dev and
+# Bitnami renders. Same pin, with the checksums from the release's CHECKSUMS.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+         amd64) KSUM=95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73 ;; \
+         arm64) KSUM=dc82f79bb03c5479b1ae5fd4af221e4b5a3111f62bf01a2795d9c5c20fa96644 ;; \
+         *) echo "unsupported arch $ARCH" && exit 1 ;; \
+       esac \
+    && KUBECONFORM_VERSION=v0.6.7 \
+    && cd /tmp \
+    && curl --retry 3 --retry-delay 5 -fsSL -o kubeconform.tar.gz \
+       "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH}.tar.gz" \
+    && echo "${KSUM}  kubeconform.tar.gz" | sha256sum -c - \
+    && tar -xzf kubeconform.tar.gz -C /usr/local/bin kubeconform \
+    && rm -f kubeconform.tar.gz \
+    && kubeconform -v
+
 ########################################################
 # ACTIONLINT + HADOLINT (CI lint gates)
 ########################################################
