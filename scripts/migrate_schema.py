@@ -32,6 +32,8 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 def get_connection_url():
     url = os.environ.get('DATABASE_URL')
@@ -558,8 +560,12 @@ def run_migrations(url=None):
     each numbered as the log numbers it.
     """
     url = url or get_connection_url()
-    safe_url = url.split('@')[-1] if '@' in url else url
-    logger.info(f"Connecting to: ...@{safe_url}")
+    try:
+        # Log only the server and database; never echo the URL, which carries credentials.
+        target = make_url(url)
+        logger.info(f"Connecting to: {target.host or 'localhost'}:{target.port or 5432}/{target.database}")
+    except ArgumentError:
+        logger.info("Connecting to the configured database")
 
     # SQLAlchemy 2.1 defaults bare postgresql:// to psycopg3; we ship psycopg2.
     # (postgres:// is the form env.example/Heroku-style URLs use.)
