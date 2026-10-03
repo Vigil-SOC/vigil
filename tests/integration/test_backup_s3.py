@@ -41,7 +41,7 @@ def _parts() -> dict[str, str]:
 def _url(database: str) -> str:
     part = _parts()
     return (
-        f"postgresql://{part['user']}:{part['password']}"
+        f"postgresql+psycopg2://{part['user']}:{part['password']}"
         f"@{part['host']}:{part['port']}/{database}"
     )
 

@@ -68,7 +68,7 @@ def _url(database: str) -> str:
     user = os.getenv("POSTGRES_USER", "deeptempo")
     password = os.getenv("POSTGRES_PASSWORD", "deeptempo_secure_password_change_me")
     port = os.getenv("POSTGRES_PORT", "5432")
-    return f"postgresql://{user}:{password}@{_host()}:{port}/{database}"
+    return f"postgresql+psycopg2://{user}:{password}@{_host()}:{port}/{database}"
 
 
 # 'postgres' always exists and is never the target, so it is safe to CREATE and

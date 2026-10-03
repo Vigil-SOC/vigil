@@ -29,6 +29,11 @@ def _database_url() -> str:
     )
 
 
+def _sqlalchemy_url() -> str:
+    # DATABASE_URL stays bare for the Node worker; SQLAlchemy 2.1 needs the driver named.
+    return _database_url().replace("postgresql://", "postgresql+psycopg2://", 1)
+
+
 def _redis_url() -> str:
     return os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
@@ -47,7 +52,7 @@ AGENT_DDL = (
 
 @pytest.fixture(scope="module")
 def engine():
-    engine = create_engine(_database_url(), future=True)
+    engine = create_engine(_sqlalchemy_url())
     with engine.connect() as conn:
         for name in AGENT_DDL:
             ddl = (REPO_ROOT / "infra" / "database" / "init" / name).read_text()

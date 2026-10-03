@@ -54,12 +54,12 @@ def _parts():
     }
 
 
-def _url(database, user=None, password=None):
+def _url(database, user=None, password=None, driver="+psycopg2"):
     parts = _parts()
     who = user if user is not None else parts["user"]
     pw = password if password is not None else parts["password"]
     return (
-        f"postgresql://{quote(who, safe='')}:{quote(pw, safe='')}"
+        f"postgresql{driver}://{quote(who, safe='')}:{quote(pw, safe='')}"
         f"@{parts['host']}:{parts['port']}/{database}"
     )
 
@@ -194,8 +194,8 @@ def helm_db():
         _provision()
         yield {
             "owner": _parts()["user"],
-            "owner_url": _url(SCRATCH_DB),
-            "app_url": _url(SCRATCH_DB, user="vigil_app"),
+            "owner_url": _url(SCRATCH_DB, driver=""),
+            "app_url": _url(SCRATCH_DB, user="vigil_app", driver=""),
         }
     finally:
         _drop()
@@ -210,8 +210,8 @@ def two_owner_db():
         _provision(owner, password)
         yield {
             "owner": owner,
-            "owner_url": _url(SCRATCH_DB, user=owner, password=password),
-            "app_url": _url(SCRATCH_DB, user="vigil_app"),
+            "owner_url": _url(SCRATCH_DB, user=owner, password=password, driver=""),
+            "app_url": _url(SCRATCH_DB, user="vigil_app", driver=""),
         }
     finally:
         _drop(owner)

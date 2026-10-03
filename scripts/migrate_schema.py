@@ -561,6 +561,9 @@ def run_migrations(url=None):
     safe_url = url.split('@')[-1] if '@' in url else url
     logger.info(f"Connecting to: ...@{safe_url}")
 
+    # SQLAlchemy 2.1 defaults bare postgresql:// to psycopg3; we ship psycopg2.
+    # (postgres:// is the form env.example/Heroku-style URLs use.)
+    url = re.sub(r'^postgres(ql)?://', 'postgresql+psycopg2://', url)
     engine = create_engine(url)
     applied, skipped, failed = [], [], []
     try:

@@ -52,7 +52,10 @@ def _database_url() -> str:
 
 @pytest.fixture(scope="module")
 def engine():
-    engine = create_engine(_database_url(), future=True)
+    # SQLAlchemy 2.1 needs the driver named; the env URL stays bare for other readers.
+    engine = create_engine(
+        _database_url().replace("postgresql://", "postgresql+psycopg2://", 1)
+    )
     with engine.connect() as conn:
         for name in DDL:
             conn.execute(

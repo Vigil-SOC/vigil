@@ -43,7 +43,7 @@ def _url(database: str, user: str | None = None, password: str | None = None) ->
     who = user if user is not None else parts["user"]
     pw = password if password is not None else parts["password"]
     return (
-        f"postgresql://{quote(who, safe='')}:{quote(pw, safe='')}"
+        f"postgresql+psycopg2://{quote(who, safe='')}:{quote(pw, safe='')}"
         f"@{parts['host']}:{parts['port']}/{database}"
     )
 

@@ -43,7 +43,7 @@ def _parts() -> dict[str, str]:
 def _url(database: str) -> str:
     part = _parts()
     return (
-        f"postgresql://{part['user']}:{part['password']}"
+        f"postgresql+psycopg2://{part['user']}:{part['password']}"
         f"@{part['host']}:{part['port']}/{database}"
     )
 
@@ -505,17 +505,20 @@ OWNER_PASSWORD = "owner-secret"
 DECOY_PASSWORD = "decoy-secret"
 
 
-def _role_url(user: str, password: str, database: str) -> str:
+def _role_url(
+    user: str, password: str, database: str, driver: str = "+psycopg2"
+) -> str:
     part = _parts()
     return (
-        f"postgresql://{quote(user)}:{quote(password)}"
+        f"postgresql{driver}://{quote(user)}:{quote(password)}"
         f"@{part['host']}:{part['port']}/{database}"
     )
 
 
 def _write_decoy_secret(state: Path) -> None:
     # The stored DSN is the decoy role. DatabaseConfig prefers it over POSTGRES_*.
-    dsn = _role_url(DECOY_ROLE, DECOY_PASSWORD, DECOY_DB)
+    # Plain libpq DSN, not a SQLAlchemy URL, so no driver suffix.
+    dsn = _role_url(DECOY_ROLE, DECOY_PASSWORD, DECOY_DB, driver="")
     key = Fernet.generate_key()
     (state / "master.key").write_bytes(key)
     blob = json.dumps({"POSTGRESQL_CONNECTION_STRING": dsn}).encode()
