@@ -12,14 +12,38 @@ from core.storage.database_data_service import DatabaseDataService
 
 
 def _make_disconnected_service() -> DatabaseDataService:
-    """Construct a service that failed its initial DB connection."""
+    """Construct a service whose first connection attempt (on first use) failed."""
+    svc = DatabaseDataService()
     with patch(
         "core.storage.database_data_service.init_database",
         side_effect=RuntimeError("postgres down"),
     ):
-        svc = DatabaseDataService()
+        assert svc._db_available is False
     assert svc._db_connected is False
     return svc
+
+
+def test_construction_opens_no_connection():
+    """Importing a module with a module-level service must not touch Postgres (#1456)."""
+    with patch("core.storage.database_data_service.init_database") as fake_init:
+        svc = DatabaseDataService()
+    fake_init.assert_not_called()
+    assert svc._db_connected is False
+
+
+def test_first_access_connects_even_on_a_freshly_booted_host():
+    """The cooldown must not suppress the first attempt when monotonic() is small."""
+    fake_manager = MagicMock()
+    fake_manager.health_check.return_value = True
+    svc = DatabaseDataService()
+    with patch("core.storage.database_data_service.time.monotonic", return_value=1.0):
+        with patch("core.storage.database_data_service.init_database") as fake_init:
+            with patch(
+                "core.storage.database_data_service.get_db_manager",
+                return_value=fake_manager,
+            ), patch("core.storage.database_data_service.DatabaseService"):
+                assert svc._db_available is True
+    fake_init.assert_called_once()
 
 
 def test_db_available_retries_when_disconnected_after_interval():
@@ -53,10 +77,11 @@ def test_db_available_short_circuits_when_already_connected():
     """When already connected, reading the property must NOT touch init_database."""
     fake_manager = MagicMock()
     fake_manager.health_check.return_value = True
+    svc = DatabaseDataService()
     with patch("core.storage.database_data_service.init_database"), patch(
         "core.storage.database_data_service.get_db_manager", return_value=fake_manager
     ), patch("core.storage.database_data_service.DatabaseService"):
-        svc = DatabaseDataService()
+        assert svc._db_available is True
 
     assert svc._db_connected is True
 

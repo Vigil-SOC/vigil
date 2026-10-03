@@ -42,6 +42,41 @@ def _reset_settings_cache():
     get_settings.cache_clear()
 
 
+# Tests that legitimately talk to Postgres: `external_service` ones (unit/conftest.py
+# provisions a throwaway database from the POSTGRES_* env) and the integration and
+# smoke trees, which CI runs against a service container.
+_DB_TREES = ("integration", "smoke")
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_postgres(request, monkeypatch):
+    """Point any accidental DB connection at a host that cannot resolve (#1456).
+
+    Without this a unit test falls back to localhost:5432 and the built-in
+    password, i.e. a developer's own running stack.
+    """
+    if request.node.get_closest_marker("external_service") or any(
+        part in _DB_TREES for part in request.path.parts
+    ):
+        yield
+        return
+    monkeypatch.setenv("POSTGRES_HOST", "postgres-blocked-in-unit-tests.invalid")
+    monkeypatch.setenv("POSTGRES_PORT", "1")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "blocked-in-unit-tests")
+    monkeypatch.delenv("POSTGRESQL_CONNECTION_STRING", raising=False)
+    try:
+        # A developer's stored DSN would otherwise outrank the POSTGRES_* pin.
+        monkeypatch.setattr(
+            "core.storage.connection._load_connection_string_secret", lambda: None
+        )
+        from core.config import get_settings
+
+        get_settings.cache_clear()
+    except ImportError:  # AST-only environments have no app deps
+        pass
+    yield
+
+
 @pytest.fixture
 def authenticate_app():
     """Make a FastAPI app treat every request as a permitted admin.

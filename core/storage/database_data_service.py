@@ -36,7 +36,10 @@ class DatabaseDataService:
     def __init__(self, demo_data=None):
         self._db_service = None
         self._db_connected = False
-        self._last_reconnect_attempt = 0.0
+        # Connection is deferred to first use (`_db_available`) so importing a
+        # module that builds a module-level service opens no connection (#1456).
+        # -inf, not 0.0: monotonic() can be under the interval on a fresh boot.
+        self._last_reconnect_attempt = float("-inf")
         self._demo_mode = is_demo_mode()
         self._demo_service = None
 
@@ -45,8 +48,6 @@ class DatabaseDataService:
             from core.platform.demo_data_service import DemoDataService
 
             self._demo_service = demo_data or DemoDataService()
-        else:
-            self._init_database()
 
     def _init_database(self):
         try:
