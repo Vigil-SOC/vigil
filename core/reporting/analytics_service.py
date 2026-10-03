@@ -24,8 +24,9 @@ from core.threat_intel.mitre_lookup import get_time_range, resolve_technique
 logger = logging.getLogger(__name__)
 
 # Known-answer probes (#923) are the daemon testing itself, not activity in the
-# estate: out of the headline totals and trend buckets, left in the per-source
-# breakdowns so they stay visible as what they are.
+# estate: out of the headline totals, the trend buckets and the severity,
+# entity and heatmap breakdowns, so those add up to the total. Left in the
+# per-source breakdown, so they stay visible there as what they are.
 _NOT_PROBE = Finding.data_source != "probe"
 
 
@@ -297,7 +298,7 @@ async def get_severity_distribution(
 
     severity_counts = (
         db.query(Finding.severity, func.count(Finding.finding_id).label("count"))
-        .filter(Finding.created_at.between(start_time, end_time))
+        .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
         .group_by(Finding.severity)
         .all()
     )
@@ -388,7 +389,9 @@ async def get_affected_entities(
     """Get top affected entities/devices from findings."""
 
     findings = (
-        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+        db.query(Finding)
+        .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
+        .all()
     )
 
     entity_counts = {}
@@ -493,6 +496,7 @@ async def get_attack_time_heatmap(
         .filter(
             Finding.created_at.between(start_time, end_time),
             Finding.timestamp.isnot(None),
+            _NOT_PROBE,
         )
         .group_by(day_col, hour_col)
         .all()
