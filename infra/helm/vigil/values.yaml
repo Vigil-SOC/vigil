@@ -686,14 +686,11 @@ config:
   SPLUNK_URL: ""
   SPLUNK_USERNAME: ""
   CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
-  ELASTIC_HOST: ""
-  ELASTIC_KIBANA_URL: ""
-  ELASTIC_USERNAME: ""
-  ELASTIC_VERIFY_SSL: "true"
-  ELASTIC_INDEX_PATTERN: ".alerts-security.alerts-default"
-  CRIBL_URL: ""
-  CRIBL_USERNAME: ""
-  CRIBL_WORKER_GROUP: "default"
+  ELASTIC_SIEM_ELASTICSEARCH_URL: ""
+  ELASTIC_SIEM_KIBANA_URL: ""
+  ELASTIC_SIEM_USERNAME: ""
+  ELASTIC_SIEM_VERIFY_SSL: "true"
+  ELASTIC_SIEM_INDEX_PATTERN: ".alerts-security.alerts-default"
   DARKTRACE_ENABLED: "false"
   DARKTRACE_URL: ""
   DARKTRACE_MAX_BODY_KB: "1024"
@@ -751,7 +748,7 @@ config:
   # Autonomous orchestrator
   ORCHESTRATOR_ENABLED: "false"
   ORCHESTRATOR_LOOP_INTERVAL: "60"
-  ORCHESTRATOR_MAX_CONCURRENT_AGENTS: "3"
+  ORCHESTRATOR_MAX_AGENTS: "3"
   ORCHESTRATOR_MAX_ITERATIONS: "50"
   ORCHESTRATOR_MAX_COST: "5.0"
   ORCHESTRATOR_MAX_RUNTIME: "3600"
@@ -764,7 +761,7 @@ config:
   VIGIL_OTEL_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
   OTEL_TRACES_SAMPLER: "parentbased_always_on"
-  VIGIL_OTEL_LOG_LLM_CONTENT: "false"
+  VIGIL_OTEL_RECORD_LLM_CONTENT: "false"
 
   # Kafka — disabled by default
   KAFKA_ENABLED: "false"
@@ -784,13 +781,8 @@ config:
 
   # Multi-provider LLM (non-secret defaults; per-provider config is stored
   # per-row in llm_provider_configs after first boot).
-  BIFROST_ENABLED: "false"
   BIFROST_URL: "http://bifrost:8080"
   OLLAMA_URL: "http://ollama:11434"
-  OPENAI_ENABLED: "false"
-  OPENAI_BASE_URL: "https://api.openai.com/v1"
-  OPENAI_ORGANIZATION: ""
-  DEFAULT_LLM_PROVIDER: "anthropic"
 
 # Additional ad-hoc env entries merged into every pod. Useful for site-specific
 # settings that don't warrant a top-level config key.
