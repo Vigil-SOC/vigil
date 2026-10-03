@@ -12,6 +12,9 @@
     "security-detections-mcp": "3.3.0"
   },
   "overrides": {
-    "axios": "^1.20.0"
+    "axios": "^1.20.0",
+    "@modelcontextprotocol/server-github": {
+      "@modelcontextprotocol/sdk": "^1.30.1"
+    }
   }
 }
