@@ -8,8 +8,6 @@ the application.
 Environment variables:
     VIGIL_OTEL_ENABLED              Master switch ("true"/"1"/"yes" to enable)
     OTEL_EXPORTER_OTLP_ENDPOINT     Collector address (default http://localhost:4317)
-    VIGIL_OTEL_RECORD_LLM_CONTENT   Opt-in to recording LLM prompts/responses (default off)
-    VIGIL_OTEL_RECORD_IOC_VALUES    Opt-in to recording raw finding/IOC content (default off)
     ENVIRONMENT                     Deployment environment label (default "development")
     RELEASE_VERSION                 Service version label (default "unknown")
 """
@@ -61,14 +59,6 @@ def get_investigation_id() -> Optional[str]:
 def _is_otel_enabled() -> bool:
     return get_settings().vigil_otel_enabled
 
-
-# Opt-in flag helpers live in core.telemetry_config so the sanitizer can
-# read them without importing this module (breaks the import cycle).
-# Re-exported here for backwards compatibility with existing callers/tests.
-from core.telemetry_config import (  # noqa: E402,F401
-    _should_record_ioc_values,
-    _should_record_llm_content,
-)
 
 # ---------------------------------------------------------------------------
 # Fallback no-op classes (used when OTEL is disabled or SDK missing)

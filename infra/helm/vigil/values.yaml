@@ -764,7 +764,6 @@ config:
   VIGIL_OTEL_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
   OTEL_TRACES_SAMPLER: "parentbased_always_on"
-  VIGIL_OTEL_LOG_LLM_CONTENT: "false"
 
   # Kafka — disabled by default
   KAFKA_ENABLED: "false"

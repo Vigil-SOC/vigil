@@ -197,24 +197,6 @@ class TestConfigHelpers:
             with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": val}):
                 assert _is_otel_enabled() is False
 
-    def test_llm_content_default_off(self):
-        from core.telemetry import _should_record_llm_content
-
-        env = {
-            k: v for k, v in os.environ.items() if k != "VIGIL_OTEL_RECORD_LLM_CONTENT"
-        }
-        with patch.dict(os.environ, env, clear=True):
-            assert _should_record_llm_content() is False
-
-    def test_ioc_values_default_off(self):
-        from core.telemetry import _should_record_ioc_values
-
-        env = {
-            k: v for k, v in os.environ.items() if k != "VIGIL_OTEL_RECORD_IOC_VALUES"
-        }
-        with patch.dict(os.environ, env, clear=True):
-            assert _should_record_ioc_values() is False
-
 
 # ---------------------------------------------------------------------------
 # core.telemetry_sanitizer — SECURITY TESTS
@@ -415,6 +397,52 @@ class TestSensitiveAttributeScrubber:
         assert attrs["http.method"] == "GET"
         assert attrs["http.status_code"] == 200
         provider.shutdown()
+
+    def test_on_end_always_redacts_content_despite_old_env_flags(self):
+        try:
+            from opentelemetry.sdk.trace import TracerProvider
+        except ImportError:
+            pytest.skip("opentelemetry-sdk not installed")
+
+        from core.telemetry_sanitizer import SensitiveAttributeScrubber
+
+        provider = TracerProvider()
+        scrubber = SensitiveAttributeScrubber()
+        redacted_keys = (
+            "gen_ai.prompt",
+            "gen_ai.completion",
+            "llm.prompt",
+            "llm.response",
+            "finding.description",
+            "finding.raw_event",
+            "finding.payload",
+            "finding.entity_context",
+            "finding.entity_id",  # regression: was covered by the old IOC block
+        )
+        old_flags = {
+            "VIGIL_OTEL_RECORD_LLM_CONTENT": "true",
+            "VIGIL_OTEL_RECORD_IOC_VALUES": "true",
+        }
+        with patch.dict(os.environ, old_flags):
+            span = provider.get_tracer("test").start_span("content")
+            for key in redacted_keys:
+                span.set_attribute(key, "plain content")
+            span.set_attribute("safe.attr", "hello")
+            span.end()
+            scrubber.on_end(span)
+
+        attrs = dict(span.attributes)
+        assert all(attrs[k] == "[REDACTED]" for k in redacted_keys)
+        assert attrs["safe.attr"] == "hello"
+        provider.shutdown()
+
+    def test_removed_opt_in_settings_are_ignored(self):
+        from core.config import Settings
+
+        assert not hasattr(Settings, "vigil_otel_record_llm_content")
+        assert not hasattr(Settings, "vigil_otel_record_ioc_values")
+        with patch.dict(os.environ, {"VIGIL_OTEL_RECORD_LLM_CONTENT": "true"}):
+            assert not hasattr(Settings(), "vigil_otel_record_llm_content")
 
 
 # ---------------------------------------------------------------------------
