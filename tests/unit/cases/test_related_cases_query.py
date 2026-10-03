@@ -140,3 +140,57 @@ def test_unknown_case_and_no_relations(session, tag):
     lonely = f"rc-{tag}-lonely"
     _case(session, lonely, iocs=[f"ioc-{tag}-x"])
     assert service.get_related_cases(lonely, session=session) == []
+
+
+def test_source_with_techniques_does_not_raise(session, tag):
+    # Generic ``sqlalchemy.ARRAY`` has no ``.overlap()``; the MITRE branch
+    # used to raise AttributeError whenever the source case had techniques.
+    base = f"rc-{tag}-base"
+    _case(session, base, techniques=[f"T{tag}-1"])
+    service = CaseSearchService()
+    assert service.get_related_cases(base, session=session) == []
+
+
+def test_shared_mitre_scores_five_per_technique(session, tag):
+    t1, t2, t3 = (f"T{tag}-{i}" for i in range(1, 4))
+    base = f"rc-{tag}-base"
+    _case(session, base, techniques=[t1, t2, t3])
+    _case(session, f"rc-{tag}-one", techniques=[t3, f"T{tag}-other"])
+    _case(session, f"rc-{tag}-two", techniques=[t1, t2])
+    _case(session, f"rc-{tag}-none", techniques=[f"T{tag}-unrelated"])
+
+    result = CaseSearchService().get_related_cases(base, session=session)
+
+    assert [
+        (r["case_id"], r["similarity_score"], r["similarity_reasons"]) for r in result
+    ] == [
+        (f"rc-{tag}-two", 10, ["shared_mitre_techniques"]),
+        (f"rc-{tag}-one", 5, ["shared_mitre_techniques"]),
+    ]
+
+
+def test_ioc_and_mitre_scores_combine_in_order(session, tag):
+    v1, v2 = f"ioc-{tag}-1", f"ioc-{tag}-2"
+    t1, t2, t3 = (f"T{tag}-{i}" for i in range(1, 4))
+    base = f"rc-{tag}-base"
+    _case(session, base, techniques=[t1, t2, t3], iocs=[v1, v2])
+    # Seeded out of score order, so the output order has to come from scores.
+    _case(session, f"rc-{tag}-mitre", techniques=[t1, t2, t3])  # 15
+    _case(session, f"rc-{tag}-ioc", iocs=[v1])  # 10
+    _case(session, f"rc-{tag}-both", techniques=[t1], iocs=[v1, v2])  # 25
+    _case(session, f"rc-{tag}-tiny", techniques=[t2])  # 5
+
+    result = CaseSearchService().get_related_cases(base, session=session)
+
+    assert [
+        (r["case_id"], r["similarity_score"], r["similarity_reasons"]) for r in result
+    ] == [
+        (
+            f"rc-{tag}-both",
+            25,
+            ["shared_ioc", "shared_ioc", "shared_mitre_techniques"],
+        ),
+        (f"rc-{tag}-mitre", 15, ["shared_mitre_techniques"]),
+        (f"rc-{tag}-ioc", 10, ["shared_ioc"]),
+        (f"rc-{tag}-tiny", 5, ["shared_mitre_techniques"]),
+    ]
