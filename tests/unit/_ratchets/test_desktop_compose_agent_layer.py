@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+import posixpath
+
 import pytest
 import yaml
 
@@ -18,6 +21,9 @@ pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parents[3]
 COMPOSE_PATH = REPO / "clients" / "desktop" / "standalone" / "docker-compose.yml"
+
+# prepare-standalone.js copies this file to the desktop's bifrost-config.json.
+BIFROST_CONFIG = REPO / "infra" / "docker" / "bifrost" / "config.json"
 
 AGENT_SERVICES = ("agent-worker", "agent-serve")
 
@@ -62,4 +68,37 @@ def test_bifrost_keeps_runtime_config_in_a_named_volume(path: Path) -> None:
         assert _named_volume_at(compose, name, "/app/data"), (
             f"{name} in {path.name} has no named volume at /app/data, so its "
             "settings are lost when the container is removed"
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        REPO / "infra" / "docker" / "docker-compose.yml",
+        COMPOSE_PATH,
+    ],
+    ids=["server", "desktop"],
+)
+def test_bifrost_request_log_lands_in_a_named_volume(path: Path) -> None:
+    """logs_store.path resolves under a volume, not the writable layer (#1454).
+
+    Bifrost's working directory is /app, so the relative "./logs.db" landed in
+    /app/logs.db and every recreate deleted the gateway log.
+    """
+    compose = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    logs_path = json.loads(BIFROST_CONFIG.read_text(encoding="utf-8"))["logs_store"][
+        "config"
+    ]["path"]
+    resolved = posixpath.normpath(posixpath.join("/app", logs_path))
+    for name, spec in compose["services"].items():
+        if "maximhq/bifrost" not in str(spec.get("image", "")):
+            continue
+        volume_dirs = [
+            target
+            for target in ("/app/data", "/app")
+            if _named_volume_at(compose, name, target)
+        ]
+        assert any(resolved.startswith(f"{d}/") for d in volume_dirs), (
+            f"{name} in {path.name} writes its request log to {resolved}, "
+            "outside any named volume, so it is lost when the container is removed"
         )

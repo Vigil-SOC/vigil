@@ -8,7 +8,7 @@
     "enabled": true,
     "type": "sqlite",
     "config": {
-      "path": "./logs.db"
+      "path": "/app/data/logs.db"
     }
   },
   "providers": {
