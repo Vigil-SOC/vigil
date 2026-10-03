@@ -8524,16 +8524,12 @@ export interface components {
         /** ByPriorityResponse */
         ByPriorityResponse: {
             /** Priority Breakdown */
-            priority_breakdown?: {
-                [key: string]: number;
-            };
+            priority_breakdown?: components["schemas"]["PriorityBreakdownRow"][];
         };
         /** ByStatusResponse */
         ByStatusResponse: {
             /** Status Breakdown */
-            status_breakdown?: {
-                [key: string]: number;
-            };
+            status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -11165,6 +11161,15 @@ export interface components {
             /** Connection String */
             connection_string: string;
         };
+        /** PriorityBreakdownRow */
+        PriorityBreakdownRow: {
+            /** Closed Count */
+            closed_count: number;
+            /** Count */
+            count: number;
+            /** Priority */
+            priority: string;
+        };
         /**
          * RecalculateCostRequest
          * @description Body for POST /analytics/recalculate-cost.
@@ -11646,6 +11651,13 @@ export interface components {
             job_id: string;
             /** Run Id */
             run_id: string;
+        };
+        /** StatusBreakdownRow */
+        StatusBreakdownRow: {
+            /** Count */
+            count: number;
+            /** Status */
+            status: string;
         };
         /**
          * SubmitFeedbackRequest

@@ -80,11 +80,11 @@
       "ByPriorityResponse": {
         "properties": {
           "priority_breakdown": {
-            "additionalProperties": {
-              "type": "integer"
+            "items": {
+              "$ref": "#/components/schemas/PriorityBreakdownRow"
             },
             "title": "Priority Breakdown",
-            "type": "object"
+            "type": "array"
           }
         },
         "title": "ByPriorityResponse",
@@ -93,11 +93,11 @@
       "ByStatusResponse": {
         "properties": {
           "status_breakdown": {
-            "additionalProperties": {
-              "type": "integer"
+            "items": {
+              "$ref": "#/components/schemas/StatusBreakdownRow"
             },
             "title": "Status Breakdown",
-            "type": "object"
+            "type": "array"
           }
         },
         "title": "ByStatusResponse",
@@ -2792,6 +2792,29 @@
         "title": "PendingActionResponse",
         "type": "object"
       },
+      "PriorityBreakdownRow": {
+        "properties": {
+          "closed_count": {
+            "title": "Closed Count",
+            "type": "integer"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "string"
+          }
+        },
+        "required": [
+          "priority",
+          "count",
+          "closed_count"
+        ],
+        "title": "PriorityBreakdownRow",
+        "type": "object"
+      },
       "RejectRequest": {
         "properties": {
           "reason": {
@@ -3280,6 +3303,24 @@
           "job_id"
         ],
         "title": "StartRunResponse",
+        "type": "object"
+      },
+      "StatusBreakdownRow": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "count"
+        ],
+        "title": "StatusBreakdownRow",
         "type": "object"
       },
       "ValidationError": {

@@ -158,12 +158,23 @@ class BreachedCasesResponse(BaseModel):
     breached_cases: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class PriorityBreakdownRow(BaseModel):
+    priority: str
+    count: int
+    closed_count: int
+
+
+class StatusBreakdownRow(BaseModel):
+    status: str
+    count: int
+
+
 class ByPriorityResponse(BaseModel):
-    priority_breakdown: Dict[str, int] = Field(default_factory=dict)
+    priority_breakdown: List[PriorityBreakdownRow] = Field(default_factory=list)
 
 
 class ByStatusResponse(BaseModel):
-    status_breakdown: Dict[str, int] = Field(default_factory=dict)
+    status_breakdown: List[StatusBreakdownRow] = Field(default_factory=list)
 
 
 metrics_service = CaseMetricsService()

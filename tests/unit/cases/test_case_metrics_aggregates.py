@@ -11,6 +11,8 @@ import pytest
 from sqlalchemy import event
 
 from core.api.v1.case_metrics_router import (
+    ByPriorityResponse,
+    ByStatusResponse,
     get_all_analyst_performance,
     get_by_priority,
     get_by_status,
@@ -315,6 +317,18 @@ def test_by_priority_and_status_respect_the_window(session):
         "open": 1,
         "investigating": 1,
     }
+
+
+def test_by_priority_and_status_fit_their_response_models(session):
+    # The handlers are called directly above, which skips FastAPI's response
+    # validation; the declared models must accept what they return.
+    _seed(session)
+
+    priority = ByPriorityResponse.model_validate(_run(get_by_priority, session))
+    status = ByStatusResponse.model_validate(_run(get_by_status, session))
+
+    assert [row.priority for row in priority.priority_breakdown] == ["high", "low"]
+    assert sum(row.count for row in status.status_breakdown) == 5
 
 
 def test_by_priority_and_status_empty(session):
