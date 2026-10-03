@@ -491,7 +491,7 @@ describe("scope", () => {
     await expect(controllerFor(started.ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
     const checkpoint = pendingCheckpoints(started.ledger.projection)[0]!;
     expect(checkpoint.checkpoint_class).toBe("scope_extension");
-    expect(checkpoint.question).toMatch(new RegExp(SEED_KEY.replace(/\./g, "\\.")));
+    expect(checkpoint.question).toMatch(new RegExp(SEED_KEY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     expect([...started.ledger.projection.questions.values()]).toHaveLength(0);
 
     await steer(started.queue, started.runId, "approve", "yes, it is ours", { checkpoint_id: checkpoint.checkpoint_id });
