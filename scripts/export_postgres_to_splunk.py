@@ -11,8 +11,10 @@ import os
 import logging
 import argparse
 import json
+import time
 import requests
-from typing import List, Dict, Any
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
 import urllib3
 
 # Add parent directory to path for imports
@@ -21,7 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.storage.connection import get_db_manager
 from core.storage.models import Finding, Case
 from core.storage.schemas import FindingSchema
-from core.time import utcnow
 from sqlalchemy import func
 
 # Disable SSL warnings for self-signed certificates
@@ -33,6 +34,20 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _epoch(dt: Optional[datetime]) -> float:
+    """Return Unix epoch seconds for a DB datetime, or now if it is missing.
+
+    The model columns are naive ``DateTime`` holding UTC, and a naive
+    ``datetime.timestamp()`` is read as host-local time, so it is pinned to
+    UTC here.
+    """
+    if dt is None:
+        return time.time()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
 
 class PostgresToSplunkExporter:
@@ -170,7 +185,7 @@ class PostgresToSplunkExporter:
         
         # HEC format
         hec_event = {
-            "time": finding.timestamp.timestamp() if finding.timestamp else utcnow().timestamp(),
+            "time": _epoch(finding.timestamp),
             "sourcetype": "deeptempo:finding",
             "source": "postgresql_export",
             "host": "deeptempo-soc",
@@ -227,7 +242,7 @@ class PostgresToSplunkExporter:
         
         # HEC format
         hec_event = {
-            "time": case.created_at.timestamp() if case.created_at else utcnow().timestamp(),
+            "time": _epoch(case.created_at),
             "sourcetype": "deeptempo:case",
             "source": "postgresql_export",
             "host": "deeptempo-soc",

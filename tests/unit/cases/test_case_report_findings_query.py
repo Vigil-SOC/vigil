@@ -21,8 +21,13 @@ from core.time import utcnow
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
-# Any SELECT that returns finding rows, direct or through the case link.
-_FINDINGS_READ = re.compile(r"\bfindings\.finding_id AS\b", re.IGNORECASE)
+# Any SELECT that returns finding rows, direct or through the case link: the
+# column sits in the select list, before the first FROM. SQLAlchemy 2.1 no
+# longer labels it ``AS findings_finding_id``, so match the column alone.
+_FINDINGS_READ = re.compile(
+    r"^\s*SELECT\b(?:(?!\bFROM\b).)*\bfindings\.finding_id\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @contextmanager

@@ -268,7 +268,9 @@ class CaseSearchService:
                     .filter(
                         and_(
                             Case.case_id != case_id,
-                            Case.mitre_techniques.overlap(case.mitre_techniques),
+                            # Generic ``sqlalchemy.ARRAY`` has no ``.overlap()``;
+                            # spell Postgres' array-overlap operator directly.
+                            Case.mitre_techniques.op("&&")(case.mitre_techniques),
                         )
                     )
                     .all()

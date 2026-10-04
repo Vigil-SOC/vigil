@@ -8,6 +8,10 @@ finding turned the whole response into a 500.
 DB-backed because the NULL ordering is half of it: ``ORDER BY timestamp DESC``
 puts NULLs first in Postgres, so a page of findings can be nothing but undated
 rows, and a route that skips them after fetching that page shows nothing.
+
+``findings.severity`` is nullable too: the same ingest stores findings without
+one. ``f.get("severity", "unknown")`` returns None for a present-but-null key,
+so those findings were labelled "Finding: X - None".
 """
 
 from __future__ import annotations
@@ -68,12 +72,14 @@ def undated_page():
     _seed(*(_finding(f"tl-crowd-{i:04d}", None) for i in range(PAGE)))
 
 
-def _finding(finding_id: str, at: Optional[datetime], **kw) -> Finding:
+def _finding(
+    finding_id: str, at: Optional[datetime], severity: Optional[str] = "high", **kw
+) -> Finding:
     return Finding(
         finding_id=finding_id,
         timestamp=at,
         data_source="loglm",
-        severity="high",
+        severity=severity,
         **kw,
     )
 
@@ -204,3 +210,55 @@ def test_a_clusters_own_undated_findings_do_not_hide_its_dated_ones(client):
 
     assert r.status_code == 200, r.text
     assert _finding_ids(r.json()) == ["tl-dated"]
+
+
+def _unrated_labels(body: dict) -> list:
+    return [e["content"] for e in body["events"] if e["type"] == "finding"]
+
+
+def test_case_timeline_labels_an_unrated_finding_unknown(client):
+    _seed(
+        Case(
+            case_id="tl-case",
+            title="LogLM import",
+            findings=[_finding("tl-unrated", T0, severity=None)],
+        )
+    )
+
+    r = client.get("/api/timeline/case/tl-case")
+
+    assert r.status_code == 200, r.text
+    assert _unrated_labels(r.json()) == ["Finding: tl-unrated - unknown"]
+
+
+def test_context_timeline_labels_an_unrated_finding_unknown(client):
+    _seed(
+        _finding("tl-target", T0),
+        _finding("tl-unrated", T0 + timedelta(minutes=5), severity=None),
+    )
+
+    r = client.get("/api/timeline/finding/tl-target/context")
+
+    assert r.status_code == 200, r.text
+    assert _unrated_labels(r.json()) == [
+        "\U0001f3af Finding: tl-target - high",
+        "Finding: tl-unrated - unknown",
+    ]
+
+
+def test_context_timeline_labels_an_unrated_target_unknown(client):
+    _seed(_finding("tl-unrated", T0, severity=None))
+
+    r = client.get("/api/timeline/finding/tl-unrated/context")
+
+    assert r.status_code == 200, r.text
+    assert _unrated_labels(r.json()) == ["\U0001f3af Finding: tl-unrated - unknown"]
+
+
+def test_cluster_timeline_labels_an_unrated_finding_unknown(client):
+    _seed(_finding("tl-unrated", T0, severity=None, cluster_id="tl-cluster"))
+
+    r = client.get("/api/timeline/cluster/tl-cluster")
+
+    assert r.status_code == 200, r.text
+    assert _unrated_labels(r.json()) == ["Finding: tl-unrated - unknown"]

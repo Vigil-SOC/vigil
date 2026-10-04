@@ -168,7 +168,7 @@ async def get_case_timeline(case_id: str):
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
-                content=f"Finding: {finding['finding_id']} - {finding.get('severity', 'unknown')}",
+                content=f"Finding: {finding['finding_id']} - {finding.get('severity') or 'unknown'}",
                 start=normalize_timestamp(finding["timestamp"]),
                 type="finding",
                 severity=finding.get("severity"),
@@ -248,7 +248,7 @@ async def get_finding_context_timeline(
             events.append(
                 TimelineEvent(
                     id=f"finding-{f['finding_id']}",
-                    content=f"{'🎯 ' if is_target else ''}Finding: {f['finding_id']} - {f.get('severity', 'unknown')}",
+                    content=f"{'🎯 ' if is_target else ''}Finding: {f['finding_id']} - {f.get('severity') or 'unknown'}",
                     start=f_time,
                     type="finding",
                     severity=f.get("severity"),
@@ -406,7 +406,7 @@ async def get_cluster_timeline(cluster_id: str):
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
-                content=f"Finding: {finding['finding_id']} - {finding.get('severity', 'unknown')}",
+                content=f"Finding: {finding['finding_id']} - {finding.get('severity') or 'unknown'}",
                 start=normalize_timestamp(finding["timestamp"]),
                 type="finding",
                 severity=finding.get("severity"),
