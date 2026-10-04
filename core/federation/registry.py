@@ -94,6 +94,9 @@ def _ensure_builtins_loaded() -> None:
         from core.integrations.microsoft_defender import (  # noqa: F401
             adapter as _defender_adapter,
         )
+        from core.integrations.opensearch import (  # noqa: F401
+            adapter as _opensearch_adapter,
+        )
         from core.integrations.splunk import adapter as _splunk_adapter  # noqa: F401
     except Exception as e:
         logger.warning("Failed to load builtin federation adapters: %s", e)

@@ -106,6 +106,7 @@ PROXY_SUPPORTED: frozenset[str] = frozenset(
     {
         "splunk",
         "elastic-siem",
+        "opensearch",
         "cribl-stream",
         "misp",
     }

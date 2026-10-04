@@ -15,6 +15,7 @@ const SOURCE_BADGES: Record<string, SourceBadge> = {
   'azure-sentinel': { label: 'Sentinel', color: '#2a7de1', icon: 'shield' },
   elastic: { label: 'Elastic', color: '#f0bf1a', icon: 'bolt' },
   'elastic-siem': { label: 'Elastic', color: '#f0bf1a', icon: 'bolt' },
+  opensearch: { label: 'OpenSearch', color: '#005eb8', icon: 'search' },
   'aws-security-hub': { label: 'Security Hub', color: '#e88b1a', icon: 'shield' },
   webhook: { label: 'Webhook', color: '#8a90a6', icon: 'link' },
   // The daemon's known-answer self-test (#923), not a connector.

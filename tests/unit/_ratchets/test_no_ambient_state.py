@@ -53,6 +53,7 @@ LAZY_SINGLETON_ALLOWED = {
     ("core/secrets_manager.py", "get_secrets_manager"),
     ("core/llm/providers/registry.py", "get_registry"),
     ("core/integrations/elastic/tool.py", "get_elastic_service"),
+    ("core/integrations/opensearch/tool.py", "get_opensearch_service"),
     ("core/integrations/splunk/tool.py", "get_splunk_service"),
     ("core/integrations/vstrike/client.py", "get_vstrike_service"),
     # Module-private and already injectable: every caller may pass its own

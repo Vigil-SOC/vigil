@@ -113,6 +113,7 @@ class DataPoller:
         self._aws_security_hub_state = PollState()
         self._microsoft_defender_state = PollState()
         self._elastic_state = PollState()
+        self._opensearch_state = PollState()
         self._generic_state = PollState()
 
         # Durable per-source dedup sets (Redis-backed)
@@ -132,6 +133,7 @@ class DataPoller:
         self._aws_security_hub_service = None
         self._microsoft_defender_service = None
         self._elastic_service = None
+        self._opensearch_service = None
 
         # Stats
         self.stats = {
@@ -147,6 +149,8 @@ class DataPoller:
             "microsoft_defender_findings": 0,
             "elastic_polls": 0,
             "elastic_findings": 0,
+            "opensearch_polls": 0,
+            "opensearch_findings": 0,
             "webhook_findings": 0,
             "errors": 0,
         }
@@ -247,6 +251,18 @@ class DataPoller:
                     logger.warning(
                         f"Failed to initialize Elastic Security service: {e}"
                     )
+
+            # Initialize OpenSearch service if configured
+            if is_integration_enabled("opensearch"):
+                try:
+                    from core.integrations.opensearch.ingestion import (
+                        OpenSearchIngestion,
+                    )
+
+                    self._opensearch_service = OpenSearchIngestion()
+                    logger.info("OpenSearch service initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize OpenSearch service: {e}")
 
             # Initialize data service for database access
             from core.storage.database_data_service import DatabaseDataService
@@ -771,6 +787,7 @@ class DataPoller:
         "azure_sentinel": ("Azure Sentinel", "incidents"),
         "aws_security_hub": ("AWS Security Hub", "findings"),
         "microsoft_defender": ("Microsoft Defender", "alerts"),
+        "opensearch": ("OpenSearch", "findings"),
     }
 
     async def _poll_ingestion_source(self, source: str):

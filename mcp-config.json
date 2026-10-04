@@ -94,6 +94,15 @@
       }
     },
 
+    "opensearch": {
+      "command": "python3",
+      "args": ["core/integrations/opensearch/tool.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "OpenSearch SIEM via the OpenSearch REST API. Configure in Settings (OpenSearch URL, username/password, optional OpenSearch Dashboards URL). The tool reads via resolve(); there is no required env placeholder, so the server is not treated as dormant until those values exist."
+      }
+    },
+
     "pagerduty": {
       "command": "uvx",
       "args": ["pagerduty-mcp==1.1.0", "--enable-write-tools"],
