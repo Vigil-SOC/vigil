@@ -193,7 +193,10 @@ export function SkillDrawer({
             ) : (
               <div className="vg-skill-field">
                 <div className="flex items-center justify-between gap-3">
-                  <label htmlFor="vg-s-file" className="vg-skill-label mono break-all">{openFile} · read-only</label>
+                  <label htmlFor="vg-s-file" className="vg-skill-label mono">
+                    <span className="break-all">{openFile}</span>{' '}
+                    <span className="whitespace-nowrap">· read-only</span>
+                  </label>
                   <button type="button" className="vg-skill-btn" onClick={() => setOpenFile(null)}>Back to steps</button>
                 </div>
                 {file.error && err(file.error)}
