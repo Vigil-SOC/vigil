@@ -8,6 +8,7 @@
 # x-agent-env anchor, with host-side hosts.
 set -euo pipefail
 
+source "$(dirname "$0")/lib.sh"
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
@@ -55,6 +56,7 @@ cd services/agent
 # start hit EADDRINUSE (#970). tsx itself relays SIGTERM/SIGINT to the node
 # process it spawns, so the recorded PID is one whose death stops the listener.
 start() {
+    rotate_log "$ROOT/logs/agent-$1.log"
     AGENT_HEALTH_PORT=6990 AGENT_HTTP_PORT=6989 \
         nohup node_modules/.bin/tsx "$1.ts" > "$ROOT/logs/agent-$1.log" 2>&1 &
     echo $! > "$ROOT/logs/agent-$1.pid"

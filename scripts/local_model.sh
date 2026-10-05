@@ -9,6 +9,7 @@
 # address only. Host-side catalog sync uses that same address: .env ships
 # OLLAMA_URL=localhost, and the sync reads it.
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
@@ -117,6 +118,7 @@ EOF
         sleep 0.25
       done
     fi
+    rotate_log "$ROOT/logs/ollama-local.log"
     OLLAMA_HOST="${BRIDGE}:11434" \
       setsid ollama serve >>"$ROOT/logs/ollama-local.log" 2>&1 </dev/null &
     echo "$!" >"$ROOT/logs/ollama-local.pid"

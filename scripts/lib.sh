@@ -33,6 +33,61 @@ dc() {
         "${_DC_CMD[@]}" -f "$REPO_ROOT/infra/docker/docker-compose.yml" "$@"
 }
 
+# --- Log retention ---
+# Shift FILE to FILE.1 .. FILE.4 (5 runs kept) before a new process truncates it.
+# Call only where a new process is about to start. Never fails under set -e.
+rotate_log() {
+    local f="$1" i
+    [ -s "$f" ] || return 0
+    rm -f "$f.4" 2>/dev/null || true
+    for i in 3 2 1; do
+        [ -e "$f.$i" ] && { mv -f "$f.$i" "$f.$((i + 1))" 2>/dev/null || true; }
+    done
+    mv -f "$f" "$f.1" 2>/dev/null || true
+    return 0
+}
+
+# Save a container's logs to logs/containers/<name>-<UTC stamp>.log before Vigil
+# removes or recreates it; keeps the 5 newest per container. The read is capped
+# at VIGIL_LOG_SAVE_TAIL lines (default 20000) and VIGIL_LOG_SAVE_TIMEOUT seconds
+# (default 15; a watchdog, since macOS has no `timeout`). Never fails or blocks.
+save_container_logs() {
+    local name="$1" dir="$REPO_ROOT/logs/containers"
+    command -v docker &>/dev/null || return 0
+    # Anchored exact-name match, as in ensure_container.
+    [ -n "$(docker ps -aq -f "name=^${name}$" 2>/dev/null)" ] || return 0
+    mkdir -p "$dir" 2>/dev/null || return 0
+    local out; out="$dir/${name}-$(date -u +%Y%m%dT%H%M%SZ).log"
+    docker logs --timestamps --tail "${VIGIL_LOG_SAVE_TAIL:-20000}" "$name" >"$out.tmp" 2>&1 &
+    local pid=$!
+    { sleep "${VIGIL_LOG_SAVE_TIMEOUT:-15}"; kill "$pid"; } >/dev/null 2>&1 &
+    local watchdog=$!
+    if wait "$pid" 2>/dev/null; then
+        mv -f "$out.tmp" "$out" 2>/dev/null || true
+    fi
+    pkill -P "$watchdog" 2>/dev/null || true
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+    rm -f "$out.tmp" 2>/dev/null || true
+    # Timestamps sort lexically; the glob needs a digit after the name so
+    # "deeptempo-postgres" does not claim "deeptempo-postgres-test" logs.
+    local -a saved=("$dir/${name}"-[0-9]*T*Z.log)
+    local n=$((${#saved[@]} - 5)) i
+    for ((i = 0; i < n; i++)); do rm -f "${saved[$i]}" 2>/dev/null || true; done
+    return 0
+}
+
+# Save logs for every container of the compose project, including one-offs.
+save_project_container_logs() {
+    command -v docker &>/dev/null || return 0
+    local id name
+    for id in $(dc ps -a -q 2>/dev/null || true); do
+        name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null || true)"
+        [ -n "$name" ] && save_container_logs "${name#/}"
+    done
+    return 0
+}
+
 # --- Ensure the Docker daemon is reachable, launching Docker Desktop if not ---
 # `command -v docker` only proves the CLI exists; every compose call still fails
 # if the daemon is down. Checks the daemon, starts it, and waits.
@@ -290,6 +345,7 @@ install_python_deps() {
     mkdir -p "$REPO_ROOT/logs"
 
     echo "Installing Python dependencies from $(basename "$src") (log: $log)..."
+    rotate_log "$log"
     if ! "$UV" pip install --python "$venv/bin/python" -r "$src" >"$log" 2>&1; then
         echo "" >&2
         echo "Failed to install Python dependencies. Last 30 lines:" >&2
@@ -362,6 +418,8 @@ ensure_container() {
     if [ -n "$(docker ps -q -f "name=^${name}$")" ]; then
         return 0
     fi
+    # `up -d` on a stopped container may recreate it, which discards its logs.
+    save_container_logs "$name"
     if [ -n "$profile" ]; then
         COMPOSE_PROFILES="$profile" dc up -d "$service"
     else

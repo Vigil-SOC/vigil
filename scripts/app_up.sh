@@ -97,6 +97,7 @@ if [ -n "$(pgrep -f 'uvicorn services.api.main:app')" ]; then
 else
     mkdir -p "$REPO_ROOT/logs"
     cd "$REPO_ROOT"
+    rotate_log "$REPO_ROOT/logs/backend.log"
     # Fully detach the daemon: stdin from /dev/null and disown so this script
     # doesn't wait4() the backgrounded uvicorn and can return once it's healthy.
     nohup "$VENV_UVICORN" services.api.main:app --host "$BIND_HOST" --port 6987 \

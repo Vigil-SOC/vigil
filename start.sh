@@ -65,6 +65,7 @@ backup_pre_upgrade() {
     [ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0
     prepare_backup_mounts
     # An old loop would hold the backup lock, and could snapshot mid-upgrade.
+    save_container_logs "$BACKUP_LOOP_CONTAINER"
     docker rm -f "$BACKUP_LOOP_CONTAINER" >/dev/null 2>&1 || true
     local -a version_arg=()
     [ "$VERSION" = "dev" ] || version_arg=(--target-version "$VERSION")
@@ -81,6 +82,7 @@ backup_pre_upgrade() {
 start_backup_loop() {
     [ -f "$(host_state_dir)/$BACKUPS_FILE" ] || return 0
     prepare_backup_mounts
+    save_container_logs "$BACKUP_LOOP_CONTAINER"
     docker rm -f "$BACKUP_LOOP_CONTAINER" >/dev/null 2>&1 || true
     dc run -d --no-deps --name "$BACKUP_LOOP_CONTAINER" "${BACKUP_RUN_ARGS[@]}" backup >/dev/null \
         || { echo "Warning: backup schedule failed to start." >&2; return 0; }
@@ -266,6 +268,8 @@ fi
 
 # --- Launch ---
 export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
+LOGS_DIR="${PWD}/logs"
+mkdir -p "$LOGS_DIR"
 
 print_ready() {
     echo ""
@@ -288,7 +292,8 @@ start_frontend() {
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
         local host="$BIND_HOST"; [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
         wait_for_url "http://${host}:6987/api/health" 60 || true
-        (cd clients/web && npm run dev) &
+        # exec: $! is npm itself, not a subshell the cleanup trap would orphan it from.
+        (cd clients/web && exec npm run dev > >(tee -ia "$LOGS_DIR/frontend.log") 2>&1) &
         FRONTEND_PID=$!
     fi
 }
@@ -317,11 +322,20 @@ if [ "$DAEMON" -eq 0 ]; then
     }
     trap cleanup INT TERM EXIT
 
+    # Output goes to the terminal and the same logs/*.log files daemon mode
+    # writes. tee -i survives Ctrl-C so shutdown output is still captured; piping
+    # makes Python block-buffer, hence PYTHONUNBUFFERED.
+    export PYTHONUNBUFFERED=1
+    rotate_log "$LOGS_DIR/backend.log"
+    rotate_log "$LOGS_DIR/llm_worker.log"
+    rotate_log "$LOGS_DIR/frontend.log"
+
     uvicorn services.api.main:app --host "$BIND_HOST" --port 6987 --reload \
-        --reload-dir services --reload-dir core --reload-dir tools &
+        --reload-dir services --reload-dir core --reload-dir tools \
+        > >(tee -ia "$LOGS_DIR/backend.log") 2>&1 &
     BACKEND_PID=$!
 
-    python3 -m services.worker &
+    python3 -m services.worker > >(tee -ia "$LOGS_DIR/llm_worker.log") 2>&1 &
     WORKER_PID=$!
 
     start_frontend
@@ -337,11 +351,11 @@ if [ "$DAEMON" -eq 0 ]; then
     wait
 else
     # Daemon
-    mkdir -p logs
     [ "$(pgrep -f 'uvicorn services.api.main:app' | wc -l)" -gt 0 ] && {
         echo "Backend already running. Use ./shutdown_all.sh to stop."; exit 1;
     }
 
+    rotate_log logs/backend.log
     nohup uvicorn services.api.main:app --host "$BIND_HOST" --port 6987 --reload \
         --reload-dir services --reload-dir core --reload-dir tools \
         > logs/backend.log 2>&1 &
@@ -357,10 +371,12 @@ else
         exit 1
     fi
 
+    rotate_log logs/daemon.log
     nohup "${PWD}/venv/bin/python" services/daemon/main.py > logs/daemon.log 2>&1 &
     echo $! > logs/daemon.pid
 
     # Started unconditionally, independent of orchestrator.settings (#581).
+    rotate_log logs/llm_worker.log
     nohup "${PWD}/venv/bin/python" -m services.worker > logs/llm_worker.log 2>&1 &
     echo $! > logs/llm_worker.pid
 
@@ -372,6 +388,7 @@ else
         # from the repo root — so a relative ../logs there pointed above the
         # repo and failed. Anchor both writes to the repo-root logs dir.
         logs_dir="${PWD}/logs"
+        rotate_log "${logs_dir}/frontend.log"
         (cd clients/web && nohup npm run dev > "${logs_dir}/frontend.log" 2>&1 &
          echo $! > "${logs_dir}/frontend.pid")
     fi
