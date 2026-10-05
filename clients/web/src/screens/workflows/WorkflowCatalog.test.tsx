@@ -197,6 +197,10 @@ describe('workflow catalog table', () => {
   })
 
   it('names workflows whose listed agents recommend read_skill, and marks built-in skills read-only', async () => {
+    vi.mocked(skillsApi.list).mockResolvedValueOnce([
+      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+    ])
     render(
       <MemoryRouter>
         <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
@@ -205,16 +209,19 @@ describe('workflow catalog table', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('executive-summary')).toBeInTheDocument()
+    expect(screen.getByText('desk-check')).toBeInTheDocument()
     expect(await screen.findByText('Beacon hunt, Threat hunt')).toBeInTheDocument()
     expect(screen.queryByText('Ransom reply')).toBeNull()
     expect(screen.queryByText('Phase tools only')).toBeNull()
     expect(screen.queryByText('Orphan flow')).toBeNull()
-    expect(screen.getByRole('button', { name: 'The grant offers the whole library.' })).toBeInTheDocument()
+    // once above the grid, not on every card
+    expect(screen.getAllByText('Offered to')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'The grant offers the whole library.' })).toHaveLength(1)
     expect(screen.getByText('Built in')).toBeInTheDocument()
     expect(screen.getByText('Read-only')).toBeInTheDocument()
     expect(screen.queryByText('skills/executive-summary')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit executive-summary' }))
     expect(await screen.findByText(/path is unset/)).toBeInTheDocument()

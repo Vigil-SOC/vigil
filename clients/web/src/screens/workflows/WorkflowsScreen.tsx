@@ -3867,7 +3867,16 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   return (
     <>
       <div className="flex items-center gap-3 px-[22px] pt-[14px]">
-        <span className="flex-1 text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
+        <div className="flex-1 min-w-0">
+          <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
+          <span className="sk-offered" title={`Offered to ${offeredText}`}>
+            Offered to
+            <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
+              <Icon name="info" size={14} />
+            </button>
+            <span className="sk-offered-list">{offeredText}</span>
+          </span>
+        </div>
         <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} style={{ opacity: phase === 'ready' ? 1 : 0.5 }} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
       </div>
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
@@ -3890,13 +3899,6 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
-                <span className="sk-offered" title={`Offered to ${offeredText}`}>
-                  Offered to
-                  <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
-                    <Icon name="info" size={14} />
-                  </button>
-                  <span className="sk-offered-list">{offeredText}</span>
-                </span>
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}

@@ -6174,31 +6174,39 @@
 
 .soc-console .sk-meta {
    display: flex;
-   align-items: flex-start;
-   justify-content: space-between;
+   align-items: center;
+   justify-content: flex-end;
    gap: 8px;
    min-width: 0;
+   min-height: 24px;
    padding: 0 2px;
    font-size: 11px;
    color: var(--tx2);
 }
 
 .soc-console .sk-offered {
+   display: flex;
+   align-items: center;
+   gap: 4px;
    min-width: 0;
+   font-size: 12px;
    line-height: 1.45;
+   color: var(--tx2);
+   white-space: nowrap;
 }
 
 .soc-console .sk-offered .btn.icon {
+   flex: none;
    padding: 0;
    border: 0;
    vertical-align: middle;
 }
 
 .soc-console .sk-offered-list {
-   display: -webkit-box;
-   -webkit-box-orient: vertical;
-   -webkit-line-clamp: 2;
+   min-width: 0;
    overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
 }
 
 .soc-console .sk-ro {
