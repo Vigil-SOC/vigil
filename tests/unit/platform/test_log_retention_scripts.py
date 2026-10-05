@@ -44,9 +44,7 @@ def sandbox(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _bash(
-    root: Path, body: str, **env: str
-) -> subprocess.CompletedProcess[str]:
+def _bash(root: Path, body: str, **env: str) -> subprocess.CompletedProcess[str]:
     full_env = {
         **os.environ,
         "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
@@ -92,7 +90,9 @@ def test_save_container_logs_names_and_keeps_five(sandbox: Path) -> None:
     containers.mkdir(parents=True)
     # Seven old saves of this container, plus another container's that must survive.
     for i in range(7):
-        (containers / f"deeptempo-postgres-2025010{i + 1}T000000Z.log").write_text("old")
+        (containers / f"deeptempo-postgres-2025010{i + 1}T000000Z.log").write_text(
+            "old"
+        )
     (containers / "deeptempo-postgres-test-20250101T000000Z.log").write_text("other")
 
     done = _bash(sandbox, "save_container_logs deeptempo-postgres", STUB_RUN="now")

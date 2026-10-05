@@ -23,7 +23,9 @@ SCRIPTS = [
 ]
 
 # `>` or `>>` to a .log path; `2>&1`, `>&2` and `&>` do not match.
-REDIRECT = re.compile(r'(?<![\d&<>])(>>?)\s*"?([^\s">&]*(?:logs|\$log\b)[^\s">]*?(?:\.log)?)"?(?=\s|$)')
+REDIRECT = re.compile(
+    r'(?<![\d&<>])(>>?)\s*"?([^\s">&]*(?:logs|\$log\b)[^\s">]*?(?:\.log)?)"?(?=\s|$)'
+)
 WINDOW = 8
 
 # Appends that deliberately keep one growing file: install_dev_deps adds to the
