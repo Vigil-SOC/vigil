@@ -5978,3 +5978,244 @@
       min-width: 120px;
    }
 }
+
+/* ---- Skills tab: folder cards (boards/Agents.dc.html, Skills). The tone is the
+   accent for a built-in skill and --vio for a custom one. A folder lifts its
+   SKILL.md out on hover or focus. Scoped to .sk-*, so no other screen moves. ---- */
+.soc-console .sk-card {
+   --sk-tone: var(--ac);
+   --sk-back: color-mix(in oklab, var(--sk-tone) 24%, var(--bg2));
+   --sk-front: color-mix(in oklab, var(--sk-tone) 30%, var(--bg4));
+   --sk-paper: color-mix(in oklab, var(--tx0) 12%, var(--bg4));
+   --sk-paper-fg: var(--tx0);
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+   min-width: 0;
+}
+
+.soc-console .sk-card.sk-custom {
+   --sk-tone: var(--vio);
+}
+
+.soc-console.vg-light .sk-card {
+   --sk-back: color-mix(in oklab, var(--sk-tone) 30%, var(--bg3));
+   --sk-front: color-mix(in oklab, var(--sk-tone) 16%, var(--bg2));
+   --sk-paper: var(--bg1);
+   --sk-paper-fg: var(--sk-tone);
+}
+
+.soc-console .sk-open {
+   display: flex;
+   flex-direction: column;
+   gap: 10px;
+   min-width: 0;
+   padding: 0;
+   border: 0;
+   border-radius: 14px;
+   background: transparent;
+   color: inherit;
+   cursor: pointer;
+   text-align: left;
+}
+
+.soc-console .sk-open:focus-visible {
+   outline: 2px solid var(--ac);
+   outline-offset: 3px;
+}
+
+.soc-console .sk-folder {
+   position: relative;
+   display: block;
+   height: 150px;
+   perspective: 700px;
+   /* the tilted flap bleeds a few px past the card; clip it so nothing overflows sideways */
+   overflow-x: clip;
+}
+
+.soc-console .sk-tab,
+.soc-console .sk-back,
+.soc-console .sk-paper,
+.soc-console .sk-flap {
+   position: absolute;
+}
+
+.soc-console .sk-tab {
+   left: 0;
+   top: 12px;
+   width: 40%;
+   height: 24px;
+   border-radius: 9px 12px 0 0;
+   background: var(--sk-back);
+}
+
+.soc-console .sk-back {
+   inset: 30px 0 0 0;
+   border-radius: 0 14px 14px 14px;
+   background: var(--sk-back);
+}
+
+.soc-console .sk-paper {
+   left: 25%;
+   right: 25%;
+   bottom: 20px;
+   height: 88px;
+   box-sizing: border-box;
+   padding: 9px 10px;
+   display: flex;
+   flex-direction: column;
+   gap: 6px;
+   border-radius: 8px;
+   background: var(--sk-paper);
+   border: 1px solid var(--ln1);
+   box-shadow: 0 6px 14px -8px var(--shadow);
+   transform-origin: 50% 100%;
+   transform: translateY(-4px);
+   transition: transform .3s cubic-bezier(.2, .8, .2, 1);
+}
+
+.soc-console .sk-paper-name {
+   font-family: var(--font-mono);
+   font-size: 10px;
+   font-weight: 500;
+   color: var(--sk-paper-fg);
+}
+
+.soc-console .sk-paper i {
+   display: block;
+   height: 3px;
+   border-radius: 2px;
+   background: var(--ln1);
+}
+
+.soc-console .sk-paper i:nth-of-type(1) { width: 82%; }
+.soc-console .sk-paper i:nth-of-type(2) { width: 64%; }
+.soc-console .sk-paper i:nth-of-type(3) { width: 74%; }
+
+.soc-console .sk-flap {
+   left: 0;
+   right: 0;
+   bottom: 0;
+   height: 90px;
+   box-sizing: border-box;
+   padding: 0 12px 11px;
+   display: flex;
+   align-items: flex-end;
+   border-radius: 10px 10px 14px 14px;
+   background: var(--sk-front);
+   border: 1px solid color-mix(in oklab, var(--sk-tone) 36%, var(--ln1));
+   box-shadow: 0 -10px 18px -14px var(--shadow);
+   transform-origin: 50% 100%;
+   transform: rotateX(-12deg);
+   transition: transform .3s cubic-bezier(.2, .8, .2, 1);
+}
+
+.soc-console .sk-origin {
+   display: inline-flex;
+   align-items: center;
+   height: 20px;
+   padding: 0 8px;
+   border-radius: 999px;
+   background: var(--bg1);
+   color: var(--tx1);
+   font-size: 11px;
+   font-weight: 700;
+   white-space: nowrap;
+}
+
+.soc-console .sk-custom .sk-origin {
+   color: var(--vio);
+}
+
+.soc-console .sk-card:hover .sk-paper,
+.soc-console .sk-open:focus-visible .sk-paper {
+   transform: translateY(-40px);
+}
+
+.soc-console .sk-card:hover .sk-flap,
+.soc-console .sk-open:focus-visible .sk-flap {
+   transform: rotateX(-30deg);
+}
+
+.soc-console .sk-text {
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+   min-width: 0;
+   padding: 0 2px;
+}
+
+.soc-console .sk-name {
+   font-family: var(--font-mono);
+   font-size: 13px;
+   font-weight: 500;
+   color: var(--tx0);
+   overflow: hidden;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+   transition: color .3s;
+}
+
+.soc-console .sk-card:hover .sk-name,
+.soc-console .sk-open:focus-visible .sk-name {
+   color: var(--sk-tone);
+}
+
+/* the description stops at two lines; the full text is on hover */
+.soc-console .sk-desc {
+   display: -webkit-box;
+   -webkit-box-orient: vertical;
+   -webkit-line-clamp: 2;
+   overflow: hidden;
+   font-size: 12px;
+   line-height: 1.45;
+   color: var(--tx1);
+}
+
+.soc-console .sk-meta {
+   display: flex;
+   align-items: flex-start;
+   justify-content: space-between;
+   gap: 8px;
+   min-width: 0;
+   padding: 0 2px;
+   font-size: 11px;
+   color: var(--tx2);
+}
+
+.soc-console .sk-offered {
+   min-width: 0;
+   line-height: 1.45;
+}
+
+.soc-console .sk-offered .btn.icon {
+   padding: 0;
+   border: 0;
+   vertical-align: middle;
+}
+
+.soc-console .sk-offered-list {
+   display: -webkit-box;
+   -webkit-box-orient: vertical;
+   -webkit-line-clamp: 2;
+   overflow: hidden;
+}
+
+.soc-console .sk-ro {
+   font-weight: 700;
+   color: var(--good);
+   white-space: nowrap;
+}
+
+.soc-console .sk-meta .btn {
+   padding: 3px 9px;
+   font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+   .soc-console .sk-paper,
+   .soc-console .sk-flap,
+   .soc-console .sk-name {
+      transition: none;
+   }
+}

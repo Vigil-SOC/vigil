@@ -3853,61 +3853,64 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
 }
 
 const SKILL_GRANT_INFO = 'The grant offers the whole library.'
-const LATER_RELEASE = 'Coming in a later release'
 
 function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
   const { rows, phase, error, reload } = feed
   const [editName, setEditName] = useState<string | null>(null)
+  const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
     : null
+  const offeredText = offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')
 
   return (
     <>
-      <div className="flex items-start gap-4 flex-wrap px-[22px] pt-5 pb-[6px]">
-        <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">Skills</h2>
-          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Capabilities loaded from the bundled library and the operator skills directory.</p></div>
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <span title={LATER_RELEASE}><button className="btn ghost" disabled title={LATER_RELEASE}>Import</button></span>
-          <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-        </div>
+      <div className="flex items-center gap-3 px-[22px] pt-[14px]">
+        <span className="flex-1 text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
+        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} style={{ opacity: phase === 'ready' ? 1 : 0.5 }} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
       </div>
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
-        <div className="grid gap-4 px-[22px] pt-[14px] pb-6 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
+        <div className="grid gap-x-5 gap-y-[26px] px-[22px] pt-4 pb-24 [grid-template-columns:repeat(4,minmax(0,1fr))]">
           {rows.map((s) => (
-            <div className="flex flex-col gap-[9px] bg-panel border border-line rounded-lg p-[18px] shadow-panel" key={s.id}>
-              <div className="flex items-center gap-2 min-w-0">
-                <h3 className="text-base min-w-0">{s.name}</h3>
-                {s.bundled && <span className="tmpl-badge">Bundled</span>}
-              </div>
-              {s.source && <div className="text-[11.5px] text-tx-3 mono break-all">{s.source}</div>}
-              <p className="text-[13px] text-tx-2 leading-[1.5] flex-1">{s.desc}</p>
-              <div className="text-[12.5px] text-tx-2">
-                <span className="inline-flex items-center gap-1 text-tx-3">
+            <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
+              <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
+                <span className="sk-folder" aria-hidden="true">
+                  <span className="sk-tab" />
+                  <span className="sk-back" />
+                  <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
+                  <span className="sk-flap"><span className="sk-origin">{s.bundled ? 'Built in' : 'Custom'}</span></span>
+                </span>
+                <span className="sk-text">
+                  <span className="sk-name" title={s.name}>{s.name}</span>
+                  <span className="sk-desc" title={s.desc}>{s.desc}</span>
+                </span>
+              </button>
+              <div className="sk-meta">
+                <span className="sk-offered" title={`Offered to ${offeredText}`}>
                   Offered to
                   <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
                     <Icon name="info" size={14} />
                   </button>
+                  <span className="sk-offered-list">{offeredText}</span>
                 </span>
-                <div>{offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')}</div>
-              </div>
-              <div className="flex justify-end gap-2">
-                <button className="btn ghost" onClick={() => setEditName(s.name)}>Edit</button>
-                {!s.bundled && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
+                {s.bundled
+                  ? <span className="sk-ro">Read-only</span>
+                  : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
               </div>
             </div>
           ))}
         </div>
       )}
-      {editName && (
+      {(editName || building) && (
         <SkillDrawer
           name={editName}
-          onClose={() => setEditName(null)}
-          onSaved={() => { setEditName(null); reload() }}
+          existingNames={rows.map((r) => r.name)}
+          onClose={() => { setEditName(null); setBuilding(false) }}
+          onSaved={() => { setEditName(null); setBuilding(false); reload() }}
         />
       )}
       {deleteSkill && (

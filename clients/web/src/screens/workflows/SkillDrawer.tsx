@@ -11,22 +11,27 @@ function errMsg(e: unknown): string {
   return r?.response?.data?.detail || r?.message || 'Something went wrong'
 }
 
+/** `name` null opens a blank editor that builds a new skill; `existingNames` are the skills already loaded. */
 export function SkillDrawer({
   name,
+  existingNames,
   onClose,
   onSaved,
 }: {
-  name: string
+  name: string | null
+  existingNames: string[]
   onClose: () => void
   onSaved: () => void
 }) {
+  const creating = name === null
   const [detail, setDetail] = useState<ApiSkillDetail | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [skillName, setSkillName] = useState(name)
+  const [skillName, setSkillName] = useState(name ?? '')
   const [description, setDescription] = useState('')
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [rootUnset, setRootUnset] = useState(false)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -37,6 +42,7 @@ export function SkillDrawer({
   }, [onClose])
 
   useEffect(() => {
+    if (name === null) return
     let cancelled = false
     skillsApi
       .get(name)
@@ -55,18 +61,33 @@ export function SkillDrawer({
     }
   }, [name])
 
-  const pathUnset = detail !== null && !detail.operator_root_set
+  // Create mode has no skill of its own to read the flag from; any loaded skill carries it.
+  useEffect(() => {
+    if (name !== null || existingNames.length === 0) return
+    let cancelled = false
+    skillsApi
+      .get(existingNames[0])
+      .then((loaded) => { if (!cancelled) setRootUnset(!loaded.operator_root_set) })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name])
+
+  const pathUnset = rootUnset || (detail !== null && !detail.operator_root_set)
   const nameLocked = detail !== null && !detail.bundled
   const needsNewName = detail?.bundled === true && skillName.trim() === detail.name
-  const saveDisabled = busy || detail === null || pathUnset || needsNewName || !skillName.trim() || !description.trim()
+  // POST /api/skills overwrites an operator skill of the same name, so a taken name is refused here.
+  const nameTaken = !nameLocked && !needsNewName && existingNames.includes(skillName.trim())
+  const ready = creating || detail !== null
+  const saveDisabled = busy || !ready || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim()
 
   const save = () => {
-    if (saveDisabled || detail === null) return
+    if (saveDisabled) return
     setBusy(true)
     setError(null)
     skillsApi
       .save({
-        name: nameLocked ? detail.name : skillName.trim(),
+        name: nameLocked && detail ? detail.name : skillName.trim(),
         description: description.trim(),
         body,
       })
@@ -82,7 +103,7 @@ export function SkillDrawer({
       <aside
         className="vg-case-drawer"
         role="dialog"
-        aria-label={`Edit ${name}`}
+        aria-label={creating ? 'Build a skill' : `Edit ${name}`}
         style={{ width: 480, maxWidth: '100%' }}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -90,13 +111,13 @@ export function SkillDrawer({
           <button type="button" className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <div className="flex flex-col gap-3.5 p-4 overflow-auto">
-          <h3 className="text-base">Edit · {name}</h3>
+          <h3 className="text-base">{creating ? 'Build a skill' : `Edit · ${name}`}</h3>
           {loadError && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{loadError}</div>}
-          {detail === null && !loadError && <p className="text-[13px] text-tx-3">Loading skill…</p>}
-          {detail && (
+          {!ready && !loadError && <p className="text-[13px] text-tx-3">Loading skill…</p>}
+          {ready && (
             <>
               {pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_UNSET}</p>}
-              {detail.bundled && (
+              {detail?.bundled && (
                 <p className="text-[13px] text-tx-2 leading-[1.5]">
                   Saving writes a new skill under the operator root and leaves the bundled directory unchanged.
                 </p>
@@ -108,8 +129,11 @@ export function SkillDrawer({
                   value={skillName}
                   maxLength={64}
                   disabled={nameLocked}
+                  placeholder={creating ? 'lowercase-with-hyphens' : undefined}
+                  autoFocus={creating}
                   onChange={(e) => setSkillName(e.target.value)}
                 />
+                {nameTaken && <span className="text-[11px]" style={{ color: 'var(--crit)' }}>A skill named {skillName.trim()} already exists. Choose another name.</span>}
                 {needsNewName && (
                   <span className="text-[11px] text-tx-3">Choose a new name. A bundled skill cannot be overwritten.</span>
                 )}
