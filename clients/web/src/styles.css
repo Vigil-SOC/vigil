@@ -2046,7 +2046,7 @@
 
    .case-side {
       flex: 0 0 280px;
-      width: 280px;
+      width: 240px;
       border-left: 1px solid var(--line);
       overflow-y: auto;
       padding: 16px 14px;
@@ -3967,6 +3967,32 @@
       height: 7px;
       border-radius: 50%;
       flex: 0 0 auto;
+   }
+
+   .agent-seq.nowrap {
+      flex-wrap: nowrap;
+   }
+
+   /* Workflow catalog: a long description wraps (2 lines) in a bounded Name
+      column instead of widening the table past the screen; the trust note
+      wraps too, so the row actions stay on screen. */
+   .tbl.wf-catalog tbody td.wfc-name {
+      white-space: normal;
+      width: 240px;
+      max-width: 240px;
+      height: 80px; /* even rows, with or without a description */
+   }
+
+   .tbl.wf-catalog tbody td.wfc-trust {
+      white-space: normal;
+      min-width: 190px;
+   }
+
+   .wfc-desc {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
    }
 
    .seq-arrow {
@@ -6692,7 +6718,7 @@
    }
 
    .coverage-run-input {
-      width: 280px;
+      width: 240px;
       font-family: var(--mono);
       font-size: 12.5px;
    }

@@ -117,11 +117,14 @@ function StateMsg({ children }: { children: React.ReactNode }) {
   )
 }
 
-function AgentSequence({ agents, ordered }: { agents: string[]; ordered: boolean }) {
+// `max` is opt-in: past it, the rest collapse into a "+N" chip (title lists them all).
+function AgentSequence({ agents, ordered, max }: { agents: string[]; ordered: boolean; max?: number }) {
   const agentMeta = useAgentMeta()
+  const shown = max != null && agents.length > max ? agents.slice(0, max) : agents
+  const hidden = agents.length - shown.length
   return (
-    <div className="agent-seq">
-      {agents.map((a, i) => {
+    <div className={hidden > 0 ? 'agent-seq nowrap' : 'agent-seq'}>
+      {shown.map((a, i) => {
         const meta = agentMeta(a)
         return (
           <Fragment key={i}>
@@ -129,12 +132,17 @@ function AgentSequence({ agents, ordered }: { agents: string[]; ordered: boolean
               <span className="ad" style={{ background: meta.color }} />
               {meta.label}
             </span>
-            {ordered && i < agents.length - 1 && (
+            {ordered && (i < shown.length - 1 || hidden > 0) && (
               <span className="seq-arrow"><Icon name="chevR" /></span>
             )}
           </Fragment>
         )
       })}
+      {hidden > 0 && (
+        <span className="agent-chip" title={agents.map((a) => agentMeta(a).label).join(ordered ? ' → ' : ', ')}>
+          +{hidden}
+        </span>
+      )}
     </div>
   )
 }
@@ -184,9 +192,10 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
         </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
-        <div className="px-[22px] py-5">
+        // bottom padding clears the fixed Ask Vigil button
+        <div className="px-[22px] pt-5 pb-[96px]">
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl wf-catalog">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -201,7 +210,7 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
               <tbody>
                 {list.map((w) => (
                   <tr key={w.id}>
-                    <td>
+                    <td className="wfc-name">
                       <div
                         role="button"
                         tabIndex={0}
@@ -211,13 +220,13 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
                       >
                         {w.name}
                       </div>
-                      {w.desc && <div className="text-[12px] text-tx-3 mt-0.5">{w.desc}</div>}
+                      {w.desc && <div className="wfc-desc text-[12px] text-tx-3 mt-0.5" title={w.desc}>{w.desc}</div>}
                     </td>
-                    <td>{w.agents.length > 0 ? <AgentSequence agents={w.agents} ordered={!w.huntLike} /> : '—'}</td>
+                    <td>{w.agents.length > 0 ? <AgentSequence agents={w.agents} ordered={!w.huntLike} max={2} /> : '—'}</td>
                     <td>{w.runsToday}</td>
                     <td>{w.meanCostUsd == null ? '—' : <Cost usd={w.meanCostUsd} />}</td>
                     <td>{fmtEdited(w.updatedAt)}</td>
-                    <td>
+                    <td className="wfc-trust">
                       <span className="inline-flex items-center gap-1.5">
                         Not measured yet
                         <button type="button" className="btn ghost icon" aria-label={TRUST_INFO} title={TRUST_INFO}>

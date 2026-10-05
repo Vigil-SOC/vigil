@@ -43,6 +43,15 @@ vi.mock('../../services/api', () => ({
             mean_cost_usd: 1.5,
           },
           {
+            id: 'shadow',
+            name: 'Shadow adjudication',
+            description: 'Three agents',
+            agents: ['reporter', 'threat_hunter', 'responder'],
+            source: 'file',
+            runs_today: 0,
+            mean_cost_usd: null,
+          },
+          {
             id: 'cloud-incident',
             name: 'Cloud incident',
             description: 'One agent',
@@ -194,6 +203,19 @@ describe('workflow catalog table', () => {
 
     fireEvent.click(within(beacon[6]).getByRole('button', { name: 'History' }))
     expect(await screen.findByText('No runs yet')).toBeInTheDocument()
+  })
+
+  it('collapses agents past the second into a +N chip that lists them all', async () => {
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Shadow adjudication')
+    const agents = cells('Shadow adjudication')[1]
+    expect(within(agents).getByText('+1')).toHaveAttribute('title', expect.stringContaining('→'))
+    expect(within(cells('Threat hunt')[1]).queryByText(/^\+\d/)).toBeNull()
   })
 
   it('names workflows whose listed agents recommend read_skill, and keeps import disabled', async () => {
