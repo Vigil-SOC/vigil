@@ -225,6 +225,163 @@
   box-shadow: -16px 0 40px var(--shadow);
 }
 
+/* Skill editor drawer: docs/design/console/boards/SkillEditor.dc.html */
+.vg-skill-scrim {
+  position: fixed;
+  top: 98px; /* below the header and nav, as the board's drawer sits under the nav */
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden; /* keep the drawer's shadow off the nav */
+  background: var(--scrim);
+}
+
+.vg-skill-drawer {
+  box-sizing: border-box;
+  width: 620px;
+  max-width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px;
+  background: var(--bg1);
+  border-left: 1px solid var(--ln1);
+  box-shadow: -24px 0 60px var(--shadow);
+  animation: vg-skill-slide .16s ease-out;
+}
+
+.vg-skill-drawer p {
+  margin: 0;
+}
+
+@keyframes vg-skill-slide {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.vg-skill-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vg-skill-label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--tx2);
+}
+
+.vg-skill-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.vg-skill-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln1);
+  border-radius: 10px;
+  color: var(--tx0);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+
+.vg-skill-input:focus {
+  border-color: var(--ac);
+}
+
+.vg-skill-input:disabled {
+  opacity: 0.6;
+}
+
+.vg-skill-input.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+input.vg-skill-input {
+  height: 36px;
+  padding: 0 12px;
+}
+
+.vg-skill-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--tx1);
+  cursor: pointer;
+}
+
+.vg-skill-close:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.vg-skill-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--ln0);
+}
+
+.vg-skill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 13px;
+  box-sizing: border-box;
+  background: transparent;
+  color: var(--tx1);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.vg-skill-btn:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.vg-skill-btn.primary {
+  background: var(--ac);
+  color: var(--ac-tx);
+  border-color: var(--ac);
+}
+
+.vg-skill-btn.primary:hover {
+  filter: brightness(1.08);
+}
+
+.vg-skill-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .vg-drawer-tools {
   flex: 0 0 auto;
   display: flex;
