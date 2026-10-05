@@ -167,7 +167,8 @@ def test_two_installs_write_nothing(env, tmp_path):
     assert "/api/health reports 9.9.9" in (root / "SUMMARY.txt").read_text()
 
 
-def test_sigterm_leaves_nothing_behind(env, tmp_path):
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+def test_signal_leaves_nothing_behind(env, tmp_path, sig):
     pidfile = tmp_path / "sleep.pid"
     env["FAKE_JOURNAL"] = f"echo $$ > {pidfile}; exec sleep 60"
     env["FAKE_DMESG"] = env["FAKE_JOURNAL"]
@@ -176,7 +177,7 @@ def test_sigterm_leaves_nothing_behind(env, tmp_path):
     )
     wait_for(pidfile)
     helper = int(pidfile.read_text())
-    proc.send_signal(signal.SIGTERM)
+    proc.send_signal(sig)
     assert proc.wait(timeout=15) != 0
     deadline = time.time() + 5
     while alive(helper) and time.time() < deadline:
@@ -202,7 +203,10 @@ def test_simultaneous_runs_get_distinct_names(env, tmp_path):
     env["VIGIL_SUPPORT_NOW"] = "20261005T120000Z"
     procs = [
         subprocess.Popen(
-            ["sh", str(SCRIPT)], cwd=tmp_path / "out", env=env, stdout=subprocess.DEVNULL
+            ["sh", str(SCRIPT)],
+            cwd=tmp_path / "out",
+            env=env,
+            stdout=subprocess.DEVNULL,
         )
         for _ in range(2)
     ]
@@ -228,11 +232,27 @@ def test_source_over_its_ceiling_is_cut_to_the_newest(env, tmp_path):
     env["FAKE_DMESG"] = "seq 1 500"
     env["VIGIL_SUPPORT_SOURCE_MAX"] = "100"
     assert run(env, tmp_path).returncode == 0
-    entry = {e["path"]: e for e in manifest_of(tmp_path)["entries"]}["system/kernel.txt"]
+    entry = {e["path"]: e for e in manifest_of(tmp_path)["entries"]}[
+        "system/kernel.txt"
+    ]
     assert entry["state"] == "collected" and entry["bytes_cut"] > 0
     root = next((tmp_path / "x").iterdir())
     kernel = (root / "system" / "kernel.txt").read_text()
     assert len(kernel) <= 100 and kernel.rstrip().endswith("500")
+
+
+def test_cut_inside_a_private_key_body_leaks_nothing(env, tmp_path):
+    # 84 bytes; a 60-byte ceiling keeps the tail of the key body but not its BEGIN
+    env["FAKE_DMESG"] = (
+        "printf '%s\\n' xxxxxxxxxxxxxxxx SECRETKEYBODYSECRETKEYBODY "
+        "'-----END RSA PRIVATE KEY-----' tail-line"
+    )
+    env["VIGIL_SUPPORT_SOURCE_MAX"] = "60"
+    assert run(env, tmp_path).returncode == 0
+    manifest_of(tmp_path)
+    root = next((tmp_path / "x").iterdir())
+    kernel = (root / "system" / "kernel.txt").read_text()
+    assert "KEYBODY" not in kernel and "tail-line" in kernel
 
 
 def test_symlink_leaving_its_location_is_recorded_not_followed(env, tmp_path):
@@ -243,7 +263,9 @@ def test_symlink_leaving_its_location_is_recorded_not_followed(env, tmp_path):
     (fs / "etc" / "os-release").symlink_to("../outside/secret")
     env["VIGIL_SUPPORT_FS_ROOT"] = str(fs)
     assert run(env, tmp_path).returncode == 0
-    entry = {e["path"]: e for e in manifest_of(tmp_path)["entries"]}["system/os-release.txt"]
+    entry = {e["path"]: e for e in manifest_of(tmp_path)["entries"]}[
+        "system/os-release.txt"
+    ]
     assert entry["state"] == "not collected" and "symlink" in entry["reason"]
     root = next((tmp_path / "x").iterdir())
     assert not (root / "system" / "os-release.txt").exists()

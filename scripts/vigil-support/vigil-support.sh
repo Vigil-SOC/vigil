@@ -18,6 +18,7 @@ REDACT="$HERE/redact.awk"
 NAMES="$HERE/secret-names.txt"
 VERSION=unknown
 [ -r "$HERE/VERSION" ] && read -r VERSION _ <"$HERE/VERSION"
+case $VERSION in '' | *[!0-9A-Za-z.+_-]*) VERSION=unknown ;; esac # it is part of a file name
 
 # Limits. The VIGIL_SUPPORT_* overrides exist for tests.
 SRC_SECS=${VIGIL_SUPPORT_SOURCE_SECS:-60}
@@ -56,7 +57,7 @@ kill_tree() { # pid signal
 }
 
 cleanup() {
-    trap '' INT TERM
+    trap '' INT TERM HUP PIPE
     for _c in $(kids $$); do kill_tree "$_c" KILL; done
     [ "$KEEP" = 1 ] || { [ -n "$RESERVED" ] && rm -f "$RESERVED"; }
     [ -n "$WORK" ] && rm -rf "$WORK"
@@ -64,6 +65,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
+trap 'exit 141' PIPE
 
 # --- arguments ---------------------------------------------------------------
 
@@ -111,7 +114,9 @@ done
 OUTDIR=$(pwd -P)
 [ -w "$OUTDIR" ] || die "cannot write to $OUTDIR"
 [ -r "$REDACT" ] && [ -r "$NAMES" ] || die "redact.awk or secret-names.txt missing beside the script; refusing to collect without the redaction filter"
-has awk || die "awk not found; refusing to collect without the redaction filter"
+for _t in awk mkfifo mktemp tar tee tail wc tr; do
+    has "$_t" || die "$_t not found; refusing to collect"
+done
 
 printf '%s\n\n' "$NOTICE"
 
@@ -141,9 +146,26 @@ EXTRA_CUT=0
 
 # --- running things with a time limit ----------------------------------------
 
-# Portable timeout (macOS has none): the command runs in the background with a
-# watchdog beside it. Output is capped at SRC_MAX keeping the newest bytes; the
-# true size comes through a fifo. Sets RC (124 on timeout).
+# Portable timeout (macOS has none): wait for background job PID while a
+# watchdog beside it kills the job's tree when SECS pass. The job reports its
+# status in STEM.st. Sets RC (124 on timeout).
+supervise() { # secs stem pid
+    (sleep "$1"; : >"$2.to"; kill_tree "$3" KILL) &
+    _wd=$!
+    { wait "$3"; } 2>/dev/null
+    kill_tree "$_wd" KILL
+    { wait "$_wd"; } 2>/dev/null
+    if [ -s "$2.st" ]; then
+        read -r RC <"$2.st"
+    elif [ -e "$2.to" ]; then
+        RC=124
+    else
+        RC=1
+    fi
+}
+
+# Run a command under supervise. Its output is capped at SRC_MAX keeping the
+# newest bytes; the true size comes through a fifo.
 run_limited() { # secs stem cmd...
     _secs=$1
     _stem=$2
@@ -154,19 +176,7 @@ run_limited() { # secs stem cmd...
         ("$@" 2>"$_stem.err"; echo $? >"$_stem.st") | tee "$_stem.fifo" | tail -c "$SRC_MAX" >"$_stem.out"
         wait
     } &
-    _bg=$!
-    (sleep "$_secs"; : >"$_stem.to"; kill_tree "$_bg" KILL) &
-    _wd=$!
-    { wait "$_bg"; } 2>/dev/null
-    kill_tree "$_wd" KILL
-    { wait "$_wd"; } 2>/dev/null
-    if [ -s "$_stem.st" ]; then
-        read -r RC <"$_stem.st"
-    elif [ -e "$_stem.to" ]; then
-        RC=124
-    else
-        RC=1
-    fi
+    supervise "$_secs" "$_stem" $!
 }
 
 clean() { printf '%s' "$1" | tr -d '\000-\037'; }
@@ -178,27 +188,47 @@ record() { # path state reason source bytes bytes_cut redactions
 
 skip() { record "$1" "not collected" "$2" "${3:-}"; } # path reason [source]
 
+# A cut can land inside a private-key block whose BEGIN line is gone, which the
+# filter would not recognise. Drop the partial first line and any such body.
+trim_cut() { # file
+    _e=$(grep -n -m1 -e '-----END [A-Z ]*PRIVATE KEY' "$1" | cut -d: -f1)
+    _b=$(grep -n -m1 -e '-----BEGIN [A-Z ]*PRIVATE KEY' "$1" | cut -d: -f1)
+    _k=1
+    if [ -n "$_e" ] && { [ -z "$_b" ] || [ "$_e" -lt "$_b" ]; }; then _k=$_e; fi
+    tail -n +$((_k + 1)) "$1" >"$1.t" && mv "$1.t" "$1"
+}
+
 # Redact a captured file into the bundle. A filter failure drops the item: the
 # unredacted input is never copied.
-store() { # dest stem source cut
+store() { # dest stem source
     mkdir -p "$STAGE/$(dirname "$1")"
     _cf=$WORK/counts.$ITEM
-    if tr -d '\000' <"$2.out" |
-        awk -f "$REDACT" -v names="$NAMES" -v counts="$_cf" -v name="$1" >"$STAGE/$1"; then
+    _seen=0
+    [ -r "$2.cnt" ] && read -r _seen <"$2.cnt"
+    _cut=$EXTRA_CUT
+    [ "${_seen:-0}" -gt "$SRC_MAX" ] && _cut=$((_cut + _seen - SRC_MAX))
+    [ "$_cut" -gt 0 ] && trim_cut "$2.out"
+    rm -f "$2.r.st" "$2.r.to"
+    (
+        tr -d '\000' <"$2.out" |
+            awk -f "$REDACT" -v names="$NAMES" -v counts="$_cf" -v name="$1" >"$STAGE/$1"
+        echo $? >"$2.r.st"
+    ) &
+    supervise "$SRC_SECS" "$2.r" $!
+    if [ "$RC" = 0 ]; then
         _n=0
         [ -r "$_cf" ] && IFS='	' read -r _ _n <"$_cf"
-        _seen=0
-        [ -r "$2.cnt" ] && read -r _seen <"$2.cnt"
-        _cut=$((EXTRA_CUT))
-        [ "${_seen:-0}" -gt "$SRC_MAX" ] && _cut=$((_cut + _seen - SRC_MAX))
         BUNDLE_RAW=$((BUNDLE_RAW + $(wc -c <"$2.out")))
         _why=ok
         [ "$_cut" -gt 0 ] && _why="cut to the per-source size limit, newest kept"
         record "$1" collected "$_why" "$3" "$(wc -c <"$STAGE/$1" | tr -d ' ')" "$_cut" "$_n"
     else
-        _rc=$?
         rm -f "$STAGE/$1"
-        skip "$1" "redaction failed (exit $_rc); not copied unredacted" "$3"
+        if [ "$RC" = 124 ]; then
+            skip "$1" "redaction timed out after ${SRC_SECS} s; not copied unredacted" "$3"
+        else
+            skip "$1" "redaction failed (exit $RC); not copied unredacted" "$3"
+        fi
     fi
 }
 
@@ -230,8 +260,11 @@ collect_cmd() {
     run_limited "$_lim" "$_stem" "$@"
     _denied=0
     if [ "$_elev" = 1 ]; then
+        # journalctl says so with exit 0, so a clean exit only counts for its message
+        _re=$ELEV_RE
+        [ "$RC" = 0 ] && _re='insufficient permissions'
         { cat "$_stem.err"; [ "$(wc -c <"$_stem.out")" -lt 2048 ] && cat "$_stem.out"; } 2>/dev/null |
-            grep -qiE "$ELEV_RE" && _denied=1
+            grep -qiE "$_re" && _denied=1
     fi
     if [ "$RC" = 124 ]; then
         skip "$_dest" "timed out after ${_lim} s" "$_src"
@@ -256,12 +289,6 @@ collect_file() {
         skip "$_dest" "$_path not found" "$_path"
         return
     fi
-    case ${_path##*/} in
-    vigil-support-*.tar.gz)
-        skip "$_dest" "an earlier support bundle is never nested" "$_path"
-        return
-        ;;
-    esac
     if [ -L "$_path" ]; then
         _t=$(ls -ld "$_path" | sed 's/.* -> //')
         case $_t in /*) ;; *) _t=$(dirname "$_path")/$_t ;; esac
@@ -278,6 +305,12 @@ collect_file() {
         fi
         _path=$_t
     fi
+    case ${_path##*/} in
+    vigil-support-*.tar.gz)
+        skip "$_dest" "an earlier support bundle is never nested" "$_path"
+        return
+        ;;
+    esac
     if [ ! -f "$_path" ]; then
         skip "$_dest" "not a regular file" "$_path"
         return
@@ -306,10 +339,10 @@ find_checkout() {
         [ -n "$_c" ] || continue
         if [ -f "$_c/infra/docker/docker-compose.yml" ]; then
             CHECKOUT=$(cd "$_c" && pwd -P)
-            echo "checkout: found at $CHECKOUT" >>"$LOOKED"
+            printf "checkout: found at %s\n" "$CHECKOUT" >>"$LOOKED"
             return
         fi
-        echo "checkout: none at $_c" >>"$LOOKED"
+        printf "checkout: none at %s\n" "$_c" >>"$LOOKED"
     done
 }
 
@@ -323,13 +356,13 @@ detect() {
         ITEM=$((ITEM + 1))
         run_limited 20 "$RAW/$ITEM" docker ps --format '{{.Names}}|{{.Label "com.docker.compose.project"}}'
         if [ "$RC" != 0 ]; then
-            echo "docker ps: failed (exit $RC); containers not seen" >>"$LOOKED"
+            printf "docker ps: failed (exit %s); containers not seen\n" "$RC" >>"$LOOKED"
         else
             while IFS='|' read -r _name _proj; do
                 case $_name in deeptempo-*) SRC_NAMES="$SRC_NAMES $_name" ;; esac
                 [ "$_proj" = vigil ] && DESK_NAMES="$DESK_NAMES $_name"
             done <"$RAW/$ITEM.out"
-            echo "docker ps: deeptempo-* containers:${SRC_NAMES:- none}; Compose project vigil:${DESK_NAMES:- none}" >>"$LOOKED"
+            printf "docker ps: deeptempo-* containers:%s; Compose project vigil:%s\n" "${SRC_NAMES:- none}" "${DESK_NAMES:- none}" >>"$LOOKED"
         fi
     fi
     _want_src=1
@@ -371,13 +404,14 @@ if [ -n "$STATE_ARG" ]; then
     STATE_DIR=$STATE_ARG
 elif [ "$MODE" = desktop ]; then
     case $OS_KIND in
-    Darwin) STATE_DIR=$HOME/Library/Application\ Support/Vigil ;;
-    *) STATE_DIR=$HOME/.config/Vigil ;;
+    Darwin) STATE_DIR=${HOME:-}/Library/Application\ Support/Vigil ;;
+    *) STATE_DIR=${HOME:-}/.config/Vigil ;;
     esac
 else
-    STATE_DIR=${VIGIL_DIR:-$HOME/.vigil}
+    STATE_DIR=${VIGIL_DIR:-${HOME:-}/.vigil}
 fi
-if [ -d "$STATE_DIR" ]; then echo "state dir: found at $STATE_DIR" >>"$LOOKED"; else echo "state dir: none at $STATE_DIR" >>"$LOOKED"; fi
+if [ -d "$STATE_DIR" ]; then _found=found; else _found=none; fi
+printf "state dir: %s at %s\n" "$_found" "$STATE_DIR" >>"$LOOKED"
 
 NAME=vigil-support-$KIND-$VERSION-$STAMP
 STAGE=$WORK/bundle/$NAME
@@ -390,6 +424,7 @@ if [ "$N_INSTALLS" = 1 ] && has curl; then
     run_limited 10 "$RAW/$ITEM" curl -fsS --max-time 5 "$API_URL/api/health"
     [ "$RC" = 0 ] && HEALTH_VERSION=$(awk 'match($0, /"version" *: *"[^"]*"/) {
         v = substr($0, RSTART, RLENGTH); sub(/^"version" *: *"/, "", v); sub(/"$/, "", v); print v; exit }' "$RAW/$ITEM.out")
+    case $HEALTH_VERSION in *[!0-9A-Za-z.+_-]*) HEALTH_VERSION= ;; esac # it lands in the manifest
 fi
 
 # --- per-install parts belong to the install collector -----------------------
@@ -421,9 +456,14 @@ collect_cmd system/processes-vigil.txt "$SRC_SECS" "ps -ef, Vigil entries" 0 \
 section 4/6 "disk space and OS release"
 collect_disk() {
     set -- df -Pk
-    for _d in "$STATE_DIR" "$CHECKOUT/logs" "$CHECKOUT/data" "$OUTDIR" "$TMP_PARENT"; do
+    for _d in "$STATE_DIR" "$OUTDIR" "$TMP_PARENT"; do
         [ -d "$_d" ] && set -- "$@" "$_d"
     done
+    if [ -n "$CHECKOUT" ]; then
+        for _d in "$CHECKOUT/logs" "$CHECKOUT/data"; do
+            [ -d "$_d" ] && set -- "$@" "$_d"
+        done
+    fi
     collect_cmd system/disk.txt "$SRC_SECS" "df -Pk, Vigil write locations" 0 "$@"
 }
 collect_disk
@@ -465,7 +505,7 @@ section 6/6 "writing the manifest and summary"
 M_VERSION=$VERSION M_CREATED=$CREATED M_MODE=$MODE M_OS=$HOST_OS M_NOTE=$INSTALL_NOTE \
     M_HEALTH=$HEALTH_VERSION M_LOOKED=$LOOKED M_FOUND=$N_INSTALLS \
     awk -F '\t' '
-    function q(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
+    function q(s) { gsub(/[^ -~]/, "?", s); gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
     BEGIN {
         printf "{\n  \"format_version\": 1,\n  \"support_version\": %s,\n  \"created_utc\": %s,\n", q(ENVIRON["M_VERSION"]), q(ENVIRON["M_CREATED"])
         printf "  \"mode\": %s,\n  \"host_os\": %s,\n", q(ENVIRON["M_MODE"]), q(ENVIRON["M_OS"])
@@ -485,16 +525,14 @@ M_VERSION=$VERSION M_CREATED=$CREATED M_MODE=$MODE M_OS=$HOST_OS M_NOTE=$INSTALL
         printf "}"
         sep = ",\n    "
     }
-    END { printf "\n  ]\n}\n" }' "$ITEMS" >"$STAGE/manifest.json"
+    END { printf "\n  ]\n}\n" }' "$ITEMS" >"$STAGE/manifest.json" || die "cannot write manifest.json"
 
 {
     echo "Vigil support bundle"
-    echo "Version:  $VERSION"
-    echo "Mode:     $MODE ($INSTALL_NOTE)"
-    echo "Host OS:  $HOST_OS"
-    echo "Created:  $CREATED (UTC)"
+    printf 'Version:  %s\nMode:     %s (%s)\nHost OS:  %s\nCreated:  %s (UTC)\n' \
+        "$VERSION" "$MODE" "$INSTALL_NOTE" "$HOST_OS" "$CREATED"
     if [ -n "$HEALTH_VERSION" ] && [ "$HEALTH_VERSION" != "$VERSION" ]; then
-        echo "Version mismatch: this tool is $VERSION, /api/health reports $HEALTH_VERSION"
+        printf 'Version mismatch: this tool is %s, /api/health reports %s\n' "$VERSION" "$HEALTH_VERSION"
     fi
     echo
     awk -F '\t' '$2 != "collected" { n++; l = l "  " $1 ": " $3 "\n" } END { printf "Not collected (%d)\n%s", n, l }' "$ITEMS"
@@ -505,7 +543,7 @@ M_VERSION=$VERSION M_CREATED=$CREATED M_MODE=$MODE M_OS=$HOST_OS M_NOTE=$INSTALL
     echo "Credentials in free log text that match no known format cannot be guaranteed caught."
     echo
     echo "$NOTICE"
-} >"$STAGE/SUMMARY.txt"
+} >"$STAGE/SUMMARY.txt" || die "cannot write SUMMARY.txt"
 
 # --- pack --------------------------------------------------------------------
 
@@ -537,9 +575,7 @@ fi
 echo
 echo "$NOTICE"
 echo
-echo "Bundle:  $FINAL"
-echo "Size:    $SIZE bytes"
-echo "SHA-256: $SUM"
+printf 'Bundle:  %s\nSize:    %s bytes\nSHA-256: %s\n' "$FINAL" "$SIZE" "$SUM"
 if awk -F '\t' '$2 != "collected" { f = 1 } END { exit !f }' "$ITEMS"; then
     echo
     echo "Not collected:"
