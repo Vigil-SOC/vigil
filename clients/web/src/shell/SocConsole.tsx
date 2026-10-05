@@ -97,7 +97,7 @@ export default function SocConsole() {
   )
 }
 
-/** key is a plain string, so extension screens can join the rail */
+/** key is a plain string, so extension screens can join the nav row */
 type NavItem = [IconName, string, string | null, NavGate?]
 
 function SocConsoleInner() {
@@ -166,12 +166,12 @@ function SocConsoleInner() {
   const [tourOn, setTourOn] = useState(() => !readConsoleTourSeen())
   const [tourIndex, setTourIndex] = useState(0)
   // from ExtensionProvider, so a connector configured in Settings reaches the
-  // rail without a refresh
+  // nav row without a refresh
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
   const [demoOn, setDemoOn] = useState(false)
 
   useDesktopNotifications()
-  // the rail is the only thing on screen from every other view; without this
+  // the nav row is on screen from every other view; without this
   // badge a parked run sat in a tab nobody opened
   const parked = usePendingApprovals().actions.length
   // needs-you is uncapped; the decisions badge stays on the pending list
@@ -438,7 +438,9 @@ function SocConsoleInner() {
           <div className="vg-header-end">
             {assist !== null && (
               <div className="vg-autonomy" ref={infoRef}>
-                <span>{assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}</span>
+                <button type="button" className="vg-autonomy-link" onClick={() => goSettings('autoinvestigate')}>
+                  {assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}
+                </button>
                 <button
                   type="button"
                   className="vg-info"

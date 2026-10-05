@@ -69,11 +69,10 @@ describe('DevModeWarning', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
-  // The rail is collapsed until someone expands it, and a collapsed item is a
-  // 40px square: `.nav-label` is clipped to zero width and the tip only opens
-  // on hover. So what an operator sees by default is this element's styling and
-  // nothing else, and the warning has to be reachable without a mouse.
-  it('carries what makes it legible in a collapsed rail', async () => {
+  // The tip is hidden in the header, so what an operator sees by default is
+  // this element's styling and nothing else, and the warning has to be
+  // reachable without a mouse.
+  it('carries what makes it legible in the header', async () => {
     await renderWarning('true')
 
     const warning = screen.getByRole('status')

@@ -424,7 +424,7 @@ describe('SocConsole', () => {
     }
   })
 
-  it('hides the rail and the top bar while Overview is on the wall', async () => {
+  it('hides the nav row and the top bar while Overview is on the wall', async () => {
     renderConsole('/overview')
     expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
@@ -472,7 +472,7 @@ describe('SocConsole', () => {
     } as never)
     try {
       renderConsole('/health')
-      // the count sits beside "pending"; the rail badge shows the same number
+      // the count sits beside "pending"; the nav badge shows the same number
       expect((await screen.findByText('pending')).previousElementSibling?.textContent).toBe('2')
       fireEvent.click(screen.getByRole('button', { name: /Open approvals/ }))
       expect(title()).toBe('AI Decisions')
@@ -601,7 +601,7 @@ describe('SocConsole', () => {
   })
 
   // without the count, a parked run's question sat in a tab nobody opened
-  it('counts the runs waiting on someone in the rail', async () => {
+  it('counts the runs waiting on someone in the nav row', async () => {
     vi.mocked(approvalsApi.listPending).mockResolvedValue({
       data: { actions: [{ action_id: 'a' }, { action_id: 'b' }] },
     } as never)
@@ -616,7 +616,7 @@ describe('SocConsole', () => {
   // The badge counts pending approvals, so the click has to land on the tab
   // holding them: opening the feedback tab instead showed "No decisions
   // awaiting feedback" while the counted questions sat one tab over (#746).
-  it('opens the approvals tab when the rail badge is what was clicked', async () => {
+  it('opens the approvals tab when the nav badge is what was clicked', async () => {
     vi.mocked(approvalsApi.listPending).mockResolvedValue({
       data: {
         actions: [
@@ -672,7 +672,7 @@ describe('SocConsole', () => {
     vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
   })
 
-  // Approving the last action empties the queue, so the rail loses its badge
+  // Approving the last action empties the queue, so the nav row loses its badge
   // while the operator is still sitting on ?tab=approvals. The unbadged click
   // has to move them, which go()'s dedupe guard used to swallow.
   it('moves off the approvals tab when the badge is gone', async () => {
@@ -782,6 +782,22 @@ describe('SocConsole', () => {
     } as never)
     renderConsole()
     expect(await screen.findByText('Autonomy · Assist · asks before changes')).toBeInTheDocument()
+  })
+
+  it('opens Limits & autonomy from the chip in both Assist and Act', async () => {
+    const act = renderConsole()
+    fireEvent.click(await screen.findByRole('button', { name: 'Autonomy · Act · reversible changes on its own' }))
+    const where = screen.getByTestId('console-location')
+    expect(where).toHaveAttribute('data-path', '/settings')
+    expect(where).toHaveAttribute('data-search', '?section=autoinvestigate')
+    act.unmount()
+
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: true, force_manual_approval: true },
+    } as never)
+    renderConsole()
+    fireEvent.click(await screen.findByRole('button', { name: 'Autonomy · Assist · asks before changes' }))
+    expect(screen.getByTestId('console-location')).toHaveAttribute('data-search', '?section=autoinvestigate')
   })
 
   it('paints vg-dark and vg-light from the profile menu', async () => {
