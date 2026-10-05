@@ -4,51 +4,13 @@ from pathlib import Path
 import pytest
 
 from core.config import Settings
+from core.integrations.integration_secrets import ENV_CREDENTIAL_NAMES
 
 ENV_EXAMPLE = Path(__file__).resolve().parents[3] / "env.example"
 
 # Keys env.example documents that are deliberately NOT Settings fields, grouped
 # by the channel that owns them. Anything not listed here must become a field.
-NOT_SETTINGS = {
-    # Credentials — the encrypted store owns these, read via get_secret so a
-    # value saved in the UI wins over the environment.
-    "AGENT_INTERNAL_TOKEN",
-    "ALIENVAULT_OTX_API_KEY",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "CAPE_SANDBOX_API_KEY",
-    "CLOUDFORCE_ONE_API_TOKEN",
-    "CLOUDY_WEBHOOK_SECRET",
-    "CRIBL_PASSWORD",
-    "CRIBL_USERNAME",
-    "CROWDSTRIKE_CLIENT_ID",
-    "CROWDSTRIKE_CLIENT_SECRET",
-    "DAEMON_WEBHOOK_TOKEN",
-    "DARKTRACE_WEBHOOK_SECRET",
-    "ELASTIC_SIEM_API_KEY",
-    "ELASTIC_SIEM_PASSWORD",
-    "ELASTIC_SIEM_USERNAME",
-    "OPENSEARCH_PASSWORD",
-    "OPENSEARCH_USERNAME",
-    "GITHUB_TOKEN",
-    "JOE_SANDBOX_API_KEY",
-    "JWT_SECRET_KEY",
-    "KAFKA_SASL_PASSWORD",
-    "KAFKA_SASL_USERNAME",
-    "OPENAI_API_KEY",
-    "PAGERDUTY_ROUTING_KEY",
-    "POSTGRES_PASSWORD",
-    "SHODAN_API_KEY",
-    "SLACK_BOT_TOKEN",
-    "SMTP_PASSWORD",
-    "SPLUNK_PASSWORD",
-    "SPLUNK_USERNAME",
-    "TEAMS_WEBHOOK_URL",
-    "VIRUSTOTAL_API_KEY",
-    "VSTRIKE_API_KEY",
-    "VSTRIKE_INBOUND_API_KEY",
-    "VSTRIKE_PASSWORD",
-    "VSTRIKE_USERNAME",
+NOT_SETTINGS = ENV_CREDENTIAL_NAMES | {
     # Integration endpoints and options consumed inside MCP server child
     # processes, whose config protocol is the environment they are spawned with.
     "ATOMIC_RED_TEAM_ATOMICS_PATH",

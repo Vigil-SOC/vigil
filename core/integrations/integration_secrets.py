@@ -163,6 +163,53 @@ def _build_registry() -> Dict[str, Dict[str, str]]:
 INTEGRATION_SECRET_FIELDS: Mapping[str, Mapping[str, str]] = _build_registry()
 
 
+# Credentials env.example documents that are not integration form fields: the
+# encrypted store owns them, read via get_secret so a value saved in the UI wins
+# over the environment. Usernames and client IDs ride along; over-redacting them
+# in a support bundle is harmless. Feeds scripts/vigil-support/secret-names.txt.
+ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
+    {
+        "AGENT_INTERNAL_TOKEN",
+        "ALIENVAULT_OTX_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "CAPE_SANDBOX_API_KEY",
+        "CLOUDFORCE_ONE_API_TOKEN",
+        "CLOUDY_WEBHOOK_SECRET",
+        "CRIBL_PASSWORD",
+        "CRIBL_USERNAME",
+        "CROWDSTRIKE_CLIENT_ID",
+        "CROWDSTRIKE_CLIENT_SECRET",
+        "DAEMON_WEBHOOK_TOKEN",
+        "DARKTRACE_WEBHOOK_SECRET",
+        "ELASTIC_SIEM_API_KEY",
+        "ELASTIC_SIEM_PASSWORD",
+        "ELASTIC_SIEM_USERNAME",
+        "OPENSEARCH_PASSWORD",
+        "OPENSEARCH_USERNAME",
+        "GITHUB_TOKEN",
+        "JOE_SANDBOX_API_KEY",
+        "JWT_SECRET_KEY",
+        "KAFKA_SASL_PASSWORD",
+        "KAFKA_SASL_USERNAME",
+        "OPENAI_API_KEY",
+        "PAGERDUTY_ROUTING_KEY",
+        "POSTGRES_PASSWORD",
+        "SHODAN_API_KEY",
+        "SLACK_BOT_TOKEN",
+        "SMTP_PASSWORD",
+        "SPLUNK_PASSWORD",
+        "SPLUNK_USERNAME",
+        "TEAMS_WEBHOOK_URL",
+        "VIRUSTOTAL_API_KEY",
+        "VSTRIKE_API_KEY",
+        "VSTRIKE_INBOUND_API_KEY",
+        "VSTRIKE_PASSWORD",
+        "VSTRIKE_USERNAME",
+    }
+)
+
+
 def secret_fields_for(integration_id: str) -> Mapping[str, str]:
     """Return the secret-field map for an integration, empty if unregistered."""
     return INTEGRATION_SECRET_FIELDS.get(integration_id, {})
