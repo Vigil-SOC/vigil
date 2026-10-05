@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useToast } from '../../shell/toast'
-import AppearanceSection from './AppearanceSection'
 import GeneralSection from './GeneralSection'
 import SystemSection from './SystemSection'
 import FederationSection from './FederationSection'
@@ -21,7 +20,6 @@ import type { SectionProps } from './types'
 const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 
 type NavKey =
-  | 'appearance'
   | 'ai-config'
   | 'integrations'
   | 'federation'
@@ -117,7 +115,6 @@ function SystemTabs({ notify }: SectionProps) {
 }
 
 const NAV: NavDef[] = [
-  { key: 'appearance', label: 'Appearance', icon: 'palette', Component: AppearanceSection },
   { key: 'ai-config', label: 'AI models', icon: 'sparkle', Component: AiConfigSection },
   { key: 'integrations', label: 'Integrations', icon: 'link', Component: IntegrationsSection },
   { key: 'federation', label: 'Alert collection', icon: 'graph', Component: FederationSection },
@@ -133,7 +130,7 @@ function resolveNav(sectionParam: string | null): NavKey {
   // Old bookmarks for the panels that now live under System stay on that item.
   if (sectionParam && SYSTEM_KEYS.has(sectionParam)) return 'system'
   if (sectionParam && NAV_KEYS.has(sectionParam)) return sectionParam as NavKey
-  return 'appearance'
+  return NAV[0].key
 }
 
 export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {

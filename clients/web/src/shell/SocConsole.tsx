@@ -9,8 +9,7 @@ import { Icon, type IconName } from '../shared/icons'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
-import { accentVars } from '../shared/accent'
-import { bgVars, isDarkBase } from './bg'
+import { useColorScheme } from '../contexts/ColorSchemeContext'
 import CaseDrawer from './CaseDrawer'
 import Chat from './Chat'
 import CommandBar from './CommandBar'
@@ -22,7 +21,6 @@ import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
 import { useDesktopNotifications } from './useDesktopNotifications'
 import { usePendingApprovals } from '../screens/decisions/useDecisions'
-import { SocThemeProvider, useSocTheme } from './theme'
 import type { ConsoleScreenGoOptions, ConsoleScreenProps, SettingsSectionKey } from '../shared/types'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import CasesScreen from '../screens/cases/CasesScreen'
@@ -86,14 +84,10 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
 const CHAT_WIDTH = 400
 
 export default function SocConsole() {
-  // the theme provider must wrap the inner shell: that shell both styles
-  // .soc-console and renders the Appearance page that writes to it
   return (
-    <SocThemeProvider>
-      <ExtensionProvider>
-        <SocConsoleInner />
-      </ExtensionProvider>
-    </SocThemeProvider>
+    <ExtensionProvider>
+      <SocConsoleInner />
+    </ExtensionProvider>
   )
 }
 
@@ -142,7 +136,7 @@ function SocConsoleInner() {
   const currentPerm = valid ? screenPerms[current] : undefined
   const allowed = !currentPerm || hasPermission(currentPerm)
 
-  const { accent, bg, scheme } = useSocTheme()
+  const { scheme } = useColorScheme()
   const [chatOpen, setChatOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [infoOpen, setInfoOpen] = useState(false)
@@ -407,16 +401,12 @@ function SocConsoleInner() {
 
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
-  const consoleStyle = {
-    ...bgVars(bg.base),
-    ...accentVars(accent.a, accent.b),
-    '--chat-w': `${effectiveChatWidth}px`,
-  } as CSSProperties
+  const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
 
   return (
     <div
       className={wrapperClass}
-      data-theme={isDarkBase(bg.base) ? 'dark' : 'light'}
+      data-theme={scheme}
       style={consoleStyle}
     >
       <ToastProvider>

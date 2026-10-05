@@ -5,7 +5,6 @@ import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import SettingsScreen from './SettingsScreen'
 
-vi.mock('./AppearanceSection', () => ({ default: () => <div>Appearance panel</div> }))
 vi.mock('./AiConfigSection', () => ({ default: () => <div>AI panel</div> }))
 vi.mock('./IntegrationsSection', () => ({ default: () => <div>Integrations panel</div> }))
 vi.mock('./FederationSection', () => ({ default: () => <div>Federation panel</div> }))
@@ -49,16 +48,16 @@ function tabs() {
 }
 
 describe('settings nav', () => {
-  it('groups the existing panels under the seven screens and Appearance', () => {
+  it('groups the existing panels under the seven screens', () => {
     renderAt('/settings')
-    const labels = ['Appearance', 'AI models', 'Integrations', 'Alert collection', 'SLA policies', 'Limits & autonomy', 'Data & uploads', 'System']
+    const labels = ['AI models', 'Integrations', 'Alert collection', 'SLA policies', 'Limits & autonomy', 'Data & uploads', 'System']
     for (const label of labels) {
       expect(nav().getByRole('button', { name: label })).toBeInTheDocument()
     }
     expect(nav().queryByRole('button', { name: 'Services' })).not.toBeInTheDocument()
     expect(nav().queryByRole('button', { name: 'Users' })).not.toBeInTheDocument()
     expect(nav().queryByRole('button', { name: 'Developer' })).not.toBeInTheDocument()
-    expect(screen.getByText('Appearance panel')).toBeInTheDocument()
+    expect(screen.getByText('AI panel')).toBeInTheDocument()
   })
 
   it('opens System on the bookmarked panel', () => {
@@ -83,11 +82,11 @@ describe('settings nav', () => {
     fireEvent.click(tabs().getByRole('button', { name: 'Services' }))
     expect(screen.getByText('Services panel')).toBeInTheDocument()
 
-    fireEvent.click(nav().getByRole('button', { name: 'Appearance' }))
-    expect(screen.getByText('Appearance panel')).toBeInTheDocument()
+    fireEvent.click(nav().getByRole('button', { name: 'AI models' }))
+    expect(screen.getByText('AI panel')).toBeInTheDocument()
   })
 
-  it('sends a dev-gated or unknown section back to Appearance', () => {
+  it('sends a dev-gated or unknown section back to the first section', () => {
     const { unmount } = render(
       <MemoryRouter initialEntries={['/settings?section=dev']}>
         <ToastProvider>
@@ -95,12 +94,12 @@ describe('settings nav', () => {
         </ToastProvider>
       </MemoryRouter>,
     )
-    expect(screen.getByText('Appearance panel')).toBeInTheDocument()
-    expect(nav().getByRole('button', { name: 'Appearance' })).toHaveClass('active')
+    expect(screen.getByText('AI panel')).toBeInTheDocument()
+    expect(nav().getByRole('button', { name: 'AI models' })).toHaveClass('active')
     unmount()
 
     renderAt('/settings?section=nope')
-    expect(screen.getByText('Appearance panel')).toBeInTheDocument()
+    expect(screen.getByText('AI panel')).toBeInTheDocument()
     expect(screen.queryByText('System panel')).not.toBeInTheDocument()
   })
 

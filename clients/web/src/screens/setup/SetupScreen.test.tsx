@@ -12,6 +12,10 @@ vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ hasPermission: () => auth.allowed }),
 }))
 
+vi.mock('../../contexts/ColorSchemeContext', () => ({
+  useColorScheme: () => ({ scheme: 'dark', setScheme: vi.fn(), toggleScheme: vi.fn() }),
+}))
+
 vi.mock('../../services/api', () => ({
   consoleApi: { getHealth: vi.fn(() => Promise.resolve({ data: { status: 'healthy' } })) },
   storageApi: { getStatus: vi.fn(() => Promise.resolve({ data: { backend: 'none' } })) },
@@ -58,6 +62,11 @@ describe('SetupScreen', () => {
   beforeEach(() => {
     localStorage.clear()
     auth.allowed = true
+  })
+
+  it('themes the page root from the scheme', () => {
+    const { container } = renderSetup()
+    expect(container.querySelector('.soc-console')).toHaveClass('vg-dark')
   })
 
   it('skips the pass onto the console and stays dismissed', () => {

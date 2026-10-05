@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { extensionsApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useToast, type ToastKind } from '../shell/toast'
-import { useSocTheme } from '../shell/theme'
+import { useColorScheme } from '../contexts/ColorSchemeContext'
 import type { ConsoleScreenProps } from '../shared/types'
 import {
   EXTENSION_EVENT,
@@ -21,6 +21,9 @@ interface Props extends ConsoleScreenProps {
 
 type Status = 'loading' | 'ready' | 'error'
 
+// The accent the console paints per scheme: --ac in docs/design/console/tokens/tokens.css.
+const ACCENT_BY_SCHEME = { dark: '#3AA8FF', light: '#0A6FD6' } as const
+
 // guards a bundle that loads but never defines its custom element
 const DEFINE_TIMEOUT_MS = 10_000
 
@@ -35,7 +38,7 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const elRef = useRef<HostContextElement | null>(null)
   const ctxRef = useRef<HostContext | null>(null)
-  const { scheme, accent } = useSocTheme()
+  const { scheme } = useColorScheme()
   const { notify } = useToast()
   const navigate = useNavigate()
   const [status, setStatus] = useState<Status>('loading')
@@ -47,13 +50,13 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
     const res = await extensionsApi.getSessionToken(ext.integrationId)
     const { token, user } = res.data
     return {
-      themeTokens: { '--accent': accent.a, mode: scheme },
+      themeTokens: { '--accent': ACCENT_BY_SCHEME[scheme], mode: scheme },
       // token is null when no mint secret is configured — mount session-less
       // rather than failing (the connector is then expected to be open).
       session: token ? { token, user } : undefined,
       apiBase: ext.connectorUrl,
     }
-  }, [ext.integrationId, ext.connectorUrl, accent.a, scheme])
+  }, [ext.integrationId, ext.connectorUrl, scheme])
 
   const applyContext = useCallback(() => {
     if (elRef.current && ctxRef.current) elRef.current.hostContext = { ...ctxRef.current }
@@ -117,9 +120,9 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
 
   useEffect(() => {
     if (!ctxRef.current) return
-    ctxRef.current = { ...ctxRef.current, themeTokens: { '--accent': accent.a, mode: scheme } }
+    ctxRef.current = { ...ctxRef.current, themeTokens: { '--accent': ACCENT_BY_SCHEME[scheme], mode: scheme } }
     applyContext()
-  }, [accent.a, scheme, applyContext])
+  }, [scheme, applyContext])
 
   useEffect(() => {
     const container = containerRef.current

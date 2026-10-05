@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import '../../../../../docs/design/console/tokens/tokens.css'
 import '../../styles.css'
+import '../../shell/shell.css'
+import { useColorScheme } from '../../contexts/ColorSchemeContext'
 import { Icon } from '../../shared/icons'
 import { VigilMark } from '../../shared/VigilLogo'
 import { SettingsCard } from '../../shared/ui'
@@ -43,15 +46,18 @@ const STEP_COPY: Record<StepId, { title: string; desc: string }> = {
   },
 }
 
-const Shell = ({ children }: { children: React.ReactNode }) => (
-  <div className="soc-console">
-    <div className="absolute inset-0 overflow-auto">
-      <div className="min-h-full flex justify-center px-6 py-6">
-        <div className="w-full max-w-xl my-auto">{children}</div>
+const Shell = ({ children }: { children: React.ReactNode }) => {
+  const { scheme } = useColorScheme()
+  return (
+    <div className={`soc-console ${scheme === 'light' ? 'vg-light' : 'vg-dark'}`} data-theme={scheme}>
+      <div className="absolute inset-0 overflow-auto">
+        <div className="min-h-full flex justify-center px-6 py-6">
+          <div className="w-full max-w-xl my-auto">{children}</div>
+        </div>
       </div>
     </div>
-  </div>
-)
+  )
+}
 
 function stepPanel(id: StepId, onAdvance: () => void) {
   switch (id) {

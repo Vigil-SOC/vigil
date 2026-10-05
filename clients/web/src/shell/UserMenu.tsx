@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
-import { useSocTheme } from './theme'
+import { useColorScheme } from '../contexts/ColorSchemeContext'
 
 const FEEDBACK_BASE =
   import.meta.env.VITE_FEEDBACK_URL ||
@@ -21,7 +21,7 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { screen } = useParams<{ screen?: string }>()
-  const { scheme, setBgPreset } = useSocTheme()
+  const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
   const [version, setVersion] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -116,14 +116,14 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
         <button
           role="menuitem"
           aria-pressed={scheme === 'dark'}
-          onClick={() => setBgPreset('slate')}
+          onClick={() => setScheme('dark')}
         >
           <Icon name="moon" size={15} /> Dark
         </button>
         <button
           role="menuitem"
           aria-pressed={scheme === 'light'}
-          onClick={() => setBgPreset('light')}
+          onClick={() => setScheme('light')}
         >
           <Icon name="sun" size={15} /> Light
         </button>

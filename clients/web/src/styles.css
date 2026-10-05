@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -30,46 +28,47 @@
    Tailwind utility classes in the screens always win over them.
    ============================================================ */
 
-/* ---- scoped root: design tokens + reset (foundational, un-layered) ---- */
+/* ---- scoped root: legacy names aliased onto the design tokens + reset
+   (foundational, un-layered). The token class (.vg-dark / .vg-light) must sit
+   on this element or an ancestor; it supplies the palette for both schemes. ---- */
 .soc-console {
-   --bg: #0c0f14;
-   --bg-1: #11151c;
-   --bg-2: #161b23;
-   --bg-3: #1c222c;
-   --panel: #12161d;
-   --hover: #1a2029;
-   --line: #232a35;
-   --line-soft: #1b212b;
-   --line-strong: #2e3744;
+   --bg: var(--bg0);
+   --bg-1: var(--bg1);
+   --bg-2: var(--bg2);
+   --bg-3: var(--bg3);
+   --panel: var(--bg1);
+   --hover: var(--bg3);
+   --line: var(--ln1);
+   --line-soft: var(--ln0);
+   --line-strong: var(--ln2);
 
-   --tx: #e8ebf0;
-   --tx-2: #aeb6c2;
-   --tx-3: #7c8593;
-   --tx-faint: #58616e;
+   --tx: var(--tx0);
+   --tx-2: var(--tx1);
+   --tx-3: var(--tx2);
+   --tx-faint: var(--tx3);
 
-   --accent: #7d74f3;
-   --accent-2: #9a92f7;
-   --accent-dim: #7d74f324;
-   --accent-line: #7d74f355;
+   --accent: var(--ac);
+   --accent-2: color-mix(in srgb, var(--ac), #fff 22%);
+   --accent-dim: var(--ac-bg);
+   --accent-line: var(--ac-ln);
 
-   --crit: #e5635f;
-   --crit-dim: #e5635f1f;
-   --high: #e0a44a;
-   --high-dim: #e0a44a1f;
-   --med: #6f93c7;
-   --med-dim: #6f93c71f;
-   --ok: #4fb286;
-   --ok-dim: #4fb2861f;
+   --crit: var(--sev-crit);
+   --crit-dim: color-mix(in srgb, var(--sev-crit) 12%, transparent);
+   --high: var(--sev-high);
+   --high-dim: color-mix(in srgb, var(--sev-high) 12%, transparent);
+   --med: var(--sev-med);
+   --med-dim: color-mix(in srgb, var(--sev-med) 12%, transparent);
+   --ok: var(--good);
+   --ok-dim: color-mix(in srgb, var(--good) 12%, transparent);
 
    --r-sm: 6px;
    --r: 9px;
    --r-lg: 13px;
-   --shadow: 0 1px 0 #ffffff06 inset, 0 8px 24px -16px #000000cc;
    --rail-w: 60px;
    --rail-w-x: 216px;
    --chat-w: 400px;
-   --font: "IBM Plex Sans", system-ui, sans-serif;
-   --mono: "IBM Plex Mono", ui-monospace, monospace;
+   --font: var(--font-ui);
+   --mono: var(--font-mono);
 
    position: fixed;
    inset: 0;
@@ -77,7 +76,7 @@
    font-family: var(--font);
    background: var(--bg);
    color: var(--tx);
-   /* render native controls (date picker calendar, etc.) in dark mode */
+   /* render native controls (date picker calendar, etc.) in the scheme's mode */
    color-scheme: dark;
    -webkit-font-smoothing: antialiased;
    font-size: 14px;
@@ -85,27 +84,7 @@
    overflow: hidden;
 }
 
-/* ---- light theme: redefines the neutral ramp (bg/surface/line/text) and
-   the elevation shadow when [data-theme="light"] is set on the console root.
-   Accent (--accent*) and status colors (crit/high/med/ok) are user-chosen /
-   semantic and intentionally shared across both modes. ---- */
-.soc-console[data-theme="light"] {
-   --bg: #f6f7f9;
-   --bg-1: #ffffff;
-   --bg-2: #ffffff;
-   --bg-3: #eceff3;
-   --panel: #ffffff;
-   --hover: #eceff3;
-   --line: #dde1e8;
-   --line-soft: #e9ecf1;
-   --line-strong: #c4cad4;
-
-   --tx: #1b2027;
-   --tx-2: #49515f;
-   --tx-3: #6b7480;
-   --tx-faint: #98a0ad;
-
-   --shadow: 0 1px 2px #1b20270d, 0 10px 26px -18px #1b202740;
+.soc-console.vg-light {
    color-scheme: light;
 }
 
@@ -121,21 +100,13 @@
 }
 
 .soc-console ::-webkit-scrollbar-thumb {
-   background: #2a313d;
+   background: var(--ln2);
    border-radius: 8px;
    border: 2px solid var(--bg);
 }
 
 .soc-console ::-webkit-scrollbar-thumb:hover {
-   background: #353d4a;
-}
-
-.soc-console[data-theme="light"] ::-webkit-scrollbar-thumb {
-   background: #c7ccd6;
-}
-
-.soc-console[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-   background: #b4bbc7;
+   background: var(--tx3);
 }
 
 .soc-console ::-webkit-scrollbar-track {
@@ -713,7 +684,7 @@
    .btn.primary {
       background: var(--accent);
       border-color: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
    }
 
    .btn.primary:hover {
@@ -1320,7 +1291,7 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: var(--r-lg);
-      box-shadow: var(--shadow);
+      box-shadow: 0 8px 24px -16px var(--shadow);
       overflow: hidden;
    }
 
@@ -1669,7 +1640,7 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      box-shadow: var(--shadow);
+      box-shadow: 0 8px 24px -16px var(--shadow);
       padding: 7px 9px;
       min-width: 110px;
    }
@@ -2334,7 +2305,7 @@
       border-radius: 999px;
       border: none;
       background: linear-gradient(150deg, var(--accent), var(--accent-2));
-      color: #fff;
+      color: var(--ac-tx);
       font-family: var(--font);
       font-size: 14px;
       font-weight: 600;
@@ -2620,7 +2591,7 @@
       background: var(--bg-1);
       border: 1px solid var(--line);
       border-radius: 9px;
-      box-shadow: var(--shadow);
+      box-shadow: 0 8px 24px -16px var(--shadow);
    }
 
    .chat-mention button {
@@ -2725,7 +2696,7 @@
       border-radius: 8px;
       border: none;
       background: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
       display: grid;
       place-items: center;
    }
@@ -3139,7 +3110,7 @@
    }
 
    .chat-settings .cs-cost-val {
-      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-family: var(--mono);
       font-size: 12.5px;
       color: var(--tx-2);
    }
@@ -3175,7 +3146,7 @@
 
    .chat-meta .cm-cost {
       flex: 0 0 auto;
-      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-family: var(--mono);
       color: var(--tx-2);
       font-variant-numeric: tabular-nums;
    }
@@ -3309,7 +3280,7 @@
    }
 
    .trace-block-b.mono {
-      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-family: var(--mono);
       font-size: 11.5px;
    }
 
@@ -3671,148 +3642,6 @@
       line-height: 1.45;
    }
 
-   /* ---------- appearance settings (mode + accent) ---------- */
-   .appr-seg {
-      display: inline-flex;
-      gap: 4px;
-      background: var(--bg-3);
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      padding: 3px;
-   }
-
-   .appr-seg button {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--tx-2);
-      background: transparent;
-      border: none;
-      padding: 7px 15px;
-      border-radius: 7px;
-      transition: all .14s;
-   }
-
-   .appr-seg button:hover {
-      color: var(--tx);
-   }
-
-   .appr-seg button.active {
-      color: #fff;
-      background: var(--accent);
-   }
-
-   .appr-accent {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-   }
-
-   .appr-sw-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-   }
-
-   .appr-sw {
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      border: 2px solid transparent;
-      cursor: pointer;
-      padding: 0;
-      transition: transform .1s;
-   }
-
-   .appr-sw:hover {
-      transform: scale(1.08);
-   }
-
-   .appr-sw.active {
-      border-color: var(--tx);
-   }
-
-   /* background swatches: a faint inset ring so the very dark bases stay
-      visible against the panel */
-   .appr-bg-sw {
-      box-shadow: inset 0 0 0 1px #ffffff26;
-   }
-
-   .appr-custom {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-   }
-
-   .appr-color {
-      position: relative;
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      cursor: pointer;
-      border: 1px solid var(--line);
-      overflow: hidden;
-      display: block;
-      flex: 0 0 auto;
-   }
-
-   .appr-color-dot {
-      position: absolute;
-      inset: 0;
-      background: var(--accent);
-   }
-
-   .appr-color input[type="color"] {
-      position: absolute;
-      inset: -4px;
-      width: calc(100% + 8px);
-      height: calc(100% + 8px);
-      border: none;
-      padding: 0;
-      opacity: 0;
-      cursor: pointer;
-   }
-
-   .appr-hex {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      background: var(--bg-3);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 7px 11px;
-      font-family: var(--mono);
-      font-size: 13px;
-      color: var(--tx-3);
-   }
-
-   .appr-hex input {
-      width: 70px;
-      background: transparent;
-      border: none;
-      outline: none;
-      padding: 0;
-      font-family: var(--mono);
-      font-size: 13px;
-      color: var(--tx);
-      letter-spacing: 0.02em;
-      text-transform: lowercase;
-   }
-
-   .appr-hex:focus-within {
-      border-color: var(--accent-line);
-   }
-
-   .appr-hex.bad {
-      border-color: var(--crit);
-   }
-
-   .appr-hex.bad input {
-      color: var(--crit);
-   }
-
    /* The queue has more columns than the pane. A floor lets the existing
       table scroll sideways instead of crushing SLA and last activity. */
    .cases-tbl {
@@ -3884,7 +3713,7 @@
       display: flex;
       flex-direction: column;
       gap: 13px;
-      box-shadow: var(--shadow);
+      box-shadow: 0 8px 24px -16px var(--shadow);
       transition: border-color .14s, transform .14s;
    }
 
@@ -4184,7 +4013,7 @@
       display: flex;
       flex-direction: column;
       gap: 9px;
-      box-shadow: var(--shadow);
+      box-shadow: 0 8px 24px -16px var(--shadow);
       transition: border-color .14s, transform .14s;
    }
 
@@ -4548,7 +4377,7 @@
 
    .range-tabs button.active {
       background: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
    }
 
    .mini-list .ml-row {
@@ -4678,7 +4507,7 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      box-shadow: var(--shadow);
+      box-shadow: 0 8px 24px -16px var(--shadow);
       padding: 8px 10px;
       min-width: 120px;
    }
@@ -4905,7 +4734,7 @@
 
    .tl-toggle button.active {
       background: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
    }
 
    .tl-count {
@@ -4947,7 +4776,7 @@
 
    .tl-iconbtn.play.on {
       background: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
       border-color: var(--accent);
    }
 
@@ -4971,7 +4800,7 @@
 
    .tl-seg button.active {
       background: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
    }
 
    .tl-hint {
@@ -5590,7 +5419,7 @@
       margin-left: 7px;
       border-radius: 9px;
       background: var(--accent);
-      color: #fff;
+      color: var(--ac-tx);
       font-size: 10.5px;
       font-weight: 600;
    }
@@ -6800,7 +6629,7 @@
 
 /* ============================================================
    Login / auth screen — full-bleed split layout (brand + form).
-   Mounted on its own .soc-console root (data-theme + accent vars),
+   Mounted on its own .soc-console root (scheme class + data-theme),
    so it inherits the same token ramp and themes in light + dark.
    ============================================================ */
 .soc-console.auth-root {
@@ -7076,7 +6905,7 @@
 }
 
 .auth .remember input:checked+.box {
-   color: #fff;
+   color: var(--ac-tx);
    background: var(--accent);
    border-color: var(--accent);
 }
@@ -7114,7 +6943,7 @@
    padding: 12px;
    font-size: 14px;
    font-weight: 600;
-   color: #fff;
+   color: var(--ac-tx);
    background: var(--accent);
    border: 1px solid var(--accent);
    border-radius: var(--r);

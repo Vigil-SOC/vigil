@@ -78,7 +78,9 @@ describe('LoginScreen', () => {
     const { container } = renderLogin()
     const root = container.querySelector('.auth-root') as HTMLElement
     await waitFor(() => expect(root.getAttribute('data-theme')).toBe('dark'))
+    expect(root).toHaveClass('vg-dark')
     fireEvent.click(screen.getByRole('button', { name: /switch to light mode/i }))
     await waitFor(() => expect(root.getAttribute('data-theme')).toBe('light'))
+    expect(root).toHaveClass('vg-light')
   })
 })

@@ -3,7 +3,6 @@
 import type { ConsoleScreenKey } from '../data/data'
 
 export type SettingsSectionKey =
-  | 'appearance'
   | 'ai-config'
   | 'services'
   | 'integrations'

@@ -19,7 +19,7 @@ vi.mock('../contexts/AuthContext', () => ({
   }),
 }))
 
-// The theme provider bridges ColorSchemeContext, so it needs a real one above it.
+// The console reads the scheme from ColorSchemeContext, so it needs a real one above it.
 function ConsoleAt() {
   const location = useLocation()
   return (
@@ -580,17 +580,6 @@ describe('SocConsole', () => {
     expect(document.querySelector('.soc-console')).toHaveStyle({ '--chat-w': '500px' })
   })
 
-  it('applies an accent + light mode from the Appearance settings page', () => {
-    renderConsole('/settings')
-    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    const cyan = screen.getByRole('button', { name: 'accent cyan' })
-    fireEvent.click(cyan)
-    expect(cyan).toHaveAttribute('aria-pressed', 'true')
-    const light = screen.getByRole('button', { name: 'Light' })
-    fireEvent.click(light)
-    expect(light).toHaveAttribute('aria-pressed', 'true')
-  })
-
   it('opens the dock on the current page without a per-chat model', () => {
     renderConsole()
     fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
@@ -788,11 +777,13 @@ describe('SocConsole', () => {
     const { container } = renderConsole()
     const root = container.querySelector('.soc-console')
     expect(root).toHaveClass('vg-dark')
+    expect(root).toHaveAttribute('data-theme', 'dark')
     await screen.findByText('Autonomy · Act · reversible changes on its own')
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Light' }))
     expect(root).toHaveClass('vg-light')
     expect(root).not.toHaveClass('vg-dark')
+    expect(root).toHaveAttribute('data-theme', 'light')
     fireEvent.click(screen.getByRole('menuitem', { name: 'Dark' }))
     expect(root).toHaveClass('vg-dark')
   })

@@ -3,7 +3,6 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import UserMenu from './UserMenu'
-import { SocThemeProvider } from './theme'
 
 vi.mock('../services/api', () => ({
   configApi: {
@@ -33,14 +32,12 @@ vi.mock('../contexts/AuthContext', () => ({
 function renderMenu(path = '/cases', onShowTour = vi.fn()) {
   return render(
     <ColorSchemeProvider>
-      <SocThemeProvider>
-        <MemoryRouter initialEntries={[path]}>
-          <Routes>
-            <Route path="/setup" element={<div>setup-route</div>} />
-            <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} />} />
-          </Routes>
-        </MemoryRouter>
-      </SocThemeProvider>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/setup" element={<div>setup-route</div>} />
+          <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} />} />
+        </Routes>
+      </MemoryRouter>
     </ColorSchemeProvider>,
   )
 }
