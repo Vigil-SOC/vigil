@@ -40,12 +40,35 @@ EOF
     esac
 done
 
+# Listening PIDs on a TCP port, via lsof, ss or fuser. Returns 2 (no output)
+# when none of them is installed, so callers can say "unknown" instead of 0.
+port_pids() {
+    local port="$1"
+    if command -v lsof &>/dev/null; then
+        lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+    elif command -v ss &>/dev/null; then
+        ss -ltnpH "sport = :$port" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 || true
+    elif command -v fuser &>/dev/null; then
+        fuser -n tcp "$port" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' || true
+    else
+        return 2
+    fi
+}
+
 echo "Stopping Vigil SOC..."
 
 # Kill by PID files
 for pidfile in logs/backend.pid logs/daemon.pid logs/frontend.pid logs/llm_worker.pid \
                logs/agent-worker.pid logs/agent-serve.pid; do
-    [ -f "$pidfile" ] && kill "$(cat "$pidfile")" 2>/dev/null && rm -f "$pidfile"
+    [ -f "$pidfile" ] || continue
+    pid="$(cat "$pidfile")"
+    # A stale pidfile's PID may have been reused by an unrelated process.
+    if [ "$pidfile" = logs/frontend.pid ] &&
+       ! ps -p "$pid" -o args= 2>/dev/null | grep -qE 'vite|npm run dev'; then
+        rm -f "$pidfile"
+        continue
+    fi
+    kill "$pid" 2>/dev/null && rm -f "$pidfile" || true
 done
 
 # Kill by process pattern.
@@ -63,8 +86,13 @@ pkill -f "mcp_servers.*_server" 2>/dev/null || true
 # serve (6989) and worker (6990) are already stopped by their pidfiles above; we
 # deliberately do NOT port-kill those, because a user's Splunk UI can share 6990
 # and a blind `kill -9` would take it down.
-lsof -ti:6987 | xargs kill -9 2>/dev/null || true
-lsof -ti:6988 | xargs kill -9 2>/dev/null || true
+for port in 6987 6988; do
+    if pids="$(port_pids "$port")"; then
+        [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
+    else
+        echo "Warning: none of lsof/ss/fuser found; cannot free port $port by port." >&2
+    fi
+done
 
 # The backup schedule loop start.sh launches runs in Docker but is Vigil's own
 # process, so it stops with the rest whether or not -d is given.
@@ -90,8 +118,13 @@ fi
 
 # Status
 echo ""
-echo "Port 6987: $(lsof -ti:6987 2>/dev/null | wc -l | xargs) process(es)"
-echo "Port 6988: $(lsof -ti:6988 2>/dev/null | wc -l | xargs) process(es)"
+for port in 6987 6988; do
+    if pids="$(port_pids "$port")"; then
+        echo "Port $port: $(echo "$pids" | grep -c .) process(es)" || true
+    else
+        echo "Port $port: unknown (no lsof/ss/fuser)"
+    fi
+done
 echo ""
 [ "$DOCKER_STOP" -eq 0 ] && echo "Docker left running. Use -d to stop containers."
 echo "Done."

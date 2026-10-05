@@ -292,8 +292,9 @@ start_frontend() {
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
         local host="$BIND_HOST"; [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
         wait_for_url "http://${host}:6987/api/health" 60 || true
-        # exec: $! is npm itself, not a subshell the cleanup trap would orphan it from.
-        (cd clients/web && exec npm run dev > >(tee -ia "$LOGS_DIR/frontend.log") 2>&1) &
+        # exec + vite directly: $! is Vite itself, not a subshell or npm (which
+        # doesn't forward SIGTERM, leaving Vite orphaned on the port).
+        (cd clients/web && exec node_modules/.bin/vite > >(tee -ia "$LOGS_DIR/frontend.log") 2>&1) &
         FRONTEND_PID=$!
     fi
 }
@@ -389,7 +390,9 @@ else
         # repo and failed. Anchor both writes to the repo-root logs dir.
         logs_dir="${PWD}/logs"
         rotate_log "${logs_dir}/frontend.log"
-        (cd clients/web && nohup npm run dev > "${logs_dir}/frontend.log" 2>&1 &
+        # exec + vite directly (not `npm run dev`): the recorded PID is Vite
+        # itself, so killing it can't orphan a child holding the port.
+        (cd clients/web && exec nohup node_modules/.bin/vite > "${logs_dir}/frontend.log" 2>&1 &
          echo $! > "${logs_dir}/frontend.pid")
     fi
 
