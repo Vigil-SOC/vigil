@@ -5,7 +5,11 @@ from typing import Dict, List, Optional
 
 from core.agents.builtins import BUILTIN_AGENTS, AgentProfile, blank_model
 from core.agents.prompts import prompt_for_row, render_confidence_bands
+from core.agents.run_stats import agent_run_stats
+from core.llm.chat_layers import changes_for_tools
+from core.llm.providers.registry import get_registry, model_display_name
 from core.response.config import ResponseConfig
+from core.skills.skill_library import READ_SKILL_TOOL, load_skills, skill_roots
 
 logger = logging.getLogger(__name__)
 
@@ -124,16 +128,82 @@ class AgentManager:
         self.agents = {**builtins, **customs}
 
     def get_agent_list(self) -> List[Dict]:
-        return [
-            {
-                "id": a.id,
-                "name": a.name,
-                "description": a.description,
-                "icon": a.icon,
-                "color": a.color,
-                "specialization": a.specialization,
-                "decision_id": a.decision_id,
-                "recommended_tools": list(a.recommended_tools),
-            }
-            for a in self.agents.values()
-        ]
+        """One row per agent, with what the Agents tab shows beside it.
+
+        ``model`` is the label (registry display name, else the stored id) and
+        ``model_source`` is ``agent``, ``assignment`` or ``default``; both are
+        None when nothing is configured. ``skills`` is the size of the skill
+        library when the agent can ``read_skill``, else 0. ``changes`` is
+        ``read_only``, ``asks_first`` or ``on_its_own``. ``runs_7d``,
+        ``success_rate`` (a fraction 0..1, None with no runs) and
+        ``success_level`` cover the last 7 days; all three are None if the
+        stats could not be read.
+        """
+        assignments = _read_assignments()
+        default = _UNSET
+        library = len(load_skills(skill_roots()))
+        try:
+            stats: Optional[Dict[str, dict]] = agent_run_stats()
+        except Exception as e:
+            logger.warning(f"Agent run stats unavailable: {e}")
+            stats = None
+        rows = []
+        for a in self.agents.values():
+            if a.model:
+                model, source = a.model, "agent"
+            elif a.component_category in assignments:
+                model, source = assignments[a.component_category], "assignment"
+            else:
+                if default is _UNSET:
+                    default = _default_model(assignments)
+                model, source = default, ("default" if default else None)
+            if stats is None:
+                run = dict.fromkeys(_STAT_FIELDS)
+            else:
+                run = stats.get(a.id) or {**dict.fromkeys(_STAT_FIELDS), "runs_7d": 0}
+            rows.append(
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "description": a.description,
+                    "icon": a.icon,
+                    "color": a.color,
+                    "specialization": a.specialization,
+                    "decision_id": a.decision_id,
+                    "recommended_tools": list(a.recommended_tools),
+                    "model": model_display_name(model) if model else None,
+                    "model_source": source,
+                    "component_category": a.component_category,
+                    "skills": library if READ_SKILL_TOOL in a.recommended_tools else 0,
+                    "changes": changes_for_tools(a.recommended_tools),
+                    **run,
+                }
+            )
+        return rows
+
+
+_UNSET = object()
+_STAT_FIELDS = ("runs_7d", "success_rate", "success_level")
+
+
+def _read_assignments() -> Dict[str, str]:
+    """Configured model id per component; empty when the DB is unreachable."""
+    try:
+        return {c: a.model_id for c, a in get_registry().get_all_assignments().items()}
+    except Exception as e:
+        logger.warning(f"Model assignments unavailable: {e}")
+        return {}
+
+
+def _default_model(assignments: Dict[str, str]) -> Optional[str]:
+    """The rest of resolve_model_for_component: chat_default, then the provider default."""
+    if "chat_default" in assignments:
+        return assignments["chat_default"]
+    try:
+        from core.llm.router.router import get_default_provider_spec
+
+        spec = get_default_provider_spec()
+    except Exception as e:
+        logger.warning(f"Default provider unavailable: {e}")
+        return None
+    return spec.default_model if spec else None

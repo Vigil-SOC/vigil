@@ -212,6 +212,14 @@ def _clear_discovered_meta() -> None:
 # ---------------------------------------------------------------------------
 
 
+def model_display_name(model_id: str) -> str:
+    """The display name any provider's catalog lists for ``model_id``, else the id."""
+    for (_, mid), live in _LIVE_META.items():
+        if mid == model_id and live.get("display_name"):
+            return live["display_name"]
+    return model_id
+
+
 def _default_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
     return {
         "display_name": model_id,

@@ -98,6 +98,21 @@ def _is_destructive_mcp(name: str) -> bool:
     return any(tok in _DESTRUCTIVE_VERBS for tok in tokens)
 
 
+def changes_for_tools(tools: List[str]) -> str:
+    """What an agent with these tools does to the outside world.
+
+    ``on_its_own`` when any tool acts directly with no approval gate (a
+    destructive MCP tool that is not ART execute, which the gate covers);
+    ``asks_first`` when it can queue an approval or run a gated ART execute;
+    otherwise ``read_only``. Vigil's own case writes are not outside changes.
+    """
+    if any(t not in EXECUTE_IDS and _is_destructive_mcp(t) for t in tools):
+        return "on_its_own"
+    if "create_approval_action" in tools or any(t in EXECUTE_IDS for t in tools):
+        return "asks_first"
+    return "read_only"
+
+
 # A conversation is one answer at a time with a person waiting, so the ceiling is
 # per turn rather than per run: they will say so long before a budget would.
 DEFAULT_BUDGETS = {"max_calls": 12, "max_wall_ms": 300_000, "max_cost_usd": 2.0}
