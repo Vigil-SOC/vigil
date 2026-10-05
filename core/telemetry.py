@@ -272,7 +272,6 @@ def init_telemetry(service_name: str) -> bool:
     try:
         _do_init(service_name)
         _initialized = True
-        _install_json_logging()
         return True
     except Exception as exc:
         logger.warning("OpenTelemetry initialization failed (non-fatal): %s", exc)
@@ -471,46 +470,79 @@ def current_trace_ids() -> tuple[str, str]:
     return "", ""
 
 
-def _install_json_logging() -> None:
+TEXT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Libraries that log routine per-request/per-query chatter at INFO. Pinned so a
+# root level of INFO shows Vigil's own records, not theirs.
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "sqlalchemy.engine",
+    "urllib3",
+    "watchfiles",
+    "asyncio",
+)
+
+
+class _OTELJsonFormatter(logging.Formatter):
+    """One JSON object per record, with trace ids and a stable grouping key.
+
+    ``msg_template`` (``record.msg`` before args are applied) plus ``logger``
+    and ``exc_type`` identify a call site without regex-normalising
+    ``message``. Neither carries argument values.
     """
-    Replace the root logger's handlers with structured JSON output.
 
-    Each log line includes trace_id and span_id from the current OTEL span
-    so that logs can be correlated with traces in Jaeger/Grafana.
-    Retains file output alongside stdout.
+    def format(self, record: logging.LogRecord) -> str:
+        trace_id, span_id = current_trace_ids()
+
+        entry: dict = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%f"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "msg_template": record.msg if isinstance(record.msg, str) else "",
+            "trace_id": trace_id,
+            "span_id": span_id,
+        }
+
+        inv_id = get_investigation_id()
+        if inv_id:
+            entry["vigil.investigation.id"] = inv_id
+
+        if record.exc_info:
+            exc_cls = record.exc_info[0]
+            if exc_cls is not None:
+                entry["exc_type"] = f"{exc_cls.__module__}.{exc_cls.__qualname__}"
+            entry["exception"] = self.formatException(record.exc_info)
+
+        for key, val in record.__dict__.items():
+            if key.startswith("vigil."):
+                entry[key] = val
+
+        return json.dumps(entry, default=str)
+
+
+def configure_logging(level: str | int = "INFO") -> None:
     """
+    Install the process's root logging: stdout plus ``vigil.log`` in the State
+    Directory, at *level*. Independent of OTEL; called by the backend, daemon
+    and llm-worker on startup.
 
-    class _OTELJsonFormatter(logging.Formatter):
-        def format(self, record: logging.LogRecord) -> str:
-            trace_id, span_id = current_trace_ids()
-
-            entry: dict = {
-                "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%f"),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-                "trace_id": trace_id,
-                "span_id": span_id,
-            }
-
-            inv_id = get_investigation_id()
-            if inv_id:
-                entry["vigil.investigation.id"] = inv_id
-
-            if record.exc_info:
-                entry["exception"] = self.formatException(record.exc_info)
-
-            for key, val in record.__dict__.items():
-                if key.startswith("vigil."):
-                    entry[key] = val
-
-            return json.dumps(entry, default=str)
+    ``VIGIL_LOG_FORMAT`` picks JSON (default; carries trace_id/span_id from the
+    active OTEL span, empty when none) or the plain text format.
+    """
+    formatter: logging.Formatter = (
+        logging.Formatter(TEXT_LOG_FORMAT)
+        if get_settings().vigil_log_format == "text"
+        else _OTELJsonFormatter()
+    )
 
     root = logging.getLogger()
     for handler in root.handlers[:]:
         root.removeHandler(handler)
-
-    formatter = _OTELJsonFormatter()
+    root.setLevel(level.upper() if isinstance(level, str) else level)
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     console = logging.StreamHandler()
     console.setFormatter(formatter)

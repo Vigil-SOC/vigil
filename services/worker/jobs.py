@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.llm.gateway.gateway import QUEUE_NAME
 from core.llm.gateway.gateway import redis_settings as gateway_redis_settings
+from core.telemetry import configure_logging, init_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -148,16 +149,10 @@ async def _maybe_dispatch_via_router(
 
 
 async def on_startup(ctx: Dict[str, Any]):
-    # Initialize OTEL telemetry (replaces basicConfig with structured JSON logging)
+    configure_logging("INFO")
     try:
-        from core.telemetry import init_telemetry
-
         init_telemetry("vigil-llm-worker")
     except Exception as _tel_err:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
         logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
 
     # Initialize the SQLAlchemy DB manager so downstream code (reasoning-trace

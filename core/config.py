@@ -4,7 +4,7 @@ import os
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -242,6 +242,8 @@ class Settings(BaseSettings):
     # Observability
     sentry_dsn: str = ""
     vigil_otel_enabled: bool = False
+    # Process log output: "json" (one object per line) or plain "text".
+    vigil_log_format: Literal["json", "text"] = "json"
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 
     # Daemon

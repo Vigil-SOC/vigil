@@ -33,6 +33,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.platform.monitoring import get_metrics_response, init_sentry
+from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
 from services.api.discovery import mount_routers
 from services.api.errors import register_exception_handlers
@@ -73,12 +74,10 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
 
 # Initialize telemetry before creating the FastAPI app so instrumentation
 # is registered before the first request handler is defined.
+configure_logging("INFO")
 try:
-    from core.telemetry import init_telemetry
-
     init_telemetry("vigil-backend")
 except Exception as _tel_err:
-    logging.basicConfig(level=logging.INFO)
     logging.getLogger(__name__).warning(
         "Telemetry init failed (non-fatal): %s", _tel_err
     )

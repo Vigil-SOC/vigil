@@ -7,6 +7,7 @@ from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonCon
 from core.intent import INTENT_FIELDS
 from core.response.config import ResponseConfig  # re-exported for DaemonConfig
 from core.secrets import get_secret
+from core.telemetry import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,6 @@ class DaemonConfig:
 
     # Logging
     log_level: str = "INFO"
-    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     # Where each intent knob's value came from (env | db | default), keyed by
     # attribute path, recorded by from_env() for the INTENT.md observe report.
@@ -289,7 +289,5 @@ class DaemonConfig:
         return config
 
     def setup_logging(self):
-        logging.basicConfig(
-            level=getattr(logging, self.log_level.upper()), format=self.log_format
-        )
-        logger.info(f"Logging configured at {self.log_level} level")
+        configure_logging(self.log_level)
+        logger.info("Logging configured at %s level", self.log_level)

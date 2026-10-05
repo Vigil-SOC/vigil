@@ -326,6 +326,8 @@ if [ "$DAEMON" -eq 0 ]; then
     # writes. tee -i survives Ctrl-C so shutdown output is still captured; piping
     # makes Python block-buffer, hence PYTHONUNBUFFERED.
     export PYTHONUNBUFFERED=1
+    # Readable lines in a terminal; override with VIGIL_LOG_FORMAT=json.
+    export VIGIL_LOG_FORMAT="${VIGIL_LOG_FORMAT:-text}"
     rotate_log "$LOGS_DIR/backend.log"
     rotate_log "$LOGS_DIR/llm_worker.log"
     rotate_log "$LOGS_DIR/frontend.log"

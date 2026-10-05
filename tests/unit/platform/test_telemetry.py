@@ -5,6 +5,7 @@ The sanitizer tests are **security-critical** — they verify that sensitive
 data patterns are scrubbed before leaving the process.
 """
 
+import json
 import os
 import sys
 import pytest
@@ -175,6 +176,75 @@ class TestInvestigationContext:
         assert get_investigation_id() == "inv-test-123"
         set_investigation_id(None)
         assert get_investigation_id() is None
+
+
+# ---------------------------------------------------------------------------
+# Structured logging
+# ---------------------------------------------------------------------------
+
+
+def _record(msg, args=(), exc_info=None):
+    import logging
+
+    return logging.LogRecord("svc.mod", logging.ERROR, __file__, 1, msg, args, exc_info)
+
+
+class TestJsonLogging:
+    def test_same_call_site_groups_by_msg_template(self):
+        from core.telemetry import _OTELJsonFormatter
+
+        fmt = _OTELJsonFormatter()
+        a = json.loads(fmt.format(_record("job %s failed", ("a1",))))
+        b = json.loads(fmt.format(_record("job %s failed", ("b2",))))
+        assert a["msg_template"] == b["msg_template"] == "job %s failed"
+        assert a["message"] == "job a1 failed" and b["message"] == "job b2 failed"
+        assert {"ts", "level", "logger", "trace_id", "span_id"} <= a.keys()
+
+    def test_non_str_msg_has_empty_template(self):
+        from core.telemetry import _OTELJsonFormatter
+
+        out = json.loads(_OTELJsonFormatter().format(_record(ValueError("x"))))
+        assert out["msg_template"] == ""
+
+    def test_exc_type_only_with_exc_info(self):
+        from core.telemetry import _OTELJsonFormatter
+
+        fmt = _OTELJsonFormatter()
+        assert "exc_type" not in json.loads(fmt.format(_record("plain")))
+        try:
+            raise KeyError("k")
+        except KeyError:
+            rec = _record("boom", exc_info=sys.exc_info())
+        out = json.loads(fmt.format(rec))
+        assert out["exc_type"] == "builtins.KeyError"
+        assert "KeyError" in out["exception"]
+
+    def test_configure_logging_without_otel(self, tmp_path, monkeypatch, capsys):
+        import logging
+
+        import core.telemetry as tel
+
+        monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+        monkeypatch.setattr(tel, "get_settings", lambda: MagicMock(vigil_log_format="json"))
+        root = logging.getLogger()
+        saved, level = root.handlers[:], root.level
+        try:
+            tel.configure_logging("INFO")
+            logging.getLogger("svc.mod").info("started %s", 1)
+            logging.getLogger("svc.mod").debug("hidden")
+            for h in root.handlers:
+                h.flush()
+        finally:
+            for h in root.handlers[:]:
+                root.removeHandler(h)
+                h.close()
+            for h in saved:
+                root.addHandler(h)
+            root.setLevel(level)
+        line = json.loads(capsys.readouterr().err.strip())
+        assert line["msg_template"] == "started %s" and line["message"] == "started 1"
+        logged = (tmp_path / "vigil.log").read_text().strip().splitlines()
+        assert len(logged) == 1 and json.loads(logged[0]) == line
 
 
 # ---------------------------------------------------------------------------
