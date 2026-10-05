@@ -550,7 +550,7 @@ describe('SocConsole', () => {
     renderConsole()
     clickScreen('Agents & workflows')
     fireEvent.click(screen.getByRole('tab', { name: 'Agents' }))
-    expect(screen.getByText('SOC Agents')).toBeInTheDocument()
+    expect(screen.getByText(/Each can use its own model/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('UI Demo Skill')).toBeInTheDocument()
     // Skills are files (#882 decision 7): no build/import/toggle/delete controls

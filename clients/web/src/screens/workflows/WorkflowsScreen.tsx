@@ -3413,15 +3413,37 @@ function DeleteModal({ wf, onClose, onDeleted }: { wf: Workflow; onClose: () => 
   )
 }
 
+const CHANGES_LABEL = { read_only: 'Read-only', asks_first: 'Asks first', on_its_own: 'On its own' } as const
+const CHANGES_TIP = 'Its actions wait for you unless Settings lets a high-confidence reversible one through.'
+const SUCCESS_TIP = 'Counts workflow steps and chat turns only. “Success” means it ran to the end, not that the conclusion was right.'
+const LEVELS = {
+  good: { name: 'Good', glyph: 'M5 12.5l4.2 4.2L19 7.2' },
+  fair: { name: 'Fair', glyph: 'M5 12h14' },
+  poor: { name: 'Poor', glyph: 'M7 7l10 10M17 7 7 17' },
+} as const
+const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
+
+/** The line under the model name: where the model came from. */
+function modelSource(a: AgentTemplate): string | null {
+  if (!a.model) return null
+  if (a.modelSource === 'agent') return 'Set for this agent'
+  if (a.modelSource === 'assignment' && a.category) return `${a.category.charAt(0).toUpperCase()}${a.category.slice(1).replace(/_/g, ' ')} default`
+  return 'Default'
+}
+
 function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
+  // optimistic On switches, dropped when the list reloads
+  const [enabledNow, setEnabledNow] = useState<Record<string, boolean>>({})
+  const [toggleErr, setToggleErr] = useState<string | null>(null)
+  useEffect(() => setEnabledNow({}), [rows])
 
   const builtins = rows.filter((a) => !a.custom)
-  const customs = rows.filter((a) => a.custom)
+  const ordered = [...builtins, ...rows.filter((a) => a.custom)]
 
   const fork = (handle: string) => {
     setBusy(handle)
@@ -3435,42 +3457,51 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
       .finally(() => setBusy(null))
   }
 
+  const setEnabled = (a: AgentTemplate, on: boolean) => {
+    setToggleErr(null)
+    setEnabledNow((m) => ({ ...m, [a.handle]: on }))
+    agentsApi.setEnabled(a.handle, on).catch((e) => {
+      setEnabledNow((m) => ({ ...m, [a.handle]: !on }))
+      setToggleErr(`Couldn’t turn ${a.name} ${on ? 'on' : 'off'}: ${(e as { message?: string })?.message || 'request failed'}`)
+    })
+  }
+
   return (
-    <>
-      <div className="flex items-start gap-4 flex-wrap px-[22px] pt-5 pb-[6px]">
-        <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">SOC Agents</h2>
-          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Built-in agents are read-only templates. Fork one to create an editable custom copy, or start from scratch with “New Agent”.</p></div>
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <button className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New Agent</button>
-          <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        </div>
+    <div className="ag-page">
+      <div className="ag-bar">
+        <span className="ag-summary">
+          {phase === 'ready' ? `${builtins.length} built-in agent${builtins.length === 1 ? '' : 's'} plus your own. Each can use its own model.` : 'Built-in agents plus your own. Each can use its own model.'}
+        </span>
+        <button className="ag-btn" title="Refresh" aria-label="Refresh" onClick={reload}><Icon name="refresh" /></button>
+        <button className="ag-btn" onClick={() => setCreating(true)}><Icon name="sparkle" /> Describe a new agent</button>
+        <button className="ag-btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New agent</button>
       </div>
 
+      {toggleErr && <div className="ag-err" role="alert">{toggleErr}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="brain" title="Loading agents…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating(true), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
 
       {phase === 'ready' && rows.length > 0 && (
-        // two-up only when forked copies exist
-        <div
-          className="grid gap-x-6 gap-y-2 px-[22px] pb-[22px] items-start"
-          style={{ gridTemplateColumns: customs.length > 0 ? 'repeat(auto-fit, minmax(440px, 1fr))' : '1fr' }}
-        >
-          {customs.length > 0 && (
-            <AgentSection title={`Custom agents (${customs.length})`} agents={customs} renderActions={(a) => (
+        <>
+          <AgentTable
+            agents={ordered.map((a) => ({ ...a, enabled: enabledNow[a.handle] ?? a.enabled }))}
+            onOpen={(a) => (a.custom ? setEditId(a.handle) : fork(a.handle))}
+            onToggle={setEnabled}
+            renderActions={(a) => a.custom ? (
               <span className="row-act">
-                <button title="Edit" onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
-                <button title="Fork into a new copy" disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
-                <button title="Delete" onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
+                <button title="Edit" aria-label={`Edit ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
+                <button title="Fork into a new copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
+                <button title="Delete" aria-label={`Delete ${a.name}`} onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
               </span>
-            )} />
-          )}
-          <AgentSection title={`Built-in templates (${builtins.length})`} agents={builtins} template renderActions={(a) => (
-            <span className="row-act">
-              <button title="Fork to editable copy" disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
-            </span>
-          )} />
-        </div>
+            ) : (
+              <span className="row-act">
+                <button title="Fork to editable copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
+              </span>
+            )}
+          />
+          <p className="ag-foot">{ASSIGNMENT_NOTE}</p>
+        </>
       )}
 
       {(creating || editId) && (
@@ -3481,53 +3512,82 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
-    </>
-  )
-}
-
-function AgentSection({ title, agents, template, renderActions }: {
-  title: string
-  agents: AgentTemplate[]
-  template?: boolean
-  renderActions: (a: AgentTemplate) => React.ReactNode
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="pt-[14px] pb-2.5 text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3">{title}</div>
-      <AgentTable agents={agents} template={template} renderActions={renderActions} />
     </div>
   )
 }
 
-function AgentTable({ agents, template, renderActions }: {
+function SuccessInfo() {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="ag-info" onBlur={() => setOpen(false)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+      <button type="button" aria-label="How success is calculated" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Icon name="info" size={15} /></button>
+      {open && <span role="dialog" className="ag-info-pop">{SUCCESS_TIP}</span>}
+    </span>
+  )
+}
+
+function AgentTable({ agents, onOpen, onToggle, renderActions }: {
   agents: AgentTemplate[]
-  template?: boolean
+  onOpen: (a: AgentTemplate) => void
+  onToggle: (a: AgentTemplate, on: boolean) => void
   renderActions: (a: AgentTemplate) => React.ReactNode
 }) {
+  // a click on the switch or a row action must not also open the row
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation()
   return (
-    <div className="table-wrap border border-line rounded-lg overflow-hidden">
+    <div className="ag-card">
       <table className="tbl agents-tbl">
+        <colgroup>
+          <col className="c-agent" /><col /><col className="c-model" /><col className="c-skills" /><col className="c-changes" />
+          <col className="c-runs" /><col className="c-success" /><col className="c-on" /><col className="c-act" />
+        </colgroup>
         <thead><tr>
-          <th>Name</th><th>Specialization</th>
-          <th className="ag-c">Tools</th><th className="ag-c">Actions</th>
+          <th>Agent</th><th>What it does</th><th>Model</th><th>Skills</th><th>Changes things?</th><th>Runs, 7 days</th>
+          <th><span className="ag-th-info">Success<SuccessInfo /></span></th><th>On</th><th><span className="sr-only">Actions</span></th>
         </tr></thead>
         <tbody>
-          {agents.map((a) => (
-            <tr key={a.handle}>
-              <td>
-                <div className="flex items-center gap-3">
-                  <span className="ag-avatar" style={{ background: a.color }}>{a.ini}</span>
-                  <div className="ag-meta">
-                    <div className="text-[13.5px] font-semibold flex items-center gap-2.5">{a.name} {template && <span className="tmpl-badge"><Icon name="lock" /> Template</span>}</div>
-                    <div className="text-[11.5px] text-tx-3 mt-[3px] mono">{a.handle}</div>
-                  </div>
-                </div>
-              </td>
-              <td>{a.spec}</td>
-              <td className="muted ag-c">{a.tools ?? '—'}</td>
-              <td className="ag-c">{renderActions(a)}</td>
-            </tr>
-          ))}
+          {agents.map((a) => {
+            const source = modelSource(a)
+            const level = a.successPct !== null && a.successLevel ? LEVELS[a.successLevel] : null
+            return (
+              <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
+                <td>
+                  <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
+                    <span className="ag-ini">{a.ini.charAt(0)}</span>
+                    <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
+                  </button>
+                </td>
+                <td><span className="ag-does" title={a.does}>{a.does}</span></td>
+                <td>
+                  {a.model
+                    ? <span className="ag-model"><span className="ag-model-name">{a.model}</span>{source && <span className="ag-sub">{source}</span>}</span>
+                    : <span className="ag-dash">—</span>}
+                </td>
+                <td className="ag-num">{a.skills}</td>
+                <td>
+                  {a.changes
+                    ? <span className={`ag-chg ${a.changes}`} title={a.changes === 'asks_first' ? CHANGES_TIP : undefined}>{CHANGES_LABEL[a.changes]}</span>
+                    : <span className="ag-dash">—</span>}
+                </td>
+                <td className="ag-num">{a.runs7d === null ? '—' : a.runs7d.toLocaleString('en-US')}</td>
+                <td>
+                  <span className="ag-rate">
+                    {a.successPct === null ? '—' : `${a.successPct.toFixed(1)}%`}
+                    {level && a.successLevel && (
+                      <span className={`ag-level ${a.successLevel}`}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d={level.glyph} /></svg>
+                        {level.name}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="ag-on" onClick={stop}>
+                  <button type="button" role="switch" aria-checked={a.enabled} aria-label={`${a.name} on`} className="ag-switch" onClick={() => onToggle(a, !a.enabled)}><span /></button>
+                </td>
+                <td className="ag-acts" onClick={stop}>{renderActions(a)}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

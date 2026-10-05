@@ -2983,21 +2983,336 @@
       flex-wrap: wrap;
    }
 
-   .agents-tbl th.ag-c,
-   .agents-tbl td.ag-c {
-      text-align: center;
+   /* Agents table. Scoped overrides that follow the Agents board and
+      tokens.json (sentence-case 12px heads, square initial, green switch,
+      22px state pills); the shared .tbl, .toggle and .row-act rules stay. */
+   .ag-page {
+      padding: 20px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
    }
 
-   .ag-avatar {
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      font-size: 12.5px;
-      font-weight: 700;
-      color: #fff;
+   .ag-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+   }
+
+   .ag-summary {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .ag-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      height: 36px;
+      padding: 0 14px;
       flex: 0 0 auto;
+      white-space: nowrap;
+      background: transparent;
+      color: var(--tx0);
+      border: 1px solid var(--ln2);
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+   }
+
+   .ag-btn:hover {
+      background: var(--bg3);
+   }
+
+   .ag-btn svg {
+      width: 15px;
+      height: 15px;
+   }
+
+   .ag-btn[aria-label="Refresh"] {
+      width: 36px;
+      padding: 0;
+      color: var(--tx2);
+   }
+
+   .ag-btn.primary {
+      background: var(--ac);
+      border-color: var(--ac);
+      color: var(--ac-tx);
+   }
+
+   .ag-btn.primary:hover {
+      background: var(--ac);
+      filter: brightness(1.08);
+   }
+
+   .ag-err {
+      font-size: 12px;
+      color: var(--poor);
+   }
+
+   .ag-foot {
+      margin: 0;
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .ag-card {
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+      overflow: hidden;
+   }
+
+   .agents-tbl {
+      table-layout: fixed;
+   }
+
+   .agents-tbl col.c-agent { width: 19%; }
+   .agents-tbl col.c-model { width: 14%; }
+   .agents-tbl col.c-skills { width: 64px; }
+   .agents-tbl col.c-changes { width: 112px; }
+   .agents-tbl col.c-runs { width: 92px; }
+   .agents-tbl col.c-success { width: 152px; }
+   .agents-tbl col.c-on { width: 62px; }
+   .agents-tbl col.c-act { width: 124px; }
+
+   .agents-tbl thead th {
+      position: static;
+      background: transparent;
+      padding: 11px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--tx2);
+      border-bottom: 0;
+   }
+
+   .agents-tbl tbody td {
+      padding: 11px 12px;
+      border-top: 1px solid var(--ln0);
+      border-bottom: 0;
+      font-size: 12px;
+      color: var(--tx1);
+      white-space: normal;
+      vertical-align: middle;
+   }
+
+   .agents-tbl thead th:first-child,
+   .agents-tbl tbody td:first-child {
+      padding-left: 16px;
+   }
+
+   .agents-tbl thead th:last-child,
+   .agents-tbl tbody td:last-child {
+      padding-right: 16px;
+   }
+
+   .agents-tbl tbody tr {
+      cursor: pointer;
+   }
+
+   .agents-tbl tbody tr:hover {
+      background: var(--bg3);
+   }
+
+   .agents-tbl tr:focus-within .row-act {
+      opacity: 1;
+   }
+
+   .agents-tbl tbody tr.ag-off td:not(.ag-on):not(.ag-acts) {
+      opacity: 0.5;
+   }
+
+   .ag-who {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      max-width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      color: inherit;
+   }
+
+   .ag-ini {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--bg3);
+      color: var(--tx0);
+      font-size: 11px;
+      font-weight: 700;
+   }
+
+   .ag-who-txt,
+   .ag-model {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+   }
+
+   .ag-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--tx0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .ag-sub {
+      font-size: 11px;
+      color: var(--tx2);
+   }
+
+   .ag-model-name {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .ag-does {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.4;
+   }
+
+   .ag-num {
+      font-variant-numeric: tabular-nums;
+   }
+
+   .ag-dash {
+      color: var(--tx2);
+   }
+
+   .ag-chg {
+      font-weight: 650;
+   }
+
+   .ag-chg.read_only { color: var(--good); }
+   .ag-chg.asks_first { color: var(--fair); }
+   /* the board has no row for "on its own"; poor keeps it apart from the other two */
+   .ag-chg.on_its_own { color: var(--poor); }
+
+   .ag-rate {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--tx0);
+      font-variant-numeric: tabular-nums;
+   }
+
+   .ag-level {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 22px;
+      padding: 0 9px 0 7px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 11.5px;
+      font-weight: 700;
+      white-space: nowrap;
+   }
+
+   .ag-level.good { color: var(--good); background: var(--good-bg); border-color: var(--good-ln); }
+   .ag-level.fair { color: var(--fair); background: var(--fair-bg); border-color: var(--fair-ln); }
+   .ag-level.poor { color: var(--poor); background: var(--poor-bg); border-color: var(--poor-ln); }
+
+   .ag-th-info {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+   }
+
+   .ag-info {
+      position: relative;
+      display: inline-flex;
+   }
+
+   .ag-info button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--tx3);
+   }
+
+   .ag-info button:hover {
+      color: var(--ac);
+      background: var(--bg3);
+   }
+
+   .ag-info-pop {
+      position: absolute;
+      right: -8px; /* opens leftwards: the card clips anything past its right edge */
+      top: 28px;
+      z-index: 40;
+      width: 300px;
+      padding: 12px 14px;
+      background: var(--bg2);
+      border: 1px solid var(--ln2);
+      border-radius: 12px;
+      box-shadow: 0 18px 40px var(--shadow);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      color: var(--tx0);
+      white-space: normal; /* the th above is nowrap */
+      text-align: left;
+   }
+
+   .ag-switch {
+      position: relative;
+      display: block;
+      width: 38px;
+      height: 22px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: var(--ln2);
+      transition: background .15s;
+   }
+
+   .ag-switch[aria-checked="true"] {
+      background: var(--good);
+   }
+
+   .ag-switch span {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+      transition: left .15s;
+   }
+
+   .ag-switch[aria-checked="true"] span {
+      left: 19px;
+   }
+
+   .agents-tbl td.ag-acts {
+      text-align: right;
    }
 
    .tmpl-badge {

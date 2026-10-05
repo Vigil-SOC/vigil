@@ -379,6 +379,16 @@ export interface ApiAgent {
   color?: string
   specialization?: string
   recommended_tools?: string[]
+  model?: string | null
+  model_source?: AgentTemplate['modelSource']
+  component_category?: string | null
+  skills?: number
+  changes?: AgentTemplate['changes']
+  runs_7d?: number | null
+  /** fraction 0..1 */
+  success_rate?: number | null
+  success_level?: AgentTemplate['successLevel']
+  enabled?: boolean
 }
 
 export function mapApiAgent(a: ApiAgent): AgentTemplate {
@@ -388,7 +398,16 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
     spec: a.specialization || a.description || '—',
     ini: initials(a.name || a.id),
     color: a.color || 'var(--accent)',
-    tools: a.recommended_tools?.length,
+    does: a.description || a.specialization || '—',
+    model: a.model ?? null,
+    modelSource: a.model_source ?? null,
+    category: a.component_category ?? null,
+    skills: a.skills ?? 0,
+    changes: a.changes ?? null,
+    runs7d: a.runs_7d ?? null,
+    successPct: a.success_rate == null ? null : a.success_rate * 100,
+    successLevel: a.success_level ?? null,
+    enabled: a.enabled !== false,
     custom: a.id.startsWith('custom-'),
   }
 }

@@ -59,8 +59,20 @@ export interface AgentTemplate {
   spec: string
   ini: string
   color: string
-  /** count of recommended_tools on the agent list */
-  tools?: number
+  /** what the agent does: description, else specialization */
+  does: string
+  model: string | null
+  modelSource: 'agent' | 'assignment' | 'default' | null
+  /** Triage, Investigation, Reporting… for an assignment-sourced model */
+  category: string | null
+  skills: number
+  changes: 'read_only' | 'asks_first' | 'on_its_own' | null
+  /** null when the stats query failed server-side */
+  runs7d: number | null
+  /** percent 0..100, null with no runs or a failed stats query */
+  successPct: number | null
+  successLevel: 'good' | 'fair' | 'poor' | null
+  enabled: boolean
   /** true for DB-backed forked copies (handle starts with "custom-") */
   custom: boolean
 }

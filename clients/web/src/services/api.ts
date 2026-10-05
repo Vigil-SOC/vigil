@@ -504,6 +504,9 @@ export const claudeApi = {
 
 export const agentsApi = {
   listAgents: () => api.get('/agents/agents'),
+  // the router prefix and the route path both say "agents"
+  setEnabled: (agent_id: string, enabled: boolean) =>
+    api.put(`/agents/agents/${agent_id}/enabled`, { enabled }),
 
   listCustom: () => api.get('/agents/custom'),
   getCustom: (agent_id: string) => api.get(`/agents/custom/${agent_id}`),
