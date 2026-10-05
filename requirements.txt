@@ -65,7 +65,7 @@ cryptography>=42.0.0
 slowapi>=0.1.10
 # Signed URL-safe tokens for password reset (also a Starlette transitive
 # dep; listed explicitly so pip show it and it doesn't quietly disappear).
-itsdangerous>=2.1.0
+itsdangerous>=2.2.0
 
 # Testing Dependencies
 pytest>=8.0.0
