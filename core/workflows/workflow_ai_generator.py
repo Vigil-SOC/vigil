@@ -152,9 +152,15 @@ class WorkflowAIGenerator:
 
     def _agents_context(self) -> str:
         try:
+            from core.agents.enablement import disabled_agent_ids
             from core.agents.manager import SOCAgentLibrary
 
-            agents = SOCAgentLibrary.get_all_agents()
+            disabled = disabled_agent_ids()
+            agents = {
+                k: v
+                for k, v in SOCAgentLibrary.get_all_agents().items()
+                if k not in disabled
+            }
         except Exception as e:
             logger.warning(f"Could not load agent library: {e}")
             return "(agent library unavailable)"

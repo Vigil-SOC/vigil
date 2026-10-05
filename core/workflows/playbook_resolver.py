@@ -186,6 +186,7 @@ def _candidate_names(capability: str) -> Tuple[str, ...]:
 # An agent's prompt is rendered now rather than read from a file: the memory block
 # depends on the agent's own grant, so a stored copy would describe another agent.
 def _profile_for(agent_id: str) -> Any:
+    from core.agents.enablement import disabled_agent_ids, disabled_message
     from core.agents.manager import (
         CUSTOM_AGENT_ID_PREFIX,
         AgentManager,
@@ -200,6 +201,8 @@ def _profile_for(agent_id: str) -> Any:
         profile = AgentManager().agents.get(agent_id)
     if profile is None:
         raise UnknownPlaybook(f"phase names agent {agent_id}, which does not exist")
+    if agent_id in disabled_agent_ids():
+        raise UnknownPlaybook(f"phase names {disabled_message(agent_id)}")
     return profile
 
 

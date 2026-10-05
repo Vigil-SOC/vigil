@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Optional
 
 from core.agents.builtins import BUILTIN_AGENTS, AgentProfile, blank_model
+from core.agents.enablement import disabled_agent_ids
 from core.agents.prompts import prompt_for_row, render_confidence_bands
 from core.response.config import ResponseConfig
 
@@ -124,6 +125,7 @@ class AgentManager:
         self.agents = {**builtins, **customs}
 
     def get_agent_list(self) -> List[Dict]:
+        disabled = disabled_agent_ids()
         return [
             {
                 "id": a.id,
@@ -134,6 +136,7 @@ class AgentManager:
                 "specialization": a.specialization,
                 "decision_id": a.decision_id,
                 "recommended_tools": list(a.recommended_tools),
+                "enabled": a.id not in disabled,
             }
             for a in self.agents.values()
         ]

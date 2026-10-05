@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from core.agents.builtins import blank_model
+from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
 from core.auth import tool_principal
 from core.deps import provide_mcp_registry
@@ -288,6 +289,9 @@ async def chat_stream(
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
+    # Before model resolution, whose agent lookup swallows errors.
+    if request.agent_id and request.agent_id in disabled_agent_ids():
+        raise HTTPException(status_code=409, detail=disabled_message(request.agent_id))
     # Resolved here because this is the side that knows what an agent is: the
     # harness is handed a prompt, a model and a tool list, never an agent id.
     provider_id, resolved_model = _resolve_provider_model_for_request(
