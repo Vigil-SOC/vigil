@@ -29,6 +29,10 @@
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
+          "type": "generic",
+          "path": "scripts/vigil-support/VERSION"
+        },
+        {
           "type": "json",
           "path": "clients/web/package.json",
           "jsonpath": "$.version"
