@@ -261,6 +261,26 @@
   white-space: nowrap;
 }
 
+.vg-autonomy-link {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vg-autonomy-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.vg-autonomy-link:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
 .vg-info {
   width: 22px;
   height: 22px;

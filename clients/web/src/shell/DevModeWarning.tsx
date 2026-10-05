@@ -3,7 +3,7 @@ import { Icon } from '../shared/icons'
 import { basePath } from '../config/basePath'
 
 /**
- * The rail item that says this console is not authenticated.
+ * The header item that says this console is not authenticated.
  *
  * With the bypass on, the SPA mocks a signed-in user, so there is no login
  * screen to notice and nothing else on the page looks any different from a
@@ -52,8 +52,7 @@ export default function DevModeWarning() {
 
   if (!BUILT_WITH_BYPASS && !backendBypassed) return null
 
-  // tabIndex so the tip is reachable without a mouse: with the rail collapsed
-  // it is the only place the warning is spelled out.
+  // tabIndex so the warning is reachable without a mouse.
   return (
     <div
       className="nav-btn dev-mode-warning"

@@ -55,17 +55,17 @@ socksio>=1.0.0
 # pagerduty-mcp, gcp-* security tools). Installing it here means the venv
 # has `uvx` on PATH and those servers can connect at backend startup
 # instead of silently failing with FileNotFoundError.
-uv>=0.5.0
+uv>=0.12.22
 
 # Authentication
 bcrypt>=5.0.0
 pyjwt>=2.13.0
 pyotp>=2.9.0
-cryptography>=42.0.0
+cryptography>=50.0.2
 slowapi>=0.1.10
 # Signed URL-safe tokens for password reset (also a Starlette transitive
 # dep; listed explicitly so pip show it and it doesn't quietly disappear).
-itsdangerous>=2.1.0
+itsdangerous>=2.2.0
 
 # Testing Dependencies
 pytest>=8.0.0
@@ -109,7 +109,7 @@ opentelemetry-exporter-otlp-proto-http>=1.25.0
 opentelemetry-exporter-prometheus>=0.46b0
 opentelemetry-instrumentation-fastapi>=0.46b0
 opentelemetry-instrumentation-sqlalchemy>=0.46b0
-opentelemetry-instrumentation-redis>=0.65b0
+opentelemetry-instrumentation-redis>=0.66b0
 opentelemetry-instrumentation-logging>=0.46b0
 opentelemetry-semantic-conventions-ai>=0.5.1
 

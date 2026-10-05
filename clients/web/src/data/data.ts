@@ -14,7 +14,7 @@ export type ConsoleScreenKey =
   | 'health'
   | 'settings'
 
-/** A rail item carrying a gate only renders when the gate is satisfied. */
+/** A nav item carrying a gate only renders when the gate is satisfied. */
 export interface NavGate {
   /** an integration id, matched against the enabled-integrations list */
   integration?: string
