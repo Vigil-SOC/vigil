@@ -135,6 +135,43 @@ def test_run_together_names_are_caught(awk):
     assert out == "PGPASSWORD: [REDACTED]\nmonkey: banana\n"
 
 
+EDGE_CASES = [
+    ("POSTGRES_PASSWORD={hunter2hunter2", "POSTGRES_PASSWORD=[REDACTED]"),
+    (
+        'x password=SecretStr("hunter2hunter2") y',
+        'x password=SecretStr("[REDACTED]") y',
+    ),
+    ("x password: 'it''s secret' y", "x password: '[REDACTED]' y"),
+    ("x PGPASSWORD=ab;cd y", "x PGPASSWORD=[REDACTED] y"),
+    ('{"t": "a\\nghp_abcdefghijklmnopqrstuvwxyz0123"}', '{"t": "a\\n[REDACTED]"}'),
+    ("db=postgres://u:abc/def==@h/x", "db=postgres://u:[REDACTED]@h/x"),
+    (
+        "https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz0123@github.com/x",
+        "https://x-access-token:[REDACTED]@github.com/x",
+    ),
+    ("http://host:8080/p?email=a@b.com", "http://host:8080/p?email=a@b.com"),
+    (
+        "Using Bearer authentication for upstream",
+        "Using Bearer authentication for upstream",
+    ),
+    ("Authorization: Bearer [REDACTED]", "Authorization: Bearer [REDACTED]"),
+    (
+        "- name: SMTP_PASSWORD\n\n  value: hunter2hunter2",
+        "- name: SMTP_PASSWORD\n\n  value: [REDACTED]",
+    ),
+    (
+        "  - password: |\n      secret\n    other: 1",
+        "  - password: |\n      [REDACTED]\n    other: 1",
+    ),
+]
+
+
+@pytest.mark.parametrize("awk", AWKS)
+@pytest.mark.parametrize(("line", "expected"), EDGE_CASES)
+def test_edge_cases(awk, line, expected):
+    assert run_awk(awk, line + "\n") == expected + "\n"
+
+
 @pytest.mark.parametrize("awk", AWKS)
 def test_pem_block_is_dropped_whole(awk):
     pem = (
@@ -142,6 +179,10 @@ def test_pem_block_is_dropped_whole(awk):
         "-----END RSA PRIVATE KEY-----\nafter\n"
     )
     assert run_awk(awk, pem) == "before\n[REDACTED]\nafter\n"
+    two_keys = "-----BEGIN PRIVATE KEY-----\\nA\\n-----END PRIVATE KEY-----"
+    assert "A" not in run_awk(awk, f"{{{two_keys}{two_keys}}}\n").replace(
+        "[REDACTED]", ""
+    )
     one_line = (
         '{"k": "-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"}\n'
     )
