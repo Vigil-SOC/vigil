@@ -46,6 +46,18 @@ Tokens in `tokens/`. Two themes, neutral grays, one accent. Summary:
 - Case drawer 75% width over a scrim; expand toggles to 100% (icons `expand`/`shrink`). Side panel 280px. Drawer z 28: above page, below header (30) and menus (60).
 - Chat dock 400px when off a case.
 
+### Screen rules
+
+Check every screen you change against these at 1440px and at 1920px, in a real browser with real data. Unit tests do not lay a page out, so none of this is caught by them.
+
+- **Nothing sideways.** No content is reachable only by scrolling sideways, and a row's primary action is on screen without scrolling. An element whose `scrollWidth` exceeds its `clientWidth` breaks this rule.
+- **Prose wraps, then stops.** In tables, descriptions, summaries and other free text wrap, so a long one cannot decide a column's width, and stop at two lines with an ellipsis, so it cannot make its row tall. The full text is on hover (`title`) and wherever the row opens. Only IDs, numbers, times, chips and action buttons stay on one line.
+- **Rows stay even.** A cell that would grow its row far past its neighbours (a stack of chips, for example) shows the first few and "+N".
+- **Names match the nav.** A screen's heading uses the nav label (§2): the Agents & workflows screen is headed "Agents & workflows".
+- **Tab strips are uniform.** Show a count on every tab of a strip or on none.
+- **One accent.** Active underlines, in the nav and in tab strips, use the accent token. No second underline colour.
+- **Floating controls cover nothing.** The Ask Vigil button and other floating controls leave a row's content and actions visible. Pad the scroll area under them.
+
 ## 8. Component index
 
 See `components/`. Phase 1 ships: card, row-stack, tab-strip, state-pill, info-button, hold-to-confirm, undo-fuse, needs-you-strip, decision-block (reduced per PRD CP-P3), citation-chip, composer (Ask mode only). Not in phase 1 and not in this folder: tier-control, trust-strip, revert-window, parsed-action, evidence-row-actions.
