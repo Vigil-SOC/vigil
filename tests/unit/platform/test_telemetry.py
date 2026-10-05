@@ -199,6 +199,7 @@ class TestJsonLogging:
         assert a["msg_template"] == b["msg_template"] == "job %s failed"
         assert a["message"] == "job a1 failed" and b["message"] == "job b2 failed"
         assert {"ts", "level", "logger", "trace_id", "span_id"} <= a.keys()
+        assert "%f" not in a["ts"] and a["ts"].endswith("+00:00")
 
     def test_non_str_msg_has_empty_template(self):
         from core.telemetry import _OTELJsonFormatter

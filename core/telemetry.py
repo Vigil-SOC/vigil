@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.config import get_settings, vigil_path
@@ -496,7 +497,10 @@ class _OTELJsonFormatter(logging.Formatter):
         trace_id, span_id = current_trace_ids()
 
         entry: dict = {
-            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%f"),
+            # formatTime goes through time.strftime, which has no %f.
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(
+                timespec="microseconds"
+            ),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
