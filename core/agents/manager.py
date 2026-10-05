@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Optional
 
 from core.agents.builtins import BUILTIN_AGENTS, AgentProfile, blank_model
+from core.agents.enablement import disabled_agent_ids
 from core.agents.prompts import prompt_for_row, render_confidence_bands
 from core.agents.run_stats import agent_run_stats
 from core.llm.chat_layers import changes_for_tools
@@ -137,8 +138,9 @@ class AgentManager:
         ``read_only``, ``asks_first`` or ``on_its_own``. ``runs_7d``,
         ``success_rate`` (a fraction 0..1, None with no runs) and
         ``success_level`` cover the last 7 days; all three are None if the
-        stats could not be read.
+        stats could not be read. ``enabled`` is False for an agent turned off.
         """
+        disabled = disabled_agent_ids()
         assignments = _read_assignments()
         default = _UNSET
         library = len(load_skills(skill_roots()))
@@ -177,6 +179,7 @@ class AgentManager:
                     "skills": library if READ_SKILL_TOOL in a.recommended_tools else 0,
                     "changes": changes_for_tools(a.recommended_tools),
                     **run,
+                    "enabled": a.id not in disabled,
                 }
             )
         return rows

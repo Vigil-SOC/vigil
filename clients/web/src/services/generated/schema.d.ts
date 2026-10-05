@@ -101,6 +101,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/agents/{agent_id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Enabled
+         * @description Turn an agent (built-in or custom) on or off. Setting the current state is a no-op.
+         */
+        put: operations["put_api_agents_agents_agent_id_enabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agents/custom": {
         parameters: {
             query?: never;
@@ -8355,6 +8375,11 @@ export interface components {
             /** Updated Before */
             updated_before?: string | null;
         };
+        /** AgentEnabledRequest */
+        AgentEnabledRequest: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** ApprovalActionResult */
         ApprovalActionResult: {
             action: components["schemas"]["PendingActionResponse"];
@@ -12674,6 +12699,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_agents_agents_agent_id_enabled: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentEnabledRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

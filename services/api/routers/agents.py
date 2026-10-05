@@ -1,9 +1,13 @@
 """Agents API endpoints for SOC agent management."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
+from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX, AgentManager
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -65,3 +69,21 @@ async def get_agent(agent_id: str):
         "max_tokens": agent.max_tokens,
         "enable_thinking": agent.enable_thinking,
     }
+
+
+class AgentEnabledRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/agents/{agent_id}/enabled")
+async def set_enabled(
+    agent_id: str,
+    body: AgentEnabledRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Turn an agent (built-in or custom) on or off. Setting the current state is a no-op."""
+    if _resolve_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+    if not set_agent_enabled(agent_id, body.enabled, str(current_user.user_id)):
+        raise HTTPException(status_code=500, detail="Could not save agent setting")
+    return {"id": agent_id, "enabled": body.enabled}
