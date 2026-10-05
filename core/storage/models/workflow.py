@@ -282,9 +282,9 @@ class WorkflowRun(Base):
 class WorkflowRunPhase(Base):
     """Per-phase record within a workflow run.
 
-    Reserved for phase-by-phase execution (#128). The table ships with
-    the schema so the audit story is complete, but no rows are written
-    until phase-level execution lands.
+    Written by ``core.workflows.run_bridge_router.record_phase`` through
+    ``WorkflowRunService.upsert_phase``. ``started_at`` is set when a phase
+    first reports ``running`` and kept after that.
     """
 
     __tablename__ = "workflow_run_phases"
