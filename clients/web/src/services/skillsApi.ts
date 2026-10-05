@@ -33,6 +33,8 @@ export interface SkillWrite {
   body: string
   /** A loaded skill whose whole folder is copied under the new name. */
   source?: string
+  /** The version the editor opened; an overwrite is refused (409) if it has moved. */
+  version?: number
 }
 
 export const skillsApi = {

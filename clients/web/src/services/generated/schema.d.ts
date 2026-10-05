@@ -5925,7 +5925,8 @@ export interface paths {
          * Save Skill
          * @description Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
          *
-         *     An existing operator skill is overwritten; ``source`` copies that skill's folder.
+         *     An existing operator skill is overwritten when ``version`` is the one on disk
+         *     (409 otherwise); ``source`` copies that skill's folder.
          */
         post: operations["post_api_skills"];
         delete?: never;
@@ -11577,6 +11578,8 @@ export interface components {
             name: string;
             /** Source */
             source?: string | null;
+            /** Version */
+            version?: number | null;
         };
         /**
          * SourceEvidence

@@ -105,7 +105,8 @@ export function SkillDrawer({
         description: description.trim(),
         body,
         // A built-in is never written to: its folder is copied under the new name.
-        ...(detail?.bundled ? { source: detail.name } : {}),
+        // A custom skill sends the version it opened so a stale save is refused.
+        ...(detail?.bundled ? { source: detail.name } : detail ? { version: detail.version } : {}),
       })
       .then(onSaved)
       .catch((e) => {

@@ -57,6 +57,10 @@ class SkillNotFound(SkillError):
     """No loaded skill has this name."""
 
 
+class SkillConflict(SkillError):
+    """The write clashes with what is on disk: a stale version or a taken folder."""
+
+
 def _require_str(frontmatter: Dict[str, Any], key: str, limit: int) -> str:
     value = frontmatter.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -349,14 +353,16 @@ def _accepts_skill(name: str, content: str) -> None:
 
 
 def _copy_skill_dir(source: Path, dest: Path) -> None:
-    """Copy ``source`` to ``dest``, leaving symlinks behind."""
+    """Copy ``source`` to ``dest``, leaving behind what ``skill_files`` does not list."""
 
-    def skip_links(directory: str, names: List[str]) -> List[str]:
-        return [n for n in names if Path(directory, n).is_symlink()]
+    def skip_hidden(directory: str, names: List[str]) -> List[str]:
+        return [
+            n for n in names if n.startswith(".") or Path(directory, n).is_symlink()
+        ]
 
     # copyfile drops the source's modes, so a read-only library still copies to a writable folder
     shutil.copytree(
-        source, dest, symlinks=True, ignore=skip_links, copy_function=shutil.copyfile
+        source, dest, symlinks=True, ignore=skip_hidden, copy_function=shutil.copyfile
     )
     for directory, _, _ in os.walk(dest):
         os.chmod(directory, 0o755)
@@ -368,6 +374,7 @@ def write_operator_skill(
     body: str,
     settings: Optional[Settings] = None,
     source: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> Skill:
     """Write ``<vigil_skills_path>/<name>/SKILL.md`` that ``parse_skill`` accepts.
 
@@ -377,6 +384,10 @@ def write_operator_skill(
     frontmatter keys carry over and ``metadata.version`` goes up by one.
     With ``source`` (a loaded skill's name) and no skill of this name yet, the
     source's whole folder is copied first and the copy starts at version 1.
+    An overwrite must send the ``expected_version`` it opened: a folder that
+    exists with none sent, or with a different one on disk, raises
+    :class:`SkillConflict` before anything is written. Check and write are not
+    atomic. ``expected_version`` is ignored when copying.
     """
     root = _require_operator_root(settings)
     skill_dir = _skill_dir(root, name)
@@ -393,9 +404,15 @@ def write_operator_skill(
             raise SkillNotFound(f"No skill named {source!r}")
     if origin is not None:
         existing, version = _frontmatter_of(origin.path), 1
-    elif (skill_dir / SKILL_FILE).is_file():
+    elif skill_dir.exists():
+        if expected_version is None:
+            raise SkillConflict(f"A skill folder named {name} already exists.")
         existing = _frontmatter_of(skill_dir)
-        version = _version_of(existing) + 1
+        if expected_version != _version_of(existing):
+            raise SkillConflict(
+                "This skill changed since you opened it. Reopen it to see the latest."
+            )
+        version = expected_version + 1
     else:
         existing, version = {}, 1
     metadata = existing.get("metadata")

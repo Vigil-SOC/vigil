@@ -295,6 +295,47 @@ describe('workflow catalog table', () => {
     expect(skillsApi.delete).toHaveBeenCalledWith('desk-check')
   })
 
+  it('sends the opened version when saving a custom skill and keeps the edits on a stale 409', async () => {
+    vi.mocked(skillsApi.get).mockResolvedValueOnce({
+      name: 'desk-check',
+      description: 'A copy.',
+      source_path: 'skills/desk-check',
+      bundled: false,
+      body: '# Steps\n',
+      operator_root_set: true,
+      version: 2,
+      files: [{ path: 'SKILL.md', size: 10 }],
+    })
+    vi.mocked(skillsApi.list).mockResolvedValueOnce([
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+    ])
+    vi.mocked(skillsApi.save).mockRejectedValueOnce({
+      response: { data: { detail: 'This skill changed since you opened it. Reopen it to see the latest.' } },
+    })
+
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit desk-check' }))
+    const editor = await screen.findByRole('dialog', { name: 'Edit desk-check' })
+    const steps = await within(editor).findByLabelText('Steps (SKILL.md)')
+    fireEvent.change(steps, { target: { value: '# My edit\n' } })
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save new version' }))
+    expect(skillsApi.save).toHaveBeenCalledWith({
+      name: 'desk-check',
+      description: 'A copy.',
+      body: '# My edit\n',
+      version: 2,
+    })
+    expect(await within(editor).findByText(/changed since you opened it/)).toBeInTheDocument()
+    expect(within(editor).getByLabelText('Steps (SKILL.md)')).toHaveValue('# My edit\n')
+    expect(within(editor).getByRole('button', { name: 'Save new version' })).toBeEnabled()
+  })
+
   it('builds a skill from a blank editor and refuses a name already in the list', async () => {
     render(
       <MemoryRouter>

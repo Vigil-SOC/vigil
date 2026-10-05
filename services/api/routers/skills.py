@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import (
     Skill,
+    SkillConflict,
     SkillError,
     SkillNotFound,
     delete_operator_skill,
@@ -66,6 +67,8 @@ class SkillWriteRequest(BaseModel):
     body: str
     # A loaded skill to copy in full when saving under a new name.
     source: Optional[str] = None
+    # The version the drawer opened; an overwrite is refused if it has moved.
+    version: Optional[int] = None
 
 
 def _response(skill: Skill) -> SkillResponse:
@@ -85,7 +88,11 @@ def _loaded(name: str) -> Skill:
 
 
 def _http(exc: SkillError) -> HTTPException:
-    status = 404 if isinstance(exc, SkillNotFound) else 400
+    status = (
+        404
+        if isinstance(exc, SkillNotFound)
+        else 409 if isinstance(exc, SkillConflict) else 400
+    )
     return HTTPException(status_code=status, detail=str(exc))
 
 
@@ -137,11 +144,16 @@ async def get_skill_file(name: str, path: str):
 async def save_skill(req: SkillWriteRequest):
     """Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
 
-    An existing operator skill is overwritten; ``source`` copies that skill's folder.
+    An existing operator skill is overwritten when ``version`` is the one on disk
+    (409 otherwise); ``source`` copies that skill's folder.
     """
     try:
         skill = write_operator_skill(
-            req.name, req.description, req.body, source=req.source
+            req.name,
+            req.description,
+            req.body,
+            source=req.source,
+            expected_version=req.version,
         )
     except SkillError as exc:
         raise _http(exc) from exc
