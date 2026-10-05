@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as http from "http";
 import * as crypto from "crypto";
 import * as readline from "readline";
+import { openAppLog, captureToFile, snapshotContainerLogs } from "./logkeep";
 
 const BACKEND_URL = "http://127.0.0.1:6987";
 const HEALTH_URL = `${BACKEND_URL}/api/health`;
@@ -368,7 +369,13 @@ function augmentedEnv(): NodeJS.ProcessEnv {
   return { ...process.env, PATH: loginShellPath() };
 }
 
+// Set at startup once app.getPath("logs") is usable; no-op until then.
+let appLog: (line: string) => void = () => {};
+
 function sendSplash(channel: string, payload: unknown): void {
+  if ((channel === "log" || channel === "error") && typeof payload === "string") {
+    appLog(channel === "error" ? `ERROR ${payload}` : payload);
+  }
   if (splashWindow && !splashWindow.isDestroyed()) {
     splashWindow.webContents.send(channel, payload);
   }
@@ -481,15 +488,9 @@ async function stopStack(keepDocker = false): Promise<void> {
 async function openLogs(): Promise<void> {
   if (mode !== "standalone") return void shell.openPath(path.join(repoRoot!, "logs"));
   const file = path.join(app.getPath("temp"), "vigil-logs.txt");
-  const text = await new Promise<string>((resolve) => {
-    const proc = spawnCompose(composeArgs("logs", "--tail", "500", "--no-color"));
-    let out = "";
-    proc.stdout!.on("data", (d) => (out += d));
-    proc.stderr!.on("data", (d) => (out += d));
-    proc.on("close", () => resolve(out));
-    proc.on("error", (e) => resolve(String(e)));
-  });
-  fs.writeFileSync(file, text || "No container logs yet.");
+  const r = await captureToFile(spawnCompose, composeArgs("logs", "--tail", "500", "--no-color"), file);
+  if (r.error) fs.writeFileSync(file, String(r.error));
+  else if (!r.bytes) fs.writeFileSync(file, "No container logs yet.");
   await shell.openPath(file);
 }
 
@@ -793,6 +794,7 @@ ipcMain.handle("retry", async () => {
 ipcMain.handle("quit", () => app.quit());
 
 app.whenReady().then(async () => {
+  appLog = openAppLog(app.getPath("logs"));
   // Order matters: the external apps we drive must exist, and we must know
   // where the source tree is, before any script can run.
   if (!(await checkDependencies())) return app.exit(1);
@@ -834,8 +836,17 @@ app.on("before-quit", async (e) => {
   const teardown = (async () => {
     // `down` without -v: containers go, the volumes holding cases and
     // credentials stay.
-    if (mode === "standalone") await runCompose(composeArgs("down"));
-    else await runScript("app_down.sh", ["--stop-docker"]);
+    if (mode === "standalone") {
+      // `down` removes the containers and their logs, so save them first. The
+      // 5 s cap leaves most of the 15 s quit deadline for `down` itself.
+      await snapshotContainerLogs(
+        spawnCompose,
+        composeArgs("logs", "--no-color", "--timestamps"),
+        app.getPath("logs"),
+        5000,
+      ).catch(() => {});
+      await runCompose(composeArgs("down"));
+    } else await runScript("app_down.sh", ["--stop-docker"]);
   })().catch(() => {}); // best effort
   const deadline = new Promise((r) => setTimeout(r, 15000)); // a wedged daemon must not trap the quit
   await Promise.race([teardown, deadline]);
