@@ -65,3 +65,20 @@ def test_lists_the_four_tools():
         "opensearch_get_indices",
         "opensearch_get_findings",
     ]
+
+
+def test_findings_filter_by_detector_name_uses_monitor_name():
+    class FakeService:
+        async def search(self, query, size, sort):
+            self.query = query
+            return {"hits": {"total": {"value": 0}, "hits": []}}
+
+    fake = FakeService()
+    opensearch_tool._opensearch_service = fake
+    asyncio.run(
+        opensearch_tool.handle_call_tool(
+            "opensearch_get_findings", {"detector_name": "win-detector"}
+        )
+    )
+    # Findings carry monitor_name (the detector's name), not a detector id.
+    assert fake.query == {"term": {"monitor_name": "win-detector"}}

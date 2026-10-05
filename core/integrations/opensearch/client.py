@@ -18,6 +18,11 @@ from core.integrations._base.tls import tls_verify
 
 logger = logging.getLogger(__name__)
 
+# Where log and IOC searches look unless told otherwise: every index but the
+# hidden system ones. index_pattern is the findings pattern, whose documents
+# are identifiers only and carry no ``@timestamp``.
+LOG_INDICES = "*,-.*"
+
 
 class OpenSearchService:
     """Service for interacting with OpenSearch and OpenSearch Dashboards."""
@@ -163,7 +168,7 @@ class OpenSearchService:
                     "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
-            index=index,
+            index=index or LOG_INDICES,
         )
 
     async def search_by_hash(
@@ -176,7 +181,7 @@ class OpenSearchService:
                     "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
-            index=index,
+            index=index or LOG_INDICES,
         )
 
     async def search_by_username(
@@ -200,7 +205,7 @@ class OpenSearchService:
                     "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
-            index=index,
+            index=index or LOG_INDICES,
         )
 
     async def search_by_hostname(
@@ -225,7 +230,7 @@ class OpenSearchService:
                     "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
-            index=index,
+            index=index or LOG_INDICES,
         )
 
     async def get_indices(self) -> Optional[List[str]]:

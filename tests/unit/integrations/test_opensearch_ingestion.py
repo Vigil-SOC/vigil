@@ -10,6 +10,7 @@ import pytest
 
 from core.integrations.opensearch.ingestion import (
     OpenSearchIngestion,
+    finding_time,
     log_type_of,
     mitre_from_tags,
     rule_ids_of,
@@ -53,13 +54,14 @@ class TestTransformFinding:
         assert finding["data_source"] == "opensearch"
         assert finding["title"] == "Suspicious PowerShell Execution"
         assert finding["severity"] == "high"
-        assert finding["timestamp"] == "2026-10-04T15:04:05.123Z"
+        assert finding["timestamp"] == "2026-10-04T15:04:05.123000Z"
 
     def test_metadata_carries_finding_context(self, ingestion, sample_findings):
         finding = ingestion.transform_alert_to_finding(sample_findings[0])
         metadata = finding["metadata"]
         assert metadata["opensearch_finding_id"] == "f1nd1ng-0001"
-        assert metadata["detector_id"] == "detector-abc"
+        assert metadata["monitor_id"] == "monitor-abc"
+        assert metadata["detector_name"] == "win-detector"
         assert metadata["triggered_rule_ids"] == ["rule-uuid-001"]
         assert metadata["related_doc_ids"] == ["doc-1", "doc-2"]
         assert metadata["source_index"] == "windows-logs"
@@ -95,7 +97,7 @@ class TestTransformFinding:
         alert = {
             "_id": finding_ref,
             "_index": ".opensearch-sap-windows-findings-2026.10.04",
-            "_source": {"id": finding_ref, "timestamp": "2026-10-04T15:04:05Z"},
+            "_source": {"id": finding_ref, "timestamp": 1791126245000},
         }
         finding = ingestion.transform_alert_to_finding(alert)
         assert finding is not None
@@ -116,11 +118,18 @@ class TestFindingHelpers:
     def test_rule_ids_of_accepts_bare_strings(self):
         assert rule_ids_of({"queries": ["r1", {"id": "r2"}]}) == ["r1", "r2"]
 
-    def test_severity_of_reads_rule_level(self):
-        assert (
-            severity_of({"queries": [{"id": "r", "level": "critical"}]}) == "critical"
-        )
+    def test_severity_of_reads_sigma_level_from_rule_tags(self):
+        source = {"queries": [{"tags": ["critical", "windows", "attack.t1003"]}]}
+        assert severity_of(source) == "critical"
+        assert severity_of({"queries": [{"tags": ["windows"]}]}) is None
         assert severity_of({}) is None
+
+    def test_finding_time_reads_epoch_milliseconds(self):
+        assert finding_time({"timestamp": 1791126245123}) == datetime(
+            2026, 10, 4, 15, 4, 5, 123000
+        )
+        assert finding_time({"timestamp": "2026-10-04T15:04:05Z"}) is None
+        assert finding_time({}) is None
 
     def test_mitre_from_tags_ignores_non_technique_tags(self):
         source = {"queries": [{"tags": ["attack.execution", "attack.t1110.001"]}]}
@@ -190,8 +199,10 @@ class TestFetchAlerts:
 
         query = mock_svc.search.call_args.kwargs["query"]
         range_filter = query["bool"]["filter"][0]["range"]["timestamp"]
-        assert range_filter["gte"] == "2026-10-04T14:00:00Z"
-        assert range_filter["lte"] == "2026-10-04T15:00:00Z"
+        # The findings index maps ``timestamp`` as a long of epoch ms, which
+        # rejects an ISO string bound.
+        assert range_filter["gte"] == 1791122400000
+        assert range_filter["lte"] == 1791126000000
         sort = mock_svc.search.call_args.kwargs["sort"]
         assert sort[0] == {"timestamp": {"order": "asc"}}
 

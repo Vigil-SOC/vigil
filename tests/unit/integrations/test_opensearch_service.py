@@ -148,7 +148,7 @@ class TestSearch:
     @respx.mock
     @pytest.mark.asyncio
     async def test_search_by_username_fields(self, service):
-        route = respx.post(f"{OS_URL}/.opensearch-sap-*-findings-*/_search").mock(
+        route = respx.post(f"{OS_URL}/*,-.*/_search").mock(
             return_value=httpx.Response(
                 200, json={"hits": {"total": {"value": 0}, "hits": []}}
             )
@@ -157,6 +157,32 @@ class TestSearch:
         fields = _multi_match_fields(route)
         assert "user.name" in fields
         assert "winlog.event_data.TargetUserName" in fields
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_ioc_search_skips_findings_and_system_indices_by_default(
+        self, service
+    ):
+        # Findings carry identifiers and an epoch-ms ``timestamp``, no
+        # ``@timestamp``, so an IOC search over them would never match.
+        route = respx.post(f"{OS_URL}/*,-.*/_search").mock(
+            return_value=httpx.Response(
+                200, json={"hits": {"total": {"value": 0}, "hits": []}}
+            )
+        )
+        await service.search_by_ip("10.0.0.1")
+        assert route.called
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_ioc_search_honours_explicit_index(self, service):
+        route = respx.post(f"{OS_URL}/windows-logs/_search").mock(
+            return_value=httpx.Response(
+                200, json={"hits": {"total": {"value": 0}, "hits": []}}
+            )
+        )
+        await service.search_by_hostname("dc01", index="windows-logs")
+        assert route.called
 
     @respx.mock
     @pytest.mark.asyncio

@@ -4,17 +4,18 @@ OpenSearch Ingestion Service - Ingest Security Analytics findings.
 Detections in OpenSearch come from the Security Analytics plugin: a
 detector's Sigma rules match ingested log documents and produce *findings*,
 stored as documents in ``.opensearch-sap-<log-type>-findings-*`` indices.
-A finding is deliberately thin — its id, the detector that produced it, the
-ids of the rules that matched (``queries``), the source index, the ids of
-the triggering documents (``related_doc_ids``), and a ``timestamp`` — so
-ingestion reads the findings indices directly with the search API, the same
+A finding is deliberately thin — its id, the monitor that produced it
+(``monitor_id`` / ``monitor_name``, the latter being the detector's name), the
+rules that matched (``queries``, each with the rule's id, name and tags), the
+source index, the ids of the triggering documents (``related_doc_ids``), and a
+``timestamp`` in epoch milliseconds — so ingestion reads the findings indices directly with the search API, the same
 way the Elastic slice reads a Wazuh indexer that has no Kibana.
 """
 
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 # Sigma attack tags look like "attack.t1059.001" or "attack.execution".
 _TECHNIQUE_TAG = re.compile(r"^attack\.(t\d{4}(?:\.\d{3})?)$", re.IGNORECASE)
+
+# Security Analytics stamps each matched rule's Sigma level into its tags as a
+# bare word ("critical"), next to the log type and the "attack.*" tags.
+_SIGMA_LEVELS = frozenset({"informational", "low", "medium", "high", "critical"})
 
 # ".opensearch-sap-<log-type>-findings-<suffix>"
 _FINDINGS_INDEX = re.compile(r"^\.opensearch-sap-(.+)-findings-")
@@ -68,13 +73,13 @@ def rule_ids_of(source: Mapping[str, Any]) -> List[str]:
 
 
 def severity_of(source: Mapping[str, Any]) -> Optional[str]:
-    """The Sigma severity a finding carries, when a matched rule states one."""
+    """The Sigma level a matched rule carries in its tags, if any."""
     for query in _queries(source):
-        severity = query.get("severity") or query.get("level")
-        if severity:
-            return str(severity)
-    severity = source.get("severity")
-    return str(severity) if severity else None
+        for tag in _as_list(query.get("tags")):
+            level = str(tag).strip().lower()
+            if level in _SIGMA_LEVELS:
+                return level
+    return None
 
 
 def mitre_from_tags(source: Mapping[str, Any]) -> Dict[str, float]:
@@ -86,6 +91,24 @@ def mitre_from_tags(source: Mapping[str, Any]) -> Dict[str, float]:
             if match:
                 predictions[match.group(1).upper()] = 0.9
     return predictions
+
+
+def finding_time(source: Mapping[str, Any]) -> Optional[datetime]:
+    """A finding's creation time as naive UTC.
+
+    The findings index maps ``timestamp`` as a ``long`` of epoch milliseconds.
+    """
+    raw = source.get("timestamp")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(raw / 1000, tz=timezone.utc).replace(tzinfo=None)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _epoch_ms(moment: datetime) -> int:
+    return int(moment.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def log_type_of(index_name: str) -> str:
@@ -146,8 +169,8 @@ class OpenSearchIngestion(SIEMIngestionService):
     ) -> List[Dict[str, Any]]:
         """Fetch Security Analytics findings in the window.
 
-        Findings carry their creation time in ``timestamp`` (not the ECS
-        ``@timestamp``). ``oldest_first`` is what federation asks for: a batch
+        Findings carry their creation time in ``timestamp`` (epoch
+        milliseconds, not the ECS ``@timestamp``). ``oldest_first`` is what federation asks for: a batch
         that fills ``limit`` must be a contiguous oldest-first prefix of the
         window so the cursor can stop at its newest finding. ``_doc`` is the
         stable tiebreaker, as in the Elastic indexer path.
@@ -160,23 +183,11 @@ class OpenSearchIngestion(SIEMIngestionService):
             if not start_time:
                 start_time = utcnow() - timedelta(hours=24)
 
+            window: Dict[str, int] = {"gte": _epoch_ms(start_time)}
+            if end_time:
+                window["lte"] = _epoch_ms(end_time)
             query: Dict[str, Any] = {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "timestamp": {
-                                    "gte": start_time.isoformat() + "Z",
-                                    **(
-                                        {"lte": end_time.isoformat() + "Z"}
-                                        if end_time
-                                        else {}
-                                    ),
-                                }
-                            }
-                        }
-                    ]
-                }
+                "bool": {"filter": [{"range": {"timestamp": window}}]}
             }
             order = "asc" if oldest_first else "desc"
             result = await svc.search(
@@ -211,7 +222,8 @@ class OpenSearchIngestion(SIEMIngestionService):
             finding_id = fit_id("opensearch-", finding_ref, FINDING_ID_MAX)
 
             rule_ids = rule_ids_of(source)
-            detector_id = str(source.get("detector_id") or "")
+            monitor_id = str(source.get("monitor_id") or "")
+            detector_name = str(source.get("monitor_name") or "")
             source_index = str(source.get("index") or "")
             related_doc_ids = [str(d) for d in _as_list(source.get("related_doc_ids"))]
 
@@ -224,8 +236,8 @@ class OpenSearchIngestion(SIEMIngestionService):
                 title = "OpenSearch Security Analytics Finding"
 
             description_parts = [title]
-            if detector_id:
-                description_parts.append(f"Detector: {detector_id}")
+            if detector_name:
+                description_parts.append(f"Detector: {detector_name}")
             if rule_ids:
                 description_parts.append(f"Matched rules: {', '.join(rule_ids)}")
             if source_index:
@@ -240,6 +252,7 @@ class OpenSearchIngestion(SIEMIngestionService):
             severity = (
                 self.normalize_severity(raw_severity) if raw_severity else "medium"
             )
+            created = finding_time(source)
 
             # Raw findings carry no event payload, so entities are normally
             # empty; an enriched document that embeds ECS fields still yields
@@ -267,9 +280,9 @@ class OpenSearchIngestion(SIEMIngestionService):
                 "finding_id": finding_id,
                 "external_id": fit_id("", finding_ref, EXTERNAL_ID_MAX),
                 "data_source": "opensearch",
-                "timestamp": source.get("timestamp")
-                or source.get("@timestamp")
-                or utcnow().isoformat(),
+                "timestamp": (
+                    created.isoformat() + "Z" if created else utcnow().isoformat()
+                ),
                 "severity": severity,
                 "status": "new",
                 "title": title,
@@ -280,7 +293,8 @@ class OpenSearchIngestion(SIEMIngestionService):
                 "mitre_predictions": mitre_from_tags(source),
                 "metadata": {
                     "opensearch_finding_id": finding_ref,
-                    "detector_id": detector_id,
+                    "monitor_id": monitor_id,
+                    "detector_name": detector_name,
                     "triggered_rule_ids": rule_ids,
                     "related_doc_ids": related_doc_ids,
                     "source_index": source_index,

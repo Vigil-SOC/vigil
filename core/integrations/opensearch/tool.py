@@ -25,7 +25,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
-from core.integrations.opensearch.client import OpenSearchService
+from core.integrations.opensearch.client import LOG_INDICES, OpenSearchService
 from core.integrations.opensearch.descriptor import OPENSEARCH
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ async def handle_list_tools():
                     },
                     "index": {
                         "type": "string",
-                        "description": "Target index (default: configured findings index pattern)",
+                        "description": "Target index (default: all non-system indices)",
                     },
                     "time_range": {
                         "type": "string",
@@ -124,9 +124,9 @@ async def handle_list_tools():
                 "type": "object",
                 "properties": {
                     "max_results": {"type": "integer", "default": 50},
-                    "detector_id": {
+                    "detector_name": {
                         "type": "string",
-                        "description": "Filter by Security Analytics detector id",
+                        "description": "Filter by Security Analytics detector name",
                     },
                 },
             },
@@ -174,7 +174,7 @@ async def _search_logs(svc, args: dict):
 
     data = await svc.search(
         query=wrapped,
-        index=args.get("index"),
+        index=args.get("index") or LOG_INDICES,
         size=min(args.get("max_results", 100), 500),
     )
     if data is None:
@@ -233,9 +233,9 @@ async def _get_indices(svc):
 
 async def _get_findings(svc, args: dict):
     query: dict = {"match_all": {}}
-    detector_id = args.get("detector_id")
-    if detector_id:
-        query = {"term": {"detector_id": detector_id}}
+    detector_name = args.get("detector_name")
+    if detector_name:
+        query = {"term": {"monitor_name": detector_name}}
 
     data = await svc.search(
         query=query,
@@ -253,7 +253,11 @@ async def _get_findings(svc, args: dict):
                 {
                     "_id": h["_id"],
                     "finding_id": h.get("_source", {}).get("id", ""),
-                    "detector_id": h.get("_source", {}).get("detector_id", ""),
+                    "detector_name": h.get("_source", {}).get("monitor_name", ""),
+                    "rules": [
+                        q.get("name", q.get("id", ""))
+                        for q in h.get("_source", {}).get("queries", [])
+                    ],
                     "timestamp": h.get("_source", {}).get("timestamp", ""),
                     "index": h.get("_index", ""),
                 }
