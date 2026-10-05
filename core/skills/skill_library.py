@@ -203,7 +203,10 @@ def _version_of(frontmatter: Dict[str, Any]) -> int:
     """``metadata.version`` as a positive int; missing or malformed counts as 1."""
     metadata = frontmatter.get("metadata")
     raw = metadata.get("version") if isinstance(metadata, dict) else None
-    return int(raw) if isinstance(raw, str) and raw.isdecimal() and int(raw) > 0 else 1
+    ok = (
+        isinstance(raw, str) and raw.isdecimal() and len(raw) <= 9
+    )  # bounded: int() of a huge digit string raises
+    return int(raw) if ok and int(raw) > 0 else 1
 
 
 def skill_version(skill: Skill) -> int:
@@ -351,7 +354,12 @@ def _copy_skill_dir(source: Path, dest: Path) -> None:
     def skip_links(directory: str, names: List[str]) -> List[str]:
         return [n for n in names if Path(directory, n).is_symlink()]
 
-    shutil.copytree(source, dest, symlinks=True, ignore=skip_links)
+    # copyfile drops the source's modes, so a read-only library still copies to a writable folder
+    shutil.copytree(
+        source, dest, symlinks=True, ignore=skip_links, copy_function=shutil.copyfile
+    )
+    for directory, _, _ in os.walk(dest):
+        os.chmod(directory, 0o755)
 
 
 def write_operator_skill(
