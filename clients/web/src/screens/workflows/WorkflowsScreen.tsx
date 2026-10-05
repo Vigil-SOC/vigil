@@ -1,4 +1,4 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
@@ -119,9 +119,31 @@ function StateMsg({ children }: { children: React.ReactNode }) {
 
 function AgentSequence({ agents, ordered }: { agents: string[]; ordered: boolean }) {
   const agentMeta = useAgentMeta()
+  const ref = useRef<HTMLDivElement>(null)
+  // how many chips to show; null = render all, then measure how many fit on one line
+  const [limit, setLimit] = useState<number | null>(null)
+  useEffect(() => {
+    const reset = () => setLimit(null)
+    window.addEventListener('resize', reset)
+    return () => window.removeEventListener('resize', reset)
+  }, [])
+  useEffect(() => setLimit(null), [agents])
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (limit !== null || !el) return
+    const chips = Array.from(el.querySelectorAll<HTMLElement>('.agent-chip'))
+    let k = chips.filter((c) => c.offsetTop === chips[0].offsetTop).length
+    if (k < chips.length) {
+      // leave room for the "+N" chip (and the arrow before it)
+      while (k > 1 && chips[k - 1].offsetLeft + chips[k - 1].offsetWidth + MORE_CHIP_PX > el.clientWidth) k--
+    }
+    setLimit(k)
+  }, [limit, agents])
+  const shown = limit === null ? agents : agents.slice(0, limit)
+  const hidden = agents.length - shown.length
   return (
-    <div className="agent-seq">
-      {agents.map((a, i) => {
+    <div className="agent-seq" ref={ref} title={hidden > 0 ? agents.map((a) => agentMeta(a).label).join(ordered ? ' → ' : ', ') : undefined}>
+      {shown.map((a, i) => {
         const meta = agentMeta(a)
         return (
           <Fragment key={i}>
@@ -129,15 +151,19 @@ function AgentSequence({ agents, ordered }: { agents: string[]; ordered: boolean
               <span className="ad" style={{ background: meta.color }} />
               {meta.label}
             </span>
-            {ordered && i < agents.length - 1 && (
+            {ordered && (i < shown.length - 1 || hidden > 0) && (
               <span className="seq-arrow"><Icon name="chevR" /></span>
             )}
           </Fragment>
         )
       })}
+      {hidden > 0 && <span className="agent-chip">+{hidden}</span>}
     </div>
   )
 }
+
+// width reserved for the "+N" chip and its arrow when the agent list is collapsed
+const MORE_CHIP_PX = 64
 
 const TRUST_INFO = 'Tier, trust, and agreement are not recorded.'
 
@@ -184,9 +210,10 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
         </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
-        <div className="px-[22px] py-5">
+        // bottom padding keeps the last row's actions clear of the fixed Ask Vigil button
+        <div className="px-[22px] pt-5 pb-[110px]">
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl wf-catalog">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -201,7 +228,7 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
               <tbody>
                 {list.map((w) => (
                   <tr key={w.id}>
-                    <td>
+                    <td className="wfc-name">
                       <div
                         role="button"
                         tabIndex={0}
@@ -211,9 +238,9 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
                       >
                         {w.name}
                       </div>
-                      {w.desc && <div className="text-[12px] text-tx-3 mt-0.5">{w.desc}</div>}
+                      {w.desc && <div className="wfc-desc text-[12px] text-tx-3 mt-0.5" title={w.desc}>{w.desc}</div>}
                     </td>
-                    <td>{w.agents.length > 0 ? <AgentSequence agents={w.agents} ordered={!w.huntLike} /> : '—'}</td>
+                    <td className="wfc-agents">{w.agents.length > 0 ? <AgentSequence agents={w.agents} ordered={!w.huntLike} /> : '—'}</td>
                     <td>{w.runsToday}</td>
                     <td>{w.meanCostUsd == null ? '—' : <Cost usd={w.meanCostUsd} />}</td>
                     <td>{fmtEdited(w.updatedAt)}</td>

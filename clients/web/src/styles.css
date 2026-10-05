@@ -3979,6 +3979,34 @@
       height: 13px;
    }
 
+   /* workflow catalog: Name takes the spare width (description clamps to 2 lines),
+     Agents is only as wide as its chips (capped by viewport, see AgentSequence) */
+   .tbl.wf-catalog thead th,
+   .tbl.wf-catalog tbody td {
+      padding-left: 12px;
+      padding-right: 12px;
+   }
+
+   .tbl.wf-catalog td.wfc-name {
+      width: 100%;
+      min-width: 200px;
+      white-space: normal;
+   }
+
+   .wfc-desc {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 2lh; /* even row heights whether the description is 1 or 2 lines */
+   }
+
+   .tbl.wf-catalog td.wfc-agents .agent-seq {
+      width: max-content;
+      max-width: clamp(200px, calc(100vw - 1500px), 520px);
+      flex-wrap: wrap;
+   }
+
    .wf-cmds {
       display: flex;
       flex-direction: column;
