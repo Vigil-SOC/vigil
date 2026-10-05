@@ -4093,6 +4093,12 @@
       text-align: center;
    }
 
+   .agents-tbl td.ag-wrap {
+      white-space: normal;
+      min-width: 200px;
+      color: var(--tx-2);
+   }
+
    .agent-id {
       display: flex;
       align-items: center;

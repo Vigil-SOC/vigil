@@ -379,6 +379,8 @@ export interface ApiAgent {
   color?: string
   specialization?: string
   recommended_tools?: string[]
+  model?: string | null
+  model_source?: string | null
 }
 
 export function mapApiAgent(a: ApiAgent): AgentTemplate {
@@ -390,6 +392,8 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
     color: a.color || 'var(--accent)',
     tools: a.recommended_tools?.length,
     custom: a.id.startsWith('custom-'),
+    model: a.model,
+    modelSource: a.model_source,
   }
 }
 

@@ -123,17 +123,56 @@ class AgentManager:
         }
         self.agents = {**builtins, **customs}
 
+    @staticmethod
+    def _model_resolver():
+        """Return ``resolve(profile) -> (model, source)`` for the agent list.
+
+        Mirrors resolve_model_for_component: the agent's own model, then the
+        assignment for its category, then chat_default, then the default
+        provider's model. Assignments and the provider are read once per call.
+        """
+        assignments: Dict = {}
+        default_model: Optional[str] = None
+        try:
+            from core.llm.providers.registry import get_registry
+            from core.llm.router.router import get_default_provider_spec
+
+            assignments = get_registry().get_all_assignments()
+            spec = get_default_provider_spec()
+            default_model = spec.default_model if spec else None
+        except Exception as e:
+            logger.debug(f"Model assignments unavailable for agent list: {e}")
+
+        def resolve(a: AgentProfile):
+            if a.model:
+                return a.model, "agent"
+            for key in (a.component_category, "chat_default"):
+                if key in assignments:
+                    return assignments[key].model_id, key
+            if default_model:
+                return default_model, "default"
+            return None, None
+
+        return resolve
+
     def get_agent_list(self) -> List[Dict]:
-        return [
-            {
-                "id": a.id,
-                "name": a.name,
-                "description": a.description,
-                "icon": a.icon,
-                "color": a.color,
-                "specialization": a.specialization,
-                "decision_id": a.decision_id,
-                "recommended_tools": list(a.recommended_tools),
-            }
-            for a in self.agents.values()
-        ]
+        resolve = self._model_resolver()
+        out = []
+        for a in self.agents.values():
+            model, source = resolve(a)
+            out.append(
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "description": a.description,
+                    "icon": a.icon,
+                    "color": a.color,
+                    "specialization": a.specialization,
+                    "decision_id": a.decision_id,
+                    "recommended_tools": list(a.recommended_tools),
+                    "component_category": a.component_category,
+                    "model": model,
+                    "model_source": source,
+                }
+            )
+        return out

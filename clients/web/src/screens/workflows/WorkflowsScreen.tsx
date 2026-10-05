@@ -3392,11 +3392,13 @@ function AgentsTab() {
   const { rows, phase, error, reload } = useAgents()
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+  // null = closed; 'blank' opens an empty form, 'describe' opens it with the AI panel
+  const [creating, setCreating] = useState<'blank' | 'describe' | null>(null)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
 
-  const builtins = rows.filter((a) => !a.custom)
-  const customs = rows.filter((a) => a.custom)
+  const builtinCount = rows.filter((a) => !a.custom).length
+  // yours first, then the built-ins, each in API order
+  const sorted = [...rows.filter((a) => a.custom), ...rows.filter((a) => !a.custom)]
 
   const fork = (handle: string) => {
     setBusy(handle)
@@ -3410,49 +3412,48 @@ function AgentsTab() {
       .finally(() => setBusy(null))
   }
 
+  const renderActions = (a: AgentTemplate) => a.custom ? (
+    <span className="row-act">
+      <button title="Edit" onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
+      <button title="Fork into a new copy" disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
+      <button title="Delete" onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
+    </span>
+  ) : (
+    <span className="row-act">
+      <button title="Fork to editable copy" disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
+    </span>
+  )
+
   return (
     <>
-      <div className="flex items-start gap-4 flex-wrap px-[22px] pt-5 pb-[6px]">
-        <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">SOC Agents</h2>
-          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Built-in agents are read-only templates. Fork one to create an editable custom copy, or start from scratch with “New Agent”.</p></div>
+      <div className="flex items-center gap-4 flex-wrap px-[22px] pt-5 pb-3">
+        <p className="flex-1 min-w-[200px] text-[13px] text-tx-3 leading-[1.5]">
+          {phase === 'ready' && `${builtinCount} built-in agents plus your own. Each can use its own model.`}
+        </p>
         <div className="flex items-center gap-2.5 flex-wrap">
-          <button className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New Agent</button>
           <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
+          <button className="btn ghost" onClick={() => setCreating('describe')}><Icon name="sparkle" /> Describe a new agent</button>
+          <button className="btn primary" onClick={() => setCreating('blank')}><Icon name="plus" /> New agent</button>
         </div>
       </div>
 
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="brain" title="Loading agents…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating(true), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating('blank'), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
 
       {phase === 'ready' && rows.length > 0 && (
-        // two-up only when forked copies exist
-        <div
-          className="grid gap-x-6 gap-y-2 px-[22px] pb-[22px] items-start"
-          style={{ gridTemplateColumns: customs.length > 0 ? 'repeat(auto-fit, minmax(440px, 1fr))' : '1fr' }}
-        >
-          {customs.length > 0 && (
-            <AgentSection title={`Custom agents (${customs.length})`} agents={customs} renderActions={(a) => (
-              <span className="row-act">
-                <button title="Edit" onClick={() => setEditId(a.handle)}><Icon name="edit" /></button>
-                <button title="Fork into a new copy" disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'copy'} /></button>
-                <button title="Delete" onClick={() => setDeleteAgent(a)}><Icon name="trash" /></button>
-              </span>
-            )} />
-          )}
-          <AgentSection title={`Built-in templates (${builtins.length})`} agents={builtins} template renderActions={(a) => (
-            <span className="row-act">
-              <button title="Fork to editable copy" disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
-            </span>
-          )} />
+        <div className="px-[22px] pb-[22px]">
+          <AgentTable agents={sorted} renderActions={renderActions} />
+          <p className="text-[11.5px] text-tx-3 mt-3 leading-[1.5]">Workflow runs use the investigation assignment in Settings › AI models. A custom agent’s own model applies to chat.</p>
         </div>
       )}
 
       {(creating || editId) && (
         <AgentEditModal
           agentId={editId}
-          onClose={() => { setEditId(null); setCreating(false) }}
-          onSaved={() => { setEditId(null); setCreating(false); reload() }}
+          describe={creating === 'describe'}
+          onClose={() => { setEditId(null); setCreating(null) }}
+          onSaved={() => { setEditId(null); setCreating(null); reload() }}
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
@@ -3460,31 +3461,24 @@ function AgentsTab() {
   )
 }
 
-function AgentSection({ title, agents, template, renderActions }: {
-  title: string
-  agents: AgentTemplate[]
-  template?: boolean
-  renderActions: (a: AgentTemplate) => React.ReactNode
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="pt-[14px] pb-2.5 text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3">{title}</div>
-      <AgentTable agents={agents} template={template} renderActions={renderActions} />
-    </div>
-  )
+/** "triage" → "Triage default"; the agent's own model reads "Set for this agent". */
+function modelSourceLabel(source: string): string {
+  if (source === 'agent') return 'Set for this agent'
+  if (source === 'default') return 'Provider default'
+  const name = source.replace(/_default$/, '')
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} default`
 }
 
-function AgentTable({ agents, template, renderActions }: {
+function AgentTable({ agents, renderActions }: {
   agents: AgentTemplate[]
-  template?: boolean
   renderActions: (a: AgentTemplate) => React.ReactNode
 }) {
   return (
     <div className="table-wrap border border-line rounded-lg overflow-hidden">
       <table className="tbl agents-tbl">
         <thead><tr>
-          <th>Name</th><th>Specialization</th>
-          <th className="ag-c">Tools</th><th className="ag-c">Actions</th>
+          <th>Agent</th><th>What it does</th><th>Model</th>
+          <th className="ag-c">Actions</th>
         </tr></thead>
         <tbody>
           {agents.map((a) => (
@@ -3493,13 +3487,20 @@ function AgentTable({ agents, template, renderActions }: {
                 <div className="flex items-center gap-3">
                   <span className="ag-avatar" style={{ background: a.color }}>{a.ini}</span>
                   <div className="ag-meta">
-                    <div className="text-[13.5px] font-semibold flex items-center gap-2.5">{a.name} {template && <span className="tmpl-badge"><Icon name="lock" /> Template</span>}</div>
-                    <div className="text-[11.5px] text-tx-3 mt-[3px] mono">{a.handle}</div>
+                    <div className="text-[13.5px] font-semibold">{a.name}</div>
+                    <div className="text-[11.5px] text-tx-3 mt-[3px]">{a.custom ? 'Yours' : 'Built in'}</div>
                   </div>
                 </div>
               </td>
-              <td>{a.spec}</td>
-              <td className="muted ag-c">{a.tools ?? '—'}</td>
+              <td className="ag-wrap">{a.spec}</td>
+              <td>
+                {a.model && a.modelSource ? (
+                  <>
+                    <div className="text-[13px] font-semibold break-all">{a.model}</div>
+                    <div className="text-[11.5px] text-tx-3 mt-[3px]">{modelSourceLabel(a.modelSource)}</div>
+                  </>
+                ) : <span className="muted">—</span>}
+              </td>
               <td className="ag-c">{renderActions(a)}</td>
             </tr>
           ))}
@@ -3554,7 +3555,7 @@ const BLANK_AGENT_FORM: AgentForm = {
 
 /** AI-assisted drafting;
     mirroring the old Agent Builder. `agentId === null` ⇒ create mode. */
-function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null; onClose: () => void; onSaved: () => void }) {
+function AgentEditModal({ agentId, describe, onClose, onSaved }: { agentId: string | null; describe?: boolean; onClose: () => void; onSaved: () => void }) {
   const isCreate = agentId === null
   const [agent, setAgent] = useState<CustomAgentDetail | null>(null)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(isCreate ? 'ready' : 'loading')
@@ -3566,7 +3567,7 @@ function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null;
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [aiOpen, setAiOpen] = useState(isCreate)
+  const [aiOpen, setAiOpen] = useState(isCreate && !!describe)
   const [aiDesc, setAiDesc] = useState('')
   const [aiFeedback, setAiFeedback] = useState('')
   const [aiDraft, setAiDraft] = useState<GeneratedAgentDraft | null>(null)

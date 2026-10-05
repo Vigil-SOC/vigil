@@ -63,6 +63,9 @@ export interface AgentTemplate {
   tools?: number
   /** true for DB-backed forked copies (handle starts with "custom-") */
   custom: boolean
+  /** model id the agent runs on, and where it comes from (see get_agent_list) */
+  model?: string | null
+  modelSource?: string | null
 }
 
 export interface Skill {
