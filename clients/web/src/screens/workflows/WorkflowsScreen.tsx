@@ -5,7 +5,8 @@ import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill } from '../../data/appData'
-import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered } from './useWorkflowsData'
+import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, type Phase } from './useWorkflowsData'
+import { TITLES } from '../../data/data'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
@@ -15,41 +16,68 @@ import { COMMANDS } from '../../shell/commandBar'
 
 type WfTab = 'workflows' | 'agents' | 'skills' | 'commands'
 
+/** One list's hook result. The screen owns the three lists so a tab chip counts
+ *  the same rows the tab shows, and a mutation in a tab updates the chip. */
+export interface Feed<T> {
+  rows: T[]
+  phase: Phase
+  error: string | null
+  reload: () => void
+}
+
+const [PAGE_TITLE, PAGE_DESC] = TITLES.workflows
+
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
+  // lifted so the header's "New workflow" opens the same builder from any tab
+  const [creating, setCreating] = useState<null | 'blank' | 'ai'>(null)
+  const workflows = useWorkflows()
+  const agents = useAgents()
+  const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
   const [searchParams, setSearchParams] = useSearchParams()
   const runId = searchParams.get('run')
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
-  const tabs: [WfTab, string][] = [
-    ['workflows', 'Workflows'],
-    ['agents', 'Agents'],
-    ['skills', 'Skills'],
-    ['commands', 'Commands'],
+  // no chip while a list is loading or failed: a count of 0 would read as empty
+  const count = (feed: { rows: unknown[]; phase: Phase }) => (feed.phase === 'ready' ? feed.rows.length : null)
+  const tabs: [WfTab, string, number | null][] = [
+    ['workflows', 'Workflows', count(workflows)],
+    ['agents', 'Agents', count(agents)],
+    ['skills', 'Skills', count(skills)],
+    ['commands', 'Commands', COMMANDS.length],
   ]
   return (
     <>
-      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <div className="tabs" role="tablist" aria-label="Workflow views">
-          {tabs.map(([k, label]) => (
+      <div className="flex flex-col gap-3.5 px-[26px] pt-5">
+        <div className="flex items-end justify-between gap-5">
+          <div className="flex flex-col gap-[5px] min-w-0">
+            {/* inline weight: the shell's unlayered h1 rule would beat a utility class */}
+            <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
+            <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
+          </div>
+          <button className="btn primary wf-new" onClick={() => setCreating('blank')}><Icon name="plus" /> New workflow</button>
+        </div>
+        <div className="wf-tabs" role="tablist" aria-label="Workflow views">
+          {tabs.map(([k, label, n]) => (
             <button
               key={k}
               role="tab"
               aria-selected={tab === k}
-              aria-label={k === 'commands' ? `${label} ${COMMANDS.length}` : label}
-              className={`tab${tab === k ? ' active' : ''}`}
+              aria-label={n === null ? label : `${label} ${n}`}
+              className="wf-tab"
               onClick={() => setTab(k)}
             >
               {label}
-              {k === 'commands' && <span className="mono text-[10.5px] text-tx-3 ml-1.5">{COMMANDS.length}</span>}
+              {n !== null && <span className="wf-count">{n}</span>}
             </button>
           ))}
         </div>
       </div>
-      {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab />}
-      {tab === 'skills' && <SkillsTab />}
+      {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={setCreating} goSettings={goSettings} />)}
+      {tab === 'agents' && <AgentsTab feed={agents} />}
+      {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
+      {creating && <WorkflowBuilder autoGenerate={creating === 'ai'} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); workflows.reload() }} />}
     </>
   )
 }
@@ -175,11 +203,10 @@ function fmtEdited(iso?: string): string {
 
 type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
 
-function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSettings'] }) {
-  const { rows, phase, error, reload } = useWorkflows()
+function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: (kind: 'blank' | 'ai') => void; goSettings: ConsoleScreenProps['goSettings'] }) {
+  const { rows, phase, error, reload } = feed
   const [q, setQ] = useState('')
   const [modal, setModal] = useState<WfModal | null>(null)
-  const [creating, setCreating] = useState<null | 'blank' | 'ai'>(null)
   const close = () => setModal(null)
   const list: Workflow[] = q
     ? rows.filter((w) => w.name.toLowerCase().includes(q.toLowerCase()))
@@ -193,8 +220,7 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
         </div>
         <div className="flex-1" />
         <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="btn ghost" onClick={() => setCreating('ai')}><Icon name="sparkle" /> Generate with AI</button>
-        <button className="btn primary" onClick={() => setCreating('blank')}><Icon name="plus" /> New workflow</button>
+        <button className="btn ghost" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
       </div>
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="flow" title="Loading workflows…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load workflows" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
@@ -204,8 +230,8 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
             icon={q ? 'filter' : 'flow'}
             title={q ? 'No workflows match this search' : 'No workflows yet'}
             body={q ? 'Clear the search to return to the workflow catalog.' : 'Create a workflow manually or generate one with AI from a plain-language investigation goal.'}
-            primary={q ? { label: 'Clear search', onClick: () => setQ(''), icon: 'close' } : { label: 'New workflow', onClick: () => setCreating('blank'), icon: 'plus' }}
-            secondary={q ? undefined : { label: 'Generate with AI', onClick: () => setCreating('ai'), icon: 'sparkle' }}
+            primary={q ? { label: 'Clear search', onClick: () => setQ(''), icon: 'close' } : { label: 'New workflow', onClick: () => onCreate('blank'), icon: 'plus' }}
+            secondary={q ? undefined : { label: 'Generate with AI', onClick: () => onCreate('ai'), icon: 'sparkle' }}
           />
         </StateMsg>
       )}
@@ -276,7 +302,6 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
       {modal?.kind === 'history' && <HistoryModal wf={modal.wf} onClose={close} />}
       {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); reload() }} />}
       {modal?.kind === 'delete' && <DeleteModal wf={modal.wf} onClose={close} onDeleted={() => { close(); reload() }} />}
-      {creating && <WorkflowBuilder autoGenerate={creating === 'ai'} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); reload() }} />}
       {phase === 'ready' && rows.length === 0 && (
         <div className="px-[22px] pb-5">
           <button className="btn ghost" onClick={() => goSettings('ai-config')}><Icon name="gear" /> Configure AI models</button>
@@ -3388,8 +3413,8 @@ function DeleteModal({ wf, onClose, onDeleted }: { wf: Workflow; onClose: () => 
   )
 }
 
-function AgentsTab() {
-  const { rows, phase, error, reload } = useAgents()
+function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
+  const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
@@ -3830,10 +3855,8 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
 const SKILL_GRANT_INFO = 'The grant offers the whole library.'
 const LATER_RELEASE = 'Coming in a later release'
 
-function SkillsTab() {
-  const { rows, phase, error, reload } = useSkills()
-  const workflows = useWorkflows()
-  const agents = useAgents()
+function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
+  const { rows, phase, error, reload } = feed
   const [editName, setEditName] = useState<string | null>(null)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'

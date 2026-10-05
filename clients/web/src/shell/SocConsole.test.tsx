@@ -407,7 +407,7 @@ describe('SocConsole', () => {
     renderConsole()
     const screens: [string, string][] = [
       ['Cases', 'Cases'],
-      ['Agents & workflows', 'Workflows & Skills'],
+      ['Agents & workflows', 'Agents & workflows'],
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
       ['Triage', 'Triage'],

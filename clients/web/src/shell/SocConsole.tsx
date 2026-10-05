@@ -369,9 +369,8 @@ function SocConsoleInner() {
   const moreCurrent = more.some((item) => valid && item[2] === current)
 
   const navButton = (item: NavItem) => {
-    const [icon, rawLabel, key] = item
+    const [icon, label, key] = item
     if (!key) return null
-    const label = key === 'workflows' ? 'Agents & workflows' : rawLabel
     const count = key === 'decisions' ? parked : key === 'home' || key === 'cases' ? needsYou : 0
     const active = valid && key === current
     return (
@@ -399,6 +398,7 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
+  const ownsHeading = valid && allowed && current === 'workflows'
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -419,7 +419,7 @@ function SocConsoleInner() {
           <CommandBar
             boards={[...primary, ...more].map((item) => {
               const key = item[2] as string
-              return { key, label: key === 'workflows' ? 'Agents & workflows' : item[1] }
+              return { key, label: item[1] }
             })}
             onOpenChat={openChat}
             onOpenCase={setDrawerCase}
@@ -489,7 +489,8 @@ function SocConsoleInner() {
 
         {/* main */}
         <div className={mainClass}>
-          {!wallMode && (
+          {/* Agents & workflows draws its own heading, on the page background */}
+          {!wallMode && !ownsHeading && (
             <header className="topbar">
               <div className="title">
                 <h1>{title}</h1>
