@@ -7,9 +7,10 @@ because ``/workflows/custom`` and ``/workflows/{workflow_id}`` are only
 order-safe inside one router. So the reads live here, in the domain whose
 language they speak, and both routers call down into them.
 
-The detail read is the definition and nothing else, whatever the kind. Hunt
-preflight (capabilities, pricing, budgets) is about executing a run, so it lives
-in ``core.workflows.hunt_preflight`` behind its own console route.
+The detail read is the definition, plus the lead and model for a single-agent
+workflow. Hunt preflight (capabilities, pricing, budgets) is about executing a
+run, so it lives in ``core.workflows.hunt_preflight`` behind its own console
+route.
 """
 
 from datetime import datetime
@@ -17,6 +18,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy import func
 
+from core.llm import target
+from core.llm.providers.registry import get_registry, model_display_name
 from core.storage.connection import get_db_manager
 from core.storage.models import WorkflowRun
 from core.time import utcnow
@@ -97,9 +100,6 @@ def _lead_agent() -> Dict[str, Any]:
     look up. The source is only claimed when it was checked: a model that came
     from ``chat_default`` or the provider default is plain "default".
     """
-    from core.llm import target
-    from core.llm.providers.registry import get_registry, model_display_name
-
     resolved = target.resolve_component("investigation")
     if resolved is None:
         return {"role": LEAD_ROLE, "model": None, "model_source": None}

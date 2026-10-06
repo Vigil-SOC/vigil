@@ -104,7 +104,7 @@ def _detail(workflow_id, resolved, assignments):
     registry = MagicMock()
     registry.get_all_assignments.return_value = assignments
     with patch("core.llm.target.resolve_component", return_value=resolved), patch(
-        "core.llm.providers.registry.get_registry", return_value=registry
+        "core.workflows.catalog.get_registry", return_value=registry
     ):
         return catalog.detail(WorkflowsService(), workflow_id)
 
