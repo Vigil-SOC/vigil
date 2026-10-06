@@ -2938,8 +2938,8 @@
       flex: 0 0 auto;
    }
 
-   /* Workflow cards: the Agents board's 320px left column. Equal heights come from
-      the clamped name and the one-line stats; chips are at most kind, trigger, command. */
+   /* Workflow cards: the Agents board's 320px left column. Heights are equal across
+      built-in workflows (clamped name and stats reserve two lines each); a custom one adds a row of actions. */
    .wfk-col {
       width: 320px;
       display: flex;
@@ -3025,11 +3025,13 @@
    .wfk-acts {
       display: flex;
       align-items: center;
+      flex-wrap: wrap; /* a custom workflow's edit and delete push the row past 290px */
       gap: 6px;
       padding-top: 8px;
       border-top: 1px solid var(--ln0);
    }
 
+   .wfk-acts .btn.primary { margin-left: auto; }
    .btn.wfk-btn { padding: 4px 9px; font-size: 12px; }
    .btn.icon.wfk-btn { padding: 4px 6px; }
 
