@@ -45,6 +45,11 @@ class _IntelIntake(NamedTuple):
 # which is fine because indicator upserts are idempotent.
 _last_polled: Dict[str, datetime] = {}
 
+# What is missing from the config the last time a poll skipped for it, so the
+# WARNING fires once per distinct state instead of every interval. Holds field
+# names only, never the token.
+_last_skip_signature: Optional[tuple] = None
+
 
 class ThreatFeedPoller:
     """Pull STIX 2.1 indicators from configured TAXII collections."""
@@ -55,6 +60,8 @@ class ThreatFeedPoller:
             "indicators_seen": 0,
             "inserted": 0,
             "updated": 0,
+            "skipped": 0,
+            "skipped_incomplete": 0,
             "errors": 0,
         }
 
@@ -87,6 +94,7 @@ class ThreatFeedPoller:
 
     async def run_once(self) -> Dict[str, Any]:
         """Poll all configured collections; return per-source counters."""
+        global _last_skip_signature
         if not self.is_enabled():
             logger.debug("Cloudforce One integration disabled; skipping poll")
             return {"skipped": "integration_disabled"}
@@ -103,22 +111,31 @@ class ThreatFeedPoller:
         server_url = cfg.get("taxii_server_url")
         collection_ids_raw = cfg.get("collection_ids") or ""
 
-        if not api_token or not server_url or not collection_ids_raw:
-            logger.info(
-                "Cloudforce One configured but missing token/url/collections; skipping"
-            )
-            return {"skipped": "incomplete_config"}
-
         collection_ids: List[str] = [
             c.strip() for c in str(collection_ids_raw).split(",") if c.strip()
         ]
-        if not collection_ids:
-            return {"skipped": "no_collections"}
+        missing = tuple(
+            name
+            for name, present in (
+                ("api_token", api_token),
+                ("taxii_server_url", server_url),
+                ("collection_ids", collection_ids),
+            )
+            if not present
+        )
+        if missing:
+            self._note_skipped_config(missing)
+            only_blank_ids = missing == ("collection_ids",) and collection_ids_raw
+            return {
+                "skipped": "no_collections" if only_blank_ids else "incomplete_config"
+            }
+        _last_skip_signature = None
 
         per_collection: Dict[str, Dict[str, int]] = {}
         total_seen = 0
         total_inserted = 0
         total_updated = 0
+        total_skipped = 0
         errors = 0
 
         for cid in collection_ids:
@@ -137,7 +154,19 @@ class ThreatFeedPoller:
                 total_seen += len(indicators)
                 total_inserted += counts.get("inserted", 0)
                 total_updated += counts.get("updated", 0)
-                _last_polled[key] = utcnow() - timedelta(seconds=60)
+                skipped = counts.get("skipped", 0)
+                total_skipped += skipped
+                # Upserts are idempotent, so holding the watermark re-pulls the
+                # rejected indicators next poll instead of losing them.
+                if skipped == 0:
+                    _last_polled[key] = utcnow() - timedelta(seconds=60)
+                else:
+                    logger.warning(
+                        "Cloudforce One collection %s: %d indicator(s) not stored; "
+                        "keeping watermark so the next poll re-pulls them",
+                        cid,
+                        skipped,
+                    )
             except Exception as e:  # noqa: BLE001
                 logger.error("Cloudforce One poll failed for %s: %s", cid, e)
                 errors += 1
@@ -147,6 +176,7 @@ class ThreatFeedPoller:
         self.stats["indicators_seen"] += total_seen
         self.stats["inserted"] += total_inserted
         self.stats["updated"] += total_updated
+        self.stats["skipped"] += total_skipped
         self.stats["errors"] += errors
 
         summary = {
@@ -156,6 +186,7 @@ class ThreatFeedPoller:
                 "seen": total_seen,
                 "inserted": total_inserted,
                 "updated": total_updated,
+                "skipped": total_skipped,
                 "errors": errors,
             },
         }
@@ -167,6 +198,21 @@ class ThreatFeedPoller:
         if total_seen or errors:
             logger.info("Threat feed poll: %s", summary)
         return summary
+
+    def _note_skipped_config(self, missing: tuple) -> None:
+        """Count a poll skipped for config; warn once per distinct missing set."""
+        global _last_skip_signature
+        self.stats["skipped_incomplete"] += 1
+        if missing == _last_skip_signature:
+            logger.debug(
+                "Cloudforce One still missing %s; skipping", ", ".join(missing)
+            )
+            return
+        _last_skip_signature = missing
+        logger.warning(
+            "Cloudforce One is enabled but missing %s; threat feed poll skipped",
+            ", ".join(missing),
+        )
 
     def offer_uncovered_indicators_to_intake(self) -> Dict[str, Any]:
         """Offer this poll's uncovered keys as one case-less schedule row.

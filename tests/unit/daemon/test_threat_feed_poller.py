@@ -98,7 +98,13 @@ async def test_run_once_fetches_upserts_then_offers(monkeypatch):
         ("upsert", 1),
         "offered",
     ]
-    assert summary["totals"] == {"seen": 2, "inserted": 2, "updated": 0, "errors": 0}
+    assert summary["totals"] == {
+        "seen": 2,
+        "inserted": 2,
+        "updated": 0,
+        "skipped": 0,
+        "errors": 0,
+    }
     assert summary["intake"] == {"inserted": 1, "keys": 1}
 
 
@@ -267,3 +273,95 @@ def test_a_refused_insert_is_reported_not_raised(monkeypatch):
     assert ThreatFeedPoller().offer_uncovered_indicators_to_intake() == {
         "error": "no database"
     }
+
+
+def _quiet_poll(monkeypatch, *, counts, config=CONFIG):
+    monkeypatch.setattr(ThreatFeedPoller, "is_enabled", staticmethod(lambda: True))
+    monkeypatch.setattr("core.config.get_integration_config", lambda _id: config)
+    monkeypatch.setattr(feed, "fetch_taxii_collection", lambda **_kw: ["indicator"])
+    monkeypatch.setattr(feed, "upsert_indicators", lambda _ind: counts)
+    monkeypatch.setattr(
+        ThreatFeedPoller,
+        "offer_uncovered_indicators_to_intake",
+        lambda self: {"inserted": 0},
+    )
+
+
+@pytest.mark.asyncio
+async def test_upsert_failures_hold_the_watermark_and_are_totalled(monkeypatch):
+    watermark = datetime(2026, 9, 29, 12, 0, 0)
+    last_polled = {"cloudforce_one::col-1": watermark}
+    monkeypatch.setattr(poller, "_last_polled", last_polled)
+    _quiet_poll(monkeypatch, counts={"inserted": 1, "updated": 0, "skipped": 2})
+
+    run = ThreatFeedPoller()
+    summary = await run.run_once()
+
+    assert last_polled["cloudforce_one::col-1"] == watermark
+    assert "cloudforce_one::col-2" not in last_polled
+    assert summary["totals"]["skipped"] == 4
+    assert run.stats["skipped"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_clean_upsert_advances_the_watermark(monkeypatch):
+    last_polled = {}
+    monkeypatch.setattr(poller, "_last_polled", last_polled)
+    _quiet_poll(monkeypatch, counts={"inserted": 1, "updated": 0, "skipped": 0})
+
+    await ThreatFeedPoller().run_once()
+
+    assert set(last_polled) == {"cloudforce_one::col-1", "cloudforce_one::col-2"}
+
+
+@pytest.mark.asyncio
+async def test_a_missing_taxii_client_is_a_poll_error_not_a_clean_empty_fetch(
+    monkeypatch,
+):
+    last_polled = {}
+    monkeypatch.setattr(poller, "_last_polled", last_polled)
+    _quiet_poll(monkeypatch, counts={"inserted": 0, "updated": 0, "skipped": 0})
+
+    def _no_wheel(**_kwargs):
+        raise ModuleNotFoundError("No module named 'taxii2client'")
+
+    monkeypatch.setattr(feed, "fetch_taxii_collection", _no_wheel)
+
+    run = ThreatFeedPoller()
+    summary = await run.run_once()
+
+    assert last_polled == {}
+    assert run.stats["errors"] == 2
+    assert summary["totals"]["errors"] == 2
+
+
+@pytest.mark.asyncio
+async def test_incomplete_config_warns_once_per_state_and_is_counted(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(poller, "_last_skip_signature", None)
+    config = {"api_token": "s3cret-token", "collection_ids": "col-1"}
+    _quiet_poll(monkeypatch, counts={}, config=config)
+    run = ThreatFeedPoller()
+
+    with caplog.at_level("DEBUG", logger=poller.logger.name):
+        assert await run.run_once() == {"skipped": "incomplete_config"}
+        await run.run_once()
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "taxii_server_url" in warnings[0].getMessage()
+
+        config.pop("api_token")
+        await run.run_once()
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 2
+    assert "api_token" in warnings[1].getMessage()
+    assert run.stats["skipped_incomplete"] == 3
+    assert "s3cret-token" not in caplog.text
+
+    config.update(api_token="s3cret-token", taxii_server_url="https://taxii.example")
+    await run.run_once()
+    config.pop("taxii_server_url")
+    await run.run_once()
+    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3

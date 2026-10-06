@@ -274,14 +274,10 @@ def fetch_taxii_collection(
     A transport, auth, discovery, or missing-collection failure raises. The
     poller already isolates each collection, and a raised error leaves that
     collection's watermark on the last good poll. An empty envelope is a real
-    answer and returns []. A missing taxii2-client wheel is a deploy state
-    and still returns [].
+    answer and returns []. A missing taxii2-client wheel raises too: it is in
+    requirements.txt, so its absence is a broken deploy, not an empty feed.
     """
-    try:
-        from taxii2client.v21 import Server  # type: ignore[import-untyped]
-    except Exception as e:  # noqa: BLE001
-        logger.warning("taxii2-client not available, skipping fetch: %s", e)
-        return []
+    from taxii2client.v21 import Server  # type: ignore[import-untyped]
 
     headers = {"Authorization": f"Bearer {api_token}"}
     server = Server(server_url, headers=headers)
@@ -308,13 +304,26 @@ def fetch_taxii_collection(
         else getattr(envelope, "objects", [])
     )
     out: List[NormalizedIndicator] = []
+    malformed = 0
+    first_error: Optional[Exception] = None
     for obj in objects or []:
         try:
             out.extend(
                 parse_stix_indicator(obj, source=source, collection_id=collection_id)
             )
         except Exception as e:  # noqa: BLE001
-            logger.debug("Skipping malformed STIX object: %s", e)
+            malformed += 1
+            first_error = first_error or e
+    if malformed:
+        # Not held against the watermark: a malformed object stays malformed on
+        # re-pull, so holding it would re-fetch the same objects every poll.
+        logger.warning(
+            "Collection %s: %d malformed of %d STIX objects skipped (first: %s)",
+            collection_id,
+            malformed,
+            len(objects or []),
+            first_error,
+        )
     return out
 
 
@@ -326,7 +335,8 @@ def fetch_taxii_collection(
 def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
     """Upsert normalized indicators into the threat_indicators table.
 
-    Returns counters for inserted/updated rows.
+    Returns inserted/updated/skipped counters. A row that fails is rolled back
+    alone and counted in ``skipped``; the other rows still commit.
     """
     if not indicators:
         return {"inserted": 0, "updated": 0, "skipped": 0}
@@ -343,50 +353,57 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
     updated = 0
     skipped = 0
     now = utcnow()
+    first_error: Optional[Tuple[str, Exception]] = None
     with db.session_scope() as session:
         for ind in indicators:
             try:
-                existing = (
-                    session.query(ThreatIndicator)
-                    .filter_by(
-                        source=ind.source,
-                        indicator_type=ind.indicator_type,
-                        indicator_value=ind.indicator_value,
-                    )
-                    .one_or_none()
-                )
-                if existing is None:
-                    session.add(
-                        ThreatIndicator(
+                # A savepoint per row, flushed inside it: a flush-time error
+                # (constraint, oversized value) rolls back only this row instead
+                # of poisoning the session and failing the whole commit.
+                with session.begin_nested():
+                    existing = (
+                        session.query(ThreatIndicator)
+                        .filter_by(
+                            source=ind.source,
                             indicator_type=ind.indicator_type,
                             indicator_value=ind.indicator_value,
-                            source=ind.source,
-                            collection_id=ind.collection_id,
-                            confidence=ind.confidence,
-                            threat_level=ind.threat_level,
-                            labels=ind.labels,
-                            valid_from=ind.valid_from,
-                            valid_until=ind.valid_until,
-                            raw_stix=ind.raw_stix,
-                            first_seen=now,
-                            last_seen=now,
                         )
+                        .one_or_none()
                     )
+                    if existing is None:
+                        session.add(
+                            ThreatIndicator(
+                                indicator_type=ind.indicator_type,
+                                indicator_value=ind.indicator_value,
+                                source=ind.source,
+                                collection_id=ind.collection_id,
+                                confidence=ind.confidence,
+                                threat_level=ind.threat_level,
+                                labels=ind.labels,
+                                valid_from=ind.valid_from,
+                                valid_until=ind.valid_until,
+                                raw_stix=ind.raw_stix,
+                                first_seen=now,
+                                last_seen=now,
+                            )
+                        )
+                    else:
+                        existing.last_seen = now
+                        if ind.confidence is not None:
+                            existing.confidence = ind.confidence
+                        if ind.threat_level:
+                            existing.threat_level = ind.threat_level
+                        if ind.labels:
+                            existing.labels = ind.labels
+                        # Unconditional: a re-published indicator with no
+                        # valid_until no longer expires, and keeping the old
+                        # past date would hide a hit the feed still reports.
+                        existing.valid_until = ind.valid_until
+                        if ind.raw_stix:
+                            existing.raw_stix = ind.raw_stix
+                if existing is None:
                     inserted += 1
                 else:
-                    existing.last_seen = now
-                    if ind.confidence is not None:
-                        existing.confidence = ind.confidence
-                    if ind.threat_level:
-                        existing.threat_level = ind.threat_level
-                    if ind.labels:
-                        existing.labels = ind.labels
-                    # Unconditional: a re-published indicator with no
-                    # valid_until no longer expires, and keeping the old
-                    # past date would hide a hit the feed still reports.
-                    existing.valid_until = ind.valid_until
-                    if ind.raw_stix:
-                        existing.raw_stix = ind.raw_stix
                     updated += 1
             except Exception as e:  # noqa: BLE001
                 logger.debug(
@@ -395,7 +412,18 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
                     ind.indicator_value,
                     e,
                 )
+                first_error = first_error or (
+                    f"{ind.indicator_type}/{ind.indicator_value}",
+                    e,
+                )
                 skipped += 1
+    if skipped:
+        logger.warning(
+            "Failed to upsert %d of %d indicators (first: %s: %s)",
+            skipped,
+            len(indicators),
+            *first_error,
+        )
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
 
