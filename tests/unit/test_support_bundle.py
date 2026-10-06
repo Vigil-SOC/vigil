@@ -561,7 +561,10 @@ def test_backend_without_a_state_mount_is_recorded(env, tmp_path):
     env["FAKE_DOCKER_MOUNTS"] = "/app/data\n"
     assert run(env, tmp_path).returncode == 0
     entry = entries_of(tmp_path)["logs/state/vigil.log"]
-    assert entry["state"] == "not collected" and "no State Directory mount" in entry["reason"]
+    assert (
+        entry["state"] == "not collected"
+        and "no State Directory mount" in entry["reason"]
+    )
 
 
 def test_container_symlink_or_directory_is_never_followed(env, tmp_path):
@@ -646,4 +649,6 @@ def test_summary_lists_never_included_apart_from_not_collected(env, tmp_path):
     out_head, _, out_never = proc.stdout.partition("Never included (existence only):")
     assert "never included" not in out_head and "secrets.enc" in out_never
     entries = entries_of(tmp_path)
-    assert entries["configuration/never-included/secrets.enc"]["state"] == "not collected"
+    assert (
+        entries["configuration/never-included/secrets.enc"]["state"] == "not collected"
+    )
