@@ -1,10 +1,11 @@
-"""A legacy Splunk poll where every query failed is a failure, not a clean poll.
+"""A legacy Splunk poll with a failed query is a failure, not a clean poll.
 
 ``SplunkService.search`` returns ``None`` on error. ``_poll_splunk`` used to
 treat that like ``[]`` and return, so ``_poll_splunk_loop`` stamped
 ``last_poll_time`` and the next tick's fixed lookback skipped the outage.
-A query now fails if it raised or returned ``None``; if none ran, the poll
-raises. When ``last_poll_time`` is set, ``earliest_time`` reaches back to it
+A query fails if it raised or returned ``None``, and the poll then raises, even
+when a later fallback would have run. The last query (the ``notable`` macro,
+undefined without ES) may fail once every earlier query ran empty. When ``last_poll_time`` is set, ``earliest_time`` reaches back to it
 (capped at 60 minutes).
 """
 
@@ -65,9 +66,9 @@ def _event(n: int) -> Dict[str, Any]:
 async def test_all_queries_return_none_raises(caplog):
     poller = _poller(_FakeSplunk([None, None, None]))
     caplog.set_level(logging.WARNING)
-    with pytest.raises(RuntimeError, match="every search query failed"):
+    with pytest.raises(RuntimeError, match="query failed"):
         await poller._poll_splunk()
-    assert caplog.text.count("Splunk query failed") == 3
+    assert caplog.text.count("Splunk query failed") >= 1
 
 
 @pytest.mark.asyncio
@@ -75,7 +76,7 @@ async def test_all_queries_raise_raises_with_last_error():
     poller = _poller(
         _FakeSplunk([TimeoutError("read"), TimeoutError("read"), OSError("handshake")])
     )
-    with pytest.raises(RuntimeError, match="handshake"):
+    with pytest.raises(RuntimeError, match="index=notable.*read"):
         await poller._poll_splunk()
 
 
@@ -108,10 +109,35 @@ async def test_all_empty_returns_normally():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", [[_event(1)], []])
+async def test_failed_notable_query_raises_whatever_the_fallback_returns(fallback):
+    svc = _FakeSplunk([None, fallback, None])
+    poller = _poller(svc)
+
+    with pytest.raises(RuntimeError, match="index=notable"):
+        await poller._poll_splunk()
+
+    assert len(svc.queries) == 1
+    assert poller._output_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_failed_macro_query_after_empty_queries_is_a_clean_poll():
+    """Non-ES install: no notable index, no alerts, and the macro is undefined."""
+    svc = _FakeSplunk([[], [], None])
+    poller = _poller(svc)
+
+    await poller._poll_splunk()
+
+    assert len(svc.queries) == 3
+    assert poller.stats["errors"] == 0
+
+
+@pytest.mark.asyncio
 async def test_failed_poll_increments_errors_and_leaves_last_poll_time():
     prior = datetime(2026, 9, 30, 11, 0, 0)
     shutdown = asyncio.Event()
-    poller = _poller(_FakeSplunk([None, None, None], on_search=shutdown.set))
+    poller = _poller(_FakeSplunk([None, [_event(1)], None], on_search=shutdown.set))
     poller._splunk_state.last_poll_time = prior
 
     await poller._poll_splunk_loop(shutdown)
@@ -131,7 +157,7 @@ async def test_earliest_time_reaches_back_to_last_success_capped_at_60():
         await poller._poll_splunk()
     assert {q["earliest_time"] for q in svc.queries} == {"-26m"}
 
-    svc_long = _FakeSplunk([[]])
+    svc_long = _FakeSplunk([[], [], []])
     poller._splunk_service = svc_long
     poller._splunk_state.last_poll_time = fixed - timedelta(minutes=90)
     with patch("services.daemon.poller.utcnow", return_value=fixed):
@@ -141,7 +167,7 @@ async def test_earliest_time_reaches_back_to_last_success_capped_at_60():
 
 @pytest.mark.asyncio
 async def test_first_run_keeps_fixed_lookback():
-    svc = _FakeSplunk([[]])
+    svc = _FakeSplunk([[], [], []])
     poller = _poller(svc)
 
     await poller._poll_splunk()
