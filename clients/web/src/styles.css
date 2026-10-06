@@ -1674,28 +1674,6 @@
       min-height: 0;
    }
 
-   .case-side {
-      flex: 0 0 280px;
-      width: 280px;
-      border-left: 1px solid var(--line);
-      overflow-y: auto;
-      padding: 16px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      font-size: 13px;
-   }
-
-   .case-side .k {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--tx-3);
-      margin-bottom: 2px;
-   }
-
    .case-composer {
       flex: 0 0 auto;
       display: flex;

@@ -12,7 +12,9 @@ import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
-import { CommentsCard, EvidenceCard, IOCsCard, TasksCard } from './CaseSections'
+import { EvidenceCard, IOCsCard } from './CaseSections'
+import { CaseSide } from './CaseSide'
+import { money, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -61,17 +63,6 @@ function Mark({ text }: { text: string }) {
   )
 }
 
-function when(value?: string | null): string {
-  if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? value : format(d, 'MMM d, yyyy · HH:mm')
-}
-
-function money(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `$${value.toFixed(4)}`
-}
-
 function clock(value: string | null | undefined): string {
   if (!value) return '—'
   const d = new Date(value)
@@ -90,15 +81,6 @@ function detailOf(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
   return (error as { message?: string })?.message || fallback
-}
-
-/** Resolve-by clock: "7 h left", or "2 d over" once past due. */
-function timeLeft(due: string): string {
-  const ms = new Date(due).getTime() - Date.now()
-  if (Number.isNaN(ms)) return ''
-  const min = Math.round(Math.abs(ms) / 60_000)
-  const span = min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
-  return `${span} ${ms < 0 ? 'over' : 'left'}`
 }
 
 /** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
@@ -1019,39 +1001,7 @@ export function CasePage({
 
         <aside className="case-side" aria-label="Case details">
           <LinkedFindings items={linkedFindings} />
-          <div><span className="k">Workflow</span><div>{latest?.workflow_id || '—'}</div></div>
-          <div>
-            <span className="k">Budget</span>
-            <div>
-              {latest ? `${money(latest.cost_usd)} / ${money(latest.max_cost_usd)} · ${latest.budget_health}` : '—'}
-            </div>
-          </div>
-          <div>
-            <span className="k">Resolve by</span>
-            <div>{sla ? `${when(sla.due)}${sla.health ? ` · ${sla.health}` : ''}` : '—'}</div>
-          </div>
-          <div>
-            <span className="k">Entities</span>
-            <div>{fold?.recall && !fold.recall.unavailable && fold.recall.keys.length ? fold.recall.keys.join(', ') : '—'}</div>
-          </div>
-          <div><span className="k">Cost</span><div>{money(fold?.costUsd ?? latest?.cost_usd)}</div></div>
-          <details className="case-fold">
-            <summary>People</summary>
-            <p>Owner {c?.ownerName || '—'}</p>
-            <CommentsCard caseId={id} />
-            <TasksCard caseId={id} />
-            <Tickets caseId={id} />
-          </details>
-          <details className="case-fold">
-            <summary>Known about these entities</summary>
-            <p className="muted">
-              {fold?.recall
-                ? fold.recall.unavailable
-                  ? `Recall did not happen: ${fold.recall.unavailable}`
-                  : `${fold.recall.keys.join(', ') || 'No entities'}${fold.recall.verdicts.length ? `. Verdicts: ${fold.recall.verdicts.map((v) => [v.outcome, v.statement].filter(Boolean).join(' — ')).join('; ')}` : ''}${fold.recall.gaps.length ? `. Gaps: ${fold.recall.gaps.map((g) => g.statement).join('; ')}` : ''}`
-                : 'The run did not journal a recall.'}
-            </p>
-          </details>
+          <CaseSide key={id} caseId={id} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />
@@ -1232,40 +1182,5 @@ function EvidenceTable({
         </tbody>
       </table>
     </div>
-  )
-}
-
-function Tickets({ caseId }: { caseId: string }) {
-  const [rows, setRows] = useState<{ id: string; label: string }[]>([])
-  const [phase, setPhase] = useState<Phase>('loading')
-
-  useEffect(() => {
-    let cancelled = false
-    casesApi
-      .getEscalations(caseId)
-      .then((res) => {
-        if (cancelled) return
-        setRows((res.data.escalations || []).map((row) => ({
-          id: String(row.escalation_id ?? row.escalated_to),
-          label: [row.escalated_to, row.reason].filter(Boolean).join(' — ') || 'Ticket',
-        })))
-        setPhase('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setPhase('error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [caseId])
-
-  return (
-    <section>
-      <h3>Linked tickets</h3>
-      {phase === 'loading' && <p className="muted">Loading tickets…</p>}
-      {phase === 'error' && <p className="muted">Couldn’t load tickets.</p>}
-      {phase === 'ready' && rows.length === 0 && <p className="muted">No linked tickets.</p>}
-      {rows.map((row) => <p key={row.id}>{row.label}</p>)}
-    </section>
   )
 }
