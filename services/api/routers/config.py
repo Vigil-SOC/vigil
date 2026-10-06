@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.api.v1.findings_router import data_service as findings_data_service
+from core.auth.permissions import permission_gate
 from core.config import (
     get_settings,
     is_demo_mode,
@@ -47,6 +48,11 @@ from services.daemon.config import DaemonConfig
 from services.daemon.intent import effective_daemon_config, intent_report
 
 router = APIRouter()
+
+# Writes change what the platform connects to and trusts, so Auth.REQUIRED alone
+# (any active account) is not enough. Reads stay open to every role.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
+_INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/config",
@@ -175,7 +181,7 @@ def get_demo_mode():
         return {"enabled": False, "error": str(e)}
 
 
-@router.post("/demo-mode")
+@router.post("/demo-mode", dependencies=_SETTINGS_WRITE)
 def set_demo_mode(config: DemoModeConfig):
     """
     Set demo mode configuration.
@@ -211,7 +217,7 @@ def set_demo_mode(config: DemoModeConfig):
     }
 
 
-@router.post("/demo-mode/reset")
+@router.post("/demo-mode/reset", dependencies=_SETTINGS_WRITE)
 def reset_demo_data(demo_service=Depends(provide_demo_data)):
     """
     Reset demo data to regenerate sample findings and cases.
@@ -260,7 +266,7 @@ def get_claude_config():
         return {"configured": False, "error": str(e)}
 
 
-@router.post("/claude")
+@router.post("/claude", dependencies=_SETTINGS_WRITE)
 def set_claude_config(config: ClaudeConfig):
     """
     Set Claude API configuration.
@@ -355,7 +361,7 @@ def get_s3_config():
         return {"configured": False, "error": str(e)}
 
 
-@router.post("/s3")
+@router.post("/s3", dependencies=_SETTINGS_WRITE)
 def set_s3_config(
     config: S3Config,
     current_user: User = Depends(get_current_active_user),
@@ -480,7 +486,7 @@ def get_platform_database_config():
     return result
 
 
-@router.post("/platform-database")
+@router.post("/platform-database", dependencies=_SETTINGS_WRITE)
 def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     """Persist the platform-DB proxy config to the encrypted secrets
     store. Takes effect on the next backend restart — the live engine
@@ -536,7 +542,7 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     }
 
 
-@router.post("/s3/test")
+@router.post("/s3/test", dependencies=_INTEGRATIONS_WRITE)
 def test_s3_connection():
     """
     Test S3 connection with current configuration.
@@ -639,7 +645,7 @@ def get_theme_config():
         return {"theme": "dark"}
 
 
-@router.post("/theme")
+@router.post("/theme", dependencies=_SETTINGS_WRITE)
 def set_theme_config(
     config: ThemeConfig,
     current_user: User = Depends(get_current_active_user),
@@ -840,7 +846,7 @@ def get_integrations_config():
         }
 
 
-@router.post("/integrations")
+@router.post("/integrations", dependencies=_INTEGRATIONS_WRITE)
 def set_integrations_config(
     config: IntegrationsConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1159,7 +1165,7 @@ def get_general_config():
         }
 
 
-@router.post("/general")
+@router.post("/general", dependencies=_SETTINGS_WRITE)
 def set_general_config(
     config: GeneralConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1232,7 +1238,7 @@ def get_github_config():
         return {"configured": False, "error": str(e)}
 
 
-@router.post("/github")
+@router.post("/github", dependencies=_SETTINGS_WRITE)
 def set_github_config(config: GitHubConfig):
     """
     Set GitHub integration configuration.
@@ -1281,7 +1287,7 @@ def get_postgresql_config():
         return {"configured": False, "error": str(e)}
 
 
-@router.post("/postgresql")
+@router.post("/postgresql", dependencies=_SETTINGS_WRITE)
 def set_postgresql_config(config: PostgreSQLConfig):
     """
     Set PostgreSQL database backend configuration.
@@ -1343,7 +1349,7 @@ def get_ai_operations_config():
         return AI_OPERATIONS_DEFAULTS
 
 
-@router.post("/ai-operations")
+@router.post("/ai-operations", dependencies=_SETTINGS_WRITE)
 def set_ai_operations_config(
     config: AIOperationsSettingsConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1560,7 +1566,7 @@ def get_orchestrator_config():
         return _orchestrator_payload(None)
 
 
-@router.post("/orchestrator")
+@router.post("/orchestrator", dependencies=_SETTINGS_WRITE)
 def set_orchestrator_config(
     config: OrchestratorSettingsConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1651,7 +1657,11 @@ def get_force_manual_approval():
     )
 
 
-@router.post("/force-manual-approval", response_model=ForceManualApprovalResponse)
+@router.post(
+    "/force-manual-approval",
+    dependencies=_SETTINGS_WRITE,
+    response_model=ForceManualApprovalResponse,
+)
 def set_force_manual_approval(
     config: ForceManualApprovalConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1717,7 +1727,7 @@ def get_darktrace_config():
         return {**DARKTRACE_DEFAULTS, "configured": False}
 
 
-@router.post("/darktrace")
+@router.post("/darktrace", dependencies=_INTEGRATIONS_WRITE)
 def set_darktrace_config(
     config: DarktraceConfig,
     current_user: User = Depends(get_current_active_user),
@@ -1782,7 +1792,7 @@ def secrets_status() -> Dict[str, Any]:
     return mgr.get_backend_status()
 
 
-@router.post("/secrets/reinit")
+@router.post("/secrets/reinit", dependencies=_SETTINGS_WRITE)
 def secrets_reinit(
     request: Optional[_SecretsReinitRequest] = None,
 ) -> Dict[str, Any]:
@@ -1806,7 +1816,7 @@ def secrets_reinit(
     }
 
 
-@router.post("/secrets/migrate-to-encrypted")
+@router.post("/secrets/migrate-to-encrypted", dependencies=_SETTINGS_WRITE)
 def secrets_migrate_to_encrypted(
     request: Optional[_SecretsMigrateRequest] = None,
 ) -> Dict[str, Any]:

@@ -181,6 +181,7 @@ async def test_approve_action_refuses_when_no_principal_is_bound(monkeypatch):
 @pytest.mark.asyncio
 async def test_approve_action_names_the_bound_principal(monkeypatch):
     called = _approval_spy(monkeypatch)
+    monkeypatch.setattr(tool_registry, "username_has_permission", lambda *_: True)
 
     with acting_as("analyst"):
         _result, handled = await execute_backend_tool(
@@ -250,3 +251,32 @@ async def test_technique_rollup_reads_the_sql_rollup(monkeypatch):
 
     assert handled is True
     assert result == {"total_techniques": 0, "techniques": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("approve_action", {"action_id": "act-1"}),
+        ("reject_action", {"action_id": "act-1", "reason": "no"}),
+    ],
+)
+async def test_a_principal_without_the_approval_right_cannot_decide(
+    monkeypatch, tool, args
+):
+    called = _approval_spy(monkeypatch)
+    asked = []
+
+    def _holds(username, permission):
+        asked.append((username, permission))
+        return False
+
+    monkeypatch.setattr(tool_registry, "username_has_permission", _holds)
+
+    with acting_as("vera_viewer"):
+        result, handled = await execute_backend_tool(tool, args)
+
+    assert handled is True
+    assert "ai_decisions.approve required" in result["error"]
+    assert asked == [("vera_viewer", "ai_decisions.approve")]
+    assert called == []

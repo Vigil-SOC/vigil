@@ -68,10 +68,11 @@ class StubWorkflows:
 
 
 @pytest.fixture()
-def app():
+def app(authenticate_app):
     # A bare app with just the router under test: no lifespan runs, so nothing
     # populates app.state and the overrides below are the only wiring.
     application = FastAPI()
+    authenticate_app(application)
     application.include_router(approvals_router, prefix="/api")
     return application
 
@@ -117,8 +118,9 @@ def test_approving_a_workflow_linked_action_resumes_the_run(app, monkeypatch):
     )
 
     assert resp.status_code == 200
-    assert approvals.approved == [("ACT-1", "tester")]
-    assert resumed == [("wfr-1", "ACT-1", "tester")]
+    # The decider is the session user; the body's claim is not recorded.
+    assert approvals.approved == [("ACT-1", "test-admin")]
+    assert resumed == [("wfr-1", "ACT-1", "test-admin")]
     assert resp.json()["resume_result"]["status"] == "completed"
 
 
