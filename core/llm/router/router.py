@@ -18,7 +18,7 @@ from core.llm.security import (
     wrap_tool_result,
 )
 from core.secrets import get_secret
-from core.telemetry import record_llm_call
+from core.telemetry import record_budget_unenforced, record_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -202,15 +202,21 @@ def bifrost_headers(interaction_id: Optional[str] = None) -> Dict[str, str]:
     headers: Dict[str, str] = {}
     if interaction_id:
         headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+    reason = "budget_unavailable"
     try:
-        from core.llm.cost.budget import get_active_vk, should_enforce
+        from core.llm.cost.budget import enforcement_status
 
-        if should_enforce():
-            vk = get_active_vk()
-            if vk:
-                headers["x-bf-vk"] = vk
+        reason, vk = enforcement_status()
+        if vk:
+            headers["x-bf-vk"] = vk
     except Exception as exc:
-        logger.debug("budget_service unavailable (%s); proceeding without x-bf-vk", exc)
+        logger.warning(
+            "budget_service unavailable (%s); proceeding without x-bf-vk "
+            "(LLM spend is unenforced)",
+            exc,
+        )
+    if "x-bf-vk" not in headers:
+        record_budget_unenforced(reason)
     return headers
 
 

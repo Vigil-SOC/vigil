@@ -132,7 +132,9 @@ class TestChatVirtualKeyHeader:
             anthropic_base_url=base_url,
         )
         monkeypatch.setattr("core.llm.cost.budget.get_app_settings", lambda: app)
-        monkeypatch.setattr("core.llm.cost.budget.get_active_vk", lambda: vk)
+        monkeypatch.setattr(
+            "core.llm.cost.budget._get_settings", lambda: {"default_vk": vk or ""}
+        )
         monkeypatch.setattr("core.llm.harness.claude.get_settings", lambda: app)
 
         with patch(

@@ -647,6 +647,18 @@ class TestRecordLLMCall:
             for attrs, _ in pts:
                 assert set(attrs) <= {"model", "provider", "token_type"}
 
+    def test_budget_unenforced_counter_carries_only_the_reason(self, reader):
+        from core.telemetry import record_budget_unenforced
+
+        record_budget_unenforced("read_error")
+        record_budget_unenforced("read_error")
+        record_budget_unenforced("dev_mode")
+        points = _collect_points(reader)["vigil.llm.budget.unenforced.total"]
+        assert sorted((a["reason"], v) for a, v in points) == [
+            ("dev_mode", 1),
+            ("read_error", 2),
+        ]
+
     def test_unpriced_call_skips_cost_but_real_zero_records(self, reader):
         from core.telemetry import record_llm_call
 

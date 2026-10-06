@@ -19,13 +19,31 @@ The 60s runtime-config TTL the rest of Vigil uses applies here too.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+import threading
+from typing import Literal, Optional, Tuple
 
 from core.config import get_settings as get_app_settings
+from core.storage.config_service import get_session
+from core.storage.models import SystemConfig
 
 logger = logging.getLogger(__name__)
 
 GLOBAL_KEY = "bifrost.virtual_keys"
+
+# Why a call does or does not carry x-bf-vk. Only ENFORCED attaches the key.
+EnforcementReason = Literal[
+    "enforced", "dev_mode", "unlimited", "not_configured", "read_error"
+]
+ENFORCED: EnforcementReason = "enforced"
+DEV_MODE: EnforcementReason = "dev_mode"
+UNLIMITED: EnforcementReason = "unlimited"
+NOT_CONFIGURED: EnforcementReason = "not_configured"
+READ_ERROR: EnforcementReason = "read_error"
+
+# Last result of a settings read, so only the transition into and out of
+# READ_ERROR is logged. Bypass reasons never read, so they leave it alone.
+_state_lock = threading.Lock()
+_last_read_reason: Optional[EnforcementReason] = None
 
 
 # ---------------------------------------------------------------------------
@@ -55,19 +73,53 @@ class BudgetExceeded(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _note_read(reason: EnforcementReason, exc: Optional[Exception] = None) -> None:
+    """Record the outcome of a settings read; log on read_error transitions."""
+    global _last_read_reason
+    with _state_lock:
+        previous, _last_read_reason = _last_read_reason, reason
+    if reason == READ_ERROR and previous != READ_ERROR:
+        why = (str(exc).splitlines() or [""])[0]
+        logger.warning(
+            "LLM budget enforcement skipped: settings read failed (%s: %s); "
+            "calls are going out without x-bf-vk",
+            type(exc).__name__,
+            why,
+        )
+    elif previous == READ_ERROR and reason != READ_ERROR:
+        logger.info("budget enforcement resumed (status: %s)", reason)
+
+
+def enforcement_status() -> Tuple[EnforcementReason, Optional[str]]:
+    """Return ``(reason, vk)``; ``vk`` is set only when ``reason`` is ENFORCED.
+
+    Fails open: a failed settings read yields READ_ERROR (no key, calls are
+    not blocked) instead of raising, and is logged once per transition.
+    """
+    app_settings = get_app_settings()
+    if app_settings.dev_mode:
+        return DEV_MODE, None
+    if app_settings.llm_budget_unlimited:
+        return UNLIMITED, None
+    try:
+        vk = _read_vk()
+    except Exception as e:
+        _note_read(READ_ERROR, e)
+        return READ_ERROR, None
+    if not vk:
+        _note_read(NOT_CONFIGURED)
+        return NOT_CONFIGURED, None
+    _note_read(ENFORCED)
+    return ENFORCED, vk
+
+
 def should_enforce() -> bool:
     """True if we should attach the VK header and respect Bifrost's gating.
 
-    Returns False when DEV_MODE or LLM_BUDGET_UNLIMITED is on, OR when
-    no default VK is configured (bootstrap window — accept calls without
-    enforcement until the operator provisions a key).
+    False under DEV_MODE or LLM_BUDGET_UNLIMITED, when no default VK is
+    configured (bootstrap window), or when the settings can't be read.
     """
-    app_settings = get_app_settings()
-    if app_settings.dev_mode or app_settings.llm_budget_unlimited:
-        return False
-    if not get_active_vk():
-        return False
-    return True
+    return enforcement_status()[0] == ENFORCED
 
 
 # ---------------------------------------------------------------------------
@@ -75,14 +127,8 @@ def should_enforce() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def get_active_vk() -> Optional[str]:
-    """Return the configured global VK ID, or None if not set.
-
-    Lazily reads from ``system_config['bifrost.virtual_keys']``. Returns
-    None on any DB error so a misconfigured persistence layer can never
-    block LLM traffic — Vigil falls back to no-VK mode and the operator
-    sees the bootstrap behavior.
-    """
+def _read_vk() -> Optional[str]:
+    """The configured VK, None if unset. Raises if the settings can't be read."""
     settings = _get_settings()
     if not isinstance(settings, dict):
         return None
@@ -92,9 +138,33 @@ def get_active_vk() -> Optional[str]:
     return vk.strip()
 
 
+def get_active_vk() -> Optional[str]:
+    """Return the configured global VK ID, or None if not set.
+
+    Reads ``system_config['bifrost.virtual_keys']``. Returns None on any DB
+    error so a misconfigured persistence layer can never block LLM traffic;
+    the failure is logged as READ_ERROR, distinct from "not configured".
+    """
+    try:
+        vk = _read_vk()
+    except Exception as e:
+        _note_read(READ_ERROR, e)
+        return None
+    _note_read(ENFORCED if vk else NOT_CONFIGURED)
+    return vk
+
+
 def get_settings() -> dict:
     """Public read of the full settings dict (for the Budgets UI)."""
-    val = _get_settings() or {}
+    try:
+        val = _get_settings() or {}
+    except Exception as e:
+        logger.debug("budget_service: settings read failed: %s", e)
+        return {
+            "default_vk": "",
+            "budget_limit_usd": 0.0,
+            "enforcement_mode": "warning",
+        }
     if not isinstance(val, dict):
         return {}
     return {
@@ -141,10 +211,7 @@ def set_settings(
 
 
 def _get_settings():
-    try:
-        from core.storage.config_service import get_config_service
-
-        return get_config_service().get_system_config(GLOBAL_KEY)
-    except Exception as e:
-        logger.debug("budget_service: settings read failed: %s", e)
-        return None
+    """Stored settings dict, or None when no row exists. Raises on DB errors."""
+    with get_session() as session:
+        row = session.query(SystemConfig).filter_by(key=GLOBAL_KEY).first()
+        return row.value if row else None

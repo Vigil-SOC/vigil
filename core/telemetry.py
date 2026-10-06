@@ -337,9 +337,9 @@ def extract_traceparent(carrier: dict) -> Any:
 
 def create_genai_metrics(meter: Any) -> dict:
     """
-    Create and return the 4 GenAI metric instruments used for LLM observability.
+    Create and return the GenAI metric instruments used for LLM observability.
 
-    Keys: llm_calls, llm_duration, llm_tokens, llm_cost_usd
+    Keys: llm_calls, llm_duration, llm_tokens, llm_cost_usd, llm_budget_unenforced
     """
     return {
         "llm_calls": meter.create_counter(
@@ -357,6 +357,10 @@ def create_genai_metrics(meter: Any) -> dict:
         "llm_cost_usd": meter.create_counter(
             "vigil.llm.cost.usd.total",
             description="Cumulative LLM cost in USD",
+        ),
+        "llm_budget_unenforced": meter.create_counter(
+            "vigil.llm.budget.unenforced.total",
+            description="LLM dispatches sent without a Bifrost virtual key (x-bf-vk)",
         ),
     }
 
@@ -416,6 +420,27 @@ def record_llm_call(
         for token_type, count in tokens.items():
             if count:
                 metrics["llm_tokens"].add(count, {**attrs, "token_type": token_type})
+    except Exception:
+        pass
+
+
+def record_budget_unenforced(reason: str) -> None:
+    """
+    Count one LLM dispatch that went out without ``x-bf-vk``.
+
+    ``reason`` is the budget enforcement status (``read_error``,
+    ``not_configured``, ``dev_mode``, ``unlimited``). Never raises; a no-op when
+    OTEL is disabled.
+    """
+    global _genai_metrics
+    try:
+        metrics = _genai_metrics
+        if metrics is None:
+            meter = get_meter("vigil.llm")
+            metrics = create_genai_metrics(meter)
+            if _initialized and not isinstance(meter, _FallbackNoOpMeter):
+                _genai_metrics = metrics
+        metrics["llm_budget_unenforced"].add(1, {"reason": reason})
     except Exception:
         pass
 

@@ -429,8 +429,9 @@ async def test_dispatch_attaches_vk_header_when_budget_enforce_active():
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
-        "core.llm.cost.budget.should_enforce", return_value=True
-    ), patch("core.llm.cost.budget.get_active_vk", return_value="sk-bf-test-vk"):
+        "core.llm.cost.budget.enforcement_status",
+        return_value=("enforced", "sk-bf-test-vk"),
+    ):
         await router.dispatch(
             provider=_openai_spec(),
             messages=[{"role": "user", "content": "hi"}],
@@ -460,8 +461,8 @@ async def test_dispatch_omits_vk_header_when_enforcement_off():
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
-        "core.llm.cost.budget.should_enforce", return_value=False
-    ), patch("core.llm.cost.budget.get_active_vk", return_value="sk-bf-test-vk"):
+        "core.llm.cost.budget.enforcement_status", return_value=("dev_mode", None)
+    ):
         await router.dispatch(
             provider=_openai_spec(),
             messages=[{"role": "user", "content": "hi"}],
@@ -492,8 +493,9 @@ async def test_dispatch_translates_402_into_budget_exceeded():
     mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
-        "core.llm.cost.budget.should_enforce", return_value=True
-    ), patch("core.llm.cost.budget.get_active_vk", return_value="sk-bf-test"):
+        "core.llm.cost.budget.enforcement_status",
+        return_value=("enforced", "sk-bf-test"),
+    ):
         with pytest.raises(BudgetExceeded) as excinfo:
             await router.dispatch(
                 provider=_openai_spec(),
