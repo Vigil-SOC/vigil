@@ -226,9 +226,9 @@ function Segments({ n, cursor, playing, onJump, labels }: { n: number; cursor: n
           <button
             key={i} type="button" role="listitem" title={labels[i]} aria-label={labels[i]} aria-current={current ? 'step' : undefined}
             onClick={() => onJump(i)}
-            className="min-w-[10px] h-[10px] p-0 border-0 rounded-full overflow-hidden cursor-pointer"
+            className="min-w-[4px] h-[10px] p-0 border-0 rounded-full overflow-hidden cursor-pointer"
             style={{
-              flex: current ? '6 1 0' : '0 0 10px',
+              flex: current ? '6 1 0' : '0 1 10px',
               background: i < cursor ? 'var(--ac)' : current ? 'var(--bg4)' : 'var(--ln2)',
               transition: 'flex .35s cubic-bezier(.2,.8,.2,1)',
             }}
@@ -355,11 +355,19 @@ function HuntReplay({ d, hunt, live }: { d: WfRunDetail; hunt: HuntView; live: b
 
 function InvestigateReplay({ d, live }: { d: WfRunDetail; live: boolean }) {
   const read = useInvestigateReplay(d.run_id, live)
+  // a failed poll must not tear down a player that already has steps
+  const held = useRef<InvestigateDecisionView[] | null>(null)
+  if (read.kind === 'investigate') held.current = read.decisions
+  if (read.kind === 'failed' && held.current) return <InvestigateSteps decisions={held.current} live={live} runId={d.run_id} />
   if (read.kind === 'pending') return <OneLine>Loading steps…</OneLine>
   if (read.kind === 'absent') return <OneLine>{UNSUPPORTED}</OneLine>
   if (read.kind === 'failed') return <OneLine>Couldn’t read the steps — {read.message}</OneLine>
-  if (read.decisions.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
-  return <Replay key={d.run_id} steps={investigateSteps(read.decisions)} live={live} note={null} />
+  return <InvestigateSteps decisions={read.decisions} live={live} runId={d.run_id} />
+}
+
+function InvestigateSteps({ decisions, live, runId }: { decisions: InvestigateDecisionView[]; live: boolean; runId: string }) {
+  if (decisions.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
+  return <Replay key={runId} steps={investigateSteps(decisions)} live={live} note={null} />
 }
 
 function versionText(d: WfRunDetail): string {
