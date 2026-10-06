@@ -5046,52 +5046,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/logs/frontend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Log Frontend
-         * @description Receive logs from frontend and write to file.
-         *
-         *     Args:
-         *         entry: Log entry with level, message, component, and optional extra data
-         *
-         *     Returns:
-         *         Status confirmation
-         */
-        post: operations["post_api_logs_frontend"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/logs/frontend/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Frontend Log Status
-         * @description Check if frontend logging is working.
-         */
-        get: operations["get_api_logs_frontend_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/mcp/connections/status": {
         parameters: {
             query?: never;
@@ -10244,24 +10198,6 @@ export interface components {
         ForkAgentRequest: {
             /** New Name */
             new_name?: string | null;
-        };
-        /**
-         * FrontendLogEntry
-         * @description Frontend log entry model.
-         */
-        FrontendLogEntry: {
-            /** Component */
-            component: string;
-            /** Extra */
-            extra?: {
-                [key: string]: unknown;
-            } | null;
-            /** Level */
-            level: string;
-            /** Message */
-            message: string;
-            /** Timestamp */
-            timestamp?: string | null;
         };
         /**
          * GeneralConfig
@@ -21273,72 +21209,6 @@ export interface operations {
             path: {
                 provider_id: string;
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_logs_frontend: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FrontendLogEntry"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_logs_frontend_status: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
