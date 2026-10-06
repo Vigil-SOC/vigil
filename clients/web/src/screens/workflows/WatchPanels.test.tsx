@@ -202,6 +202,15 @@ describe('what each kind of run says where it has nothing', () => {
     expect(screen.getByText(NO_REVIEWER)).toBeInTheDocument()
   })
 
+  it('root cause with no telemetry: its one notice is the blind spot, not "None so far."', async () => {
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404 } })
+    const text = 'This deployment has no telemetry search, so the trace could not look.'
+    const d = { run_id: 'run-5', status: 'completed', workflow_name: 'Root cause', projection: { run_kind: 'root_cause', notices: [text], recent_searches: [] } } as unknown as WfRunDetail
+    render(<WatchRun d={d} onBack={vi.fn()} />)
+    expect(await screen.findByText(text)).toBeInTheDocument()
+    expect(screen.queryByText('None so far.')).not.toBeInTheDocument()
+  })
+
   it('compose: every panel says it is not recorded or not tracked', () => {
     render(<WatchRun d={{ run_id: 'run-4', status: 'completed', workflow_name: 'Compose', projection: { results: [] } } as unknown as WfRunDetail} onBack={vi.fn()} />)
     expect(screen.getAllByText('Not tracked for this kind.')).toHaveLength(3)
