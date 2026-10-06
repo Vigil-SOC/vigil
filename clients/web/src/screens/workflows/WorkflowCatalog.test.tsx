@@ -1,7 +1,7 @@
 /* The catalog is a table of today's runs and cost, and each skill names the
    workflows whose agents are granted the library. */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import WorkflowsScreen from './WorkflowsScreen'
 import { skillsApi } from '../../services/skillsApi'
@@ -303,8 +303,24 @@ describe('workflow catalog table', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
     const dialog = await screen.findByRole('dialog', { name: 'Delete skill' })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
-    expect(skillsApi.delete).toHaveBeenCalledWith('desk-check')
+    const hold = within(dialog).getByRole('button', { name: 'Delete. Press and hold to confirm; this cannot be undone.' })
+
+    // a click or an early release deletes nothing
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(hold)
+      fireEvent.pointerDown(hold)
+      act(() => void vi.advanceTimersByTime(800))
+      fireEvent.pointerUp(hold)
+      act(() => void vi.advanceTimersByTime(1600))
+      expect(skillsApi.delete).not.toHaveBeenCalled()
+
+      fireEvent.pointerDown(hold)
+      act(() => void vi.advanceTimersByTime(1600))
+      expect(skillsApi.delete).toHaveBeenCalledWith('desk-check')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('sends the opened version when saving a custom skill and keeps the edits on a stale 409', async () => {
