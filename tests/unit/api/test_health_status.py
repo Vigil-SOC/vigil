@@ -30,8 +30,6 @@ def client(monkeypatch):
     from services.api.main import app
 
     get_settings.cache_clear()
-    # The handler keeps one long-lived service; drop it so each test's fake applies.
-    monkeypatch.setattr("services.api.main._health_storage", None)
     monkeypatch.setattr("core.storage.connection.init_database", lambda *a, **k: None)
     monkeypatch.setattr(
         "core.storage.connection.get_schema_drift_report",
@@ -49,11 +47,19 @@ def client(monkeypatch):
 
 
 def _backend(monkeypatch, info):
-    monkeypatch.setattr("services.api.main._health_storage", None)
-    monkeypatch.setattr(
-        "core.storage.database_data_service.DatabaseDataService",
-        lambda *a, **k: _Service(info),
-    )
+    from services.api.main import app
+
+    monkeypatch.setattr(app.state, "health_storage", _Service(info), raising=False)
+
+
+def _boom(monkeypatch, error):
+    from services.api.main import app
+
+    class Boom:
+        def get_backend_info(self):
+            raise error
+
+    monkeypatch.setattr(app.state, "health_storage", Boom(), raising=False)
 
 
 def test_unavailable_database_is_degraded_outside_demo_mode(client, monkeypatch):
@@ -132,15 +138,7 @@ def test_storage_check_failure_is_degraded_and_does_not_leak(
         },
     )
 
-    class Boom:
-        def __init__(self, *args, **kwargs):
-            raise SchemaDriftError(_LEAK)
-
-    monkeypatch.setattr("services.api.main._health_storage", None)
-    monkeypatch.setattr(
-        "core.storage.database_data_service.DatabaseDataService",
-        Boom,
-    )
+    _boom(monkeypatch, SchemaDriftError(_LEAK))
 
     with caplog.at_level(logging.ERROR, logger="services.api.main"):
         response = client.get("/api/health")
@@ -183,31 +181,8 @@ def test_ready_is_503_when_degraded_and_200_otherwise(client, monkeypatch):
 
 
 def test_ready_503_on_storage_check_failure_does_not_leak(client, monkeypatch):
-    class Boom:
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError(_LEAK)
-
-    monkeypatch.setattr("core.storage.database_data_service.DatabaseDataService", Boom)
+    _boom(monkeypatch, RuntimeError(_LEAK))
     response = client.get("/api/health/ready")
     assert response.status_code == 503
     assert response.json()["storage"]["error"] == "storage_check_failed"
     assert _LEAK not in response.text
-
-
-def test_storage_probe_reuses_one_service(client, monkeypatch):
-    monkeypatch.setattr("core.config.is_demo_mode", lambda: False)
-    built = []
-
-    def factory(*a, **k):
-        built.append(1)
-        return _Service(
-            {"backend": "none", "database_available": False, "demo_mode": False}
-        )
-
-    monkeypatch.setattr("services.api.main._health_storage", None)
-    monkeypatch.setattr(
-        "core.storage.database_data_service.DatabaseDataService", factory
-    )
-    client.get("/api/health")
-    client.get("/api/health/ready")
-    assert len(built) == 1

@@ -426,6 +426,7 @@ def _build_services(app: FastAPI):
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
     from core.response.approval_service import ApprovalService, register_pending_gauge
+    from core.storage.database_data_service import DatabaseDataService
     from core.workflows.custom_workflow_service import CustomWorkflowService
     from core.workflows.workflow_ai_generator import WorkflowAIGenerator
     from core.workflows.workflow_run_service import WorkflowRunService
@@ -433,6 +434,10 @@ def _build_services(app: FastAPI):
 
     app.state.mcp_client = build_mcp_client()
     set_process_mcp_client(app.state.mcp_client)
+
+    # Long-lived, so its reconnect throttle applies across health probes; a fresh
+    # service per probe would re-run init_database(create_tables=True) each time.
+    app.state.health_storage = DatabaseDataService()
 
     app.state.approvals = ApprovalService()
     register_pending_gauge(app.state.approvals)
@@ -700,27 +705,17 @@ async def metrics():
     return get_metrics_response()
 
 
-# Long-lived so its reconnect throttle (10 s) applies across probes; a fresh
-# service per probe would re-run init_database(create_tables=True) every time.
-_health_storage = None
-
-
-def _check_storage() -> tuple[dict, dict]:
+def _check_storage(service) -> tuple[dict, dict]:
     """Blocking storage probe; run it off the event loop.
 
     With Postgres down, a reconnect attempt waits out the connect timeout.
     """
-    global _health_storage
     from core.config import state_dir_status
 
-    if _health_storage is None:
-        from core.storage.database_data_service import DatabaseDataService
-
-        _health_storage = DatabaseDataService()
-    return _health_storage.get_backend_info(), state_dir_status()
+    return service.get_backend_info(), state_dir_status()
 
 
-async def _health_payload() -> dict:
+async def _health_payload(request: Request) -> dict:
     """The health body, shared by /api/health and /api/health/ready so the
     two cannot drift. ``status`` is "degraded" exactly when storage is
     unavailable outside demo mode (or the storage check itself fails).
@@ -754,7 +749,9 @@ async def _health_payload() -> dict:
         logger.exception("Health check could not read process flags")
 
     try:
-        backend_info, state_dir = await asyncio.to_thread(_check_storage)
+        backend_info, state_dir = await asyncio.to_thread(
+            _check_storage, request.app.state.health_storage
+        )
         database_available = bool(backend_info.get("database_available", False))
         # Demo mode runs without Postgres. Schema drift stays healthy; the
         # schema block already reports it.
@@ -799,18 +796,18 @@ async def _health_payload() -> dict:
 # Liveness: 200 means the process is up; ``status`` carries the health. Probes
 # that decide restarts use this, so Postgres being down must not fail it.
 @app.get(f"{_CONTEXT_PATH}/api/health")
-async def health_check():
+async def health_check(request: Request):
     """Liveness: always HTTP 200 while the process is up; ``status`` in the
     body reports "healthy" or "degraded" (storage backend info included)."""
-    return await _health_payload()
+    return await _health_payload(request)
 
 
 # Readiness: same body, 503 when degraded so load balancers and kubelet take
 # the pod out of rotation without restarting it.
 @app.get(f"{_CONTEXT_PATH}/api/health/ready")
-async def health_ready():
+async def health_ready(request: Request):
     """Readiness: HTTP 503 exactly when ``/api/health`` reports "degraded"."""
-    payload = await _health_payload()
+    payload = await _health_payload(request)
     degraded = payload["status"] == "degraded"
     return JSONResponse(payload, status_code=503 if degraded else 200)
 
