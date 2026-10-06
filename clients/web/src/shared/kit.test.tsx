@@ -5,6 +5,7 @@ import { HoldButton } from './HoldButton'
 import { InfoTip } from './InfoTip'
 import { LevelBadge, slaLevel } from './LevelBadge'
 import { NotMeasured } from './NotMeasured'
+import { PageHead } from './PageHead'
 import { SeverityMark } from './SeverityMark'
 import { StatePill, statePill } from './StatePill'
 import { TabStrip } from './TabStrip'
@@ -162,5 +163,24 @@ describe('FilterChip', () => {
     rerender(<FilterChip label="Agent" active onClick={onClick} />)
     expect(chip).toHaveAttribute('aria-pressed', 'true')
     expect(chip).toHaveClass('active')
+  })
+
+  it('list size draws the dot and count beside the label', () => {
+    render(<FilterChip list label="Needs you" dot="var(--poor)" count={3} active={false} onClick={vi.fn()} />)
+    const chip = screen.getByRole('button', { name: 'Needs you 3' })
+    expect(chip).toHaveClass('list')
+    expect(chip.querySelector('.chip-dot')).toHaveStyle({ background: 'var(--poor)' })
+    expect(screen.getByText('3')).toHaveClass('chip-count')
+  })
+})
+
+describe('PageHead', () => {
+  it('renders the Settings markup unchanged without actions, and the slot beside the text with them', () => {
+    const { container, rerender } = render(<PageHead title="Cases" description="Every case." />)
+    expect(container.querySelector('header.page-head > h2')).toHaveTextContent('Cases')
+    expect(container.querySelector('.page-head-actions')).toBeNull()
+    rerender(<PageHead title="Cases" description="Every case." actions={<button>Go</button>} />)
+    expect(container.querySelector('.page-head-actions')).toContainElement(screen.getByRole('button', { name: 'Go' }))
+    expect(container.querySelector('.page-head-text > h2')).toHaveTextContent('Cases')
   })
 })

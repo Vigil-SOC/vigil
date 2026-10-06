@@ -509,3 +509,38 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+/* Cases list head and chip rows (boards/Cases.dc.html) */
+.cases-top {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 26px 14px;
+  border-bottom: 1px solid var(--ln0);
+}
+
+.cases-top .search {
+  width: 300px;
+  min-width: 0;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--ln1);
+  background: var(--bg2);
+}
+
+.cases-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+}
+
+/* each row wraps as a unit when the line is full, so a divider never dangles */
+.cases-chips .chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
