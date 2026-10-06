@@ -407,6 +407,9 @@ interface ReaderPhase {
 }
 
 interface WfDetail {
+  body?: string
+  /** Single-agent file workflows only: the lead, and the model a run uses. */
+  agent?: { role: string; model: string | null; model_source: 'assignment' | 'default' | null }
   run_kind?: string
   hunt_like?: boolean
   objectives?: unknown
@@ -478,16 +481,66 @@ function Roster({ detail }: { detail: WfDetail }) {
   )
 }
 
+/** Read-only instructions, clamped to a few lines until "Show all". */
+function Instructions({ body }: { body: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [clipped, setClipped] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || open) return
+    const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    // The same text clips differently at another width.
+    if (typeof ResizeObserver === 'undefined') return
+    const watch = new ResizeObserver(measure)
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [body, open])
+  return (
+    <div className="flex flex-col gap-1.5">
+      <SectionLabel>Instructions</SectionLabel>
+      <div
+        ref={ref}
+        className={`bg-bg-2 border border-line rounded-[10px] px-3 py-2.5 overflow-hidden${open ? '' : ' max-h-[7.5rem]'}`}
+      >
+        <ReportBody md={body} />
+      </div>
+      {(clipped || open) && (
+        <button type="button" className="self-start text-[12px] text-accent" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function SingleAgent({ detail }: { detail: WfDetail }) {
   const objectives = stringList(detail.objectives)
+  const { agent, body } = detail
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[13px] text-tx-2">This workflow runs as one agent.</p>
-      {objectives.length > 0 && (
-        <ul className="list-disc pl-5 text-[13px] text-tx-2 flex flex-col gap-1">
-          {objectives.map((line) => <li key={line}>{line}</li>)}
-        </ul>
-      )}
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
+        <p className="text-[13px] text-tx-2">This workflow runs as one agent.</p>
+        {agent && (
+          <div className="flex flex-col min-w-0">
+            <span className="text-[13px] font-bold text-tx">{agent.role}</span>
+            {agent.model && (
+              <span className="text-[12px] text-tx-2">
+                <span className="font-semibold text-tx">{agent.model}</span>
+                {' · '}
+                {agent.model_source === 'assignment' ? 'Investigation default' : 'Default'}
+              </span>
+            )}
+          </div>
+        )}
+        {objectives.length > 0 && (
+          <ul className="list-disc pl-5 text-[13px] text-tx-2 flex flex-col gap-1">
+            {objectives.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        )}
+      </div>
+      {body?.trim() && <Instructions body={body} />}
     </div>
   )
 }

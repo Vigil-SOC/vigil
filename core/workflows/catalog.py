@@ -20,7 +20,16 @@ from sqlalchemy import func
 from core.storage.connection import get_db_manager
 from core.storage.models import WorkflowRun
 from core.time import utcnow
-from core.workflows.workflows_service import WorkflowsService, is_hunt_like
+from core.workflows.workflows_service import (
+    ROOT_CAUSE_RUN_KIND,
+    WorkflowsService,
+    is_hunt_like,
+)
+
+# The run kinds driven by one lead agent, and the component its model is filed under.
+SINGLE_AGENT_RUN_KINDS = frozenset({"investigate", ROOT_CAUSE_RUN_KIND})
+INVESTIGATION_COMPONENT = "investigation"
+LEAD_ROLE = "Lead analyst"
 
 
 def is_hunt(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
@@ -80,10 +89,43 @@ def listing(service: WorkflowsService) -> Dict[str, Any]:
     return {"workflows": workflows, "count": len(workflows)}
 
 
+def _lead_agent() -> Dict[str, Any]:
+    """The lead a single-agent run is driven by, and the model it will use.
+
+    The model is what ``get_playbook`` hands the run, so the reader shows what
+    runs. The lead has no Agents-tab row, so there is no id, avatar or label to
+    look up. The source is only claimed when it was checked: a model that came
+    from ``chat_default`` or the provider default is plain "default".
+    """
+    from core.llm import target
+    from core.llm.providers.registry import get_registry, model_display_name
+
+    resolved = target.resolve_component("investigation")
+    if resolved is None:
+        return {"role": LEAD_ROLE, "model": None, "model_source": None}
+    try:
+        assigned = INVESTIGATION_COMPONENT in get_registry().get_all_assignments()
+    except Exception:  # noqa: BLE001
+        assigned = False
+    return {
+        "role": LEAD_ROLE,
+        "model": model_display_name(resolved[1]),
+        "model_source": "assignment" if assigned else "default",
+    }
+
+
 def detail(service: WorkflowsService, workflow_id: str) -> Optional[Dict[str, Any]]:
     """One workflow in full, or ``None`` when there is no such workflow.
 
     Not-found is returned rather than raised: the status code is the router's
-    business, and this module has two of them.
+    business, and this module has two of them. A single-agent file workflow also
+    names its lead; every other kind omits ``agent``.
     """
-    return service.get_workflow_dict(workflow_id, include_body=True)
+    workflow = service.get_workflow_dict(workflow_id, include_body=True)
+    if (
+        workflow
+        and workflow["source"] == "file"
+        and workflow["run_kind"] in SINGLE_AGENT_RUN_KINDS
+    ):
+        workflow["agent"] = _lead_agent()
+    return workflow

@@ -94,3 +94,36 @@ def test_cloud_incident_workflow_dict():
     assert d["id"] == "cloud-incident"
     assert "body" in d
     assert "cloud" in d["body"].lower()
+
+
+def _detail(workflow_id, resolved, assignments):
+    from unittest.mock import MagicMock, patch
+
+    from core.workflows import catalog
+
+    registry = MagicMock()
+    registry.get_all_assignments.return_value = assignments
+    with patch("core.llm.target.resolve_component", return_value=resolved), patch(
+        "core.llm.providers.registry.get_registry", return_value=registry
+    ):
+        return catalog.detail(WorkflowsService(), workflow_id)
+
+
+def test_single_agent_detail_names_the_lead_and_its_model():
+    d = _detail("full-investigation", ("anthropic", "claude-x"), {"investigation": 1})
+    assert d["agent"] == {
+        "role": "Lead analyst",
+        "model": "claude-x",
+        "model_source": "assignment",
+    }
+    assert d["body"]
+    # root_cause is single-agent too; chat_default only is plain "default"
+    d = _detail("root-cause-analysis", ("anthropic", "claude-x"), {"chat_default": 1})
+    assert d["agent"]["model_source"] == "default"
+    # nothing resolved: no model and no source claimed
+    d = _detail("full-investigation", None, {})
+    assert d["agent"] == {"role": "Lead analyst", "model": None, "model_source": None}
+
+
+def test_other_kinds_carry_no_agent():
+    assert "agent" not in _detail("threat-hunt", ("anthropic", "claude-x"), {})

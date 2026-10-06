@@ -98,6 +98,8 @@ vi.mock('../../services/api', () => ({
             objectives: ['Establish blast radius'],
             checkpoints: {},
             phases: [],
+            agent: { role: 'Lead analyst', model: 'Claude Sonnet', model_source: 'assignment' },
+            body: 'Scope the cloud account first.',
           },
         })
       }
@@ -394,6 +396,7 @@ describe('workflow catalog table', () => {
     expect(within(hunt).getByText('Per-stage stops')).toBeInTheDocument()
     expect(within(hunt).getByText('Not measured yet')).toBeInTheDocument()
     expect(within(hunt).queryByText('This workflow runs as one agent.')).toBeNull()
+    expect(within(hunt).queryByText('Instructions')).toBeNull()
     expect(within(hunt).queryByText(/\$/)).toBeNull()
     expect(within(hunt).queryByText(/iteration/i)).toBeNull()
     fireEvent.click(within(hunt).getByRole('button', { name: 'Close' }))
@@ -402,6 +405,12 @@ describe('workflow catalog table', () => {
     const one = await screen.findByRole('dialog')
     expect(within(one).getByText('This workflow runs as one agent.')).toBeInTheDocument()
     expect(within(one).getByText('Establish blast radius')).toBeInTheDocument()
+    expect(within(one).getByText('Lead analyst')).toBeInTheDocument()
+    expect(within(one).getByText('Claude Sonnet')).toBeInTheDocument()
+    expect(within(one).getByText(/Investigation default/)).toBeInTheDocument()
+    expect(within(one).getByText('Scope the cloud account first.')).toBeInTheDocument()
+    // fits in the clamp: no toggle
+    expect(within(one).queryByRole('button', { name: 'Show all' })).toBeNull()
     expect(within(one).queryByText('findings_search')).toBeNull()
     expect(within(one).queryByText('The lead dispatches among these.')).toBeNull()
     fireEvent.click(within(one).getByRole('button', { name: 'Close' }))
@@ -416,6 +425,22 @@ describe('workflow catalog table', () => {
     expect(within(order).getAllByRole('listitem')[0]).toHaveTextContent('Write')
     expect(within(order).getAllByRole('listitem')[1]).toHaveTextContent('Check')
     expect(within(compose).queryByText(/\$/)).toBeNull()
+  })
+
+  it('collapses long instructions behind Show all', async () => {
+    const heights = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400)
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Cloud incident' }))
+    const one = await screen.findByRole('dialog')
+    fireEvent.click(await within(one).findByRole('button', { name: 'Show all' }))
+    expect(within(one).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(within(one).getByRole('button', { name: 'Show less' }))
+    expect(within(one).getByRole('button', { name: 'Show all' })).toBeInTheDocument()
+    heights.mockRestore()
   })
 
   it('lists every command, marks the later rows, and runs nothing', () => {

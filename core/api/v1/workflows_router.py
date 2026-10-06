@@ -58,6 +58,8 @@ class WorkflowDetailResponse(BaseModel):
     body: str
     # Structured phases, carried by custom workflows for the builder UI.
     phases: Optional[List[Dict[str, Any]]] = None
+    # Single-agent file workflows only: the lead and the model a run uses.
+    agent: Optional[Dict[str, Any]] = None
 
 
 router = APIRouter()
