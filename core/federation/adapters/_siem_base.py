@@ -11,22 +11,21 @@ factory module.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import cursor_at, fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    cursor_at,
+    fresh_cursor,
+    full_batch_cursor,
+    parse_alert_time,
+    parse_cursor_since,
+)
 from core.federation.contract import FetchResult
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
-
-# How far past a stuck instant the cursor steps. Elastic's ``date`` fields and
-# Security Hub's ``CreatedAt`` resolve to the millisecond, so a smaller step
-# would round back to the same instant on their side and re-read the same page
-# every tick; Defender and Sentinel compare finer than this and lose nothing
-# they were not already losing at that instant.
-_CURSOR_STEP = timedelta(milliseconds=1)
 
 
 class SIEMIngestionAdapter:
@@ -182,53 +181,13 @@ class SIEMIngestionAdapter:
         if not truncated or self._alert_time is None:
             return self._drained_cursor(start, now)
 
-        newest: Optional[datetime] = None
+        times = []
         for alert in alerts:
             try:
-                when = self._alert_time(alert)
+                times.append(parse_alert_time(self._alert_time(alert)))
             except Exception as e:  # a malformed record must not fail the poll
                 logger.debug("%s: alert time unreadable: %s", self.name, e)
-                when = None
-            if when is not None and when.tzinfo is not None:
-                when = when.astimezone(timezone.utc).replace(tzinfo=None)
-            if when is not None and (newest is None or when > newest):
-                newest = when
-
-        if newest is None:
-            logger.warning(
-                "Federation %s: batch filled max_items=%d but no alert carried a "
-                "readable time; cursor moves to now and the rest of the window "
-                "is skipped",
-                self.name,
-                len(alerts),
-            )
-            return self._drained_cursor(start, now)
-
-        if newest > now:
-            logger.warning(
-                "Federation %s: newest alert time %s is ahead of this host's clock "
-                "(window end %s); capping the cursor there",
-                self.name,
-                newest.isoformat(),
-                now.isoformat(),
-            )
-            newest = now
-
-        if newest <= start:
-            # Every alert in a full batch sits at or before the tick's start.
-            # Step just past that instant so the next tick cannot fetch the
-            # same page forever; any alerts at the instant that did not fit
-            # this batch are skipped, and the warning says so.
-            logger.warning(
-                "Federation %s: batch filled max_items=%d with newest alert time "
-                "%s not past the tick start %s; stepping the cursor to %s. Alerts "
-                "at that instant beyond this batch are skipped",
-                self.name,
-                len(alerts),
-                newest.isoformat(),
-                start.isoformat(),
-                (start + _CURSOR_STEP).isoformat(),
-            )
-            newest = start + _CURSOR_STEP
-
-        return cursor_at(newest)
+        cursor = full_batch_cursor(
+            times, start=start, now=now, source=self.name, count=len(alerts)
+        )
+        return cursor or self._drained_cursor(start, now)

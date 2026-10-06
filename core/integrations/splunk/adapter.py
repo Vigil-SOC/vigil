@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    fresh_cursor,
+    full_batch_cursor,
+    parse_alert_time,
+    parse_cursor_since,
+)
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
@@ -23,11 +28,12 @@ logger = logging.getLogger(__name__)
 
 # Search candidates ported from the original poller.py loop. We try the more
 # specific notable index first, falling back to broader queries if it's empty
-# (matching pre-federation behavior).
+# (matching pre-federation behavior). Oldest first: when the window holds more
+# than max_items events, the ones left out must be the newest (#1571).
 _QUERIES = [
-    "index=notable | head {limit}",
-    "index=security sourcetype=*:alert* | head {limit}",
-    "`notable` | head {limit}",
+    "index=notable | sort 0 _time | head {limit}",
+    "index=security sourcetype=*:alert* | sort 0 _time | head {limit}",
+    "`notable` | sort 0 _time | head {limit}",
 ]
 
 _SEVERITY_MAP = {
@@ -83,16 +89,20 @@ class SplunkAdapter:
         if svc is None:
             return FetchResult(findings=[], cursor=fresh_cursor())
 
+        # Taken before the fetch: the cursor never moves past this instant.
+        now = utcnow()
         # Use cursor's last_poll_at when available; otherwise "now" sentinel
         # (no cold-start backfill — federation MVP design).
         last = parse_cursor_since(cursor) or since
         if last is not None:
-            # Convert to relative Splunk earliest_time (rounded up to minute)
-            delta_minutes = max(int((utcnow() - last).total_seconds() // 60) + 1, 1)
-            earliest_time = f"-{delta_minutes}m"
+            # Absolute epoch seconds: a relative "-Nm" is rounded up to the
+            # minute, which widens the window behind a mid-minute cursor and
+            # can re-read the same oldest page forever on a full batch.
+            earliest_time = f"{last.replace(tzinfo=timezone.utc).timestamp():.3f}"
         else:
             # First run: tiny window so we don't replay history.
             earliest_time = "-1m"
+            last = now - timedelta(minutes=1)
 
         # search() returns None on any error (it logs and swallows them), so a
         # query failed if it returned None or raised. An empty list ran and
@@ -132,13 +142,23 @@ class SplunkAdapter:
             detail = f": {last_error}" if last_error is not None else ""
             raise RuntimeError(f"Splunk: every search query failed{detail}")
 
+        events = events[:max_items]
         findings = []
-        for event in events[:max_items]:
+        for event in events:
             f = _splunk_event_to_finding(event)
             if f is not None:
                 findings.append(f)
 
-        return FetchResult(findings=findings, cursor=fresh_cursor())
+        # A full batch may have left newer events behind: stop at the newest
+        # returned _time; the next tick re-reads it and dedup absorbs it.
+        cursor_out = len(events) >= max_items and full_batch_cursor(
+            [parse_alert_time(e.get("_time")) for e in events],
+            start=last,
+            now=now,
+            source=self.name,
+            count=len(events),
+        )
+        return FetchResult(findings=findings, cursor=cursor_out or fresh_cursor())
 
 
 def _splunk_event_to_finding(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:

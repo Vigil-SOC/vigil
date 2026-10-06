@@ -8,7 +8,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    fresh_cursor,
+    full_batch_cursor,
+    parse_alert_time,
+    parse_cursor_since,
+)
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
@@ -70,15 +75,24 @@ class CrowdStrikeAdapter:
         if svc is None:
             return FetchResult(findings=[], cursor=fresh_cursor())
 
+        # Taken before the fetch: the cursor never moves past this instant.
+        now = utcnow()
         cutoff = parse_cursor_since(cursor) or since
         if cutoff is None:
             # First run: small window, no backfill.
-            cutoff = utcnow() - timedelta(minutes=1)
+            cutoff = now - timedelta(minutes=1)
 
+        # The Detects ID query cannot sort on created_timestamp (its documented
+        # sort keys are first_behavior, last_behavior, max_severity,
+        # max_confidence, adversary_id, devices.hostname), so "oldest first" is
+        # done here: read every detection in the window (limit=None pages the
+        # IDs and summarises them in chunks), sort by created_timestamp, and
+        # keep the oldest max_items. When the window overflows, the ones left
+        # out are the newest, and the cursor stops at the newest one kept.
         detections = await asyncio.to_thread(
             svc.get_detections,
             filter_query=f"created_timestamp:>='{cutoff.isoformat()}Z'",
-            limit=max_items,
+            limit=None,
         )
         if detections is None:
             # Raised so the runner records a failure and keeps the cursor.
@@ -88,13 +102,29 @@ class CrowdStrikeAdapter:
                 + (f": {detail}" if detail else "")
             )
 
+        # An unreadable time sorts first: the cursor cannot track it, so it
+        # must not be the one left behind.
+        by_time = sorted(
+            ((parse_alert_time(d.get("created_timestamp")), d) for d in detections),
+            key=lambda td: td[0] or datetime.min,
+        )
+        truncated = len(by_time) >= max_items
+        by_time = by_time[:max_items]
+
         findings = []
-        for det in detections[:max_items]:
+        for _, det in by_time:
             f = _detection_to_finding(det)
             if f is not None:
                 findings.append(f)
 
-        return FetchResult(findings=findings, cursor=fresh_cursor())
+        cursor_out = truncated and full_batch_cursor(
+            [t for t, _ in by_time],
+            start=cutoff,
+            now=now,
+            source=self.name,
+            count=len(by_time),
+        )
+        return FetchResult(findings=findings, cursor=cursor_out or fresh_cursor())
 
 
 def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]:
