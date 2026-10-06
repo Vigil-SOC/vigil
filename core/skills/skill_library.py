@@ -446,11 +446,12 @@ def _install_copy(root: Path, origin: Skill, name: str, content: str) -> None:
     except OSError as exc:
         raise SkillError(f"could not write under {root}: {exc}") from exc
     try:
-        staged = scratch / name
+        staged = _direct_child(scratch, name)
+        final = _skill_dir(root, name)
         _copy_skill_dir(origin.path, staged)
         _write_new_file(staged / SKILL_FILE, content.encode("utf-8"))
         parse_skill(staged)
-        os.replace(staged, root / name)
+        os.replace(staged, final)
     except OSError as exc:
         raise SkillError(f"could not copy {origin.name!r}: {exc}") from exc
     finally:
