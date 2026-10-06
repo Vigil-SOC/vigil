@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import { FilterChip } from './FilterChip'
 import { HoldButton } from './HoldButton'
 import { InfoTip } from './InfoTip'
 import { LevelBadge, slaLevel } from './LevelBadge'
@@ -147,5 +148,19 @@ describe('TabStrip', () => {
     expect(beta).toHaveAttribute('aria-selected', 'false')
     fireEvent.click(beta)
     expect(onChange).toHaveBeenCalledWith('b')
+  })
+})
+
+describe('FilterChip', () => {
+  it('reports its pressed state and clicks', () => {
+    const onClick = vi.fn()
+    const { rerender } = render(<FilterChip label="Agent" active={false} onClick={onClick} />)
+    const chip = screen.getByRole('button', { name: 'Agent' })
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(chip)
+    expect(onClick).toHaveBeenCalledTimes(1)
+    rerender(<FilterChip label="Agent" active onClick={onClick} />)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+    expect(chip).toHaveClass('active')
   })
 })

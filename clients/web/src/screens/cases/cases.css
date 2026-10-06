@@ -127,3 +127,111 @@
 @media (prefers-reduced-motion: reduce) {
   .case-needs-strip .strip-dot { animation: none; }
 }
+
+/* Record tab (CaseInvestigation board): chip row with the actions at the right, then a typed row stack. */
+.case-page .rec-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+
+.case-page .rec-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.case-page .rec-chips,
+.case-page .rec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.case-page .rec-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--ln2);
+  background: transparent;
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.case-page .rec-btn:hover:not(:disabled),
+.case-page .rec-why:hover { background: var(--bg3); color: var(--tx0); }
+.case-page .rec-btn:disabled { opacity: 0.5; cursor: default; }
+
+.case-page .rec-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+  background: var(--stack-bg);
+}
+
+.case-page .rec-row {
+  display: grid;
+  grid-template-columns: 48px 72px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  background: var(--stack-row-bg);
+  font-size: 13px;
+}
+
+.case-page .rec-time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.case-page .rec-type {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--tx2);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.case-page .rec-type.agent { background: var(--ac-bg); color: var(--ac); }
+.case-page .rec-type.human { background: var(--vio-bg); color: var(--vio); }
+.case-page .rec-type.memory { color: var(--tx1); }
+
+.case-page .rec-text {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.case-page .rec-chained { margin-left: 8px; font-size: 11.5px; color: var(--tx3); }
+
+.case-page .rec-why {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--ln2);
+  background: transparent;
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
