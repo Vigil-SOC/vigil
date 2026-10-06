@@ -79,6 +79,7 @@ def _store():
         return True
 
     svc.get_system_config.side_effect = get_system_config
+    svc.read_system_config.side_effect = lambda key: saved.get(key)
     svc.set_system_config.side_effect = set_system_config
     return saved, svc
 
@@ -161,7 +162,7 @@ def test_assist_and_act_write_only_the_approval_flag():
 
 def test_a_failed_approval_read_is_an_error_not_act():
     svc = MagicMock()
-    svc.get_system_config.side_effect = RuntimeError("db down")
+    svc.read_system_config.side_effect = RuntimeError("db down")
     with (
         patch("services.api.routers.config.get_config_service", return_value=svc),
         patch(

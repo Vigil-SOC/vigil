@@ -19,7 +19,7 @@ from core.response.config import ResponseConfig
 def no_db():
     """Stand-in session and config store so ApprovalService never reaches
     PostgreSQL: not for the row _put_action inserts, and not for the
-    force_manual_approval flag __init__ reads (and would otherwise write).
+    force_manual_approval flag read at each decision.
     The status the test reads is decided before the session is touched.
     """
     manager = MagicMock()
@@ -30,7 +30,7 @@ def no_db():
 
     manager.session_scope = _scope
     config_store = Mock()
-    config_store.get_system_config.return_value = {"enabled": False}
+    config_store.read_system_config.return_value = {"enabled": False}
     with (
         patch("core.response.approval_service.get_db_manager", return_value=manager),
         patch(
@@ -106,7 +106,7 @@ class TestConfidenceThresholds:
         """Settings writes Assist/Act while the service is up; the next action reads it."""
         stored = {"enabled": False}
         store = Mock()
-        store.get_system_config.side_effect = lambda key, default=None: stored
+        store.read_system_config.side_effect = lambda key: stored
         with patch(
             "core.response.approval_service.get_config_service", return_value=store
         ):
@@ -115,20 +115,60 @@ class TestConfidenceThresholds:
             stored["enabled"] = True
             assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
 
-    def test_a_failed_read_keeps_the_last_stored_flag(self):
-        reads = iter([{"enabled": True}, {"enabled": True}, None])
+    def test_a_failed_read_requires_approval_and_writes_nothing(self):
+        reads = iter(
+            [{"enabled": True}, RuntimeError("pool timeout"), {"enabled": True}]
+        )
+
+        def read(key):
+            value = next(reads)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
         store = Mock()
-        store.get_system_config.side_effect = lambda key, default=None: next(reads)
+        store.read_system_config.side_effect = read
         with patch(
             "core.response.approval_service.get_config_service", return_value=store
         ):
             svc = ApprovalService(config=ResponseConfig())
+            for _ in range(3):
+                assert (
+                    _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+                )
+        store.set_system_config.assert_not_called()
+
+    def test_a_failed_read_does_not_fall_back_to_act(self):
+        """The stored flag was Act on the previous read; an error still holds the action."""
+        reads = iter([{"enabled": False}, RuntimeError("db down")])
+
+        def read(key):
+            value = next(reads)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        store = Mock()
+        store.read_system_config.side_effect = read
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            svc = ApprovalService(config=ResponseConfig())
+            assert _create(svc, confidence=0.99).status == ActionStatus.APPROVED.value
             assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
-            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+
+    def test_construction_never_reads_or_writes_the_flag(self):
+        store = Mock()
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            ApprovalService(config=ResponseConfig())
+        store.assert_not_called()
+        store.set_system_config.assert_not_called()
 
     def test_forcing_approval_in_process_leaves_the_stored_row(self):
         store = Mock()
-        store.get_system_config.return_value = {"enabled": False}
+        store.read_system_config.return_value = {"enabled": False}
         with patch(
             "core.response.approval_service.get_config_service", return_value=store
         ):
