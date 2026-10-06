@@ -17,7 +17,7 @@ PACKAGES = ("core", "services", "tools", "scripts")
 LEVELS = {"warning", "error", "exception", "critical"}
 
 # Lower this when converting calls; the test fails if the count differs.
-BASELINE = 365
+BASELINE = 364
 
 
 def _fstring_log_calls() -> list[str]:
