@@ -186,6 +186,22 @@
 
 .tab-strip > button.active .tab-count { background: var(--ac-bg); color: var(--ac); }
 
+.filter-chip {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ln1);
+  background: transparent;
+  color: var(--tx0);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filter-chip:hover { background: var(--bg3); }
+.filter-chip.active { border-color: var(--ac); background: var(--ac-bg); }
+
 @media (prefers-reduced-motion: reduce) {
   .state-pill.needs .state-dot { animation: none; }
 }

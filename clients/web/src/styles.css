@@ -1792,19 +1792,11 @@
       padding: 6px 0;
    }
 
-   .case-actions, .case-chips {
+   .case-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
    }
-
-   .case-record {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-   }
-
-   .case-record > div { flex: 1; min-width: 0; }
 
    .case-fold > summary {
       cursor: pointer;
