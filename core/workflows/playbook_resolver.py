@@ -550,6 +550,22 @@ def resolve_root_cause(
 # and only the two words are needed to tell a policy from a typo.
 CHECKPOINT_POLICIES = ("ask", "auto")
 
+# The four moments a hunt may stop and ask, and what each does unless a definition
+# says otherwise. Mirrored from services/agent/workflows/hunt/checkpoints.ts and
+# held to it by a ratchet, so the reader can show a class the engine really has.
+CHECKPOINT_CLASSES = (
+    "hypothesis_approval",
+    "scope_extension",
+    "verdict_review",
+    "budget_anomaly",
+)
+DEFAULT_CHECKPOINTS = {
+    "hypothesis_approval": "auto",
+    "scope_extension": "auto",
+    "verdict_review": "auto",
+    "budget_anomaly": "auto",
+}
+
 
 # Refused here rather than shrugged at. A WORKFLOW.md's front matter is text nobody
 # type-checks, and YAML reads `hypothesis_approval: yes` as the boolean True. The

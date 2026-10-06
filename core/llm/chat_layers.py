@@ -98,19 +98,29 @@ def _is_destructive_mcp(name: str) -> bool:
     return any(tok in _DESTRUCTIVE_VERBS for tok in tokens)
 
 
-def changes_for_tools(tools: List[str]) -> str:
-    """What an agent with these tools does to the outside world.
+# Weakest to strongest, so an agent is as hands-on as its most hands-on tool.
+_CHANGES_RANK = ("read_only", "asks_first", "on_its_own")
 
-    ``on_its_own`` when any tool acts directly with no approval gate (a
-    destructive MCP tool that is not ART execute, which the gate covers);
-    ``asks_first`` when it can queue an approval or run a gated ART execute;
-    otherwise ``read_only``. Vigil's own case writes are not outside changes.
+
+def changes_for_tool(name: str) -> str:
+    """What one tool does to the outside world.
+
+    ``on_its_own`` for a destructive MCP tool with no approval gate; ``asks_first``
+    for the approval tool and ART execute, which the gate covers; otherwise
+    ``read_only``. Vigil's own case writes are not outside changes.
     """
-    if any(t not in EXECUTE_IDS and _is_destructive_mcp(t) for t in tools):
-        return "on_its_own"
-    if "create_approval_action" in tools or any(t in EXECUTE_IDS for t in tools):
+    if name in EXECUTE_IDS or name == "create_approval_action":
         return "asks_first"
-    return "read_only"
+    return "on_its_own" if _is_destructive_mcp(name) else "read_only"
+
+
+def changes_for_tools(tools: List[str]) -> str:
+    """What an agent with these tools does: the strongest of its tools' answers."""
+    return max(
+        (changes_for_tool(t) for t in tools),
+        key=_CHANGES_RANK.index,
+        default="read_only",
+    )
 
 
 # A conversation is one answer at a time with a person waiting, so the ceiling is

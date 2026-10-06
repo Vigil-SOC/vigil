@@ -8,9 +8,9 @@ order-safe inside one router. So the reads live here, in the domain whose
 language they speak, and both routers call down into them.
 
 The detail read is the definition, plus the lead and model for a single-agent
-workflow. Hunt preflight (capabilities, pricing, budgets) is about executing a
-run, so it lives in ``core.workflows.hunt_preflight`` behind its own console
-route.
+workflow. Preflight (roles, model, skills, permissions, budgets, checkpoints) is
+about executing a run, so it lives in ``core.workflows.hunt_preflight`` behind
+its own console route.
 """
 
 from datetime import datetime

@@ -346,10 +346,11 @@ async def get_workflow_preflight(
     service: WorkflowsService = Depends(provide_workflows),
     registry=Depends(provide_mcp_registry),
 ):
-    """What a hunt will cost at most and what it cannot look at, before it runs.
+    """What a run of this workflow is before it runs, for every kind.
 
-    ``{capabilities, pricing, budgets}`` for a hunt-kind workflow, ``{}`` for
-    any other kind, 404 for an unknown id.
+    ``{roles, model, skills, permissions, budgets, checkpoints}`` with a note
+    beside any that is empty, plus ``{capabilities, pricing}`` for a hunt-kind
+    workflow; 404 for an unknown id.
     """
     result = hunt_preflight.preflight(service, registry, workflow_id)
     if result is None:
