@@ -9,6 +9,7 @@
   --stack-row-bg: var(--bg2);
   --stack-radius: 10px;
   --stack-gap: 1px;
+  min-height: 0; /* lets .detail-body scroll so the composer stays on screen in the drawer */
 }
 
 .case-page .detail-head {
@@ -126,4 +127,193 @@
 
 @media (prefers-reduced-motion: reduce) {
   .case-needs-strip .strip-dot { animation: none; }
+}
+
+/* Pinned case composer (components/composer.md, citation-chip.md). Scoped so the dock keeps the shared chat rules. */
+.case-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  container-type: inline-size;
+  border-top: 1px solid var(--ln1);
+  background: var(--bg1);
+}
+
+.case-composer .composer-fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 24px 0;
+  border: 0;
+  background: transparent;
+  color: var(--tx3);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.case-composer .composer-fold:hover { color: var(--tx1); }
+
+.case-composer .composer-chev {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.case-composer .composer-fold[aria-expanded="false"] .composer-chev { transform: rotate(-90deg); }
+
+.case-composer .chat-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 150px;
+  padding: 8px 24px 4px;
+  gap: 10px;
+  overflow-x: hidden;
+}
+
+.case-composer .msg {
+  position: relative;
+  max-width: 80%;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.case-composer .msg.user { align-self: flex-end; }
+.case-composer .msg.vigil { align-self: flex-start; }
+
+.case-composer .msg.user .body {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.case-composer .msg.vigil {
+  padding: 10px 12px;
+  border: 1px solid var(--ln0);
+  border-radius: 12px 12px 12px 4px;
+  background: var(--bg2);
+}
+
+.case-composer .msg.vigil .body { color: var(--tx0); }
+.case-composer .msg.vigil .body > :first-child { margin-top: 0; }
+.case-composer .msg.vigil .body > :last-child { margin-bottom: 0; }
+.case-composer .msg.vigil.err .body { color: var(--poor); }
+.case-composer .msg.vigil .vigil-status:last-child { margin-bottom: 0; }
+
+/* hover actions hang beside the bubble so they take no height */
+.case-composer .msg-actions {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 2px);
+  margin: 0;
+}
+
+.case-composer .msg-actions button { width: 24px; height: 24px; }
+
+.case-composer .cite-row { gap: 6px; margin-top: 6px; }
+
+.case-composer .cite-chip {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--ac-ln);
+  border-radius: 999px;
+  background: var(--ac-bg);
+  color: var(--tx0);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.case-composer .cite-chip:hover {
+  background: var(--ac);
+  color: var(--ac-tx);
+}
+
+.case-composer .composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 24px 12px;
+}
+
+.case-composer .composer-modes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.case-composer .composer-modes button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--ln1);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.case-composer .composer-modes button.on {
+  border-color: var(--ac);
+  background: var(--ac-bg);
+  color: var(--tx0);
+}
+
+.case-composer .composer-modes button:disabled { cursor: not-allowed; }
+
+.case-composer .chat-foot { padding: 0; }
+
+/* One 42px row: input, trailing note, send. .ci-row dissolves so its children join the grid. */
+.case-composer .chat-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 42px;
+  padding: 5px 6px 5px 14px;
+  border-color: var(--ln1);
+  border-radius: 12px;
+  background: var(--bg2);
+}
+
+.case-composer .chat-input:focus-within { border-color: var(--ac-ln); }
+
+.case-composer .chat-input .ci-row { display: contents; }
+.case-composer .chat-input .ci-grow { display: none; }
+
+.case-composer .chat-input textarea {
+  color: var(--tx0);
+  font-size: 13.5px;
+}
+
+.case-composer .chat-input textarea::placeholder { color: var(--tx3); }
+
+.case-composer .composer-note {
+  font-size: 11.5px;
+  color: var(--tx3);
+  white-space: nowrap;
+}
+
+.case-composer .ci-send {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--ac);
+  color: var(--ac-tx);
+}
+
+.case-composer .ci-send:hover { background: var(--ac); filter: brightness(1.1); }
+.case-composer .ci-send.busy { background: var(--bg4); color: var(--tx1); filter: none; }
+
+/* narrow drawer: the note drops under the input instead of squeezing it */
+@container (max-width: 480px) {
+  .case-composer .composer-box { padding-inline: 14px; }
+  .case-composer .composer-fold { padding-inline: 14px; }
+  .case-composer .chat-body { padding-inline: 14px; }
+  .case-composer .chat-input { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
+  .case-composer .composer-note { grid-row: 2; grid-column: 1 / -1; white-space: normal; padding-bottom: 2px; }
+  .case-composer .ci-send { grid-row: 1; grid-column: 2; }
 }
