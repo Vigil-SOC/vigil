@@ -2,7 +2,7 @@
 # Support-bundle redaction filter: stdin to stdout, POSIX awk (gawk, mawk, BSD).
 #
 #   awk -f redact.awk -v names=secret-names.txt [-v values=exact.txt] \
-#       [-v counts=counts.tsv -v name=<label>] < in > out
+#       [-v counts=counts.tsv -v name=<label>] [-v learn=1] < in > out
 #
 # names   one secret env-var name per line (required; the filter fails closed
 #         without it). Matched case-insensitively with "_" and "-" ignored, so
@@ -10,6 +10,11 @@
 # values  optional file of exact values learned elsewhere, one per line. Each of
 #         6+ characters is replaced wherever it appears (fixed-string match).
 # counts  optional side file; "<name><TAB><replacements>" is appended at the end.
+# learn   with learn=1 nothing is redacted or passed through: the output is the
+#         values to feed back as `values`, one per line. Those are the values of
+#         credential-class fields (a name ending in password, passphrase, secret,
+#         token, key, apikey, dsn, passwd or pwd, or webhook_url) and the password
+#         of any scheme://user:pass@host URL, from lines that are not comments.
 #
 # Every secret becomes the fixed string [REDACTED]: no length, no fragment.
 
@@ -57,6 +62,23 @@ function secret_key(k,   s, flat, i) {
     for (i = 1; i <= nsuffix; i++)
         if (endswith(s, "_" suffix[i])) return 1
     return 0
+}
+
+# Names whose values are credentials, as against registry names such as a
+# username or client ID that are redacted by name but are ordinary words elsewhere.
+function cred_class(k,   s, flat) {
+    if (!secret_key(k)) return 0
+    s = snake(k)
+    flat = s
+    gsub(/_/, "", flat)
+    return s == "webhook_url" || endswith(flat, "password") || endswith(flat, "passphrase") ||
+        endswith(flat, "secret") || endswith(flat, "token") || endswith(flat, "key") ||
+        endswith(flat, "dsn") || endswith(flat, "passwd") || endswith(flat, "pwd")
+}
+
+# learn mode: print a value worth replacing everywhere (6+ characters).
+function learned(v) {
+    if (learn && length(v) >= 6 && index("[REDACTED]", v) == 0) print v
 }
 
 # Split the text after a separator into V_PRE (blanks + opening quote), V_BODY
@@ -110,7 +132,7 @@ function is_blank_value(b) {
 
 # KEY=value, "key": "value", key: value. Walks the line key by key so a
 # non-secret key never hides a secret one after it.
-function redact_keys(s,   out, tok, key, sk, atstart, mode, p) {
+function redact_keys(s,   out, tok, key, sk, cls, atstart, mode, p) {
     if (index(s, ":") == 0 && index(s, "=") == 0) return s
     out = ""
     while (match(s, KEYRE)) {
@@ -124,10 +146,12 @@ function redact_keys(s,   out, tok, key, sk, atstart, mode, p) {
         if (snake(key) == "name") {
             take(s, 0)
             pending = secret_key(V_BODY)
+            pending_cls = cred_class(V_BODY)
             pending_line = NR
             continue
         }
-        if (snake(key) == "value" && pending) { sk = 1; pending = 0 }
+        cls = cred_class(key)
+        if (snake(key) == "value" && pending) { sk = 1; cls = pending_cls; pending = 0 }
         if (!sk) continue
         atstart = (p ~ /^[ \t]*(-[ \t]+)?(export[ \t]+)?$/)
         mode = atstart ? 2 : (snake(key) == "authorization" ? 1 : 0)
@@ -143,22 +167,53 @@ function redact_keys(s,   out, tok, key, sk, atstart, mode, p) {
         } else {
             out = out V_PRE "[REDACTED]" V_POST
             n++
+            if (cls) learned(V_BODY)
         }
         s = V_REST
     }
     return out s
 }
 
+# --name=value and --name value, for a name secret_key() accepts. Only long
+# flags: "-p value" is too ambiguous. A value that is itself a flag is left alone.
+function redact_flags(s,   out, m, c, sep, ctx, prev) {
+    if (index(s, "--") == 0) return s
+    out = ""
+    while (match(s, FLAGRE)) {
+        m = substr(s, RSTART, RLENGTH)
+        ctx = out substr(s, 1, RSTART - 1)
+        out = ctx m
+        s = substr(s, RSTART + RLENGTH)
+        prev = substr(ctx, length(ctx), 1)
+        c = substr(s, 1, 1)
+        if (isword(prev) || prev == "-" || (c != "=" && c != " " && c != "\t")) continue
+        if (!secret_key(substr(m, 3))) continue
+        sep = c == "=" ? "=" : ""
+        take(substr(s, length(sep) + 1), 0)
+        if (is_blank_value(V_BODY) || (sep == "" && V_BODY ~ /^-/)) continue
+        out = out sep V_PRE "[REDACTED]" V_POST
+        n++
+        if (cred_class(substr(m, 3))) learned(V_BODY)
+        s = V_REST
+    }
+    return out s
+}
+
+# Is the text in ctx glued to a word character on its right edge? "\n" and
+# "\t" in a JSON string end a word, they do not extend one.
+function word_before(ctx,   prev) {
+    prev = substr(ctx, length(ctx), 1)
+    if (substr(ctx, length(ctx) - 1, 1) == "\\" && index("ntr", prev)) return 0
+    return isword(prev)
+}
+
 # Replace each match of re that is at least minlen long and not glued to a
 # preceding word character with repl.
-function redact_re(s, re, repl, minlen,   out, ctx, prev) {
+function redact_re(s, re, repl, minlen,   out, ctx) {
     out = ""
     while (match(s, re)) {
         ctx = out substr(s, 1, RSTART - 1)
-        prev = substr(ctx, length(ctx), 1)
-        # "\n" and "\t" in a JSON string end a word, they do not extend one.
-        if (substr(ctx, length(ctx) - 1, 1) == "\\" && index("ntr", prev)) prev = ""
-        if (RLENGTH >= minlen && !isword(prev)) {
+        if (RLENGTH >= minlen && !word_before(ctx)) {
             out = out substr(s, 1, RSTART - 1) repl
             n++
         } else
@@ -180,6 +235,7 @@ function redact_urls(s,   out, m, i, ui, c) {
         ui = substr(m, i, length(m) - i)
         c = index(ui, ":")
         if (substr(ui, c + 1) != "" && substr(ui, c + 1) != "[REDACTED]") {
+            learned(substr(ui, c + 1))
             m = substr(m, 1, i - 1) substr(ui, 1, c) "[REDACTED]@"
             n++
         }
@@ -202,18 +258,38 @@ function redact_pem(s,   out) {
     return out s
 }
 
-function redact_exact(s,   i, v, out, p) {
-    for (i = 1; i <= nvals; i++) {
-        v = vals[i]
-        out = ""
-        while ((p = index(s, v)) > 0) {
-            out = out substr(s, 1, p - 1) "[REDACTED]"
-            s = substr(s, p + length(v))
-            n++
-        }
-        s = out s
+# First place v stands alone in s: a word character at either edge of v must not
+# touch another word character. out is what has already been emitted before s.
+function find_exact(s, v, out,   off, p, pos, lw, rw) {
+    lw = isword(substr(v, 1, 1))
+    rw = isword(substr(v, length(v), 1))
+    off = 0
+    while ((p = index(substr(s, off + 1), v)) > 0) {
+        pos = off + p
+        if (!(lw && word_before(substr(out, length(out) - 1) substr(s, 1, pos - 1))) &&
+            !(rw && isword(substr(s, pos + length(v), 1))))
+            return pos
+        off = pos
     }
-    return s
+    return 0
+}
+
+# One left-to-right pass over the line, so the replacement text is never scanned
+# again; at a tie the longest value (vals is sorted) wins.
+function redact_exact(s,   i, out, pos, best, bi) {
+    out = ""
+    while (s != "") {
+        best = 0
+        for (i = 1; i <= nvals; i++) {
+            pos = find_exact(s, vals[i], out)
+            if (pos && (!best || pos < best)) { best = pos; bi = i }
+        }
+        if (!best) break
+        out = out substr(s, 1, best - 1) "[REDACTED]"
+        s = substr(s, best + length(vals[bi]))
+        n++
+    }
+    return out s
 }
 
 function load_values(path,   line, i, j, tmp, r) {
@@ -235,6 +311,7 @@ BEGIN {
     PEM_BEGIN = "-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----"
     PEM_END = "-----END [A-Z ]*PRIVATE KEY( BLOCK)?-----"
     KEYRE = "[A-Za-z_][A-Za-z0-9_.-]*(\\\\)?[\"']?[ \t]*[:=]"
+    FLAGRE = "--[A-Za-z][A-Za-z0-9_.-]*"
     URLRE = "[A-Za-z][A-Za-z0-9+.-]*://[^/@ \t\"'?#:]*:[^@ \t\"'?#]*@"
     split("key secret token password passphrase dsn passwd pwd webhook_url", suffix, " ")
     nsuffix = 9
@@ -282,8 +359,12 @@ failed { next }
         line = redact_pem(line)
     if (line ~ /^[ \t]*(#.*)?$/) { if (pending) pending_line = NR }
     else if (pending && pending_line < NR - 1) pending = 0
-    line = redact_urls(line)
+    if (learn && line ~ /^[ \t]*#/) next
+    if (learn) redact_urls(line)
+    else line = redact_urls(line)
     line = redact_keys(line)
+    line = redact_flags(line)
+    if (learn) next
     line = redact_re(line, "[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", 23)
     line = redact_re(line, "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*", "[REDACTED]", 0)
     line = redact_re(line, "sk-[A-Za-z0-9_-]+", "[REDACTED]", 32)

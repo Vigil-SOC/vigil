@@ -150,10 +150,24 @@ notice.
 Every captured byte goes through `redact.awk` with `secret-names.txt`
 (`awk -f redact.awk -v names=... -v values=... -v counts=... -v name=<file>`)
 before it enters the bundle. The `.env` and the rendered Compose config are read
-first: each value the filter redacts by name there (6+ characters) goes into a
-file in the private work directory and is passed as `values`, so the same value
-is also replaced in free text such as container logs and the process list. The
-values never reach the bundle, the manifest or the output. A not-collected
+first, and the filter run with `-v learn=1` prints the values worth catching
+elsewhere; they go into a file in the private work directory and are passed as
+`values`, so the same value is also replaced in free text such as container logs
+and the process list. Only credential-class fields are learned: names ending in
+`password`, `passphrase`, `secret`, `token`, `key`, `apikey`, `dsn`, `passwd` or
+`pwd`, and `webhook_url`, with a value of 6+ characters, plus the password of any
+`scheme://user:pass@host` URL (a URL password is a credential wherever it sits).
+Comment lines are never learned, and neither are usernames, user and client IDs:
+those are redacted by name where `secret-names.txt` lists them, but their values
+are ordinary words elsewhere (`elastic` in an image name). A learned value is
+replaced only where it stands alone: a word character at either end of it must
+not touch another word character, so `hunter2hunter2` is replaced in `pw=hunter2hunter2` but not in
+`hunter2hunter2x`. Longest values win, and the
+replacement is never scanned again. Long flags are caught too: `--auth-token
+<value>`, `--api-key=<value>` and `--password <value>` in a process list lose
+the value when the flag name would be a secret name (the value ends at the next
+blank; a value that is itself a `--flag` is left alone; `-p value` is not
+touched). The values never reach the bundle, the manifest or the output. A not-collected
 reason that quotes a command's error message goes through the filter too. If the filter cannot run, the item is `not collected`; the
 unredacted input is never copied. `SUMMARY.txt` and `manifest.json` are written
 by the script itself and hold only paths, versions and reasons.

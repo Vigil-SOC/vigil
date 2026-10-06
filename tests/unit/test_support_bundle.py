@@ -479,3 +479,39 @@ def test_desktop_install_reads_the_app_log_directory(env, tmp_path):
         == "never included; present"
     )
     assert NEVER not in everything(tmp_path, proc)
+
+
+def test_learning_skips_comments_and_usernames_and_respects_word_edges(env, tmp_path):
+    checkout, state = install(tmp_path)
+    (checkout / ".env").write_text(
+        '# ELASTIC_SIEM_USERNAME="elastic"\nELASTIC_SIEM_USERNAME="elastic"\n'
+        'SPLUNK_USERNAME="admin"\nCRIBL_USERNAME="monitor"\n'
+        f"POSTGRES_PASSWORD={ENV_SECRET}\nDEV_MODE=false\n"
+    )
+    survivors = [
+        "docker.elastic.co/elasticsearch/elasticsearch:8.15.0",
+        "deeptempo-elasticsearch",
+        "elastic_data:",
+        '"elastic": {',
+        "core/integrations/elastic/tool.py",
+        "worker monitor reported 3 events",
+        f"{ENV_SECRET}x",
+    ]
+    log_line = "\n".join(survivors + [f"auth failed with {ENV_SECRET}"])
+    env["VIGIL_REPO_ROOT"] = str(checkout)
+    env["FAKE_DOCKER_PS"] = "deeptempo-backend|docker|/x/docker-compose.yml\n"
+    env["FAKE_DOCKER_PS_A"] = "deeptempo-backend|docker|running\n"
+    env["FAKE_LOG_LINE"] = log_line
+    proc = run(env, tmp_path, "--state-dir", str(state))
+    assert proc.returncode == 0, proc.stderr
+    manifest_of(tmp_path)
+    root = next((tmp_path / "x").iterdir())
+    logged = (root / "logs" / "docker" / "deeptempo-backend.log").read_text()
+    assert logged.splitlines()[1:] == survivors + ["auth failed with [REDACTED]"]
+    assert ENV_SECRET not in everything(tmp_path, proc).replace(f"{ENV_SECRET}x", "")
+    assert (root / "configuration" / "env").read_text().splitlines()[:4] == [
+        '# ELASTIC_SIEM_USERNAME="[REDACTED]"',
+        'ELASTIC_SIEM_USERNAME="[REDACTED]"',
+        'SPLUNK_USERNAME="[REDACTED]"',
+        'CRIBL_USERNAME="[REDACTED]"',
+    ]
