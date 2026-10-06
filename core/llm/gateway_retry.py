@@ -104,6 +104,11 @@ async def through_gateway(
                 raise
             last = error
             if attempt == attempts - 1:
+                logger.warning(
+                    "gateway retries exhausted: last status %s after %d attempts",
+                    status,
+                    attempt + 1,
+                )
                 break
             wait = backoff_s(attempt, error)
             logger.info(

@@ -333,9 +333,10 @@ async def _connect_external_services(mcp_client, registry):
         await get_llm_gateway()
         logger.info("✓ LLM Gateway connected to Redis")
     except Exception as e:
-        logger.warning(f"⚠ LLM Gateway not available: {e}")
-        logger.warning(
-            "  LLM calls will fail until Redis is running and ARQ worker is started"
+        logger.error(
+            "LLM Gateway not available, LLM calls will fail until Redis and the "
+            "ARQ worker are up: %s",
+            e,
         )
 
     # MCP tools connect lazily when an agent actually needs them. Starting

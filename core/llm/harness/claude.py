@@ -87,7 +87,7 @@ class ClaudeService:
 
                     self.api_key = discover_anthropic_api_key()
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug("UI-provider key discovery skipped: %s", exc)
+                    logger.warning("UI-provider key discovery skipped: %s", exc)
 
             if self.api_key and ANTHROPIC_AVAILABLE:
                 # Set longer timeout for operations that may take more than 10 minutes

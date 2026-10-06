@@ -74,6 +74,8 @@ async def llm_call(
                 )
             finally:
                 in_flight.release()
+            if response is None:
+                logger.warning("llm_call got an empty response from the provider")
             result = (
                 {"content": response, "type": "text"}
                 if response is not None
