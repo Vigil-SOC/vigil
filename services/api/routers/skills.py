@@ -33,6 +33,7 @@ from core.skills.skill_library import (
     skill_version,
     write_operator_skill,
 )
+from services.api.routers.claude import NO_PROVIDER_DETAIL
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +219,6 @@ async def test_skill(name: str):
     resolved = get_registry().resolve_model_for_component("chat_default")
     provider = get_provider_spec(resolved[0]) if resolved else None
     if resolved is None or provider is None:
-        from services.api.routers.claude import NO_PROVIDER_DETAIL
-
         raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL["message"])
     model = resolved[1]
 
