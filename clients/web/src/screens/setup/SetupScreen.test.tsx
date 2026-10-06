@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode, useState } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import SetupScreen from './SetupScreen'
 import { SETUP_DISMISSED_KEY } from './setupDismissed'
+import { federationApi, mcpApi } from '../../services/api'
+import { TEST_POLL_MS, TEST_POLL_TRIES } from './SourceCollection'
 
 const auth = vi.hoisted(() => ({
   allowed: true,
@@ -14,6 +17,33 @@ vi.mock('../../contexts/AuthContext', () => ({
 
 vi.mock('../../contexts/ColorSchemeContext', () => ({
   useColorScheme: () => ({ scheme: 'dark', setScheme: vi.fn(), toggleScheme: vi.fn() }),
+}))
+
+// stands in for the real form: Save runs the dialog's save, as the wizard does
+vi.mock('../settings/IntegrationWizard', () => ({
+  default: function WizardStub({
+    integration,
+    onSave,
+    onClose,
+  }: {
+    integration: { id: string }
+    onSave: (id: string, config: Record<string, unknown>) => Promise<void>
+    onClose: () => void
+  }) {
+    const [err, setErr] = useState('')
+    return (
+      <div>
+        {err && <p>{err}</p>}
+        <button
+          onClick={() =>
+            onSave(integration.id, {}).then(onClose, (e: Error) => setErr(e.message))
+          }
+        >
+          Save source
+        </button>
+      </div>
+    )
+  },
 }))
 
 vi.mock('../../services/api', () => ({
@@ -32,8 +62,20 @@ vi.mock('../../services/api', () => ({
     getAutonomy: vi.fn(() =>
       Promise.resolve({ data: { auto_response_enabled: false, force_manual_approval: true } }),
     ),
+    setIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
   },
-  mcpApi: { listServers: vi.fn(() => Promise.resolve({ data: { servers: [] } })) },
+  mcpApi: {
+    listServers: vi.fn(() => Promise.resolve({ data: { servers: [] } })),
+    setServerEnabled: vi.fn(() => Promise.resolve({ data: { connected: true } })),
+    getStatuses: vi.fn(() => Promise.resolve({ data: { statuses: [] } })),
+  },
+  federationApi: {
+    getHealth: vi.fn(() => Promise.resolve({ data: { sources: [] } })),
+    listSources: vi.fn(),
+    updateSource: vi.fn(),
+    pollNow: vi.fn(() => Promise.resolve({ data: { ok: true } })),
+    setSettings: vi.fn(),
+  },
 }))
 
 vi.mock('../../services/bifrostApi', () => ({
@@ -52,14 +94,31 @@ vi.mock('../../services/bifrostApi', () => ({
 
 function renderSetup() {
   return render(
-    <MemoryRouter initialEntries={['/setup']}>
-      <Routes>
-        <Route path="/setup" element={<SetupScreen />} />
-        <Route path="/" element={<div>console-home</div>} />
-      </Routes>
-    </MemoryRouter>,
+    <StrictMode>
+      <MemoryRouter initialEntries={['/setup']}>
+        <Routes>
+          <Route path="/setup" element={<SetupScreen />} />
+          <Route path="/" element={<div>console-home</div>} />
+        </Routes>
+      </MemoryRouter>
+    </StrictMode>,
   )
 }
+
+const source = (over: Record<string, unknown> = {}) => ({
+  source_id: 'crowdstrike',
+  enabled: true,
+  interval_seconds: 300,
+  min_severity: null,
+  last_poll_at: '2026-10-06T10:00:00Z',
+  last_success_at: null,
+  last_error: null,
+  consecutive_errors: 0,
+  is_configured: true,
+  ...over,
+})
+const listing = (sources: unknown[], enabled = true) =>
+  ({ data: { sources, global: { enabled } } }) as never
 
 describe('SetupScreen', () => {
   beforeEach(() => {
@@ -111,5 +170,152 @@ describe('SetupScreen', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
     expect(await screen.findByRole('button', { name: /Assist/ })).toBeInTheDocument()
     expect(screen.getByText(/5 of 6/)).toBeInTheDocument()
+  })
+
+  describe('Connect data after a save', () => {
+    const connect = async () => {
+      vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['crowdstrike'] } } as never)
+      renderSetup()
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await screen.findByText('CrowdStrike Falcon'))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      await screen.findByText('Connected to CrowdStrike Falcon')
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks()
+      vi.mocked(federationApi.listSources).mockResolvedValue(listing([source()]))
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('stays on the step with a Connected row, the source row and Connect another', async () => {
+      await connect()
+      expect(await screen.findByRole('switch', { name: 'Collect alerts' })).toBeChecked()
+      expect(screen.getByRole('button', { name: 'Test' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Connect another' }))
+      expect(screen.getByPlaceholderText(/Search data sources/)).toBeInTheDocument()
+    })
+
+    it('keeps the error when the connection fails', async () => {
+      vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['crowdstrike'] } } as never)
+      vi.mocked(mcpApi.setServerEnabled).mockResolvedValue({
+        data: { connected: false, error: 'Bad credentials' },
+      } as never)
+      renderSetup()
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await screen.findByText('CrowdStrike Falcon'))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      expect(await screen.findByText('Bad credentials')).toBeInTheDocument()
+      expect(screen.queryByText(/Connected to/)).not.toBeInTheDocument()
+      vi.mocked(mcpApi.setServerEnabled).mockResolvedValue({ data: { connected: true } } as never)
+    })
+
+    it('saves the collection switch through updateSource', async () => {
+      vi.mocked(federationApi.updateSource).mockResolvedValue({
+        data: source({ enabled: false }),
+      } as never)
+      await connect()
+      fireEvent.click(await screen.findByRole('switch', { name: 'Collect alerts' }))
+      expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { enabled: false })
+      expect(await screen.findByRole('button', { name: 'Test' })).toBeDisabled()
+      expect(screen.getByText('Turn on Collect alerts to test.')).toBeInTheDocument()
+    })
+
+    it('saves a typed interval on blur, and ignores a blank one', async () => {
+      vi.mocked(federationApi.updateSource).mockResolvedValue({
+        data: source({ interval_seconds: 600 }),
+      } as never)
+      await connect()
+      const input = await screen.findByLabelText('Interval (s)')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+      expect(federationApi.updateSource).not.toHaveBeenCalled()
+      fireEvent.change(input, { target: { value: '600' } })
+      fireEvent.blur(input)
+      expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { interval_seconds: 600 })
+    })
+
+    it('says collection is off globally and turns it on', async () => {
+      vi.mocked(federationApi.listSources).mockResolvedValue(listing([source()], false))
+      vi.mocked(federationApi.setSettings).mockResolvedValue({ data: { enabled: true } } as never)
+      await connect()
+      expect(await screen.findByText(/Alert collection is off/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Test' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('switch', { name: 'Alert collection' }))
+      expect(federationApi.setSettings).toHaveBeenCalledWith(true)
+    })
+
+    it('Test queues a poll and reports last_success_at once the poll advanced', async () => {
+      await connect()
+      await screen.findByRole('switch', { name: 'Collect alerts' })
+      vi.useFakeTimers()
+      vi.mocked(federationApi.listSources)
+        .mockResolvedValueOnce(listing([source()])) // baseline read before queueing
+        .mockResolvedValueOnce(listing([source()])) // stale: poll has not run yet
+        .mockResolvedValue(
+          listing([
+            source({ last_poll_at: '2026-10-06T10:05:00Z', last_success_at: '2026-10-06T10:05:00Z' }),
+          ]),
+        )
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+      })
+      expect(federationApi.pollNow).toHaveBeenCalledWith('crowdstrike')
+      await act(() => vi.advanceTimersByTimeAsync(TEST_POLL_MS))
+      expect(screen.queryByText(/Last success/)).not.toBeInTheDocument()
+      await act(() => vi.advanceTimersByTimeAsync(TEST_POLL_MS))
+      expect(screen.getByText(/Last success/)).toBeInTheDocument()
+    })
+
+    it('Test shows last_error', async () => {
+      await connect()
+      await screen.findByRole('switch', { name: 'Collect alerts' })
+      vi.useFakeTimers()
+      vi.mocked(federationApi.listSources)
+        .mockResolvedValueOnce(listing([source()])) // baseline read before queueing
+        .mockResolvedValue(
+          listing([source({ last_poll_at: '2026-10-06T10:05:00Z', last_error: '401 Unauthorized' })]),
+        )
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+      })
+      await act(() => vi.advanceTimersByTimeAsync(TEST_POLL_MS))
+      expect(screen.getByText('401 Unauthorized')).toBeInTheDocument()
+    })
+
+    it('Test gives up with a queued line when the poll never advances', async () => {
+      await connect()
+      await screen.findByRole('switch', { name: 'Collect alerts' })
+      vi.useFakeTimers()
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+      })
+      await act(() => vi.advanceTimersByTimeAsync(TEST_POLL_MS * TEST_POLL_TRIES))
+      expect(screen.getByText(/Queued · the collector runs it/)).toBeInTheDocument()
+      const calls = vi.mocked(federationApi.listSources).mock.calls.length
+      await act(() => vi.advanceTimersByTimeAsync(TEST_POLL_MS * 5))
+      expect(vi.mocked(federationApi.listSources).mock.calls.length).toBe(calls)
+    })
+
+    it('shows the load error with a retry', async () => {
+      vi.mocked(federationApi.listSources).mockRejectedValue(new Error('boom'))
+      await connect()
+      expect(await screen.findByText(/Couldn.t load collection settings: boom/)).toBeInTheDocument()
+    })
+
+    it('shows only the Connected row for an integration with no federation source', async () => {
+      vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['opensearch'] } } as never)
+      vi.mocked(federationApi.listSources).mockClear()
+      renderSetup()
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await screen.findByText(/OpenSearch/))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      expect(await screen.findByText(/^Connected to /)).toBeInTheDocument()
+      expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+      expect(federationApi.listSources).not.toHaveBeenCalled()
+    })
   })
 })

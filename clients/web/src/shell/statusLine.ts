@@ -33,6 +33,16 @@ export interface StatusReads {
   routability: RoutabilityRead | null
 }
 
+/** An enabled federation source that is erroring. Disabled and never-seeded sources report none. */
+export function failingFederationSource(read: FederationRead | null) {
+  return read?.sources?.find((source) => source.enabled && (source.consecutive_errors ?? 0) > 0)
+}
+
+/** An enabled MCP server that is not running. */
+export function stoppedMcpServer(read: McpRead | null) {
+  return read?.statuses?.find((server) => server.enabled && server.status !== 'running')
+}
+
 interface Fact {
   level: 'poor' | 'fair'
   sentence: string
@@ -55,9 +65,7 @@ export function foldStatus(reads: StatusReads): StatusFold {
     }
   }
 
-  const failing = reads.federation?.sources?.find(
-    (source) => source.enabled && (source.consecutive_errors ?? 0) > 0,
-  )
+  const failing = failingFederationSource(reads.federation)
   if (failing) {
     facts.push({
       level: 'fair',
@@ -65,9 +73,7 @@ export function foldStatus(reads: StatusReads): StatusFold {
     })
   }
 
-  const down = reads.mcp?.statuses?.find(
-    (server) => server.enabled && server.status !== 'running',
-  )
+  const down = stoppedMcpServer(reads.mcp)
   if (down) {
     facts.push({
       level: 'fair',

@@ -5,10 +5,8 @@ import { getAllIntegrations } from '../../config/integrations'
 import { DATA_SOURCE_CATEGORIES } from './setupSteps'
 import { configApi, mcpApi } from '../../services/api'
 import { TextInput } from '../../shared/ui'
-
-interface Props {
-  onSaved: () => void
-}
+import CheckMark from './CheckMark'
+import SourceCollection from './SourceCollection'
 
 // for the few ids whose mcp-config.json server key differs from the catalog id.
 // Shared by the picker filter and connect-on-save, so the two can't diverge.
@@ -21,13 +19,25 @@ const CATALOG_TO_SERVER: Record<string, string> = {
 }
 const serverFor = (catalogId: string) => CATALOG_TO_SERVER[catalogId] ?? catalogId
 
+// catalog id -> federation source_id, for the ids that have a collector
+const CATALOG_TO_SOURCE: Record<string, string> = {
+  crowdstrike: 'crowdstrike',
+  splunk: 'splunk',
+  'elastic-siem': 'elastic',
+  'azure-sentinel': 'azure_sentinel',
+  'aws-security-hub': 'aws_security_hub',
+  'microsoft-defender': 'microsoft_defender',
+}
+
 interface IntegrationsConfig {
   enabled_integrations: string[]
   integrations: Record<string, Record<string, unknown>>
 }
 
-const DataSourceDialog = ({ onSaved }: Props) => {
+const DataSourceDialog = () => {
   const [selected, setSelected] = useState<IntegrationMetadata | null>(null)
+  // set by a successful save; the step stays on it so the result is seen
+  const [connected, setConnected] = useState<IntegrationMetadata | null>(null)
   const [query, setQuery] = useState('')
   const [availableServers, setAvailableServers] = useState<Set<string> | null>(null)
   const [serversError, setServersError] = useState(false)
@@ -112,7 +122,7 @@ const DataSourceDialog = ({ onSaved }: Props) => {
           `Couldn't connect to ${selected?.name ?? serverName}. Check the credentials and try again.`,
       )
     }
-    onSaved()
+    if (selected) setConnected(selected)
   }
 
   if (selected) {
@@ -123,6 +133,26 @@ const DataSourceDialog = ({ onSaved }: Props) => {
         onClose={() => setSelected(null)}
         onSave={handleSave}
       />
+    )
+  }
+
+  if (connected) {
+    const sourceId = CATALOG_TO_SOURCE[connected.id]
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-3 text-sm rounded-[10px] px-3.5 py-2.5 border border-[color:var(--good-ln)] bg-[var(--good-bg)]">
+          <CheckMark phase="passed" />
+          <span className="text-tx font-semibold" role="status">
+            Connected to {connected.name}
+          </span>
+        </div>
+        {sourceId && <SourceCollection key={sourceId} sourceId={sourceId} />}
+        <div>
+          <button className="btn ghost" onClick={() => setConnected(null)}>
+            Connect another
+          </button>
+        </div>
+      </div>
     )
   }
 
