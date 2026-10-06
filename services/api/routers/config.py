@@ -37,6 +37,7 @@ from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
+from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
 from core.time import utcnow
 from services.api.middleware.auth import (
     get_current_active_user,
@@ -543,8 +544,6 @@ def test_s3_connection():
     Returns:
         Connection test result
     """
-    from core.storage.s3_service import S3Service
-
     # Load S3 config
     config_service = get_config_service()
     s3_integration = config_service.get_integration_config("s3")
@@ -592,22 +591,23 @@ def test_s3_connection():
     # Test connection
     success, message = s3_service.test_connection()
 
-    if success:
-        files = s3_service.list_files()
-        return {
-            "success": True,
-            "message": message,
-            "bucket": cfg.get("bucket_name"),
-            "region": cfg.get("region", "us-east-1"),
-            "files_found": len(files),
-        }
-    else:
+    result = {
+        "bucket": cfg.get("bucket_name"),
+        "region": cfg.get("region", "us-east-1"),
+    }
+    if not success:
+        return {"success": False, "message": message, **result}
+
+    # List under the configured prefix: that is what sync uses, and scoped roles can't list the root.
+    try:
+        files = s3_service.list_files(prefix=cfg.get("parquet_prefix") or "")
+    except S3_LIST_ERRORS as e:
         return {
             "success": False,
-            "message": message,
-            "bucket": cfg.get("bucket_name"),
-            "region": cfg.get("region", "us-east-1"),
+            "message": f"{message}, but listing objects failed: {describe_s3_error(e)}",
+            **result,
         }
+    return {"success": True, "message": message, "files_found": len(files), **result}
 
 
 @router.get("/theme")

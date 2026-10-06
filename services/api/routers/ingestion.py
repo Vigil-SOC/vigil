@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -30,6 +31,7 @@ from core.ingestion.ingestion_jobs import (
 )
 from core.ingestion.ingestion_service import IngestionService
 from core.routing import Auth, RouterMeta
+from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +363,10 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     logger.info(f"Starting S3 folder sync with prefix='{prefix}'")
 
     ingestion_service = IngestionService()
-    stats = ingestion_service.ingest_s3_folder(s3_service=s3, prefix=prefix)
+    try:
+        stats = ingestion_service.ingest_s3_folder(s3_service=s3, prefix=prefix)
+    except S3_LIST_ERRORS as e:
+        raise _s3_list_http_error(e) from e
 
     success, summary = summarize_stats(stats)
 
@@ -389,6 +394,18 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
         cases_errors=stats.get("cases_errors", 0),
         success=success,
         message=message,
+    )
+
+
+def _s3_list_http_error(exc: Exception) -> HTTPException:
+    """Map an S3 listing failure to an HTTP error carrying the botocore error code."""
+    denied = (
+        isinstance(exc, ClientError)
+        and exc.response.get("Error", {}).get("Code") == "AccessDenied"
+    )
+    return HTTPException(
+        status_code=403 if denied else 502,
+        detail=f"S3 listing failed: {describe_s3_error(exc)}",
     )
 
 
@@ -464,7 +481,10 @@ def list_s3_files(prefix: Optional[str] = Query("")):
             detail="S3 is not configured. Please configure S3 in Settings first.",
         )
 
-    files = s3.list_files_detailed(prefix=prefix or "")
+    try:
+        files = s3.list_files_detailed(prefix=prefix or "")
+    except S3_LIST_ERRORS as e:
+        raise _s3_list_http_error(e) from e
     return {"files": files, "count": len(files), "prefix": prefix or ""}
 
 
