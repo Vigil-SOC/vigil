@@ -741,7 +741,7 @@ class DataPoller:
         except OSError as e:
             # Don't re-raise: the other polling tasks must keep running.
             logger.error(
-                f"Webhook server failed to bind port {self.config.webhook_port}: {e}"
+                "Webhook server failed to bind port %s: %s", self.config.webhook_port, e
             )
             await runner.cleanup()
             return
