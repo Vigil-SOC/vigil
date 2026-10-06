@@ -1,10 +1,11 @@
-"""A Splunk poll in which every query failed is a failure, not an empty poll (#1256).
+"""A failed Splunk query fails the tick, it is not an empty poll (#1256, #1572).
 
-``SplunkService.search`` returns ``None`` on any error, and ``SplunkAdapter.fetch``
-used to treat that (and raised errors) like an empty result, so an outage was
-recorded as a healthy poll and the cursor skipped the window. A query now fails
-if it raised or returned ``None``; if all fail, ``fetch`` raises. An empty list
-still falls through to the next query (non-ES installs have no notable index).
+``SplunkService.search`` returns ``None`` on any error. A query fails if it
+raised or returned ``None``, and ``SplunkAdapter.fetch`` then raises so the
+cursor keeps the window, even when a later fallback would have run. An empty
+list falls through to the next query (non-ES installs have no notable index).
+The last query (the ``notable`` macro, undefined without ES) may fail once every
+earlier query ran empty.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from core.federation.adapters._base import parse_cursor_since
+from core.federation.runner import FederationRunner
 from core.integrations.splunk.adapter import _QUERIES, SplunkAdapter
 from core.time import utcnow
 
@@ -52,12 +54,12 @@ def _event(n: int) -> Dict[str, Any]:
 
 
 def test_all_queries_return_none_raises():
-    with pytest.raises(RuntimeError, match="every search query failed"):
+    with pytest.raises(RuntimeError, match="query failed"):
         _fetch([None, None, None])
 
 
 def test_all_queries_raise_raises_with_last_error():
-    with pytest.raises(RuntimeError, match="handshake"):
+    with pytest.raises(RuntimeError, match="index=notable.*read"):
         _fetch([TimeoutError("read"), TimeoutError("read"), OSError("handshake")])
 
 
@@ -74,9 +76,55 @@ def test_all_empty_is_a_successful_empty_poll():
     assert len(svc.queries) == len(_QUERIES)
 
 
-def test_one_query_running_empty_is_success_despite_others_failing():
-    res, _ = _fetch([None, [], None])
+def test_failed_notable_query_raises_even_when_a_fallback_has_events():
+    with pytest.raises(RuntimeError, match=r"index=notable.*permission denied"):
+        _fetch([PermissionError("permission denied"), [_event(1)], None])
+
+
+def test_failed_notable_query_raises_when_the_fallback_is_empty():
+    with pytest.raises(RuntimeError, match="index=notable.*no result"):
+        _fetch([None, [], []])
+
+
+def test_failed_second_query_raises_after_empty_notable():
+    with pytest.raises(RuntimeError, match="index=security"):
+        _fetch([[], None, [_event(1)]])
+
+
+def test_failed_macro_query_after_empty_queries_is_a_successful_empty_tick():
+    """Non-ES install: no notable index, no alerts, and the macro is undefined."""
+    res, svc = _fetch([[], [], None])
     assert res.findings == []
+    assert len(svc.queries) == len(_QUERIES)
+    assert res.cursor["last_poll_at"] > CURSOR["last_poll_at"]
+
+
+@pytest.mark.asyncio
+async def test_failed_notable_query_keeps_the_cursor_and_records_the_error(
+    monkeypatch,
+):
+    row = {"cursor": dict(CURSOR), "last_error": None, "consecutive_errors": 0}
+
+    def _failure(source_id, error):
+        row["last_error"] = error
+        row["consecutive_errors"] += 1
+
+    monkeypatch.setattr("core.federation.runner.store.record_failure", _failure)
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda *a, **k: pytest.fail("a failed notable query is not a success"),
+    )
+    adapter = SplunkAdapter()
+    adapter._service = _FakeSplunk([None, [_event(1)], None])
+    runner = FederationRunner(output_queue=asyncio.Queue())
+
+    for expected in (1, 2):
+        await runner._do_one_tick(adapter, {"max_items": 10, "cursor": row["cursor"]})
+        assert row["consecutive_errors"] == expected
+        adapter._service = _FakeSplunk([None, [_event(1)], None])
+
+    assert "index=notable" in row["last_error"]
+    assert row["cursor"] == CURSOR
 
 
 def test_service_construction_failure_raises_and_is_retried():

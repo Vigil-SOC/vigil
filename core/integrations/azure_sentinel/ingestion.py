@@ -163,11 +163,11 @@ class AzureSentinelIngestion(SIEMIngestionService):
             logger.info(f"Fetched {len(incidents)} incidents from Azure Sentinel")
             return incidents
 
-        except ImportError:
-            logger.error(
-                "Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity"
-            )
-            return []
+        except ImportError as e:
+            # Raise, not []: an empty poll would be recorded as a success.
+            msg = "Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity"
+            logger.error(msg)
+            raise RuntimeError(msg) from e
         except Exception as e:
             logger.error(f"Error fetching Azure Sentinel incidents: {e}")
             # Raise, not []: federation must record the failure and keep its cursor.

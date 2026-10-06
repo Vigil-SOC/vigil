@@ -373,12 +373,15 @@ class DataPoller:
 
         # search() returns None on any error (it logs and swallows them), so a
         # query failed if it returned None or raised. An empty list ran and
-        # found nothing; it still falls through, since on non-ES installs
+        # found nothing; it falls through, since on non-ES installs
         # `index=notable` is empty by design and the fallbacks must be reached.
+        # A failed query raises, so the loop counts an error and leaves
+        # last_poll_time alone, else a fallback's results would hide the events
+        # it missed. The last query is exempt: the `notable` macro is undefined
+        # without Enterprise Security, so it fails there, and as a last resort
+        # after empty queries it cannot discard anything.
         findings = []
-        any_ran = False
-        last_error: Optional[Exception] = None
-        for query in queries:
+        for i, query in enumerate(queries):
             try:
                 # search() polls its job with time.sleep for up to ~60s,
                 # which would otherwise freeze the whole daemon loop.
@@ -389,25 +392,17 @@ class DataPoller:
                     latest_time="now",
                     max_count=100,
                 )
+                error = "search returned no result" if results is None else None
             except Exception as e:
-                logger.warning("Splunk query failed (%s): %s", query, e)
-                last_error = e
-                continue
+                results, error = None, str(e)
             if results is None:
-                logger.warning(
-                    "Splunk query failed (%s): search returned no result", query
-                )
+                logger.warning("Splunk query failed (%s): %s", query, error)
+                if i < len(queries) - 1:
+                    raise RuntimeError(f"Splunk: query failed ({query}): {error}")
                 continue
-            any_ran = True
             if results:
                 findings.extend(results)
                 break  # Use first successful query
-
-        # Every query failed: raise so the loop counts an error and leaves
-        # last_poll_time alone, instead of advancing past the outage window.
-        if not any_ran:
-            detail = f": {last_error}" if last_error is not None else ""
-            raise RuntimeError(f"Splunk: every search query failed{detail}")
 
         # Process findings
         new_count = 0
