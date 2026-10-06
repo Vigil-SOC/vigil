@@ -7680,7 +7680,7 @@ export interface paths {
         get: operations["get_api_workflows_custom_workflow_id"];
         /**
          * Update Custom Workflow
-         * @description Update an existing custom workflow. Increments version.
+         * @description Update an existing custom workflow. Increments version only when its definition changes.
          */
         put: operations["put_api_workflows_custom_workflow_id"];
         post?: never;
