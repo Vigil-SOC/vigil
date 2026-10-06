@@ -369,6 +369,22 @@ export function stripOrchestratorProfiles<T>(data: T & { profiles?: unknown }): 
   return rest
 }
 
+const LIMIT_FIELDS = [
+  'max_cost_per_investigation',
+  'max_iterations_per_agent',
+  'max_runtime_per_investigation',
+  'max_concurrent_agents',
+  'max_total_hourly_cost',
+] as const satisfies readonly (keyof InvestigationProfileValues)[]
+
+export const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
+  LIMIT_FIELDS.some((field) => next[field] > prev[field])
+
+export const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
+  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
+    ([k, v]) => cfg[k] === v,
+  )
+
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,

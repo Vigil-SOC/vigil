@@ -1028,6 +1028,7 @@ export interface ReplayReport {
 
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
+  setEnabled: (id: string, enabled: boolean) => api.put(`/workflows/${id}/enabled`, { enabled }),
   get: (id: string) => api.get(`/workflows/${id}`),
   /** Hunt cost ceiling, bound/unbound capabilities and pricing confidence; `{}` for a non-hunt. */
   preflight: (id: string) => api.get(`/workflows/${id}/preflight`),

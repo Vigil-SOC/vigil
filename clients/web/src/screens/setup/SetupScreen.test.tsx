@@ -29,6 +29,9 @@ vi.mock('../../services/api', () => ({
     ),
     setForceManualApproval: vi.fn(),
     getIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
+    getAutonomy: vi.fn(() =>
+      Promise.resolve({ data: { auto_response_enabled: false, force_manual_approval: true } }),
+    ),
   },
   mcpApi: { listServers: vi.fn(() => Promise.resolve({ data: { servers: [] } })) },
 }))
@@ -90,5 +93,23 @@ describe('SetupScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /Continue to console/ }))
     expect(screen.getByText('console-home')).toBeInTheDocument()
     expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBe('1')
+  })
+
+  it('opens the summary on the last step and jumps back to a step from Change', async () => {
+    renderSetup()
+    for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+    expect(await screen.findByText('Nothing connected yet')).toBeInTheDocument()
+    expect(screen.getByText('No provider')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Go to console' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Workflows' }))
+    expect(await screen.findByText('No workflows yet.')).toBeInTheDocument()
+    expect(screen.getByText(/4 of 6/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
+    expect(await screen.findByRole('button', { name: /Assist/ })).toBeInTheDocument()
+    expect(screen.getByText(/5 of 6/)).toBeInTheDocument()
   })
 })
