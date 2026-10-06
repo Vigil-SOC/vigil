@@ -210,3 +210,75 @@ def test_cloudy_health_reports_disabled_state(gated_app, monkeypatch):
     assert body["enabled"] is False
     assert body["secret_configured"] is False
     assert body["receiver"] == "cloudflare-cloudy"
+
+
+def _signed_post(client, body: bytes, secret: str, sig: str | None = None):
+    import hashlib
+    import hmac
+
+    sig = (
+        sig
+        if sig is not None
+        else hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    )
+    headers = {"Content-Type": "application/json"}
+    if sig:
+        headers["X-Cloudflare-Signature"] = sig
+    return client.post("/api/webhooks/cloudflare/cloudy", content=body, headers=headers)
+
+
+def test_cloudy_rejections_are_logged_counted_and_distinguished(
+    gated_app, monkeypatch, caplog
+):
+    import logging
+
+    from core import webhook_rejections as wr
+
+    wr._counts.clear()
+    wr._log_state.clear()
+    app, mod = gated_app
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: True)
+    client = TestClient(app)
+    caplog.set_level(logging.WARNING)
+
+    def reasons():
+        return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+    # no secret configured
+    monkeypatch.setattr(mod, "_get_secret", lambda: None)
+    assert _signed_post(client, b"{}", "x", sig="s").status_code == 503
+    assert "endpoint=cloudflare/cloudy reason=no_secret source_ip=" in reasons()[-1]
+
+    # lookup failure is a 503 with its own detail (was an unhandled 500)
+    def boom():
+        raise RuntimeError("vault down")
+
+    monkeypatch.setattr(mod, "_get_secret", boom)
+    r = _signed_post(client, b"{}", "x", sig="s")
+    assert r.status_code == 503
+    assert "lookup failed" in r.json()["detail"]
+    assert "reason=secret_lookup_failed" in reasons()[-1]
+
+    # missing + bad signature; a burst of bad ones is one log line, exact count
+    monkeypatch.setattr(mod, "_get_secret", lambda: "s3cret")
+    assert _signed_post(client, b"{}", "s3cret", sig="").status_code == 401
+    assert "reason=missing_signature" in reasons()[-1]
+    before = len(reasons())
+    for _ in range(100):
+        assert _signed_post(client, b"{}", "s3cret", sig="bad").status_code == 401
+    assert len(reasons()) == before + 1
+    assert "reason=bad_signature" in reasons()[-1]
+
+    # disabled
+    monkeypatch.setattr(mod, "cloudy_ingestion_enabled", lambda: False)
+    assert _signed_post(client, b"{}", "s3cret").status_code == 503
+    assert "reason=disabled" in reasons()[-1]
+
+    health = client.get("/api/webhooks/cloudflare/cloudy/health").json()
+    assert health["rejections"]["cloudflare/cloudy"] == {
+        "no_secret": 1,
+        "secret_lookup_failed": 1,
+        "missing_signature": 1,
+        "bad_signature": 100,
+        "disabled": 1,
+    }

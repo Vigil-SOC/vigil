@@ -28,8 +28,19 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
+from core.webhook_rejections import (
+    BAD_SIGNATURE,
+    DISABLED,
+    MISSING_SIGNATURE,
+    NO_SECRET,
+    SECRET_LOOKUP_FAILED,
+    record_rejection,
+    rejection_counts,
+)
 
 logger = logging.getLogger(__name__)
+
+ENDPOINT = "cloudflare/cloudy"
 
 router = APIRouter()
 
@@ -76,28 +87,53 @@ def _get_max_body_bytes() -> int:
     return max(1, get_settings().cloudy_webhook_max_body_kb) * 1024
 
 
-def _verify_signature(raw_body: bytes, provided: Optional[str]) -> bool:
-    secret = _get_secret()
-    if not secret or not provided:
-        return False
+def _verify_signature(raw_body: bytes, provided: str, secret: str) -> bool:
     expected = hmac.new(secret.encode("utf-8"), raw_body, sha256).hexdigest()
     clean = provided.split("=", 1)[-1].strip()
     return hmac.compare_digest(expected, clean)
 
 
-def _require_enabled() -> None:
+def _reject(
+    request: Request,
+    reason: str,
+    status_code: int,
+    detail: str,
+    exc: Optional[BaseException] = None,
+) -> HTTPException:
+    record_rejection(
+        ENDPOINT, reason, request.client.host if request.client else None, exc=exc
+    )
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _require_enabled(request: Request) -> None:
     if not cloudy_ingestion_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cloudy ingestion is disabled. Set CLOUDY_INGESTION_ENABLED=true to enable.",
+        raise _reject(
+            request,
+            DISABLED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Cloudy ingestion is disabled. Set CLOUDY_INGESTION_ENABLED=true to enable.",
         )
 
 
 async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
-    if not _get_secret():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cloudy webhook receiver not configured (CLOUDY_WEBHOOK_SECRET missing)",
+    # Fetch the secret once per request: a second lookup would double-count.
+    try:
+        secret = _get_secret()
+    except Exception as exc:  # noqa: BLE001
+        raise _reject(
+            request,
+            SECRET_LOOKUP_FAILED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Cloudy webhook secret lookup failed",
+            exc,
+        )
+    if not secret:
+        raise _reject(
+            request,
+            NO_SECRET,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Cloudy webhook receiver not configured (CLOUDY_WEBHOOK_SECRET missing)",
         )
     raw = await request.body()
     if len(raw) > _get_max_body_bytes():
@@ -105,10 +141,12 @@ async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Body exceeds {_get_max_body_bytes()} bytes",
         )
-    if not _verify_signature(raw, signature):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing X-Cloudflare-Signature",
+    if not signature or not _verify_signature(raw, signature, secret):
+        raise _reject(
+            request,
+            BAD_SIGNATURE if signature else MISSING_SIGNATURE,
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid or missing X-Cloudflare-Signature",
         )
     return raw
 
@@ -156,11 +194,16 @@ def _ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/cloudy/health")
 async def health() -> Dict[str, Any]:
     """Liveness probe. Returns enabled-flag and secret-configured-flag."""
+    try:
+        secret_configured = _get_secret() is not None
+    except Exception:  # noqa: BLE001
+        secret_configured = False
     return {
         "status": "ok",
         "receiver": "cloudflare-cloudy",
         "enabled": cloudy_ingestion_enabled(),
-        "secret_configured": _get_secret() is not None,
+        "secret_configured": secret_configured,
+        "rejections": rejection_counts(ENDPOINT),
     }
 
 
@@ -169,7 +212,7 @@ async def cloudy_event(
     request: Request,
     x_cloudflare_signature: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    _require_enabled()
+    _require_enabled(request)
     raw = await _read_and_verify(request, x_cloudflare_signature)
     payload = _parse_json(raw)
     return await asyncio.to_thread(_ingest, payload)

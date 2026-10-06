@@ -28,6 +28,14 @@ from core.config import get_settings
 from core.integrations.darktrace.ingestion import DarktraceIngestionService
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
+from core.webhook_rejections import (
+    BAD_SIGNATURE,
+    MISSING_SIGNATURE,
+    NO_SECRET,
+    SECRET_LOOKUP_FAILED,
+    record_rejection,
+    rejection_counts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +95,9 @@ def _get_max_body_bytes() -> int:
 
 # Read at request time, not import time, so a secret saved in the UI takes
 # effect without a restart.
+# Lookup errors propagate so callers can tell "lookup failed" from "not set".
 def _get_secret() -> Optional[str]:
-    try:
-        return get_secret("DARKTRACE_WEBHOOK_SECRET") or None
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("DARKTRACE_WEBHOOK_SECRET lookup failed: %s", exc)
-        return None
+    return get_secret("DARKTRACE_WEBHOOK_SECRET") or None
 
 
 def _get_console_url() -> str:
@@ -102,25 +107,53 @@ def _get_console_url() -> str:
     return get_settings().darktrace_url
 
 
-def _verify_signature(raw_body: bytes, provided: Optional[str]) -> bool:
-    secret = _get_secret()
-    if not secret:
-        # Fail closed: without a configured secret we cannot authenticate.
-        return False
-    if not provided:
-        return False
+def _verify_signature(raw_body: bytes, provided: str, secret: str) -> bool:
     expected = hmac.new(secret.encode("utf-8"), raw_body, sha256).hexdigest()
     # Strip common prefix if Darktrace wraps signature (e.g. "sha256=...").
     clean = provided.split("=", 1)[-1].strip()
     return hmac.compare_digest(expected, clean)
 
 
-async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
-    if not _get_secret():
-        logger.error("DARKTRACE_WEBHOOK_SECRET not configured; rejecting webhook")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Darktrace webhook receiver not configured",
+def _reject(
+    request: Request,
+    endpoint: str,
+    reason: str,
+    status_code: int,
+    detail: str,
+    exc: Optional[BaseException] = None,
+) -> HTTPException:
+    record_rejection(
+        endpoint,
+        reason,
+        request.client.host if request.client else None,
+        exc=exc,
+    )
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+async def _read_and_verify(
+    request: Request, signature: Optional[str], endpoint: str
+) -> bytes:
+    # Fetch the secret once per request: a second lookup would double-count.
+    try:
+        secret = _get_secret()
+    except Exception as exc:  # noqa: BLE001
+        raise _reject(
+            request,
+            endpoint,
+            SECRET_LOOKUP_FAILED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Darktrace webhook secret lookup failed",
+            exc,
+        )
+    if not secret:
+        # Fail closed: without a configured secret we cannot authenticate.
+        raise _reject(
+            request,
+            endpoint,
+            NO_SECRET,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Darktrace webhook receiver not configured",
         )
     raw = await request.body()
     if len(raw) > _get_max_body_bytes():
@@ -128,10 +161,13 @@ async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Body exceeds {_get_max_body_bytes()} bytes",
         )
-    if not _verify_signature(raw, signature):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing X-Darktrace-Signature",
+    if not signature or not _verify_signature(raw, signature, secret):
+        raise _reject(
+            request,
+            endpoint,
+            BAD_SIGNATURE if signature else MISSING_SIGNATURE,
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid or missing X-Darktrace-Signature",
         )
     return raw
 
@@ -183,10 +219,15 @@ def _ingest(
 @router.get("/health")
 async def health() -> Dict:
     """Liveness probe for Darktrace's webhook test feature."""
+    try:
+        secret_configured = _get_secret() is not None
+    except Exception:  # noqa: BLE001
+        secret_configured = False
     return {
         "status": "ok",
         "receiver": "darktrace",
-        "secret_configured": _get_secret() is not None,
+        "secret_configured": secret_configured,
+        "rejections": rejection_counts("darktrace/"),
     }
 
 
@@ -195,7 +236,9 @@ async def model_breach(
     request: Request,
     x_darktrace_signature: Optional[str] = Header(default=None),
 ) -> Dict:
-    raw = await _read_and_verify(request, x_darktrace_signature)
+    raw = await _read_and_verify(
+        request, x_darktrace_signature, "darktrace/model-breach"
+    )
     payload = _parse_json(raw)
     return await asyncio.to_thread(
         _ingest,
@@ -210,7 +253,7 @@ async def ai_analyst(
     request: Request,
     x_darktrace_signature: Optional[str] = Header(default=None),
 ) -> Dict:
-    raw = await _read_and_verify(request, x_darktrace_signature)
+    raw = await _read_and_verify(request, x_darktrace_signature, "darktrace/ai-analyst")
     payload = _parse_json(raw)
     return await asyncio.to_thread(
         _ingest,
@@ -225,7 +268,9 @@ async def system_status(
     request: Request,
     x_darktrace_signature: Optional[str] = Header(default=None),
 ) -> Dict:
-    raw = await _read_and_verify(request, x_darktrace_signature)
+    raw = await _read_and_verify(
+        request, x_darktrace_signature, "darktrace/system-status"
+    )
     payload = _parse_json(raw)
     return await asyncio.to_thread(
         _ingest,

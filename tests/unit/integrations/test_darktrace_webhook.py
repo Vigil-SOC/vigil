@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ sys.modules["darktrace_webhook_under_test"] = _mod
 _spec.loader.exec_module(_mod)
 darktrace_router = _mod.router
 
+from core import webhook_rejections as wr  # noqa: E402
 from core.integrations.darktrace.ingestion import (
     DarktraceIngestionService,
 )  # noqa: E402
@@ -336,3 +338,86 @@ class TestMisconfiguration:
             },
         )
         assert r.status_code == 503
+
+
+class TestRejectionLogging:
+    """Rejections leave a WARNING and a count; a lookup failure is not "not configured"."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        wr._counts.clear()
+        wr._log_state.clear()
+
+    def _warnings(self, caplog):
+        return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_bad_and_missing_signature_logged_with_endpoint_reason_ip(
+        self, client, caplog
+    ):
+        caplog.set_level(logging.WARNING)
+        _post(client, "/api/webhooks/darktrace/ai-analyst", {"a": 1}, sig="bad" * 20)
+        _post(client, "/api/webhooks/darktrace/ai-analyst", {"a": 1}, sig="")
+        msgs = self._warnings(caplog)
+        assert len(msgs) == 2
+        assert (
+            "endpoint=darktrace/ai-analyst reason=bad_signature source_ip=" in msgs[0]
+        )
+        assert "reason=missing_signature" in msgs[1]
+        assert "bad" * 20 not in "".join(msgs)
+
+    def test_no_secret_logged(self, monkeypatch, caplog):
+        monkeypatch.delenv("DARKTRACE_WEBHOOK_SECRET", raising=False)
+        app = FastAPI()
+        app.include_router(darktrace_router, prefix="/api/webhooks/darktrace")
+        c = TestClient(app)
+        caplog.set_level(logging.WARNING)
+        r = _post(c, "/api/webhooks/darktrace/system-status", {}, sig="x")
+        assert r.status_code == 503
+        assert "reason=no_secret" in self._warnings(caplog)[0]
+
+    def test_burst_is_one_log_line_and_exact_count(self, client, caplog):
+        caplog.set_level(logging.WARNING)
+        for _ in range(100):
+            _post(client, "/api/webhooks/darktrace/model-breach", {}, sig="nope")
+        assert len(self._warnings(caplog)) == 1
+        health = client.get("/api/webhooks/darktrace/health").json()
+        assert health["rejections"] == {
+            "darktrace/model-breach": {"bad_signature": 100}
+        }
+        assert health["secret_configured"] is True
+
+    def test_lookup_failure_is_distinct_503_and_looked_up_once(
+        self, client, monkeypatch, caplog
+    ):
+        calls = []
+
+        def boom():
+            calls.append(1)
+            raise RuntimeError("vault down")
+
+        monkeypatch.setattr(_mod, "_get_secret", boom)
+        caplog.set_level(logging.WARNING)
+        r = _post(client, "/api/webhooks/darktrace/model-breach", {})
+        assert r.status_code == 503
+        assert "lookup failed" in r.json()["detail"]
+        assert "not configured" not in r.json()["detail"]
+        assert "reason=secret_lookup_failed" in self._warnings(caplog)[0]
+        assert caplog.records[0].exc_info is not None
+        assert len(calls) == 1
+        assert wr.rejection_counts("darktrace/")["darktrace/model-breach"] == {
+            "secret_lookup_failed": 1
+        }
+
+    def test_valid_request_is_not_a_rejection(self, client, caplog):
+        caplog.set_level(logging.WARNING)
+        p = patch("darktrace_webhook_under_test.DarktraceIngestionService")
+        inst = p.start().return_value
+        inst.transform_system_status.return_value = {"finding_id": "f-1"}
+        inst.ingestion_service.ingest_finding.return_value = True
+        try:
+            r = _post(client, "/api/webhooks/darktrace/system-status", {"id": "x"})
+        finally:
+            p.stop()
+        assert r.status_code == 202
+        assert self._warnings(caplog) == []
+        assert wr.rejection_counts("darktrace/") == {}
