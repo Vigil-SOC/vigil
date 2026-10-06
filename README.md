@@ -390,6 +390,41 @@ cd clients/desktop && npm run dist
 
 ---
 
+## Getting help: the support bundle
+
+When something is wrong, `vigil-support.sh` writes one redacted `tar.gz` you can attach to a support request. It is POSIX `sh` using baseline tools only, runs on Linux and macOS, and uploads nothing.
+
+From a checkout:
+
+```bash
+sh scripts/vigil-support/vigil-support.sh
+```
+
+Without a checkout, fetch the script from the release (replace `<version>` with a release such as the one on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest), without the leading `v`). It needs only `curl` or `wget`, plus `sha256sum` or `shasum -a 256`:
+
+```bash
+V=<version>; U=https://github.com/Vigil-SOC/vigil/releases/download/v$V
+curl -fLO "$U/vigil-support-$V.tar.gz" -O "$U/vigil-support-$V.tar.gz.sha256"   # or: wget "$U/vigil-support-$V.tar.gz" "$U/vigil-support-$V.tar.gz.sha256"
+sha256sum -c "vigil-support-$V.tar.gz.sha256"                                   # macOS: shasum -a 256 -c "vigil-support-$V.tar.gz.sha256"
+tar -xzf "vigil-support-$V.tar.gz" && sh vigil-support/vigil-support.sh
+```
+
+Vigil Desktop shows the exact command for its install under **Support Bundle Command…** in the tray menu.
+
+Re-run with `sudo` to include sources that need elevation (some system logs).
+
+> DATA NOTICE: this bundle holds information from this machine: its hostname,
+> the full process list with command lines, system logs and disk usage. Known
+> credential formats and secret names are redacted, but credentials in free log
+> text that match no known format cannot be guaranteed caught. Nothing is
+> uploaded. Review the bundle before you share it.
+
+**In the bundle** (host level, under `system/`): hostname and `uname`, the clock and timezone, the full process list, disk usage, the OS release, and the journal, syslog and dmesg (or the macOS log); plus `manifest.json` and `SUMMARY.txt`, which list everything collected and everything not.
+
+**Not in the bundle yet**: `configuration/`, `health/` and `logs/` are empty placeholders until per-install collection lands (#1536), so there are no Vigil logs, configuration, health endpoint output, container status or database contents. See [`scripts/vigil-support/README.md`](scripts/vigil-support/README.md) for the format.
+
+---
+
 ## Architecture
 
 ```

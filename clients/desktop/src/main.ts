@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } from "electron";
+import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, clipboard } from "electron";
 import { spawn, execFileSync, ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
@@ -6,6 +6,7 @@ import * as http from "http";
 import * as crypto from "crypto";
 import * as readline from "readline";
 import { openAppLog, captureToFile, snapshotContainerLogs } from "./logkeep";
+import { supportCommand } from "./supportcmd";
 
 const BACKEND_URL = "http://127.0.0.1:6987";
 const HEALTH_URL = `${BACKEND_URL}/api/health`;
@@ -494,6 +495,28 @@ async function openLogs(): Promise<void> {
   await shell.openPath(file);
 }
 
+// Shows the command for this install and offers to copy it. Never runs the
+// script: the bundle is for the user to produce and review in a terminal.
+async function showSupportCommand(): Promise<void> {
+  const dir = app.isPackaged
+    ? path.join(process.resourcesPath, "vigil-support")
+    : path.join(repoRoot ?? path.join(__dirname, "..", "..", ".."), "scripts", "vigil-support");
+  const command = supportCommand(dir);
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    title: "Support Bundle",
+    message: "Support bundle command",
+    detail:
+      "Run this in a terminal. It writes one redacted .tar.gz to the current " +
+      "directory and uploads nothing. Re-run with sudo to include logs that need elevation.\n\n" +
+      command,
+    buttons: ["Copy", "Close"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) clipboard.writeText(command);
+}
+
 // The pinned backend image is the large one and the one that changes per
 // release, so its presence stands in for "already downloaded". Any other
 // missing image is pulled by `up` anyway.
@@ -758,6 +781,7 @@ function trayTemplate(): Electron.MenuItemConstructorOptions[] {
       },
     },
     { label: "Open Logs", click: () => openLogs() },
+    { label: "Support Bundle Command…", click: () => void showSupportCommand() },
     { type: "separator" },
     { label: "Quit Vigil", click: () => app.quit() },
   ];

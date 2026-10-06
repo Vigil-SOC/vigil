@@ -412,6 +412,12 @@ jobs:
       packages: read
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build support tarball
+        run: scripts/build-support-tarball.sh "${{ needs.version.outputs.version }}" support-dist
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -436,6 +442,9 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           append_body: true
+          files: |
+            support-dist/vigil-support-${{ needs.version.outputs.version }}.tar.gz
+            support-dist/vigil-support-${{ needs.version.outputs.version }}.tar.gz.sha256
           body: |
 
             ---
