@@ -3290,7 +3290,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
                   <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
-                    <span className="ag-ini">{a.ini.charAt(0)}</span>
+                    <span className="ag-ini">{a.ini}</span>
                     <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
                   </button>
                 </td>

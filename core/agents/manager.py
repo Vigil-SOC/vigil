@@ -44,7 +44,8 @@ class SOCAgentLibrary:
             name=row.get("name") or row["id"],
             description=row.get("description") or "",
             system_prompt=prompt,
-            icon=row.get("icon") or "C",
+            # Blank stays blank so the web falls back to the name's initials.
+            icon=row.get("icon") or "",
             color=row.get("color") or "#888888",
             specialization=row.get("specialization") or "Custom",
             recommended_tools=list(row.get("recommended_tools") or []),

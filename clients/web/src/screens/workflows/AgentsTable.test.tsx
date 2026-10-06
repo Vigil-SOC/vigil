@@ -18,9 +18,9 @@ vi.mock('../../services/api', () => {
           agents: [
             agent({ id: 'custom-mine', name: 'My agent', description: 'Mine does a thing', model: 'Claude Opus 5.5', model_source: 'agent', component_category: 'investigation', skills: 2, changes: 'on_its_own', runs_7d: 1240, success_rate: 0.912, success_level: 'fair' }),
             agent({ id: 'triage', name: 'Triage agent', specialization: 'Scores alerts', model: 'Claude Haiku 4.5', model_source: 'assignment', component_category: 'triage', skills: 3, changes: 'asks_first', runs_7d: 18240, success_rate: 0.981, success_level: 'good' }),
-            agent({ id: 'reporter', name: 'Reporting agent', description: 'Writes briefs', model: 'Claude Sonnet 5', model_source: 'default', runs_7d: 0 }),
+            agent({ id: 'reporter', name: 'Reporting agent', icon: 'W', description: 'Writes briefs', model: 'Claude Sonnet 5', model_source: 'default', runs_7d: 0 }),
             agent({ id: 'hunter', name: 'Hunter', description: 'Hunts', model: null, model_source: null, enabled: false }),
-            agent({ id: 'blind', name: 'Blind agent', description: 'Stats down', runs_7d: null }),
+            agent({ id: 'blind', name: 'Blind agent', icon: 'TI', description: 'Stats down', runs_7d: null }),
           ],
         },
       })),
@@ -53,7 +53,7 @@ describe('agents table', () => {
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent)
     expect(heads.slice(0, 8)).toEqual(['Agent', 'What it does', 'Model', 'Skills', 'Changes things?', 'Runs, 7 days', 'Success', 'On'])
     const names = screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)
-    expect(names).toEqual(['TTriage agentBuilt in', 'RReporting agentBuilt in', 'HHunterBuilt in', 'BBlind agentBuilt in', 'MMy agentYours'])
+    expect(names).toEqual(['TATriage agentBuilt in', 'WReporting agentBuilt in', 'HUHunterBuilt in', 'TIBlind agentBuilt in', 'MAMy agentYours'])
     expect(screen.getByText('4 built-in agents plus your own. Each can use its own model.')).toBeInTheDocument()
     expect(screen.queryByText('SOC Agents')).toBeNull()
     expect(screen.queryByText('Template')).toBeNull()

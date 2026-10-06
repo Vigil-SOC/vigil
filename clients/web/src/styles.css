@@ -3101,6 +3101,8 @@
       color: var(--tx1);
       white-space: normal;
       vertical-align: middle;
+      /* The board's rows are 52px; the inherited 1.45 makes the two-line model cell 56 */
+      line-height: normal;
    }
 
    .agents-tbl thead th:first-child,
@@ -3154,6 +3156,7 @@
       color: var(--tx0);
       font-size: 11px;
       font-weight: 700;
+      white-space: nowrap;
    }
 
    .ag-who-txt,
