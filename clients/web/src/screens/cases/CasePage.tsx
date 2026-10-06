@@ -279,6 +279,8 @@ export function CasePage({
   phase,
   error,
   pageKey,
+  seed,
+  onSeedConsumed,
   onBack,
   onExpand,
   onEdit,
@@ -298,6 +300,9 @@ export function CasePage({
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
   pageKey: string
+  /** Text typed in the command bar; handed to the composer, then cleared. */
+  seed?: string | null
+  onSeedConsumed?: () => void
   /** The "Cases" crumb; in the drawer it also backs the Close icon. */
   onBack: () => void
   /** Set only in the drawer: shows the Expand and Close icons. */
@@ -367,6 +372,13 @@ export function CasePage({
     setNote('')
     setChip('all')
   }, [id])
+
+  // the command bar's text rides the composer's own seed path
+  useEffect(() => {
+    if (!seed) return
+    setAskSeed({ id, text: seed })
+    onSeedConsumed?.()
+  }, [seed, id, onSeedConsumed])
 
   const latest = investigations[0] ?? null
   const runId = latest?.run_id ?? null

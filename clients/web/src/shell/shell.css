@@ -203,6 +203,40 @@
   font-size: 13px;
 }
 
+.vg-command-foot {
+  position: sticky;
+  bottom: -6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 6px -6px -6px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--ln0);
+  background: var(--bg1);
+  color: var(--tx2);
+  font-size: 11px;
+}
+
+.vg-command-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vg-command-foot kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--ln2);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--tx2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .vg-drawer-scrim {
   position: fixed;
   top: 52px;

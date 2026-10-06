@@ -91,7 +91,7 @@ function renderBar(props?: Partial<ComponentProps<typeof CommandBar>>) {
   const onOpenChat = props?.onOpenChat ?? vi.fn()
   const onOpenCase = props?.onOpenCase ?? vi.fn()
   const onGo = props?.onGo ?? vi.fn()
-  render(<CommandBar boards={BOARDS} onOpenChat={onOpenChat} onOpenCase={onOpenCase} onGo={onGo} />)
+  render(<CommandBar boards={BOARDS} onOpenChat={onOpenChat} onOpenCase={onOpenCase} onGo={onGo} caseOpen={props?.caseOpen} />)
   return { onOpenChat, onOpenCase, onGo }
 }
 
@@ -163,6 +163,22 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'Tab' })
     expect(onOpenChat).toHaveBeenCalledWith('why this beacon')
     expect(localStorage.getItem(RECENTS)).toBeNull()
+  })
+
+  it('hints Tab by where it goes, and an empty query does nothing', () => {
+    const { onOpenChat } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(screen.getByText('Tab').parentElement).toHaveTextContent('Tab ask Vigil')
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(onOpenChat).not.toHaveBeenCalled()
+  })
+
+  it('hints Tab as asking on the case when one is open', () => {
+    renderBar({ caseOpen: true })
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(screen.getByText('Tab').parentElement).toHaveTextContent('Tab ask on this case')
   })
 
   it('ranks an exact id, then full-text and ioc hits, then boards', async () => {

@@ -543,6 +543,56 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument()
   })
 
+  describe('⌘K Tab', () => {
+    const ask = (text: string) => {
+      const input = screen.getByRole('combobox', { name: /Find a case/ })
+      fireEvent.change(input, { target: { value: text } })
+      fireEvent.keyDown(input, { key: 'Tab' })
+    }
+    const sentOnCase = async () => {
+      await waitFor(() => expect(vi.mocked(streamFetch)).toHaveBeenCalled())
+      const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+      expect(body.case_id).toBe('case-2026-0142')
+      expect(body.messages.at(-1)).toEqual({ role: 'user', content: 'why this loader?' })
+      expect(document.querySelector('.soc-console')).not.toHaveClass('chat-active')
+    }
+
+  const sentOnChat = async () => {
+      await waitFor(() => expect(vi.mocked(streamFetch)).toHaveBeenCalled())
+      const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+      expect(body.case_id).toBeUndefined()
+      expect(document.querySelector('.soc-console')).toHaveClass('chat-active')
+    }
+
+    beforeEach(() => vi.mocked(streamFetch).mockClear())
+    afterEach(() => {
+      vi.mocked(streamFetch).mockClear()
+      localStorage.clear() // Chat keeps its history and thread map here
+    })
+
+    it('sends to the drawer case and leaves the dock closed', async () => {
+      renderConsole('/cases')
+      fireEvent.click(await screen.findByText('Defense Evasion: Obfuscated Loader'))
+      await screen.findByRole('dialog', { name: 'Case' })
+      ask('why this loader?')
+      await sentOnCase()
+    })
+
+    it('sends to the full-page case and leaves the dock closed', async () => {
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      ask('why this loader?')
+      await sentOnCase()
+    })
+
+    it('opens the dock with the text when no case is open', async () => {
+      renderConsole('/cases')
+      await screen.findByText('Defense Evasion: Obfuscated Loader')
+      ask('why this loader?')
+      await sentOnChat()
+    })
+  })
+
   it('opens the AI Decisions review queue', async () => {
     renderConsole()
     clickScreen('AI Decisions')
@@ -684,6 +734,7 @@ describe('SocConsole', () => {
       'data: {"type":"text","content":" world"}\n',
     ].map((s) => new TextEncoder().encode(s))
     let i = 0
+    vi.mocked(streamFetch).mockClear()
     vi.mocked(streamFetch).mockResolvedValueOnce({
       ok: true,
       status: 200,

@@ -142,6 +142,7 @@ function SocConsoleInner() {
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
   const [chatSeed, setChatSeed] = useState<string | null>(null)
+  const [caseSeed, setCaseSeed] = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
   const [wallMode, setWallMode] = useState(false)
@@ -171,6 +172,15 @@ function SocConsoleInner() {
     if (prompt) setChatSeed(prompt)
   }, [])
   const closeChat = useCallback(() => setChatOpen(false), [])
+  // the open case: the drawer wins over the full page's ?case= param
+  const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
+  const openCaseId = drawerCase ?? pageCase
+  // with a case open the text goes to its own composer, not the dock
+  const askVigil = useCallback((text?: string) => {
+    if (openCaseId && text) setCaseSeed(text)
+    else openChat(text)
+  }, [openCaseId, openChat])
+  const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -410,7 +420,8 @@ function SocConsoleInner() {
               const key = item[2] as string
               return { key, label: item[1] }
             })}
-            onOpenChat={openChat}
+            onOpenChat={askVigil}
+            caseOpen={openCaseId !== null}
             onOpenCase={setDrawerCase}
             onGo={(next) => go(next)}
           />
@@ -505,7 +516,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} />
                 )}
               </ErrorBoundary>
             </div>
@@ -526,6 +537,8 @@ function SocConsoleInner() {
             caseId={drawerCase}
             onClose={() => setDrawerCase(null)}
             pageKey={current}
+            seed={caseSeed}
+            onSeedConsumed={clearCaseSeed}
           />
         )}
       </div>
