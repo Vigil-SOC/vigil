@@ -428,9 +428,18 @@ services:
     container_name: deeptempo-llm-worker
     command: ["python", "-m", "services.worker"]
     healthcheck:
-      # Shares the backend image, whose HEALTHCHECK curls :6987. A queue worker
-      # serves no HTTP, so inheriting it just reports unhealthy forever.
-      disable: true
+      # Replaces the backend image's HEALTHCHECK, which curls :6987; a queue
+      # worker serves no HTTP, so that would report unhealthy forever. Instead
+      # ask ARQ whether this container's health key exists: the poll loop
+      # rewrites it every 30 s and it expires 31 s later, so a wedged worker
+      # goes unhealthy. Same command and budget as the Helm probes. start_period
+      # covers on_startup (up to ~300 s) before the first key; 4 retries x 30 s
+      # tolerate ~120 s without the key.
+      test: ["CMD", "arq", "--check", "services.worker.jobs.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 300s
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
