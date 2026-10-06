@@ -859,6 +859,9 @@ describe('SocConsole', () => {
   })
 
   describe('console tour', () => {
+    const NAV_TITLE = 'Pages are grouped by what you are doing'
+    const ATTENTION_TITLE = 'Decisions wait here'
+    const ASK_TITLE = 'Ask Vigil anywhere'
     let rectSpy: { mockRestore: () => void }
 
     beforeEach(() => {
@@ -879,12 +882,14 @@ describe('SocConsole', () => {
     it('points at the primary nav until Skip, then stays hidden on reload', () => {
       const first = renderConsole()
       const ring = document.querySelector('.console-tour-ring')
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toHaveTextContent('primary nav')
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toHaveTextContent('Watch intake (Overview, Triage)')
       expect(ring).toHaveAttribute('data-stop', 'nav')
+      expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 1 of 3')
+      expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
       expect(ring).toHaveStyle({ top: '34px', left: '4px', width: '512px', height: '58px' })
       expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
 
@@ -897,13 +902,16 @@ describe('SocConsole', () => {
       renderConsole('/cases')
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
-      expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: ATTENTION_TITLE })).toBeInTheDocument()
       const attention = document.querySelector('.console-tour-ring')
       expect(attention).toHaveAttribute('data-stop', 'attention')
       expect(attention).toHaveStyle({ top: '194px', left: '18px' })
+      expect(screen.getByRole('dialog', { name: ATTENTION_TITLE })).toHaveTextContent('Approve or reject here, or open the case.')
+      expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 2 of 3')
+      expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toHaveTextContent('Ask Vigil')
+      expect(screen.getByRole('dialog', { name: ASK_TITLE })).toHaveTextContent('Conversations are private to you and kept in your history.')
       const ask = document.querySelector('.console-tour-ring')
       expect(ask).toHaveAttribute('data-stop', 'ask')
       expect(ask).toHaveStyle({ top: '614px', left: '794px' })
@@ -922,7 +930,7 @@ describe('SocConsole', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-      expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: ATTENTION_TITLE })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Ask Vigil chat assistant' })).toBeInTheDocument()
@@ -932,12 +940,13 @@ describe('SocConsole', () => {
     it('skips Home for an operator who cannot open it', () => {
       authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
       renderConsole('/dashboard')
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: ASK_TITLE })).toBeInTheDocument()
+      expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 2 of 2')
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/dashboard')
       expect(screen.queryByText(/Access denied/)).not.toBeInTheDocument()
-      expect(screen.queryByRole('dialog', { name: 'Needs your attention' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: ATTENTION_TITLE })).not.toBeInTheDocument()
     })
 
     it('starts again at the primary nav from the account menu', () => {
@@ -946,9 +955,9 @@ describe('SocConsole', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Console tour' }))
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
       expect(screen.queryByRole('menu', { name: 'Account' })).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
     })

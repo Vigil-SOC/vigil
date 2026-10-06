@@ -932,7 +932,7 @@ export default function Chat({
         <textarea
           ref={taRef}
           rows={1}
-          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil, / for commands, @ for context'}
+          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil · @ to attach a case'}
           aria-label={lockedCaseId ? 'Ask about this case' : 'Ask Vigil'}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

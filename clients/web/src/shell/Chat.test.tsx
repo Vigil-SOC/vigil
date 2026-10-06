@@ -101,6 +101,7 @@ describe('Ask Vigil dock', () => {
 
     renderChat()
     const box = screen.getByPlaceholderText(/Ask Vigil/)
+    expect(box).toHaveAttribute('placeholder', 'Ask Vigil · @ to attach a case')
     fireEvent.change(box, { target: { value: '@loader' } })
     fireEvent.click(await screen.findByRole('option', { name: /CASE-9/ }))
 
