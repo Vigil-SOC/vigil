@@ -22,7 +22,7 @@ type StepId = (typeof STEPS)[number]
 const STEP_COPY: Record<StepId, { title: string; desc: string }> = {
   checks: {
     title: 'System checks',
-    desc: 'API health, the storage backend, and whether a provider can route.',
+    desc: 'API health, storage, an AI provider, federation and MCP servers, one at a time.',
   },
   data: {
     title: 'Connect data',
@@ -64,7 +64,7 @@ function stepPanel(id: StepId, onAdvance: () => void) {
     case 'checks':
       return <SystemChecksStep />
     case 'data':
-      return <DataSourceDialog onSaved={onAdvance} />
+      return <DataSourceDialog />
     case 'ai':
       return <SetupProviderStep onSaved={onAdvance} />
     case 'workflows':
