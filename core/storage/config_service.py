@@ -78,6 +78,16 @@ class ConfigService:
             logger.error(f"Error getting system config '{key}': {e}")
             return default
 
+    def read_system_config(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get a system configuration value; None when absent, raises on a failed read.
+
+        For settings that gate safety controls, where "could not read" must not
+        look like "not set".
+        """
+        with get_session() as session:
+            config = session.query(SystemConfig).filter_by(key=key).first()
+            return config.value if config else None
+
     @default_on_error(False)
     def set_system_config(
         self,

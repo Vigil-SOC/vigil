@@ -85,11 +85,13 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
   }
 }
 
+const openCase = vi.fn()
+
 function renderScreen(path = '/triage') {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />} />
+        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={openCase} setViewFull={vi.fn()} />} />
         <Route path="/cases" element={<p>Cases page</p>} />
       </Routes>
     </MemoryRouter>,
@@ -123,6 +125,9 @@ describe('TriageScreen', () => {
     expect(vi.mocked(triageApi.get).mock.calls.length).toBe(calls)
 
     expect(screen.getByRole('link', { name: 'Started a case' })).toHaveAttribute('href', '/cases?case=case-9')
+    fireEvent.click(screen.getByRole('link', { name: 'Started a case' }))
+    expect(openCase).toHaveBeenCalledWith('case-9')
+    expect(screen.queryByText('Cases page')).not.toBeInTheDocument()
     const ghost = screen.getByText('inv-ghost')
     expect(ghost.closest('a')).toBeNull()
   })

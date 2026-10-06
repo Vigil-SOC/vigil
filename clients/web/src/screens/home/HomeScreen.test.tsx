@@ -23,6 +23,7 @@ const props = {
   openChat: vi.fn(),
   go: vi.fn(),
   goSettings: vi.fn(),
+  openCase: vi.fn(),
   setViewFull: vi.fn(),
 }
 
@@ -199,6 +200,8 @@ describe('Home', () => {
     expect(await screen.findByText('2 decisions wait on you. Everything else is running.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-9')
     expect(screen.getAllByRole('link', { name: 'Open case' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('link', { name: 'Open case' }))
+    expect(props.openCase).toHaveBeenCalledWith('case-9')
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(approvalsApi.approve).toHaveBeenCalledWith('act-rev')

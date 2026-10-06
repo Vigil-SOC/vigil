@@ -8,12 +8,14 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import {
   useCases,
   useCaseDetail,
+  notifyCasesChanged,
+  CASES_CHANGED,
+  CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
   type CaseFilters,
-  type CaseStrip,
   type Phase,
 } from './useCases'
-import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select, activateOnKey } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
@@ -62,17 +64,11 @@ function stripStates(by: Record<string, number>): string {
 }
 
 
-export default function CasesScreen({ setViewFull }: ConsoleScreenProps) {
-  // the open case is a ?case=<id> param, so a detail view is deep-linkable
+export default function CasesScreen({ setViewFull, openCase }: ConsoleScreenProps) {
+  // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
   const [filters, setFilters] = useState(INITIAL_CASE_FILTERS)
-  const { rows, total, strip, phase, error, reload } = useCases(filters)
-
-  const selectCase = useCallback(
-    (id: string) => setSearchParams({ case: id }),
-    [setSearchParams],
-  )
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
 
   useEffect(() => {
@@ -80,26 +76,9 @@ export default function CasesScreen({ setViewFull }: ConsoleScreenProps) {
   }, [selected, setViewFull])
 
   return selected ? (
-    <CasesDetail
-      id={selected}
-      rows={rows}
-      onSelect={selectCase}
-      onBack={backToList}
-      pageKey="cases"
-      reloadList={reload}
-    />
+    <CasesDetail id={selected} onBack={backToList} pageKey="cases" />
   ) : (
-    <CasesTable
-      rows={rows}
-      total={total}
-      strip={strip}
-      phase={phase}
-      error={error}
-      reload={reload}
-      filters={filters}
-      onFilters={setFilters}
-      onSelect={selectCase}
-    />
+    <CasesTable filters={filters} onFilters={setFilters} onSelect={openCase} />
   )
 }
 
@@ -107,7 +86,7 @@ export default function CasesScreen({ setViewFull }: ConsoleScreenProps) {
 function StateRow({ children }: { children: ReactNode }) {
   return (
     <tr>
-      <td colSpan={14}>
+      <td colSpan={13}>
         {children}
       </td>
     </tr>
@@ -115,33 +94,26 @@ function StateRow({ children }: { children: ReactNode }) {
 }
 
 function CasesTable({
-  rows,
-  total,
-  strip,
-  phase,
-  error,
-  reload,
   filters,
   onFilters,
   onSelect,
 }: {
-  rows: CaseRow[]
-  total: number
-  strip: CaseStrip
-  phase: Phase
-  error: string | null
-  reload: () => void
   filters: CaseFilters
   onFilters: (next: CaseFilters) => void
   onSelect: (id: string) => void
 }) {
-  const { hasPermission } = useAuth()
-  const canDelete = hasPermission('cases.delete')
+  const { rows, total, strip, phase, error, reload } = useCases(filters)
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Advanced search replaces the page until cleared. Results stay in API order.
   const [results, setResults] = useState<CaseRow[] | null>(null)
   const [newOpen, setNewOpen] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<CaseRow | null>(null)
+
+  // a case changed in the drawer over this list: its search results are stale
+  useEffect(() => {
+    const clear = () => setResults(null)
+    window.addEventListener(CASES_CHANGED, clear)
+    return () => window.removeEventListener(CASES_CHANGED, clear)
+  }, [])
 
   const setFilters = (partial: Partial<CaseFilters>) =>
     onFilters({
@@ -276,7 +248,6 @@ function CasesTable({
               <th>Age</th>
               <th>SLA</th>
               <th>Last activity</th>
-              <th />
             </tr>
           </thead>
           <tbody>
@@ -299,7 +270,13 @@ function CasesTable({
             )}
             {phase === 'ready' &&
               display.map((c) => (
-                <tr key={c.id} className="clickable" onClick={() => onSelect(c.id)}>
+                <tr
+                  key={c.id}
+                  className="clickable"
+                  tabIndex={0}
+                  onClick={() => onSelect(c.id)}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget) activateOnKey(() => onSelect(c.id))(e) }}
+                >
                   <td><span className="id-cell">{c.id}</span></td>
                   <td className="case-title" title={c.title}>
                     {c.needsYou && <span className="tag">Needs you</span>}
@@ -316,35 +293,6 @@ function CasesTable({
                   <td className="muted">{c.age}</td>
                   <td><span className={`sla ${c.slaState}`}>{c.sla}</span></td>
                   <td className="muted">{c.updated}</td>
-                  <td>
-                    <span className="row-act" style={{ opacity: 1 }}>
-                      {canDelete && (
-                        <button
-                          type="button"
-                          aria-label={`Delete case ${c.id}`}
-                          title="Delete case"
-                          style={{ color: 'var(--crit)' }}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setDeleteTarget(c)
-                          }}
-                        >
-                          <Icon name="trash" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        aria-label={`Open case ${c.id}`}
-                        title="Open case"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onSelect(c.id)
-                        }}
-                      >
-                        <Icon name="arrowR" />
-                      </button>
-                    </span>
-                  </td>
                 </tr>
               ))}
           </tbody>
@@ -374,14 +322,6 @@ function CasesTable({
       )}
 
       <NewCaseDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={reload} />
-      <DeleteCaseDialog
-        target={deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        onDeleted={(deleted) => {
-          setResults((current) => current?.filter((c) => c.id !== deleted.id) ?? null)
-          reload()
-        }}
-      />
     </>
   )
 }
@@ -811,13 +751,37 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
   )
 }
 
-function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; c: CaseRow | null; rows: CaseRow[]; onClose: () => void; onMerged: () => void }) {
+function MergeCaseDialog({ open, c, onClose, onMerged }: { open: boolean; c: CaseRow | null; onClose: () => void; onMerged: () => void }) {
   const [target, setTarget] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [rows, setRows] = useState<CaseRow[]>([])
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [loadError, setLoadError] = useState('')
+  const [loadKey, setLoadKey] = useState(0)
   const candidates = useMemo(() => rows.filter((r) => r.id !== c?.id), [rows, c])
 
-  useEffect(() => { if (open) { setTarget(''); setErr('') } }, [open])
+  // the picker loads its own list: the drawer holds none
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setTarget('')
+    setErr('')
+    setPhase('loading')
+    casesApi
+      .getAll({ limit: CASE_PAGE_LIMIT })
+      .then((res) => {
+        if (cancelled) return
+        setRows((res.data.cases ?? []).map((x) => mapQueueCase(x)))
+        setPhase('ready')
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setLoadError(caseActionError(e, 'Failed to load cases'))
+        setPhase('error')
+      })
+    return () => { cancelled = true }
+  }, [open, loadKey])
 
   const submit = async () => {
     if (!c) return
@@ -847,14 +811,20 @@ function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; 
           <Select
             value={target}
             onSelect={setTarget}
-            placeholder="Select target case…"
+            placeholder={phase === 'loading' ? 'Loading cases…' : 'Select target case…'}
             options={candidates.map((r) => ({ value: r.id, label: `${r.id} — ${r.title}` }))}
           />
         </label>
+        {phase === 'error' && (
+          <div role="alert" className="text-[13px]" style={{ color: 'var(--crit)' }}>
+            Couldn’t load cases: {loadError}{' '}
+            <button type="button" className="btn ghost" onClick={() => setLoadKey((k) => k + 1)}>Retry</button>
+          </div>
+        )}
         {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
         <div className="flex justify-end gap-2.5">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Merging…' : 'Merge case'}</button>
+          <button className="btn primary" onClick={submit} disabled={busy || phase !== 'ready'}>{busy ? 'Merging…' : 'Merge case'}</button>
         </div>
       </div>
     </Popup>
@@ -863,79 +833,27 @@ function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; 
 
 export function CasesDetail({
   id,
-  rows,
-  onSelect,
   onBack,
+  onExpand,
   pageKey,
-  reloadList,
 }: {
   id: string
-  rows: CaseRow[]
-  onSelect: (id: string) => void
+  /** Leave the case: back to the list, or close the drawer. */
   onBack: () => void
+  /** Set only in the drawer. */
+  onExpand?: () => void
   pageKey: string
-  reloadList: () => void
 }) {
-  const { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail } =
+  const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail } =
     useCaseDetail(id)
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
-  // prefer the freshly-fetched detail; fall back to the list row while it loads
-  const c = row || rows.find((x) => x.id === id) || null
-  const [listQuery, setListQuery] = useState('')
   const [action, setAction] = useState<'edit' | 'merge' | 'delete' | null>(null)
-
-  const listRows = useMemo(() => {
-    const q = listQuery.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter(
-      (r) =>
-        r.id.toLowerCase().includes(q) ||
-        r.title.toLowerCase().includes(q) ||
-        r.ownerName.toLowerCase().includes(q),
-    )
-  }, [rows, listQuery])
+  // a list left mounted behind the drawer reloads on this
+  const onChanged = () => { reloadDetail(); notifyCasesChanged() }
 
   return (
-    <div className="split">
-      <div className="list-pane">
-        <div className="flex items-center gap-2 flex-wrap px-[22px] py-[13px] border-b border-line">
-          <div className="search" style={{ flex: 1, minWidth: 0 }}>
-            <span><Icon name="search" /></span>
-            <input
-              placeholder="Search cases…"
-              value={listQuery}
-              onChange={(e) => setListQuery(e.target.value)}
-            />
-          </div>
-        </div>
-        <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-          {listRows.length === 0 && (
-            <div className="muted" style={{ padding: '16px 18px', fontSize: 13 }}>
-              {rows.length === 0
-                ? 'No cases yet. Upload findings or create a case to start case tracking.'
-                : 'No cases match your filters.'}
-            </div>
-          )}
-          {listRows.map((cr) => (
-            <div
-              key={cr.id}
-              className={`case-row${cr.id === id ? ' sel' : ''}`}
-              onClick={() => onSelect(cr.id)}
-            >
-              <div className="cr-top">
-                <span className="cr-title">{cr.title}</span>
-                <span className={`prio ${cr.prio}`} style={{ marginLeft: 'auto' }}>{cr.prio[0].toUpperCase()}</span>
-              </div>
-              <div className="cr-meta">
-                <span className="mono">{cr.id}</span>
-                <span className={`status ${cr.status}`}>{cr.status}</span>
-                <span style={{ marginLeft: 'auto' }}>{cr.findings} findings</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+    <>
       <CasePage
         id={id}
         c={c}
@@ -948,34 +866,34 @@ export function CasesDetail({
         error={error}
         pageKey={pageKey}
         onBack={onBack}
+        onExpand={onExpand}
         onEdit={() => setAction('edit')}
         onMerge={() => setAction('merge')}
         onDelete={() => setAction('delete')}
         canDelete={canDelete}
-        onChanged={() => { reloadDetail(); reloadList() }}
+        onChanged={onChanged}
       />
 
       <EditCaseDialog
         open={action === 'edit'}
         c={c}
         onClose={() => setAction(null)}
-        onSaved={() => { reloadDetail(); reloadList() }}
+        onSaved={onChanged}
       />
       <MergeCaseDialog
         open={action === 'merge'}
         c={c}
-        rows={rows}
         onClose={() => setAction(null)}
-        onMerged={() => { reloadList(); onBack() }}
+        onMerged={() => { notifyCasesChanged(); onBack() }}
       />
       <DeleteCaseDialog
         target={action === 'delete' ? c : null}
         onClose={() => setAction(null)}
         onDeleted={() => {
-          reloadList()
+          notifyCasesChanged()
           onBack()
         }}
       />
-    </div>
+    </>
   )
 }

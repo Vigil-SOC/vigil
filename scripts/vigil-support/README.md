@@ -6,13 +6,15 @@ Python), and runs on Linux and macOS. This file is the record of the bundle
 format.
 
 ```
-sh scripts/vigil-support/vigil-support.sh [--mode native|compose|desktop] [--state-dir DIR] [--since DAYS]
+sh scripts/vigil-support/vigil-support.sh [--mode native|compose|desktop|helm] [--state-dir DIR] [--since DAYS]
+                                           [--release NAME] [--namespace NS]
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `--mode` | Only look for that kind of install. `native` and `compose` mean a checkout, `desktop` means Desktop standalone. |
+| `--mode` | Only look for that kind of install. `native` and `compose` mean a checkout, `desktop` means Desktop standalone, `helm` means a Helm release read from the administrator's machine (see [Helm](#helm)). |
 | `--state-dir` | Vigil's State Directory. Default `$VIGIL_DIR`, else `~/.vigil` (Desktop: its app-data directory). |
+| `--release`, `--namespace` | `--mode helm` only: pick the Helm release and its namespace. Either one without `--mode helm` is an error. |
 | `--since DAYS` | How far back journal and macOS log sources reach. Default 7. macOS `log show` uses 24 h unless `--since` is given. |
 
 The bundle is written to the current directory as
@@ -27,8 +29,11 @@ collected into a new one.
   script, `$VIGIL_REPO_ROOT`, or the current directory) plus running
   `deeptempo-*` containers. `compose` when `deeptempo-backend` runs, else `native`.
 - **Desktop standalone**: running containers of Compose project `vigil`.
+- **Helm**: only with `--mode helm`, never probed (a stray kubeconfig on a Docker
+  host would be contacted otherwise). `helm list -A -o json` (`-n NS` with
+  `--namespace`), keeping releases whose chart is `vigil-*`.
 - More than one install found: nothing is written, the installs are listed, and
-  the exit code is 1. Pick one with `--mode`.
+  the exit code is 1. Pick one with `--mode` (Helm: `--release NAME --namespace NS`).
 - None found: a host-only bundle that says so and records, in `manifest.json`
   under `looked`, where the script looked.
 
@@ -51,14 +56,14 @@ with no install found each is an empty directory with a `not collected` entry.
 | --- | --- |
 | `configuration/env` | the checkout's `.env` (native, compose) |
 | `configuration/compose-config.yml` | `docker compose -p <project> -f <files> config` (compose, desktop). The project and files come from the `com.docker.compose.project` and `...config_files` container labels, else the checkout's `infra/docker/docker-compose.yml` or the Desktop's staged copy. If interpolation fails (the Desktop injects its tokens at launch) the uninterpolated file is used. |
-| `configuration/state/` | `backups.json` (State Directory), `mcp-config.json`, `INTENT.md`, `.vigil-autostart` (checkout, else State Directory) |
+| `configuration/state/` | `backups.json` and `detection_sources.json` (State Directory, see below), `mcp-config.json`, `INTENT.md`, `.vigil-autostart` (checkout, else State Directory) |
 | `configuration/deployment/` | native, compose: `infra/docker/` compose, OpenTelemetry, Prometheus and Bifrost config plus Grafana provisioning YAML. Desktop: its staged compose file. |
 | `configuration/never-included/` | see below |
 | `health/*.json`, `health/*.txt` | `curl` of the API `/api/health` (`VIGIL_API_URL`), daemon `:9091/health` and `/status`, webhook receiver `:8081/health`, agent `:6989` and `:6990` `/healthz`, Bifrost `:8080/health`, stored as returned. An endpoint that does not answer is `not collected` with curl's message. |
 | `health/containers.txt` | `docker inspect --format` per container: state, restart count, start time, image. Never raw inspect, never container environments. |
 | `logs/checkout/` | native, compose: everything under the checkout's `logs/`, including `.1`-`.4` rotations, PID files and `containers/` |
-| `logs/state/vigil.log` | native, compose: `vigil.log` in the State Directory |
-| `logs/docker/<container>.log` | compose, desktop: `docker logs --timestamps --since <DAYS> days` |
+| `logs/state/vigil.log` | `vigil.log` in the State Directory (all modes, see below) |
+| `logs/docker/<container>.log` | all modes: `docker logs --timestamps --since <DAYS> days`. On native these are Postgres, Redis and Bifrost, in addition to the snapshots `start.sh` saves under `logs/checkout/containers/`. |
 | `logs/desktop/` | desktop: the app log directory (`vigil-desktop.log*` and the `containers/vigil-*.log` snapshots written on quit). Linux `<State Directory>/logs` (`~/.config/Vigil/logs`), macOS `~/Library/Logs/Vigil`. |
 
 Containers are listed from `docker ps -a`: names `deeptempo-*` or the install's
@@ -66,11 +71,77 @@ Compose project (native, compose), project `vigil` (desktop). Lab and demo
 containers (`deeptempo-splunk`, `-kafka`, `-elasticsearch`, `-kibana`,
 `-misp-*`, `-pgadmin`) and any Ollama container are `not collected` with the
 reason `excluded: lab/demo container; state <running state>`. A container that
-cannot be read is `not collected` with docker's message. Native installs take
-no `docker logs`: `start.sh` saves those under the checkout's `logs/`.
+cannot be read is `not collected` with docker's message.
 
-Under Compose and Desktop the State Directory lives in a container volume, which
-is not read; only files on the host are.
+### State Directory
+
+Native reads `backups.json`, `detection_sources.json` and `vigil.log` from the
+host State Directory. Under Compose and Desktop the State Directory is a volume
+of the backend container, so without `--state-dir` they are read from there:
+
+- The backend is the kept container with Compose service label `backend` (else
+  named `deeptempo-backend`). The mount is the destination ending in `/.vigil`
+  in `docker inspect --format` on its `.Mounts` (`/home/vigil/.vigil` in both
+  compose files).
+- Each file comes from `docker cp <backend>:<mount>/<file> -`, a TAR stream that
+  works on a stopped container and runs nothing in it. The one member is
+  extracted to stdout, so it goes through the usual size cap, time limit and
+  redaction. A symlink or directory is `not collected`, never followed.
+- No backend container, no such mount, or a file missing in the container: each
+  file is `not collected` with that reason (docker's message for a missing file).
+- `--state-dir` makes the host copy win; the default `~/.vigil` is not read in
+  these modes, since it may be a stale native directory.
+- The `backup-repository-N` entries are listed from the copied `backups.json`;
+  those paths are inside the container, so they are noted as not checked.
+
+### Helm
+
+`--mode helm` runs on the administrator's machine (Linux or macOS) with their
+current `kubectl` context and `helm`; both must be on `PATH`. No image is pulled
+and nothing is started in the cluster; the one helper is a `kubectl port-forward`
+that runs under the same time limit and clean-up as everything else, and is gone
+on exit, INT and TERM. The host is not the install, so the Docker and checkout
+detection is skipped and `system/` holds only the administrator's host files.
+Every command names the release's namespace with `-n`. With no release found, or
+`helm` or `kubectl` missing (`<tool> not found`), the bundle is a host-only one
+and `manifest.json` `looked` says what `helm list` returned.
+
+Pods are selected with `app.kubernetes.io/instance=<release>`. The lab components
+`pgadmin` and `splunk` are left out and recorded as
+`excluded: lab/demo component <name>; state <phase>`.
+
+| Path | Source |
+| --- | --- |
+| `configuration/helm-values.yaml`, `helm-values-all.yaml` | `helm get values <release> -n <ns> -o yaml`, user-supplied and `--all`. Read first, so the values they hold are learned and redacted everywhere else. The Secret names and key names (`existingSecret`, `existingSecretKey`, `existingSecretPasswordKey`, `userPasswordKey`) are kept. |
+| `configuration/kubernetes-secrets.txt` | Secrets of the namespace: name, type and key names. Never values; `helm get manifest` is not collected. |
+| `configuration/configmaps/<name>.yaml` | each ConfigMap of the release |
+| `health/pods.txt`, `workloads.txt`, `pods-describe.txt` | `kubectl get pods -o wide`, `get deploy,statefulset,job,hpa`, `describe pods` |
+| `health/api.json` | `/api/health` through one `kubectl port-forward` to the backend Service (local port chosen by kubectl). Its `version` is `install.api_version`. If the forward does not come up in time, `not collected` with `timed out after N s`. The other health endpoints are `not collected`: `Helm: only /api/health is read; see health/pods.txt`. |
+| `logs/pods/<pod>/<container>.log` | `kubectl logs --timestamps --since <DAYS*24>h` for every pod and container (init containers too) |
+| `logs/pods/<pod>/<container>.previous.log` | the same with `--previous`; `not collected`, `no previous container`, where there is none |
+| `logs/pods/` | recorded with the reason that a pod replaced or rescheduled cannot be read; that needs the cluster's own log collection |
+| `logs/pods/postgres/`, `logs/pods/redis/` | `not collected`, `external, not applicable`, when the release has no such pod |
+| `system/tools.txt`, `nodes.txt`, `events.txt` | `kubectl version --client` and `helm version`; the NODE column of `get pods -o wide`; `kubectl get events --sort-by=.lastTimestamp` for the namespace |
+| `system/host.txt`, `clock.txt`, `os-release.txt` | as above, for the administrator's machine |
+
+The other `system/` files are `not collected`: `Helm: the host is not the install`.
+
+A response of `forbidden` is `not collected` with the reason
+`needs elevation: <first line of the cluster's message>`, which names the missing
+permission. The final output then says that cluster permissions are missing,
+instead of suggesting `sudo`. If `get pods` is refused, `logs/pods/` is that one
+entry.
+
+**By-hand release check** (against a real cluster, before a release): install the
+chart with planted secrets (`--set secrets.postgresPassword=PLANTED-pg
+--set secrets.jwtSecretKey=PLANTED-jwt`, plus `existingSecret` pointing at a
+real Secret), force a container restart (for example `kubectl exec <pod> -- kill 1`; deleting the pod
+creates a new one with no previous log), then run `sh vigil-support.sh --mode helm`. Check that every section above is
+present or `not collected` with a reason, that `PLANTED-*` appears nowhere in the
+unpacked bundle (`grep -r PLANTED`), that the Secret name from `existingSecret`
+does, that `kubernetes-secrets.txt` holds no values, and that the restarted
+container has a `.previous.log` from before the restart. Repeat with a
+read-only user to see the `needs elevation` entries.
 
 ### Never included
 
@@ -100,6 +171,7 @@ in `secrets.enc`.
 
 Logs a normal user cannot read are `not collected` with the reason
 `needs elevation`; the final output says that running with `sudo` includes them.
+(Helm: see above.)
 
 ## `manifest.json`
 
@@ -135,13 +207,15 @@ Every item appears exactly once with a `state` and a free-text `reason`.
 | Code | Meaning |
 | --- | --- |
 | 0 | A bundle was written. Not-collected items are listed in the final output. |
-| 1 | No bundle was written: several installs found, not enough free space, a missing redaction filter, bad options, or a write failure. |
+| 1 | No bundle was written: several installs found (several Helm releases too), not enough free space, a missing redaction filter, bad options, or a write failure. |
 
 ## `SUMMARY.txt`
 
 A short plain list: version, mode, host OS, UTC time; a line when the tool's
 `VERSION` differs from the version `/api/health` reports; the not-collected
-items with reasons; per-file redaction counts; the sentence that credentials in
+items with reasons; the never-included entries under their own heading
+"Never included (existence only)" (they are by design, not failures; the
+manifest records them as `not collected`, reason `never included; ...`); per-file redaction counts; the sentence that credentials in
 free log text matching no known format cannot be guaranteed caught; and the data
 notice.
 
@@ -198,7 +272,7 @@ Printed at the start and end of every run, and ending `SUMMARY.txt`:
 > uploaded. Review the bundle before you share it.
 
 The end of the run then prints the bundle path, size and SHA-256 (`sha256sum`
-or `shasum -a 256`), then the not-collected items.
+or `shasum -a 256`), then the not-collected items and the never-included entries.
 
 ## `VERSION`
 
@@ -211,4 +285,6 @@ bumps it). Its first word is the version; the rest of the line is ignored.
 `PATH`. It reads these overrides, which are not for normal use:
 `VIGIL_SUPPORT_SOURCE_SECS`, `VIGIL_SUPPORT_LOG_SECS`, `VIGIL_SUPPORT_TOTAL_SECS`,
 `VIGIL_SUPPORT_SOURCE_MAX`, `VIGIL_SUPPORT_NOW` (the timestamp in the name) and
-`VIGIL_SUPPORT_FS_ROOT` (a prefix for `/etc` and `/var/log` paths).
+`VIGIL_SUPPORT_FS_ROOT` (a prefix for `/etc` and `/var/log` paths). The Helm tests
+stub `kubectl` and `helm` and take pod, component and label names from a real
+`helm template` of `infra/helm/vigil` (skipped when `helm` is absent).

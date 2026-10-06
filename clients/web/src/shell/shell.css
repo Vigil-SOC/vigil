@@ -412,21 +412,6 @@ input.vg-skill-input {
   cursor: default;
 }
 
-.vg-drawer-tools {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ln0);
-  background: var(--bg1);
-}
-
-.vg-case-drawer .split {
-  flex: 1;
-  min-height: 0;
-}
-
 .vg-header-end {
   display: flex;
   align-items: center;

@@ -143,7 +143,7 @@ function Expanded({
   )
 }
 
-const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = () => {
+const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) => {
   const [searchParams, setSearchParams] = useSearchParams()
   const kind = searchParams.get('kind') ?? ''
   const source = searchParams.get('source') ?? ''
@@ -195,11 +195,22 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = () => {
     {
       key: 'state',
       label: 'State',
-      render: (row) => row.case_door ? (
-        <Link to={`/cases?case=${encodeURIComponent(row.case_door)}`} onClick={(event) => event.stopPropagation()}>
-          {row.state_label}
-        </Link>
-      ) : row.state_label || BLANK,
+      render: (row) => {
+        const door = row.case_door
+        return door ? (
+          <Link
+            to={`/cases?case=${encodeURIComponent(door)}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+              event.preventDefault()
+              openCase(door)
+            }}
+          >
+            {row.state_label}
+          </Link>
+        ) : row.state_label || BLANK
+      },
       sortVal: (row) => row.state_label,
     },
     { key: 'severity', label: 'Severity', render: (row) => row.severity_band, sortVal: (row) => row.severity_band },
@@ -211,7 +222,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = () => {
       render: (row) => row.pickup_seconds === null ? BLANK : fmtDuration(row.pickup_seconds),
       sortVal: (row) => row.pickup_seconds ?? -1,
     },
-  ], [])
+  ], [openCase])
   const tableSort = useTableSort(columns, { key: 'server', dir: 'asc' })
   const open = data?.rows.find((row) => row.id === openId) ?? null
 

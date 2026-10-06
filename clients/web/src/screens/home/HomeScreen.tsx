@@ -74,14 +74,17 @@ function DecisionCard({
   busy,
   onApprove,
   onReject,
+  onOpenCase,
 }: {
   item: NeedsYouItem
   busy: boolean
   onApprove: (id: string) => void
   onReject: (id: string, reason: string) => void
+  onOpenCase: (id: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
+  const caseId = item.case_id
   const meta = [item.kind, item.case_id, waited(item.created_at)].filter(Boolean).join(' · ')
 
   return (
@@ -125,8 +128,16 @@ function DecisionCard({
               Reject
             </button>
           )}
-          {item.case_id && (
-            <Link className="btn ghost" to={`/cases?case=${encodeURIComponent(item.case_id)}`}>
+          {caseId && (
+            <Link
+              className="btn ghost"
+              to={`/cases?case=${encodeURIComponent(caseId)}`}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+                event.preventDefault()
+                onOpenCase(caseId)
+              }}
+            >
               Open case
             </Link>
           )}
@@ -136,7 +147,7 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen(_props: ConsoleScreenProps) {
+export default function HomeScreen({ openCase }: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [count, setCount] = useState<number | null>(null)
   const [share, setShare] = useState<number | null>(null)
@@ -303,6 +314,7 @@ export default function HomeScreen(_props: ConsoleScreenProps) {
               busy={busy !== null}
               onApprove={(id) => void run(id, () => approvalsApi.approve(id))}
               onReject={(id, reason) => void run(id, () => approvalsApi.reject(id, reason))}
+              onOpenCase={openCase}
             />
           ))}
         </div>

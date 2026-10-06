@@ -1626,7 +1626,7 @@ def _environment_wins() -> bool:
 
 
 def _stored_force_manual(config_service) -> bool:
-    value = config_service.get_system_config(APPROVAL_CONFIG_KEY)
+    value = config_service.read_system_config(APPROVAL_CONFIG_KEY)
     if isinstance(value, dict):
         return bool(value.get("enabled", False))
     return False

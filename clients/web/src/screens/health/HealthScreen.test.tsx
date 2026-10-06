@@ -40,14 +40,14 @@ const modelRow = (model: string) => screen.getByText(model).closest('tr') as HTM
 
 describe('health spend table', () => {
   it('shows a priced model and a genuine zero as dollar amounts', () => {
-    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />)
+    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
 
     expect(within(modelRow('claude-priced')).getByText('$1.50')).toBeInTheDocument()
     expect(within(modelRow('claude-free-tier')).getByText('$0.00')).toBeInTheDocument()
   })
 
   it('never renders a not-billed or unpriced model as a dollar amount, and never says "free"', () => {
-    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />)
+    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
 
     const selfHosted = modelRow('ollama/llama3')
     expect(within(selfHosted).getAllByText('not billed')).toHaveLength(2)
@@ -62,7 +62,7 @@ describe('health spend table', () => {
   })
 
   it('says how many calls the total and each model could not price (#1115)', () => {
-    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />)
+    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
 
     const total = screen.getByText('Total cost').parentElement as HTMLElement
     expect(within(total).getByText('$1.50')).toBeInTheDocument()

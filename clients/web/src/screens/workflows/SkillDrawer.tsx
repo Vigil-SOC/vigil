@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Icon } from '../../shared/icons'
+import { HoldButton } from '../../shared/HoldButton'
 import { Popup } from '../../shared/ui'
 import { skillsApi, type ApiSkillDetail } from '../../services/skillsApi'
 import type { Skill } from '../../data/appData'
@@ -267,7 +267,7 @@ export function SkillDeleteModal({
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn danger" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={del}><Icon name="trash" /> {busy ? 'Deleting…' : 'Delete'}</button>
+          <HoldButton label="Delete" disabled={busy} onConfirm={del} />
         </div>
       </div>
     </Popup>
