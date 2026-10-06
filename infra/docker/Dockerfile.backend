@@ -175,6 +175,8 @@ RUN python -m core.integrations.mcp.verify_catalog
 
 EXPOSE 6987
 
+# Liveness by intent: /api/health is 200 whenever the process is up. Compose and
+# desktop startup wait on it, so readiness (/api/health/ready) would deadlock them.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://localhost:6987/api/health || exit 1
 

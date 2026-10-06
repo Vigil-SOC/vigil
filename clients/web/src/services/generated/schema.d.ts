@@ -4046,9 +4046,30 @@ export interface paths {
         };
         /**
          * Health Check
-         * @description Health check endpoint with storage backend info.
+         * @description Liveness: always HTTP 200 while the process is up; ``status`` in the
+         *     body reports "healthy" or "degraded" (storage backend info included).
          */
         get: operations["get_api_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health Ready
+         * @description Readiness: HTTP 503 exactly when ``/api/health`` reports "degraded".
+         */
+        get: operations["get_api_health_ready"];
         put?: never;
         post?: never;
         delete?: never;
@@ -19540,6 +19561,26 @@ export interface operations {
         };
     };
     get_api_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_api_health_ready: {
         parameters: {
             query?: never;
             header?: never;
