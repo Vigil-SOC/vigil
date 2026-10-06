@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
@@ -724,7 +725,7 @@ class DataPoller:
 
         async def health_check(request: web.Request) -> web.Response:
             """Health check endpoint."""
-            return web.json_response({"status": "healthy", "stats": self.stats})
+            return web.json_response({"status": "healthy"})
 
         app = web.Application()
         app.router.add_post("/ingest", handle_webhook)
@@ -733,7 +734,9 @@ class DataPoller:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
+        site = web.TCPSite(
+            runner, get_settings().daemon_bind_host, self.config.webhook_port
+        )
 
         logger.info(f"Webhook server starting on port {self.config.webhook_port}")
         try:

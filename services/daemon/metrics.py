@@ -158,7 +158,7 @@ class MetricsServer:
                 await runner.setup()
                 runners.append(runner)
                 logger.info("%s server starting on port %d", label, port)
-                await web.TCPSite(runner, "0.0.0.0", port).start()
+                await web.TCPSite(runner, get_settings().daemon_bind_host, port).start()
 
             await shutdown_event.wait()
         except Exception:
