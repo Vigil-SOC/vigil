@@ -319,6 +319,12 @@ BEGIN {
     allow["auth_min_password_length"] = 1
     allow["auth_max_password_bytes"] = 1
     allow["password_reset_ttl_seconds"] = 1
+    # Helm values that name a Secret or a key inside it, not a value; support
+    # needs to see which Secret an install points at.
+    allow["existing_secret"] = 1
+    allow["existing_secret_key"] = 1
+    allow["existing_secret_password_key"] = 1
+    allow["user_password_key"] = 1
 
     if (names == "") fail("-v names=<secret-names.txt> is required")
     while ((r = (getline line < names)) > 0) {

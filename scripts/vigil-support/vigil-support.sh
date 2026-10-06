@@ -2,7 +2,8 @@
 # Collect a support bundle for Vigil: one redacted tar.gz in the current
 # directory. Portable POSIX sh, baseline tools only. Format: README.md.
 #
-#   vigil-support.sh [--mode native|compose|desktop] [--state-dir DIR] [--since DAYS]
+#   vigil-support.sh [--mode native|compose|desktop|helm] [--state-dir DIR] [--since DAYS]
+#                    [--release NAME] [--namespace NS]   (the last two: --mode helm only)
 #
 # Exit 0: a bundle was written. Exit 1: none was.
 
@@ -72,6 +73,8 @@ trap 'exit 141' PIPE
 
 MODE_ARG=
 STATE_ARG=
+REL_ARG=
+NS_ARG=
 SINCE=7
 SINCE_SET=0
 while [ $# -gt 0 ]; do
@@ -80,13 +83,13 @@ while [ $# -gt 0 ]; do
         sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
-    --mode | --state-dir | --since)
+    --mode | --state-dir | --since | --release | --namespace)
         [ $# -ge 2 ] || die "$1 needs a value"
         _opt=$1
         _val=$2
         shift 2
         ;;
-    --mode=* | --state-dir=* | --since=*)
+    --mode=* | --state-dir=* | --since=* | --release=* | --namespace=*)
         _opt=${1%%=*}
         _val=${1#*=}
         shift
@@ -96,11 +99,15 @@ while [ $# -gt 0 ]; do
     case $_opt in
     --mode)
         case $_val in
-        native | compose | desktop) MODE_ARG=$_val ;;
-        *) die "--mode must be native, compose or desktop" ;;
+        native | compose | desktop | helm) MODE_ARG=$_val ;;
+        *) die "--mode must be native, compose, desktop or helm" ;;
         esac
         ;;
     --state-dir) STATE_ARG=$_val ;;
+    --release | --namespace)
+        case $_val in '' | *[!A-Za-z0-9._-]*) die "$_opt takes a Kubernetes name" ;; esac
+        if [ "$_opt" = --release ]; then REL_ARG=$_val; else NS_ARG=$_val; fi
+        ;;
     --since)
         case $_val in
         '' | *[!0-9]* | 0) die "--since takes a whole number of days" ;;
@@ -110,6 +117,13 @@ while [ $# -gt 0 ]; do
         ;;
     esac
 done
+
+HELM_REQ=0
+[ "$MODE_ARG" = helm ] && HELM_REQ=1
+if [ "$HELM_REQ" = 0 ] && { [ -n "$REL_ARG" ] || [ -n "$NS_ARG" ]; }; then
+    die "--release and --namespace need --mode helm"
+fi
+[ "$HELM_REQ" = 1 ] && [ -n "$STATE_ARG" ] && die "--state-dir does not apply to --mode helm"
 
 OUTDIR=$(pwd -P)
 [ -w "$OUTDIR" ] || die "cannot write to $OUTDIR"
@@ -175,7 +189,7 @@ run_limited() { # secs stem cmd...
     {
         mkfifo "$_stem.fifo" || exit 1
         wc -c <"$_stem.fifo" >"$_stem.cnt" &
-        ("$@" 2>"$_stem.err"; echo $? >"$_stem.st") | tee "$_stem.fifo" | tail -c "$SRC_MAX" >"$_stem.out"
+        ("$@" 2>"$_stem.err" </dev/null; echo $? >"$_stem.st") | tee "$_stem.fifo" | tail -c "$SRC_MAX" >"$_stem.out"
         wait
     } &
     supervise "$_secs" "$_stem" $!
@@ -261,7 +275,46 @@ err_line() { # stem
 
 ELEV_RE='permission denied|not permitted|insufficient permissions|must be root|access denied|administrator'
 
-# collect_cmd DEST SECS SOURCE ELEV cmd args...   (ELEV=1: a refusal means "needs elevation")
+# What went wrong with the run_limited run just finished (STEM, RC); nothing when
+# it went well. ELEV 1: a refusal means "needs elevation"; 2: so does kubectl's
+# or helm's "forbidden", with the cluster's message naming the missing permission.
+# ABSENT_RE / ABSENT_WHY: a failure matching this is an expected absence.
+failure_reason() { # stem elev limit
+    if [ "$RC" = 124 ]; then
+        echo "timed out after ${3} s"
+        return
+    fi
+    case $2 in
+    1)
+        # journalctl says so with exit 0, so a clean exit only counts for its message
+        _re=$ELEV_RE
+        [ "$RC" = 0 ] && _re='insufficient permissions'
+        if { cat "$1.err"; [ "$(wc -c <"$1.out")" -lt 2048 ] && cat "$1.out"; } 2>/dev/null | grep -qiE "$_re"; then
+            echo "needs elevation"
+            return
+        fi
+        ;;
+    2)
+        if [ "$RC" != 0 ] && grep -qi forbidden "$1.err" 2>/dev/null; then
+            _e=$(err_line "$1")
+            echo "needs elevation${_e:+: $_e}"
+            return
+        fi
+        ;;
+    esac
+    [ "$RC" = 0 ] && return
+    if [ -n "$ABSENT_RE" ] && grep -qiE "$ABSENT_RE" "$1.err" 2>/dev/null; then
+        echo "$ABSENT_WHY"
+        return
+    fi
+    _e=$(err_line "$1")
+    echo "exit status $RC${_e:+: $_e}"
+}
+
+ABSENT_RE=
+ABSENT_WHY=
+
+# collect_cmd DEST SECS SOURCE ELEV cmd args...   (ELEV: see failure_reason)
 collect_cmd() {
     _dest=$1
     _lim=$2
@@ -285,26 +338,16 @@ collect_cmd() {
     [ "$_lim" -gt "$_left" ] && _lim=$_left
     _stem=$RAW/$ITEM
     run_limited "$_lim" "$_stem" "$@"
-    _denied=0
-    if [ "$_elev" = 1 ]; then
-        # journalctl says so with exit 0, so a clean exit only counts for its message
-        _re=$ELEV_RE
-        [ "$RC" = 0 ] && _re='insufficient permissions'
-        { cat "$_stem.err"; [ "$(wc -c <"$_stem.out")" -lt 2048 ] && cat "$_stem.out"; } 2>/dev/null |
-            grep -qiE "$_re" && _denied=1
-    fi
-    if [ "$RC" = 124 ]; then
-        skip "$_dest" "timed out after ${_lim} s" "$_src"
-    elif [ "$_denied" = 1 ]; then
-        skip "$_dest" "needs elevation" "$_src"
-    elif [ "$RC" != 0 ]; then
-        _e=$(err_line "$_stem")
-        skip "$_dest" "exit status $RC${_e:+: $_e}" "$_src"
+    _why=$(failure_reason "$_stem" "$_elev" "$_lim")
+    if [ -n "$_why" ]; then
+        skip "$_dest" "$_why" "$_src"
     else
         [ "$LEARN" = 1 ] && learn "$_stem.out"
         store "$_dest" "$_stem" "$_src"
     fi
     EXTRA_CUT=0
+    ABSENT_RE=
+    ABSENT_WHY=
 }
 
 # collect_file DEST SRC ELEV ROOT...   A symlink is followed only to a regular
@@ -375,7 +418,53 @@ find_checkout() {
     done
 }
 
+# Helm is chosen with --mode helm only, never probed: a stray kubeconfig on a
+# Docker host would otherwise be contacted. HELM_RELS lists the Vigil releases as
+# name, namespace, chart and app version, tab separated.
+HELM_RELS=$WORK/helm-releases.txt
+HELM_WHY=
+detect_helm() {
+    : >"$HELM_RELS"
+    for _t in helm kubectl; do
+        if ! has "$_t"; then
+            HELM_WHY="$_t not found"
+            echo "$_t: not found; no release looked for" >>"$LOOKED"
+            return
+        fi
+    done
+    if [ -n "$NS_ARG" ]; then _scope="-n $NS_ARG"; else _scope=-A; fi
+    ITEM=$((ITEM + 1))
+    # shellcheck disable=SC2086
+    run_limited 30 "$RAW/$ITEM" helm list -o json $_scope
+    if [ "$RC" != 0 ]; then
+        _e=$(err_line "$RAW/$ITEM")
+        HELM_WHY="helm list failed (exit $RC)"
+        printf 'helm list %s: failed (exit %s)%s\n' "$_scope" "$RC" "${_e:+: $_e}" >>"$LOOKED"
+        return
+    fi
+    # One JSON object per line; only names that are safe in a command line and a path.
+    tr '{}' '\n\n' <"$RAW/$ITEM.out" | awk -F '\t' '
+        function f(k,   m) {
+            if (!match($0, "\"" k "\" *: *\"[^\"]*\"")) return ""
+            m = substr($0, RSTART, RLENGTH)
+            sub(/^"[^"]*" *: *"/, "", m); sub(/"$/, "", m)
+            return m
+        }
+        f("name") ~ /^[A-Za-z0-9._-]+$/ && f("namespace") ~ /^[A-Za-z0-9._-]+$/ {
+            print f("name") "\t" f("namespace") "\t" f("chart") "\t" f("app_version")
+        }' >"$WORK/helm-all.txt"
+    awk -F '\t' -v rel="$REL_ARG" '$3 ~ /^vigil-/ && (rel == "" || $1 == rel)' "$WORK/helm-all.txt" >"$HELM_RELS"
+    _all=$(wc -l <"$WORK/helm-all.txt" | tr -d ' ')
+    _v=$(wc -l <"$HELM_RELS" | tr -d ' ')
+    printf 'helm list %s: %s releases returned, %s matching a vigil-* chart%s\n' "$_scope" "$_all" "$_v" \
+        "${REL_ARG:+ named $REL_ARG}" >>"$LOOKED"
+    while IFS='	' read -r _n _ns _ch _av; do
+        printf 'helm\tHelm release %s, namespace %s, chart %s, app version %s\n' "$_n" "$_ns" "$_ch" "${_av:-unknown}" >>"$INSTALLS"
+    done <"$HELM_RELS"
+}
+
 detect() {
+    echo "helm: not probed, use --mode helm" >>"$LOOKED"
     find_checkout
     SRC_NAMES=
     DESK_NAMES=
@@ -423,13 +512,17 @@ detect() {
 }
 
 section 1/6 "detecting the install"
-detect
+if [ "$HELM_REQ" = 1 ]; then detect_helm; else detect; fi
 N_INSTALLS=$(wc -l <"$INSTALLS" | tr -d ' ')
 if [ "$N_INSTALLS" -gt 1 ]; then
     echo
     echo "More than one Vigil install was found, so nothing was written:"
     sed 's/^[^	]*	/  - /' "$INSTALLS"
-    echo "Pick one with --mode native|compose|desktop and run again."
+    if [ "$HELM_REQ" = 1 ]; then
+        echo "Pick one with --release NAME --namespace NS and run again."
+    else
+        echo "Pick one with --mode native|compose|desktop and run again."
+    fi
     exit 1
 fi
 MODE=host
@@ -441,7 +534,13 @@ else
     KIND=host
 fi
 
-if [ -n "$STATE_ARG" ]; then
+HELM_REL=
+HELM_NS=
+[ "$MODE" = helm ] && IFS='	' read -r HELM_REL HELM_NS _ <"$HELM_RELS"
+
+if [ "$HELM_REQ" = 1 ]; then
+    STATE_DIR=
+elif [ -n "$STATE_ARG" ]; then
     STATE_DIR=$STATE_ARG
 elif [ "$MODE" = desktop ]; then
     case $OS_KIND in
@@ -451,21 +550,28 @@ elif [ "$MODE" = desktop ]; then
 else
     STATE_DIR=${VIGIL_DIR:-${HOME:-}/.vigil}
 fi
-if [ -d "$STATE_DIR" ]; then _found=found; else _found=none; fi
-printf "state dir: %s at %s\n" "$_found" "$STATE_DIR" >>"$LOOKED"
+if [ "$HELM_REQ" = 0 ]; then
+    if [ -d "$STATE_DIR" ]; then _found=found; else _found=none; fi
+    printf "state dir: %s at %s\n" "$_found" "$STATE_DIR" >>"$LOOKED"
+fi
 
 NAME=vigil-support-$KIND-$VERSION-$STAMP
 STAGE=$WORK/bundle/$NAME
 mkdir -p "$STAGE/configuration" "$STAGE/health" "$STAGE/logs" "$STAGE/system"
 
 # The API is asked for its version only; its payload is per-install collection.
+# Helm takes it from the forwarded health answer instead: localhost may be some
+# other install.
 HEALTH_VERSION=
-if [ "$N_INSTALLS" = 1 ] && has curl; then
+health_version() { # file with the /api/health answer
+    HEALTH_VERSION=$(awk 'match($0, /"version" *: *"[^"]*"/) {
+        v = substr($0, RSTART, RLENGTH); sub(/^"version" *: *"/, "", v); sub(/"$/, "", v); print v; exit }' "$1")
+    case $HEALTH_VERSION in *[!0-9A-Za-z.+_-]*) HEALTH_VERSION= ;; esac # it lands in the manifest
+}
+if [ "$HELM_REQ" = 0 ] && [ "$N_INSTALLS" = 1 ] && has curl; then
     ITEM=$((ITEM + 1))
     run_limited 10 "$RAW/$ITEM" curl -fsS --max-time 5 "$API_URL/api/health"
-    [ "$RC" = 0 ] && HEALTH_VERSION=$(awk 'match($0, /"version" *: *"[^"]*"/) {
-        v = substr($0, RSTART, RLENGTH); sub(/^"version" *: *"/, "", v); sub(/"$/, "", v); print v; exit }' "$RAW/$ITEM.out")
-    case $HEALTH_VERSION in *[!0-9A-Za-z.+_-]*) HEALTH_VERSION= ;; esac # it lands in the manifest
+    [ "$RC" = 0 ] && health_version "$RAW/$ITEM.out"
 fi
 
 # --- per-install collection --------------------------------------------------
@@ -710,8 +816,195 @@ collect_logs() {
     fi
 }
 
+# --- Helm --------------------------------------------------------------------
+
+# Everything is read with the administrator's own kubectl and helm, from the
+# release's namespace. Nothing runs inside the cluster beyond a port-forward.
+HELM_HOST_WHY="Helm: the host is not the install"
+HELM_LAB='pgadmin|splunk'
+
+# kube_list DEST SOURCE cmd...   cmd prints names; LIST is its output. On failure
+# DEST is recorded as not collected and the status is 1.
+LIST=
+kube_list() {
+    _ld=$1
+    _ls=$2
+    shift 2
+    ITEM=$((ITEM + 1))
+    _stem=$RAW/$ITEM
+    LIST=$_stem.out
+    run_limited 30 "$_stem" "$@"
+    _why=$(failure_reason "$_stem" 2 30)
+    [ -z "$_why" ] && return 0
+    skip "$_ld" "$_why" "$_ls"
+    return 1
+}
+
+# GET /api/health through a port-forward to the backend Service, on a local port
+# kubectl picks. The forward is a child of this function's job, so the time limit
+# and the exit traps take it down with everything else.
+api_via_forward() { # service
+    has curl || { echo "curl not found" >&2; return 1; }
+    _pf=$WORK/port-forward.out
+    : >"$_pf"
+    kubectl -n "$HELM_NS" port-forward "svc/$1" :6987 >"$_pf" 2>&1 &
+    _pid=$!
+    _port=
+    while :; do
+        _port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9][0-9]*\) .*/\1/p' "$_pf" | head -n 1)
+        [ -n "$_port" ] && break
+        if ! kill -0 "$_pid" 2>/dev/null; then
+            cat "$_pf" >&2
+            return 1
+        fi
+        sleep 1
+    done
+    curl -fsS --max-time 5 "http://127.0.0.1:$_port/api/health"
+    _rc=$?
+    kill_tree "$_pid" KILL
+    return $_rc
+}
+
+# Node names from the NODE column of `get pods -o wide`: the column is cut at its
+# header's offsets, since a cell such as "1 (5m ago)" holds spaces.
+pod_nodes() { # kubectl get pods args
+    kubectl "$@" -o wide >"$WORK/pods-wide.txt" || return $?
+    awk 'NR == 1 { s = index($0, "NODE"); e = index($0, "NOMINATED"); next }
+        s { v = (e > s ? substr($0, s, e - s) : substr($0, s)); gsub(/^ +| +$/, "", v); if (v != "" && v != "<none>") print v }' \
+        "$WORK/pods-wide.txt" | sort -u
+}
+
+tools_info() {
+    kubectl version --client 2>&1
+    helm version 2>&1
+}
+
+helm_configuration() {
+    _ns=$1
+    _sel=$2
+    # Values first, so what they hold is known before anything else is stored.
+    collect_secret_cmd configuration/helm-values.yaml "$SRC_SECS" "helm get values $HELM_REL" 2 \
+        helm get values "$HELM_REL" -n "$_ns" -o yaml
+    collect_secret_cmd configuration/helm-values-all.yaml "$SRC_SECS" "helm get values --all $HELM_REL" 2 \
+        helm get values "$HELM_REL" -n "$_ns" --all -o yaml
+    # Names and key names only; the template never prints a value.
+    collect_cmd configuration/kubernetes-secrets.txt "$SRC_SECS" "kubectl get secrets, names and keys only" 2 \
+        kubectl -n "$_ns" get secrets -o \
+        'go-template={{range .items}}{{.metadata.name}} {{.type}}{{range $k, $v := .data}} {{$k}}{{end}}{{"\n"}}{{end}}'
+    if kube_list configuration/configmaps/ "kubectl get configmaps" \
+        kubectl -n "$_ns" get configmaps -l "$_sel" --no-headers -o custom-columns=NAME:.metadata.name; then
+        cp "$LIST" "$WORK/configmaps.list"
+        [ -s "$WORK/configmaps.list" ] || skip configuration/configmaps/ "no ConfigMaps of this release" "kubectl get configmaps"
+        while IFS= read -r _cm; do
+            case $_cm in '' | *[!A-Za-z0-9_.-]*) continue ;; esac
+            collect_cmd "configuration/configmaps/$_cm.yaml" "$SRC_SECS" "kubectl get configmap $_cm -o yaml" 2 \
+                kubectl -n "$_ns" get configmap "$_cm" -o yaml
+        done <"$WORK/configmaps.list"
+    fi
+}
+
+helm_health() {
+    _ns=$1
+    _sel=$2
+    collect_cmd health/pods.txt "$SRC_SECS" "kubectl get pods -o wide" 2 kubectl -n "$_ns" get pods -l "$_sel" -o wide
+    collect_cmd health/workloads.txt "$SRC_SECS" "kubectl get deploy,statefulset,job,hpa" 2 \
+        kubectl -n "$_ns" get deploy,statefulset,job,hpa -l "$_sel"
+    collect_cmd health/pods-describe.txt "$SRC_SECS" "kubectl describe pods" 2 kubectl -n "$_ns" describe pods -l "$_sel"
+    for _f in daemon-health.json daemon-status.json webhook-health.json agent-serve-healthz.txt \
+        agent-worker-healthz.txt bifrost-health.json; do
+        skip "health/$_f" "Helm: only /api/health is read; see health/pods.txt"
+    done
+    if kube_list health/api.json "kubectl get service" \
+        kubectl -n "$_ns" get service -l "$_sel,app.kubernetes.io/component=backend" --no-headers -o custom-columns=NAME:.metadata.name; then
+        _svc=$(sed -n 1p "$LIST")
+        case $_svc in
+        '' | *[!A-Za-z0-9_.-]*) skip health/api.json "no backend Service in this release" "kubectl get service" ;;
+        *)
+            _api_item=$((ITEM + 1))
+            collect_cmd health/api.json "$SRC_SECS" "kubectl port-forward svc/$_svc, GET /api/health" 2 api_via_forward "$_svc"
+            health_version "$RAW/$_api_item.out"
+            ;;
+        esac
+    fi
+}
+
+helm_logs() {
+    _ns=$1
+    # Lab pods are listed too, to be recorded as excluded.
+    if ! kube_list logs/pods/ "kubectl get pods" kubectl -n "$_ns" get pods -l "app.kubernetes.io/instance=$HELM_REL" \
+        --no-headers -o 'custom-columns=NAME:.metadata.name,COMPONENT:.metadata.labels.app\.kubernetes\.io/component,PHASE:.status.phase,INIT:.spec.initContainers[*].name,CONTAINERS:.spec.containers[*].name'; then
+        return
+    fi
+    cp "$LIST" "$WORK/pods.list"
+    if [ ! -s "$WORK/pods.list" ]; then
+        skip logs/pods/ "no pods of this release" "kubectl get pods"
+        return
+    fi
+    skip logs/pods/ "only pods that exist now can be read; a pod that was replaced or rescheduled needs the cluster's own log collection" "kubectl get pods"
+    while read -r _pod _comp _phase _init _conts; do
+        case $_pod in '' | *[!A-Za-z0-9_.-]*) continue ;; esac
+        case $_comp in
+        pgadmin | splunk)
+            skip "logs/pods/$_pod/" "excluded: lab/demo component $_comp; state ${_phase:-unknown}" "kubectl get pods"
+            continue
+            ;;
+        esac
+        _oifs=$IFS
+        IFS=,
+        # shellcheck disable=SC2086
+        set -- $_init $_conts
+        IFS=$_oifs
+        for _ctr in "$@"; do
+            case $_ctr in '<none>' | '' | *[!A-Za-z0-9_.-]*) continue ;; esac
+            collect_cmd "logs/pods/$_pod/$_ctr.log" "$LOG_SECS" "kubectl logs --since ${SINCE}d" 2 \
+                kubectl -n "$_ns" logs "$_pod" -c "$_ctr" --timestamps --since "$((SINCE * 24))h"
+            ABSENT_RE='previous terminated container'
+            ABSENT_WHY="no previous container"
+            collect_cmd "logs/pods/$_pod/$_ctr.previous.log" "$LOG_SECS" "kubectl logs --previous" 2 \
+                kubectl -n "$_ns" logs "$_pod" -c "$_ctr" --previous --timestamps --since "$((SINCE * 24))h"
+        done
+    done <"$WORK/pods.list"
+    # In-cluster Postgres and Redis show up as pods; their absence means external.
+    for _x in postgres redis; do
+        grep -qi "$_x" "$WORK/pods.list" ||
+            skip "logs/pods/$_x/" "external, not applicable: no $_x pod in this release" "kubectl get pods"
+    done
+}
+
+collect_helm() {
+    if [ "$N_INSTALLS" != 1 ]; then
+        for _p in configuration health logs; do skip "$_p/" "${HELM_WHY:-no Vigil install found}"; done
+        return
+    fi
+    _sel="app.kubernetes.io/instance=$HELM_REL,app.kubernetes.io/component notin ($(echo "$HELM_LAB" | tr '|' ','))"
+    helm_configuration "$HELM_NS" "$_sel"
+    helm_health "$HELM_NS" "$_sel"
+    helm_logs "$HELM_NS"
+}
+
+collect_helm_system() {
+    if [ -n "$HELM_WHY" ]; then
+        skip system/tools.txt "$HELM_WHY"
+    else
+        collect_cmd system/tools.txt "$SRC_SECS" "kubectl version --client; helm version" 0 tools_info
+    fi
+    if [ "$N_INSTALLS" = 1 ]; then
+        collect_cmd system/nodes.txt "$SRC_SECS" "kubectl get pods -o wide, NODE column" 2 \
+            pod_nodes -n "$HELM_NS" get pods -l "app.kubernetes.io/instance=$HELM_REL"
+        collect_cmd system/events.txt "$SRC_SECS" "kubectl get events" 2 \
+            kubectl -n "$HELM_NS" get events --sort-by=.lastTimestamp
+    else
+        for _f in nodes events; do skip "system/$_f.txt" "${HELM_WHY:-no Vigil install found}"; done
+    fi
+    for _f in timezone-sync processes processes-vigil disk journal syslog kernel macos-log; do
+        skip "system/$_f.txt" "$HELM_HOST_WHY"
+    done
+}
+
 section 2/6 "collecting configuration, health and logs"
-if [ "$N_INSTALLS" = 1 ]; then
+if [ "$HELM_REQ" = 1 ]; then
+    collect_helm
+elif [ "$N_INSTALLS" = 1 ]; then
     list_containers
     find_compose_files
     collect_configuration
@@ -729,16 +1022,20 @@ fi
 section 3/6 "host, clock and processes"
 collect_cmd system/host.txt "$SRC_SECS" "hostname; uname -a" 0 sh -c 'hostname; uname -a'
 collect_cmd system/clock.txt "$SRC_SECS" "date" 0 sh -c 'date -u; date; date +%Z'
-if has timedatectl; then
+if [ "$HELM_REQ" = 1 ]; then
+    : # skipped with the other host-level files, below
+elif has timedatectl; then
     collect_cmd system/timezone-sync.txt "$SRC_SECS" "timedatectl" 0 timedatectl
 elif has systemsetup; then
     collect_cmd system/timezone-sync.txt "$SRC_SECS" "systemsetup" 0 sh -c 'systemsetup -gettimezone; systemsetup -getusingnetworktime'
 else
     skip system/timezone-sync.txt "neither timedatectl nor systemsetup found"
 fi
-collect_cmd system/processes.txt "$SRC_SECS" "ps -ef" 0 ps -ef
-collect_cmd system/processes-vigil.txt "$SRC_SECS" "ps -ef, Vigil entries" 0 \
-    sh -c "ps -ef | awk 'NR == 1 || /[v]igil|[d]eeptempo/'"
+if [ "$HELM_REQ" = 0 ]; then
+    collect_cmd system/processes.txt "$SRC_SECS" "ps -ef" 0 ps -ef
+    collect_cmd system/processes-vigil.txt "$SRC_SECS" "ps -ef, Vigil entries" 0 \
+        sh -c "ps -ef | awk 'NR == 1 || /[v]igil|[d]eeptempo/'"
+fi
 
 section 4/6 "disk space and OS release"
 collect_disk() {
@@ -753,7 +1050,7 @@ collect_disk() {
     fi
     collect_cmd system/disk.txt "$SRC_SECS" "df -Pk, Vigil write locations" 0 "$@"
 }
-collect_disk
+[ "$HELM_REQ" = 0 ] && collect_disk
 if [ -r "$FS_ROOT/etc/os-release" ] || [ -L "$FS_ROOT/etc/os-release" ]; then
     collect_file system/os-release.txt "$FS_ROOT/etc/os-release" 0 "$FS_ROOT/etc" "$FS_ROOT/usr/lib"
 elif has sw_vers; then
@@ -763,7 +1060,9 @@ else
 fi
 
 section 5/6 "system logs"
-if [ "$OS_KIND" = Darwin ]; then
+if [ "$HELM_REQ" = 1 ]; then
+    collect_helm_system
+elif [ "$OS_KIND" = Darwin ]; then
     _last=24h
     [ "$SINCE_SET" = 1 ] && _last=${SINCE}d
     collect_cmd system/macos-log.txt "$LOG_SECS" "log show --last $_last, Docker and Vigil entries" 1 \
@@ -869,6 +1168,9 @@ if awk -F '\t' '$2 != "collected" { f = 1 } END { exit !f }' "$ITEMS"; then
     awk -F '\t' '$2 != "collected" { print "  " $1 ": " $3 }' "$ITEMS"
     if awk -F '\t' '$3 == "needs elevation" { f = 1 } END { exit !f }' "$ITEMS"; then
         echo "Run with sudo to include the items marked \"needs elevation\"."
+    fi
+    if awk -F '\t' '$2 != "collected" && $3 ~ /^needs elevation: / { f = 1 } END { exit !f }' "$ITEMS"; then
+        echo "Cluster permissions are missing for the items marked \"needs elevation\"; each reason names the permission the cluster refused."
     fi
 fi
 exit 0

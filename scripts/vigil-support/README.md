@@ -6,13 +6,15 @@ Python), and runs on Linux and macOS. This file is the record of the bundle
 format.
 
 ```
-sh scripts/vigil-support/vigil-support.sh [--mode native|compose|desktop] [--state-dir DIR] [--since DAYS]
+sh scripts/vigil-support/vigil-support.sh [--mode native|compose|desktop|helm] [--state-dir DIR] [--since DAYS]
+                                           [--release NAME] [--namespace NS]
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `--mode` | Only look for that kind of install. `native` and `compose` mean a checkout, `desktop` means Desktop standalone. |
+| `--mode` | Only look for that kind of install. `native` and `compose` mean a checkout, `desktop` means Desktop standalone, `helm` means a Helm release read from the administrator's machine (see [Helm](#helm)). |
 | `--state-dir` | Vigil's State Directory. Default `$VIGIL_DIR`, else `~/.vigil` (Desktop: its app-data directory). |
+| `--release`, `--namespace` | `--mode helm` only: pick the Helm release and its namespace. Either one without `--mode helm` is an error. |
 | `--since DAYS` | How far back journal and macOS log sources reach. Default 7. macOS `log show` uses 24 h unless `--since` is given. |
 
 The bundle is written to the current directory as
@@ -27,8 +29,11 @@ collected into a new one.
   script, `$VIGIL_REPO_ROOT`, or the current directory) plus running
   `deeptempo-*` containers. `compose` when `deeptempo-backend` runs, else `native`.
 - **Desktop standalone**: running containers of Compose project `vigil`.
+- **Helm**: only with `--mode helm`, never probed (a stray kubeconfig on a Docker
+  host would be contacted otherwise). `helm list -A -o json` (`-n NS` with
+  `--namespace`), keeping releases whose chart is `vigil-*`.
 - More than one install found: nothing is written, the installs are listed, and
-  the exit code is 1. Pick one with `--mode`.
+  the exit code is 1. Pick one with `--mode` (Helm: `--release NAME --namespace NS`).
 - None found: a host-only bundle that says so and records, in `manifest.json`
   under `looked`, where the script looked.
 
@@ -72,6 +77,56 @@ no `docker logs`: `start.sh` saves those under the checkout's `logs/`.
 Under Compose and Desktop the State Directory lives in a container volume, which
 is not read; only files on the host are.
 
+### Helm
+
+`--mode helm` runs on the administrator's machine (Linux or macOS) with their
+current `kubectl` context and `helm`; both must be on `PATH`. No image is pulled
+and nothing is started in the cluster; the one helper is a `kubectl port-forward`
+that runs under the same time limit and clean-up as everything else, and is gone
+on exit, INT and TERM. The host is not the install, so the Docker and checkout
+detection is skipped and `system/` holds only the administrator's host files.
+Every command names the release's namespace with `-n`. With no release found, or
+`helm` or `kubectl` missing (`<tool> not found`), the bundle is a host-only one
+and `manifest.json` `looked` says what `helm list` returned.
+
+Pods are selected with `app.kubernetes.io/instance=<release>`. The lab components
+`pgadmin` and `splunk` are left out and recorded as
+`excluded: lab/demo component <name>; state <phase>`.
+
+| Path | Source |
+| --- | --- |
+| `configuration/helm-values.yaml`, `helm-values-all.yaml` | `helm get values <release> -n <ns> -o yaml`, user-supplied and `--all`. Read first, so the values they hold are learned and redacted everywhere else. The Secret names and key names (`existingSecret`, `existingSecretKey`, `existingSecretPasswordKey`, `userPasswordKey`) are kept. |
+| `configuration/kubernetes-secrets.txt` | Secrets of the namespace: name, type and key names. Never values; `helm get manifest` is not collected. |
+| `configuration/configmaps/<name>.yaml` | each ConfigMap of the release |
+| `health/pods.txt`, `workloads.txt`, `pods-describe.txt` | `kubectl get pods -o wide`, `get deploy,statefulset,job,hpa`, `describe pods` |
+| `health/api.json` | `/api/health` through one `kubectl port-forward` to the backend Service (local port chosen by kubectl). Its `version` is `install.api_version`. If the forward does not come up in time, `not collected` with `timed out after N s`. The other health endpoints are `not collected`: `Helm: only /api/health is read; see health/pods.txt`. |
+| `logs/pods/<pod>/<container>.log` | `kubectl logs --timestamps --since <DAYS*24>h` for every pod and container (init containers too) |
+| `logs/pods/<pod>/<container>.previous.log` | the same with `--previous`; `not collected`, `no previous container`, where there is none |
+| `logs/pods/` | recorded with the reason that a pod replaced or rescheduled cannot be read; that needs the cluster's own log collection |
+| `logs/pods/postgres/`, `logs/pods/redis/` | `not collected`, `external, not applicable`, when the release has no such pod |
+| `system/tools.txt`, `nodes.txt`, `events.txt` | `kubectl version --client` and `helm version`; the NODE column of `get pods -o wide`; `kubectl get events --sort-by=.lastTimestamp` for the namespace |
+| `system/host.txt`, `clock.txt`, `os-release.txt` | as above, for the administrator's machine |
+
+The other `system/` files are `not collected`: `Helm: the host is not the install`.
+
+A response of `forbidden` is `not collected` with the reason
+`needs elevation: <first line of the cluster's message>`, which names the missing
+permission. The final output then says that cluster permissions are missing,
+instead of suggesting `sudo`. If `get pods` is refused, `logs/pods/` is that one
+entry.
+
+**By-hand release check** (against a real cluster, before a release): install the
+chart with planted secrets (`--set secrets.postgresPassword=PLANTED-pg
+--set secrets.jwtSecretKey=PLANTED-jwt`, plus `existingSecret` pointing at a
+real Secret), restart one pod (`kubectl delete pod` of a backend replica is not
+enough; make a container crash, for example with `kubectl exec <pod> -- kill 1`),
+then run `sh vigil-support.sh --mode helm`. Check that every section above is
+present or `not collected` with a reason, that `PLANTED-*` appears nowhere in the
+unpacked bundle (`grep -r PLANTED`), that the Secret name from `existingSecret`
+does, that `kubernetes-secrets.txt` holds no values, and that the restarted
+container has a `.previous.log` from before the restart. Repeat with a
+read-only user to see the `needs elevation` entries.
+
 ### Never included
 
 Recorded as `configuration/never-included/<name>`, `not collected`, reason
@@ -100,6 +155,7 @@ in `secrets.enc`.
 
 Logs a normal user cannot read are `not collected` with the reason
 `needs elevation`; the final output says that running with `sudo` includes them.
+(Helm: see above.)
 
 ## `manifest.json`
 
@@ -135,7 +191,7 @@ Every item appears exactly once with a `state` and a free-text `reason`.
 | Code | Meaning |
 | --- | --- |
 | 0 | A bundle was written. Not-collected items are listed in the final output. |
-| 1 | No bundle was written: several installs found, not enough free space, a missing redaction filter, bad options, or a write failure. |
+| 1 | No bundle was written: several installs found (several Helm releases too), not enough free space, a missing redaction filter, bad options, or a write failure. |
 
 ## `SUMMARY.txt`
 
@@ -211,4 +267,6 @@ bumps it). Its first word is the version; the rest of the line is ignored.
 `PATH`. It reads these overrides, which are not for normal use:
 `VIGIL_SUPPORT_SOURCE_SECS`, `VIGIL_SUPPORT_LOG_SECS`, `VIGIL_SUPPORT_TOTAL_SECS`,
 `VIGIL_SUPPORT_SOURCE_MAX`, `VIGIL_SUPPORT_NOW` (the timestamp in the name) and
-`VIGIL_SUPPORT_FS_ROOT` (a prefix for `/etc` and `/var/log` paths).
+`VIGIL_SUPPORT_FS_ROOT` (a prefix for `/etc` and `/var/log` paths). The Helm tests
+stub `kubectl` and `helm` and take pod, component and label names from a real
+`helm template` of `infra/helm/vigil` (skipped when `helm` is absent).

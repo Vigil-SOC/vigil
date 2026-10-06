@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -515,3 +517,397 @@ def test_learning_skips_comments_and_usernames_and_respects_word_edges(env, tmp_
         'SPLUNK_USERNAME="[REDACTED]"',
         'CRIBL_USERNAME="[REDACTED]"',
     ]
+
+
+# --- Helm ---------------------------------------------------------------------
+
+BASE64_VALUE = "c3VwZXItc2VjcmV0LXZhbHVl"
+HELM_LIST = (
+    '[{"name":"vigil","namespace":"vigil","revision":"3","status":"deployed",'
+    '"chart":"vigil-0.6.0","app_version":"0.6.0"},'
+    '{"name":"grafana","namespace":"mon","revision":"1","status":"deployed",'
+    '"chart":"grafana-8.0.0","app_version":"11.0.0"}]'
+)
+HELM_VALUES = (
+    "secrets:\n  postgresPassword: {p}\n  jwtSecretKey: {p}jwt\n"
+    "postgresql:\n  auth:\n    existingSecret: vigil-prod-secrets\n"
+    "    existingSecretKey: POSTGRES_PASSWORD\n"
+    "redis:\n  bitnami:\n    auth:\n      existingSecretPasswordKey: redis-password\n"
+).format(p=PLANTED)
+FORBIDDEN = (
+    'Error from server (Forbidden): pods is forbidden: User "ann" cannot list '
+    'resource "pods" in API group "" in the namespace "vigil"'
+)
+
+KUBECTL_STUB = r"""
+echo "kubectl $*" >>"$FAKE_KUBE_LOG"
+case " $* " in
+*" version "*) echo "Client Version: v1.31.0"; exit 0 ;;
+*" port-forward "*)
+    [ "${FAKE_PF_HANG:-}" = 1 ] || echo "Forwarding from 127.0.0.1:41234 -> 6987"
+    exec sleep "$FAKE_PF_MARKER" ;;
+*" get pods "* | *" describe pods "*)
+    if [ -n "${FAKE_FORBID_PODS:-}" ]; then echo "$FAKE_FORBID_PODS" >&2; exit 1; fi ;;
+esac
+case " $* " in
+*" get pods "*custom-columns*) printf '%s\n' "$FAKE_PODS" ;;
+*" get pods "*" -o wide"*) printf '%s\n' "$FAKE_WIDE" ;;
+*" get pods "*) echo "NAME READY STATUS"; printf '%s\n' "$FAKE_PODS" ;;
+*" describe pods "*) echo "Name: pod"; echo "Environment: DB_PASSWORD=$FAKE_PLANTED" ;;
+*" get secrets "*)
+    case "$*" in
+    *go-template*) printf '%s\n' "vigil-prod-secrets Opaque POSTGRES_PASSWORD ANTHROPIC_API_KEY" ;;
+    *) printf '%s\n' "vigil-prod-secrets Opaque POSTGRES_PASSWORD: $FAKE_B64" ;;
+    esac ;;
+*" get configmaps "*) printf '%s\n' vigil-config vigil-db-init-sql ;;
+*" get configmap "*) printf 'kind: ConfigMap\ndata:\n  LOG_LEVEL: info\n' ;;
+*" get service "*) echo vigil-backend ;;
+*" get deploy"*) echo "NAME READY"; echo "deployment.apps/vigil-backend 2/2" ;;
+*" get events "*) echo "LAST SEEN TYPE REASON"; echo "1m Warning BackOff" ;;
+*" logs "*)
+    pod= c= prev=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+        logs) pod=$2; shift ;;
+        -c) c=$2; shift ;;
+        --previous) prev=1 ;;
+        esac
+        shift
+    done
+    if [ $prev = 1 ]; then
+        case " ${FAKE_PREVIOUS:-} " in
+        *" $pod/$c "*) echo "before restart: $pod/$c"; exit 0 ;;
+        esac
+        echo "Error from server (BadRequest): previous terminated container \"$c\" in pod \"$pod\" not found" >&2
+        exit 1
+    fi
+    echo "log of $pod/$c"; printf '%s\n' "${FAKE_LOG_LINE:-}" ;;
+esac
+"""
+
+HELM_STUB = r"""
+echo "helm $*" >>"$FAKE_KUBE_LOG"
+case "$1" in
+list) printf '%s' "$FAKE_HELM_LIST" ;;
+get) case "$*" in *--all*) printf '%s\n' "$FAKE_VALUES" "defaultsOnly: true" ;; *) printf '%s\n' "$FAKE_VALUES" ;; esac ;;
+version) echo 'version.BuildInfo{Version:"v3.17.0"}' ;;
+esac
+"""
+
+
+def _table(rows: list[list[str]]) -> str:
+    widths = [max(len(r[i]) for r in rows) + 3 for i in range(len(rows[0]))]
+    return "\n".join("".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows)
+
+
+@pytest.fixture(scope="module")
+def chart_pods() -> list[dict]:
+    """Pods of the real chart (plus its lab pods), from `helm template`."""
+    yaml = pytest.importorskip("yaml")
+    if shutil.which("helm") is None:
+        pytest.skip("helm not installed")
+    rendered = subprocess.run(
+        [
+            "helm",
+            "template",
+            "vigil",
+            str(REPO / "infra" / "helm" / "vigil"),
+            "--namespace",
+            "vigil",
+            "--set",
+            "pgadmin.enabled=true",
+            "--set",
+            "splunk.enabled=true",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    pods = []
+    for doc in yaml.safe_load_all(rendered):
+        if not doc or doc.get("kind") not in ("Deployment", "StatefulSet", "Job"):
+            continue
+        labels = doc["metadata"]["labels"]
+        assert labels["app.kubernetes.io/instance"] == "vigil"
+        spec = doc["spec"]["template"]["spec"]
+        name = doc["metadata"]["name"]
+        replicas = {"Deployment": 2, "StatefulSet": 1, "Job": 1}[doc["kind"]]
+        for i in range(replicas):
+            suffix = f"{i}" if doc["kind"] == "StatefulSet" else f"7d9c5b6f4-x{i}k8p"
+            pods.append(
+                {
+                    "name": f"{name}-{suffix}",
+                    "component": labels["app.kubernetes.io/component"],
+                    "init": [c["name"] for c in spec.get("initContainers", [])],
+                    "containers": [c["name"] for c in spec["containers"]],
+                }
+            )
+    assert {"backend", "pgadmin", "splunk", "postgres", "redis"} <= {
+        p["component"] for p in pods
+    }
+    return pods
+
+
+@pytest.fixture
+def helm_env(env, tmp_path, chart_pods):
+    for name, body in {"kubectl": KUBECTL_STUB, "helm": HELM_STUB}.items():
+        stub = tmp_path / "bin" / name
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(0o755)
+    env.update(
+        FAKE_KUBE_LOG=str(tmp_path / "kube.log"),
+        FAKE_HELM_LIST=HELM_LIST,
+        FAKE_VALUES=HELM_VALUES,
+        FAKE_PLANTED=PLANTED,
+        FAKE_B64=BASE64_VALUE,
+        FAKE_PF_MARKER=str(600000 + os.getpid() % 100000),
+        FAKE_LOG_LINE=f"connecting with {PLANTED}",
+        FAKE_PODS=_table(
+            [
+                [
+                    p["name"],
+                    p["component"],
+                    "Running",
+                    ",".join(p["init"]) or "<none>",
+                    ",".join(p["containers"]),
+                ]
+                for p in chart_pods
+            ]
+        ),
+        FAKE_WIDE=_table(
+            [
+                "NAME READY STATUS RESTARTS AGE IP NODE NOMINATED_NODE READINESS_GATES".split()
+            ]
+            + [
+                [p["name"], "1/1", "Running", "1 (5m ago)", "2d", f"10.0.0.{i}"]
+                + [f"node-{'ab'[i % 2]}", "<none>", "<none>"]
+                for i, p in enumerate(chart_pods)
+            ]
+        ).replace("NOMINATED_NODE", "NOMINATED NODE").replace("READINESS_GATES", "READINESS GATES"),
+    )
+    (tmp_path / "kube.log").write_text("")
+    return env
+
+
+def helm_run(env, tmp_path, *args, **kw):
+    return run(env, tmp_path, "--mode", "helm", *args, **kw)
+
+
+def marker_pids(marker: str) -> list[int]:
+    found = []
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            if marker.encode() in cmdline.read_bytes().split(b"\0"):
+                found.append(int(cmdline.parent.name))
+        except OSError:
+            pass
+    return [p for p in found if alive(p)]
+
+
+def test_helm_release_is_collected_and_secrets_stay_out(helm_env, tmp_path, chart_pods):
+    helm_env["FAKE_PREVIOUS"] = "vigil-daemon-0/daemon"
+    proc = helm_run(helm_env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    manifest = manifest_of(tmp_path)
+    entries = {e["path"]: e for e in manifest["entries"]}
+    root = next((tmp_path / "x").iterdir())
+    assert manifest["mode"] == "helm" and manifest["install"]["found"] is True
+    assert "Helm release vigil, namespace vigil, chart vigil-0.6.0" in (
+        manifest["install"]["description"]
+    )
+    assert manifest["install"]["api_version"] == "9.9.9"  # from the forwarded answer
+    assert not any("docker" in line for line in manifest["looked"])
+
+    for path in (
+        "configuration/helm-values.yaml",
+        "configuration/helm-values-all.yaml",
+        "configuration/kubernetes-secrets.txt",
+        "configuration/configmaps/vigil-config.yaml",
+        "configuration/configmaps/vigil-db-init-sql.yaml",
+        "health/pods.txt",
+        "health/workloads.txt",
+        "health/pods-describe.txt",
+        "health/api.json",
+        "system/events.txt",
+        "system/nodes.txt",
+        "system/tools.txt",
+        "system/host.txt",
+    ):
+        assert entries[path]["state"] == "collected", (path, entries.get(path))
+    for name in ("journal", "syslog", "kernel", "processes", "disk", "timezone-sync"):
+        entry = entries[f"system/{name}.txt"]
+        assert entry["reason"] == "Helm: the host is not the install"
+    assert entries["health/daemon-health.json"]["reason"].startswith("Helm: only /api/health")
+    assert (root / "system" / "nodes.txt").read_text().split() == ["node-a", "node-b"]
+
+    # every replica's every container, init containers too; lab pods excluded
+    for pod in chart_pods:
+        if pod["component"] in ("pgadmin", "splunk"):
+            entry = entries[f"logs/pods/{pod['name']}/"]
+            assert entry["reason"].startswith("excluded: lab/demo component ")
+            assert not any(
+                p.startswith(f"logs/pods/{pod['name']}/") and e["state"] == "collected"
+                for p, e in entries.items()
+            )
+            continue
+        for container in pod["init"] + pod["containers"]:
+            base = f"logs/pods/{pod['name']}/{container}"
+            assert entries[f"{base}.log"]["state"] == "collected", base
+            if f"{pod['name']}/{container}" == "vigil-daemon-0/daemon":
+                assert entries[f"{base}.previous.log"]["state"] == "collected"
+                assert "before restart" in (root / f"{base}.previous.log").read_text()
+            else:
+                assert entries[f"{base}.previous.log"]["reason"] == "no previous container"
+    assert "replaced or rescheduled" in entries["logs/pods/"]["reason"]
+
+    # planted secrets appear nowhere; the Secret names and keys stay readable
+    assert PLANTED not in everything(tmp_path, proc)
+    assert BASE64_VALUE not in everything(tmp_path, proc)
+    values = (root / "configuration" / "helm-values.yaml").read_text()
+    assert "existingSecret: vigil-prod-secrets" in values
+    assert "existingSecretKey: POSTGRES_PASSWORD" in values
+    assert "existingSecretPasswordKey: redis-password" in values
+    assert "postgresPassword: [REDACTED]" in values
+    assert "[REDACTED]" in next((root / "logs" / "pods").rglob("backend.log")).read_text()
+    assert (root / "configuration" / "kubernetes-secrets.txt").read_text() == (
+        "vigil-prod-secrets Opaque POSTGRES_PASSWORD ANTHROPIC_API_KEY\n"
+    )
+
+    # what was asked of the cluster
+    calls = (tmp_path / "kube.log").read_text().splitlines()
+    kube = [c for c in calls if c.startswith("kubectl ") and " version " not in c]
+    assert kube and all(" -n vigil " in c for c in kube)
+    logs = [c for c in kube if " logs " in c]
+    assert logs and all(re.search(r"--since \d+h(\s|$)", c) for c in logs)
+    assert all("--since 168h" in c for c in logs)
+    assert all("go-template" in c for c in kube if " get secrets " in c)
+    assert not any("manifest" in c for c in calls)
+    assert any(c.endswith("port-forward svc/vigil-backend :6987") for c in kube)
+    assert "helm get values vigil -n vigil -o yaml" in calls
+    assert "helm list -o json -A" in calls
+    assert marker_pids(helm_env["FAKE_PF_MARKER"]) == []
+
+
+def test_helm_external_postgres_and_redis_are_not_applicable(helm_env, tmp_path):
+    helm_env["FAKE_PODS"] = "\n".join(
+        line
+        for line in helm_env["FAKE_PODS"].splitlines()
+        if "postgres" not in line and "redis" not in line
+    )
+    assert helm_run(helm_env, tmp_path).returncode == 0
+    entries = entries_of(tmp_path)
+    for name in ("postgres", "redis"):
+        entry = entries[f"logs/pods/{name}/"]
+        assert entry["state"] == "not collected"
+        assert entry["reason"].startswith("external, not applicable")
+
+
+def test_helm_two_releases_write_nothing_until_one_is_named(helm_env, tmp_path):
+    helm_env["FAKE_HELM_LIST"] = HELM_LIST.replace(
+        "grafana-8.0.0", "vigil-0.5.0"
+    ).replace('"name":"grafana","namespace":"mon"', '"name":"vigil-lab","namespace":"lab"')
+    proc = helm_run(helm_env, tmp_path)
+    assert proc.returncode == 1
+    assert bundles(tmp_path) == [] and list((tmp_path / "tmp").iterdir()) == []
+    assert "vigil-lab" in proc.stdout and "namespace lab" in proc.stdout
+    assert "--release NAME --namespace NS" in proc.stdout
+
+    proc = helm_run(helm_env, tmp_path, "--release", "vigil-lab", "--namespace", "lab")
+    assert proc.returncode == 0, proc.stderr
+    assert "Helm release vigil-lab, namespace lab" in manifest_of(tmp_path)["install"]["description"]
+    calls = (tmp_path / "kube.log").read_text()
+    assert "helm list -o json -n lab" in calls
+    assert "kubectl -n lab " in calls and "kubectl -n vigil " not in calls
+
+
+def test_helm_no_vigil_release_writes_a_host_bundle(helm_env, tmp_path):
+    helm_env["FAKE_HELM_LIST"] = '[{"name":"g","namespace":"m","chart":"grafana-1.0.0"}]'
+    assert helm_run(helm_env, tmp_path).returncode == 0
+    manifest = manifest_of(tmp_path)
+    entries = {e["path"]: e for e in manifest["entries"]}
+    assert manifest["mode"] == "host" and manifest["install"]["found"] is False
+    assert any("1 releases returned, 0 matching" in line for line in manifest["looked"])
+    assert entries["logs/"]["state"] == "not collected"
+    assert entries["system/events.txt"]["state"] == "not collected"
+    assert entries["system/host.txt"]["state"] == "collected"
+
+
+def test_helm_missing_tool_writes_a_host_bundle(helm_env, tmp_path):
+    safe = tmp_path / "safe-bin"
+    safe.mkdir()
+    for tool in (
+        "sh awk mkfifo mktemp tar tee tail wc tr date sleep ps kill sed grep cut head "
+        "sort df uname hostname cat rm mkdir cp chmod ls dirname basename find mv gzip"
+    ).split():
+        found = shutil.which(tool, path="/usr/bin:/bin")
+        if found:
+            (safe / tool).symlink_to(found)
+    helm_env["PATH"] = str(safe)
+    proc = helm_run(helm_env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    manifest = manifest_of(tmp_path)
+    entries = {e["path"]: e for e in manifest["entries"]}
+    assert manifest["mode"] == "host"
+    assert any(line.startswith("helm: not found") for line in manifest["looked"])
+    for path in ("configuration/", "health/", "logs/", "system/tools.txt", "system/nodes.txt"):
+        assert entries[path]["state"] == "not collected" and "helm not found" in entries[path]["reason"], path
+    assert entries["system/host.txt"]["state"] == "collected"
+
+
+def test_helm_forbidden_pods_name_the_missing_permission(helm_env, tmp_path):
+    helm_env["FAKE_FORBID_PODS"] = FORBIDDEN
+    proc = helm_run(helm_env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    entries = entries_of(tmp_path)
+    reason = f"needs elevation: {FORBIDDEN}"
+    for path in ("logs/pods/", "health/pods.txt", "health/pods-describe.txt", "system/nodes.txt"):
+        assert entries[path]["state"] == "not collected" and entries[path]["reason"] == reason, path
+    assert not any(p.startswith("logs/pods/") and p != "logs/pods/" for p in entries)
+    assert entries["configuration/helm-values.yaml"]["state"] == "collected"
+    assert reason in proc.stdout
+    assert "Cluster permissions are missing" in proc.stdout
+    assert "Run with sudo" not in proc.stdout
+
+
+def test_helm_port_forward_that_never_answers_is_killed(helm_env, tmp_path):
+    helm_env["FAKE_PF_HANG"] = "1"
+    helm_env["VIGIL_SUPPORT_SOURCE_SECS"] = "2"
+    started = time.time()
+    assert helm_run(helm_env, tmp_path).returncode == 0
+    assert time.time() - started < 60
+    entry = entries_of(tmp_path)["health/api.json"]
+    assert entry["state"] == "not collected" and entry["reason"] == "timed out after 2 s"
+    assert marker_pids(helm_env["FAKE_PF_MARKER"]) == []
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_helm_signal_takes_the_port_forward_with_it(helm_env, tmp_path, sig):
+    helm_env["FAKE_PF_HANG"] = "1"
+    marker = helm_env["FAKE_PF_MARKER"]
+    proc = subprocess.Popen(
+        ["sh", str(SCRIPT), "--mode", "helm"],
+        cwd=tmp_path / "out",
+        env=helm_env,
+        stdout=subprocess.DEVNULL,
+    )
+    deadline = time.time() + 20
+    while not marker_pids(marker) and time.time() < deadline:
+        time.sleep(0.05)
+    assert marker_pids(marker)
+    proc.send_signal(sig)
+    assert proc.wait(timeout=15) != 0
+    deadline = time.time() + 5
+    while marker_pids(marker) and time.time() < deadline:
+        time.sleep(0.05)
+    assert marker_pids(marker) == []
+    assert bundles(tmp_path) == [] and list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_helm_options_need_helm_mode(env, tmp_path):
+    for args in (("--release", "vigil"), ("--namespace", "vigil"), ("--mode", "compose", "--release", "x")):
+        proc = run(env, tmp_path, *args)
+        assert proc.returncode == 1 and "need --mode helm" in proc.stderr
+    assert bundles(tmp_path) == []
+    # without --mode, Helm is named but never probed
+    assert run(env, tmp_path).returncode == 0
+    assert "helm: not probed, use --mode helm" in manifest_of(tmp_path)["looked"]

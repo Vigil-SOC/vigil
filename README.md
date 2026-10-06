@@ -409,6 +409,12 @@ sha256sum -c "vigil-support-$V.tar.gz.sha256"                                   
 tar -xzf "vigil-support-$V.tar.gz" && sh vigil-support/vigil-support.sh
 ```
 
+A Helm install is read from your own machine, with your current `kubectl` context and `helm` (it is never probed unless asked for):
+
+```bash
+sh scripts/vigil-support/vigil-support.sh --mode helm [--release NAME --namespace NS]
+```
+
 Vigil Desktop shows the exact command for its install under **Support Bundle Command…** in the tray menu.
 
 Re-run with `sudo` to include sources that need elevation (some system logs).
