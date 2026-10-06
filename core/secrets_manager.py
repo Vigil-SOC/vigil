@@ -332,7 +332,13 @@ class EncryptedFileBackend(SecretsBackend):
         self.secrets_path = self.data_dir / self.SECRETS_FILENAME
         self.master_key_path = self.data_dir / self.MASTER_KEY_FILENAME
         self._fernet = None  # lazy
+        self._fernet_key: Optional[bytes] = None
         self._cache: Optional[Dict[str, str]] = None
+        # Set when an existing ``secrets.enc`` could not be decrypted. Writes
+        # are refused while set, or the next save would replace the file with
+        # a near-empty store and lose every other credential.
+        self._load_failed = False
+        self._load_failed_sig: Optional[tuple] = None
         # mtime of the last ``secrets.enc`` load. Used by ``_load_cache``
         # to detect cross-process writes so the backend picks up secrets
         # saved by sibling processes without a restart.
@@ -368,9 +374,18 @@ class EncryptedFileBackend(SecretsBackend):
     def _get_fernet(self):
         from cryptography.fernet import Fernet
 
-        if self._fernet is None:
-            self._fernet = Fernet(self._load_or_create_master_key())
+        key = self._load_or_create_master_key()
+        # Rebuild when master.key changed on disk (e.g. the original was restored).
+        if self._fernet is None or key != self._fernet_key:
+            self._fernet = Fernet(key)
+            self._fernet_key = key
         return self._fernet
+
+    def _read_master_key(self) -> Optional[bytes]:
+        try:
+            return self.master_key_path.read_bytes().strip()
+        except OSError:
+            return None
 
     def _current_mtime(self) -> float:
         """Return the secrets file's mtime, or 0 if it doesn't exist."""
@@ -394,35 +409,47 @@ class EncryptedFileBackend(SecretsBackend):
             logger.debug("Secrets file changed on disk — reloading cache")
             self._cache = None
 
+        # After a failed load, retry only once the file or master.key changes
+        # (a restored key does not touch secrets.enc's mtime).
+        sig = (current_mtime, self._read_master_key())
+        if self._load_failed and sig != self._load_failed_sig:
+            self._cache = None
+
         if self._cache is not None:
             return self._cache
         if not self.secrets_path.exists():
             self._cache = {}
             self._cache_mtime = current_mtime
+            self._load_failed = False
             return self._cache
         try:
-            from cryptography.fernet import InvalidToken  # noqa: F401
-
             blob = self.secrets_path.read_bytes()
+            # Never mint a new master key over an existing secrets.enc.
+            if sig[1] is None:
+                raise FileNotFoundError(f"{self.master_key_path} is missing")
             plaintext = self._get_fernet().decrypt(blob)
             self._cache = json.loads(plaintext.decode("utf-8"))
             self._cache_mtime = current_mtime
+            self._load_failed = False
             logger.debug(f"Loaded {len(self._cache)} secrets from {self.secrets_path}")
         except Exception as e:
-            # Don't silently wipe: log and present an empty view, but leave
-            # the encrypted file untouched so a bad master key doesn't
-            # destroy data.
+            # Don't silently wipe: serve an empty view, leave the file
+            # untouched, and refuse writes (see ``_load_failed``).
             logger.error(
-                f"Could not decrypt {self.secrets_path} ({e}); "
-                f"treating as empty. If the master key changed, restore "
-                f"~/.vigil/master.key from a backup."
+                f"Could not decrypt {self.secrets_path} ({e!r}); "
+                f"treating as empty and refusing writes. If the master key "
+                f"changed, restore the original ~/.vigil/master.key."
             )
             self._cache = {}
             self._cache_mtime = current_mtime
+            self._load_failed = True
+            self._load_failed_sig = sig
         return self._cache
 
     @default_on_error(False)
     def _write_cache(self) -> bool:
+        if self._load_failed:
+            return False
         self._ensure_dir()
         plaintext = json.dumps(self._cache or {}, sort_keys=True).encode("utf-8")
         blob = self._get_fernet().encrypt(plaintext)
@@ -451,6 +478,13 @@ class EncryptedFileBackend(SecretsBackend):
         # instead of raising. Roll the assignment back or get() serves a
         # value that never reached disk.
         cache = self._load_cache()
+        if self._load_failed:
+            logger.error(
+                f"Refusing to save secret '{key}': existing {self.secrets_path} "
+                f"cannot be decrypted, and saving would overwrite every stored "
+                f"credential. Restore the original {self.master_key_path}."
+            )
+            return False
         had_key = key in cache
         previous = cache.get(key)
         cache[key] = value
