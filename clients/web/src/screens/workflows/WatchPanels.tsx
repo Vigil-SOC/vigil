@@ -111,8 +111,12 @@ function useRecorded(runId: string, decisionId: string | null): Recorded | undef
     const keep = (value: Recorded) => { if (mounted.current) setHeld((h) => ({ ...h, [decisionId]: value })) }
     Promise.resolve()
       .then(() => workflowApi.getReplay(runId, decisionId))
-      .then((res) => keep(res.data.decisions.find((d) => d.decision_id === decisionId)?.recorded ?? 'failed'))
-      .catch(() => keep('failed'))
+      .then((res) => {
+        const one = res.data.decisions.find((d) => d.decision_id === decisionId)?.recorded
+        keep(one && Array.isArray(one.hypotheses) ? one : 'failed')
+      })
+      // a failure is shown, but asked again when the step is next opened
+      .catch(() => { asked.current.delete(decisionId); keep('failed') })
   }, [runId, decisionId])
   return decisionId === null ? undefined : held[decisionId]
 }
@@ -170,7 +174,9 @@ function scopeText(scope?: Record<string, unknown>): string | null {
   const tenant = typeof scope?.tenant === 'string' && scope.tenant ? `tenant ${scope.tenant}` : null
   const one = scope?.entity as { type?: unknown; value?: unknown } | undefined
   const entity = typeof one?.value === 'string' && one.value ? (typeof one.type === 'string' ? `${one.type} ${one.value}` : one.value) : null
-  return [tenant, entity].filter(Boolean).join(' · ') || null
+  // approved scope extensions are appended here
+  const more = Array.isArray(scope?.entities) ? scope.entities.filter((e): e is string => typeof e === 'string' && e !== '' && e !== entity) : []
+  return [tenant, entity, ...more].filter(Boolean).join(' · ') || null
 }
 
 type ScopeState = 'within scope' | 'at limit' | 'extended'
@@ -195,14 +201,16 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   // the newest step reads what the run has spent; an earlier one, what the lead was shown it had left
   const spent = last ? hunt.cost_usd : grant && digest ? grant.max_cost_usd - digest.cost_usd : undefined
   const used = last ? hunt.iteration : grant && digest ? grant.max_iterations - digest.iterations : undefined
-  const unread = recorded === 'failed' ? 'Not recorded for this step.' : '…'
+  const unread = recorded === undefined ? '…' : 'Not recorded for this step.'
 
-  const budget: LimitRow = spent === undefined ? { label: 'Budget', value: unread } : grant
+  const budget: LimitRow = spent !== undefined && grant
     ? { label: 'Budget', value: <><Cost usd={spent} /> of {fmtCost(grant.max_cost_usd)}</>, pct: share(spent, grant.max_cost_usd) }
-    : { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
-  const steps: LimitRow = used === undefined ? { label: 'Steps', value: unread } : grant
+    : spent !== undefined ? { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
+    : digest ? { label: 'Budget', value: <><Cost usd={digest.cost_usd} /> left</> } : { label: 'Budget', value: unread }
+  const steps: LimitRow = used !== undefined && grant
     ? { label: 'Steps', value: `${used} of ${grant.max_iterations}`, pct: share(used, grant.max_iterations) }
-    : { label: 'Steps', value: `${used} so far` }
+    : used !== undefined ? { label: 'Steps', value: `${used} so far` }
+    : digest ? { label: 'Steps', value: `${digest.iterations} left` } : { label: 'Steps', value: unread }
 
   const state = scopeState(hunt, iteration, last)
   const where = scopeText(hunt.scope)
