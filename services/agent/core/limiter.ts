@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { errorFields, logger } from "./log.js";
 
 export interface RateLimit {
   rpm: number;
@@ -8,6 +9,8 @@ export interface RateLimit {
 // The gateway saying its own budget is gone. Distinct from a Refusal, which is
 // this layer's pool declining a call it has not yet made.
 export class GatewayExhausted extends Error {}
+
+const log = logger("agent.limiter");
 
 const RETRYABLE = new Set([429, 500, 502, 503]);
 
@@ -101,13 +104,20 @@ export class Limiter {
         // in wall clock. A dead socket is the same ceiling with nobody left to answer.
         if (status === undefined || CEILING.has(status)) {
           blind += 1;
-          if (blind > 1) throw error;
+          if (blind > 1) {
+            log.error("model call failed, giving up", { status, attempts: attempt + 1, ...errorFields(error) });
+            throw error;
+          }
         } else if (!RETRYABLE.has(status)) {
           throw error;
         }
         lastError = error;
-        if (attempt === this.attempts - 1) break;
+        if (attempt === this.attempts - 1) {
+          log.error("model call failed, giving up", { status, attempts: this.attempts, ...errorFields(error) });
+          break;
+        }
         const backoff = retryAfterMs(error) ?? 2 ** attempt * 500;
+        log.warn("model call failed, retrying", { status, attempt: attempt + 1, attempts: this.attempts, backoff_ms: backoff, ...errorFields(error) });
         await sleep(backoff + Math.random() * 250);
       }
     }

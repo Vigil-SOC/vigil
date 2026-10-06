@@ -1,4 +1,7 @@
 import type { TokenCounts } from "../contracts/budget.js";
+import { errorFields, logger } from "./log.js";
+
+const log = logger("agent.prices");
 
 // What a model costs per token, in USD. Four rates, not two: charging a cache read
 // at the input rate over-bills it tenfold on Anthropic.
@@ -73,14 +76,18 @@ export function httpPrices(options: PricesOptions): Prices {
       const response = await call(`${base}/rates?${query.toString()}`, {
         headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
       });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        log.warn("price lookup answered with an error", { model_id: modelId, provider_type: providerType, status: response.status });
+        return null;
+      }
       const rates = ratesOf(await response.json());
       // Unknown is an answer with nothing to multiply, and it is not memoised: the
       // catalog may learn the model inside this interval. A priced card is, and the
       // card carries the fetched_at the dollars were multiplied from.
       if (rates !== null && rates.input !== null) known.set(key, { rates, at: now() });
       return rates;
-    } catch {
+    } catch (error) {
+      log.warn("price lookup failed", { model_id: modelId, provider_type: providerType, ...errorFields(error) });
       return null;
     }
   };

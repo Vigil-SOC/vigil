@@ -1,4 +1,4 @@
-import { Queue, UnrecoverableError, Worker } from "bullmq";
+import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
@@ -9,6 +9,7 @@ import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
+import { errorFields, logger } from "./core/log.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
@@ -36,6 +37,8 @@ import type { HuntKinds } from "./workflows/hunt/ledger.js";
 import type { DirectiveQueue } from "./workflows/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./workflows/hunt/directives.js";
 import { DirectiveRepository } from "./ledger/directives.js";
+
+const log = logger("agent.worker");
 
 type StartJob = Extract<RunJob, { reason: "start" }>;
 
@@ -225,7 +228,7 @@ export async function advance(
       // A renewal that could not be read is not a lost lease: the claim outlives
       // several attempts, and killing the run over one failed query would be worse
       // than the late renewal it is recovering from.
-      () => {},
+      (error: unknown) => log.warn("lease renewal failed", { run_id: job.run_id, ...errorFields(error) }),
     );
   }, RENEW_EVERY_MS);
 
@@ -538,9 +541,29 @@ export async function handle(state: State, leases: Leases, job: RunJob, directiv
   try {
     await advance(state, leases, job, build, directives);
   } catch (error) {
-    if (error instanceof SpecError || error instanceof GatewayExhausted) throw new UnrecoverableError(error.message);
+    if (error instanceof SpecError || error instanceof GatewayExhausted) {
+      throw Object.assign(new UnrecoverableError(error.message), { cause: error });
+    }
     throw error;
   }
+}
+
+// One line per failed attempt: warn while BullMQ will retry, error once it will not.
+// `job` is undefined when the failure is a stalled job BullMQ already discarded.
+// Spec and gateway errors are wrapped in UnrecoverableError by handle(); the cause
+// names the class the operator needs.
+export function logFailure(job: Job<RunJob> | undefined, error: Error): void {
+  const attempts = job?.opts.attempts ?? 1;
+  const attempt = job?.attemptsMade ?? attempts;
+  const retrying = !(error instanceof UnrecoverableError) && attempt < attempts;
+  const cause = error instanceof UnrecoverableError && error.cause instanceof Error ? error.cause : error;
+  log[retrying ? "warn" : "error"](retrying ? "run attempt failed, will retry" : "run failed", {
+    run_id: job?.data.run_id,
+    run_kind: job?.data.run_kind,
+    attempt,
+    attempts,
+    ...errorFields(cause),
+  });
 }
 
 // How many runs one worker drives at once. Tunable because the right number is a
@@ -585,6 +608,11 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
     lockDuration: LEASE_TTL_MS * 10,
   });
 
+  worker.on("failed", logFailure);
+  // Connection-level faults arrive here and nowhere else; an unhandled one would also
+  // crash the process.
+  worker.on("error", (error) => log.error("worker error", errorFields(error)));
+
   // A plain interval rather than a repeatable job: a repeat key lives in Redis and
   // can be lost on a deploy, and a watchdog that has silently stopped looks exactly
   // like one with nothing to do. This cannot stop while the process lives.
@@ -598,7 +626,7 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
       // A sweep that could not read the table tries again next tick. Throwing here
       // would take the process down with every run on it. Said out loud because a
       // watchdog failing every tick looks exactly like one with nothing to do.
-      console.warn(`sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("sweep failed", errorFields(error));
     });
   }, SWEEP_EVERY_MS);
 
@@ -629,9 +657,7 @@ export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
 function warnIfUnmirrored(): void {
   const url = process.env["VIGIL_RUNS_URL"];
   if (url !== undefined && url !== "") return;
-  console.warn(
-    "VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered",
-  );
+  log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {

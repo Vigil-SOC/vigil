@@ -6,6 +6,7 @@ import { cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
+import { errorFields, logger } from "./core/log.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
@@ -19,6 +20,8 @@ import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
 import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
 import { investigateReplay } from "./workflows/lead/replay.js";
+
+const log = logger("agent.serve");
 
 const CHAT = "/chat/stream";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
@@ -100,6 +103,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
       if (res.writableEnded || res.destroyed) return void (await stream.return(undefined as never));
     }
   } catch (error) {
+    log.error("chat turn failed", { run_id: request.run_id, ...errorFields(error) });
     res.write(sse({ error: error instanceof Error ? error.message : String(error) }));
   }
   res.end();
@@ -135,8 +139,16 @@ async function body(req: IncomingMessage): Promise<string> {
 }
 
 function refuse(res: ServerResponse, status: number, detail: string): void {
+  // A 4xx is the caller's doing and says nothing about this process; 5xx callers log first.
+  if (status < 500) log.debug("request refused", { status });
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify({ detail }));
+}
+
+// A route that threw: logged with the run, then answered as the refusal it is.
+function fail(res: ServerResponse, status: number, route: string, runId: string, error: unknown): void {
+  log.error("request failed", { route, run_id: runId, status, ...errorFields(error) });
+  refuse(res, status, error instanceof Error ? error.message : String(error));
 }
 
 // A run folded by the workflow that owns it. The events stay ours: a reader gets
@@ -178,7 +190,7 @@ async function writeNarrative(state: State, runId: string, res: ServerResponse, 
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(narrative));
   } catch (error) {
-    return refuse(res, 502, error instanceof Error ? error.message : String(error));
+    return fail(res, 502, "narrate", runId, error);
   }
 }
 
@@ -202,7 +214,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   } catch (error) {
     // Hunt-like is not the same as foldable: a ledger fold() refuses is a 502, as
     // writeNarrative answers, rather than a rejection nothing catches.
-    return refuse(res, 502, error instanceof Error ? error.message : String(error));
+    return fail(res, 502, "replay", runId, error);
   }
   if (decisionId !== null) {
     const one = report.decisions.filter((decision) => decision.decision_id === decisionId);
@@ -223,13 +235,16 @@ async function readEvents(state: State, runId: string, snapshots: boolean, res: 
 }
 
 async function readVerify(runId: string, verify: VerifyRun | undefined, res: ServerResponse): Promise<void> {
-  if (verify === undefined) return refuse(res, 500, "ledger verify is not wired");
+  if (verify === undefined) {
+    log.error("ledger verify is not wired", { run_id: runId });
+    return refuse(res, 500, "ledger verify is not wired");
+  }
   try {
     const result = await verify(runId);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(result));
   } catch (error) {
-    return refuse(res, 502, error instanceof Error ? error.message : String(error));
+    return fail(res, 502, "verify", runId, error);
   }
 }
 

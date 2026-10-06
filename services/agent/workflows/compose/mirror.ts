@@ -1,5 +1,8 @@
 import type { ResolutionPayload, RunOutcome, TerminalHandoff } from "../../contracts/events.js";
 import { httpAnswers } from "../../core/answers.js";
+import { errorFields, logger } from "../../core/log.js";
+
+const log = logger("agent.mirror");
 
 // Where a run's progress goes for a human to read, and where a human's answer
 // comes back from. The ledger stays the record; this is the copy the UI reads.
@@ -80,10 +83,10 @@ export function httpMirror(options: MirrorOptions): Mirror {
   const post = async (path: string, body: unknown): Promise<boolean> => {
     try {
       const response = await call(`${base}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
-      if (!response.ok) console.warn(`mirror ${path} answered ${response.status}`);
+      if (!response.ok) log.warn("mirror was refused", { path, status: response.status });
       return response.ok;
     } catch (error) {
-      console.warn(`mirror ${path} failed: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("mirror failed", { path, ...errorFields(error) });
       return false;
     }
   };

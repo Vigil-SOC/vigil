@@ -1,3 +1,7 @@
+import { errorFields, logger } from "./log.js";
+
+const log = logger("agent.vk");
+
 // The Bifrost virtual key a model call carries as x-bf-vk, or null for none. Asked of
 // the backend, which alone decides whether the budget is enforced; null is an answer
 // (bypass, or no key configured), not a failure.
@@ -16,7 +20,7 @@ export interface VirtualKeyOptions {
   timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
-  warn?: (message: string) => void;
+  warn?: (error: unknown) => void;
 }
 
 // Memoised for ttlMs, null included. A failed lookup is not memoised and sends no
@@ -25,7 +29,7 @@ export interface VirtualKeyOptions {
 export function httpVirtualKey(options: VirtualKeyOptions): VirtualKey {
   const call = options.fetch ?? globalThis.fetch;
   const now = options.now ?? Date.now;
-  const warn = options.warn ?? console.warn;
+  const warn = options.warn ?? ((error) => log.warn("virtual key lookup failed, sending no x-bf-vk", errorFields(error)));
   const url = `${options.url.replace(/\/$/, "")}/vk`;
   let held: { vk: string | null; at: number } | undefined;
 
@@ -44,7 +48,7 @@ export function httpVirtualKey(options: VirtualKeyOptions): VirtualKey {
       held = { vk, at: now() };
       return vk;
     } catch (error) {
-      warn(`virtual key lookup failed, sending no x-bf-vk: ${error instanceof Error ? error.message : String(error)}`);
+      warn(error);
       return null;
     }
   };

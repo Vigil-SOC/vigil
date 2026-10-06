@@ -19,9 +19,12 @@ import type { DirectiveQueue } from "./ports.js";
 import { buildReport, renderReport, type HuntReport as HuntDeliverable } from "./report.js";
 import type { Handoff, HuntOutcome } from "./types.js";
 import { expandFrom } from "./expand.js";
+import { errorFields, logger } from "../../core/log.js";
 import { registryOf } from "../../core/registry.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { grantsOf } from "../lead/workflow.js";
+
+const log = logger("agent.hunt");
 
 export interface HuntOptions {
   run_id: string;
@@ -146,7 +149,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
         try {
           await fileHandoffs(options.onHandoff, run_id, ledger.projection, filed);
         } catch (error) {
-          console.warn(`hunt ${run_id} could not file its escalations`, error);
+          log.warn("hunt could not file its escalations", { run_id, ...errorFields(error) });
         }
       }
       if (iteration.hunt_status === "terminal") {
@@ -177,7 +180,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
       }
       // Logged as well as journaled: the stack is the only thing that says a defect in
       // this process from an ordinary failed run.
-      console.error(`hunt ${run_id} ended on an unhandled error`, error);
+      log.error("hunt ended on an unhandled error", { run_id, ...errorFields(error), stack: error instanceof Error ? error.stack : undefined });
       return await end(harness, options, ledger, "failed", reason, controller, narrator);
     }
   }
@@ -261,7 +264,7 @@ async function narrate(
     ]);
     return narrative;
   } catch (error) {
-    console.error(`hunt ${options.run_id} ended without an account of it`, error);
+    log.error("hunt ended without an account of it", { run_id: options.run_id, ...errorFields(error) });
     return null;
   }
 }

@@ -1,7 +1,10 @@
+import { logger } from "../../core/log.js";
 import { newId } from "./ids.js";
 import type { Projection } from "./ledger.js";
 import type { CheckpointPayload, ResolutionPayload } from "../../contracts/events.js";
 import type { Directive } from "./types.js";
+
+const log = logger("agent.hunt.checkpoints");
 
 // The four moments a hunt is allowed to stop and ask. Closed, because a class
 // the controller has no policy for would raise a checkpoint nobody can answer.
@@ -51,11 +54,11 @@ export function checkpointsFrom(declared: unknown): Partial<Checkpoints> {
   const safe: Partial<Checkpoints> = {};
   for (const [name, policy] of Object.entries(asked)) {
     if (!(CHECKPOINT_CLASSES as readonly string[]).includes(name)) {
-      console.warn(`checkpoints: ignoring ${name}, which names no checkpoint class`);
+      log.warn("ignoring a checkpoint policy that names no checkpoint class", { name });
       continue;
     }
     if (policy !== "ask" && policy !== "auto") {
-      console.warn(`checkpoints: ${name} asked for ${JSON.stringify(policy)}, which is neither "ask" nor "auto" — asking`);
+      log.warn("a checkpoint policy is neither ask nor auto, asking", { name, policy: JSON.stringify(policy) });
     }
     safe[name as CheckpointClass] = policy === "auto" ? "auto" : "ask";
   }
