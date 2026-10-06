@@ -103,7 +103,7 @@ function Shell() {
       <div>Dashboard page</div>
       <CommandBar boards={BOARDS} onOpenChat={vi.fn()} onOpenCase={setCaseId} onGo={vi.fn()} />
       {caseId && (
-        <CaseDrawer caseId={caseId} onClose={() => setCaseId(null)} onSelect={setCaseId} pageKey="dashboard" />
+        <CaseDrawer caseId={caseId} onClose={() => setCaseId(null)} pageKey="dashboard" />
       )}
     </>
   )

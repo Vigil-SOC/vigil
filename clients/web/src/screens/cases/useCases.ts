@@ -89,6 +89,11 @@ function toParams(f: CaseFilters) {
   return params
 }
 
+export const CASES_CHANGED = 'vigil:cases-changed'
+
+/** Tells any mounted case list to reload, e.g. after an edit made in the drawer over it. */
+export const notifyCasesChanged = () => window.dispatchEvent(new Event(CASES_CHANGED))
+
 export function useCases(filters: CaseFilters) {
   const [rows, setRows] = useState<CaseRow[]>([])
   const [total, setTotal] = useState(0)
@@ -97,6 +102,11 @@ export function useCases(filters: CaseFilters) {
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
+
+  useEffect(() => {
+    window.addEventListener(CASES_CHANGED, reload)
+    return () => window.removeEventListener(CASES_CHANGED, reload)
+  }, [reload])
 
   useEffect(() => {
     let cancelled = false

@@ -31,7 +31,7 @@ const renderAt = (path: string) =>
       <Routes>
         <Route
           path="/workflows"
-          element={<><WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} /><Search /></>}
+          element={<><WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} /><Search /></>}
         />
       </Routes>
     </MemoryRouter>,

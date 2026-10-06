@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import CasesScreen from './CasesScreen'
+import CasesScreen, { CasesDetail } from './CasesScreen'
 import { ToastProvider } from '../../shell/toast'
 import { approvalsApi, casesApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
 
 const testState = vi.hoisted(() => ({
+  canDelete: true,
   cases: [] as Array<Record<string, unknown>>,
+  getByIdError: false,
   runs: {} as Record<string, unknown>,
   recordError: null as string | null,
   recordRows: [] as Array<Record<string, unknown>>,
@@ -14,14 +16,14 @@ const testState = vi.hoisted(() => ({
 }))
 
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ hasPermission: () => true }),
+  useAuth: () => ({ hasPermission: (p: string) => p !== 'cases.delete' || testState.canDelete }),
 }))
 
 vi.mock('../../services/api', () => ({
   casesApi: {
     getAll: vi.fn(() => Promise.resolve({ data: { cases: testState.cases } })),
     getById: vi.fn((id: string) =>
-      Promise.resolve({ data: testState.cases.find((item) => item.case_id === id) }),
+      testState.getByIdError ? Promise.reject(new Error('backend down')) : Promise.resolve({ data: testState.cases.find((item) => item.case_id === id) }),
     ),
     delete: vi.fn(),
     update: vi.fn(() => Promise.resolve({ data: { success: true } })),
@@ -115,11 +117,24 @@ function renderCase(id: string) {
     <MemoryRouter initialEntries={[`/cases?case=${id}`]}>
       <ToastProvider>
         <Routes>
-          <Route path="/cases" element={<CasesScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />} />
+          <Route path="/cases" element={<CasesScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />} />
         </Routes>
       </ToastProvider>
     </MemoryRouter>,
   )
+}
+
+/** The case page alone, as the drawer renders it. */
+function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void } = {}) {
+  const ui = (caseId: string) => (
+    <MemoryRouter>
+      <ToastProvider>
+        <CasesDetail id={caseId} onBack={props.onBack ?? vi.fn()} onExpand={props.onExpand} pageKey="cases" />
+      </ToastProvider>
+    </MemoryRouter>
+  )
+  const view = render(ui(id))
+  return { ...view, showCase: (caseId: string) => view.rerender(ui(caseId)) }
 }
 
 function need(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
@@ -136,6 +151,8 @@ function need(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
 }
 
 beforeEach(() => {
+  testState.canDelete = true
+  testState.getByIdError = false
   testState.cases = []
   testState.runs = {}
   testState.recordError = null
@@ -405,7 +422,7 @@ describe('case page', () => {
       case_id: 'case-hunt',
       messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not.' }],
     }]
-    renderCase('case-hunt')
+    const { showCase } = renderDetail('case-hunt')
 
     expect(await screen.findByRole('button', { name: 'e1' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'ghost-9' })).not.toBeInTheDocument()
@@ -415,7 +432,7 @@ describe('case page', () => {
     const row = (await screen.findByText('no login')).closest('tr')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
 
-    fireEvent.click(screen.getByText('Next case'))
+    showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText(/The row e1 matters/)).not.toBeInTheDocument())
   })
@@ -557,5 +574,132 @@ describe('case page', () => {
     expect(screen.getByRole('tab', { name: /^Summary/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.queryByRole('button', { name: 'Needs you' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+  })
+
+  describe('head row', () => {
+    const open = (id: string) => ({
+      case_id: id,
+      title: 'Frame case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [],
+    })
+
+    it('shows the loading state, then the breadcrumb and title', async () => {
+      testState.cases = [open('case-9')]
+      renderDetail('case-9')
+      expect(screen.getByText('Loading case…')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
+      expect(await screen.findByRole('heading', { name: 'Frame case' })).toBeInTheDocument()
+      expect(screen.getByText('Case case-9')).toBeInTheDocument()
+      expect(screen.queryByText('All cases')).not.toBeInTheDocument()
+    })
+
+    it('shows a failed read with the crumb and no menu', async () => {
+      testState.getByIdError = true
+      const onBack = vi.fn()
+      renderDetail('case-9', { onBack })
+      expect(await screen.findByText(/Couldn’t load this case: backend down/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Cases' }))
+      expect(onBack).toHaveBeenCalled()
+    })
+
+    it('has Expand and Close only in the drawer', async () => {
+      testState.cases = [open('case-9')]
+      const onBack = vi.fn()
+      const onExpand = vi.fn()
+      const { unmount } = renderDetail('case-9', { onBack, onExpand })
+      await screen.findByRole('heading', { name: 'Frame case' })
+      fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      expect(onExpand).toHaveBeenCalledTimes(1)
+      expect(onBack).toHaveBeenCalledTimes(1)
+      unmount()
+
+      renderDetail('case-9')
+      await screen.findByRole('heading', { name: 'Frame case' })
+      expect(screen.queryByRole('button', { name: 'Expand' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    })
+
+    it('opens Edit and Merge from the ⋯ menu; Merge loads its own picker', async () => {
+      testState.cases = [open('case-9'), { ...open('case-10'), title: 'Other case' }]
+      renderDetail('case-9')
+      await screen.findByRole('heading', { name: 'Frame case' })
+      const menu = screen.getByRole('button', { name: 'Case actions' })
+      expect(menu).toHaveAttribute('aria-haspopup', 'menu')
+
+      fireEvent.click(menu)
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+      expect(screen.getByRole('dialog', { name: 'Edit case' })).toBeInTheDocument()
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      fireEvent.click(within(screen.getByRole('dialog', { name: 'Edit case' })).getByRole('button', { name: 'Cancel' }))
+
+      vi.mocked(casesApi.getAll).mockClear()
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Merge' }))
+      const dialog = screen.getByRole('dialog', { name: 'Merge case' })
+      expect(within(dialog).getByRole('button', { name: 'Merge case' })).toBeDisabled()
+      await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Merge case' })).toBeEnabled())
+      expect(casesApi.getAll).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows a failed merge picker with Retry', async () => {
+      testState.cases = [open('case-9')]
+      renderDetail('case-9')
+      await screen.findByRole('heading', { name: 'Frame case' })
+      vi.mocked(casesApi.getAll).mockRejectedValueOnce(new Error('list down'))
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Merge' }))
+      expect(await screen.findByText(/Couldn’t load cases: list down/)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(screen.queryByText(/Couldn’t load cases/)).not.toBeInTheDocument())
+    })
+
+    it('gates Delete on cases.delete and confirms before deleting', async () => {
+      testState.cases = [open('case-9')]
+      testState.canDelete = false
+      const { unmount } = renderDetail('case-9')
+      await screen.findByRole('heading', { name: 'Frame case' })
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: /Delete/ })).not.toBeInTheDocument()
+      unmount()
+
+      testState.canDelete = true
+      const onBack = vi.fn()
+      renderDetail('case-9', { onBack })
+      await screen.findByRole('heading', { name: 'Frame case' })
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }))
+      expect(screen.getByRole('dialog', { name: 'Delete case?' })).toBeInTheDocument()
+      expect(casesApi.delete).not.toHaveBeenCalled()
+      vi.mocked(casesApi.delete).mockResolvedValueOnce({ data: { success: true } } as never)
+      fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete case?' })).getByRole('button', { name: 'Delete case' }))
+      await waitFor(() => expect(casesApi.delete).toHaveBeenCalledWith('case-9'))
+      await waitFor(() => expect(onBack).toHaveBeenCalled())
+    })
+
+    it('closes the menu on outside click and on Escape', async () => {
+      testState.cases = [open('case-9')]
+      renderDetail('case-9')
+      await screen.findByRole('heading', { name: 'Frame case' })
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+      // the drawer stops mousedown from bubbling; the menu must still close
+      const stop = (e: Event) => e.stopPropagation()
+      document.body.addEventListener('mousedown', stop)
+      fireEvent.mouseDown(document.body)
+      document.body.removeEventListener('mousedown', stop)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
   })
 })

@@ -38,7 +38,7 @@ const row = (name: string) => screen.getByText(name).closest('tr') as HTMLElemen
 async function openAgents() {
   render(
     <MemoryRouter>
-      <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
     </MemoryRouter>,
   )
   fireEvent.click(await screen.findByRole('tab', { name: /^Agents/ }))

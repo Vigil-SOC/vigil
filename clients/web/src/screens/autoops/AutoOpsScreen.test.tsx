@@ -32,7 +32,7 @@ const rowFor = (id: string) => screen.getByText(id).closest('tr') as HTMLElement
 
 describe('autoops investigation rows', () => {
   it('renders a priced cost and a real zero as dollars, and an absent cost as not priced', () => {
-    render(<AutoOpsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />)
+    render(<AutoOpsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />)
 
     expect(within(rowFor('inv-priced')).getByText('$1.235')).toBeInTheDocument()
     expect(within(rowFor('inv-zero')).getByText('$0.000')).toBeInTheDocument()

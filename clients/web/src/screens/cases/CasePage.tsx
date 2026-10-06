@@ -179,6 +179,66 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   }
 }
 
+/** ⋯ menu in the head row. Same pattern as the console's More menu: closes on outside click and Escape. */
+function CaseMenu({ onEdit, onMerge, onDelete }: { onEdit: () => void; onMerge: () => void; onDelete?: () => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault() // the drawer's own Escape handler skips handled keys
+      setOpen(false)
+    }
+    // capture: the drawer stops mousedown from bubbling to the document
+    document.addEventListener('mousedown', onDoc, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const pick = (fn: () => void) => () => {
+    setOpen(false)
+    triggerRef.current?.focus() // the dialog returns focus here when it closes
+    fn()
+  }
+
+  return (
+    <div className="vg-more dh-more" ref={ref}>
+      <button
+        type="button"
+        ref={triggerRef}
+        className="btn ghost icon"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Case actions"
+        title="Case actions"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon name="more" size={15} />
+      </button>
+      {open && (
+        <div className="vg-more-menu dh-menu" role="menu" aria-label="Case actions">
+          <button type="button" role="menuitem" onClick={pick(onEdit)}><Icon name="edit" size={14} /> Edit</button>
+          <button type="button" role="menuitem" onClick={pick(onMerge)}><Icon name="link" size={14} /> Merge</button>
+          {onDelete && (
+            <button type="button" role="menuitem" className="danger" onClick={pick(onDelete)}>
+              <Icon name="trash" size={14} /> Delete case
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function CasePage({
   id,
   c,
@@ -191,6 +251,7 @@ export function CasePage({
   error,
   pageKey,
   onBack,
+  onExpand,
   onEdit,
   onMerge,
   onDelete,
@@ -208,7 +269,10 @@ export function CasePage({
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
   pageKey: string
+  /** The "Cases" crumb; in the drawer it also backs the Close icon. */
   onBack: () => void
+  /** Set only in the drawer: shows the Expand and Close icons. */
+  onExpand?: () => void
   onEdit: () => void
   onMerge: () => void
   onDelete: () => void
@@ -461,8 +525,22 @@ export function CasePage({
     <div className="detail-pane">
       <div className="detail-head">
         <div className="dh-crumb">
-          <button className="back" onClick={onBack}><Icon name="chevL" size={13} /> All cases</button>
-          <span>/</span><span className="mono">{id}</span>
+          <button type="button" className="back" onClick={onBack}>Cases</button>
+          <span aria-hidden>›</span>
+          <span className="mono">Case {id}</span>
+          <div className="dh-crumb-end">
+            {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
+            {onExpand && (
+              <>
+                <button type="button" className="btn ghost icon" aria-label="Expand" title="Expand" onClick={onExpand}>
+                  <Icon name="fit" size={15} />
+                </button>
+                <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onBack}>
+                  <Icon name="close" size={15} />
+                </button>
+              </>
+            )}
+          </div>
         </div>
         {phase === 'error' ? (
           <div className="muted" style={{ padding: '6px 0' }}>Couldn’t load this case: {error}</div>
@@ -483,13 +561,6 @@ export function CasePage({
               </div>
               <LinkedFindings items={linkedFindings} />
               <NotMeasured className="case-trust" />
-            </div>
-            <div className="dh-actions">
-              <button className="btn ghost" onClick={onEdit}><Icon name="edit" /> Edit</button>
-              <button className="btn ghost" onClick={onMerge}><Icon name="link" /> Merge</button>
-              {canDelete && (
-                <button className="btn danger" onClick={onDelete}><Icon name="trash" /> Delete case</button>
-              )}
             </div>
           </div>
         ) : (

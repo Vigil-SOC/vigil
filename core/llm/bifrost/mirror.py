@@ -31,8 +31,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from core.config import get_settings
+from core.llm.outage import report_outage, report_recovered
 
 logger = logging.getLogger(__name__)
+
+_UNREACHABLE = "bifrost-mirror-unreachable"
 
 _TIMEOUT = 10.0
 
@@ -262,8 +265,14 @@ async def reconcile_all() -> Optional[Dict[str, bool]]:
     try:
         providers = (await _get("providers")).get("providers") or []
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Mirror reconcile skipped — Bifrost unreachable: %s", exc)
+        report_outage(
+            logger,
+            _UNREACHABLE,
+            "Mirror reconcile skipped — Bifrost unreachable: %s",
+            exc,
+        )
         return None
+    report_recovered(logger, _UNREACHABLE, "Bifrost reachable for mirror reconcile")
 
     verdicts: Dict[str, bool] = {}
     for p in providers:

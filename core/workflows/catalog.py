@@ -13,11 +13,12 @@ about executing a run, so it lives in ``core.workflows.hunt_preflight`` behind
 its own console route.
 """
 
-from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
 
 from sqlalchemy import func
 
+from core.findings.overview import completion_level
 from core.llm import target
 from core.llm.providers.registry import get_registry, model_display_name
 from core.storage.connection import get_db_manager
@@ -48,52 +49,80 @@ def is_hunt(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
     return definition is not None and is_hunt_like(definition.run_kind)
 
 
-def _today_run_stats(now: datetime) -> Dict[str, Tuple[int, Optional[float]]]:
-    """Runs started since UTC midnight, and the mean cost of those that finished.
+def _week_run_stats(now: datetime) -> Dict[str, Dict[str, Any]]:
+    """Per workflow, the runs started in the last 7 days and how they went.
 
     ``started_at`` is naive UTC, so the bound is too: an aware datetime
-    TypeErrors against the column. A finished run that cost nothing is a real
-    zero; null is only "nothing finished". Deleted rows stay out of both.
+    TypeErrors against the column. ``runs_7d`` counts every run in the window,
+    running ones included. ``success_rate`` is completed over those that ended
+    (completed, failed, cancelled), null while none has. ``mean_cost_usd`` is the
+    mean over runs with ``finished_at`` set; a finished run that cost nothing is
+    a real zero, null is only "nothing finished". Deleted rows stay out of all.
     """
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    since = now - timedelta(days=7)
     db = get_db_manager()
     with db.session_scope() as session:
-        rows = (
+        counts = (
             session.query(
                 WorkflowRun.workflow_id,
+                WorkflowRun.status,
                 func.count(WorkflowRun.run_id),
-                func.avg(WorkflowRun.total_cost_usd).filter(
-                    WorkflowRun.finished_at.isnot(None)
-                ),
             )
+            .filter(WorkflowRun.started_at >= since, WorkflowRun.deleted_at.is_(None))
+            .group_by(WorkflowRun.workflow_id, WorkflowRun.status)
+            .all()
+        )
+        costs = (
+            session.query(WorkflowRun.workflow_id, func.avg(WorkflowRun.total_cost_usd))
             .filter(
-                WorkflowRun.started_at >= midnight,
+                WorkflowRun.started_at >= since,
                 WorkflowRun.deleted_at.is_(None),
+                WorkflowRun.finished_at.isnot(None),
             )
             .group_by(WorkflowRun.workflow_id)
             .all()
         )
-    return {
-        str(workflow_id): (int(count), None if mean is None else float(mean))
-        for workflow_id, count, mean in rows
+    by_status: Dict[str, Dict[str, int]] = {}
+    for workflow_id, status, count in counts:
+        by_status.setdefault(str(workflow_id), {})[status] = int(count)
+    mean = {
+        str(workflow_id): float(avg) for workflow_id, avg in costs if avg is not None
     }
+    stats = {}
+    for workflow_id, statuses in by_status.items():
+        completed = statuses.get("completed", 0)
+        ended = completed + sum(statuses.get(s, 0) for s in ("failed", "cancelled"))
+        stats[workflow_id] = {
+            "runs_7d": sum(statuses.values()),
+            "success_rate": completed / ended if ended else None,
+            "success_level": completion_level(ended, completed),
+            "mean_cost_usd": mean.get(workflow_id),
+        }
+    return stats
+
+
+_NO_RUNS: Dict[str, Any] = {
+    "runs_7d": 0,
+    "success_rate": None,
+    "success_level": None,
+    "mean_cost_usd": None,
+}
 
 
 def listing(service: WorkflowsService) -> Dict[str, Any]:
     """Every available workflow, file-based and database-backed alike.
 
-    Each row carries today's run count and the mean cost of the finished
-    ones. Both keys are present when nothing matches (0 and null). ``triggers``
-    says what starts it, ``can_disable`` whether it may be turned off, and
-    ``enabled`` whether it is on.
+    Each row carries its last 7 days: ``runs_7d``, ``success_rate`` (a 0..1
+    fraction), ``success_level`` (good/fair/poor, as on the Agents tab) and the
+    mean cost of the finished runs. All four keys are present when nothing
+    matches (0 and nulls). ``triggers`` says what starts it, ``can_disable``
+    whether it may be turned off, and ``enabled`` whether it is on.
     """
     workflows = service.list_workflows()
-    stats = _today_run_stats(utcnow())
+    stats = _week_run_stats(utcnow())
     disabled = disabled_workflow_ids()
     for row in workflows:
-        runs, mean = stats.get(row["id"], (0, None))
-        row["runs_today"] = runs
-        row["mean_cost_usd"] = mean
+        row.update(stats.get(row["id"], _NO_RUNS))
         row["triggers"] = triggers_for(row["id"])
         row["can_disable"] = can_disable(row["id"])
         row["enabled"] = row["id"] not in disabled

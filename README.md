@@ -409,6 +409,12 @@ sha256sum -c "vigil-support-$V.tar.gz.sha256"                                   
 tar -xzf "vigil-support-$V.tar.gz" && sh vigil-support/vigil-support.sh
 ```
 
+A Helm install is read from your own machine, with your current `kubectl` context and `helm` (it is never probed unless asked for):
+
+```bash
+sh scripts/vigil-support/vigil-support.sh --mode helm [--release NAME --namespace NS]
+```
+
 Vigil Desktop shows the exact command for its install under **Support Bundle Command…** in the tray menu.
 
 Re-run with `sudo` to include sources that need elevation (some system logs).
@@ -421,7 +427,7 @@ Re-run with `sudo` to include sources that need elevation (some system logs).
 
 **In the bundle** (host level, under `system/`): hostname and `uname`, the clock and timezone, the full process list, disk usage, the OS release, and the journal, syslog and dmesg (or the macOS log); plus `manifest.json` and `SUMMARY.txt`, which list everything collected and everything not.
 
-**Not in the bundle yet**: `configuration/`, `health/` and `logs/` are empty placeholders until per-install collection lands (#1536), so there are no Vigil logs, configuration, health endpoint output, container status or database contents. See [`scripts/vigil-support/README.md`](scripts/vigil-support/README.md) for the format.
+**Per install** (when a Vigil install is found): `configuration/` (the `.env`, the rendered Compose config, `backups.json`, `detection_sources.json`, deployment files), `health/` (endpoint output and container status), and `logs/` (the checkout's and the State Directory's logs, and `docker logs` of the install's containers, including Postgres, Redis and Bifrost on a native install). Under Compose and Desktop the State Directory files are read from the backend container. Secrets, keys and database contents are never included; `SUMMARY.txt` lists what was left out. See [`scripts/vigil-support/README.md`](scripts/vigil-support/README.md) for the table.
 
 ---
 

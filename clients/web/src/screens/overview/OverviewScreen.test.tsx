@@ -95,7 +95,7 @@ function renderScreen() {
   const setWallMode = vi.fn()
   render(
     <MemoryRouter>
-      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} setViewFull={vi.fn()} setWallMode={setWallMode} />
+      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={vi.fn()} setViewFull={vi.fn()} setWallMode={setWallMode} />
     </MemoryRouter>,
   )
   return { goSettings, setWallMode }

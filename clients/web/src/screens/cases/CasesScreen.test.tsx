@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen from './CasesScreen'
 import { ToastProvider } from '../../shell/toast'
 import { casesApi } from '../../services/api'
+import { notifyCasesChanged } from './useCases'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
@@ -89,6 +90,7 @@ function renderCases(path = '/cases') {
                 openChat={vi.fn()}
                 go={vi.fn()}
                 goSettings={vi.fn()}
+                openCase={openCase}
                 setViewFull={vi.fn()}
               />
             }
@@ -103,84 +105,110 @@ beforeEach(() => {
   testState.canDelete = true
   testState.cases = [{ ...CASE }]
   vi.mocked(casesApi.delete).mockReset()
+  vi.mocked(casesApi.getAll).mockClear()
+  openCase.mockClear()
 })
 
+const openCase = vi.fn()
+
+/** Deletion lives on the case page, behind the ⋯ menu. */
+async function openDelete() {
+  expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete case' }))
+}
+
 describe('case deletion', () => {
-  it('hides delete controls without cases.delete permission', async () => {
-    testState.canDelete = false
+  it('leaves no delete control on the list rows', async () => {
     renderCases()
 
     expect(await screen.findByText(CASE.title)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: `Delete case ${CASE.case_id}` })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Delete case/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Open case/ })).not.toBeInTheDocument()
+  })
+
+  it('hides the Delete item without cases.delete permission', async () => {
+    testState.canDelete = false
+    renderCases(`/cases?case=${CASE.case_id}`)
+
+    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+    expect(screen.queryByRole('menuitem', { name: 'Delete case' })).not.toBeInTheDocument()
   })
 
   it('requires confirmation and supports cancellation', async () => {
-    renderCases()
-    fireEvent.click(await screen.findByRole('button', { name: `Delete case ${CASE.case_id}` }))
+    renderCases(`/cases?case=${CASE.case_id}`)
+    await openDelete()
 
     expect(screen.getByRole('dialog', { name: 'Delete case?' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
     expect(casesApi.delete).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog', { name: 'Delete case?' })).not.toBeInTheDocument()
-    expect(screen.getByText(CASE.title)).toBeInTheDocument()
-  })
-
-  it('deletes a case and refreshes the list', async () => {
-    vi.mocked(casesApi.delete).mockImplementationOnce(async () => {
-      testState.cases = []
-      return { data: { success: true } } as never
-    })
-    renderCases()
-    fireEvent.click(await screen.findByRole('button', { name: `Delete case ${CASE.case_id}` }))
-    fireEvent.click(screen.getByRole('button', { name: 'Delete case' }))
-
-    await waitFor(() => expect(casesApi.delete).toHaveBeenCalledWith(CASE.case_id))
-    await waitFor(() => expect(screen.queryByText(CASE.title)).not.toBeInTheDocument())
-    expect(screen.getByText(`Deleted ${CASE.case_id}. Linked findings were preserved.`)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: CASE.title })).toBeInTheDocument()
   })
 
   it('keeps the confirmation open and shows backend errors', async () => {
     vi.mocked(casesApi.delete).mockRejectedValueOnce({
       response: { data: { detail: 'Case is locked by an active workflow' } },
     })
-    renderCases()
-    fireEvent.click(await screen.findByRole('button', { name: `Delete case ${CASE.case_id}` }))
-    fireEvent.click(screen.getByRole('button', { name: 'Delete case' }))
+    renderCases(`/cases?case=${CASE.case_id}`)
+    await openDelete()
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Delete case?' })).getByRole('button', { name: 'Delete case' }),
+    )
 
     expect(await screen.findByText('Case is locked by an active workflow', { selector: 'span[role="alert"]' }))
       .toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Delete case?' })).toBeInTheDocument()
-    expect(screen.getByText(CASE.title)).toBeInTheDocument()
   })
 
-  it('returns to the case list after deleting an open detail', async () => {
+  it('returns to the refreshed case list after deleting', async () => {
     vi.mocked(casesApi.delete).mockImplementationOnce(async () => {
       testState.cases = []
       return { data: { success: true } } as never
     })
     renderCases(`/cases?case=${CASE.case_id}`)
-
-    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete case' }))
+    await openDelete()
     fireEvent.click(
-      within(screen.getByRole('dialog', { name: 'Delete case?' }))
-        .getByRole('button', { name: 'Delete case' }),
+      within(screen.getByRole('dialog', { name: 'Delete case?' })).getByRole('button', { name: 'Delete case' }),
     )
 
     await waitFor(() => expect(casesApi.delete).toHaveBeenCalledWith(CASE.case_id))
     await waitFor(() => expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument())
+    expect(screen.getByText(`Deleted ${CASE.case_id}. Linked findings were preserved.`)).toBeInTheDocument()
+    expect(screen.queryByText(CASE.title)).not.toBeInTheDocument()
   })
 })
 
 describe('server queue', () => {
-  it('asks the server for the first page and opens a row', async () => {
+  it('asks the server for the first page and opens a row in the drawer', async () => {
     renderCases()
 
     await screen.findByText(CASE.title)
     expect(casesApi.getAll).toHaveBeenCalledWith(expect.objectContaining({ limit: 100, offset: 0 }))
     fireEvent.click(screen.getByText(CASE.title))
+    expect(openCase).toHaveBeenCalledWith(CASE.case_id)
+    expect(screen.queryByRole('heading', { name: CASE.title })).not.toBeInTheDocument()
+  })
+
+  it('reloads the list when a case changes elsewhere', async () => {
+    renderCases()
+    await screen.findByText(CASE.title)
+    testState.cases = [{ ...CASE, title: 'Renamed in the drawer' }]
+    act(() => notifyCasesChanged())
+    expect(await screen.findByText('Renamed in the drawer')).toBeInTheDocument()
+  })
+
+  it('shows the case page alone, without a list pane', async () => {
+    testState.cases = [{ ...CASE }, { ...CASE, case_id: 'other', title: 'Another case' }]
+    renderCases(`/cases?case=${CASE.case_id}`)
+
     expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+    expect(screen.queryByText('Another case')).not.toBeInTheDocument()
+    expect(casesApi.getAll).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cases' }))
+    expect(await screen.findByText('Another case')).toBeInTheDocument()
   })
 
   it('labels needs-you rows and leaves the others unlabeled', async () => {
@@ -231,7 +259,8 @@ describe('unknown priority', () => {
 
     expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
     expect(screen.getByText('Unknown priority')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
     expect(within(screen.getByRole('dialog', { name: 'Edit case' })).getByText('Unknown')).toBeInTheDocument()
   })
 })

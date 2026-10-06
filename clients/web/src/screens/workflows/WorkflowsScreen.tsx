@@ -1,13 +1,12 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
-import { type Workflow, type AgentTemplate, type Skill } from '../../data/appData'
+import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
@@ -15,7 +14,7 @@ import WorkflowBuilder from './WorkflowBuilder'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
-import { COMMANDS } from '../../shell/commandBar'
+import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBar'
 import { WatchRun } from './WatchRun'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
@@ -166,63 +165,68 @@ function StateMsg({ children }: { children: React.ReactNode }) {
   )
 }
 
-function AgentSequence({ agents, ordered }: { agents: string[]; ordered: boolean }) {
-  const agentMeta = useAgentMeta()
-  const ref = useRef<HTMLDivElement>(null)
-  // how many chips to show; null = render all, then measure how many fit on one line
-  const [limit, setLimit] = useState<number | null>(null)
-  useEffect(() => {
-    const reset = () => setLimit(null)
-    window.addEventListener('resize', reset)
-    return () => window.removeEventListener('resize', reset)
-  }, [])
-  useEffect(() => setLimit(null), [agents])
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (limit !== null || !el) return
-    const chips = Array.from(el.querySelectorAll<HTMLElement>('.agent-chip'))
-    let k = chips.filter((c) => c.offsetTop === chips[0].offsetTop).length
-    if (k < chips.length) {
-      // leave room for the "+N" chip (and the arrow before it)
-      while (k > 1 && chips[k - 1].offsetLeft + chips[k - 1].offsetWidth + MORE_CHIP_PX > el.clientWidth) k--
-    }
-    setLimit(k)
-  }, [limit, agents])
-  const shown = limit === null ? agents : agents.slice(0, limit)
-  const hidden = agents.length - shown.length
+const KIND_LABEL: Record<string, string> = {
+  investigate: 'Investigation',
+  hunt: 'Hunt',
+  root_cause: 'Root cause',
+  adjudicate: 'Adjudication',
+  compose: 'Playbook',
+}
+const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: 'Nightly', shadow: 'Runs alongside' }
+
+type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
+
+/** One workflow on the board's card column. Opening the card reads it; the
+ *  actions sit under it until the reader carries them. */
+function WorkflowCard({ wf: w, onOpen }: { wf: Workflow; onOpen: (kind: WfModal['kind']) => void }) {
+  const commands = LIVE_COMMANDS.filter((c) => c.workflowId === w.id)
+  // an absent triggers list (older backend) draws no chip at all, not "started by hand"
+  const triggers = w.triggers?.map((t) => TRIGGER_LABEL[t] ?? t) ?? []
+  if (w.triggers?.length === 0) triggers.push('Started by hand')
   return (
-    <div className="agent-seq" ref={ref} title={hidden > 0 ? agents.map((a) => agentMeta(a).label).join(ordered ? ' → ' : ', ') : undefined}>
-      {shown.map((a, i) => {
-        const meta = agentMeta(a)
-        return (
-          <Fragment key={i}>
-            <span className="agent-chip">
-              <span className="ad" style={{ background: meta.color }} />
-              {meta.label}
-            </span>
-            {ordered && (i < shown.length - 1 || hidden > 0) && (
-              <span className="seq-arrow"><Icon name="chevR" /></span>
-            )}
-          </Fragment>
-        )
-      })}
-      {hidden > 0 && <span className="agent-chip">+{hidden}</span>}
+    <div className={`wfk${w.enabled ? '' : ' off'}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="wfk-main"
+        onClick={() => onOpen('details')}
+        onKeyDown={activateOnKey(() => onOpen('details'))}
+      >
+        <span className="wfk-head">
+          <span className="wfk-name" title={w.name}>{w.name}</span>
+          <LevelBadge variant="pill" level={w.successLevel} />
+        </span>
+        <span className="wfk-chips">
+          <span className="wfk-chip">{KIND_LABEL[w.runKind] ?? prettyHandle(w.runKind)}</span>
+          {triggers.map((t) => <span key={t} className="wfk-chip acc">{t}</span>)}
+          {commands.map((c) => <span key={c.id} className="wfk-chip acc">{c.name}</span>)}
+        </span>
+        <span className="wfk-line">
+          {w.enabled ? (
+            // each part is one unbreakable run, so a wrap lands between them
+            <>
+              <span>Ran {w.runs7d} {w.runs7d === 1 ? 'time' : 'times'} this week</span>
+              {' · '}<span>{w.successRate === null ? '—' : `${(w.successRate * 100).toFixed(1)}%`} succeeded</span>
+              {' · '}<span>{w.meanCostUsd === null ? '—' : <Cost usd={w.meanCostUsd} />} per run</span>
+            </>
+          ) : 'Off · not running'}
+        </span>
+      </div>
+      <div className="wfk-acts">
+        <WatchButton wf={w} className="btn ghost wfk-btn" />
+        <button className="btn ghost wfk-btn" onClick={() => onOpen('history')}><Icon name="clock" /> History</button>
+        <span className="flex-1" />
+        {w.source === 'custom' && (
+          <>
+            <button className="btn ghost icon wfk-btn" title="Edit workflow" aria-label={`Edit ${w.name}`} onClick={() => onOpen('edit')}><Icon name="edit" /></button>
+            <button className="btn ghost icon danger wfk-btn" title="Delete workflow" aria-label={`Delete ${w.name}`} onClick={() => onOpen('delete')}><Icon name="trash" /></button>
+          </>
+        )}
+        <button className="btn primary wfk-btn" aria-label={`Run ${w.name}`} onClick={() => onOpen('run')}><Icon name="play" /> Run</button>
+      </div>
     </div>
   )
 }
-
-// width reserved for the "+N" chip and its arrow when the agent list is collapsed
-const MORE_CHIP_PX = 64
-
-const TRUST_INFO = 'Tier, trust, and agreement are not recorded.'
-
-function fmtEdited(iso?: string): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d · HH:mm')
-}
-
-type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
 
 function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: (kind: 'blank' | 'ai') => void; goSettings: ConsoleScreenProps['goSettings'] }) {
   const { rows, phase, error, reload } = feed
@@ -257,60 +261,15 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
         </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
-        // bottom padding keeps the last row's actions clear of the fixed Ask Vigil button
+        // bottom padding keeps the last card's actions clear of the fixed Ask Vigil button
         <div className="px-[22px] pt-5 pb-[110px]">
-          <div className="table-wrap">
-            <table className="tbl wf-catalog">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Agents</th>
-                  <th>Runs today</th>
-                  <th>Cost per run</th>
-                  <th>Last edited</th>
-                  <th>Trust</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((w) => (
-                  <tr key={w.id}>
-                    <td className="wfc-name">
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        className="font-semibold cursor-pointer"
-                        onClick={() => setModal({ kind: 'details', wf: w })}
-                        onKeyDown={activateOnKey(() => setModal({ kind: 'details', wf: w }))}
-                      >
-                        {w.name}
-                      </div>
-                      {w.desc && <div className="wfc-desc text-[12px] text-tx-3 mt-0.5" title={w.desc}>{w.desc}</div>}
-                    </td>
-                    <td className="wfc-agents">{w.agents.length > 0 ? <AgentSequence agents={w.agents} ordered={!w.huntLike} /> : '—'}</td>
-                    <td>{w.runsToday}</td>
-                    <td>{w.meanCostUsd == null ? '—' : <Cost usd={w.meanCostUsd} />}</td>
-                    <td>{fmtEdited(w.updatedAt)}</td>
-                    <td>
-                      <NotMeasured tip={TRUST_INFO} />
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2 justify-end">
-                        <WatchButton wf={w} />
-                        <button className="btn ghost" onClick={() => setModal({ kind: 'history', wf: w })}><Icon name="clock" /> History</button>
-                        {w.source === 'custom' && (
-                          <>
-                            <button className="btn ghost icon" title="Edit workflow" onClick={() => setModal({ kind: 'edit', wf: w })}><Icon name="edit" /></button>
-                            <button className="btn ghost icon danger" title="Delete workflow" onClick={() => setModal({ kind: 'delete', wf: w })}><Icon name="trash" /></button>
-                          </>
-                        )}
-                        <button className="btn primary" onClick={() => setModal({ kind: 'run', wf: w })}><Icon name="play" /> Run workflow</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="wfk-col">
+            {list.map((w) => <WorkflowCard key={w.id} wf={w} onOpen={(kind) => setModal({ kind, wf: w })} />)}
+            <div className="wfk-new">
+              <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
+              <span className="text-[12px] leading-[1.45] text-tx-2">Describe how your team works a case and Vigil drafts the workflow for you to edit.</span>
+              <button className="btn ghost wfk-btn self-start" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
+            </div>
           </div>
         </div>
       )}
@@ -330,7 +289,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
 
 /** Opens the workflow's latest run as the Watch a run page. The run is looked up on
  *  the click, not once per row on load, and a workflow that never ran says so. */
-function WatchButton({ wf }: { wf: Workflow }) {
+function WatchButton({ wf, className = 'btn ghost' }: { wf: Workflow; className?: string }) {
   const navigate = useNavigate()
   const [state, setState] = useState<'idle' | 'busy' | 'none'>('idle')
   const [failed, setFailed] = useState<string | null>(null)
@@ -349,7 +308,7 @@ function WatchButton({ wf }: { wf: Workflow }) {
   }
   return (
     <button
-      className="btn ghost" disabled={state !== 'idle'} onClick={watch}
+      className={className} disabled={state !== 'idle'} onClick={watch}
       title={state === 'none' ? 'No runs yet' : failed ? `Couldn’t look up runs — ${failed}` : 'Replay the latest run step by step'}
     >
       <Icon name="play" /> {state === 'none' ? 'No runs yet' : 'Watch it run'}
@@ -1914,7 +1873,7 @@ function CopyReport({ md }: { md: string }) {
 
 /** A gap the projection reports live. query_intent belongs to the dispatch, which
  *  the finalized report joins in and a live read cannot, so the summary carries it. */
-function liveGap(one: HuntEvidence): HuntGap {
+export function liveGap(one: HuntEvidence): HuntGap {
   return {
     evidence_id: one.evidence_id,
     iteration: one.iteration,
@@ -2679,6 +2638,13 @@ function BearingCell({ tally }: { tally?: Bearing }) {
   )
 }
 
+/** Which belief the operator put up and which is the base rate to beat; any other source is untagged. */
+export function provenanceTag(provenance?: string): { text: string; title?: string } | null {
+  if (provenance === 'operator') return { text: 'yours' }
+  if (provenance === 'base_rate') return { text: 'the claim to beat', title: 'Seeded on every hunt as the claim to beat, not something you asked for.' }
+  return null
+}
+
 function HuntStandings({ hunt }: { hunt: HuntView }) {
   const strengthOf = (id: string) =>
     hunt.report?.hypotheses.find((h) => h.hypothesis_id === id)?.evidence_strength ?? null
@@ -2708,17 +2674,13 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
             <tbody>
               {ordered.map((h) => {
                 const strength = strengthOf(h.hypothesis_id)
+                const tag = provenanceTag(h.provenance)
                 return (
                   <tr key={h.hypothesis_id}>
                     <td className="tight"><Hyp id={h.hypothesis_id} /></td>
                     <td>
                       {h.statement}
-                      {h.provenance === 'operator' && <span className="chip ml-2" style={{ fontSize: 10 }}>yours</span>}
-                      {h.provenance === 'base_rate' && (
-                        <span className="chip ml-2" style={{ fontSize: 10 }} title="Seeded on every hunt as the claim to beat, not something you asked for.">
-                          the claim to beat
-                        </span>
-                      )}
+                      {tag && <span className="chip ml-2" style={{ fontSize: 10 }} title={tag.title}>{tag.text}</span>}
                       {h.resolution_reason && shared === null && <div className="muted text-[11px]">{h.resolution_reason}</div>}
                       {strength && <div className="muted text-[11px]">{strengthLine(strength)}</div>}
                     </td>
@@ -2738,7 +2700,7 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
 
 /** The one thing on this panel waiting on a person, and the approve/reject that
  *  answers it. */
-function OpenCheckpoint({ hunt }: { hunt: HuntView }) {
+export function OpenCheckpoint({ hunt }: { hunt: HuntView }) {
   const open = hunt.open_checkpoint
   const [busy, setBusy] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -3074,7 +3036,7 @@ function HuntCheckpoints({ checkpoints }: { checkpoints: HuntCheckpoint[] }) {
   )
 }
 
-function hypothesisColor(s: string): string {
+export function hypothesisColor(s: string): string {
   if (s === 'proven' || s === 'handed_off') return 'var(--crit)'
   if (s === 'disproven') return 'var(--ok)'
   if (s === 'parked' || s === 'inconclusive') return 'var(--tx-2)'

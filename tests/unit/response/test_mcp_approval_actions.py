@@ -40,7 +40,7 @@ def no_db():
 
     manager.session_scope = _scope
     config_store = Mock()
-    config_store.get_system_config.return_value = {"enabled": False}
+    config_store.read_system_config.return_value = {"enabled": False}
     with (
         patch("core.response.approval_service.get_db_manager", return_value=manager),
         patch(
