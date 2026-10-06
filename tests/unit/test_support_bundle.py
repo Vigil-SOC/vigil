@@ -605,17 +605,27 @@ def _table(rows: list[list[str]]) -> str:
 
 
 @pytest.fixture(scope="module")
-def chart_pods() -> list[dict]:
+def chart_pods(tmp_path_factory) -> list[dict]:
     """Pods of the real chart (plus its lab pods), from `helm template`."""
     yaml = pytest.importorskip("yaml")
     if shutil.which("helm") is None:
         pytest.skip("helm not installed")
+    # The subcharts are off by default and are not in a clean checkout, so render
+    # a copy without the dependency declaration.
+    chart = tmp_path_factory.mktemp("chart") / "vigil"
+    shutil.copytree(
+        REPO / "infra" / "helm" / "vigil",
+        chart,
+        ignore=shutil.ignore_patterns("charts", "Chart.lock"),
+    )
+    meta = (chart / "Chart.yaml").read_text()
+    (chart / "Chart.yaml").write_text(meta[: meta.index("\ndependencies:")] + "\n")
     rendered = subprocess.run(
         [
             "helm",
             "template",
             "vigil",
-            str(REPO / "infra" / "helm" / "vigil"),
+            str(chart),
             "--namespace",
             "vigil",
             "--set",
