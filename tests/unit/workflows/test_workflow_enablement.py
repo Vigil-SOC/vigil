@@ -98,7 +98,7 @@ def service(monkeypatch):
     monkeypatch.setattr(
         svc, "list_workflows", lambda: [{"id": w} for w in sorted(known)]
     )
-    monkeypatch.setattr(catalog, "_today_run_stats", lambda now: {})
+    monkeypatch.setattr(catalog, "_week_run_stats", lambda now: {})
     return svc
 
 

@@ -1,5 +1,5 @@
-/* The catalog is a table of today's runs and cost, and each skill names the
-   workflows whose agents are granted the library. */
+/* The catalog is the board's card column with each workflow's week of runs, and
+   each skill names the workflows whose agents are granted the library. */
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -17,8 +17,13 @@ vi.mock('../../services/api', () => ({
             description: 'Look for beacons',
             agents: ['ghost-agent', 'triage'],
             source: 'file',
-            runs_today: 0,
+            run_kind: 'compose',
+            runs_7d: 0,
+            success_rate: null,
+            success_level: null,
             mean_cost_usd: null,
+            triggers: [],
+            enabled: false,
             tools_used: ['read_skill'],
           },
           {
@@ -27,8 +32,12 @@ vi.mock('../../services/api', () => ({
             description: 'Contain it',
             agents: ['reporter'],
             source: 'custom',
-            runs_today: 2,
+            run_kind: 'compose',
+            runs_7d: 1,
+            success_rate: 1,
+            success_level: 'good',
             mean_cost_usd: 0,
+            triggers: ['shadow'],
             updated_at: '2026-10-01T12:00:00+00:00',
           },
           {
@@ -39,8 +48,11 @@ vi.mock('../../services/api', () => ({
             source: 'file',
             run_kind: 'hunt',
             hunt_like: true,
-            runs_today: 4,
+            runs_7d: 61,
+            success_rate: 0.913,
+            success_level: 'fair',
             mean_cost_usd: 1.5,
+            triggers: ['schedule'],
           },
           {
             id: 'cloud-incident',
@@ -50,8 +62,11 @@ vi.mock('../../services/api', () => ({
             source: 'file',
             run_kind: 'investigate',
             hunt_like: false,
-            runs_today: 0,
+            runs_7d: 2,
+            success_rate: null,
+            success_level: null,
             mean_cost_usd: null,
+            triggers: ['alerts'],
           },
           {
             id: 'phase-tools',
@@ -60,7 +75,7 @@ vi.mock('../../services/api', () => ({
             agents: ['reporter'],
             source: 'file',
             tools_used: ['read_skill'],
-            runs_today: 1,
+            runs_7d: 1,
             mean_cost_usd: null,
           },
           {
@@ -69,7 +84,7 @@ vi.mock('../../services/api', () => ({
             description: 'Agent missing from the list',
             agents: ['missing-agent'],
             source: 'file',
-            runs_today: 0,
+            runs_7d: 0,
             mean_cost_usd: null,
           },
         ],
@@ -170,10 +185,10 @@ vi.mock('../../services/skillsApi', () => ({
   },
 }))
 
-const cells = (name: string) => within(screen.getByText(name).closest('tr') as HTMLElement).getAllByRole('cell')
+const card = (name: string) => screen.getByText(name).closest('.wfk') as HTMLElement
 
-describe('workflow catalog table', () => {
-  it('shows today\'s runs, a real zero cost, an em dash for a missing mean, and trust', async () => {
+describe('workflow catalog cards', () => {
+  it('draws kind, triggers, command and the week\'s numbers, and keeps the actions', async () => {
     render(
       <MemoryRouter>
         <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
@@ -181,28 +196,45 @@ describe('workflow catalog table', () => {
     )
 
     await screen.findByText('Beacon hunt')
-    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByText('Not measured yet')).toBeNull()
 
-    const beacon = cells('Beacon hunt')
-    expect(beacon[2]).toHaveTextContent('0')
-    expect(beacon[3]).toHaveTextContent('—')
-    expect(beacon[3]).not.toHaveTextContent('not priced')
-    expect(beacon[4]).toHaveTextContent('—')
-    expect(beacon[5]).toHaveTextContent('Not measured yet')
+    // switched off: no stats line, no badge, and no trigger words to show
+    const beacon = card('Beacon hunt')
+    expect(beacon).toHaveTextContent('Playbook')
+    expect(beacon).toHaveTextContent('Started by hand')
+    expect(beacon).toHaveTextContent('Off · not running')
+    expect(beacon.querySelector('.level-pill')).toBeNull()
 
-    const ransom = cells('Ransom reply')
-    expect(ransom[2]).toHaveTextContent('2')
-    expect(ransom[3]).toHaveTextContent('$0.00')
-    expect(ransom[3]).not.toHaveTextContent('not priced')
-    expect(ransom[4].textContent).not.toBe('—')
-    expect(within(ransom[6]).getByTitle('Edit workflow')).toBeInTheDocument()
+    // a finished run that cost nothing is a real zero
+    const ransom = card('Ransom reply')
+    expect(ransom).toHaveTextContent('Runs alongside')
+    expect(ransom).toHaveTextContent('Ran 1 time this week · 100.0% succeeded · $0.00 per run')
+    expect(ransom.querySelector('.level-pill.good')).toHaveTextContent('Good')
+    expect(within(ransom).getByTitle('Edit workflow')).toBeInTheDocument()
 
-    const hunt = cells('Threat hunt')
-    expect(hunt[2]).toHaveTextContent('4')
-    expect(hunt[3]).toHaveTextContent('$1.50')
-    expect(within(hunt[6]).queryByTitle('Edit workflow')).toBeNull()
+    const hunt = card('Threat hunt')
+    expect(hunt).toHaveTextContent('Hunt')
+    expect(hunt).toHaveTextContent('Nightly')
+    expect(hunt).toHaveTextContent('/hunt')
+    expect(hunt).toHaveTextContent('Ran 61 times this week · 91.3% succeeded · $1.50 per run')
+    expect(hunt.querySelector('.level-pill.fair')).toHaveTextContent('Fair')
+    expect(within(hunt).queryByTitle('Edit workflow')).toBeNull()
 
-    fireEvent.click(within(beacon[6]).getByRole('button', { name: 'History' }))
+    // runs but none finished: em dashes and no badge; only a command's own workflow shows its chip
+    const cloud = card('Cloud incident')
+    expect(cloud).toHaveTextContent('Investigation')
+    expect(cloud).toHaveTextContent('On alerts')
+    expect(cloud).toHaveTextContent('Ran 2 times this week · — succeeded · — per run')
+    expect(cloud).not.toHaveTextContent('/investigate')
+    expect(cloud.querySelector('.level-pill')).toBeNull()
+
+    // an older backend that sends no triggers or enabled draws no trigger chip and is on
+    const orphan = card('Orphan flow')
+    expect(orphan.querySelector('.wfk-chip.acc')).toBeNull()
+    expect(orphan).toHaveTextContent('Ran 0 times this week')
+
+    fireEvent.click(within(beacon).getByRole('button', { name: 'History' }))
     expect(await screen.findByText('No runs yet')).toBeInTheDocument()
   })
 
@@ -389,7 +421,7 @@ describe('workflow catalog table', () => {
     expect(skillsApi.save).toHaveBeenCalledWith({ name: 'new-skill', description: 'Does a thing.', body: '' })
   })
 
-  it('opens a reader for the run kind and draws arrows only when the roster is an order', async () => {
+  it('opens a reader for the run kind', async () => {
     render(
       <MemoryRouter>
         <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
@@ -397,10 +429,7 @@ describe('workflow catalog table', () => {
     )
 
     await screen.findByText('Beacon hunt')
-    expect(cells('Beacon hunt')[1].querySelector('.seq-arrow')).not.toBeNull()
-    expect(cells('Threat hunt')[1].querySelector('.seq-arrow')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Threat hunt' }))
+    fireEvent.click(screen.getByText('Threat hunt'))
     const hunt = await screen.findByRole('dialog')
     expect(within(hunt).getByText('The lead dispatches among these.')).toBeInTheDocument()
     expect(within(hunt).getByText('findings_search')).toBeInTheDocument()
@@ -413,7 +442,7 @@ describe('workflow catalog table', () => {
     expect(within(hunt).queryByText(/iteration/i)).toBeNull()
     fireEvent.click(within(hunt).getByRole('button', { name: 'Close' }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cloud incident' }))
+    fireEvent.click(screen.getByText('Cloud incident'))
     const one = await screen.findByRole('dialog')
     expect(within(one).getByText('This workflow runs as one agent.')).toBeInTheDocument()
     expect(within(one).getByText('Establish blast radius')).toBeInTheDocument()
@@ -427,7 +456,7 @@ describe('workflow catalog table', () => {
     expect(within(one).queryByText('The lead dispatches among these.')).toBeNull()
     fireEvent.click(within(one).getByRole('button', { name: 'Close' }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Ransom reply' }))
+    fireEvent.click(screen.getByText('Ransom reply'))
     const compose = await screen.findByRole('dialog')
     expect(within(compose).getByText('Phases run in this order.')).toBeInTheDocument()
     expect(within(compose).getByText(/Approval required/)).toBeInTheDocument()
@@ -446,7 +475,7 @@ describe('workflow catalog table', () => {
         <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
-    fireEvent.click(await screen.findByRole('button', { name: 'Cloud incident' }))
+    fireEvent.click(await screen.findByText('Cloud incident'))
     const one = await screen.findByRole('dialog')
     fireEvent.click(await within(one).findByRole('button', { name: 'Show all' }))
     expect(within(one).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true')

@@ -23,7 +23,7 @@ vi.mock('../../services/skillsApi', () => ({ skillsApi: { list: h.listSkills } }
 // the builder is its own screen; here only whether the header opens it matters
 vi.mock('./WorkflowBuilder', () => ({ default: () => <div role="dialog">Builder</div> }))
 
-const wf = (id: string) => ({ id, name: id, description: '', agents: [], source: 'file', runs_today: 0, mean_cost_usd: null })
+const wf = (id: string) => ({ id, name: id, description: '', agents: [], source: 'file', runs_7d: 0, mean_cost_usd: null })
 
 function mount() {
   return render(

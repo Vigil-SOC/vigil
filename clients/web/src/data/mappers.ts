@@ -331,8 +331,15 @@ export interface ApiWorkflow {
   source?: string
   run_kind?: string
   hunt_like?: boolean
-  runs_today?: number
+  runs_7d?: number
+  /** fraction 0..1 */
+  success_rate?: number | null
+  success_level?: Workflow['successLevel']
   mean_cost_usd?: number | null
+  /** what starts it: alerts, schedule, shadow; none means a person does */
+  triggers?: string[]
+  /** absent means on; only an explicit false is off */
+  enabled?: boolean
   updated_at?: string
 }
 
@@ -365,7 +372,11 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     // list of which kinds run the hypothesis loop. Falls back to the one kind that
     // did before the flag existed, so an older backend still reads correctly.
     huntLike: w.hunt_like ?? w.run_kind === 'hunt',
-    runsToday: typeof w.runs_today === 'number' ? w.runs_today : 0,
+    runs7d: typeof w.runs_7d === 'number' ? w.runs_7d : 0,
+    successRate: typeof w.success_rate === 'number' ? w.success_rate : null,
+    successLevel: w.success_level ?? null,
+    triggers: w.triggers,
+    enabled: w.enabled !== false,
     meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
     updatedAt: w.updated_at,
   }
