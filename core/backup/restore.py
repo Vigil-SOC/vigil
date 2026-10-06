@@ -949,13 +949,27 @@ def _reencrypt_and_expire(
             users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
             # Without the old key there is no rotation, so MFA stays as it is.
             if old_key:
-                auth_service.JWT_SECRET_KEY = old_key
-                plaintext = [
-                    auth_cls._decrypt_mfa_secret(user.mfa_secret) for user in users
-                ]
-                auth_service.JWT_SECRET_KEY = new_key
-                for user, secret in zip(users, plaintext):
-                    user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
+                original_key = auth_service.JWT_SECRET_KEY
+                try:
+                    auth_service.JWT_SECRET_KEY = old_key
+                    plaintext = []
+                    for user in users:
+                        try:
+                            plaintext.append(
+                                auth_cls._decrypt_mfa_secret(user.mfa_secret)
+                            )
+                        except auth_service.MFASecretDecryptionError as exc:
+                            # Nothing is written yet; the session rolls back.
+                            raise BackupError(
+                                "cannot rotate JWT_SECRET_KEY: the old key does not "
+                                f"decrypt the MFA secret of user {user.user_id}"
+                            ) from exc
+                    auth_service.JWT_SECRET_KEY = new_key
+                    for user, secret in zip(users, plaintext):
+                        user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
+                except BaseException:
+                    auth_service.JWT_SECRET_KEY = original_key
+                    raise
             pending = (
                 session.query(ApprovalAction)
                 .filter(ApprovalAction.status == ActionStatus.PENDING.value)

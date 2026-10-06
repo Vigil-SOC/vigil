@@ -8,6 +8,7 @@ import base64
 import hashlib
 import logging
 import secrets
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,16 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# Fernet tokens are urlsafe base64 of a version byte + timestamp, so they start
+# with "gAAAAA". Lowercase "g" is not base32, so legacy plaintext never matches.
+_FERNET_TOKEN_PREFIX = "gAAAAA"
+_UNDECRYPTABLE_LOG_INTERVAL = 60.0
+_last_undecryptable_log = float("-inf")
+
+
+class MFASecretDecryptionError(Exception):
+    """A stored MFA secret is encrypted but not under the current JWT_SECRET_KEY."""
 
 
 def _is_dev_mode() -> bool:
@@ -326,7 +337,11 @@ class AuthService:
             if not user or not user.mfa_secret:
                 return None
 
-            if not AuthService._verify_totp(user.mfa_secret, code):
+            try:
+                valid = AuthService._verify_totp(user.mfa_secret, code)
+            except MFASecretDecryptionError:
+                return None  # already logged at ERROR with the cause
+            if not valid:
                 return None
 
             if user.mfa_enabled:
@@ -372,9 +387,13 @@ class AuthService:
             if not user or not user.mfa_secret:
                 return False
 
-            # Try TOTP first
-            if AuthService._verify_totp(user.mfa_secret, code):
-                return True
+            # Try TOTP first. An undecryptable secret must not block recovery
+            # codes: they are bcrypt hashes and do not depend on the key.
+            try:
+                if AuthService._verify_totp(user.mfa_secret, code):
+                    return True
+            except MFASecretDecryptionError:
+                pass  # already logged at ERROR with the cause
 
             # Try recovery codes (one-time use)
             recovery_codes = list(user.mfa_recovery_codes or [])
@@ -415,12 +434,35 @@ class AuthService:
 
     @staticmethod
     def _decrypt_mfa_secret(encrypted: str) -> str:
-        """Decrypt an MFA secret; fall back to plaintext for pre-migration rows."""
+        """Decrypt an MFA secret; fall back to plaintext for pre-migration rows.
+
+        Raises:
+            MFASecretDecryptionError: the value is a Fernet token that the
+                current JWT_SECRET_KEY cannot decrypt.
+        """
         try:
             return AuthService._fernet().decrypt(encrypted.encode()).decode()
-        except Exception:
-            # Fallback: secret may be stored unencrypted (pre-migration rows)
-            return encrypted
+        except Exception as exc:
+            if not encrypted.startswith(_FERNET_TOKEN_PREFIX):
+                return encrypted  # legacy plaintext (pre-migration rows)
+            AuthService._log_undecryptable_secret()
+            raise MFASecretDecryptionError(
+                "MFA secret cannot be decrypted with the current JWT_SECRET_KEY"
+            ) from exc
+
+    @staticmethod
+    def _log_undecryptable_secret() -> None:
+        """Log the key mismatch at ERROR, at most once per interval."""
+        global _last_undecryptable_log
+        now = time.monotonic()
+        if now - _last_undecryptable_log < _UNDECRYPTABLE_LOG_INTERVAL:
+            return
+        _last_undecryptable_log = now
+        logger.error(
+            "MFA secret cannot be decrypted with the current JWT_SECRET_KEY; "
+            "the key has changed since MFA was set up. TOTP codes are rejected "
+            "until the original key is restored; recovery codes still work."
+        )
 
     @staticmethod
     def _verify_totp(encrypted_secret: str, code: str) -> bool:
@@ -447,7 +489,10 @@ class AuthService:
             if not user or not user.mfa_secret:
                 return None
 
-            decrypted_secret = AuthService._decrypt_mfa_secret(user.mfa_secret)
+            try:
+                decrypted_secret = AuthService._decrypt_mfa_secret(user.mfa_secret)
+            except MFASecretDecryptionError:
+                return None  # already logged at ERROR with the cause
             totp = pyotp.TOTP(decrypted_secret)
             uri = totp.provisioning_uri(name=user.email, issuer_name="Vigil SOC")
             return uri

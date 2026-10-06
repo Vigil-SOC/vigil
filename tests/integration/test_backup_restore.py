@@ -836,6 +836,51 @@ def test_restore_rotates_jwt_and_expires_pending_approvals(
     assert f"mfa {_TOTP}" in checked.stdout
 
 
+def test_wrong_old_key_aborts_without_touching_mfa_secrets(
+    scratch_databases, tmp_path: Path
+):
+    root = tmp_path / "wrongkey"
+    root.mkdir()
+    paths = _layout(root, secret=None, signing_key=False)
+    (CORE_REPO_ROOT / ".env").write_text("OTHER_KEY=leave-me\n", encoding="utf-8")
+    _create_database("vigil_r_wrongkey", ledger=True)
+    # The secret was encrypted under a key other than the one the install holds.
+    ciphertext = _mfa_ciphertext(_OLD_KEY, _TOTP)
+    _install_app_rows("vigil_r_wrongkey", ciphertext)
+    repo = root / "repo"
+    passphrase = _passphrase(root / "pass")
+    env = _child_env(root, "vigil_r_wrongkey", **paths)
+    env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
+    created = _create(env, repo, passphrase)
+    assert created.returncode == 0, created.stderr
+
+    dest_root = root / "dest"
+    dest_root.mkdir()
+    dest = _empty_layout(dest_root)
+    _create_database("vigil_r_wrongkey_dst", ledger=False)
+    dest_env = _child_env(dest_root, "vigil_r_wrongkey_dst", **dest)
+    dest_env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
+    dest_env["RESTIC_CACHE_DIR"] = str(root / "cache")
+    restored = _restore(dest_env, repo, passphrase)
+
+    assert restored.returncode != 0
+    assert "u-mfa" in restored.stderr
+    for sensitive in (ciphertext, _OLD_KEY, _STALE_ENV_KEY, _TOTP):
+        assert sensitive not in restored.stderr
+    live = "vigil_r_wrongkey_dst"
+    assert _rows(live, "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'") == [
+        (ciphertext,)
+    ]
+    # The abort comes before any key store is rewritten or approval expired.
+    assert not (dest["state"] / "jwt_secret").exists()
+    assert (CORE_REPO_ROOT / ".env").read_text(encoding="utf-8") == (
+        "OTHER_KEY=leave-me\n"
+    )
+    assert _rows(
+        live, "SELECT status FROM approval_actions WHERE action_id = 'pend-plain'"
+    ) == [("pending",)]
+
+
 def test_key_held_outside_the_install_rotates_into_secrets(
     scratch_databases, tmp_path: Path
 ):
