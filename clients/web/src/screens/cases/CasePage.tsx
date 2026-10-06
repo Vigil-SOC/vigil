@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
 import { slaLevel } from '../../shared/LevelBadge'
@@ -19,6 +19,8 @@ import {
   recallEntityCalls,
   recordChip,
   visibilityGaps,
+  type CallRow,
+  type RecallProvenance,
   type RecordChip,
   type RunFold,
 } from './caseFold'
@@ -184,9 +186,16 @@ function CaseNeed({
   )
 }
 
+/** Rows the Memory tab's two cards show. */
+function memoryRows(fold: RunFold | null): number {
+  const recall = fold?.recall
+  const opening = recall && !recall.unavailable ? recall.sightings.length + recall.verdicts.length : 0
+  return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length
+}
+
 function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   const calls = fold?.calls.length ?? 0
-  const memory = (fold?.recall ? 1 : 0) + recallEntityCalls(fold).length + visibilityGaps(fold).length
+  const memory = memoryRows(fold)
   if (fold?.kind === 'hunt') {
     return {
       Summary: fold.hypotheses.length,
@@ -786,34 +795,14 @@ export function CasePage({
           )}
 
           {tab === 'Memory and blind spots' && (
-            !fold?.recall && recalled.length === 0 && gaps.length === 0 ? (
+            foldPhase === 'loading' ? (
+              <EmptyState loading compact icon="brain" title="Loading the run…" />
+            ) : foldPhase === 'error' ? (
+              <EmptyState error compact icon="alert" title="The run could not be read" />
+            ) : !fold?.recall && recalled.length === 0 && gaps.length === 0 ? (
               <EmptyState compact icon="brain" title="No memory recorded" body="Recall is what the run journaled, not a fresh read." />
             ) : (
-              <>
-                <section>
-                  <h3>Recall</h3>
-                  {fold?.recall?.unavailable ? (
-                    <p>Recall did not happen: {fold.recall.unavailable}{fold.recall.keys.length ? ` (${fold.recall.keys.join(', ')})` : ''}</p>
-                  ) : fold?.recall ? (
-                    <>
-                      <p>{fold.recall.keys.length ? fold.recall.keys.join(', ') : 'No entities recalled.'}</p>
-                      {fold.recall.sightings.map((row) => <p key={row}>{row}</p>)}
-                      {fold.recall.verdicts.map((row) => <p key={row}>{row}</p>)}
-                      {fold.recall.gaps.length > 0 && <p className="muted">Declared gaps: {fold.recall.gaps.join('; ')}</p>}
-                    </>
-                  ) : (
-                    <p className="muted">The run did not journal an opening recall.</p>
-                  )}
-                  {recalled.map((call, i) => (
-                    <p key={i}>recall_entity · {call.question || '—'} · {call.result_length} bytes</p>
-                  ))}
-                </section>
-                <section>
-                  <h3>Visibility gaps</h3>
-                  {gaps.length === 0 && <p className="muted">None recorded.</p>}
-                  {gaps.map((gap) => <p key={gap.id}>{gap.text}</p>)}
-                </section>
-              </>
+              <MemoryCards fold={fold} recalled={recalled} gaps={gaps} />
             )
           )}
 
@@ -895,7 +884,7 @@ export function CasePage({
               {fold?.recall
                 ? fold.recall.unavailable
                   ? `Recall did not happen: ${fold.recall.unavailable}`
-                  : `${fold.recall.keys.join(', ') || 'No entities'}${fold.recall.verdicts.length ? `. Verdicts: ${fold.recall.verdicts.join('; ')}` : ''}${fold.recall.gaps.length ? `. Gaps: ${fold.recall.gaps.join('; ')}` : ''}`
+                  : `${fold.recall.keys.join(', ') || 'No entities'}${fold.recall.verdicts.length ? `. Verdicts: ${fold.recall.verdicts.map((v) => [v.outcome, v.statement].filter(Boolean).join(' — ')).join('; ')}` : ''}${fold.recall.gaps.length ? `. Gaps: ${fold.recall.gaps.map((g) => g.statement).join('; ')}` : ''}`
                 : 'The run did not journal a recall.'}
             </p>
           </details>
@@ -925,6 +914,89 @@ export function CasePage({
         }}
       />
     </div>
+  )
+}
+
+const KIND_LABEL: Record<string, string> = { hunt: 'Hunt', case: 'Case', analyst: 'Analyst' }
+const LATER_TIP = 'Coming in a later release'
+
+/** "Hunt h-12 · Jun 15, 2026": the investigation a recalled row concluded in. */
+function provenance(p: RecallProvenance): string {
+  const d = new Date(p.concludedAt)
+  const day = p.concludedAt && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy') : ''
+  return [[KIND_LABEL[p.kind] ?? p.kind, p.id].filter(Boolean).join(' '), day].filter(Boolean).join(' · ')
+}
+
+function MemoryRow({ text, meta, tone, tag, action }: { text: string; meta?: string; tone?: 'poor'; tag?: string; action?: ReactNode }) {
+  return (
+    <div className={`case-mem-row${tone ? ` ${tone}` : ''}`}>
+      <span className="case-mem-text">{tag && <span className="tag">{tag}</span>}{text}</span>
+      {(meta || action) && <span className="case-mem-meta">{meta}{action}</span>}
+    </div>
+  )
+}
+
+/** Recalled and Blind spots. Withdraw and Record a blind spot wait on Written back, so they are shown disabled. */
+function MemoryCards({ fold, recalled, gaps }: { fold: RunFold | null; recalled: CallRow[]; gaps: { id: string; text: string }[] }) {
+  const recall = fold?.recall
+  const opened = recall && !recall.unavailable ? recall : null
+  return (
+    <>
+      <section className="case-mem-card" aria-label="Recalled">
+        <div className="case-mem-head"><h3>Recalled</h3></div>
+        {recall?.unavailable ? (
+          <p className="muted">Recall did not happen: {recall.unavailable}{recall.keys.length ? ` (${recall.keys.join(', ')})` : ''}</p>
+        ) : opened ? (
+          <p className="muted">{opened.keys.length ? `Asked about ${opened.keys.join(', ')}` : 'No entities recalled.'}</p>
+        ) : (
+          <p className="muted">The run did not journal an opening recall.</p>
+        )}
+        {(opened?.sightings.length || opened?.verdicts.length || recalled.length) ? (
+          <div className="case-mem-rows">
+            {opened?.sightings.map((row, i) => (
+              <MemoryRow
+                key={`s${i}`}
+                text={[row.entity, row.source, row.hits == null ? '' : `${row.hits} ${row.hits === 1 ? 'hit' : 'hits'}`].filter(Boolean).join(' · ')}
+                meta={provenance(row)}
+              />
+            ))}
+            {opened?.verdicts.map((row, i) => (
+              <MemoryRow
+                key={`v${i}`}
+                text={[row.outcome, row.statement].filter(Boolean).join(' — ')}
+                meta={provenance(row)}
+                action={<button type="button" className="btn ghost" disabled title={LATER_TIP}>Withdraw</button>}
+              />
+            ))}
+            {recalled.map((call, i) => (
+              <MemoryRow key={`c${i}`} text={`recall_entity · ${call.question || '—'}`} meta={`${call.result_length} bytes`} />
+            ))}
+          </div>
+        ) : null}
+      </section>
+      <section className="case-mem-card" aria-label="Blind spots">
+        <div className="case-mem-head">
+          <h3>Blind spots that touched this case</h3>
+          <button type="button" className="btn ghost" disabled title={LATER_TIP}>Record a blind spot</button>
+        </div>
+        {gaps.length === 0 && !recall?.gaps.length ? (
+          <p className="muted">None recorded.</p>
+        ) : (
+          <div className="case-mem-rows">
+            {recall?.gaps.map((gap, i) => (
+              <MemoryRow
+                key={`d${i}`}
+                tone="poor"
+                tag="Declared"
+                text={[gap.disposition.replace(/_/g, ' '), gap.statement].filter(Boolean).join(' — ')}
+                meta={provenance(gap)}
+              />
+            ))}
+            {gaps.map((gap) => <MemoryRow key={gap.id} tone="poor" tag="Visibility" text={gap.text} />)}
+          </div>
+        )}
+      </section>
+    </>
   )
 }
 

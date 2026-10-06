@@ -766,3 +766,120 @@ describe('case page', () => {
     })
   })
 })
+
+describe('Memory and blind spots tab', () => {
+  const prov = (kind: string, id: string) => ({ investigation_kind: kind, investigation_id: id, concluded_at: '2026-05-02T10:00:00Z' })
+  const recall = {
+    keys: ['10.0.0.7', 'm.kaur'],
+    sightings: [{ ...prov('hunt', 'hunt-9'), entity_key: '10.0.0.7', source_system: 'splunk', hit_count: 4 }],
+    verdicts: [{ ...prov('case', 'case-4302'), hypothesis_id: 'h9', statement: 'Loader family, finance laptops', outcome: 'proven' }],
+    gaps: [{ ...prov('hunt', 'hunt-3'), hypothesis_id: 'h3', statement: 'MFA push logs never checked', disposition: 'no_evidence_gathered' }],
+  }
+
+  function open(id: string, run: unknown) {
+    testState.cases = [{
+      case_id: id,
+      title: 'Memory case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [investigation('executing', true, `run-${id}`)],
+    }]
+    testState.runs[`run-${id}`] = run
+    renderCase(id)
+  }
+
+  const memoryTab = () => screen.findByRole('tab', { name: /Memory/ })
+
+  it('shows recalled rows with provenance, merged blind spots, and counts the rows', async () => {
+    open('m-hunt', { hunt: { ...HUNT, recall, calls: [...HUNT.calls, { question: 'what is 10.0.0.7', tool: 'recall_entity', result_length: 340, cost_usd: 0 }], evidence: [{ ...HUNT.evidence[0], is_gap: true, gap_detail: 'no proxy logs' }] } })
+    fireEvent.click(await memoryTab())
+    // sighting + verdict + recall_entity call + declared gap + visibility gap
+    expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('5')
+
+    const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
+    expect(recalled.getByText('Asked about 10.0.0.7, m.kaur')).toBeInTheDocument()
+    expect(recalled.getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
+    expect(recalled.getByText('Hunt hunt-9 · May 2, 2026')).toBeInTheDocument()
+    expect(recalled.getByText('proven — Loader family, finance laptops')).toBeInTheDocument()
+    expect(recalled.getByText('Case case-4302 · May 2, 2026')).toBeInTheDocument()
+    expect(recalled.getByText('recall_entity · what is 10.0.0.7')).toBeInTheDocument()
+    expect(recalled.getByText('340 bytes')).toBeInTheDocument()
+    // declared gaps live in Blind spots, not here
+    expect(recalled.queryByText(/MFA push logs/)).toBeNull()
+
+    const blind = within(screen.getByRole('region', { name: 'Blind spots' }))
+    expect(blind.getByText('Declared')).toBeInTheDocument()
+    expect(blind.getByText('no evidence gathered — MFA push logs never checked')).toBeInTheDocument()
+    expect(blind.getByText('Visibility')).toBeInTheDocument()
+    expect(blind.getByText('no proxy logs')).toBeInTheDocument()
+  })
+
+  it('reads a lead run: recall and visibility gaps', async () => {
+    open('m-lead', {
+      projection: {
+        iterations: 1, decisions: [], findings: [], calls: [], recall,
+        gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
+      },
+    })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('list users — tool down')).toBeInTheDocument()
+    expect(screen.getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
+  })
+
+  it('keeps Withdraw and Record a blind spot disabled as Later', async () => {
+    open('m-later', { hunt: { ...HUNT, recall } })
+    fireEvent.click(await memoryTab())
+    const withdraw = await screen.findByRole('button', { name: 'Withdraw' })
+    const record = screen.getByRole('button', { name: 'Record a blind spot' })
+    for (const button of [withdraw, record]) {
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'Coming in a later release')
+    }
+    expect(within(screen.getByRole('region', { name: 'Recalled' })).getAllByRole('button', { name: 'Withdraw' })).toHaveLength(1)
+  })
+
+  it('tells an unavailable recall from an empty one and from none journaled', async () => {
+    open('m-un', { hunt: { ...HUNT, recall: { unavailable: 'memory store down', keys: ['m.kaur'] } } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('Recall did not happen: memory store down (m.kaur)')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('0')
+  })
+
+  it('says so when the recall found no entities', async () => {
+    open('m-none', { hunt: { ...HUNT, recall: { keys: [], sightings: [], verdicts: [], gaps: [] } } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('No entities recalled.')).toBeInTheDocument()
+    expect(screen.getByText('None recorded.')).toBeInTheDocument()
+  })
+
+  it('says when the run journaled no opening recall but asked mid-run', async () => {
+    open('m-mid', { hunt: { ...HUNT, calls: [{ question: 'who is m.kaur', tool: 'recall_entity', result_length: 9, cost_usd: 0 }] } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('The run did not journal an opening recall.')).toBeInTheDocument()
+    expect(screen.getByText('recall_entity · who is m.kaur')).toBeInTheDocument()
+  })
+
+  it('is empty with no recall and no gaps, and keeps the tab', async () => {
+    open('m-empty', { hunt: { ...HUNT, evidence: [] } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('No memory recorded')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('0')
+  })
+
+  it('shows loading, then an error when the run cannot be read', async () => {
+    vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
+    open('m-load', { hunt: HUNT })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+  })
+
+  it('reports an unreadable run', async () => {
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
+    open('m-err', { hunt: HUNT })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('The run could not be read')).toBeInTheDocument()
+  })
+})
