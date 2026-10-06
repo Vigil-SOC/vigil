@@ -23,17 +23,24 @@ GLOBAL_KEY = "federation.settings"
 # ---------------------------------------------------------------------------
 
 
+def read_global_settings() -> Dict[str, Any]:
+    """Like :func:`get_global_settings`, but a store error raises.
+
+    For callers that must tell "federation is off" from "could not read".
+    """
+    from core.storage.config_service import get_config_service
+
+    cfg = get_config_service().get_system_config(GLOBAL_KEY)
+    return cfg if isinstance(cfg, dict) else {"enabled": False}
+
+
 def get_global_settings() -> Dict[str, Any]:
     """Return the federation.settings JSON, defaulting to ``{"enabled": False}``."""
     try:
-        from core.storage.config_service import get_config_service
-
-        cfg = get_config_service().get_system_config(GLOBAL_KEY)
-        if isinstance(cfg, dict):
-            return cfg
+        return read_global_settings()
     except Exception as e:
-        logger.debug("federation.settings read failed: %s", e)
-    return {"enabled": False}
+        logger.warning("federation.settings read failed: %s", e)
+        return {"enabled": False}
 
 
 def set_global_settings(value: Dict[str, Any], updated_by: str) -> None:
@@ -67,7 +74,7 @@ def is_globally_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 
-@default_on_error(list, level="debug")
+@default_on_error(list, level="warning")
 def list_sources() -> List[Dict[str, Any]]:
     """All federation_sources rows as dicts."""
     from core.storage.connection import get_db_manager
@@ -79,8 +86,8 @@ def list_sources() -> List[Dict[str, Any]]:
         return FederationSourceSchema.dump_many(rows)
 
 
-@default_on_error(None, level="debug")
-def get_source(source_id: str) -> Optional[Dict[str, Any]]:
+def read_source(source_id: str) -> Optional[Dict[str, Any]]:
+    """Like :func:`get_source`, but a store error raises instead of reading as no row."""
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
     from core.storage.schemas import FederationSourceSchema
@@ -88,6 +95,11 @@ def get_source(source_id: str) -> Optional[Dict[str, Any]]:
     with get_db_manager().session_scope() as session:
         row = session.get(FederationSource, source_id)
         return FederationSourceSchema.dump(row) if row else None
+
+
+@default_on_error(None, level="warning")
+def get_source(source_id: str) -> Optional[Dict[str, Any]]:
+    return read_source(source_id)
 
 
 @default_on_error(None, level="warning")
@@ -175,4 +187,4 @@ def record_failure(source_id: str, error: str) -> None:
             row.last_error = (error or "")[:2000]
             row.consecutive_errors = (row.consecutive_errors or 0) + 1
     except Exception as e:
-        logger.debug("record_failure(%s) failed: %s", source_id, e)
+        logger.warning("record_failure(%s) failed: %s", source_id, e)

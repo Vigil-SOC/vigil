@@ -239,6 +239,9 @@ class _Adapter:
     def __init__(self, findings):
         self.findings = findings
 
+    def is_configured(self) -> bool:
+        return True
+
     async def fetch(self, *, since, cursor, max_items):
         return FetchResult(findings=list(self.findings), cursor={})
 

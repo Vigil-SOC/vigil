@@ -115,6 +115,7 @@ async def test_failed_notable_query_keeps_the_cursor_and_records_the_error(
         lambda *a, **k: pytest.fail("a failed notable query is not a success"),
     )
     adapter = SplunkAdapter()
+    adapter.is_configured = lambda: True  # type: ignore[method-assign]
     adapter._service = _FakeSplunk([None, [_event(1)], None])
     runner = FederationRunner(output_queue=asyncio.Queue())
 

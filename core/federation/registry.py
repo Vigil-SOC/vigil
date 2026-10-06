@@ -13,6 +13,7 @@ import cycle. Those names are re-exported here for backward compatibility.
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import List, Optional
 
@@ -31,7 +32,18 @@ __all__ = [
     "register_adapter",
     "list_adapters",
     "get_adapter",
+    "is_registered",
 ]
+
+_BUILTIN_ADAPTER_MODULES = (
+    "core.integrations.aws_security_hub.adapter",
+    "core.integrations.azure_sentinel.adapter",
+    "core.integrations.crowdstrike.adapter",
+    "core.integrations.elastic.adapter",
+    "core.integrations.microsoft_defender.adapter",
+    "core.integrations.opensearch.adapter",
+    "core.integrations.splunk.adapter",
+)
 
 
 def list_adapters() -> List[FederationAdapter]:
@@ -48,6 +60,12 @@ def list_adapters() -> List[FederationAdapter]:
         except Exception as e:
             logger.warning("Federation adapter %s failed to construct: %s", name, e)
     return out
+
+
+def is_registered(name: str) -> bool:
+    """True if an adapter factory is registered for ``name`` (nothing is built)."""
+    _ensure_builtins_loaded()
+    return name in _ADAPTER_FACTORIES
 
 
 def get_adapter(name: str) -> Optional[FederationAdapter]:
@@ -77,26 +95,15 @@ def _ensure_builtins_loaded() -> None:
     if _BUILTINS_LOADED:
         return
     _BUILTINS_LOADED = True
-    # Import for side effects (each module calls register_adapter at module scope).
-    # Every vendor adapter lives in its vertical slice; import the adapter module
-    # directly for the module-scope register_adapter() side effect.
-    try:
-        from core.integrations.aws_security_hub import (  # noqa: F401
-            adapter as _aws_adapter,
-        )
-        from core.integrations.azure_sentinel import (  # noqa: F401
-            adapter as _azure_adapter,
-        )
-        from core.integrations.crowdstrike import (  # noqa: F401
-            adapter as _crowdstrike_adapter,
-        )
-        from core.integrations.elastic import adapter as _elastic_adapter  # noqa: F401
-        from core.integrations.microsoft_defender import (  # noqa: F401
-            adapter as _defender_adapter,
-        )
-        from core.integrations.opensearch import (  # noqa: F401
-            adapter as _opensearch_adapter,
-        )
-        from core.integrations.splunk import adapter as _splunk_adapter  # noqa: F401
-    except Exception as e:
-        logger.warning("Failed to load builtin federation adapters: %s", e)
+    # Import for side effects (each module calls register_adapter at module
+    # scope). One try per module so a broken adapter can't unregister the rest.
+    for module in _BUILTIN_ADAPTER_MODULES:
+        try:
+            importlib.import_module(module)
+        except Exception:
+            logger.error(
+                "Failed to load federation adapter %s; its source will not be "
+                "polled by federation",
+                module,
+                exc_info=True,
+            )

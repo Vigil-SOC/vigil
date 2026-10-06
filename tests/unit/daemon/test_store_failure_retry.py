@@ -286,6 +286,9 @@ class _CursorAdapter:
     def __init__(self):
         self.fetch_calls: List[Dict[str, Any]] = []
 
+    def is_configured(self) -> bool:
+        return True
+
     async def fetch(
         self, *, since: Optional[datetime], cursor: Dict[str, Any], max_items: int
     ) -> FetchResult:

@@ -57,6 +57,9 @@ class FederationRunner:
         # Sources that are currently "polling" — used so a source toggled OFF
         # then ON quickly doesn't double-fire while the old task winds down.
         self._adapters: Dict[str, registry.FederationAdapter] = {}
+        # Sources already warned about as unconfigured, so the warning is
+        # logged on the transition rather than every tick.
+        self._unconfigured_warned: set = set()
         # Stats for the metrics endpoint.
         self.stats: Dict[str, Any] = {"polls": 0, "findings": 0, "errors": 0}
 
@@ -98,8 +101,12 @@ class FederationRunner:
 
         Used by the legacy per-source loops in :mod:`daemon.poller` to decide
         whether to skip — when federation is on for a source, the legacy loop
-        must back off so we don't double-pull.
+        must back off so we don't double-pull. A source with no registered
+        adapter (e.g. its import failed) is never ours, so the legacy loop
+        keeps polling it. A store read error also reads as False.
         """
+        if not registry.is_registered(source_id):
+            return False
         if not store.is_globally_enabled():
             return False
         row = store.get_source(source_id)
@@ -118,11 +125,28 @@ class FederationRunner:
         logger.info("Federation adapter %s loop started", source_id)
         # Smallest sane sleep when waiting for global+per-source enable.
         idle_seconds = 5.0
+        store_ok = True
 
         while not shutdown_event.is_set():
             # Re-read DB state on every tick. Cheap enough at MVP cadence.
-            row = store.get_source(source_id) or {}
-            global_on = store.is_globally_enabled()
+            try:
+                row = store.read_source(source_id) or {}
+                global_on = bool(store.read_global_settings().get("enabled", False))
+            except Exception as e:
+                # Idle like "disabled", but say why — once per outage, not per tick.
+                if store_ok:
+                    logger.warning(
+                        "Federation %s: store read failed, idling until it "
+                        "recovers: %s",
+                        source_id,
+                        e,
+                    )
+                store_ok = False
+                row, global_on = {}, False
+            else:
+                if not store_ok:
+                    logger.info("Federation %s: store reads recovered", source_id)
+                store_ok = True
 
             if not (global_on and row.get("enabled")):
                 # Disabled (globally or per-source) — light sleep then re-check.
@@ -158,6 +182,20 @@ class FederationRunner:
         row: Dict[str, Any],
     ) -> None:
         source_id = adapter.name
+        # Integration disabled under an enabled row: polling would record an
+        # empty success. Skip so last_success_at stalls and the lag signal
+        # marks the source quiet.
+        if not adapter.is_configured():
+            if source_id not in self._unconfigured_warned:
+                self._unconfigured_warned.add(source_id)
+                logger.warning(
+                    "Federation %s is enabled but its integration is not "
+                    "configured; skipping polls",
+                    source_id,
+                )
+            return
+        self._unconfigured_warned.discard(source_id)
+
         max_items = int(row.get("max_items") or 100)
         cursor = row.get("cursor") or {}
         min_severity = row.get("min_severity")

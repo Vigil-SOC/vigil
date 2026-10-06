@@ -562,3 +562,117 @@ async def test_clean_tick_adds_zero_dropped(monkeypatch):
     await runner._do_one_tick(fake, {"max_items": 100, "cursor": {}})
 
     assert calls[0]["dropped"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Silent-stop paths: adapter import failure, store read errors, disabled integration
+# ---------------------------------------------------------------------------
+
+
+def test_one_adapter_import_failure_leaves_the_others_registered(monkeypatch, caplog):
+    modules = fed_registry._BUILTIN_ADAPTER_MODULES
+    broken = modules[0]
+    imported: List[str] = []
+
+    def fake_import(name):
+        if name == broken:
+            raise ImportError("boom")
+        imported.append(name)
+
+    monkeypatch.setattr(fed_registry, "_BUILTINS_LOADED", False)
+    monkeypatch.setattr(fed_registry.importlib, "import_module", fake_import)
+    with caplog.at_level("ERROR", logger=fed_registry.logger.name):
+        fed_registry._ensure_builtins_loaded()
+
+    assert imported == list(modules[1:])
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert broken in errors[0].getMessage()
+    assert errors[0].exc_info is not None
+
+
+def test_is_active_for_false_when_no_adapter_is_registered(monkeypatch):
+    runner = FederationRunner(output_queue=None)
+    monkeypatch.setattr(fed_registry, "is_registered", lambda name: False)
+    monkeypatch.setattr(
+        "core.federation.runner.store.is_globally_enabled", lambda: True
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.get_source",
+        lambda sid: {"source_id": sid, "enabled": True},
+    )
+    assert runner.is_active_for("splunk") is False
+
+
+def test_store_read_errors_log_a_warning_and_read_as_missing(monkeypatch, caplog):
+    from core.federation import store
+
+    def boom(*a, **k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("core.storage.config_service.get_config_service", boom)
+    monkeypatch.setattr("core.storage.connection.get_db_manager", boom)
+    with caplog.at_level("WARNING"):
+        assert store.get_global_settings() == {"enabled": False}
+        assert store.get_source("splunk") is None
+        assert store.list_sources() == []
+    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3
+    # The raising readers let callers tell an outage from "disabled".
+    with pytest.raises(RuntimeError):
+        store.read_global_settings()
+    with pytest.raises(RuntimeError):
+        store.read_source("splunk")
+
+
+@pytest.mark.asyncio
+async def test_adapter_loop_reports_a_store_outage_once_and_does_not_poll(
+    monkeypatch, caplog
+):
+    runner = FederationRunner(output_queue=None)
+    adapter = _FakeAdapter()
+    shutdown = asyncio.Event()
+    reads = []
+
+    def failing_read(source_id):
+        reads.append(source_id)
+        if len(reads) >= 3:
+            shutdown.set()
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("core.federation.runner.store.read_source", failing_read)
+
+    async def instant_wait(awaitable, timeout):
+        awaitable.close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr("core.federation.runner.asyncio.wait_for", instant_wait)
+    with caplog.at_level("WARNING"):
+        await runner._adapter_loop(adapter, shutdown)
+
+    assert len(reads) == 3
+    assert adapter.fetch_calls == []
+    warnings = [r for r in caplog.records if "store read failed" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_integration_is_skipped_not_recorded_as_success(
+    monkeypatch, caplog
+):
+    runner = FederationRunner(output_queue=asyncio.Queue())
+    adapter = _FakeAdapter(configured=False)
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda *a, **k: pytest.fail("record_success should not be called"),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda *a, **k: pytest.fail("record_failure should not be called"),
+    )
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            await runner._do_one_tick(adapter, {"max_items": 10, "cursor": {}})
+
+    assert adapter.fetch_calls == []
+    assert runner.stats["polls"] == 0
+    assert len([r for r in caplog.records if "not configured" in r.getMessage()]) == 1

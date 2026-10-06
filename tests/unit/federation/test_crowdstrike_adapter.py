@@ -46,6 +46,7 @@ class _FakeFalcon:
 def _adapter(svc: Any) -> CrowdStrikeAdapter:
     adapter = CrowdStrikeAdapter()
     adapter._service = svc
+    adapter.is_configured = lambda: True  # type: ignore[method-assign]
     return adapter
 
 
