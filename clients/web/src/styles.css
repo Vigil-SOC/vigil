@@ -6542,3 +6542,20 @@
       transition: none;
    }
 }
+
+/* Watch a run: the current step's segment fills over one replay step. */
+@keyframes wr-fill {
+   from {
+      width: 0;
+   }
+
+   to {
+      width: 100%;
+   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+   [aria-label="Steps"] span {
+      animation: none !important;
+   }
+}

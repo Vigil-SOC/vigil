@@ -1,5 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
@@ -13,6 +13,14 @@ import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS } from '../../shell/commandBar'
+import { WatchRun } from './WatchRun'
+import {
+  IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
+  type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
+  type HuntQuestion, type HuntRecall, type HuntStanding, type HuntStrength, type HuntView,
+  type InvestigateDecisionView, type RecalledFrom, type RecalledWindow,
+  type WfRun, type WfRunDetail,
+} from './runRead'
 
 type WfTab = 'workflows' | 'agents' | 'skills' | 'commands'
 
@@ -46,9 +54,11 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
     ['skills', 'Skills', count(skills)],
     ['commands', 'Commands', COMMANDS.length],
   ]
+  // the Watch a run page carries its own header, as the board has it; the tab strip comes back with the catalog
+  const watching = tab === 'workflows' && runId !== null
   return (
     <>
-      <div className="flex flex-col gap-3.5 px-[26px] pt-5">
+      <div className={`flex flex-col gap-3.5 px-[26px] pt-5${watching ? ' hidden' : ''}`}>
         <div className="flex items-end justify-between gap-5">
           <div className="flex flex-col gap-[5px] min-w-0">
             {/* inline weight: the shell's unlayered h1 rule would beat a utility class */}
@@ -119,9 +129,10 @@ function CommandsTab() {
   )
 }
 
-/** One run reached by URL rather than through History. Same hook and panel as
- *  RunRow, so the run polls while in flight and stops at terminal. Keyed on the
- *  id by the caller, so a new ?run= starts clean rather than over the old detail.
+/** One run reached by URL rather than through History, opened as the Watch a run
+ *  page. Same hook as RunRow, so the run polls while in flight and stops at
+ *  terminal. Keyed on the id by the caller, so a new ?run= starts clean rather
+ *  than over the old detail.
  *  No seed: the hook will not poll until getRun says the run is in flight, so a
  *  missing run is asked for once. */
 function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
@@ -130,16 +141,15 @@ function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
     setDphase('loading')
     void load()
   }, [load, setDphase])
+  if (dphase === 'ready' && detail) return <WatchRun d={detail} onBack={onBack} />
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <button className="btn ghost" onClick={onBack}><Icon name="chevL" size={13} /> All workflows</button>
+        <button className="btn ghost" onClick={onBack}><Icon name="chevL" size={13} /> Workflows</button>
         <span className="mono text-[11.5px] text-tx-3">{runId}</span>
       </div>
       <div className="px-[22px] py-5">
-        {dphase === 'loading' && <div className="muted">Loading run detail…</div>}
-        {dphase === 'error' && <div className="muted">Couldn’t load run {runId}. It may have been removed, or the id may be wrong.</div>}
-        {dphase === 'ready' && detail && <RunDetail d={detail} onSteered={load} />}
+        {dphase === 'error' ? <div className="muted">Couldn’t load run {runId}. It may have been removed, or the id may be wrong.</div> : <div className="muted">Loading run detail…</div>}
       </div>
     </>
   )
@@ -288,6 +298,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
                     </td>
                     <td>
                       <div className="flex items-center gap-2 justify-end">
+                        <WatchButton wf={w} />
                         <button className="btn ghost" onClick={() => setModal({ kind: 'history', wf: w })}><Icon name="clock" /> History</button>
                         {w.source === 'custom' && (
                           <>
@@ -319,6 +330,35 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
   )
 }
 
+/** Opens the workflow's latest run as the Watch a run page. The run is looked up on
+ *  the click, not once per row on load, and a workflow that never ran says so. */
+function WatchButton({ wf }: { wf: Workflow }) {
+  const navigate = useNavigate()
+  const [state, setState] = useState<'idle' | 'busy' | 'none'>('idle')
+  const [failed, setFailed] = useState<string | null>(null)
+  const watch = () => {
+    setState('busy')
+    setFailed(null)
+    workflowApi
+      .listRuns(wf.id, { limit: 1 })
+      .then((res) => {
+        const latest = (res.data?.runs as WfRun[] | undefined)?.[0]?.run_id
+        if (!latest) return setState('none')
+        setState('idle')
+        navigate({ search: `?run=${encodeURIComponent(latest)}` })
+      })
+      .catch((e) => { setFailed(errMsg(e)); setState('idle') })
+  }
+  return (
+    <button
+      className="btn ghost" disabled={state !== 'idle'} onClick={watch}
+      title={state === 'none' ? 'No runs yet' : failed ? `Couldn’t look up runs — ${failed}` : 'Replay the latest run step by step'}
+    >
+      <Icon name="play" /> {state === 'none' ? 'No runs yet' : 'Watch it run'}
+    </button>
+  )
+}
+
 const INPUT_CLS = 'w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line'
 
 function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxLength, list, rows = 3 }: {
@@ -346,11 +386,6 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
     </label>
   )
-}
-
-function errMsg(e: unknown): string {
-  const r = e as { response?: { data?: { detail?: string } }; message?: string }
-  return r?.response?.data?.detail || r?.message || 'Something went wrong'
 }
 
 /** uses the console's .drop-menu, not the native datalist chrome */
@@ -1223,19 +1258,6 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   )
 }
 
-interface WfRun {
-  run_id: string
-  status: string
-  triggered_by?: string
-  started_at?: string | null
-  duration_ms?: number | null
-  total_cost_usd?: number
-  error?: string | null
-  /** The agent-layer terminal. Null when this side finalized the run itself. */
-  outcome?: string | null
-  reason?: string | null
-}
-
 /** A secondary badge for the terminals the three-value status folds together.
  *  completed and failed already say what they are. */
 const OUTCOME_BADGE: Record<string, string> = {
@@ -1250,13 +1272,6 @@ function OutcomeBadge({ outcome, reason }: { outcome?: string | null; reason?: s
   return (
     <span className="status ml-2" style={{ background: 'transparent', color: 'var(--tx-2)', border: '1px solid var(--line)' }} title={reason || undefined}>{label}</span>
   )
-}
-
-function fmtDuration(ms?: number | null): string {
-  if (!ms) return '—'
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.round(ms / 60000)}m`
 }
 
 function fmtStarted(iso?: string | null): string {
@@ -1301,223 +1316,13 @@ export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => voi
           <table className="tbl">
             <thead><tr><th /><th>Status</th><th>Started</th><th>Duration</th><th>Trigger</th><th>Cost</th><th /></tr></thead>
             <tbody>
-              {runs.map((r) => <RunRow key={r.run_id} run={r} onRemoved={load} />)}
+              {runs.map((r) => <RunRow key={r.run_id} run={r} onRemoved={load} onWatch={onClose} />)}
             </tbody>
           </table>
         </div>
       )}
     </Popup>
   )
-}
-
-interface WfPhase {
-  phase_id: string
-  phase_order: number
-  agent_id: string
-  status: string
-  duration_ms?: number | null
-  cost_usd?: number | null
-  error?: string | null
-}
-/** A hunt reports beliefs and where each stands; it has no phases to report against. */
-interface HuntStanding {
-  hypothesis_id: string
-  statement: string
-  status: string
-  attack_technique?: string | null
-  /** Techniques cited by evidence bearing on this belief — earned, not declared. */
-  techniques_cited?: string[]
-  resolution_reason?: string | null
-  /** hunt_spec, operator or base_rate — which belief the operator put up themselves. */
-  provenance?: string
-}
-/** One record the hunt gathered. */
-interface HuntEvidence {
-  evidence_id: string
-  iteration: number
-  source_system: string
-  summary: string
-  why_notable?: string
-  salience?: string
-  attack_technique?: string | null
-  attacker_influenceable?: boolean
-  /** Whether anything the finding rests on was attested by the telemetry rather than
-   *  authored by the adversary. The projection computes it, so the console shows the
-   *  rule a verdict is gated on rather than a second opinion about it. */
-  sensor_attested?: boolean
-  rests_on?: { field: string; authored: 'sensor' | 'adversary' | 'third_party' }[]
-  instruction_like?: boolean
-  provenance?: string
-  is_gap?: boolean
-  /** Why the hunt could not look — kept out of the summary so plumbing is not read
-   *  as telemetry, which makes this the only place an operator sees it. */
-  gap_detail?: string | null
-  bears_on?: { hypothesis_id: string; relation: string }[]
-}
-
-/** What the hunt could not answer. A blind spot, not a finding. */
-interface HuntGap {
-  evidence_id: string
-  iteration: number
-  summary: string
-  query_intent?: string
-  hypothesis_id?: string | null
-}
-interface HuntCheckpoint {
-  checkpoint_id: string
-  class: string
-  raised_iteration?: number
-  question: string
-  resolution?: { answer: string; actor: string; text?: string } | null
-}
-/** A lead opened and not yet taken; an operator pins one with a boost directive. */
-interface HuntQuestion {
-  question_id: string
-  question: string
-  entity_key?: string | null
-  hypothesis_id?: string | null
-  spawned_iteration?: number
-}
-
-/** One move the Hunt Lead made. The rationale is the whole of why a hunt did what
- *  it did, and rejected_attempts is the only account of a turn that stalled. */
-interface HuntMove {
-  decision_id: string
-  iteration: number
-  action: string
-  rationale: string
-  target_entity?: string | null
-  target_hypothesis_id?: string | null
-  query_intent?: string
-  worker_agent_id?: string | null
-  cost_usd?: number
-  rejected_attempts?: string[]
-}
-/** The account of the run, as data. next_steps arrive already normalised to
- *  strings, so this side never has two shapes to read. */
-interface HuntNarrative {
-  summary: string
-  what_happened: string
-  next_steps: string[]
-  model_id: string
-  written_at: string
-}
-
-/** What a run read out of episodic memory before it started. Mirrors the recall
- *  contract in services/agent/contracts/memory.ts; the fields this panel does not
- *  show are omitted rather than restated. */
-interface RecalledFrom {
-  investigation_kind: string
-  investigation_id: string
-  concluded_at: string
-}
-interface RecalledWindow { first_seen: string; last_seen: string }
-interface RecalledVerdict extends RecalledFrom {
-  hypothesis_id: string
-  statement: string
-  outcome: string
-  rationale: string
-  subject_entities: string[]
-  /** A conclusion resting only on fields an adversary could have written is not one
-   *  to lean on, which is why it is called out rather than left in the rationale. */
-  attacker_influenceable_only: boolean
-  trust: string
-  window: RecalledWindow
-  window_source: string
-}
-interface RecalledGap extends RecalledFrom {
-  hypothesis_id: string
-  statement: string
-  disposition: string
-  reason: string
-  subject_entities: string[]
-}
-interface RecalledSighting extends RecalledFrom {
-  entity_key: string
-  source_system: string
-  hit_count: number
-  attacker_influenceable: boolean
-  window: RecalledWindow
-}
-interface DroppedRows { per_key_cap: number; overall_cap: number }
-/** The journaled read. `unavailable` means it could not be served; empty lists mean
- *  it ran and found nothing, which is a fact about the entities rather than about
- *  memory. The panel must not render the two alike. */
-interface HuntRecall {
-  keys: string[]
-  as_of: string
-  unavailable?: string
-  sightings?: RecalledSighting[]
-  verdicts?: RecalledVerdict[]
-  gaps?: RecalledGap[]
-  dropped?: { sightings: DroppedRows; verdicts: DroppedRows; gaps: DroppedRows }
-}
-
-interface HuntHandoff {
-  case_id: string
-  hypothesis_id: string
-  iteration: number
-  rationale: string
-}
-interface HuntStrength {
-  corroborating_sources: number
-  contradicting_records: number
-  open_gaps: number
-  attacker_influenceable_only: boolean
-  survived_disconfirmation: boolean
-}
-/** The derived deliverable. Null until the hunt writes one, so the panel reads
- *  the live fields until it exists and the report itself afterwards. */
-interface HuntReport {
-  gaps: HuntGap[]
-  checkpoints: HuntCheckpoint[]
-  hypotheses: { hypothesis_id: string; evidence_strength?: HuntStrength | null }[]
-  unruled?: number
-}
-interface HuntBudgets {
-  max_iterations: number
-  max_cost_usd: number
-}
-interface HuntView {
-  run_id?: string
-  status: string
-  /** Why it ended, which is not whether it succeeded: a hunt stopped at its ceiling
-   *  finalises as completed. */
-  outcome?: string | null
-  /** Which arm of the budget bound, or what an operator did. Not an error. */
-  reason?: string | null
-  iteration: number
-  evidence_count: number
-  /** Capped by the projection; evidence_count stays the untruncated total. */
-  evidence?: HuntEvidence[]
-  cost_usd?: number
-  /** What this run was granted, extensions included — not the shipped default. */
-  budgets?: HuntBudgets
-  hypotheses: HuntStanding[]
-  open_checkpoint?: {
-    checkpoint_id: string
-    checkpoint_class?: string
-    question: string
-    raised_at?: string
-    context?: Record<string, unknown>
-  } | null
-  report?: HuntReport | null
-  report_markdown?: string | null
-  narrative?: HuntNarrative | null
-  handoffs?: HuntHandoff[]
-  moves?: HuntMove[]
-  open_questions?: HuntQuestion[]
-  /** Off the run's own ledger, never a fresh read: memory has moved since, and a
-   *  panel that re-read it would show what the hunt never saw. Absent when the run
-   *  never asked -- older runs, and runs whose beliefs named no entity. */
-  recall?: HuntRecall | null
-}
-interface WfRunDetail extends WfRun {
-  result_summary?: string | null
-  phases?: WfPhase[]
-  hunt?: HuntView | null
-  /** What the agent layer folds for a run that is not a hunt. Its shape is the kind's. */
-  projection?: unknown
 }
 
 /** One step of a root-cause trace as last written. A name on a step that is not
@@ -1571,38 +1376,6 @@ function rootCauseOf(projection: unknown): RootCauseView | null {
   }
 }
 
-const RUN_POLL_MS = 5_000
-const IN_FLIGHT = ['running', 'paused', 'pending']
-
-/** One run's detail, refreshed while it is in flight. Shared by the start modal and
- *  the history row so one run has one poller. */
-export function useRunDetail(runId: string, watching: boolean, seed?: string) {
-  const [detail, setDetail] = useState<WfRunDetail | null>(null)
-  const [dphase, setDphase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-
-  const load = useCallback(
-    () =>
-      workflowApi
-        .getRun(runId)
-        .then((res) => { setDetail(res.data as WfRunDetail); setDphase('ready') })
-        .catch(() => setDphase((p) => (p === 'ready' ? p : 'error'))),
-    [runId],
-  )
-
-  // Polls only while we know the run is in flight. A missing status is not
-  // treated as running: a deep-link with no seed would otherwise poll a 404
-  // until a later effect stopped it.
-  const status = detail?.status ?? seed
-  const live = Boolean(watching && status && IN_FLIGHT.includes(status))
-  useEffect(() => {
-    if (!live) return
-    const timer = setInterval(() => { void load() }, RUN_POLL_MS)
-    return () => clearInterval(timer)
-  }, [live, load])
-
-  return { detail, dphase, setDphase, load }
-}
-
 /** Takes a finished run out of History. Two clicks rather than a browser confirm,
  *  since the row is one of fifty. A run in flight is ended with cancel, not this. */
 function RemoveRun({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
@@ -1638,7 +1411,7 @@ function RemoveRun({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
 }
 
 /** A run row that lazily fetches its full detail (getRun) when expanded. */
-function RunRow({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
+function RunRow({ run, onRemoved, onWatch }: { run: WfRun; onRemoved: () => void; onWatch: () => void }) {
   const [open, setOpen] = useState(false)
   const { detail, dphase, setDphase, load } = useRunDetail(run.run_id, open, run.status)
 
@@ -1664,7 +1437,15 @@ function RunRow({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
         <td className="muted">{fmtDuration(run.duration_ms)}</td>
         <td className="muted">{run.triggered_by || '—'}</td>
         <td className="muted"><Cost usd={run.total_cost_usd} digits={3} /></td>
-        <td className="tight" onClick={(e) => e.stopPropagation()}><RemoveRun run={run} onRemoved={onRemoved} /></td>
+        <td className="tight" onClick={(e) => e.stopPropagation()}>
+          <span className="flex items-center gap-1.5 justify-end">
+            {/* closes History as it navigates; the cell above keeps the row from expanding */}
+            <Link to={{ search: `?run=${encodeURIComponent(run.run_id)}` }} className="btn ghost no-underline" onClick={onWatch}>
+              <Icon name="play" size={13} /> Watch it run
+            </Link>
+            <RemoveRun run={run} onRemoved={onRemoved} />
+          </span>
+        </td>
       </tr>
       {open && (
         <tr className="run-detail-row">
@@ -2609,92 +2390,6 @@ function RejectPhaseGate({
   )
 }
 
-/** What replay already returns for an investigate run. Compose and root cause 404
- *  here; that is not a failure, and the phase view stays as it was. */
-interface InvestigateDecisionView {
-  iteration: number
-  action: string
-  rationale: string
-  cost_usd: number
-  calls: unknown[]
-}
-
-type ReplayRead =
-  | { kind: 'pending' }
-  | { kind: 'absent' }
-  | { kind: 'failed'; message: string }
-  | { kind: 'investigate'; decisions: InvestigateDecisionView[] }
-
-function statusOf(e: unknown): number | undefined {
-  return (e as { response?: { status?: number } }).response?.status
-}
-
-function decisionsOf(raw: unknown[]): InvestigateDecisionView[] {
-  return raw.map((item, at) => {
-    const row = (typeof item === 'object' && item !== null ? item : {}) as Partial<InvestigateDecisionView>
-    return {
-      iteration: typeof row.iteration === 'number' ? row.iteration : at + 1,
-      action: typeof row.action === 'string' ? row.action : '',
-      rationale: typeof row.rationale === 'string' ? row.rationale : '',
-      cost_usd: typeof row.cost_usd === 'number' ? row.cost_usd : 0,
-      calls: Array.isArray(row.calls) ? row.calls : [],
-    }
-  })
-}
-
-function pullReplay(runId: string, live: () => boolean, setRead: (next: ReplayRead) => void) {
-  workflowApi
-    .replayRun(runId)
-    .then((res) => {
-      if (!live()) return
-      const body = res.data as { run_kind?: unknown; decisions?: unknown }
-      if (body?.run_kind !== 'investigate' || !Array.isArray(body.decisions)) {
-        setRead({ kind: 'absent' })
-        return
-      }
-      setRead({ kind: 'investigate', decisions: decisionsOf(body.decisions) })
-    })
-    .catch((e: unknown) => {
-      if (!live()) return
-      setRead(statusOf(e) === 404 ? { kind: 'absent' } : { kind: 'failed', message: errMsg(e) })
-    })
-}
-
-/** Own request, not folded into getRun. Polled on the same interval while the
- *  detail is open and the run is in flight; a finished run is read once.
- *  A slower earlier response cannot overwrite a later one. */
-function useInvestigateReplay(runId: string, inFlight: boolean): ReplayRead {
-  const [read, setRead] = useState<ReplayRead>({ kind: 'pending' })
-  const req = useRef(0)
-
-  const pull = useCallback(() => {
-    const mine = ++req.current
-    pullReplay(runId, () => req.current === mine, setRead)
-  }, [runId])
-
-  useEffect(() => {
-    setRead({ kind: 'pending' })
-    pull()
-    return () => { req.current += 1 }
-  }, [pull])
-
-  useEffect(() => {
-    if (!inFlight) return
-    const timer = setInterval(pull, RUN_POLL_MS)
-    return () => clearInterval(timer)
-  }, [inFlight, pull])
-
-  // getRun can observe terminal before the next replay tick. One more read then,
-  // so the decision that ended the run is on the open panel.
-  const wasLive = useRef(inFlight)
-  useEffect(() => {
-    if (wasLive.current && !inFlight) pull()
-    wasLive.current = inFlight
-  }, [inFlight, pull])
-
-  return read
-}
-
 function RunWithoutHunt({ d, inFlight }: { d: WfRunDetail; inFlight: boolean }) {
   const replay = useInvestigateReplay(d.run_id, inFlight)
   return (
@@ -2734,18 +2429,6 @@ function InvestigateDecisions({ decisions }: { decisions: InvestigateDecisionVie
       )}
     </div>
   )
-}
-
-function callLine(call: unknown): { tool: string; rest: string } {
-  if (typeof call !== 'object' || call === null) return { tool: 'call', rest: String(call) }
-  const rec = call as { tool?: unknown; arguments?: unknown; result?: unknown }
-  const tool = typeof rec.tool === 'string' && rec.tool !== '' ? rec.tool : 'call'
-  const args = rec.arguments
-  const argText = typeof args === 'string' ? args : args === undefined ? '' : JSON.stringify(args)
-  const result = typeof rec.result === 'string' ? rec.result : ''
-  const clipped = result.length > 160 ? `${result.slice(0, 160)}…` : result
-  const rest = [argText !== '' && argText !== '{}' ? argText : '', clipped].filter(Boolean).join(' — ')
-  return { tool, rest }
 }
 
 function DecisionCalls({ calls }: { calls: unknown[] }) {
@@ -3398,13 +3081,6 @@ function hypothesisColor(s: string): string {
   if (s === 'disproven') return 'var(--ok)'
   if (s === 'parked' || s === 'inconclusive') return 'var(--tx-2)'
   return 'var(--med)' // active
-}
-
-function runStatusColor(s: string): string {
-  if (s === 'completed') return 'var(--ok)'
-  if (s === 'failed' || s === 'cancelled') return 'var(--crit)'
-  if (s === 'paused') return 'var(--high)'
-  return 'var(--med)' // running
 }
 
 function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void; onSaved: () => void }) {

@@ -141,7 +141,7 @@ describe("what the evidence actually says", () => {
     expect(standing?.weakens).toBe(1);
   });
 
-  it("lists each call with the question, the tool, and how much came back", async () => {
+  it("lists each call with the question, the tool, how much came back, and the iteration that asked", async () => {
     const started = await newLedger();
     started.ledger.append({
       kind: "dispatch",
@@ -175,8 +175,8 @@ describe("what the evidence actually says", () => {
     } as never);
 
     expect((await project(started)).calls).toEqual([
-      { question: "who did it talk to", tool: "telemetry_search", result_length: 5, cost_usd: 0.2, duration_ms: 80 },
-      { question: "who owns it", tool: "whois", result_length: 2, cost_usd: 0.1 },
+      { question: "who did it talk to", tool: "telemetry_search", result_length: 5, cost_usd: 0.2, duration_ms: 80, iteration: 1 },
+      { question: "who owns it", tool: "whois", result_length: 2, cost_usd: 0.1, iteration: 2 },
     ]);
   });
 });

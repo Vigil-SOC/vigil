@@ -1,7 +1,9 @@
 /* A run that cost nothing used to hide behind "—" because 0 is falsy (#989). */
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { HistoryModal } from './WorkflowsScreen'
+import { workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   workflowApi: {
@@ -33,9 +35,12 @@ const rowFor = (trigger: string) => screen.getByText(trigger).closest('tr') as H
 // the Cost column, by header position: <caret> Status Started Duration Trigger Cost
 const costCell = (trigger: string) => rowFor(trigger).querySelectorAll('td')[5].textContent
 
+const renderHistory = (onClose = vi.fn()) =>
+  render(<MemoryRouter><HistoryModal wf={{ id: 'wf-1', name: 'Beacon hunt' } as never} onClose={onClose} /></MemoryRouter>)
+
 describe('workflow run history rows', () => {
   it('shows a real zero as a zero, an absent cost as not priced, and never a dash', async () => {
-    render(<HistoryModal wf={{ id: 'wf-1', name: 'Beacon hunt' } as never} onClose={vi.fn()} />)
+    renderHistory()
 
     await screen.findByText('priced')
     expect(costCell('priced')).toBe('$0.500')
@@ -44,7 +49,7 @@ describe('workflow run history rows', () => {
   })
 
   it('badges a budget stop, an abandon and an abort, and leaves a plain finish bare', async () => {
-    render(<HistoryModal wf={{ id: 'wf-1', name: 'Beacon hunt' } as never} onClose={vi.fn()} />)
+    renderHistory()
 
     await screen.findByText('budget')
     expect(within(rowFor('budget')).getByText('stopped at budget')).toHaveAttribute('title', 'hit the cost ceiling')
@@ -56,5 +61,17 @@ describe('workflow run history rows', () => {
     expect(rowFor('crashed').querySelectorAll('.status')).toHaveLength(1)
     expect(rowFor('operator').querySelectorAll('.status')).toHaveLength(1)
     expect(within(rowFor('operator')).getByText('⚠')).toHaveAttribute('title', 'Cancelled: from the console')
+  })
+
+  it('links each row to its run without expanding the row, and closes History on the way', async () => {
+    const onClose = vi.fn()
+    renderHistory(onClose)
+
+    await screen.findByText('priced')
+    const link = within(rowFor('priced')).getByRole('link', { name: /Watch it run/ })
+    expect(link).toHaveAttribute('href', '/?run=run-priced')
+    fireEvent.click(link)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(workflowApi.getRun).not.toHaveBeenCalled()
   })
 })
