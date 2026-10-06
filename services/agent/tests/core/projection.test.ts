@@ -35,6 +35,17 @@ async function project(...events: readonly New[]) {
 }
 
 describe("what a supervisor is told about a run", () => {
+  it("names the kind and the budgets the run opened with", async () => {
+    const projection = await project(opened(), decided("EXAMINE"));
+
+    expect(projection.run_kind).toBe("investigate");
+    expect(projection.budgets).toEqual({ max_calls: 8, max_cost_usd: 5, max_wall_ms: 600_000, max_park_ms: 604_800_000 });
+  });
+
+  it("reports no budgets, rather than throwing, when the ledger has no run event", async () => {
+    expect((await project(decided("EXAMINE"))).budgets).toBeNull();
+  });
+
   it("reports a run still going as running, with nothing parked", async () => {
     const projection = await project(opened(), decided("EXAMINE"));
 
@@ -178,7 +189,7 @@ describe("investigate replay", () => {
     const state = new InProcessState<LeadKinds>();
     await state.append(RUN, [
       opened(),
-      event("decision", { action: "EXAMINE", rationale: "look", worker: "worker" }),
+      event("decision", { action: "EXAMINE", rationale: "look", worker: "worker", duration_ms: 1234 }),
       event("dispatch", {
         dispatch_id: "dsp-1",
         agent_id: "worker",
@@ -198,13 +209,15 @@ describe("investigate replay", () => {
       decisions: [
         {
           iteration: 1,
+          at: expect.any(String),
+          duration_ms: 1234,
           action: "EXAMINE",
           rationale: "look",
           worker: "worker",
           cost_usd: 0.05,
           calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
         },
-        { iteration: 2, action: "CONCLUDE", rationale: "done", worker: null, cost_usd: 0, calls: [] },
+        { iteration: 2, at: expect.any(String), action: "CONCLUDE", rationale: "done", worker: null, cost_usd: 0, calls: [] },
       ],
     });
   });

@@ -22,6 +22,8 @@ export interface DecisionPayload {
   action: string;
   rationale: string;
   worker: string | null;
+  // Wall time of the lead's model turn; absent on ledgers written before it was kept.
+  duration_ms?: number;
 }
 
 export interface FindingPayload {
@@ -86,7 +88,9 @@ export async function runLead(harness: Harness<LeadKinds>, options: LeadOptions)
     // waits for one iteration boundary rather than a whole resume.
     await journalAnswers(harness.state, run_id, options.run_kind, options.answers ?? noAnswers);
 
+    const started = performance.now();
     const outcome = await drain(streamTurn<Decision, LeadKinds>(turnFor(options, "lead", lead, brief(spec)), harness));
+    const durationMs = Math.round(performance.now() - started);
     if (outcome.status === "waiting_approval") {
       // Announced every time the run is looked at, not only when it first parks:
       // the far side is idempotent, and a notice lost to a restart is re-sent.
@@ -104,7 +108,7 @@ export async function runLead(harness: Harness<LeadKinds>, options: LeadOptions)
     const assignments = topology.assign(selection, spec);
     // The lead's own calls are a dispatch too. A single-lead investigation has no
     // worker, and the questions it asked would otherwise never reach the ledger.
-    const own: Event[] = [event(options, "decision", { action: decision.action, rationale: decision.rationale, worker: selection.worker })];
+    const own: Event[] = [event(options, "decision", { action: decision.action, rationale: decision.rationale, worker: selection.worker, duration_ms: durationMs })];
     if (outcome.calls.length > 0) own.push(event(options, "dispatch", leadDispatch(options, selection.task, outcome)));
     await commitTurn(harness.state, run_id, own);
 

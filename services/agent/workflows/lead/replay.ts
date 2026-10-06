@@ -11,16 +11,20 @@ export interface InvestigateReplay {
 
 export interface InvestigateDecision {
   iteration: number;
+  // The decision event's envelope timestamp.
+  at: string;
   action: string;
   rationale: string;
   worker: string | null;
   cost_usd: number;
+  // Wall time of the lead's model turn; omitted when the ledger did not record it.
+  duration_ms?: number;
   calls: unknown[];
 }
 
 export function investigateReplay(
   runId: string,
-  events: readonly { kind: string; payload: unknown }[],
+  events: readonly { kind: string; ts: string; payload: unknown }[],
 ): InvestigateReplay {
   const decisions: InvestigateDecision[] = [];
   let open: InvestigateDecision | null = null;
@@ -29,10 +33,12 @@ export function investigateReplay(
       const payload = event.payload as DecisionPayload;
       open = {
         iteration: decisions.length + 1,
+        at: event.ts,
         action: payload.action,
         rationale: payload.rationale,
         worker: payload.worker ?? null,
         cost_usd: 0,
+        ...(typeof payload.duration_ms === "number" ? { duration_ms: payload.duration_ms } : {}),
         calls: [],
       };
       decisions.push(open);

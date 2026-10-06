@@ -2,7 +2,7 @@ import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
 import { callViews, type CallView } from "../call-view.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
-import { citedTechniques, isGap, sensorAttested } from "./strength.js";
+import { citedTechniques, isGap, NULL_CHECK_PROVENANCE, sensorAttested } from "./strength.js";
 import { renderReport, type HuntReport } from "./report.js";
 import { stepsOf, type Narrative } from "./narrative.js";
 import type {
@@ -24,6 +24,9 @@ import type {
 // report progress against, so what it has tested and how each belief stands is it.
 export interface HuntProjection {
   run_id: string;
+  name: string;
+  // What the hunt was asked to cover, as the caller stated it at start.
+  scope: Record<string, unknown>;
   status: HuntStatus;
   outcome: HuntOutcome | null;
   reason: string;
@@ -37,6 +40,9 @@ export interface HuntProjection {
   // The records themselves, newest first, so a reader need not wait for the report.
   // Capped; evidence_count above stays the untruncated total.
   evidence: EvidenceView[];
+  // Every disconfirmation verdict the critic gave, in ledger order and uncapped:
+  // the evidence list above is capped and a verdict is not worth losing to it.
+  reviews: ReviewView[];
   open_checkpoint: OpenCheckpoint | null;
   // The deliverable, null until the hunt writes one. Rendered here because the
   // renderer is this side's: a reader that formatted the report itself would be a
@@ -99,7 +105,21 @@ export interface MoveView {
   cost_usd: number;
   // What was refused before this move was accepted: a stalled turn is nothing but these.
   rejected_attempts: string[];
+  // Wall time of the lead's model calls for this move. Absent on a ledger that did
+  // not record it, which reads as "not recorded" rather than zero.
+  duration_ms?: number;
   created_at: string;
+}
+
+// One critic verdict, read off the payload the controller wrote rather than
+// re-derived from the links.
+export interface ReviewView {
+  iteration: number;
+  hypothesis_id: string;
+  survives: boolean;
+  strongest_benign_explanation: string;
+  rationale: string;
+  model_id: string;
 }
 
 // What a piece of evidence is to somebody watching. The payload is left out: it is the
@@ -158,6 +178,8 @@ export function huntProjection(runId: string, events: readonly HuntEvent[]): Hun
 
   return {
     run_id: runId,
+    name: view.hunt.name,
+    scope: view.hunt.scope,
     status: view.hunt.status,
     outcome: view.hunt.outcome,
     reason: why(view.hunt),
@@ -172,6 +194,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[]): Hun
       .reverse()
       .slice(0, EVIDENCE_SHOWN)
       .map((record) => evidenceView(record, view.links)),
+    reviews: [...view.evidence.values()].filter((record) => record.provenance === NULL_CHECK_PROVENANCE).map(reviewView),
     open_checkpoint: open === undefined ? null : openCheckpoint(open),
     report,
     report_markdown: report === null ? null : renderReport(report, view, narrativeIn(events), recalledPayloadOf(events)),
@@ -209,6 +232,7 @@ function moveView(record: DecisionRecord): MoveView {
     evidence_citations: decision.evidence_citations ?? [],
     cost_usd: record.cost_usd,
     rejected_attempts: record.rejected_attempts ?? [],
+    ...(record.duration_ms === undefined ? {} : { duration_ms: record.duration_ms }),
     created_at: record.created_at,
   };
 }
@@ -273,6 +297,19 @@ function evidenceView(
     bears_on: links
       .filter((link) => link.evidence_id === record.evidence_id)
       .map((link) => ({ hypothesis_id: link.hypothesis_id, relation: link.relation })),
+  };
+}
+
+function reviewView(record: EvidenceRecord): ReviewView {
+  const { payload } = record;
+  const text = (key: string): string => (typeof payload[key] === "string" ? (payload[key] as string) : "");
+  return {
+    iteration: record.iteration,
+    hypothesis_id: text("hypothesis_id"),
+    survives: payload["survives"] === true,
+    strongest_benign_explanation: text("strongest_benign_explanation"),
+    rationale: text("rationale"),
+    model_id: text("model_id"),
   };
 }
 

@@ -11,6 +11,8 @@ export interface ReplayedDecision {
   action: string;
   target: string | null;
   cost_usd: number;
+  // Wall time of the lead's model calls; omitted on ledgers that did not record it.
+  duration_ms?: number;
   // False when the ledger predates digest_seq and the prefix had to be inferred,
   // so a mismatch there may be the boundary rather than real drift.
   exact: boolean;
@@ -81,6 +83,7 @@ export function replay(log: readonly LedgerEvent[]): ReplayReport {
       action: record.decision.action,
       target: record.decision.target_hypothesis_id ?? record.decision.target_entity ?? null,
       cost_usd: record.cost_usd,
+      ...(record.duration_ms === undefined ? {} : { duration_ms: record.duration_ms }),
       exact,
       rebuilt,
       recorded: record.digest_presented,

@@ -110,6 +110,10 @@ describe("an arch drives the loop", () => {
     expect(events.map((event) => event.kind)).toEqual([
       "run", "spend", "spend", "decision", "spend", "spend", "dispatch", "finding", "spend", "spend", "decision", "terminal",
     ]);
+    // The lead's model turn is timed onto each decision.
+    for (const decision of events.filter((event) => event.kind === "decision")) {
+      expect((decision.payload as { duration_ms: number }).duration_ms).toBeGreaterThanOrEqual(0);
+    }
     expect(events.find((event) => event.kind === "dispatch")?.payload).toMatchObject({
       agent_id: "network_analyst",
       status: "complete",

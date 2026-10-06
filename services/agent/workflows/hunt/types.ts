@@ -391,6 +391,8 @@ export interface DecisionResult {
   model_id: string;
   prompt_version: string;
   cost_usd: number;
+  // Wall time of the lead's model calls for this iteration; absent on older ledgers.
+  duration_ms?: number;
   // Emissions the controller rejected before accepting one, kept so re-prompts stay visible.
   rejected_attempts?: string[];
 }

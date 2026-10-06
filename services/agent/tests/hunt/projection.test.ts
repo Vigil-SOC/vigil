@@ -3,7 +3,9 @@ import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
 import { EVIDENCE_SHOWN, huntProjection } from "../../workflows/hunt/projection.js";
-import { evidenceOn, newLedger, type Started } from "../support/hunt.js";
+import { ScriptedDisconfirmationCritic } from "../../workflows/hunt/scripted.js";
+import { replay } from "../../workflows/hunt/replay.js";
+import { controllerFor, evidenceOn, newLedger, provable, validateOn, type Started } from "../support/hunt.js";
 
 async function project(started: Started) {
   await started.ledger.flush();
@@ -216,5 +218,48 @@ describe("the moves the lead made", () => {
     expect(view.moves.map((move) => move.action)).toEqual(["VALIDATE", "INVESTIGATE"]);
     expect(view.moves[0]!.rejected_attempts).toHaveLength(1);
     expect(JSON.stringify(view.moves)).not.toContain("digest_presented");
+  });
+});
+
+describe("what the Watch page reads off a hunt", () => {
+  it("names the hunt and carries the scope it was given", async () => {
+    const view = await project(await newLedger({ scope: { hosts: ["dmz-1"] } }));
+
+    expect(view.name).toBe("test hunt");
+    expect(view.scope).toEqual({ hosts: ["dmz-1"] });
+  });
+
+  it("lists each critic verdict off the payload, uncapped and in ledger order", async () => {
+    const started = await newLedger({ checkpoints: { verdict_review: "auto" } });
+    const hypothesisId = started.hypothesisIds[0]!;
+    await controllerFor(started.ledger, [validateOn(hypothesisId, provable(started.ledger, hypothesisId))], {
+      critic: new ScriptedDisconfirmationCritic(true),
+    }).advanceIteration();
+    // Newer than the cap could hold: the evidence list drops them, the reviews do not.
+    for (let i = 0; i < EVIDENCE_SHOWN + 1; i += 1) evidenceOn(started.ledger, hypothesisId);
+    const view = await project(started);
+
+    expect(view.reviews).toHaveLength(1);
+    expect(view.reviews[0]).toMatchObject({ iteration: 1, hypothesis_id: hypothesisId, survives: true });
+    expect(view.reviews[0]!.strongest_benign_explanation).not.toBe("");
+    expect(view.reviews[0]!.model_id).not.toBe("");
+  });
+
+  it("carries the lead's model time on each move and the replay, and omits it on old ledgers", async () => {
+    const started = await newLedger();
+    await controllerFor(started.ledger, [{ action: "INVESTIGATE", rationale: "look", query_intent: "baseline" }]).advanceIteration();
+    const view = await project(started);
+
+    expect(view.moves[0]!.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(replay(started.ledger.log).decisions[0]!.duration_ms).toBe(view.moves[0]!.duration_ms);
+
+    // An older ledger: the record has no duration, so the key is absent, not 0 or null.
+    const stripped = started.ledger.log.map((event) => {
+      if (event.kind !== "decision") return event;
+      const { duration_ms: _gone, ...rest } = event.payload;
+      return { ...event, payload: rest };
+    }) as typeof started.ledger.log;
+    expect("duration_ms" in huntProjection(started.runId, stripped).moves[0]!).toBe(false);
+    expect("duration_ms" in replay(stripped).decisions[0]!).toBe(false);
   });
 });

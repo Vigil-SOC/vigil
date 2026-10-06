@@ -653,6 +653,9 @@ export class HuntController {
     // A rejected emission was still paid for. Charging only the accepted one
     // would under-report spend by up to the attempt bound, which both hides
     let spent = 0;
+    // Wall time of the lead's model calls only (every attempt and EXPAND re-ask,
+    // failed ones included): not dispatches, the critic or enrichment.
+    let modelMs = 0;
     let presented = digest;
     let attempts = 0;
     let expansions = 0;
@@ -664,9 +667,11 @@ export class HuntController {
     try {
       while (attempts < MAX_DECISION_ATTEMPTS) {
         let result: DecisionResult;
+        const started = performance.now();
         try {
           result = await this.provider.decide(presented, watch.signal);
         } catch (error) {
+          modelMs += performance.now() - started;
           // A dead call has not decided this iteration, so it takes the same bounded
           // re-ask a schema-invalid emission gets rather than ending the run.
           // Exhausted budgets are the exception: the next call answers identically.
@@ -680,6 +685,7 @@ export class HuntController {
           rejected.push(error instanceof Error ? error.message : String(error));
           continue;
         }
+        modelMs += performance.now() - started;
         rejected.push(...(result.rejected_attempts ?? []));
         spent += result.cost_usd;
         attribution = { model_id: result.model_id, prompt_version: result.prompt_version };
@@ -716,6 +722,7 @@ export class HuntController {
           result: {
             ...result,
             cost_usd: spent,
+            duration_ms: Math.round(modelMs),
             ...(rejected.length > 0 ? { rejected_attempts: rejected } : {}),
           },
         };
@@ -723,7 +730,7 @@ export class HuntController {
 
       // A stalled iteration is a fact about the hunt, not an absence of one: it
       // presented a digest and was billed for emissions. Journaling it before the
-      await this.recordStall(presented, digestSeq, rejected, spent, attribution);
+      await this.recordStall(presented, digestSeq, rejected, spent, attribution, Math.round(modelMs));
 
       throw new InvalidDecision(
         `the Hunt Lead emitted nothing valid in ${MAX_DECISION_ATTEMPTS} attempts ` +
@@ -742,6 +749,7 @@ export class HuntController {
     rejected: readonly string[],
     spent: number,
     attribution: { model_id: string; prompt_version: string },
+    durationMs: number,
   ): Promise<void> {
     this.ledger.append({
       kind: "decision",
@@ -758,6 +766,7 @@ export class HuntController {
         digest_presented: presented,
         digest_seq: digestSeq,
         cost_usd: spent,
+        duration_ms: durationMs,
         rejected_attempts: [...rejected],
         created_at: new Date().toISOString(),
       },
