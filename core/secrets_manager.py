@@ -436,9 +436,11 @@ class EncryptedFileBackend(SecretsBackend):
             # Don't silently wipe: serve an empty view, leave the file
             # untouched, and refuse writes (see ``_load_failed``).
             logger.error(
-                f"Could not decrypt {self.secrets_path} ({e!r}); "
-                f"treating as empty and refusing writes. If the master key "
-                f"changed, restore the original ~/.vigil/master.key."
+                "Could not decrypt %s (%r); treating as empty and refusing "
+                "writes. If the master key changed, restore the original "
+                "~/.vigil/master.key.",
+                self.secrets_path,
+                e,
             )
             self._cache = {}
             self._cache_mtime = current_mtime
@@ -480,9 +482,12 @@ class EncryptedFileBackend(SecretsBackend):
         cache = self._load_cache()
         if self._load_failed:
             logger.error(
-                f"Refusing to save secret '{key}': existing {self.secrets_path} "
-                f"cannot be decrypted, and saving would overwrite every stored "
-                f"credential. Restore the original {self.master_key_path}."
+                "Refusing to save secret '%s': existing %s cannot be decrypted, "
+                "and saving would overwrite every stored credential. Restore "
+                "the original %s.",
+                key,
+                self.secrets_path,
+                self.master_key_path,
             )
             return False
         had_key = key in cache
