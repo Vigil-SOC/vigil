@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
-import api, { configApi, findingsApi, overviewApi, type OverviewPayload } from '../../services/api'
+import api, { configApi, findingsApi, overviewApi, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   default: { post: vi.fn() },
-  overviewApi: { get: vi.fn() },
+  overviewApi: { get: vi.fn(), alert: vi.fn() },
   findingsApi: {
     markNoise: vi.fn(),
     clearNoise: vi.fn(),
@@ -77,6 +77,7 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
       evidence_links: [{ ref: 'https://example.test/alert/1' }],
       source_link: 'https://example.test/alert/1',
       case_id: null,
+      noise_marked: false,
       source_evidence: {
         version: 1,
         telemetry_kind: 'dns',
@@ -90,16 +91,24 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
   }
 }
 
-function renderScreen() {
+function Where() {
+  return <output data-testid="where">{useLocation().search}</output>
+}
+
+function renderScreen(url = '/overview') {
   const goSettings = vi.fn()
   const setWallMode = vi.fn()
-  render(
-    <MemoryRouter>
-      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={vi.fn()} setViewFull={vi.fn()} setWallMode={setWallMode} />
+  const openCase = vi.fn()
+  const { unmount } = render(
+    <MemoryRouter initialEntries={[url]}>
+      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} setWallMode={setWallMode} />
+      <Where />
     </MemoryRouter>,
   )
-  return { goSettings, setWallMode }
+  return { goSettings, setWallMode, openCase, unmount }
 }
+
+const where = () => screen.getByTestId('where').textContent
 
 describe('OverviewScreen', () => {
   it('prompts for Settings when nothing is enabled and nothing arrived', async () => {
@@ -172,5 +181,66 @@ describe('OverviewScreen', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('JIRA not configured')
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/cases/case-1/export/jira', { project_key: 'SOC' }))
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
+  })
+
+  it('opens an alert from ?alert= with the feed row, and closing removes only that param', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    vi.mocked(overviewApi.alert).mockClear()
+    renderScreen('/overview?alert=f-1&keep=1')
+    expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
+    expect(screen.getByText('Odd login', { selector: 'p' })).toBeInTheDocument()
+    expect(overviewApi.alert).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(where()).toBe('?keep=1'))
+    fireEvent.click(await screen.findByText('f-1'))
+    expect(where()).toBe('?keep=1&alert=f-1')
+  })
+
+  it('reads an alert outside the feed, starting from its noise mark', async () => {
+    const old: OverviewFeedItem = { ...payload().feed[0], finding_id: 'f-old', description: 'Old one', noise_marked: true }
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    vi.mocked(overviewApi.alert).mockResolvedValue({ data: old } as never)
+    renderScreen('/overview?alert=f-old')
+    expect(screen.getByText('Loading alert…')).toBeInTheDocument()
+    expect(await screen.findByText('Old one', { selector: 'p' })).toBeInTheDocument()
+    expect(overviewApi.alert).toHaveBeenCalledWith('f-old')
+    expect(screen.getByRole('button', { name: 'Clear noise' })).toBeInTheDocument()
+  })
+
+  it('says an unknown alert is not found, and a failed read can be retried', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    vi.mocked(overviewApi.alert).mockRejectedValueOnce({ response: { status: 404 } })
+    const { unmount } = renderScreen('/overview?alert=nope')
+    expect(await screen.findByText('Alert nope not found.')).toBeInTheDocument()
+    unmount()
+    vi.mocked(overviewApi.alert)
+      .mockRejectedValueOnce({ response: { status: 500 } })
+      .mockResolvedValueOnce({ data: { ...payload().feed[0], finding_id: 'f-9', description: 'Back' } } as never)
+    renderScreen('/overview?alert=f-9')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t load alert f-9.')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Back', { selector: 'p' })).toBeInTheDocument()
+  })
+
+  it('opens the case from the popup and from the Case column, without stacking overlays', async () => {
+    const item = { ...payload().feed[0], case_id: 'case-7' }
+    const other = { ...payload().feed[0], finding_id: 'f-2', case_id: null }
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item, other] }) } as never)
+    const { openCase } = renderScreen()
+    const column = await screen.findByRole('button', { name: 'Case case-7' })
+    expect(screen.getAllByRole('button', { name: /^Case / })).toHaveLength(1)
+    fireEvent.click(column)
+    expect(openCase).toHaveBeenCalledWith('case-7')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(where()).toBe('')
+
+    fireEvent.click(screen.getByText('f-2'))
+    expect(screen.queryByRole('button', { name: 'Open case' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByText('f-1'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open case' }))
+    expect(openCase).toHaveBeenLastCalledWith('case-7')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(where()).toBe('')
   })
 })
