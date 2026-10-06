@@ -4,11 +4,20 @@ import './hold-approve.css'
 /** Matches the `.home-hold.holding .fill` transition in hold-approve.css. */
 const HOLD_MS = 1600
 
-export function HoldApprove({ disabled, onConfirm }: { disabled: boolean; onConfirm: () => void }) {
+interface HoldButtonProps {
+  label: string
+  /** Replaces the label once the action has gone through; the button then stops taking holds. */
+  done?: string
+  disabled: boolean
+  onConfirm: () => void
+}
+
+export function HoldButton({ label, done, disabled, onConfirm }: HoldButtonProps) {
   const [holding, setHolding] = useState(false)
   const timer = useRef<number | null>(null)
-  const disabledRef = useRef(disabled)
-  disabledRef.current = disabled
+  const locked = disabled || done !== undefined
+  const disabledRef = useRef(locked)
+  disabledRef.current = locked
 
   const clear = () => {
     if (timer.current !== null) {
@@ -40,8 +49,8 @@ export function HoldApprove({ disabled, onConfirm }: { disabled: boolean; onConf
     <button
       type="button"
       className={holding ? 'btn danger home-hold holding' : 'btn danger home-hold'}
-      disabled={disabled}
-      aria-label="Approve. Press and hold to confirm; this cannot be undone."
+      disabled={locked}
+      aria-label={done ?? `${label}. Press and hold to confirm; this cannot be undone.`}
       onPointerDown={(event) => {
         if (event.button != null && event.button !== 0) return
         event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -59,7 +68,7 @@ export function HoldApprove({ disabled, onConfirm }: { disabled: boolean; onConf
       }}
     >
       <span className="fill" aria-hidden="true" />
-      <span className="label">{holding ? 'Keep holding…' : 'Approve'}</span>
+      <span className="label">{done ?? (holding ? 'Keep holding…' : label)}</span>
     </button>
   )
 }

@@ -6,6 +6,8 @@ import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
 import { approvalsApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
+import { InfoTip } from '../shared/InfoTip'
+import { LevelBadge } from '../shared/LevelBadge'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
@@ -50,12 +52,6 @@ const MORE_KEYS = ['overview', 'triage', 'dashboard', 'metrics', 'analytics', 'd
 
 const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
-
-const LEVEL_WORD: Record<StatusFold['level'], string> = {
-  good: 'Good',
-  fair: 'Fair',
-  poor: 'Poor',
-}
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
@@ -139,11 +135,9 @@ function SocConsoleInner() {
   const { scheme } = useColorScheme()
   const [chatOpen, setChatOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
-  const [infoOpen, setInfoOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
-  const infoRef = useRef<HTMLDivElement>(null)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
@@ -325,17 +319,12 @@ function SocConsoleInner() {
   }, [canReadRoutability])
 
   useEffect(() => {
-    if (!moreOpen && !infoOpen) return
+    if (!moreOpen) return
     const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (moreOpen && !moreRef.current?.contains(t)) setMoreOpen(false)
-      if (infoOpen && !infoRef.current?.contains(t)) setInfoOpen(false)
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setMoreOpen(false)
-        setInfoOpen(false)
-      }
+      if (e.key === 'Escape') setMoreOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -343,7 +332,7 @@ function SocConsoleInner() {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
-  }, [moreOpen, infoOpen])
+  }, [moreOpen])
 
   const [title, sub] = valid ? titles[current] : ['Page not found', 'This page doesn’t exist']
   const Screen = screens[current]
@@ -398,7 +387,7 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  const ownsHeading = valid && allowed && current === 'workflows'
+  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings')
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -427,24 +416,16 @@ function SocConsoleInner() {
           />
           <div className="vg-header-end">
             {assist !== null && (
-              <div className="vg-autonomy" ref={infoRef}>
+              <div className="vg-autonomy">
                 <button type="button" className="vg-autonomy-link" onClick={() => goSettings('autoinvestigate')}>
                   {assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}
                 </button>
-                <button
-                  type="button"
-                  className="vg-info"
-                  aria-label="How autonomy is derived"
-                  aria-expanded={infoOpen}
-                  onClick={() => setInfoOpen((open) => !open)}
-                >
-                  <Icon name="info" size={14} />
-                </button>
-                {infoOpen && (
-                  <div className="vg-info-pop" role="tooltip">
-                    Assist when force_manual_approval is set or auto_response_enabled is off; otherwise Act.
-                  </div>
-                )}
+                <InfoTip
+                  label="How autonomy is derived"
+                  source="force_manual_approval and auto_response_enabled."
+                  calculation="Assist when the first is set or the second is off; otherwise Act."
+                  limit="Both are set in Settings › Limits & autonomy."
+                />
               </div>
             )}
             <UserMenu onShowTour={startTour} />
@@ -481,7 +462,7 @@ function SocConsoleInner() {
         >
           {status && (
             <>
-              <span className="vg-status-level">{LEVEL_WORD[status.level]}</span>
+              <LevelBadge level={status.level} className="vg-status-level" />
               <span>{status.sentence}</span>
             </>
           )}
@@ -489,7 +470,7 @@ function SocConsoleInner() {
 
         {/* main */}
         <div className={mainClass}>
-          {/* Agents & workflows draws its own heading, on the page background */}
+          {/* Agents & workflows and Settings draw their own headings */}
           {!wallMode && !ownsHeading && (
             <header className="topbar">
               <div className="title">

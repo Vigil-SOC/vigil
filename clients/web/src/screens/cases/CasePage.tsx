@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
-import { HoldApprove } from '../../shared/HoldApprove'
+import { NotMeasured } from '../../shared/NotMeasured'
+import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
@@ -120,7 +121,7 @@ function CaseNeed({
             Approve
           </button>
         ) : (
-          <HoldApprove disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+          <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
         )}
         {rejecting ? (
           <form
@@ -481,7 +482,7 @@ export function CasePage({
                 </span>
               </div>
               <LinkedFindings items={linkedFindings} />
-              <div className="case-trust">Not measured yet</div>
+              <NotMeasured className="case-trust" />
             </div>
             <div className="dh-actions">
               <button className="btn ghost" onClick={onEdit}><Icon name="edit" /> Edit</button>

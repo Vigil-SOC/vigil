@@ -2,6 +2,9 @@ import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutE
 import { Link, useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
+import { InfoTip } from '../../shared/InfoTip'
+import { LevelBadge } from '../../shared/LevelBadge'
+import { NotMeasured } from '../../shared/NotMeasured'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill } from '../../data/appData'
@@ -279,12 +282,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
                     <td>{w.meanCostUsd == null ? '—' : <Cost usd={w.meanCostUsd} />}</td>
                     <td>{fmtEdited(w.updatedAt)}</td>
                     <td>
-                      <span className="inline-flex items-center gap-1.5">
-                        Not measured yet
-                        <button type="button" className="btn ghost icon" aria-label={TRUST_INFO} title={TRUST_INFO}>
-                          <Icon name="info" size={14} />
-                        </button>
-                      </span>
+                      <NotMeasured tip={TRUST_INFO} />
                     </td>
                     <td>
                       <div className="flex items-center gap-2 justify-end">
@@ -635,7 +633,7 @@ function WorkflowReader({ wf, onClose }: { wf: Workflow; onClose: () => void }) 
             <Pauses detail={detail} />
             <div className="flex flex-col gap-1.5">
               <SectionLabel>Per-stage stops</SectionLabel>
-              <p className="text-[13px] text-tx-2">Not measured yet</p>
+              <p className="text-[13px] text-tx-2"><NotMeasured /></p>
             </div>
           </>
         )}
@@ -3476,12 +3474,11 @@ function DeleteModal({ wf, onClose, onDeleted }: { wf: Workflow; onClose: () => 
 
 const CHANGES_LABEL = { read_only: 'Read-only', asks_first: 'Asks first', on_its_own: 'On its own' } as const
 const CHANGES_TIP = 'Its actions wait for you unless Settings lets a high-confidence reversible one through.'
-const SUCCESS_TIP = 'Counts workflow steps and chat turns only. “Success” means it ran to the end, not that the conclusion was right.'
-const LEVELS = {
-  good: { name: 'Good', glyph: 'M5 12.5l4.2 4.2L19 7.2' },
-  fair: { name: 'Fair', glyph: 'M5 12h14' },
-  poor: { name: 'Poor', glyph: 'M7 7l10 10M17 7 7 17' },
-} as const
+const SUCCESS_TIP = {
+  source: 'Workflow steps and chat turns.',
+  calculation: 'The share that ran to the end.',
+  limit: 'Running to the end does not mean the conclusion was right.',
+}
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
 /** The line under the model name: where the model came from. */
@@ -3577,16 +3574,6 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
   )
 }
 
-function SuccessInfo() {
-  const [open, setOpen] = useState(false)
-  return (
-    <span className="ag-info" onBlur={() => setOpen(false)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
-      <button type="button" aria-label="How success is calculated" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Icon name="info" size={15} /></button>
-      {open && <span role="dialog" className="ag-info-pop">{SUCCESS_TIP}</span>}
-    </span>
-  )
-}
-
 function AgentTable({ agents, onOpen, onToggle, renderActions }: {
   agents: AgentTemplate[]
   onOpen: (a: AgentTemplate) => void
@@ -3604,12 +3591,11 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
         </colgroup>
         <thead><tr>
           <th>Agent</th><th>What it does</th><th>Model</th><th>Skills</th><th>Changes things?</th><th>Runs, 7 days</th>
-          <th><span className="ag-th-info">Success<SuccessInfo /></span></th><th>On</th><th><span className="sr-only">Actions</span></th>
+          <th><span className="ag-th-info">Success<InfoTip label="How success is calculated" {...SUCCESS_TIP} /></span></th><th>On</th><th><span className="sr-only">Actions</span></th>
         </tr></thead>
         <tbody>
           {agents.map((a) => {
             const source = modelSource(a)
-            const level = a.successPct !== null && a.successLevel ? LEVELS[a.successLevel] : null
             return (
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
@@ -3634,12 +3620,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
                 <td>
                   <span className="ag-rate">
                     {a.successPct === null ? '—' : `${a.successPct.toFixed(1)}%`}
-                    {level && a.successLevel && (
-                      <span className={`ag-level ${a.successLevel}`}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d={level.glyph} /></svg>
-                        {level.name}
-                      </span>
-                    )}
+                    {a.successPct !== null && <LevelBadge variant="pill" level={a.successLevel} />}
                   </span>
                 </td>
                 <td className="ag-on" onClick={stop}>

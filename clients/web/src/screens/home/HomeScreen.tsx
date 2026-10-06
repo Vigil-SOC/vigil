@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
-import { HoldApprove } from '../../shared/HoldApprove'
+import { HoldButton } from '../../shared/HoldButton'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -96,7 +96,7 @@ function DecisionCard({
               Approve
             </button>
           ) : (
-            <HoldApprove disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+            <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
           )}
           {rejecting ? (
             <form

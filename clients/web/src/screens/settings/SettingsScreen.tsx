@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
+import { NotMeasured } from '../../shared/NotMeasured'
+import { PageHead } from '../../shared/PageHead'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useToast } from '../../shell/toast'
 import GeneralSection from './GeneralSection'
@@ -33,6 +35,7 @@ type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users'
 interface NavDef {
   key: NavKey
   label: string
+  desc: string
   icon: IconName
   Component: (props: SectionProps) => JSX.Element
 }
@@ -73,7 +76,7 @@ function DataUploadsSection({ notify }: SectionProps) {
 
   return (
     <>
-      <p className="text-sm text-tx-3">Retention: Not measured yet</p>
+      <NotMeasured label="Retention" tip="Vigil does not record how long uploaded data is kept." />
       <div className="tabs" style={{ gap: 4 }}>
         <button className={`tab${tab === 'ingestion' ? ' active' : ''}`} onClick={() => setTab('ingestion')}>
           Manual Upload
@@ -115,13 +118,13 @@ function SystemTabs({ notify }: SectionProps) {
 }
 
 const NAV: NavDef[] = [
-  { key: 'ai-config', label: 'AI models', icon: 'sparkle', Component: AiConfigSection },
-  { key: 'integrations', label: 'Integrations', icon: 'link', Component: IntegrationsSection },
-  { key: 'federation', label: 'Alert collection', icon: 'graph', Component: FederationSection },
-  { key: 'sla', label: 'SLA policies', icon: 'clock', Component: SlaPoliciesSection },
-  { key: 'autoinvestigate', label: 'Limits & autonomy', icon: 'bolt', Component: AutoInvestigateSection },
-  { key: 'data', label: 'Data & uploads', icon: 'upload', Component: DataUploadsSection },
-  { key: 'system', label: 'System', icon: 'wrench', Component: SystemTabs },
+  { key: 'ai-config', label: 'AI models', desc: 'Which models Vigil uses, for which agent, and what happens when one is unavailable. Keys are stored encrypted and never shown again.', icon: 'sparkle', Component: AiConfigSection },
+  { key: 'integrations', label: 'Integrations', desc: 'The tools Vigil reads from and acts through.', icon: 'link', Component: IntegrationsSection },
+  { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection },
+  { key: 'sla', label: 'SLA policies', desc: 'How fast a case must get a first response and be resolved, by severity.', icon: 'clock', Component: SlaPoliciesSection },
+  { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, and what they may spend.', icon: 'bolt', Component: AutoInvestigateSection },
+  { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection },
+  { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs },
 ]
 
 const NAV_KEYS = new Set<string>(NAV.map((item) => item.key))
@@ -149,11 +152,13 @@ export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {
 
   return (
     <div className="settings-wrap">
-      <nav className="settings-nav">
+      <nav className="settings-nav" aria-label="Settings sections">
+        <h1 className="settings-nav-title">Settings</h1>
         {NAV.map((item) => (
           <button
             key={item.key}
             className={`settings-nav-item${item.key === active ? ' active' : ''}`}
+            aria-current={item.key === active ? 'page' : undefined}
             onClick={() => setSearchParams({ section: item.key }, { replace: true })}
           >
             <Icon name={item.icon} size={16} />
@@ -163,6 +168,7 @@ export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {
       </nav>
 
       <div className="settings-content">
+        <PageHead title={current.label} description={current.desc} />
         <Section notify={notify} />
       </div>
     </div>
