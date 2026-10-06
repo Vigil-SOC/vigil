@@ -7934,6 +7934,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Enabled
+         * @description Turn a workflow (built-in or custom) on or off. Setting the current state is a no-op.
+         */
+        put: operations["put_api_workflows_workflow_id_enabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}/execute": {
         parameters: {
             query?: never;
@@ -12378,6 +12398,11 @@ export interface components {
              * @default 1
              */
             version: number;
+        };
+        /** WorkflowEnabledRequest */
+        WorkflowEnabledRequest: {
+            /** Enabled */
+            enabled: boolean;
         };
         /**
          * WorkflowExecuteRequest
@@ -26081,6 +26106,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_workflows_workflow_id_enabled: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowEnabledRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
