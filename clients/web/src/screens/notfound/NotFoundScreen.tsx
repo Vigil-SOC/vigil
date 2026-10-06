@@ -1,6 +1,14 @@
 import { Icon } from '../../shared/icons'
 
-export default function NotFoundScreen({ path, onHome }: { path?: string; onHome: () => void }) {
+export default function NotFoundScreen({
+  path,
+  onHome,
+  homeLabel = 'Home',
+}: {
+  path?: string
+  onHome: () => void
+  homeLabel?: string
+}) {
   return (
     <div className="notfound">
       <div className="nf-code">404</div>
@@ -16,7 +24,7 @@ export default function NotFoundScreen({ path, onHome }: { path?: string; onHome
         It may have moved, or the link is wrong.
       </p>
       <button className="btn primary" onClick={onHome}>
-        <Icon name="grid" /> Back to dashboard
+        <Icon name="home" /> Back to {homeLabel}
       </button>
     </div>
   )
