@@ -201,8 +201,9 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
           <Link
             to={`/cases?case=${encodeURIComponent(door)}`}
             onClick={(event) => {
-              event.preventDefault() // opens the drawer; the href stays for new-tab opens
               event.stopPropagation()
+              if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+              event.preventDefault()
               openCase(door)
             }}
           >

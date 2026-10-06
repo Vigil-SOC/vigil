@@ -9,6 +9,7 @@ import {
   useCases,
   useCaseDetail,
   notifyCasesChanged,
+  CASES_CHANGED,
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
   type CaseFilters,
@@ -106,6 +107,13 @@ function CasesTable({
   // Advanced search replaces the page until cleared. Results stay in API order.
   const [results, setResults] = useState<CaseRow[] | null>(null)
   const [newOpen, setNewOpen] = useState(false)
+
+  // a case changed in the drawer over this list: its search results are stale
+  useEffect(() => {
+    const clear = () => setResults(null)
+    window.addEventListener(CASES_CHANGED, clear)
+    return () => window.removeEventListener(CASES_CHANGED, clear)
+  }, [])
 
   const setFilters = (partial: Partial<CaseFilters>) =>
     onFilters({

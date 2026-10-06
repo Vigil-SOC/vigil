@@ -133,7 +133,8 @@ function DecisionCard({
               className="btn ghost"
               to={`/cases?case=${encodeURIComponent(caseId)}`}
               onClick={(event) => {
-                event.preventDefault() // opens the drawer; the href stays for new-tab opens
+                if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+                event.preventDefault()
                 onOpenCase(caseId)
               }}
             >

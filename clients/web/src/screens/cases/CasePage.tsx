@@ -183,6 +183,7 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
 function CaseMenu({ onEdit, onMerge, onDelete }: { onEdit: () => void; onMerge: () => void; onDelete?: () => void }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -194,16 +195,18 @@ function CaseMenu({ onEdit, onMerge, onDelete }: { onEdit: () => void; onMerge: 
       e.preventDefault() // the drawer's own Escape handler skips handled keys
       setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
+    // capture: the drawer stops mousedown from bubbling to the document
+    document.addEventListener('mousedown', onDoc, true)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('mousedown', onDoc, true)
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
 
   const pick = (fn: () => void) => () => {
     setOpen(false)
+    triggerRef.current?.focus() // the dialog returns focus here when it closes
     fn()
   }
 
@@ -211,6 +214,7 @@ function CaseMenu({ onEdit, onMerge, onDelete }: { onEdit: () => void; onMerge: 
     <div className="vg-more dh-more" ref={ref}>
       <button
         type="button"
+        ref={triggerRef}
         className="btn ghost icon"
         aria-haspopup="menu"
         aria-expanded={open}

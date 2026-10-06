@@ -89,7 +89,7 @@ function toParams(f: CaseFilters) {
   return params
 }
 
-const CASES_CHANGED = 'vigil:cases-changed'
+export const CASES_CHANGED = 'vigil:cases-changed'
 
 /** Tells any mounted case list to reload, e.g. after an edit made in the drawer over it. */
 export const notifyCasesChanged = () => window.dispatchEvent(new Event(CASES_CHANGED))

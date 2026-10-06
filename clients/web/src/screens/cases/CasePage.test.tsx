@@ -690,7 +690,11 @@ describe('case page', () => {
       await screen.findByRole('heading', { name: 'Frame case' })
       fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
       expect(screen.getByRole('menu')).toBeInTheDocument()
+      // the drawer stops mousedown from bubbling; the menu must still close
+      const stop = (e: Event) => e.stopPropagation()
+      document.body.addEventListener('mousedown', stop)
       fireEvent.mouseDown(document.body)
+      document.body.removeEventListener('mousedown', stop)
       expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
       fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
