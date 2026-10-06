@@ -18,6 +18,7 @@ Usage:
     DATABASE_URL="postgresql://user:pass@host:5432/db" python scripts/migrate_schema.py
 """
 
+import json
 import os
 import re
 import sys
@@ -492,6 +493,47 @@ def set_case_template_usage_count_default(conn):
 
 
 # ---------------------------------------------------------------------------
+# approval_actions table
+# ---------------------------------------------------------------------------
+
+STUB_ISOLATION_ERROR = (
+    "recorded by the pre-#1276 isolation stub; no containment was made"
+)
+_LOGGED_HOST_CAP = 20
+
+
+# Before #1339 the isolation stub reported success without isolating anything,
+# so its rows say `executed` for hosts that were never contained -- and, through
+# the idempotency key, answer every later isolation of that host with "already
+# isolated". Failed rows are outside the unique index, which releases the key.
+# The original (MOCK) message stays in execution_result as evidence.
+@migration("Mark isolations recorded by the pre-#1276 stub as failed")
+def fail_stub_isolation_actions(conn):
+    if not _table_exists(conn, 'approval_actions'):
+        return
+    targets = conn.execute(text("""
+        UPDATE approval_actions
+        SET status = 'failed',
+            execution_result = execution_result || CAST(:err AS jsonb)
+        WHERE action_type = 'isolate_host'
+          AND status = 'executed'
+          AND execution_result->>'message' LIKE '%(MOCK)%'
+        RETURNING action_id, target
+    """), {"err": json.dumps({"error": STUB_ISOLATION_ERROR})}).all()
+    if not targets:
+        logger.info("  No stub isolation rows needed correcting")
+        return
+    hosts = sorted({t for _, t in targets})
+    shown = ", ".join(hosts[:_LOGGED_HOST_CAP])
+    more = len(hosts) - _LOGGED_HOST_CAP
+    logger.info(
+        f"  Marked {len(targets)} stub isolation row(s) failed; "
+        f"these hosts were never contained: {shown}"
+        + (f" (+{more} more)" if more > 0 else "")
+    )
+
+
+# ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 
@@ -503,7 +545,6 @@ def seed_default_roles(conn):
         logger.info(f"  Roles table already has {count} rows, skipping seed")
         return
 
-    import json
     roles = [
         ('admin', 'Administrator', 'Full system access',
          json.dumps({"admin": True, "manage_users": True, "manage_cases": True,
