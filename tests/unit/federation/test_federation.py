@@ -9,6 +9,7 @@ live elsewhere.
 from __future__ import annotations
 
 import asyncio
+import importlib
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from unittest import mock
@@ -17,6 +18,7 @@ import pytest
 
 from core.federation import registry as fed_registry
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._siem_base import SIEMIngestionAdapter
 from core.federation.runner import FederationRunner, _severity_passes
 
 # ---------------------------------------------------------------------------
@@ -275,6 +277,64 @@ async def test_siem_adapter_propagates_a_failed_fetch(monkeypatch):
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     with pytest.raises(ConnectionError):
         await adapter.fetch(since=None, cursor={}, max_items=10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module, ingestion_cls, url_key, service_cls",
+    [
+        (
+            "core.integrations.elastic.ingestion",
+            "ElasticIngestion",
+            "elasticsearch_url",
+            "ElasticService",
+        ),
+        (
+            "core.integrations.opensearch.ingestion",
+            "OpenSearchIngestion",
+            "opensearch_url",
+            "OpenSearchService",
+        ),
+    ],
+)
+async def test_client_construction_error_keeps_the_cursor(
+    monkeypatch, module, ingestion_cls, url_key, service_cls
+):
+    """A client that cannot be built is a failed poll: failure recorded and no
+    success, so the stored cursor stays put (#1573)."""
+    mod = importlib.import_module(module)
+    monkeypatch.setattr(mod, "resolve", lambda _spec: {url_key: "https://x.test"})
+    monkeypatch.setattr(
+        mod, service_cls, mock.MagicMock(side_effect=ValueError("bad ca_cert_path"))
+    )
+    adapter = SIEMIngestionAdapter(
+        name="siem",
+        integration_id="siem",
+        default_interval=60,
+        service_factory=getattr(mod, ingestion_cls),
+        external_id_prefix="siem",
+    )
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+
+    runner = FederationRunner(output_queue=asyncio.Queue())
+    failures = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda source_id, error: failures.append((source_id, error)),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda *a, **k: pytest.fail("record_success should not be called"),
+    )
+
+    row = {
+        "max_items": 100,
+        "cursor": {"last_poll_at": "2026-05-04T12:00:00"},
+        "min_severity": None,
+    }
+    await runner._do_one_tick(adapter, row)
+
+    assert len(failures) == 1 and "bad ca_cert_path" in failures[0][1]
 
 
 # ---------------------------------------------------------------------------

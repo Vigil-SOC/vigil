@@ -105,36 +105,32 @@ class ElasticIngestion(SIEMIngestionService):
         if self._elastic_service:
             return self._elastic_service
 
-        try:
-            host = self.config.get("elasticsearch_url")
-            if not host:
-                logger.error(
-                    "Elastic configuration incomplete: missing elasticsearch_url"
-                )
-                return None
-
-            # resolve() always returns every declared field, so a .get(k, True)
-            # default would never fire — verify_ssl is present-but-None when unset.
-            verify = (
-                True
-                if self.config.get("verify_ssl") is None
-                else self.config.get("verify_ssl")
-            )
-            self._elastic_service = ElasticService(
-                elasticsearch_url=host,
-                kibana_url=self.config.get("kibana_url"),
-                api_key=self.config.get("api_key"),
-                username=self.config.get("username"),
-                password=self.config.get("password"),
-                verify_ssl=verify,
-                index_pattern=self.config.get("index_pattern")
-                or ".alerts-security.alerts-default",
-                ca_cert_path=self.config.get("ca_cert_path"),
-            )
-            return self._elastic_service
-        except Exception as e:
-            logger.error(f"Error creating Elastic service: {e}")
+        # Constructor errors propagate: a configured source that cannot build
+        # its client is failing, not empty (#1573). A missing URL stays a quiet [].
+        host = self.config.get("elasticsearch_url")
+        if not host:
+            logger.error("Elastic configuration incomplete: missing elasticsearch_url")
             return None
+
+        # resolve() always returns every declared field, so a .get(k, True)
+        # default would never fire — verify_ssl is present-but-None when unset.
+        verify = (
+            True
+            if self.config.get("verify_ssl") is None
+            else self.config.get("verify_ssl")
+        )
+        self._elastic_service = ElasticService(
+            elasticsearch_url=host,
+            kibana_url=self.config.get("kibana_url"),
+            api_key=self.config.get("api_key"),
+            username=self.config.get("username"),
+            password=self.config.get("password"),
+            verify_ssl=verify,
+            index_pattern=self.config.get("index_pattern")
+            or ".alerts-security.alerts-default",
+            ca_cert_path=self.config.get("ca_cert_path"),
+        )
+        return self._elastic_service
 
     async def fetch_alerts(
         self,
