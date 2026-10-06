@@ -73,7 +73,9 @@ def test_release_attaches_support_tarball() -> None:
     wf = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     job = wf[wf.index("  update-release:") :]
     # Built by the committed script from the tag's version, then attached with its checksum.
-    assert 'scripts/build-support-tarball.sh "${{ needs.version.outputs.version }}"' in job
+    assert (
+        'scripts/build-support-tarball.sh "${{ needs.version.outputs.version }}"' in job
+    )
     assert "vigil-support-${{ needs.version.outputs.version }}.tar.gz\n" in job
     assert "vigil-support-${{ needs.version.outputs.version }}.tar.gz.sha256" in job
     assert "actions/checkout" in job
