@@ -42,6 +42,7 @@ class SkillResponse(BaseModel):
     description: str
     source_path: str
     bundled: bool
+    file_count: int
 
 
 class SkillFile(BaseModel):
@@ -77,6 +78,7 @@ def _response(skill: Skill) -> SkillResponse:
         description=skill.description,
         source_path=str(skill.path),
         bundled=is_bundled(skill),
+        file_count=len(skill_files(skill)),
     )
 
 
@@ -116,10 +118,7 @@ async def get_skill(name: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     listed = _response(skill)
     return SkillDetail(
-        name=listed.name,
-        description=listed.description,
-        source_path=listed.source_path,
-        bundled=listed.bundled,
+        **listed.model_dump(),
         body=body,
         operator_root_set=operator_skills_root() is not None,
         version=skill_version(skill),

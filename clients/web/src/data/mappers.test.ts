@@ -36,12 +36,14 @@ describe('mapApiSkill', () => {
       description: 'Triage a finding.',
       source_path: 'skills/triage',
       bundled: true,
+      file_count: 3,
     })).toEqual({
       id: 'triage',
       name: 'triage',
       desc: 'Triage a finding.',
       source: 'skills/triage',
       bundled: true,
+      fileCount: 3,
     })
   })
 })

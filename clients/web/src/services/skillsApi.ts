@@ -11,6 +11,8 @@ export interface ApiSkill {
   description: string
   source_path: string
   bundled: boolean
+  /** Regular files in the skill folder, SKILL.md included; same list the drawer shows. */
+  file_count: number
 }
 
 /** A file in the skill folder: posix path relative to it, and size in bytes. */

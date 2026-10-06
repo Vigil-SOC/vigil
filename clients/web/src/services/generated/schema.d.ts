@@ -11532,6 +11532,8 @@ export interface components {
             bundled: boolean;
             /** Description */
             description: string;
+            /** File Count */
+            file_count: number;
             /** Files */
             files: components["schemas"]["SkillFile"][];
             /** Name */
@@ -11563,6 +11565,8 @@ export interface components {
             bundled: boolean;
             /** Description */
             description: string;
+            /** File Count */
+            file_count: number;
             /** Name */
             name: string;
             /** Source Path */

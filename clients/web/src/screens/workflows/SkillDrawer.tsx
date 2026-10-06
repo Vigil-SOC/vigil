@@ -115,7 +115,7 @@ export function SkillDrawer({
       })
   }
 
-  const origin = creating || !detail?.bundled ? 'Custom' : 'Built in'
+  const origin = creating || !detail?.bundled ? 'Yours' : 'Built in'
   const subtitle = detail ? `${origin} · version ${detail.version}` : origin
   const err = (text: string) => <span className="text-[12px]" style={{ color: 'var(--crit)' }}>{text}</span>
 

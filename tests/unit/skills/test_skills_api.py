@@ -79,6 +79,7 @@ def test_list_returns_loaded_skills_with_source_path(client):
         "description",
         "source_path",
         "bundled",
+        "file_count",
     }
 
 
@@ -235,6 +236,23 @@ def test_detail_lists_files_and_version_and_the_list_is_unchanged(operator):
     ]
     assert all(f["size"] > 0 for f in detail["files"])
     assert "files" not in client.get("/api/skills").json()[0]
+
+
+def test_file_count_matches_the_detail_files(operator):
+    client, root = operator
+    assert _write(client, "solo").status_code == 200
+    assert _write(client, "nested").status_code == 200
+    (root / "nested" / "scripts").mkdir()
+    (root / "nested" / "scripts" / "run.py").write_text("print(1)\n")
+    (root / "nested" / ".hidden").write_text("x")
+    by_name = {s["name"]: s for s in client.get("/api/skills").json()}
+    assert by_name["solo"]["file_count"] == 1
+    assert by_name["nested"]["file_count"] == 2
+    for name in (BUNDLED, FOLDER_SKILL, "solo", "nested"):
+        detail = client.get(f"/api/skills/{name}").json()
+        assert detail["file_count"] == len(detail["files"])
+        assert by_name[name]["file_count"] == len(detail["files"])
+    assert by_name[FOLDER_SKILL]["file_count"] == 3
 
 
 def test_file_read_returns_text_and_refuses_escapes_and_binaries(operator):

@@ -85,4 +85,6 @@ export interface Skill {
   source?: string
   /** true when the directory is under the bundled library */
   bundled: boolean
+  /** files in the skill folder, SKILL.md included */
+  fileCount: number
 }

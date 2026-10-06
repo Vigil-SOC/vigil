@@ -3974,6 +3974,19 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
 }
 
 const SKILL_GRANT_INFO = 'The grant offers the whole library.'
+const SKILL_USAGE_INFO = 'Skill reads are not recorded yet.'
+
+// The card's usage line; swap this one element when skill reads are recorded.
+function SkillUsage() {
+  return (
+    <span className="sk-usage">
+      Used by · Not measured yet
+      <button type="button" className="btn ghost icon" aria-label={SKILL_USAGE_INFO} title={SKILL_USAGE_INFO}>
+        <Icon name="info" size={14} />
+      </button>
+    </span>
+  )
+}
 
 function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
   const { rows, phase, error, reload } = feed
@@ -4012,7 +4025,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   <span className="sk-tab" />
                   <span className="sk-back" />
                   <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
-                  <span className="sk-flap"><span className="sk-origin">{s.bundled ? 'Built in' : 'Custom'}</span></span>
+                  <span className="sk-flap"><span className="sk-origin">{s.bundled ? 'Built in' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
                 </span>
                 <span className="sk-text">
                   <span className="sk-name" title={s.name}>{s.name}</span>
@@ -4020,6 +4033,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
+                <SkillUsage />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}

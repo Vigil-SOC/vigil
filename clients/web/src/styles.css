@@ -6416,6 +6416,8 @@
    padding: 0 12px 11px;
    display: flex;
    align-items: flex-end;
+   justify-content: space-between;
+   gap: 8px;
    border-radius: 10px 10px 14px 14px;
    background: var(--sk-front);
    border: 1px solid color-mix(in oklab, var(--sk-tone) 36%, var(--ln1));
@@ -6435,6 +6437,16 @@
    color: var(--tx1);
    font-size: 11px;
    font-weight: 700;
+   white-space: nowrap;
+}
+
+.soc-console .sk-files {
+   display: inline-flex;
+   align-items: center;
+   height: 20px;
+   font-size: 11px;
+   font-weight: 600;
+   color: var(--tx0);
    white-space: nowrap;
 }
 
@@ -6490,7 +6502,7 @@
 .soc-console .sk-meta {
    display: flex;
    align-items: center;
-   justify-content: flex-end;
+   justify-content: space-between;
    gap: 8px;
    min-width: 0;
    min-height: 24px;
@@ -6522,6 +6534,19 @@
    overflow: hidden;
    text-overflow: ellipsis;
    white-space: nowrap;
+}
+
+.soc-console .sk-usage {
+   display: flex;
+   align-items: center;
+   gap: 2px;
+   min-width: 0;
+}
+
+.soc-console .sk-usage .btn.icon {
+   flex: none;
+   padding: 0;
+   border: 0;
 }
 
 .soc-console .sk-ro {

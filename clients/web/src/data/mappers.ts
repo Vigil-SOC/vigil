@@ -419,5 +419,6 @@ export function mapApiSkill(s: ApiSkill): Skill {
     desc: s.description,
     source: s.source_path,
     bundled: s.bundled,
+    fileCount: s.file_count,
   }
 }
