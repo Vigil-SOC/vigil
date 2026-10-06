@@ -109,9 +109,12 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             logger.info(f"Fetched {len(findings)} findings from AWS Security Hub")
             return findings
 
-        except ImportError:
-            logger.error("boto3 not installed. Install: pip install boto3")
-            return []
+        except ImportError as e:
+            # Raise, not []: an empty poll would be recorded as a success. This
+            # clause must stay first: ClientError is unbound if the import failed.
+            msg = "boto3 not installed. Install: pip install boto3"
+            logger.error(msg)
+            raise RuntimeError(msg) from e
         except ClientError as e:
             logger.error(f"AWS Security Hub API error: {e}")
             # Raise, not []: federation must record the failure and keep its cursor.

@@ -68,6 +68,14 @@ async def test_sentinel_api_failure_raises(fake_azure_sdk):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["azure.identity", "azure.mgmt.securityinsight"])
+async def test_sentinel_missing_sdk_raises(monkeypatch, missing):
+    monkeypatch.setitem(sys.modules, missing, None)  # makes the import fail
+    with pytest.raises(RuntimeError, match="pip install azure-mgmt-securityinsight"):
+        await _sentinel(_SENTINEL_CONFIG).fetch_alerts()
+
+
+@pytest.mark.asyncio
 async def test_sentinel_incomplete_config_is_not_a_failure(fake_azure_sdk):
     assert await _sentinel({"tenant_id": "t"}).fetch_alerts() == []
 
@@ -103,6 +111,13 @@ async def test_security_hub_client_error_raises():
     with patch("boto3.client", return_value=client):
         with pytest.raises(ClientError):
             await _security_hub().fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_security_hub_missing_boto3_raises(monkeypatch):
+    monkeypatch.setitem(sys.modules, "boto3", None)
+    with pytest.raises(RuntimeError, match="boto3 not installed"):
+        await _security_hub().fetch_alerts()
 
 
 # -- Microsoft Defender ----------------------------------------------------

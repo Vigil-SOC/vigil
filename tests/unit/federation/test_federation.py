@@ -277,6 +277,45 @@ async def test_siem_adapter_propagates_a_failed_fetch(monkeypatch):
         await adapter.fetch(since=None, cursor={}, max_items=10)
 
 
+@pytest.mark.asyncio
+async def test_missing_sdk_records_failure_and_keeps_cursor(monkeypatch):
+    """A source whose SDK is not installed fails the tick instead of a quiet success."""
+    import sys
+
+    from core.federation.adapters._siem_base import SIEMIngestionAdapter
+    from core.integrations.aws_security_hub.ingestion import AWSSecurityHubIngestion
+
+    monkeypatch.setitem(sys.modules, "boto3", None)
+    adapter = SIEMIngestionAdapter(
+        name="aws_security_hub",
+        integration_id="aws_security_hub",
+        default_interval=300,
+        service_factory=AWSSecurityHubIngestion,
+        external_id_prefix="aws-sh",
+    )
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner._adapters[adapter.name] = adapter
+    runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
+
+    failures = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda source_id, error: failures.append((source_id, error)),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda *a, **k: pytest.fail("record_success would advance the cursor"),
+    )
+
+    await runner._do_one_tick(
+        adapter, {"max_items": 100, "cursor": {}, "min_severity": None}
+    )
+    assert len(failures) == 1
+    assert failures[0][0] == "aws_security_hub"
+    assert "boto3" in failures[0][1] and "pip install boto3" in failures[0][1]
+
+
 # ---------------------------------------------------------------------------
 # is_active_for: depends on global toggle AND per-source row enabled
 # ---------------------------------------------------------------------------

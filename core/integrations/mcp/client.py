@@ -701,7 +701,7 @@ _process_client: Optional[MCPClient] = None
 def build_mcp_client() -> Optional[MCPClient]:
     """Build a client, or None when the MCP SDK is not installed."""
     if not MCP_AVAILABLE:
-        logger.warning("MCP SDK not available. Install with: pip install mcp")
+        logger.error("MCP SDK not available. Install with: pip install mcp")
         return None
     return MCPClient(MCPService())
 
