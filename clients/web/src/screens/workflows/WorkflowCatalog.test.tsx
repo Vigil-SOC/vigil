@@ -427,7 +427,7 @@ describe('workflow catalog table', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Commands 9' }))
     const table = screen.getByRole('table')
-    const row = (name: string) => within(table).getByText(name).closest('tr') as HTMLElement
+    const row = (name: string) => within(table).getByText(name).closest('[role="row"]') as HTMLElement
 
     for (const name of ['/investigate', '/hunt', '/replay', '/ask', '/ticket']) {
       const live = row(name)
@@ -444,7 +444,16 @@ describe('workflow catalog table', () => {
       later.focus()
       expect(document.activeElement).not.toBe(later)
     }
-    expect(within(row('Custom commands')).getAllByRole('cell')[1]).toHaveTextContent('')
+    expect(within(row('Custom commands')).getAllByRole('cell')[3]).toHaveTextContent('')
+    expect(screen.getByText(/^Type a command in search or in Ask Vigil\. Each command runs a workflow or an action;/)).toBeInTheDocument()
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Command', 'What it does', 'Runs', 'Arguments', 'Status'])
+    // what each live command starts, as the bar's run() does; Later rows start nothing
+    const cells = (name: string) => within(row(name)).getAllByRole('cell').map((c) => c.textContent)
+    expect(cells('/investigate')).toEqual(['/investigate', expect.stringContaining('incident response'), 'Incident response workflow', '<finding or context>', ''])
+    expect(cells('/hunt')[2]).toBe('Threat hunt workflow')
+    expect(cells('/ticket')[2]).toBe('Exports the case to Jira')
+    expect(cells('/isolate')[2]).toBe('—')
+    expect(within(table).queryByText(/Asks first|Who can use it|Used, 7 days/)).toBeNull()
     expect(within(table).queryByRole('button')).toBeNull()
     expect(within(table).queryByRole('link')).toBeNull()
     expect(screen.getByRole('tab', { name: 'Workflows' })).toHaveTextContent('Workflows')

@@ -8,19 +8,23 @@ export interface CommandDef {
   id: CommandId
   name: string
   hint: string
+  /** One line for the Commands tab. */
+  desc: string
+  /** What it starts, as the bar's run() does; "—" for a Later row. */
+  runs: string
   later: boolean
 }
 
 export const COMMANDS: CommandDef[] = [
-  { id: 'investigate', name: '/investigate', hint: '<finding or context>', later: false },
-  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', later: false },
-  { id: 'replay', name: '/replay', hint: '<case>', later: false },
-  { id: 'ask', name: '/ask', hint: '<question>', later: false },
-  { id: 'ticket', name: '/ticket', hint: '<case>', later: false },
-  { id: 'hold', name: '/hold', hint: '<case or kind>', later: true },
-  { id: 'isolate', name: '/isolate', hint: '<host>', later: true },
-  { id: 'phish', name: '/phish', hint: '<message or sender>', later: true },
-  { id: 'custom', name: 'Custom commands', hint: '', later: true },
+  { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false },
+  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false },
+  { id: 'replay', name: '/replay', hint: '<case>', desc: 'Open a case by id', runs: 'Opens the case', later: false },
+  { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false },
+  { id: 'ticket', name: '/ticket', hint: '<case>', desc: 'Create a Jira ticket from a case', runs: 'Exports the case to Jira', later: false },
+  { id: 'hold', name: '/hold', hint: '<case or kind>', desc: 'Hold a case, or every case of one kind', runs: '—', later: true },
+  { id: 'isolate', name: '/isolate', hint: '<host>', desc: 'Isolate a host. Irreversible, always asks you to confirm', runs: '—', later: true },
+  { id: 'phish', name: '/phish', hint: '<message or sender>', desc: 'Run Phishing triage on a reported email', runs: '—', later: true },
+  { id: 'custom', name: 'Custom commands', hint: '', desc: 'Create a command for any workflow', runs: '—', later: true },
 ]
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)

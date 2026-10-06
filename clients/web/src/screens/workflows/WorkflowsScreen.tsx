@@ -82,30 +82,38 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   )
 }
 
+const CMD_GRID = 'grid grid-cols-[150px_minmax(0,2fr)_minmax(0,1.6fr)_170px_56px] gap-3 px-4'
+
 /** The command bar's rows, read from COMMANDS. Later rows are marked and carry
  *  nothing focusable; nothing in the table runs a command. */
 function CommandsTab() {
   return (
-    <div className="px-[22px] py-5">
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Arguments</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {COMMANDS.map((command) => (
-              <tr key={command.id} aria-disabled={command.later || undefined} className={command.later ? 'opacity-60' : undefined}>
-                <td className="font-semibold">{command.name}</td>
-                <td className="muted">{command.hint}</td>
-                <td>{command.later ? 'Later' : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="px-[22px] py-5 flex flex-col gap-3">
+      <span className="text-xs leading-[1.45] text-[var(--tx2)]">
+        Type a command in search or in Ask Vigil. Each command runs a workflow or an action; anything that changes something still asks you.
+      </span>
+      <div role="table" aria-label="Commands" className="bg-[var(--bg1)] border border-[var(--ln0)] rounded-[14px] overflow-hidden">
+        <div role="row" className={`${CMD_GRID} py-[11px] text-[11px] font-bold text-[var(--tx2)]`}>
+          <span role="columnheader">Command</span>
+          <span role="columnheader">What it does</span>
+          <span role="columnheader">Runs</span>
+          <span role="columnheader">Arguments</span>
+          <span role="columnheader" className="sr-only">Status</span>
+        </div>
+        {COMMANDS.map((command) => (
+          <div
+            key={command.id}
+            role="row"
+            aria-disabled={command.later || undefined}
+            className={`${CMD_GRID} items-center py-[11px] border-t border-[var(--ln0)]`}
+          >
+            <span role="cell" className="font-mono text-[13px] text-[var(--ac)] truncate">{command.name}</span>
+            <span role="cell" title={command.desc} className="text-xs text-[var(--tx1)] line-clamp-2">{command.desc}</span>
+            <span role="cell" title={command.runs} className="text-xs font-[650] text-[var(--tx0)] line-clamp-2">{command.runs}</span>
+            <span role="cell" title={command.hint} className="font-mono text-[11px] text-[var(--tx2)] truncate">{command.hint}</span>
+            <span role="cell" className="text-[11px] font-semibold text-[var(--tx2)]">{command.later ? 'Later' : ''}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
