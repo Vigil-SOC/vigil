@@ -62,6 +62,7 @@ vi.mock('../services/api', () => ({
   },
   streamFetch: vi.fn(),
   workflowApi: {
+    listAll: vi.fn(() => Promise.resolve({ data: { workflows: [] } })),
     execute: (id: string, params: unknown) => execute(id, params),
     getRun: vi.fn(() => Promise.resolve({ data: {} })),
   },

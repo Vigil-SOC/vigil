@@ -34,6 +34,7 @@ vi.mock('../../services/api', () => ({
     getEscalations: vi.fn(() => Promise.resolve({ data: { escalations: [] } })),
   },
   workflowApi: {
+    listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
     getRun: vi.fn(() => Promise.resolve({ data: {} })),
     replayRun: vi.fn(),
     verifyRun: vi.fn(),
@@ -258,7 +259,7 @@ describe('unknown priority', () => {
     renderCases(`/cases?case=${CASE.case_id}`)
 
     expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
-    expect(screen.getByText('Unknown priority')).toBeInTheDocument()
+    expect(screen.getByTitle('Unknown priority')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
     expect(within(screen.getByRole('dialog', { name: 'Edit case' })).getByText('Unknown')).toBeInTheDocument()
