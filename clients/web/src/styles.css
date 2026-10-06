@@ -1442,14 +1442,6 @@
       gap: 10px;
    }
 
-   .case-row .cr-title {
-      font-size: 13.5px;
-      font-weight: 500;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-   }
-
    .case-row .cr-meta {
       display: flex;
       align-items: center;
@@ -2801,24 +2793,6 @@
       color: var(--tx-2);
       margin: 7px 0 0;
       line-height: 1.45;
-   }
-
-   /* The queue has more columns than the pane. A floor lets the existing
-      table scroll sideways instead of crushing SLA and last activity. */
-   .cases-tbl {
-      min-width: 1180px;
-   }
-
-   /* Title column: truncate long titles with an ellipsis (full text on hover). */
-   .cases-tbl td.case-title {
-      max-width: 340px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-   }
-
-   .cases-tbl td.case-title .tag {
-      margin-right: 8px;
    }
 
    @media (max-width: 1100px) {

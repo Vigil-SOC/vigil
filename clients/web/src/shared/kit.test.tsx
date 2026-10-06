@@ -4,6 +4,7 @@ import { FilterChip } from './FilterChip'
 import { HoldButton } from './HoldButton'
 import { InfoTip } from './InfoTip'
 import { LevelBadge, slaLevel } from './LevelBadge'
+import { MeterBar } from './MeterBar'
 import { NotMeasured } from './NotMeasured'
 import { PageHead } from './PageHead'
 import { SeverityMark } from './SeverityMark'
@@ -23,6 +24,19 @@ describe('LevelBadge', () => {
     expect(screen.getByText('Poor')).toHaveClass('level-pill', 'poor')
     rerender(<LevelBadge level={null} variant="pill" />)
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe('MeterBar', () => {
+  it('fills to the clamped percent and takes its colour from the level', () => {
+    const { rerender } = render(<MeterBar pct={41.4} level="good" label="Limit used" />)
+    const bar = screen.getByRole('meter', { name: 'Limit used' })
+    expect(bar).toHaveAttribute('aria-valuenow', '41')
+    expect(bar).toHaveClass('meter-bar', 'good')
+    expect(bar.firstElementChild).toHaveStyle({ width: '41%' })
+    rerender(<MeterBar pct={140} level="poor" label="Limit used" />)
+    expect(screen.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
+    expect(screen.getByRole('meter')).toHaveClass('poor')
   })
 })
 

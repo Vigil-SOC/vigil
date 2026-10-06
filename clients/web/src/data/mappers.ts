@@ -107,6 +107,7 @@ export interface QueueCase {
   sla_seconds_left?: number | null
   health_status?: string | null
   needs_you?: boolean | null
+  sla_paused?: boolean | null
   mitre_techniques?: string[] | null
 }
 
@@ -132,6 +133,17 @@ function slaText(seconds?: number | null, health?: string | null): string {
   return `${formatSpan(seconds)} · ${health}`
 }
 
+/** "22 h 50 min left"; paused clocks and cases with no running clock say so. */
+export function timeLeftText(seconds?: number | null, paused?: boolean | null): string {
+  if (paused) return 'Timer paused'
+  if (seconds == null || Number.isNaN(seconds)) return DASH
+  const mins = Math.round(Math.abs(seconds) / 60)
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  const span = h ? (m ? `${h} h ${m} min` : `${h} h`) : `${m} min`
+  return seconds < 0 ? `${span} overdue` : `${span} left`
+}
+
 export function mapQueueCase(c: QueueCase): CaseRow {
   const activity = c.last_activity || c.updated_at || c.created_at || undefined
   return {
@@ -147,6 +159,10 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     age: c.age_seconds != null ? formatSpan(c.age_seconds) : compactAge(c.created_at ?? undefined),
     sla: slaText(c.sla_seconds_left, c.health_status),
     slaState: slaTone(c.health_status),
+    timeLeft: timeLeftText(c.sla_seconds_left, c.sla_paused),
+    slaPaused: c.sla_paused === true,
+    lastActive: compactAge(activity),
+    slaHealth: c.health_status,
     updated: fmt(activity ?? undefined, 'MMM d'),
     updatedTs: epochMs(activity ?? undefined),
     createdTs: epochMs(c.created_at ?? undefined),
