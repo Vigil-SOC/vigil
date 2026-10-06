@@ -22,6 +22,7 @@ const screenProps: ConsoleScreenProps = {
   openChat: vi.fn(),
   go: vi.fn(),
   goSettings: vi.fn(),
+  openCase: vi.fn(),
   setViewFull: vi.fn(),
 }
 

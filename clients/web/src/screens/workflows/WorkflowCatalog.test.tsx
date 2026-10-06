@@ -176,7 +176,7 @@ describe('workflow catalog table', () => {
   it('shows today\'s runs, a real zero cost, an em dash for a missing mean, and trust', async () => {
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 
@@ -213,7 +213,7 @@ describe('workflow catalog table', () => {
     ])
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 
@@ -271,7 +271,7 @@ describe('workflow catalog table', () => {
 
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 
@@ -328,7 +328,7 @@ describe('workflow catalog table', () => {
 
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 
@@ -352,7 +352,7 @@ describe('workflow catalog table', () => {
   it('builds a skill from a blank editor and refuses a name already in the list', async () => {
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 
@@ -392,7 +392,7 @@ describe('workflow catalog table', () => {
   it('opens a reader for the run kind and draws arrows only when the roster is an order', async () => {
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 
@@ -443,7 +443,7 @@ describe('workflow catalog table', () => {
     const heights = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400)
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Cloud incident' }))
@@ -458,7 +458,7 @@ describe('workflow catalog table', () => {
   it('lists every command, marks the later rows, and runs nothing', () => {
     render(
       <MemoryRouter>
-        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
       </MemoryRouter>,
     )
 

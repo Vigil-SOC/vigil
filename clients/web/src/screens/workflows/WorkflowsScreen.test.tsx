@@ -28,7 +28,7 @@ const wf = (id: string) => ({ id, name: id, description: '', agents: [], source:
 function mount() {
   return render(
     <MemoryRouter>
-      <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
     </MemoryRouter>,
   )
 }

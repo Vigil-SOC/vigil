@@ -505,7 +505,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} setViewFull={setViewFull} setWallMode={setWallMode} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} />
                 )}
               </ErrorBoundary>
             </div>
@@ -525,7 +525,6 @@ function SocConsoleInner() {
           <CaseDrawer
             caseId={drawerCase}
             onClose={() => setDrawerCase(null)}
-            onSelect={setDrawerCase}
             pageKey={current}
           />
         )}

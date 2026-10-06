@@ -1480,17 +1480,51 @@
 
    .detail-head .dh-crumb .back {
       background: none;
-      border: 1px solid var(--line);
+      border: 0;
+      padding: 0;
+      font: inherit;
       color: var(--tx-2);
-      border-radius: 6px;
-      padding: 4px 9px;
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
    }
 
    .detail-head .dh-crumb .back:hover {
       color: var(--tx);
+   }
+
+   .detail-head .dh-crumb-end {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .vg-more-menu.dh-menu {
+      top: calc(100% + 4px);
+      left: auto;
+      right: 0;
+      min-width: 168px;
+   }
+
+   .dh-menu button {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      height: 34px;
+      padding: 0 10px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--tx1);
+      font: inherit;
+      font-size: 13px;
+      text-align: left;
+   }
+
+   .dh-menu button:hover,
+   .dh-menu button:focus-visible {
+      background: var(--bg3);
+   }
+
+   .dh-menu button.danger {
+      color: var(--crit);
    }
 
    .detail-head h2 {
@@ -1520,15 +1554,6 @@
 
    .detail-head .case-linked a {
       margin-left: 10px;
-   }
-
-   .detail-head .dh-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex: 0 0 auto;
-      flex-wrap: wrap;
-      justify-content: flex-end;
    }
 
    /* Tabbed detail: header + tab bar stay pinned; only .detail-body scrolls.
