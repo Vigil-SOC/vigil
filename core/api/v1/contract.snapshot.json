@@ -3365,6 +3365,18 @@
       },
       "WorkflowDetailResponse": {
         "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
           "agents": {
             "items": {
               "type": "string"

@@ -12334,6 +12334,10 @@ export interface components {
         };
         /** WorkflowDetailResponse */
         WorkflowDetailResponse: {
+            /** Agent */
+            agent?: {
+                [key: string]: unknown;
+            } | null;
             /** Agents */
             agents?: string[];
             /** Body */
