@@ -186,7 +186,7 @@ class CaseWorkflowService:
             )
 
             if not template or not template.is_active:
-                logger.error(f"Template {template_id} not found or inactive")
+                logger.info(f"Template {template_id} not found or inactive")
                 return None
 
             # Generate case ID
@@ -316,7 +316,7 @@ class CaseWorkflowService:
 
             case = session.query(Case).filter(Case.case_id == case_id).first()
             if not case:
-                logger.error(f"Case {case_id} not found")
+                logger.info(f"Case {case_id} not found")
                 return False
 
             # Create escalation record
@@ -365,7 +365,7 @@ class CaseWorkflowService:
             )
 
             if not template:
-                logger.error(f"Template {template_id} not found")
+                logger.info(f"Template {template_id} not found")
                 return False
 
             # Update allowed fields
@@ -411,7 +411,7 @@ class CaseWorkflowService:
             )
 
             if not template:
-                logger.error(f"Template {template_id} not found")
+                logger.info(f"Template {template_id} not found")
                 return False
 
             # Soft delete by deactivating

@@ -193,7 +193,7 @@ class CaseSLAService:
             # Get case
             case = session.query(Case).filter(Case.case_id == case_id).first()
             if not case:
-                logger.error(f"Case {case_id} not found")
+                logger.info(f"Case {case_id} not found")
                 return SlaAssignment(SlaOutcome.NO_SUCH_CASE)
 
             # Check if SLA already assigned
@@ -266,7 +266,7 @@ class CaseSLAService:
                     )
 
             if not policy:
-                logger.error(f"No SLA policy found for case {case_id}")
+                logger.warning(f"No SLA policy found for case {case_id}")
                 return SlaAssignment(
                     named_but_unusable or SlaOutcome.NO_DEFAULT_POLICY,
                     policy_id=sla_policy_id,

@@ -14,6 +14,10 @@ import httpx
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
+from core.integrations._base.config_gap import (
+    report_config_complete,
+    report_config_gap,
+)
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.time import utcnow
 
@@ -58,9 +62,16 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             client_id = self.config.get("client_id")
             client_secret = self.config.get("client_secret")
 
-            if not all([tenant_id, client_id, client_secret]):
-                logger.error("Microsoft Defender configuration incomplete")
+            required = {
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                report_config_gap(logger, "Microsoft Defender", missing)
                 return None
+            report_config_complete(logger, "Microsoft Defender")
 
             # Get token
             token_url = (

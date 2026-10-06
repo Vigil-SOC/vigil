@@ -11,6 +11,10 @@ from typing import Any, Dict, List, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
+from core.integrations._base.config_gap import (
+    report_config_complete,
+    report_config_gap,
+)
 from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.time import utcnow
@@ -62,18 +66,19 @@ class AzureSentinelIngestion(SIEMIngestionService):
             resource_group = self.config.get("resource_group")
             workspace_name = self.config.get("workspace_name")
 
-            if not all(
-                [
-                    tenant_id,
-                    client_id,
-                    client_secret,
-                    subscription_id,
-                    resource_group,
-                    workspace_name,
-                ]
-            ):
-                logger.error("Azure Sentinel configuration incomplete")
+            required = {
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "subscription_id": subscription_id,
+                "resource_group": resource_group,
+                "workspace_name": workspace_name,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                report_config_gap(logger, "Azure Sentinel", missing)
                 return []
+            report_config_complete(logger, "Azure Sentinel")
 
             # Authenticate
             credential = ClientSecretCredential(

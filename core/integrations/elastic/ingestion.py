@@ -14,6 +14,10 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
+from core.integrations._base.config_gap import (
+    report_config_complete,
+    report_config_gap,
+)
 from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
 from core.integrations.elastic.client import ElasticService
 from core.integrations.elastic.descriptor import ELASTIC
@@ -109,8 +113,9 @@ class ElasticIngestion(SIEMIngestionService):
         # its client is failing, not empty (#1573). A missing URL stays a quiet [].
         host = self.config.get("elasticsearch_url")
         if not host:
-            logger.error("Elastic configuration incomplete: missing elasticsearch_url")
+            report_config_gap(logger, "Elastic", ["elasticsearch_url"])
             return None
+        report_config_complete(logger, "Elastic")
 
         # resolve() always returns every declared field, so a .get(k, True)
         # default would never fire — verify_ssl is present-but-None when unset.
