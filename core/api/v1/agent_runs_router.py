@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from core.agents import run_limits
 from core.agents.directives import (
     DIRECTIVE_FIELDS,
     DIRECTIVE_KINDS,
@@ -25,7 +26,6 @@ from core.agents.queue import (
     enqueue_run,
     new_run_id,
 )
-from core.agents.run_limits import OverrideRefused, check_overrides
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.workflows.enablement import disabled_message, is_enabled
 
@@ -136,8 +136,8 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
         raise HTTPException(status_code=409, detail=disabled_message(named))
 
     try:
-        check_overrides(request.overrides)
-    except OverrideRefused as exc:
+        run_limits.check_overrides(request.overrides)
+    except run_limits.OverrideRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
     run_id = new_run_id()
