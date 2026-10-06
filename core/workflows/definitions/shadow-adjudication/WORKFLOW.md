@@ -1,5 +1,6 @@
 ---
 name: shadow-adjudication
+version: 1
 description: "A shadow second opinion on a finding intake has already admitted: test the stated intent against the benign account, name the workflow that should have run, and execute nothing."
 use_case: "Shadow adjudication -- given a finding intake admitted and the workflow it chose, decide independently whether the finding is what intake says it is and which catalogue workflow you would have run, so intake's choices can be scored later."
 trigger_examples:

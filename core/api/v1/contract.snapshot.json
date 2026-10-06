@@ -3454,6 +3454,11 @@
               }
             ],
             "title": "Use Case"
+          },
+          "version": {
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [

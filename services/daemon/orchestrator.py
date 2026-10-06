@@ -1298,6 +1298,9 @@ class Orchestrator:
                         workflow_id=inv_record["workflow_id"],
                         workflow_name=inv_record["workflow_id"],
                         workflow_source="agent",
+                        workflow_version=self._workflows.version_of(
+                            inv_record["workflow_id"]
+                        ),
                         trigger_context=context,
                         triggered_by="orchestrator",
                     )
@@ -1391,6 +1394,7 @@ class Orchestrator:
             workflow_id=SHADOW_WORKFLOW_ID,
             workflow_name=SHADOW_WORKFLOW_ID,
             workflow_source="agent",
+            workflow_version=self._workflows.version_of(SHADOW_WORKFLOW_ID),
             trigger_context={
                 "run_kind": "adjudicate",
                 "investigation_id": inv_id,

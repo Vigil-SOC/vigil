@@ -12369,6 +12369,11 @@ export interface components {
             trigger_examples?: string[];
             /** Use Case */
             use_case?: string | null;
+            /**
+             * Version
+             * @default 1
+             */
+            version: number;
         };
         /**
          * WorkflowExecuteRequest

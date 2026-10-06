@@ -1,5 +1,6 @@
 ---
 name: threat-hunt
+version: 1
 description: "Proactive, hypothesis-driven threat hunting across all available data sources with network analysis, malware examination, and intelligence enrichment."
 use_case: "Proactive threat hunting -- start with a hypothesis or IOC and systematically search for evidence across network, endpoint, and threat intel sources."
 trigger_examples:
