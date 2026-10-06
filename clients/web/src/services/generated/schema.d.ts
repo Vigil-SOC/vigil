@@ -5979,6 +5979,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Skill
+         * @description Run the saved skill's ``evals/cases.json`` through the chat model.
+         *
+         *     The model is the one assigned to ``chat_default``. A skill with no cases
+         *     answers ``no_cases`` without touching a provider. A dispatch failure is an
+         *     HTTP error, never a failed case.
+         */
+        post: operations["post_api_skills_name_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sla-policies/": {
         parameters: {
             query?: never;
@@ -11524,6 +11548,15 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** SkillCaseResult */
+        SkillCaseResult: {
+            /** Missing */
+            missing: string[];
+            /** Name */
+            name: string;
+            /** Passed */
+            passed: boolean;
+        };
         /** SkillDetail */
         SkillDetail: {
             /** Body */
@@ -11567,6 +11600,15 @@ export interface components {
             name: string;
             /** Source Path */
             source_path: string;
+        };
+        /** SkillTestResponse */
+        SkillTestResponse: {
+            /** Model */
+            model?: string | null;
+            /** No Cases */
+            no_cases: boolean;
+            /** Results */
+            results: components["schemas"]["SkillCaseResult"][];
         };
         /** SkillWriteRequest */
         SkillWriteRequest: {
@@ -22912,6 +22954,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillFileContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_test: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillTestResponse"];
                 };
             };
             /** @description Validation Error */
