@@ -5831,6 +5831,77 @@
       padding: 10px 0;
    }
 
+   /* ---------- Triage: alert column, expanded row, strip ⓘ ---------- */
+   .tq-alert {
+      display: block;
+      max-width: 34ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+   }
+
+   .tbl tbody tr.row-expanded:hover {
+      background: none;
+   }
+
+   .tbl tbody tr.row-expanded>td {
+      padding: 0 22px 12px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
+   .tq-panel {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--bg-2);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: default;
+   }
+
+   .tq-h {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx-2);
+   }
+
+   .tq-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--tx-2);
+   }
+
+   .tq-val {
+      font-family: var(--mono);
+      color: var(--tx);
+   }
+
+   .tq-val .not-measured {
+      font-family: var(--font);
+   }
+
+   .tq-evidence {
+      font-size: 12px;
+      color: var(--tx-2);
+   }
+
+   .tq-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+   }
+
+   /* the ⓘ sits in the tile's top-right corner, out of the label's ellipsis clip */
+   .kpi>.info-tip {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+   }
+
    .tech-expand>td {
       padding: 0 !important;
       background: var(--bg);
