@@ -79,7 +79,7 @@ class CustomWorkflowService:
         Args:
             payload: Dict with keys matching CustomWorkflow columns. Required:
                 name, description, phases. Optional: use_case, trigger_examples,
-                graph_layout, created_by, workflow_id.
+                created_by, workflow_id.
 
         Returns:
             The created workflow as a dict.
@@ -104,7 +104,6 @@ class CustomWorkflowService:
                 use_case=payload.get("use_case"),
                 trigger_examples=payload.get("trigger_examples") or [],
                 phases=payload.get("phases") or [],
-                graph_layout=payload.get("graph_layout") or {},
                 is_active=payload.get("is_active", True),
                 created_by=payload.get("created_by"),
                 version=1,
@@ -152,7 +151,6 @@ class CustomWorkflowService:
             "use_case",
             "trigger_examples",
             "phases",
-            "graph_layout",
             "is_active",
         }
         if "phases" in updates and updates["phases"] is not None:

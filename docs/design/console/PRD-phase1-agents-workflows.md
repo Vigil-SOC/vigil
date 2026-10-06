@@ -52,7 +52,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
   - **Stops when** — the workflow's objectives, its step limit and its budget. Per-stage stop conditions are **Not measured yet**.
   - **Checkpoints** — where the workflow pauses for a person, each marked auto or ask.
 - **AW-W3. Single-agent workflows say so.** A workflow that runs as one agent shows that agent, its objectives and its instructions, and states that it runs alone. It never shows empty helper panels.
-- **AW-W4. The graph builder is removed.** "Test on a sample alert" and "Generate with AI" stay; a generated workflow is labelled an AI draft until saved.
+- **AW-W4. The graph builder is removed.** "Generate with AI" stays and opens its result in the reader, labelled an AI draft until Save creates it. No "Test on a sample alert" button: the Run modal is where a run is checked before it starts (#1615 decision 10).
 - **AW-W5. Watch a run** is a page that replays a run step by step from its record, opened from Watch it run or from the run history:
   - **Player** — step through each decision, with the version of the workflow the run used.
   - **What the lead agent did** — each decision, what it was aimed at, which helper it sent, its cost, and its reasoning labelled as model text.

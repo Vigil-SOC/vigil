@@ -180,7 +180,7 @@ class CustomWorkflow(Base):
     Custom Workflow Model - User-created multi-agent workflow definitions.
 
     File-based WORKFLOW.md definitions remain supported separately. This table
-    holds workflows created/edited via the Workflow Builder UI.
+    holds workflows created in the console.
     """
 
     __tablename__ = "custom_workflows"
@@ -196,9 +196,6 @@ class CustomWorkflow(Base):
     )
     phases: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
-    )
-    graph_layout: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default="{}"
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

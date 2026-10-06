@@ -1077,7 +1077,6 @@
       "created_at": null,
       "created_by": null,
       "description": null,
-      "graph_layout": {},
       "is_active": null,
       "name": null,
       "phases": [],
@@ -1091,9 +1090,6 @@
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "created_by": "created_by-value",
       "description": "description-value",
-      "graph_layout": {
-        "sample": "graph_layout-value"
-      },
       "is_active": true,
       "name": "name-value",
       "phases": [
