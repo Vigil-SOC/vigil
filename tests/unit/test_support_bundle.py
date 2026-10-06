@@ -385,7 +385,9 @@ def test_compose_install_is_collected_and_secrets_stay_out(env, tmp_path):
 
     compose_calls = argv_log.read_text().splitlines()
     assert compose_calls and all(
-        c.startswith("compose -p ") and c.endswith(" config") and "compose compose" not in c
+        c.startswith("compose -p ")
+        and c.endswith(" config")
+        and "compose compose" not in c
         for c in compose_calls
     ), compose_calls
 
@@ -458,11 +460,14 @@ def test_compose_config_falls_back_to_no_interpolate(env, tmp_path):
     env["FAKE_COMPOSE_CONFIG"] = "services: uninterpolated"
     proc = run(env, tmp_path, "--state-dir", str(state))
     assert proc.returncode == 0, proc.stderr
-    assert entries_of(tmp_path)["configuration/compose-config.yml"]["state"] == "collected"
+    assert (
+        entries_of(tmp_path)["configuration/compose-config.yml"]["state"] == "collected"
+    )
     root = next((tmp_path / "x").iterdir())
-    assert "services: uninterpolated" in (
-        root / "configuration" / "compose-config.yml"
-    ).read_text()
+    assert (
+        "services: uninterpolated"
+        in (root / "configuration" / "compose-config.yml").read_text()
+    )
 
 
 def test_native_install_collects_files_and_no_container_logs(env, tmp_path):
