@@ -302,6 +302,11 @@ class VStrikeService:
             response = self._get(f"/api/v1/topology/asset/{asset_id}/adjacent")
             if response.status_code == 200:
                 return response.json().get("adjacent", [])
+            logger.warning(
+                "VStrike list_adjacent(%s) returned HTTP %s",
+                asset_id,
+                response.status_code,
+            )
             return None
         except _REST_ERRORS as e:
             logger.error("VStrike list_adjacent(%s) failed: %s", asset_id, e)
@@ -313,6 +318,11 @@ class VStrikeService:
             response = self._get(f"/api/v1/topology/asset/{asset_id}/blast-radius")
             if response.status_code == 200:
                 return response.json()
+            logger.warning(
+                "VStrike get_blast_radius(%s) returned HTTP %s",
+                asset_id,
+                response.status_code,
+            )
             return None
         except _REST_ERRORS as e:
             logger.error("VStrike get_blast_radius(%s) failed: %s", asset_id, e)
@@ -329,6 +339,11 @@ class VStrikeService:
             )
             if response.status_code == 200:
                 return response.json().get("findings", [])
+            logger.warning(
+                "VStrike find_findings_by_segment(%s) returned HTTP %s",
+                segment,
+                response.status_code,
+            )
             return None
         except _REST_ERRORS as e:
             logger.error("VStrike find_findings_by_segment(%s) failed: %s", segment, e)

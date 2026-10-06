@@ -33,6 +33,7 @@ except ImportError:
     pass
 
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.splunk.descriptor import SPLUNK
 
 logger = logging.getLogger(__name__)
@@ -224,7 +225,7 @@ def _telemetry_summary() -> str:
             _SUMMARY_SPL, earliest_time="-20y", max_count=_SUMMARY_ROWS
         )
     except Exception as exc:  # noqa: BLE001
-        logger.debug("could not summarise Splunk telemetry: %s", exc)
+        logger.warning("could not summarise Splunk telemetry: %s", exc)
         return ""
 
     by_index = _fold_by_index(list(rows or []))
@@ -447,14 +448,7 @@ async def _on_list_tools(_ctx, _params):
 
 
 async def _on_call_tool(_ctx, params):
-    try:
-        content = await handle_call_tool(params.name, params.arguments)
-    except Exception as exc:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=str(exc))],
-            is_error=True,
-        )
-    return types.CallToolResult(content=content)
+    return await run_tool(handle_call_tool, params)
 
 
 server = Server(

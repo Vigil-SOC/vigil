@@ -18,7 +18,9 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+from core.integrations._base.aad_token import TokenError, fetch_client_credentials_token
 from core.integrations._base.config import resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.azure_ad.descriptor import AZURE_AD
 
 logger = logging.getLogger(__name__)
@@ -29,27 +31,23 @@ def result(data):
 
 
 def get_token():
+    """Access token, or None when credentials are not configured.
+
+    Raises ``TokenError`` when they are configured but the exchange fails.
+    """
     config = resolve(AZURE_AD)
     tenant = config.get("tenant_id")
     client_id = config.get("client_id")
     client_secret = config.get("client_secret")
     if not all([tenant, client_id, client_secret]):
         return None
-    try:
-        resp = httpx.post(
-            f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "scope": "https://graph.microsoft.com/.default",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json().get("access_token")
-    except Exception:
-        return None
+    return fetch_client_credentials_token(
+        "Azure AD",
+        tenant,
+        client_id,
+        client_secret,
+        "https://graph.microsoft.com/.default",
+    )
 
 
 async def handle_list_tools():
@@ -91,7 +89,10 @@ async def handle_list_tools():
 
 
 async def handle_call_tool(name: str, arguments: dict | None):
-    token = get_token()
+    try:
+        token = get_token()
+    except TokenError as exc:
+        return result({"error": str(exc)})
     if not token:
         return result({"error": "Azure AD not configured"})
 
@@ -161,14 +162,7 @@ async def _on_list_tools(_ctx, _params):
 
 
 async def _on_call_tool(_ctx, params):
-    try:
-        content = await handle_call_tool(params.name, params.arguments)
-    except Exception as exc:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=str(exc))],
-            is_error=True,
-        )
-    return types.CallToolResult(content=content)
+    return await run_tool(handle_call_tool, params)
 
 
 server = Server(

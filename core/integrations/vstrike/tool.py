@@ -39,6 +39,8 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+from core.integrations._base.tool_result import run_tool
+
 try:
     from dotenv import load_dotenv
 
@@ -412,14 +414,7 @@ async def _on_list_tools(_ctx, _params):
 
 
 async def _on_call_tool(_ctx, params):
-    try:
-        content = await handle_call_tool(params.name, params.arguments)
-    except Exception as exc:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=str(exc))],
-            is_error=True,
-        )
-    return types.CallToolResult(content=content)
+    return await run_tool(handle_call_tool, params)
 
 
 server = Server(

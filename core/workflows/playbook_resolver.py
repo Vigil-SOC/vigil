@@ -65,7 +65,7 @@ def _mcp_catalogue(registry: Optional["MCPRegistry"]) -> List[Dict[str, Any]]:
 
         refresh_from_client(registry)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("MCP refresh failed while resolving tools: %s", exc)
+        logger.warning("MCP refresh failed while resolving tools: %s", exc)
 
     try:
         tools = registry.get_all_tools()
@@ -78,7 +78,7 @@ def _mcp_catalogue(registry: Optional["MCPRegistry"]) -> List[Dict[str, Any]]:
                 tools = registry.get_all_tools()
         return tools
     except Exception as exc:  # noqa: BLE001
-        logger.debug("MCP registry unavailable while resolving tools: %s", exc)
+        logger.warning("MCP registry unavailable while resolving tools: %s", exc)
         return []
 
 

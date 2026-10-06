@@ -25,11 +25,13 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.elastic.client import ElasticService
 from core.integrations.elastic.descriptor import ELASTIC
 
 logger = logging.getLogger(__name__)
 _elastic_service = None
+_config_failed = False
 
 
 def result(data):
@@ -37,7 +39,8 @@ def result(data):
 
 
 def get_elastic_service():
-    global _elastic_service
+    global _elastic_service, _config_failed
+    _config_failed = False
     if _elastic_service is not None:
         return _elastic_service
     try:
@@ -59,7 +62,9 @@ def get_elastic_service():
             ca_cert_path=config.get("ca_cert_path"),
         )
         return _elastic_service
-    except Exception:
+    except Exception as exc:
+        _config_failed = True
+        logger.error("Elastic config/client setup failed: %s", exc)
         return None
 
 
@@ -145,6 +150,13 @@ async def handle_list_tools():
 async def handle_call_tool(name: str, arguments: dict | None):
     svc = get_elastic_service()
     if svc is None:
+        if _config_failed:
+            return result(
+                {
+                    "error": "Elastic is configured but its connection settings "
+                    "could not be loaded; check the server log"
+                }
+            )
         return result({"error": "Elastic service not configured"})
 
     if name == "elastic_search_logs":
@@ -274,14 +286,7 @@ async def _on_list_tools(_ctx, _params):
 
 
 async def _on_call_tool(_ctx, params):
-    try:
-        content = await handle_call_tool(params.name, params.arguments)
-    except Exception as exc:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=str(exc))],
-            is_error=True,
-        )
-    return types.CallToolResult(content=content)
+    return await run_tool(handle_call_tool, params)
 
 
 server = Server(
