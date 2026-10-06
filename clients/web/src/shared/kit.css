@@ -1,0 +1,96 @@
+/* Shared kit: level badge, ⓘ, Not measured yet, page head. Tokens only. */
+.level-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.level-pill.good { color: var(--good); background: var(--good-bg); border-color: var(--good-ln); }
+.level-pill.fair { color: var(--fair); background: var(--fair-bg); border-color: var(--fair-ln); }
+.level-pill.poor { color: var(--poor); background: var(--poor-bg); border-color: var(--poor-ln); }
+
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.info-tip > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tx3);
+}
+
+.info-tip > button:hover,
+.info-tip > button:focus-visible {
+  color: var(--ac);
+  background: var(--bg3);
+}
+
+.info-tip-pop {
+  position: absolute;
+  top: 28px;
+  z-index: 60;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln2);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal; /* a th above may be nowrap */
+}
+
+.info-tip-pop.end { right: 0; }
+.info-tip-pop.start { left: 0; }
+.info-tip-line b { color: var(--tx0); font-weight: 650; }
+
+.not-measured {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--tx3);
+}
+
+.page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.page-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  line-height: 1.25;
+  color: var(--tx0);
+}
+
+.page-head p {
+  margin: 0;
+  max-width: 760px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tx1);
+}

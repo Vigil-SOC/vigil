@@ -239,11 +239,11 @@ class TestReporterAgentConfig:
         assert "- executive-summary:" in prompt
 
     def test_reporter_description_updated(self):
-        """Reporter description should mention board briefs."""
+        """Reporter description should mention executive briefs."""
         from core.agents.builtins import BUILTIN_AGENTS
 
         desc = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["description"].lower()
-        assert "board brief" in desc
+        assert "executive briefs" in desc
 
 
 # ---------------------------------------------------------------------------

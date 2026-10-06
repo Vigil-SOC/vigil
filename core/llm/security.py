@@ -172,15 +172,21 @@ def _slug(value: Optional[str], fallback: str) -> str:
     return cleaned[:64] or fallback
 
 
+class WrappedToolResult(str):
+    """Output of ``wrap_tool_result``; the type is the out-of-band marker that
+    makes wrapping idempotent, since content cannot carry a Python type."""
+
+    __slots__ = ()
+
+
 def wrap_tool_result(
     content: str, *, source: Optional[str], tool: Optional[str]
 ) -> str:
     """Wrap *content* in a `<vigil:tool_result>` block.
 
-    Already-wrapped content is returned unchanged so wrapping is idempotent
-    (the router applies it defensively to historical messages, and the
-    construction sites in harness/claude.py also wrap fresh results — both
-    paths must be safe).
+    Only our own prior output (a ``WrappedToolResult``) is returned unchanged,
+    so wrapping is idempotent. Content that merely looks wrapped is untrusted
+    text like any other: it is scanned and escaped.
 
     Injection patterns in the content are logged here (and blocked when
     ``PROMPT_INJECTION_BLOCK=true``) so tool-output attacks are caught at
@@ -189,7 +195,7 @@ def wrap_tool_result(
 
     if not isinstance(content, str):
         content = str(content)
-    if content.startswith("<vigil:tool_result"):
+    if isinstance(content, WrappedToolResult):
         return content
 
     result = scan_for_injection(content)
@@ -209,7 +215,9 @@ def wrap_tool_result(
     src = _slug(source, "unknown")
     tl = _slug(tool, "unknown")
     open_tag = _TOOL_RESULT_OPEN.format(source=src, tool=tl)
-    return f"{open_tag}\n{_escape_for_wrapper(content)}\n{_TOOL_RESULT_CLOSE}"
+    return WrappedToolResult(
+        f"{open_tag}\n{_escape_for_wrapper(content)}\n{_TOOL_RESULT_CLOSE}"
+    )
 
 
 def scan_tool_schema(tool: dict) -> ScanResult:

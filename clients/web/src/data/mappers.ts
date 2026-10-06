@@ -396,7 +396,7 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
     name: a.name || a.id,
     handle: a.id,
     spec: a.specialization || a.description || '—',
-    ini: initials(a.name || a.id),
+    ini: a.icon || initials(a.name || a.id),
     color: a.color || 'var(--accent)',
     does: a.description || a.specialization || '—',
     model: a.model ?? null,
@@ -419,5 +419,6 @@ export function mapApiSkill(s: ApiSkill): Skill {
     desc: s.description,
     source: s.source_path,
     bundled: s.bundled,
+    fileCount: s.file_count,
   }
 }

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.integrations._base.search_params import validate_index
 from core.integrations._base.tls import tls_verify
 
 logger = logging.getLogger(__name__)
@@ -143,9 +144,10 @@ class OpenSearchService:
         """Run an OpenSearch query and return the raw response body.
 
         A failed request returns None, but a client that cannot be built (an
-        unusable CA path) raises, so the caller reports why.
+        unusable CA path) or an invalid index name raises, so the caller
+        reports why.
         """
-        target = index or self.index_pattern
+        target = validate_index(index or self.index_pattern)
         body: Dict[str, Any] = {"query": query, "size": size}
         if sort:
             body["sort"] = sort
@@ -165,7 +167,9 @@ class OpenSearchService:
             query={
                 "bool": {
                     "must": [{"multi_match": {"query": ip, "fields": ["*"]}}],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index or LOG_INDICES,
@@ -178,7 +182,9 @@ class OpenSearchService:
             query={
                 "bool": {
                     "must": [{"multi_match": {"query": file_hash, "fields": ["*"]}}],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index or LOG_INDICES,
@@ -202,7 +208,9 @@ class OpenSearchService:
                             }
                         }
                     ],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index or LOG_INDICES,
@@ -227,7 +235,9 @@ class OpenSearchService:
                             }
                         }
                     ],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index or LOG_INDICES,

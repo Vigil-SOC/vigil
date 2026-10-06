@@ -25,6 +25,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.search_params import validate_time_range
 from core.integrations._base.tool_result import run_tool
 from core.integrations.opensearch.client import LOG_INDICES, OpenSearchService
 from core.integrations.opensearch.descriptor import OPENSEARCH
@@ -164,7 +165,7 @@ async def _search_logs(svc, args: dict):
     except json.JSONDecodeError:
         return result({"error": "Invalid JSON in query parameter"})
 
-    time_range = args.get("time_range", "24h")
+    time_range = validate_time_range(args.get("time_range", "24h"))
     # Wrap with time filter
     wrapped = {
         "bool": {

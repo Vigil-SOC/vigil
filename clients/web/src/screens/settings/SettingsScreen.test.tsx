@@ -60,6 +60,20 @@ describe('settings nav', () => {
     expect(screen.getByText('AI panel')).toBeInTheDocument()
   })
 
+  it('heads the nav and every section with a title and a one-line description', () => {
+    renderAt('/settings')
+    expect(screen.getByRole('navigation', { name: 'Settings sections' })).toHaveTextContent('Settings')
+    for (const label of ['AI models', 'Integrations', 'Alert collection', 'SLA policies', 'Limits & autonomy', 'Data & uploads', 'System']) {
+      fireEvent.click(nav().getByRole('button', { name: label }))
+      const head = document.querySelector('.page-head') as HTMLElement
+      expect(within(head).getByRole('heading', { name: label })).toBeInTheDocument()
+      expect(head.querySelector('p')?.textContent).toBeTruthy()
+      expect(nav().getByRole('button', { name: label })).toHaveAttribute('aria-current', 'page')
+    }
+    // the tab strip sits under the System head
+    expect(tabs().getByRole('button', { name: 'Services' })).toBeInTheDocument()
+  })
+
   it('opens System on the bookmarked panel', () => {
     const { unmount } = render(
       <MemoryRouter initialEntries={['/settings?section=users']}>

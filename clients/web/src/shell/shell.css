@@ -468,36 +468,6 @@ input.vg-skill-input {
   border-radius: 4px;
 }
 
-.vg-info {
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: transparent;
-  color: var(--tx3);
-  border-radius: 999px;
-}
-
-.vg-info-pop {
-  position: absolute;
-  top: 36px;
-  right: 0;
-  width: 280px;
-  padding: 10px 12px;
-  background: var(--bg2);
-  border: 1px solid var(--ln2);
-  border-radius: 12px;
-  box-shadow: 0 16px 40px var(--shadow);
-  color: var(--tx1);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.45;
-  white-space: normal;
-  z-index: 60;
-}
-
 .vg-avatar {
   width: 32px;
   height: 32px;

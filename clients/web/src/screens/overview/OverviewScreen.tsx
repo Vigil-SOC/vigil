@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -22,24 +23,6 @@ const ALREADY_QUEUED = 'This finding is already queued.'
 const POLL_MS = 10_000
 
 type Phase = 'loading' | 'error' | 'ready'
-type Level = OverviewAgent['level']
-
-function levelWord(level: Level): string {
-  switch (level) {
-    case 'good':
-      return 'Good'
-    case 'fair':
-      return 'Fair'
-    case 'poor':
-      return 'Poor'
-    case null:
-      return '—'
-    default: {
-      const unexpected: never = level
-      return unexpected
-    }
-  }
-}
 
 function fmtRate(rate: number | null): string {
   if (rate === null) return '—'
@@ -178,7 +161,7 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
     { key: 'running', label: 'Running', render: (row) => row.running, sortVal: (row) => row.running },
     { key: 'rate', label: '30-day rate', render: (row) => fmtRate(row.rate), sortVal: (row) => row.rate ?? -1 },
     { key: 'sample_size', label: 'Sample', render: (row) => row.sample_size, sortVal: (row) => row.sample_size },
-    { key: 'level', label: 'Level', render: (row) => levelWord(row.level), sortVal: (row) => row.level ?? '' },
+    { key: 'level', label: 'Level', render: (row) => <LevelBadge level={row.level} />, sortVal: (row) => row.level ?? '' },
     {
       key: 'current_step',
       label: 'Current step',

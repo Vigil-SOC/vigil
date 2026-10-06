@@ -142,13 +142,14 @@ vi.mock('../../services/api', () => ({
 vi.mock('../../services/skillsApi', () => ({
   skillsApi: {
     list: vi.fn(() => Promise.resolve([
-      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
+      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true, file_count: 1 },
     ])),
     get: vi.fn(() => Promise.resolve({
       name: 'executive-summary',
       description: 'Write the brief.',
       source_path: 'skills/executive-summary',
       bundled: true,
+      file_count: 2,
       body: '# Brief\n',
       operator_root_set: false,
       version: 3,
@@ -163,6 +164,7 @@ vi.mock('../../services/skillsApi', () => ({
       description: 'Write the brief.',
       source_path: 'skills/executive-summary-copy',
       bundled: false,
+      file_count: 2,
     })),
     delete: vi.fn(() => Promise.resolve({ deleted: 'desk-check' })),
   },
@@ -206,8 +208,8 @@ describe('workflow catalog table', () => {
 
   it('names workflows whose listed agents recommend read_skill, and marks built-in skills read-only', async () => {
     vi.mocked(skillsApi.list).mockResolvedValueOnce([
-      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
-      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+      { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true, file_count: 1 },
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 3 },
     ])
     render(
       <MemoryRouter>
@@ -226,6 +228,13 @@ describe('workflow catalog table', () => {
     expect(screen.getAllByText('Offered to')).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: 'The grant offers the whole library.' })).toHaveLength(1)
     expect(screen.getByText('Built in')).toBeInTheDocument()
+    expect(screen.getByText('Yours')).toBeInTheDocument()
+    expect(screen.queryByText('Custom')).toBeNull()
+    expect(screen.getByText('1 file')).toBeInTheDocument()
+    expect(screen.getByText('3 files')).toBeInTheDocument()
+    // usage is not recorded yet: a placeholder per card, with its explanation
+    expect(screen.getAllByText('Used by · Not measured yet')).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Skill reads are not recorded yet.' })).toHaveLength(2)
     expect(screen.getByText('Read-only')).toBeInTheDocument()
     expect(screen.queryByText('skills/executive-summary')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
@@ -242,6 +251,7 @@ describe('workflow catalog table', () => {
       description: 'Write the brief.',
       source_path: 'skills/executive-summary',
       bundled: true,
+      file_count: 2,
       body: '# Brief\n',
       operator_root_set: true,
       version: 3,
@@ -252,11 +262,11 @@ describe('workflow catalog table', () => {
     })
     vi.mocked(skillsApi.list)
       .mockResolvedValueOnce([
-        { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
+        { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true, file_count: 1 },
       ])
       .mockResolvedValueOnce([
-        { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true },
-        { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+        { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true, file_count: 1 },
+        { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 1 },
       ])
 
     render(
@@ -303,13 +313,14 @@ describe('workflow catalog table', () => {
       description: 'A copy.',
       source_path: 'skills/desk-check',
       bundled: false,
+      file_count: 1,
       body: '# Steps\n',
       operator_root_set: true,
       version: 2,
       files: [{ path: 'SKILL.md', size: 10 }],
     })
     vi.mocked(skillsApi.list).mockResolvedValueOnce([
-      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 1 },
     ])
     vi.mocked(skillsApi.save).mockRejectedValueOnce({
       response: { data: { detail: 'This skill changed since you opened it. Reopen it to see the latest.' } },
@@ -350,6 +361,7 @@ describe('workflow catalog table', () => {
       description: 'Write the brief.',
       source_path: 'skills/executive-summary',
       bundled: true,
+      file_count: 2,
       body: '',
       operator_root_set: true,
       version: 1,
@@ -361,7 +373,7 @@ describe('workflow catalog table', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Build a skill' })
     const name = within(dialog).getByLabelText('Name')
     const description = within(dialog).getByLabelText('When to use it')
-    expect(within(dialog).getByText('Custom')).toBeInTheDocument()
+    expect(within(dialog).getByText('Yours')).toBeInTheDocument()
     expect(within(dialog).getByText('Lower case and hyphens, 64 characters at most')).toBeInTheDocument()
     expect(name).toHaveValue('')
     expect(name).toBeEnabled()
