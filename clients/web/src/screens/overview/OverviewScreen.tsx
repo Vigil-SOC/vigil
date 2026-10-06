@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -23,6 +23,8 @@ const ALREADY_QUEUED = 'This finding is already queued.'
 const POLL_MS = 10_000
 
 type Phase = 'loading' | 'error' | 'ready'
+// The single read of an alert that is not in the feed.
+type AlertRead = { id: string; status: 'loading' | 'ready' | 'error' | 'missing'; item?: OverviewFeedItem }
 
 function fmtRate(rate: number | null): string {
   if (rate === null) return '—'
@@ -92,19 +94,46 @@ function Flow({ data }: { data: OverviewPayload }) {
   )
 }
 
-export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScreenProps) {
+export default function OverviewScreen({ goSettings, openCase, setWallMode }: ConsoleScreenProps) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const alertId = searchParams.get('alert')
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
   const [wall, setWall] = useState(false)
-  const [open, setOpen] = useState<OverviewFeedItem | null>(null)
+  const [read, setRead] = useState<AlertRead | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [marked, setMarked] = useState(false)
   const [launchNote, setLaunchNote] = useState<string | null>(null)
   const [ticketNote, setTicketNote] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
+  // The feed row when there is one; else the single read; else the last item shown, so a poll that
+  // drops the alert (marked as noise) does not blank the popup.
+  const shown = useRef<OverviewFeedItem | null>(null)
+  if (!alertId) shown.current = null
+  const open =
+    (alertId ? data?.feed.find((row) => row.finding_id === alertId) : null) ??
+    (read?.id === alertId ? read?.item : null) ??
+    (shown.current?.finding_id === alertId ? shown.current : null) ??
+    null
+  if (open) shown.current = open
   const openId = useRef<string | null>(null)
   openId.current = open?.finding_id ?? null
+  const hasOpen = open !== null
+  const readStatus = read?.id === alertId ? read.status : 'loading'
+  const feedSettled = phase !== 'loading'
+
+  const setAlert = (id: string | null) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (id) next.set('alert', id)
+        else next.delete('alert')
+        return next
+      },
+      { replace: id === null },
+    )
 
   const load = useCallback(() => {
     overviewApi
@@ -141,12 +170,34 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
     }
   }, [])
 
+  // An alert that is not in the feed (older than the cap, or noise-marked) comes from its own read.
   useEffect(() => {
-    setMarked(false)
+    if (!alertId) {
+      setRead(null)
+      return
+    }
+    if (hasOpen || !feedSettled) return
+    let live = true
+    setRead({ id: alertId, status: 'loading' })
+    overviewApi
+      .alert(alertId)
+      .then((res) => {
+        if (live) setRead({ id: alertId, status: 'ready', item: res.data })
+      })
+      .catch((error) => {
+        if (live) setRead({ id: alertId, status: error?.response?.status === 404 ? 'missing' : 'error' })
+      })
+    return () => {
+      live = false
+    }
+  }, [alertId, hasOpen, feedSettled, attempt])
+
+  useEffect(() => {
+    setMarked(open?.noise_marked ?? false)
     setLaunchNote(null)
     setTicketNote(null)
     setActionError(null)
-  }, [open?.finding_id])
+  }, [open?.finding_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => setWallMode?.(false), [setWallMode])
 
@@ -180,9 +231,27 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
       render: (row) => <span className="tag">{row.terminal_label}</span>,
       sortVal: (row) => row.terminal_label,
     },
+    {
+      key: 'case_id',
+      label: 'Case',
+      render: (row) =>
+        row.case_id ? (
+          <button
+            type="button"
+            className="tag cursor-pointer !font-[family-name:var(--mono)]"
+            onClick={(event) => {
+              event.stopPropagation() // the row opens the alert
+              openCase(row.case_id!)
+            }}
+          >
+            Case {row.case_id}
+          </button>
+        ) : null,
+      sortVal: (row) => row.case_id ?? '',
+    },
     { key: 'description', label: 'Description', render: (row) => row.description ?? '—', sortVal: (row) => row.description ?? '' },
     { key: 'created_at', label: 'Arrived', render: (row) => row.created_at ?? '—', sortVal: (row) => row.created_at ?? '' },
-  ], [])
+  ], [openCase])
   const agentSort = useTableSort(agentColumns, { key: 'name', dir: 'asc' })
   const feedSort = useTableSort(feedColumns, { key: 'created_at', dir: 'desc' })
 
@@ -299,7 +368,7 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
                 rowKey={(row) => row.finding_id}
                 sort={feedSort.sort}
                 onSort={feedSort.toggle}
-                onRowClick={setOpen}
+                onRowClick={(row) => setAlert(row.finding_id)}
                 emptyMessage="No alerts."
               />
             </div>
@@ -307,7 +376,15 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
         </>
       )}
 
-      <Popup open={open !== null} onClose={() => setOpen(null)} title={open?.finding_id ?? 'Alert'}>
+      <Popup open={alertId !== null} onClose={() => setAlert(null)} title={alertId ?? 'Alert'}>
+        {!open && readStatus === 'missing' && <p>Alert {alertId} not found.</p>}
+        {!open && readStatus === 'error' && (
+          <>
+            <p role="alert">Couldn’t load alert {alertId}.</p>
+            <div><button type="button" className="btn ghost" onClick={() => setAttempt((n) => n + 1)}>Retry</button></div>
+          </>
+        )}
+        {!open && readStatus === 'loading' && <p>Loading alert…</p>}
         {open && (
           <>
             <p className="text-[13px] text-tx-2">{open.description ?? 'No description.'}</p>
@@ -324,6 +401,18 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
                 <Icon name="info" size={14} />
               </button>
               <button type="button" className="btn ghost" onClick={launch}>Launch</button>
+              {open.case_id && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    setAlert(null) // one overlay at a time
+                    openCase(open.case_id!)
+                  }}
+                >
+                  Open case
+                </button>
+              )}
               {open.case_id && (
                 <button type="button" className="btn ghost" onClick={createTicket}>Create ticket</button>
               )}
