@@ -20,6 +20,7 @@ from core.config import get_settings
 from core.telemetry import get_meter
 from core.time import utcnow
 from services.daemon.config import MetricsConfig
+from services.daemon.vendor_errors import vendor_error_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -222,13 +223,14 @@ class MetricsServer:
             "responder": metrics.get("responder", {}),
             "scheduler": metrics.get("scheduler", {}),
             "orchestrator": metrics.get("orchestrator", {}),
+            "vendors": metrics["vendors"],
         }
 
         return web.json_response(status)
 
     def _collect_metrics(self) -> Dict[str, Any]:
         """Collect metrics from all component stats dicts."""
-        metrics: Dict[str, Any] = {}
+        metrics: Dict[str, Any] = {"vendors": vendor_error_snapshot()}
 
         if self.poller:
             metrics["poller"] = self.poller.stats.copy()

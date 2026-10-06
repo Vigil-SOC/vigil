@@ -48,9 +48,9 @@ LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
 WORKDIR /app
 
-# Nothing here needs apt except the base image's own gnutls (CVE-2026-33845,
-# CVE-2026-42010) and perl-base (CVE-2026-13221, CVE-2026-42496, CVE-2026-8376),
-# which ship fixable CRITICALs. Pinned because hadolint asks for it; Trivy is
+# Nothing here needs apt except the base image's own gnutls (two fixable
+# CRITICALs: CVE-2026-33845, CVE-2026-42010) and perl-base (CVE-2026-13221,
+# CVE-2026-42496, CVE-2026-8376). Pinned because hadolint asks for it; Trivy is
 # what says when a pin has gone stale.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

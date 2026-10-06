@@ -9,6 +9,11 @@ from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
 from services.daemon.config import ProcessingConfig, ResponseConfig
 from services.daemon.probes import PROBE_DATA_SOURCE
+from services.daemon.vendor_errors import (
+    note_response,
+    record_vendor_error,
+    vendor_cooling_down,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -744,7 +749,7 @@ REASONING: [Brief explanation]
                     if res and res.get("status") not in ("disabled", "rejected"):
                         submissions[hash_val] = res
                 except Exception as e:
-                    logger.debug(f"Sandbox submission failed for {hash_val}: {e}")
+                    record_vendor_error("sandbox", "error", detail=str(e))
             if submissions:
                 enrichment["sandbox_submissions"] = submissions
 
@@ -816,7 +821,9 @@ REASONING: [Brief explanation]
         result = {}
 
         # Shodan lookup
-        if self._enrichment_services.get("shodan", {}).get("enabled"):
+        if self._enrichment_services.get("shodan", {}).get(
+            "enabled"
+        ) and not vendor_cooling_down("shodan"):
             try:
                 import httpx
 
@@ -828,7 +835,9 @@ REASONING: [Brief explanation]
                     timeout=10,
                     follow_redirects=True,
                 )
-                if resp.status_code == 200:
+                if note_response("shodan", resp):
+                    pass
+                elif resp.status_code == 200:
                     data = resp.json()
                     result["shodan"] = {
                         "ports": data.get("ports", []),
@@ -838,10 +847,12 @@ REASONING: [Brief explanation]
                         "vulns": data.get("vulns", []),
                     }
             except Exception as e:
-                logger.debug(f"Shodan lookup failed for {ip}: {e}")
+                record_vendor_error("shodan", "error", detail=str(e))
 
         # VirusTotal IP lookup
-        if self._enrichment_services.get("virustotal", {}).get("enabled"):
+        if self._enrichment_services.get("virustotal", {}).get(
+            "enabled"
+        ) and not vendor_cooling_down("virustotal"):
             try:
                 import httpx
 
@@ -853,7 +864,9 @@ REASONING: [Brief explanation]
                     timeout=10,
                     follow_redirects=True,
                 )
-                if resp.status_code == 200:
+                if note_response("virustotal", resp):
+                    pass
+                elif resp.status_code == 200:
                     data = resp.json().get("data", {}).get("attributes", {})
                     stats = data.get("last_analysis_stats", {})
                     result["virustotal"] = {
@@ -863,13 +876,15 @@ REASONING: [Brief explanation]
                         "reputation": data.get("reputation", 0),
                     }
             except Exception as e:
-                logger.debug(f"VirusTotal lookup failed for {ip}: {e}")
+                record_vendor_error("virustotal", "error", detail=str(e))
 
         return result if result else None
 
     async def _enrich_hash(self, hash_val: str) -> Optional[Dict[str, Any]]:
         """Enrich file hash with threat intel."""
-        if not self._enrichment_services.get("virustotal", {}).get("enabled"):
+        if not self._enrichment_services.get("virustotal", {}).get(
+            "enabled"
+        ) or vendor_cooling_down("virustotal"):
             return None
 
         try:
@@ -883,6 +898,8 @@ REASONING: [Brief explanation]
                 timeout=10,
                 follow_redirects=True,
             )
+            if note_response("virustotal", resp):
+                return None
             if resp.status_code == 200:
                 data = resp.json().get("data", {}).get("attributes", {})
                 stats = data.get("last_analysis_stats", {})
@@ -894,7 +911,7 @@ REASONING: [Brief explanation]
                     "names": data.get("names", [])[:5],
                 }
         except Exception as e:
-            logger.debug(f"VirusTotal hash lookup failed: {e}")
+            record_vendor_error("virustotal", "error", detail=str(e))
 
         return None
 
