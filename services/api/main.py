@@ -33,6 +33,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.platform.monitoring import get_metrics_response, init_sentry
+from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
 from services.api.discovery import mount_routers
@@ -536,11 +537,6 @@ async def _startup(app: FastAPI):
         if postgres_conn:
             os.environ["POSTGRESQL_CONNECTION_STRING"] = postgres_conn  # noqa: ENV001
             logger.debug("Loaded PostgreSQL connection string from secrets")
-        else:
-            # Set default connection string if not configured
-            default_conn = "postgresql://deeptempo:deeptempo_secure_password_change_me@localhost:5432/deeptempo_soc"
-            os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn  # noqa: ENV001
-            logger.debug("Using default PostgreSQL connection string")
 
         # Rehydrate integration credentials into os.environ so MCP servers gated
         # on ${<ID>_<FIELD>} survive a restart — set_secret only writes os.environ
@@ -632,6 +628,8 @@ async def _startup(app: FastAPI):
                 )
                 logger.warning("    2. Restart application: ./start.sh")
 
+    except MissingPostgresPasswordError:
+        raise  # fail closed: no database credentials, nothing to serve
     except ImportError as e:
         logger.warning(f"Database modules not available: {e}")
     except Exception as e:

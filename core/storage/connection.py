@@ -197,11 +197,10 @@ def _load_connection_string_secret() -> Optional[str]:
     """Read POSTGRESQL_CONNECTION_STRING from the **encrypted store only**.
 
     Deliberately not ``get_secret()``: that falls back to the environment, and
-    ``services/api/main.py`` stuffs a hardcoded default connection string into
-    ``os.environ`` for the MCP servers whenever the secret is unset. Reading
-    through the fallback chain would let that default outrank an operator's
-    POSTGRES_* variables — silently pinning them to localhost. The encrypted
-    store is where Settings -> PostgreSQL writes, so it alone expresses intent.
+    ``services/api/main.py`` mirrors the stored DSN into ``os.environ`` for
+    child processes. Reading through the fallback chain would let that copy
+    outrank an operator's POSTGRES_* variables. The encrypted store is where
+    Settings -> PostgreSQL writes, so it alone expresses intent.
 
     Local import for the same reason as :func:`_load_platform_db_proxy` —
     ``database/`` must not hard-depend on the secrets manager at import time.
@@ -260,6 +259,57 @@ def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
     return args
 
 
+# Passwords this repo ships in Compose, Helm and env.example. Anyone can read them.
+_SHIPPED_DEFAULT_PASSWORDS = frozenset(
+    {"deeptempo_secure_password_change_me", "change-me-before-production"}
+)
+_DEV_MODE_PASSWORD = "deeptempo_secure_password_change_me"
+_shipped_default_logged = False
+
+
+class MissingPostgresPasswordError(RuntimeError):
+    """No Postgres password resolved and DEV_MODE is off. Fatal at startup."""
+
+
+def _flag_shipped_default(password: str) -> None:
+    """ERROR once per process when the password in use is a published default.
+
+    Logged, not refused: existing Compose installs initialised their volume
+    with it, and refusing would lock them out of their own database.
+    """
+    global _shipped_default_logged
+    if (
+        password in _SHIPPED_DEFAULT_PASSWORDS
+        and not _shipped_default_logged
+        and not get_settings().dev_mode
+    ):
+        _shipped_default_logged = True
+        logger.error(
+            "The Postgres password in use is a published default shipped with "
+            "Vigil. Set POSTGRES_PASSWORD to a unique value (and change it in "
+            "the database) before exposing this deployment."
+        )
+
+
+def resolve_postgres_password() -> str:
+    """The POSTGRES_PASSWORD to connect with; fails closed outside DEV_MODE."""
+    value = get_secret("POSTGRES_PASSWORD")
+    if value:
+        _flag_shipped_default(value)
+        return value
+    if get_settings().dev_mode:
+        logger.warning(
+            "POSTGRES_PASSWORD not set; using the published DEV_MODE default. "
+            "Do not use this outside development."
+        )
+        return _DEV_MODE_PASSWORD
+    raise MissingPostgresPasswordError(
+        "POSTGRES_PASSWORD is required when DEV_MODE=false. Set it in the "
+        "environment or .env (or configure POSTGRESQL_CONNECTION_STRING in "
+        "Settings) before starting."
+    )
+
+
 class DatabaseConfig:
     def __init__(self, *, connection_string: Optional[str] = None):
         """Initialize from the encrypted-store DSN, else POSTGRES_*.
@@ -310,9 +360,7 @@ class DatabaseConfig:
         self.port = settings.postgres_port
         self.database = settings.postgres_db
         self.user = settings.postgres_user
-        self.password = (
-            get_secret("POSTGRES_PASSWORD") or "deeptempo_secure_password_change_me"
-        )
+        self.password = resolve_postgres_password()
         self.ssl_mode = settings.postgres_ssl_mode
         self.extra_query: Dict[str, str] = {}
 
@@ -322,6 +370,7 @@ class DatabaseConfig:
         self.database = parsed.database
         self.user = parsed.user
         self.password = parsed.password
+        _flag_shipped_default(parsed.password)
         self.ssl_mode = parsed.query.get("sslmode") or get_settings().postgres_ssl_mode
         self.extra_query = {k: v for k, v in parsed.query.items() if k != "sslmode"}
 

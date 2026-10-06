@@ -13,12 +13,10 @@ import os
 from urllib.parse import quote
 
 from core.config import get_settings
-from core.secrets import get_secret
-from core.storage.connection import DatabaseConfig
+from core.storage.connection import DatabaseConfig, resolve_postgres_password
 
 OWNER_CONNECTION_ENV = "VIGIL_BACKUP_OWNER_CONNECTION"
 _ON = frozenset({"1", "true", "yes", "on"})
-_DEFAULT_PASSWORD = "deeptempo_secure_password_change_me"
 
 
 def backup_database_config() -> DatabaseConfig:
@@ -44,4 +42,4 @@ def _owner_password() -> str:
     env = os.environ.get("POSTGRES_PASSWORD")  # noqa: ENV001
     if env:
         return env
-    return get_secret("POSTGRES_PASSWORD") or _DEFAULT_PASSWORD
+    return resolve_postgres_password()

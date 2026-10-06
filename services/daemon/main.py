@@ -85,6 +85,7 @@ class SOCDaemon:
         )
         from core.response.approval_service import ApprovalService
         from core.response.autonomous_response_service import AutonomousResponseService
+        from core.storage.connection import get_db_manager
         from services.daemon.kafka_ingestor import KafkaIngestor
         from services.daemon.metrics import MetricsServer
         from services.daemon.orchestrator import Orchestrator
@@ -92,6 +93,10 @@ class SOCDaemon:
         from services.daemon.processor import FindingProcessor
         from services.daemon.responder import AutonomousResponder
         from services.daemon.scheduler import TaskScheduler
+
+        # Resolve the DB credentials now so a missing password stops startup,
+        # rather than surfacing on the first query inside a component task.
+        get_db_manager()
 
         self._poller = DataPoller(self.config.polling)
         self._kafka_ingestor = KafkaIngestor(self.config.kafka)

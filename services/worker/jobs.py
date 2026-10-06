@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.llm.gateway.gateway import QUEUE_NAME
 from core.llm.gateway.gateway import redis_settings as gateway_redis_settings
+from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,8 @@ async def on_startup(ctx: Dict[str, Any]):
         if db_manager._engine is None:
             db_manager.initialize()
             logger.info("LLM worker: DB manager initialized")
+    except MissingPostgresPasswordError:
+        raise  # fail closed rather than run without database credentials
     except Exception as _db_err:
         logger.warning(
             "LLM worker DB init failed (reasoning traces will be disabled): %s",
