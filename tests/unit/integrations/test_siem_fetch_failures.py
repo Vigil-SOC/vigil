@@ -5,6 +5,7 @@ recorded success and advanced the cursor past the outage. Sentinel, Defender
 and Elastic still return [] when their configuration is incomplete. Security
 Hub has no such check: it falls back to boto3's default credential chain, and
 an enabled source that finds no credentials raises like any other outage.
+A client that cannot be constructed (Elastic, OpenSearch) is an outage too.
 """
 
 import sys
@@ -239,3 +240,48 @@ async def test_elastic_without_kibana_raises_when_the_index_search_fails():
         ingestion = ElasticIngestion()
     with pytest.raises(RuntimeError, match="index search failed"):
         await ingestion.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_elastic_client_construction_error_raises():
+    from core.integrations.elastic.ingestion import ElasticIngestion
+
+    with patch(
+        "core.integrations.elastic.ingestion.resolve",
+        return_value={"elasticsearch_url": "https://es.test:9200"},
+    ):
+        ingestion = ElasticIngestion()
+    with patch(
+        "core.integrations.elastic.ingestion.ElasticService",
+        side_effect=ValueError("bad ca_cert_path"),
+    ):
+        with pytest.raises(ValueError, match="bad ca_cert_path"):
+            await ingestion.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_opensearch_client_construction_error_raises():
+    from core.integrations.opensearch.ingestion import OpenSearchIngestion
+
+    with patch(
+        "core.integrations.opensearch.ingestion.resolve",
+        return_value={"opensearch_url": "https://os.test:9200"},
+    ):
+        ingestion = OpenSearchIngestion()
+    with patch(
+        "core.integrations.opensearch.ingestion.OpenSearchService",
+        side_effect=ValueError("bad ca_cert_path"),
+    ):
+        with pytest.raises(ValueError, match="bad ca_cert_path"):
+            await ingestion.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_opensearch_without_url_is_not_a_failure():
+    from core.integrations.opensearch.ingestion import OpenSearchIngestion
+
+    with patch(
+        "core.integrations.opensearch.ingestion.resolve",
+        return_value={"opensearch_url": None},
+    ):
+        assert await OpenSearchIngestion().fetch_alerts() == []

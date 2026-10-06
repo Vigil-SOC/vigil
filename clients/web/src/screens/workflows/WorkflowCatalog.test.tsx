@@ -149,7 +149,13 @@ vi.mock('../../services/skillsApi', () => ({
       bundled: true,
       body: '# Brief\n',
       operator_root_set: false,
+      version: 3,
+      files: [
+        { path: 'SKILL.md', size: 120 },
+        { path: 'assets/board-brief.md', size: 40 },
+      ],
     })),
+    file: vi.fn(() => Promise.resolve({ path: 'assets/board-brief.md', content: 'Board brief template' })),
     save: vi.fn(() => Promise.resolve({
       name: 'executive-summary-copy',
       description: 'Write the brief.',
@@ -225,7 +231,7 @@ describe('workflow catalog table', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit executive-summary' }))
     expect(await screen.findByText(/path is unset/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save new version' })).toBeDisabled()
   })
 
   it('saves a bundled skill under a new name and deletes an operator skill after confirm', async () => {
@@ -236,6 +242,11 @@ describe('workflow catalog table', () => {
       bundled: true,
       body: '# Brief\n',
       operator_root_set: true,
+      version: 3,
+      files: [
+        { path: 'SKILL.md', size: 120 },
+        { path: 'assets/board-brief.md', size: 40 },
+      ],
     })
     vi.mocked(skillsApi.list)
       .mockResolvedValueOnce([
@@ -257,21 +268,72 @@ describe('workflow catalog table', () => {
     const name = await screen.findByDisplayValue('executive-summary')
     const editor = screen.getByRole('dialog', { name: 'Edit executive-summary' })
     expect(within(editor).getByText('Skill · executive-summary')).toBeInTheDocument()
-    expect(within(editor).getByText('Built in')).toBeInTheDocument()
+    expect(within(editor).getByText('Built in · version 3')).toBeInTheDocument()
     expect(within(editor).getByLabelText('Steps (SKILL.md)')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save new version' })).toBeDisabled()
+
+    // a file opens read-only in place of the steps, with a way back
+    fireEvent.click(within(editor).getByRole('button', { name: 'assets/board-brief.md' }))
+    expect(await within(editor).findByDisplayValue('Board brief template')).toHaveAttribute('readonly')
+    expect(skillsApi.file).toHaveBeenCalledWith('executive-summary', 'assets/board-brief.md')
+    expect(within(editor).queryByLabelText('Steps (SKILL.md)')).toBeNull()
+    fireEvent.click(within(editor).getByRole('button', { name: 'Back to steps' }))
+    expect(within(editor).getByLabelText('Steps (SKILL.md)')).toBeInTheDocument()
+
     fireEvent.change(name, { target: { value: 'desk-check' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save new version' }))
     expect(skillsApi.save).toHaveBeenCalledWith({
       name: 'desk-check',
       description: 'Write the brief.',
       body: '# Brief\n',
+      source: 'executive-summary',
     })
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
     const dialog = await screen.findByRole('dialog', { name: 'Delete skill' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     expect(skillsApi.delete).toHaveBeenCalledWith('desk-check')
+  })
+
+  it('sends the opened version when saving a custom skill and keeps the edits on a stale 409', async () => {
+    vi.mocked(skillsApi.get).mockResolvedValueOnce({
+      name: 'desk-check',
+      description: 'A copy.',
+      source_path: 'skills/desk-check',
+      bundled: false,
+      body: '# Steps\n',
+      operator_root_set: true,
+      version: 2,
+      files: [{ path: 'SKILL.md', size: 10 }],
+    })
+    vi.mocked(skillsApi.list).mockResolvedValueOnce([
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false },
+    ])
+    vi.mocked(skillsApi.save).mockRejectedValueOnce({
+      response: { data: { detail: 'This skill changed since you opened it. Reopen it to see the latest.' } },
+    })
+
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit desk-check' }))
+    const editor = await screen.findByRole('dialog', { name: 'Edit desk-check' })
+    const steps = await within(editor).findByLabelText('Steps (SKILL.md)')
+    fireEvent.change(steps, { target: { value: '# My edit\n' } })
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save new version' }))
+    expect(skillsApi.save).toHaveBeenCalledWith({
+      name: 'desk-check',
+      description: 'A copy.',
+      body: '# My edit\n',
+      version: 2,
+    })
+    expect(await within(editor).findByText(/changed since you opened it/)).toBeInTheDocument()
+    expect(within(editor).getByLabelText('Steps (SKILL.md)')).toHaveValue('# My edit\n')
+    expect(within(editor).getByRole('button', { name: 'Save new version' })).toBeEnabled()
   })
 
   it('builds a skill from a blank editor and refuses a name already in the list', async () => {
@@ -288,6 +350,8 @@ describe('workflow catalog table', () => {
       bundled: true,
       body: '',
       operator_root_set: true,
+      version: 1,
+      files: [],
     })
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     await screen.findByText('executive-summary')

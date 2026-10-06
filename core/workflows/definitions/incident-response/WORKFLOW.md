@@ -1,5 +1,6 @@
 ---
 name: incident-response
+version: 1
 description: "Respond to active security incidents with rapid triage, deep investigation, containment, and documentation. Follows NIST IR framework."
 use_case: "Active incident response -- an alert fires and the SOC needs to triage, investigate, contain, and document."
 trigger_examples:

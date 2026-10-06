@@ -158,16 +158,28 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
 # file paths is named for the loop it runs, which is all the console needs to list it.
 def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
+    from core.workflows.workflows_service import WorkflowsService
 
     # The scheme the agent layer resolves against /internal/playbooks
     # (services/agent/core/playbooks.ts::WORKFLOW_SCHEME).
     scheme = "workflow:"
     named = request.playbook.removeprefix(scheme).strip()
     workflow_id = named if request.playbook.startswith(scheme) else request.run_kind
+    # A bare run_kind names no definition, so it has no version to record.
+    try:
+        version = (
+            WorkflowsService().version_of(workflow_id)
+            if request.playbook.startswith(scheme)
+            else None
+        )
+    except Exception as exc:  # noqa: BLE001 — the row is best-effort
+        logger.warning("no workflow version for %s: %s", workflow_id, exc)
+        version = None
     WorkflowRunService().begin_run(
         workflow_id=workflow_id,
         workflow_name=workflow_id,
         workflow_source="agent",
+        workflow_version=version,
         trigger_context={"run_kind": request.run_kind, "prompt": request.prompt},
         triggered_by="api",
         run_id=run_id,

@@ -257,7 +257,7 @@ async def test_runner_persists_the_newest_time_and_the_next_tick_drains(monkeypa
     stored: List[Dict[str, Any]] = []
     monkeypatch.setattr(
         "core.federation.runner.store.record_success",
-        lambda source_id, *, cursor: stored.append(cursor),
+        lambda source_id, *, cursor, **_: stored.append(cursor),
     )
     monkeypatch.setattr(
         "core.federation.runner.store.record_failure",

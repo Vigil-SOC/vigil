@@ -22,6 +22,8 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
+from opentelemetry import trace
+
 from core.integrations.mcp.surface import VIGIL_SERVER
 
 logger = logging.getLogger(__name__)
@@ -107,7 +109,14 @@ async def call_tool(
         else:
             content.append({"type": "text", "text": str(block)})
 
-    return {"error": bool(getattr(result, "is_error", False)), "content": content}
+    is_error = bool(getattr(result, "is_error", False))
+    if is_error:
+        detail = next((c["text"] for c in content if c.get("text")), "")[:200]
+        logger.warning("%s.%s returned an error: %s", VIGIL_SERVER, name, detail)
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_status(trace.StatusCode.ERROR, detail)
+    return {"error": is_error, "content": content}
 
 
 def register(registry) -> int:

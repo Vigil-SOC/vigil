@@ -1,5 +1,6 @@
 ---
 name: full-investigation
+version: 1
 description: "Comprehensive investigation with MITRE ATT&CK mapping, cross-signal correlation, response planning, and detailed reporting."
 use_case: "Deep-dive investigation into suspicious findings or clusters, going beyond triage into full MITRE mapping, cross-signal correlation, and comprehensive response."
 trigger_examples:

@@ -242,6 +242,7 @@ class TestEnqueue:
         assert kwargs["workflow_id"] == "threat-hunt"
         assert kwargs["workflow_name"] == "threat-hunt"
         assert kwargs["workflow_source"] == "agent"
+        assert kwargs["workflow_version"] == 1
         assert kwargs["triggered_by"] == "orchestrator"
         assert kwargs["trigger_context"] == {
             "run_kind": "hunt",

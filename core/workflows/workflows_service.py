@@ -196,6 +196,7 @@ class WorkflowDefinition:
         body: str,
         source: str = "file",
         updated_at: Optional[str] = None,
+        version: Optional[int] = None,
     ):
         self.id = workflow_id
         self.file_path = file_path
@@ -204,6 +205,16 @@ class WorkflowDefinition:
         self.source = source  # "file" or "custom"
         # Custom rows only. File workflows leave this unset so to_dict omits it.
         self.updated_at = updated_at
+        # Custom rows carry their row's version. A file workflow declares it in
+        # front matter; missing or not an int reads as 1.
+        if version is None:
+            declared = metadata.get("version")
+            version = (
+                declared
+                if isinstance(declared, int) and not isinstance(declared, bool)
+                else 1
+            )
+        self.version = version
 
     @property
     def name(self) -> str:
@@ -268,6 +279,8 @@ class WorkflowDefinition:
             "use_case": self.use_case,
             "trigger_examples": self.trigger_examples,
             "source": self.source,
+            # What a run records as workflow_version, so a run says which edit ran.
+            "version": self.version,
             # The console reads this to know a run takes a turn count rather than
             # walking phases, instead of keying off the workflow id.
             "run_kind": self.run_kind,
@@ -330,6 +343,7 @@ def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
         body=body,
         source="custom",
         updated_at=updated_at,
+        version=wf.get("version") or 1,
     )
 
 
@@ -480,6 +494,18 @@ class WorkflowsService:
         if custom:
             return custom
         return self._cache.get(workflow_id)
+
+    def version_of(self, workflow_id: str) -> Optional[int]:
+        """Version of a defined workflow, None when the id names none.
+
+        Tolerant: run recording is best-effort, so a failed lookup is None.
+        """
+        try:
+            workflow = self.get_workflow(workflow_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"Version lookup failed for {workflow_id}: {exc}")
+            return None
+        return workflow.version if workflow else None
 
     def get_workflow_dict(
         self, workflow_id: str, include_body: bool = True

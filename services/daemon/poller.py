@@ -25,6 +25,13 @@ from typing import Any, Dict, Optional
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
+from core.webhook_rejections import (
+    BAD_TOKEN,
+    DISABLED,
+    NO_SECRET,
+    record_rejection,
+    rejection_counts,
+)
 from services.daemon.config import PollingConfig
 
 logger = logging.getLogger(__name__)
@@ -152,7 +159,9 @@ class DataPoller:
             "opensearch_polls": 0,
             "opensearch_findings": 0,
             "webhook_findings": 0,
+            "dropped": 0,
             "errors": 0,
+            "webhook_rejections": {},
         }
 
     def set_output_queue(self, queue: asyncio.Queue):
@@ -620,16 +629,19 @@ class DataPoller:
         """Run a simple webhook server for external ingestion."""
         from aiohttp import web
 
+        def reject(request: web.Request, reason: str, detail: Optional[str] = None):
+            record_rejection(
+                f"daemon{request.path}", reason, request.remote, detail=detail
+            )
+            self.stats["webhook_rejections"] = rejection_counts("daemon/")
+
         async def handle_webhook(request: web.Request) -> web.Response:
             """Handle incoming webhook data."""
             # Fail closed: no token configured => ingestion is disabled, and every
             # request must present a matching bearer (constant-time compare).
             token = self.config.webhook_token
             if not token:
-                logger.error(
-                    "Ingest webhook rejected: DAEMON_WEBHOOK_TOKEN is not set "
-                    "(fail-closed; ingestion disabled until configured)"
-                )
+                reject(request, NO_SECRET, "DAEMON_WEBHOOK_TOKEN is not set")
                 return web.json_response(
                     {"error": "ingest disabled: server missing DAEMON_WEBHOOK_TOKEN"},
                     status=503,
@@ -638,6 +650,7 @@ class DataPoller:
                 request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             )
             if not hmac.compare_digest(presented, token):
+                reject(request, BAD_TOKEN)
                 return web.json_response({"error": "unauthorized"}, status=401)
             try:
                 data = await request.json()
@@ -660,6 +673,11 @@ class DataPoller:
                     s for f in findings if (s := f.get("data_source")) in disabled
                 }
                 if blocked:
+                    reject(
+                        request,
+                        DISABLED,
+                        f"sources={sorted(blocked)[:10]}",
+                    )
                     return web.json_response(
                         {
                             "error": f"ingestion disabled for source(s): {sorted(blocked)}"
@@ -817,8 +835,19 @@ class DataPoller:
             raise IngestionError(f"{label} ingestion failed: {result.get('errors')}")
 
         ingested = result.get("ingested", 0)
+        failed = result.get("failed", 0)
         self.stats[f"{source}_findings"] += ingested
+        # A partial failure is not an outage (no raise, no backoff) but is counted.
+        self.stats["dropped"] += failed
         logger.info("%s: ingested %d %s", label, ingested, noun)
+        if failed:
+            logger.warning(
+                "%s: %d %s failed to ingest (first errors: %s)",
+                label,
+                failed,
+                noun,
+                result.get("errors"),
+            )
 
     async def _poll_ingestion_loop(self, source: str, shutdown_event: asyncio.Event):
         """Poll an ingestion-service source on interval until shutdown."""
@@ -880,16 +909,26 @@ class DataPoller:
             )
 
             new_count = 0
+            dropped = 0
             for alert in alerts:
                 finding = self._elastic_service.transform_alert_to_finding(alert)
-                if finding and not await self._elastic_dedup.is_processed(
-                    finding["finding_id"]
-                ):
+                if not finding:
+                    dropped += 1
+                    continue
+                if not await self._elastic_dedup.is_processed(finding["finding_id"]):
                     if await self._enqueue_finding(
                         finding, "elastic", self._elastic_dedup, finding["finding_id"]
                     ):
                         await self._elastic_dedup.mark_processed(finding["finding_id"])
                         new_count += 1
+
+            if dropped:
+                logger.warning(
+                    "Elastic Security: dropped %d of %d alert(s) that failed to transform",
+                    dropped,
+                    len(alerts),
+                )
+                self.stats["dropped"] += dropped
 
             if new_count > 0:
                 logger.info(f"Polled {new_count} new findings from Elastic Security")

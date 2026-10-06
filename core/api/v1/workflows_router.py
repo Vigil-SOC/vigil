@@ -47,6 +47,8 @@ class WorkflowDetailResponse(BaseModel):
     use_case: Optional[str] = None
     trigger_examples: List[str] = Field(default_factory=list)
     source: str
+    # Custom: the row's edit count. File: declared in front matter, else 1.
+    version: int = 1
     run_kind: str
     hunt_like: bool
     # None is an empty list. The console reader shows these for a single agent.

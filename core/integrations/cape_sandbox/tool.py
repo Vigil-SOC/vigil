@@ -32,6 +32,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.cape_sandbox.descriptor import CAPE_SANDBOX
 
 logger = logging.getLogger(__name__)
@@ -397,14 +398,7 @@ async def _on_list_tools(_ctx, _params):
 
 
 async def _on_call_tool(_ctx, params):
-    try:
-        content = await handle_call_tool(params.name, params.arguments)
-    except Exception as exc:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=str(exc))],
-            is_error=True,
-        )
-    return types.CallToolResult(content=content)
+    return await run_tool(handle_call_tool, params)
 
 
 server = Server(

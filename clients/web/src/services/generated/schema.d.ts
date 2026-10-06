@@ -5923,7 +5923,10 @@ export interface paths {
         put?: never;
         /**
          * Save Skill
-         * @description Write ``<vigil_skills_path>/<name>/SKILL.md``. An existing operator skill is overwritten.
+         * @description Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+         *
+         *     An existing operator skill is overwritten when ``version`` is the one on disk
+         *     (409 otherwise); ``source`` copies that skill's folder.
          */
         post: operations["post_api_skills"];
         delete?: never;
@@ -5951,6 +5954,26 @@ export interface paths {
          * @description Delete an operator skill directory. A bundled skill is refused.
          */
         delete: operations["delete_api_skills_name"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/files/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Skill File
+         * @description One text file in the skill folder, read-only. Nothing is executed.
+         */
+        get: operations["get_api_skills_name_files_path"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -11509,12 +11532,30 @@ export interface components {
             bundled: boolean;
             /** Description */
             description: string;
+            /** Files */
+            files: components["schemas"]["SkillFile"][];
             /** Name */
             name: string;
             /** Operator Root Set */
             operator_root_set: boolean;
             /** Source Path */
             source_path: string;
+            /** Version */
+            version: number;
+        };
+        /** SkillFile */
+        SkillFile: {
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+        };
+        /** SkillFileContent */
+        SkillFileContent: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
         };
         /** SkillResponse */
         SkillResponse: {
@@ -11535,6 +11576,10 @@ export interface components {
             description: string;
             /** Name */
             name: string;
+            /** Source */
+            source?: string | null;
+            /** Version */
+            version?: number | null;
         };
         /**
          * SourceEvidence
@@ -12324,6 +12369,11 @@ export interface components {
             trigger_examples?: string[];
             /** Use Case */
             use_case?: string | null;
+            /**
+             * Version
+             * @default 1
+             */
+            version: number;
         };
         /**
          * WorkflowExecuteRequest
@@ -22824,6 +22874,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_skills_name_files_path: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillFileContent"];
                 };
             };
             /** @description Validation Error */

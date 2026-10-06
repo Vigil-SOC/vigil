@@ -39,6 +39,7 @@ _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _NAME_MAX = 64
 _DESCRIPTION_MAX = 1024
 _COMPATIBILITY_MAX = 500
+_FILES_MAX = 200
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,10 @@ class SkillError(ValueError):
 
 class SkillNotFound(SkillError):
     """No loaded skill has this name."""
+
+
+class SkillConflict(SkillError):
+    """The write clashes with what is on disk: a stale version or a taken folder."""
 
 
 def _require_str(frontmatter: Dict[str, Any], key: str, limit: int) -> str:
@@ -189,10 +194,61 @@ def skill_body(skill: Skill) -> str:
     return content[offset:].lstrip("\n")
 
 
-def render_skill_markdown(name: str, description: str, body: str) -> str:
-    """``SKILL.md`` with only ``name`` and ``description`` in the frontmatter."""
+def _frontmatter_of(skill_dir: Path) -> Dict[str, Any]:
+    """The frontmatter of ``skill_dir/SKILL.md``, or ``{}`` when it has none."""
+    try:
+        text = (skill_dir / SKILL_FILE).read_text(encoding="utf-8-sig")
+        return split_frontmatter(text)[0] or {}
+    except (FrontmatterError, UnicodeDecodeError, OSError):
+        return {}
+
+
+def _version_of(frontmatter: Dict[str, Any]) -> int:
+    """``metadata.version`` as a positive int; missing or malformed counts as 1."""
+    metadata = frontmatter.get("metadata")
+    raw = metadata.get("version") if isinstance(metadata, dict) else None
+    ok = (
+        isinstance(raw, str) and raw.isdecimal() and len(raw) <= 9
+    )  # bounded: int() of a huge digit string raises
+    return int(raw) if ok and int(raw) > 0 else 1
+
+
+def skill_version(skill: Skill) -> int:
+    return _version_of(_frontmatter_of(skill.path))
+
+
+def skill_files(skill: Skill) -> List[Dict[str, Any]]:
+    """Regular files in the skill folder as ``{path, size}``: SKILL.md, then sorted.
+
+    Symlinks and dotfiles are skipped, and the count is capped.
+    """
+    found: List[Dict[str, Any]] = []
+    for dirpath, dirnames, filenames in os.walk(skill.path):
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if not d.startswith(".") and not Path(dirpath, d).is_symlink()
+        )
+        for filename in sorted(filenames):
+            path = Path(dirpath, filename)
+            if filename.startswith(".") or path.is_symlink() or not path.is_file():
+                continue
+            rel = path.relative_to(skill.path).as_posix()
+            found.append({"path": rel, "size": path.stat().st_size})
+    found.sort(key=lambda f: (f["path"] != SKILL_FILE, f["path"]))
+    return found[:_FILES_MAX]
+
+
+def render_skill_markdown(
+    name: str,
+    description: str,
+    body: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """``SKILL.md`` with ``name`` and ``description`` first, then ``extra`` as given."""
+    keys = {k: v for k, v in (extra or {}).items() if k not in ("name", "description")}
     dumped = yaml.safe_dump(
-        {"name": name, "description": description},
+        {"name": name, "description": description, **keys},
         sort_keys=False,
         allow_unicode=True,
         default_flow_style=False,
@@ -296,17 +352,42 @@ def _accepts_skill(name: str, content: str) -> None:
         parse_skill(skill_dir)
 
 
+def _copy_skill_dir(source: Path, dest: Path) -> None:
+    """Copy ``source`` to ``dest``, leaving behind what ``skill_files`` does not list."""
+
+    def skip_hidden(directory: str, names: List[str]) -> List[str]:
+        return [
+            n for n in names if n.startswith(".") or Path(directory, n).is_symlink()
+        ]
+
+    # copyfile drops the source's modes, so a read-only library still copies to a writable folder
+    shutil.copytree(
+        source, dest, symlinks=True, ignore=skip_hidden, copy_function=shutil.copyfile
+    )
+    for directory, _, _ in os.walk(dest):
+        os.chmod(directory, 0o755)
+
+
 def write_operator_skill(
     name: str,
     description: str,
     body: str,
     settings: Optional[Settings] = None,
+    source: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> Skill:
     """Write ``<vigil_skills_path>/<name>/SKILL.md`` that ``parse_skill`` accepts.
 
     A name the bundled library already owns is refused: ``load_skills`` would
     skip the operator copy, so the file would be invisible. An existing
-    operator directory of the same name is overwritten in place.
+    operator skill is overwritten in place: only SKILL.md changes, its other
+    frontmatter keys carry over and ``metadata.version`` goes up by one.
+    With ``source`` (a loaded skill's name) and no skill of this name yet, the
+    source's whole folder is copied first and the copy starts at version 1.
+    An overwrite must send the ``expected_version`` it opened: a folder that
+    exists with none sent, or with a different one on disk, raises
+    :class:`SkillConflict` before anything is written. Check and write are not
+    atomic. ``expected_version`` is ignored when copying.
     """
     root = _require_operator_root(settings)
     skill_dir = _skill_dir(root, name)
@@ -314,8 +395,39 @@ def write_operator_skill(
         raise SkillError(
             f"name {name!r} belongs to the bundled library; save it under a new name"
         )
-    content = render_skill_markdown(name, description, body)
+    origin: Optional[Skill] = None
+    if source is not None:
+        if skill_dir.exists():
+            raise SkillError(f"a skill named {name!r} already exists")
+        origin = {s.name: s for s in load_skills(skill_roots(settings))}.get(source)
+        if origin is None:
+            raise SkillNotFound(f"No skill named {source!r}")
+    if origin is not None:
+        existing, version = _frontmatter_of(origin.path), 1
+    elif skill_dir.exists():
+        if expected_version is None:
+            raise SkillConflict(f"A skill folder named {name} already exists.")
+        existing = _frontmatter_of(skill_dir)
+        if expected_version != _version_of(existing):
+            raise SkillConflict(
+                "This skill changed since you opened it. Reopen it to see the latest."
+            )
+        version = expected_version + 1
+    else:
+        existing, version = {}, 1
+    metadata = existing.get("metadata")
+    extra = {
+        **existing,
+        "metadata": {
+            **(metadata if isinstance(metadata, dict) else {}),
+            "version": str(version),
+        },
+    }
+    content = render_skill_markdown(name, description, body, extra)
     _accepts_skill(name, content)
+    if origin is not None:
+        _install_copy(root, origin, name, content)
+        return parse_skill(skill_dir)
     try:
         skill_dir.mkdir(exist_ok=True)
     except OSError as exc:
@@ -325,6 +437,25 @@ def write_operator_skill(
     _write_new_file(tmp, content.encode("utf-8"))
     os.replace(tmp, target)
     return parse_skill(skill_dir)
+
+
+def _install_copy(root: Path, origin: Skill, name: str, content: str) -> None:
+    """Build the copy in a temp dir under ``root``, then move it into place."""
+    try:
+        scratch = Path(tempfile.mkdtemp(prefix=".copy-", dir=root))
+    except OSError as exc:
+        raise SkillError(f"could not write under {root}: {exc}") from exc
+    try:
+        staged = _direct_child(scratch, name)
+        final = _skill_dir(root, name)
+        _copy_skill_dir(origin.path, staged)
+        _write_new_file(staged / SKILL_FILE, content.encode("utf-8"))
+        parse_skill(staged)
+        os.replace(staged, final)
+    except OSError as exc:
+        raise SkillError(f"could not copy {origin.name!r}: {exc}") from exc
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:
@@ -393,19 +524,27 @@ def read_skill(
         return {"error": f"Could not read {file or SKILL_FILE!r}: {exc}"}
 
 
-def _read(skill: Skill, file: Optional[str]) -> Dict[str, Any]:
-    if file is None:
-        content = (skill.path / SKILL_FILE).read_text(encoding="utf-8-sig")
-        _, offset = split_frontmatter(content)
-        body = content[offset:].lstrip("\n")
-        return {"skill": skill.name, "file": SKILL_FILE, "content": body}
+def read_skill_file(skill: Skill, file: str) -> str:
+    """The text of ``file`` inside the skill. Raises :class:`SkillError` otherwise."""
     target = _confined(skill.path, file)
     if target is None:
-        return {"error": f"{file!r} is outside skill {skill.name!r}"}
+        raise SkillError(f"{file!r} is outside skill {skill.name!r}")
     if not target.is_file():
-        return {"error": f"Skill {skill.name!r} has no file {file!r}"}
+        raise SkillNotFound(f"Skill {skill.name!r} has no file {file!r}")
     try:
-        text = target.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return {"error": f"{file!r} is not a text file"}
-    return {"skill": skill.name, "file": file, "content": text}
+        return target.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise SkillError(f"{file!r} is not a text file") from exc
+
+
+def _read(skill: Skill, file: Optional[str]) -> Dict[str, Any]:
+    if file is None:
+        return {"skill": skill.name, "file": SKILL_FILE, "content": skill_body(skill)}
+    try:
+        return {
+            "skill": skill.name,
+            "file": file,
+            "content": read_skill_file(skill, file),
+        }
+    except SkillError as exc:
+        return {"error": str(exc)}

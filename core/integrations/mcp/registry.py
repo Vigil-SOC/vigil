@@ -229,7 +229,7 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         try:
             connected = mcp_client.get_connection_status() or {}
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Could not read MCP connection status: %s", exc)
+            logger.warning("Could not read MCP connection status: %s", exc)
 
     registered = 0
     for name, tools in tools_dict.items():
@@ -256,7 +256,7 @@ def safe_tool_names(registry: Optional[MCPRegistry]) -> List[str]:
     try:
         return list((registry or MCPRegistry()).get_tool_names() or [])
     except Exception as e:
-        logger.debug(f"MCP registry unavailable: {e}")
+        logger.warning("MCP registry unavailable: %s", e)
         return []
 
 
@@ -264,7 +264,7 @@ def register_connected(registry: MCPRegistry, mcp_client, server_name: str) -> b
     """Register one server from the client's ``tools_cache``.
 
     Called where a connect succeeds so the registry tracks enable intent, not
-    the next reader's liveness check. Best effort: a failure logs at debug and
+    the next reader's liveness check. Best effort: a failure logs a warning and
     returns False, so an enable endpoint can keep its own result.
     """
     try:
@@ -278,7 +278,7 @@ def register_connected(registry: MCPRegistry, mcp_client, server_name: str) -> b
         )
         return True
     except Exception as exc:  # noqa: BLE001 — callers must not 500 on a registry write
-        logger.debug("Could not register MCP server %s: %s", server_name, exc)
+        logger.warning("Could not register MCP server %s: %s", server_name, exc)
         return False
 
 
@@ -287,7 +287,7 @@ def deactivate(registry: MCPRegistry, server_name: str) -> None:
     try:
         registry.set_active(server_name, False)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not deactivate MCP server %s: %s", server_name, exc)
+        logger.warning("Could not deactivate MCP server %s: %s", server_name, exc)
 
 
 def refresh_from_client(registry: MCPRegistry) -> int:
@@ -315,7 +315,7 @@ def refresh_from_client(registry: MCPRegistry) -> int:
     try:
         connected = mcp_client.get_connection_status() or {}
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not read MCP connection status: %s", exc)
+        logger.warning("Could not read MCP connection status: %s", exc)
         connected = {}
 
     added = 0
@@ -351,5 +351,5 @@ def live_mcp_tools(registry: MCPRegistry) -> List[Dict]:
         refresh_from_client(registry)
         return registry.get_all_tools() or []
     except Exception as exc:  # noqa: BLE001 — callers degrade to built-in tools
-        logger.debug("Live MCP tool surface unavailable: %s", exc)
+        logger.warning("Live MCP tool surface unavailable: %s", exc)
         return []

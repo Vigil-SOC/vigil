@@ -132,6 +132,7 @@ async def list_sources() -> Dict[str, Any]:
                 "last_success_at": None,
                 "last_error": None,
                 "consecutive_errors": 0,
+                "dropped_total": 0,
             }
         out.append(_enrich_with_adapter(dict(row)))
 

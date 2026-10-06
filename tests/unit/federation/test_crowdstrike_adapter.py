@@ -325,7 +325,7 @@ async def test_runner_delivers_every_detection_across_ticks(monkeypatch):
     stored: List[Dict[str, Any]] = []
     monkeypatch.setattr(
         "core.federation.runner.store.record_success",
-        lambda source_id, *, cursor: stored.append(cursor),
+        lambda source_id, *, cursor, **_: stored.append(cursor),
     )
     monkeypatch.setattr(
         "core.federation.runner.store.record_failure",

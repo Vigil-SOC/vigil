@@ -319,12 +319,24 @@ async def test_on_call_tool_turns_handler_exceptions_into_error_results(mock_ser
 
 
 @pytest.mark.asyncio
-async def test_on_call_tool_keeps_handler_content_as_success(mock_service):
+async def test_on_call_tool_flags_handled_failure_as_error(mock_service):
     with patch.object(vstrike_module, "_get_service", return_value=mock_service):
         result = await vstrike_module._on_call_tool(
             None,
             SimpleNamespace(name="does_not_exist", arguments={}),
         )
     assert isinstance(result, CallToolResult)
-    assert result.is_error is False
+    assert result.is_error is True
     assert "Unknown tool" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_on_call_tool_keeps_success_content_unflagged(mock_service):
+    with patch.object(vstrike_module, "_get_service", return_value=mock_service):
+        result = await vstrike_module._on_call_tool(
+            None,
+            SimpleNamespace(
+                name="vstrike_get_asset_topology", arguments={"asset_id": "a1"}
+            ),
+        )
+    assert result.is_error is False

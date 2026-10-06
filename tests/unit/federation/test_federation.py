@@ -9,6 +9,7 @@ live elsewhere.
 from __future__ import annotations
 
 import asyncio
+import importlib
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from unittest import mock
@@ -17,6 +18,7 @@ import pytest
 
 from core.federation import registry as fed_registry
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._siem_base import SIEMIngestionAdapter
 from core.federation.runner import FederationRunner, _severity_passes
 
 # ---------------------------------------------------------------------------
@@ -167,7 +169,9 @@ async def test_runner_do_one_tick_filters_by_severity(monkeypatch):
     record_success_calls = []
     monkeypatch.setattr(
         "core.federation.runner.store.record_success",
-        lambda source_id, *, cursor: record_success_calls.append((source_id, cursor)),
+        lambda source_id, *, cursor, dropped=0: record_success_calls.append(
+            (source_id, cursor)
+        ),
     )
     monkeypatch.setattr(
         "core.federation.runner.store.record_failure",
@@ -275,6 +279,64 @@ async def test_siem_adapter_propagates_a_failed_fetch(monkeypatch):
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     with pytest.raises(ConnectionError):
         await adapter.fetch(since=None, cursor={}, max_items=10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module, ingestion_cls, url_key, service_cls",
+    [
+        (
+            "core.integrations.elastic.ingestion",
+            "ElasticIngestion",
+            "elasticsearch_url",
+            "ElasticService",
+        ),
+        (
+            "core.integrations.opensearch.ingestion",
+            "OpenSearchIngestion",
+            "opensearch_url",
+            "OpenSearchService",
+        ),
+    ],
+)
+async def test_client_construction_error_keeps_the_cursor(
+    monkeypatch, module, ingestion_cls, url_key, service_cls
+):
+    """A client that cannot be built is a failed poll: failure recorded and no
+    success, so the stored cursor stays put (#1573)."""
+    mod = importlib.import_module(module)
+    monkeypatch.setattr(mod, "resolve", lambda _spec: {url_key: "https://x.test"})
+    monkeypatch.setattr(
+        mod, service_cls, mock.MagicMock(side_effect=ValueError("bad ca_cert_path"))
+    )
+    adapter = SIEMIngestionAdapter(
+        name="siem",
+        integration_id="siem",
+        default_interval=60,
+        service_factory=getattr(mod, ingestion_cls),
+        external_id_prefix="siem",
+    )
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+
+    runner = FederationRunner(output_queue=asyncio.Queue())
+    failures = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda source_id, error: failures.append((source_id, error)),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda *a, **k: pytest.fail("record_success should not be called"),
+    )
+
+    row = {
+        "max_items": 100,
+        "cursor": {"last_poll_at": "2026-05-04T12:00:00"},
+        "min_severity": None,
+    }
+    await runner._do_one_tick(adapter, row)
+
+    assert len(failures) == 1 and "bad ca_cert_path" in failures[0][1]
 
 
 @pytest.mark.asyncio
@@ -406,3 +468,97 @@ async def test_siem_adapter_propagates_a_service_that_cannot_be_built(monkeypatc
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     with pytest.raises(RuntimeError, match="secret store"):
         await adapter.fetch(since=None, cursor={}, max_items=10)
+
+
+# ---------------------------------------------------------------------------
+# Dropped-record accounting
+# ---------------------------------------------------------------------------
+
+
+class _LossySvc:
+    """Transform raises on 'boom', returns None on 'none', else a finding."""
+
+    async def fetch_alerts(self, start_time=None, limit=100, oldest_first=False):
+        return [{"id": i} for i in ("a", "boom", "none", "b")]
+
+    def transform_alert_to_finding(self, alert):
+        if alert["id"] == "boom":
+            raise ValueError("bad shape")
+        if alert["id"] == "none":
+            return None
+        return {"finding_id": f"x-{alert['id']}"}
+
+
+@pytest.mark.asyncio
+async def test_siem_adapter_counts_dropped_and_warns_once(monkeypatch, caplog):
+    from core.federation.adapters._siem_base import SIEMIngestionAdapter
+
+    adapter = SIEMIngestionAdapter(
+        name="lossy",
+        integration_id="lossy",
+        default_interval=60,
+        service_factory=_LossySvc,
+        external_id_prefix="x",
+    )
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+
+    with caplog.at_level("WARNING"):
+        result = await adapter.fetch(since=None, cursor={}, max_items=10)
+
+    assert [f["external_id"] for f in result.findings] == ["a", "b"]
+    assert result.dropped == 2
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "bad shape" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_runner_adds_idless_findings_to_dropped(monkeypatch):
+    from core.federation.registry import FetchResult
+
+    queue: asyncio.Queue = asyncio.Queue()
+    runner = FederationRunner(output_queue=queue)
+    fake = _FakeAdapter()
+
+    async def fetch(**_):
+        return FetchResult(
+            findings=[
+                {"finding_id": "f-1", "severity": "high"},
+                {"severity": "high"},
+            ],
+            cursor={"c": 1},
+            dropped=2,
+        )
+
+    fake.fetch = fetch  # type: ignore[method-assign]
+    runner._adapters[fake.name] = fake
+    runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
+    calls = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda source_id, **kw: calls.append(kw),
+    )
+
+    await runner._do_one_tick(fake, {"max_items": 100, "cursor": {}})
+
+    assert queue.qsize() == 1
+    assert calls == [{"cursor": {"c": 1}, "dropped": 3}]
+
+
+@pytest.mark.asyncio
+async def test_clean_tick_adds_zero_dropped(monkeypatch):
+    queue: asyncio.Queue = asyncio.Queue()
+    runner = FederationRunner(output_queue=queue)
+    fake = _FakeAdapter()
+    fake.next_findings = [{"finding_id": "f-1", "severity": "high"}]
+    runner._adapters[fake.name] = fake
+    runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
+    calls = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda source_id, **kw: calls.append(kw),
+    )
+
+    await runner._do_one_tick(fake, {"max_items": 100, "cursor": {}})
+
+    assert calls[0]["dropped"] == 0

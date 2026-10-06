@@ -32,6 +32,9 @@ export function SkillDrawer({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [rootUnset, setRootUnset] = useState(false)
+  // The file shown read-only in place of the steps; null is the editable SKILL.md.
+  const [openFile, setOpenFile] = useState<string | null>(null)
+  const [file, setFile] = useState<{ content?: string; error?: string }>({})
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -60,6 +63,17 @@ export function SkillDrawer({
       cancelled = true
     }
   }, [name])
+
+  useEffect(() => {
+    if (name === null || openFile === null) return
+    let cancelled = false
+    setFile({})
+    skillsApi
+      .file(name, openFile)
+      .then((r) => { if (!cancelled) setFile({ content: r.content }) })
+      .catch((e) => { if (!cancelled) setFile({ error: errMsg(e) }) })
+    return () => { cancelled = true }
+  }, [name, openFile])
 
   // Create mode has no skill of its own to read the flag from; any loaded skill carries it.
   useEffect(() => {
@@ -90,6 +104,9 @@ export function SkillDrawer({
         name: nameLocked && detail ? detail.name : skillName.trim(),
         description: description.trim(),
         body,
+        // A built-in is never written to: its folder is copied under the new name.
+        // A custom skill sends the version it opened so a stale save is refused.
+        ...(detail?.bundled ? { source: detail.name } : detail ? { version: detail.version } : {}),
       })
       .then(onSaved)
       .catch((e) => {
@@ -99,6 +116,7 @@ export function SkillDrawer({
   }
 
   const origin = creating || !detail?.bundled ? 'Custom' : 'Built in'
+  const subtitle = detail ? `${origin} · version ${detail.version}` : origin
   const err = (text: string) => <span className="text-[12px]" style={{ color: 'var(--crit)' }}>{text}</span>
 
   return (
@@ -114,7 +132,7 @@ export function SkillDrawer({
             <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">
               {creating ? 'Build a skill' : `Skill · ${name}`}
             </span>
-            {ready && <span className="vg-skill-hint">{origin}</span>}
+            {ready && <span className="vg-skill-hint">{subtitle}</span>}
           </span>
           <button type="button" className="vg-skill-close" aria-label="Close" onClick={onClose}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -161,21 +179,57 @@ export function SkillDrawer({
               />
               <span className="vg-skill-hint">Agents read this to decide whether the skill applies (1,024 characters at most)</span>
             </div>
-            <div className="vg-skill-field">
-              <label htmlFor="vg-s-body" className="vg-skill-label">Steps (SKILL.md)</label>
-              <textarea
-                id="vg-s-body"
-                className="vg-skill-input mono"
-                rows={9}
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-              />
-            </div>
+            {openFile === null ? (
+              <div className="vg-skill-field">
+                <label htmlFor="vg-s-body" className="vg-skill-label">Steps (SKILL.md)</label>
+                <textarea
+                  id="vg-s-body"
+                  className="vg-skill-input mono"
+                  rows={9}
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="vg-skill-field">
+                <div className="flex items-center justify-between gap-3">
+                  <label htmlFor="vg-s-file" className="vg-skill-label mono">
+                    <span className="break-all">{openFile}</span>{' '}
+                    <span className="whitespace-nowrap">· read-only</span>
+                  </label>
+                  <button type="button" className="vg-skill-btn" onClick={() => setOpenFile(null)}>Back to steps</button>
+                </div>
+                {file.error && err(file.error)}
+                {!file.error && file.content === undefined && <span className="vg-skill-hint">Loading file…</span>}
+                {file.content !== undefined && (
+                  <textarea id="vg-s-file" className="vg-skill-input mono" rows={9} readOnly value={file.content} />
+                )}
+              </div>
+            )}
+            {detail && detail.files.length > 0 && (
+              <div className="vg-skill-field">
+                <span className="vg-skill-files-title">Files in this skill</span>
+                {detail.files.map((f) => (
+                  <button
+                    key={f.path}
+                    type="button"
+                    className="vg-skill-file"
+                    aria-current={(openFile ?? 'SKILL.md') === f.path}
+                    onClick={() => setOpenFile(f.path === 'SKILL.md' ? null : f.path)}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tx2)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 4h10l4 4v12H5zM15 4v4h4M8.5 12h7M8.5 15.5h5" />
+                    </svg>
+                    <span className="min-w-0 break-all">{f.path}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
             <div className="vg-skill-foot">
               <button type="button" className="vg-skill-btn" onClick={onClose}>Cancel</button>
               <button type="button" className="vg-skill-btn primary" disabled={saveDisabled} onClick={save}>
-                {busy ? 'Saving…' : 'Save'}
+                {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
               </button>
             </div>
           </>

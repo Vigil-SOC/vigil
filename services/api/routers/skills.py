@@ -5,20 +5,26 @@ optional ``VIGIL_SKILLS_PATH`` root; see ``core.skills.skill_library``. Writes
 go only to that operator root. The bundled library is never modified.
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import (
     Skill,
+    SkillConflict,
     SkillError,
     SkillNotFound,
     delete_operator_skill,
     is_bundled,
     load_skills,
     operator_skills_root,
+    read_skill_file,
     skill_body,
+    skill_files,
     skill_roots,
+    skill_version,
     write_operator_skill,
 )
 
@@ -38,15 +44,31 @@ class SkillResponse(BaseModel):
     bundled: bool
 
 
+class SkillFile(BaseModel):
+    path: str
+    size: int
+
+
+class SkillFileContent(BaseModel):
+    path: str
+    content: str
+
+
 class SkillDetail(SkillResponse):
     body: str
     operator_root_set: bool
+    version: int
+    files: list[SkillFile]
 
 
 class SkillWriteRequest(BaseModel):
     name: str
     description: str
     body: str
+    # A loaded skill to copy in full when saving under a new name.
+    source: Optional[str] = None
+    # The version the drawer opened; an overwrite is refused if it has moved.
+    version: Optional[int] = None
 
 
 def _response(skill: Skill) -> SkillResponse:
@@ -66,7 +88,11 @@ def _loaded(name: str) -> Skill:
 
 
 def _http(exc: SkillError) -> HTTPException:
-    status = 404 if isinstance(exc, SkillNotFound) else 400
+    status = (
+        404
+        if isinstance(exc, SkillNotFound)
+        else 409 if isinstance(exc, SkillConflict) else 400
+    )
     return HTTPException(status_code=status, detail=str(exc))
 
 
@@ -96,15 +122,39 @@ async def get_skill(name: str):
         bundled=listed.bundled,
         body=body,
         operator_root_set=operator_skills_root() is not None,
+        version=skill_version(skill),
+        files=skill_files(skill),
     )
+
+
+@router.get("/{name}/files/{path:path}", response_model=SkillFileContent)
+async def get_skill_file(name: str, path: str):
+    """One text file in the skill folder, read-only. Nothing is executed."""
+    try:
+        content = read_skill_file(_loaded(name), path)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SkillFileContent(path=path, content=content)
 
 
 @router.post("", response_model=SkillResponse)
 @router.post("/", response_model=SkillResponse, include_in_schema=False)
 async def save_skill(req: SkillWriteRequest):
-    """Write ``<vigil_skills_path>/<name>/SKILL.md``. An existing operator skill is overwritten."""
+    """Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+
+    An existing operator skill is overwritten when ``version`` is the one on disk
+    (409 otherwise); ``source`` copies that skill's folder.
+    """
     try:
-        skill = write_operator_skill(req.name, req.description, req.body)
+        skill = write_operator_skill(
+            req.name,
+            req.description,
+            req.body,
+            source=req.source,
+            expected_version=req.version,
+        )
     except SkillError as exc:
         raise _http(exc) from exc
     return _response(skill)

@@ -317,6 +317,36 @@ input.vg-skill-input {
   padding: 0 12px;
 }
 
+.vg-skill-files-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx0);
+}
+
+.vg-skill-drawer .vg-skill-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--tx0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vg-skill-drawer .vg-skill-file:hover {
+  background: var(--bg3);
+}
+
+.vg-skill-drawer .vg-skill-file[aria-current='true'] {
+  border-color: var(--ln1);
+}
+
 .vg-skill-close {
   display: inline-flex;
   align-items: center;

@@ -565,14 +565,23 @@ class MCPClient:
         try:
             # Apply timeout
             result = await asyncio.wait_for(_call_tool_persistent(), timeout=timeout)
+            is_err = bool(result.get("error")) if isinstance(result, dict) else False
+            if is_err:
+                _detail = next(
+                    (c["text"] for c in result.get("content") or [] if c.get("text")),
+                    "",
+                )[:200]
+                logger.warning(
+                    "Tool call %s.%s returned an error: %s",
+                    server_name,
+                    tool_name,
+                    _detail,
+                )
             try:
                 if _mcp_span is not None:
-                    is_err = (
-                        result.get("error", False)
-                        if isinstance(result, dict)
-                        else False
-                    )
                     _mcp_span.set_attribute("vigil.tool.success", not is_err)
+                    if is_err and _SC is not None:
+                        _mcp_span.set_status(_SC.ERROR, _detail)
                     _mcp_span.set_attribute(
                         "vigil.tool.output_size", len(_json.dumps(result, default=str))
                     )

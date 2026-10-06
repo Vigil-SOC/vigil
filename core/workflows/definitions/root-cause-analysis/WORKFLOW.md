@@ -1,5 +1,6 @@
 ---
 name: root-cause-analysis
+version: 1
 description: "Given a confirmed compromise, trace backward event by event to where it began, and record each step only when the value that ties it to the one before checks out."
 use_case: "Root-cause analysis of a confirmed intrusion -- start from a proven finding and reconstruct how the attacker got in, so the response closes the right door."
 trigger_examples:

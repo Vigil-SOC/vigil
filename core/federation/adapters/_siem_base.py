@@ -125,13 +125,17 @@ class SIEMIngestionAdapter:
         alerts = alerts[:max_items]
 
         findings = []
+        dropped = 0
+        first_error: Optional[Exception] = None
         for alert in alerts:
             try:
                 finding = svc.transform_alert_to_finding(alert)
             except Exception as e:
-                logger.debug("%s transform failed: %s", self.name, e)
+                dropped += 1
+                first_error = first_error or e
                 continue
             if not finding:
+                dropped += 1
                 continue
             # Backfill external_id from the prefix-stripped finding_id when
             # the underlying service doesn't set it explicitly. We need
@@ -146,11 +150,21 @@ class SIEMIngestionAdapter:
                     finding["external_id"] = fid
             findings.append(finding)
 
+        if dropped:
+            logger.warning(
+                "%s dropped %d of %d alert(s) that failed to transform%s",
+                self.name,
+                dropped,
+                len(alerts),
+                f" (first error: {first_error})" if first_error else "",
+            )
+
         return FetchResult(
             findings=findings,
             cursor=self._next_cursor(
                 alerts, truncated=truncated, start=start_time, now=horizon
             ),
+            dropped=dropped,
         )
 
     def _drained_cursor(self, start: datetime, now: datetime) -> Dict[str, Any]:

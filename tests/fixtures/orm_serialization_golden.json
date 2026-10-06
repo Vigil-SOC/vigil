@@ -1117,6 +1117,7 @@
       "consecutive_errors": null,
       "created_at": null,
       "cursor": null,
+      "dropped_total": null,
       "enabled": null,
       "interval_seconds": null,
       "last_error": null,
@@ -1133,6 +1134,7 @@
       "cursor": {
         "sample": "cursor-value"
       },
+      "dropped_total": 851,
       "enabled": true,
       "interval_seconds": 356,
       "last_error": "last_error-value",

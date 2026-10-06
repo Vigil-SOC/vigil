@@ -118,7 +118,18 @@ async def test_partial_transform_failure_stays_success():
     assert captured["result"]["ingested"] == 1
     assert captured["result"]["failed"] == 1
     assert poller.stats["azure_sentinel_findings"] == 1
+    assert poller.stats["dropped"] == 1
     assert poller.stats["errors"] == 0
+
+
+@pytest.mark.asyncio
+async def test_clean_poll_drops_nothing():
+    service = ProbeSIEM([{"id": "a"}])
+    poller = _poller(service)
+
+    await poller._poll_ingestion_source("azure_sentinel")
+
+    assert poller.stats["dropped"] == 0
 
 
 @pytest.mark.asyncio

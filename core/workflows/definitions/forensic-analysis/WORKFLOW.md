@@ -1,5 +1,6 @@
 ---
 name: forensic-analysis
+version: 1
 description: "Post-incident digital forensics with evidence preservation, malware deep-dive, network forensics, and audit-ready documentation suitable for legal proceedings."
 use_case: "Post-incident forensic examination of artifacts, timeline reconstruction with chain-of-custody documentation, suitable for legal proceedings or compliance audits."
 trigger_examples:
