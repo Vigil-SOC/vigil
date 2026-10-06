@@ -111,6 +111,26 @@ class MetricsServer:
         self.scheduler = None
         self.orchestrator = None
 
+        self._tasks: Dict[str, asyncio.Task] = {}
+
+    def register_task(self, name: str, task: "asyncio.Task") -> None:
+        """Track a component's task so /health reflects whether it is alive."""
+        self._tasks[name] = task
+
+    def _component_state(self, name: str, component: Any) -> str:
+        task = self._tasks.get(name)
+        if component is None or task is None:
+            return "not_initialized"
+        # done() first: a dead orchestrator task is a failure even when disabled.
+        if task.done():
+            if task.cancelled():
+                return "stopped"
+            exc = task.exception()
+            return f"failed: {type(exc).__name__}" if exc else "stopped"
+        if name == "orchestrator" and not component.enabled:
+            return "disabled"
+        return "running"
+
     @property
     def health_port(self) -> int:
         return DAEMON_HEALTH_PORT
@@ -167,45 +187,23 @@ class MetricsServer:
             "uptime_seconds": (utcnow() - self._start_time).total_seconds(),
         }
 
-        components = {}
-
-        if self.poller:
-            components["poller"] = "running"
-        else:
-            components["poller"] = "not_initialized"
-
-        if self.processor:
-            components["processor"] = "running"
-        else:
-            components["processor"] = "not_initialized"
-
-        if self.responder:
-            components["responder"] = "running"
-        else:
-            components["responder"] = "not_initialized"
-
-        if self.scheduler:
-            components["scheduler"] = "running"
-        else:
-            components["scheduler"] = "not_initialized"
-
-        if self.orchestrator:
-            components["orchestrator"] = (
-                "running" if self.orchestrator.enabled else "disabled"
+        components = {
+            name: self._component_state(name, obj)
+            for name, obj in (
+                ("poller", self.poller),
+                ("kafka", self.kafka_ingestor),
+                ("processor", self.processor),
+                ("responder", self.responder),
+                ("scheduler", self.scheduler),
+                ("orchestrator", self.orchestrator),
             )
-        else:
-            components["orchestrator"] = "not_initialized"
-
+        }
         health["components"] = components
 
-        if all(v == "running" for v in components.values()):
-            health["status"] = "healthy"
-        elif any(v == "running" for v in components.values()):
-            health["status"] = "degraded"
-        else:
-            health["status"] = "unhealthy"
-
-        status_code = 200 if health["status"] != "unhealthy" else 503
+        # A dead task makes the daemon unhealthy so the probes restart it.
+        ok = all(v in ("running", "disabled") for v in components.values())
+        health["status"] = "healthy" if ok else "unhealthy"
+        status_code = 200 if ok else 503
         return web.json_response(health, status=status_code)
 
     async def _handle_status(self, request: web.Request) -> web.Response:

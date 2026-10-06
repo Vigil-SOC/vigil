@@ -74,6 +74,18 @@ class SOCDaemon:
         logger.info("Shutdown signal received")
         self._shutdown_event.set()
 
+    def _on_task_done(self, name: str, task: asyncio.Task) -> None:
+        """Log the moment a component task dies outside of shutdown."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Component task '%s' failed: %s", name, type(exc).__name__, exc_info=exc
+            )
+        elif not self._shutdown_event.is_set():
+            logger.error("Component task '%s' exited unexpectedly", name)
+
     async def _init_components(self):
         """Initialize all daemon components."""
         logger.info("Initializing daemon components...")
@@ -159,45 +171,38 @@ class SOCDaemon:
         # Start all component tasks
         tasks = []
 
+        def start(name: str, component, label: str):
+            task = asyncio.create_task(component.run(self._shutdown_event))
+            task.add_done_callback(lambda t: self._on_task_done(name, t))
+            if self._metrics_server and component is not self._metrics_server:
+                self._metrics_server.register_task(name, task)
+            tasks.append(task)
+            logger.info("%s started", label)
+
         if self._poller:
-            tasks.append(asyncio.create_task(self._poller.run(self._shutdown_event)))
-            logger.info("Data poller started")
+            start("poller", self._poller, "Data poller")
 
         if self._kafka_ingestor:
-            tasks.append(
-                asyncio.create_task(self._kafka_ingestor.run(self._shutdown_event))
-            )
-            logger.info(
-                "Kafka ingestor started (controlled by kafka.settings enabled flag)"
-            )
+            start("kafka", self._kafka_ingestor, "Kafka ingestor")
 
         if self._processor:
-            tasks.append(asyncio.create_task(self._processor.run(self._shutdown_event)))
-            logger.info("Finding processor started")
+            start("processor", self._processor, "Finding processor")
 
         if self._responder:
-            tasks.append(asyncio.create_task(self._responder.run(self._shutdown_event)))
-            logger.info("Autonomous responder started")
+            start("responder", self._responder, "Autonomous responder")
 
         if self._scheduler:
-            tasks.append(asyncio.create_task(self._scheduler.run(self._shutdown_event)))
-            logger.info("Task scheduler started")
+            start("scheduler", self._scheduler, "Task scheduler")
 
         if self._orchestrator:
-            tasks.append(
-                asyncio.create_task(self._orchestrator.run(self._shutdown_event))
-            )
-            if self.config.orchestrator.enabled:
-                logger.info("Autonomous orchestrator started")
-            else:
-                logger.info("Autonomous orchestrator loaded (disabled)")
+            start("orchestrator", self._orchestrator, "Autonomous orchestrator")
+            if not self.config.orchestrator.enabled:
+                logger.info("Autonomous orchestrator is disabled")
 
         if self._metrics_server:
-            tasks.append(
-                asyncio.create_task(self._metrics_server.run(self._shutdown_event))
-            )
+            start("metrics", self._metrics_server, "Metrics server")
             logger.info(
-                "Metrics server started (health :%d, prometheus :%d)",
+                "Health :%d, prometheus :%d",
                 self._metrics_server.health_port,
                 self._metrics_server.metrics_port,
             )
