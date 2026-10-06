@@ -43,8 +43,23 @@ logs)
     case " ${FAKE_DOCKER_LOGS_FAIL:-} " in
     *" $last "*) echo "Error: No such container: $last" >&2; exit 1 ;;
     esac
-    echo "log of $last"; printf "%s\n" "${FAKE_LOG_LINE:-}" ;;
-inspect) echo "$(for last; do :; done; echo "$last") state=running restarts=0" ;;
+    prev=; for a; do [ "$prev" = --since ] && since=$a; prev=$a; done
+    echo "log of $last since=$since"; printf "%s\n" "${FAKE_LOG_LINE:-}" ;;
+inspect)
+    case "$*" in
+    *.Mounts*) printf "%b" "${FAKE_DOCKER_MOUNTS-/app/data\n/home/vigil/.vigil\n}" ;;
+    *) echo "$(for last; do :; done; echo "$last") state=running restarts=0" ;;
+    esac ;;
+cp)
+    src=${2#*:}; f=${src##*/}
+    case "$src" in
+    /home/vigil/.vigil/*) ;;
+    *) echo "Error response from daemon: Could not find the file $src in container ${2%%:*}" >&2; exit 1 ;;
+    esac
+    if [ ! -e "$FAKE_CP_DIR/$f" ] && [ ! -L "$FAKE_CP_DIR/$f" ]; then
+        echo "Error response from daemon: Could not find the file $src in container ${2%%:*}" >&2; exit 1
+    fi
+    exec tar -cf - -C "$FAKE_CP_DIR" "$f" ;;
 esac
 """
 
@@ -358,8 +373,8 @@ def test_compose_install_is_collected_and_secrets_stay_out(env, tmp_path):
         "deeptempo-backend|docker|/x/docker-compose.yml\ndeeptempo-redis|docker|\n"
     )
     env["FAKE_DOCKER_PS_A"] = (
-        "deeptempo-backend|docker|running\ndeeptempo-redis|docker|exited\n"
-        "deeptempo-splunk|docker|running\ndeeptempo-misp-core|docker|exited\n"
+        "deeptempo-backend|docker|running|backend\ndeeptempo-redis|docker|exited|redis\n"
+        "deeptempo-splunk|docker|running|splunk\ndeeptempo-misp-core|docker|exited|\n"
         "ollama|other|running\nunrelated|other|running\n"
     )
     env["FAKE_COMPOSE_CONFIG"] = (
@@ -431,21 +446,153 @@ def test_compose_install_is_collected_and_secrets_stay_out(env, tmp_path):
     assert not (root / "configuration" / "state" / "secrets.enc").exists()
 
 
-def test_native_install_collects_files_and_no_container_logs(env, tmp_path):
+def test_native_install_collects_dependency_container_logs(env, tmp_path):
     checkout, state = install(tmp_path)
     env["VIGIL_REPO_ROOT"] = str(checkout)
-    env["FAKE_DOCKER_PS"] = "deeptempo-postgres|docker|\n"
+    names = ("deeptempo-postgres", "deeptempo-redis", "deeptempo-bifrost")
+    env["FAKE_DOCKER_PS"] = "".join(f"{n}|docker|\n" for n in names)
+    env["FAKE_DOCKER_PS_A"] = "".join(f"{n}|docker|running|\n" for n in names)
+    env["FAKE_LOG_LINE"] = f"free text {ENV_SECRET} and POSTGRES_PASSWORD={PLANTED}"
     proc = run(env, tmp_path, "--state-dir", str(state))
     assert proc.returncode == 0, proc.stderr
     entries = entries_of(tmp_path)
     assert manifest_of(tmp_path)["mode"] == "native"
-    assert entries["logs/checkout/backend.log"]["state"] == "collected"
     assert entries["configuration/compose-config.yml"]["state"] == "not collected"
-    assert not any(
-        p.startswith("logs/docker/") and e["state"] == "collected"
-        for p, e in entries.items()
+    for path in (
+        "logs/checkout/backend.log",
+        "logs/checkout/containers/deeptempo-redis-20261005T000000Z.log",
+        "logs/state/vigil.log",
+        *(f"logs/docker/{n}.log" for n in names),
+    ):
+        assert entries[path]["state"] == "collected", path
+    root = next((tmp_path / "x").iterdir())
+    log = (root / "logs" / "docker" / "deeptempo-postgres.log").read_text()
+    assert "since=168h" in log and "[REDACTED]" in log
+    blob = everything(tmp_path, proc)
+    assert ENV_SECRET not in blob and PLANTED not in blob
+
+
+def container_state(tmp_path: Path, env, **files: str) -> Path:
+    """The stub backend container's State Directory, served by `docker cp`."""
+    cp = tmp_path / "container-state"
+    cp.mkdir()
+    for name, text in files.items():
+        (cp / name).write_text(text)
+    env["FAKE_CP_DIR"] = str(cp)
+    return cp
+
+
+BACKUPS = '[{"name": "a", "repo": "/vol/repo", "password": "' + PLANTED + '"}]'
+STATE_ENTRIES = (
+    "configuration/state/backups.json",
+    "configuration/state/detection_sources.json",
+    "logs/state/vigil.log",
+)
+
+
+def compose_env(tmp_path: Path, env, backend_row: str):
+    checkout, _ = install(tmp_path)
+    env["VIGIL_REPO_ROOT"] = str(checkout)
+    env["FAKE_DOCKER_PS"] = "deeptempo-backend|docker|\n"
+    env["FAKE_DOCKER_PS_A"] = backend_row
+    container_state(
+        tmp_path,
+        env,
+        **{
+            "backups.json": BACKUPS,
+            "detection_sources.json": "{}\n",
+            "vigil.log": f"state log {ENV_SECRET}\n",
+        },
     )
-    assert ENV_SECRET not in everything(tmp_path, proc)
+
+
+def test_compose_reads_the_state_directory_from_the_backend_container(env, tmp_path):
+    compose_env(tmp_path, env, "deeptempo-backend|docker|exited|backend\n")
+    proc = run(env, tmp_path)  # no --state-dir: the container, not ~/.vigil
+    assert proc.returncode == 0, proc.stderr
+    entries = entries_of(tmp_path)
+    for path in STATE_ENTRIES:
+        assert entries[path]["state"] == "collected", path
+        assert entries[path]["source"].startswith("docker cp deeptempo-backend:")
+    root = next((tmp_path / "x").iterdir())
+    assert "[REDACTED]" in (root / "configuration/state/backups.json").read_text()
+    assert "state log" in (root / "logs/state/vigil.log").read_text()
+    # repositories named by the copied file are listed, never checked on the host
+    never = entries["configuration/never-included/backup-repository-1"]
+    assert never["reason"].startswith("never included; not checked")
+    blob = everything(tmp_path, proc)
+    assert PLANTED not in blob and ENV_SECRET not in blob
+
+
+def test_desktop_finds_its_backend_by_service_label_and_mount(env, tmp_path):
+    standalone = tmp_path / "state" / "standalone"
+    standalone.mkdir(parents=True)
+    (standalone / "docker-compose.yml").write_text("name: vigil\n")
+    env["FAKE_DOCKER_PS"] = f"vigil-backend-1|vigil|{standalone}/docker-compose.yml\n"
+    env["FAKE_DOCKER_PS_A"] = (
+        "vigil-postgres-1|vigil|running|postgres\nvigil-backend-1|vigil|running|backend\n"
+    )
+    container_state(tmp_path, env, **{"backups.json": BACKUPS, "vigil.log": "app\n"})
+    env["FAKE_DOCKER_MOUNTS"] = "/elsewhere\n/home/vigil/.vigil\n"
+    proc = run(env, tmp_path, "--mode", "desktop")
+    assert proc.returncode == 0, proc.stderr
+    entries = entries_of(tmp_path)
+    for path in ("configuration/state/backups.json", "logs/state/vigil.log"):
+        assert entries[path]["state"] == "collected", path
+        assert "vigil-backend-1" in entries[path]["source"]
+    # a file missing in the container is not collected, with docker's message
+    entry = entries["configuration/state/detection_sources.json"]
+    assert entry["state"] == "not collected" and "Could not find" in entry["reason"]
+    assert PLANTED not in everything(tmp_path, proc)
+
+
+def test_state_directory_not_found_is_recorded_per_file(env, tmp_path):
+    # no backend container
+    compose_env(tmp_path, env, "deeptempo-redis|docker|running|redis\n")
+    assert run(env, tmp_path).returncode == 0
+    entries = entries_of(tmp_path)
+    for path in STATE_ENTRIES:
+        assert entries[path]["state"] == "not collected", path
+        assert "no backend container" in entries[path]["reason"]
+
+
+def test_backend_without_a_state_mount_is_recorded(env, tmp_path):
+    compose_env(tmp_path, env, "deeptempo-backend|docker|running|backend\n")
+    env["FAKE_DOCKER_MOUNTS"] = "/app/data\n"
+    assert run(env, tmp_path).returncode == 0
+    entry = entries_of(tmp_path)["logs/state/vigil.log"]
+    assert entry["state"] == "not collected" and "no State Directory mount" in entry["reason"]
+
+
+def test_container_symlink_or_directory_is_never_followed(env, tmp_path):
+    compose_env(tmp_path, env, "deeptempo-backend|docker|running|backend\n")
+    cp = Path(env["FAKE_CP_DIR"])
+    (cp / "vigil.log").unlink()
+    (cp / "vigil.log").symlink_to("/etc/hostname")
+    (cp / "backups.json").unlink()
+    (cp / "backups.json").mkdir()
+    (cp / "backups.json" / "inner").write_text(NEVER)
+    proc = run(env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    entries = entries_of(tmp_path)
+    for path in ("logs/state/vigil.log", "configuration/state/backups.json"):
+        assert entries[path]["state"] == "not collected", path
+        assert "not a regular file" in entries[path]["reason"]
+    assert NEVER not in everything(tmp_path, proc)
+
+
+def test_state_dir_flag_makes_the_host_copy_win(env, tmp_path):
+    compose_env(tmp_path, env, "deeptempo-backend|docker|running|backend\n")
+    _, state = install(tmp_path / "host")
+    (state / "detection_sources.json").write_text("{}\n")
+    proc = run(env, tmp_path, "--state-dir", str(state))
+    assert proc.returncode == 0, proc.stderr
+    entries = entries_of(tmp_path)
+    for path in STATE_ENTRIES:
+        assert entries[path]["state"] == "collected", path
+        assert entries[path]["source"].startswith(str(state)), path
+    root = next((tmp_path / "x").iterdir())
+    assert (root / "logs/state/vigil.log").read_text() == "state log\n"
 
 
 def test_desktop_install_reads_the_app_log_directory(env, tmp_path):
@@ -459,11 +606,13 @@ def test_desktop_install_reads_the_app_log_directory(env, tmp_path):
     standalone = state / "standalone"
     standalone.mkdir()
     (standalone / "docker-compose.yml").write_text("name: vigil\n")
+    (state / "vigil.log").write_text("host state log\n")
     env["FAKE_DOCKER_PS"] = f"vigil-backend-1|vigil|{standalone}/docker-compose.yml\n"
     proc = run(env, tmp_path, "--state-dir", str(state))
     assert proc.returncode == 0, proc.stderr
     entries = entries_of(tmp_path)
     assert manifest_of(tmp_path)["mode"] == "desktop"
+    assert entries["logs/state/vigil.log"]["state"] == "collected"
     for path in (
         "logs/desktop/vigil-desktop.log",
         "logs/desktop/vigil-desktop.log.1",
@@ -479,3 +628,22 @@ def test_desktop_install_reads_the_app_log_directory(env, tmp_path):
         == "never included; present"
     )
     assert NEVER not in everything(tmp_path, proc)
+
+
+def test_summary_lists_never_included_apart_from_not_collected(env, tmp_path):
+    checkout, state = install(tmp_path)
+    env["VIGIL_REPO_ROOT"] = str(checkout)
+    env["FAKE_DOCKER_PS"] = "deeptempo-postgres|docker|\n"
+    proc = run(env, tmp_path, "--state-dir", str(state))
+    assert proc.returncode == 0, proc.stderr
+    root = unpack(bundles(tmp_path)[0], tmp_path / "x")
+    summary = (root / "SUMMARY.txt").read_text()
+    head, _, never = summary.partition("Never included (existence only)")
+    assert never and "never-included/secrets.enc: never included; present" in never
+    assert "never included" not in head
+    assert "compose-config.yml" in head
+    # the final output splits the same way, and the manifest still has every entry
+    out_head, _, out_never = proc.stdout.partition("Never included (existence only):")
+    assert "never included" not in out_head and "secrets.enc" in out_never
+    entries = entries_of(tmp_path)
+    assert entries["configuration/never-included/secrets.enc"]["state"] == "not collected"

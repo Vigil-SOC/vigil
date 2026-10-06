@@ -517,20 +517,22 @@ never() { # label path [note]
 KEPT=$WORK/containers.kept
 EXCLUDED=$WORK/containers.excluded
 CONT_ERR=
+BACKEND= # the backend container of a Compose or Desktop install
 list_containers() {
     : >"$KEPT"
     : >"$EXCLUDED"
+    BACKEND=
     if ! has docker; then
         CONT_ERR="docker not found"
         return
     fi
     ITEM=$((ITEM + 1))
-    run_limited 20 "$RAW/$ITEM" docker ps -a --format '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.State}}'
+    run_limited 20 "$RAW/$ITEM" docker ps -a --format '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.State}}|{{.Label "com.docker.compose.service"}}'
     if [ "$RC" != 0 ]; then
         CONT_ERR="docker ps -a failed (exit $RC)"
         return
     fi
-    while IFS='|' read -r _name _proj _state; do
+    while IFS='|' read -r _name _proj _state _svc; do
         case $_name in '' | *[!A-Za-z0-9_.-]*) continue ;; esac
         case $_name in
         deeptempo-splunk | deeptempo-kafka | deeptempo-elasticsearch | deeptempo-kibana | deeptempo-misp-* | deeptempo-pgadmin | *ollama*)
@@ -547,7 +549,63 @@ list_containers() {
             esac
         fi
         echo "$_name" >>"$KEPT"
+        # Desktop's backend has no fixed name; its Compose service label does
+        if [ -z "$BACKEND" ] && { [ "$_svc" = backend ] || [ "$_name" = deeptempo-backend ]; }; then BACKEND=$_name; fi
     done <"$RAW/$ITEM.out"
+}
+
+# Under Compose and Desktop the State Directory is a volume of the backend
+# container, so it is read with `docker cp` (a TAR stream; works on a stopped
+# container and runs nothing in it). --state-dir makes the host copy win.
+state_in_container() { [ "$MODE" != native ] && [ -z "$STATE_ARG" ]; }
+
+STATE_MOUNT=
+STATE_WHY=
+resolve_state_mount() {
+    STATE_MOUNT=
+    STATE_WHY=
+    state_in_container || return 0
+    if [ -z "$BACKEND" ]; then
+        STATE_WHY="no backend container of this install${CONT_ERR:+ ($CONT_ERR)}"
+        return 0
+    fi
+    ITEM=$((ITEM + 1))
+    # --format on .Mounts only: never raw inspect, never the container environment
+    run_limited 20 "$RAW/$ITEM" docker inspect --format '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' "$BACKEND"
+    if [ "$RC" != 0 ]; then
+        STATE_WHY="docker inspect of $BACKEND failed (exit $RC)"
+        return 0
+    fi
+    STATE_MOUNT=$(awk '/\/\.vigil$/ { print; exit }' "$RAW/$ITEM.out")
+    case $STATE_MOUNT in
+    '' | *[!A-Za-z0-9_./-]* | [!/]*)
+        STATE_MOUNT=
+        STATE_WHY="no State Directory mount (a path ending in /.vigil) in $BACKEND"
+        ;;
+    esac
+}
+
+# docker cp into a temp tar, then extract the one regular file by name to stdout.
+# A symlink, a directory or any other member fails, so nothing is followed.
+CP_MEMBER='t=$3; b=${2##*/}
+docker cp "$1:$2" - >"$t" || { rm -f "$t"; exit 1; }
+n=$(tar -tf "$t" 2>/dev/null); k=$(tar -tvf "$t" 2>/dev/null | cut -c1)
+if [ "$n" != "$b" ] || [ "$k" != - ]; then rm -f "$t"; echo "not a regular file in the container" >&2; exit 1; fi
+tar -xOf "$t" "$b"; r=$?; rm -f "$t"; exit $r'
+
+# collect_state DEST NAME [HOSTDIR...]   a State Directory file, from the host or the backend container
+collect_state() {
+    if ! state_in_container; then
+        _sd=$1
+        _sn=$2
+        shift 2
+        collect_where "$_sd" "$_sn" "$STATE_DIR" "$@"
+    elif [ -n "$STATE_WHY" ]; then
+        skip "$1" "$STATE_WHY" "State Directory in the backend container"
+    else
+        collect_cmd "$1" "$SRC_SECS" "docker cp $BACKEND:$STATE_MOUNT/$2" 0 \
+            sh -c "$CP_MEMBER" _ "$BACKEND" "$STATE_MOUNT/$2" "$WORK/cp.tar"
+    fi
 }
 
 # Compose project and files of this install, from the container labels read by
@@ -610,7 +668,8 @@ collect_configuration() {
 
     _ck=$CHECKOUT
     [ "$MODE" = desktop ] && _ck=
-    collect_where configuration/state/backups.json backups.json "$STATE_DIR" "$_ck"
+    collect_state configuration/state/backups.json backups.json "$_ck"
+    collect_state configuration/state/detection_sources.json detection_sources.json
     collect_where configuration/state/mcp-config.json mcp-config.json "$_ck" "$STATE_DIR"
     collect_where configuration/state/INTENT.md INTENT.md "$_ck" "$STATE_DIR"
     collect_where configuration/state/vigil-autostart .vigil-autostart "$_ck" "$STATE_DIR"
@@ -639,15 +698,25 @@ collect_configuration() {
     never home-deeptempo-env "${HOME:-}/.deeptempo/.env"
     never bifrost-data "$STATE_DIR/bifrost"
     [ "$MODE" = desktop ] && never desktop-config "$STATE_DIR/config.json"
-    if [ -r "$STATE_DIR/backups.json" ]; then
+    # Repositories of a container's State Directory are paths in the container
+    # (not checked); they are read from the redacted copy already in the bundle.
+    _bj=$STATE_DIR/backups.json
+    state_in_container && _bj=$STAGE/configuration/state/backups.json
+    if [ -r "$_bj" ]; then
         awk '{ s = $0; while (match(s, /"repo" *: *"[^"]*"/)) {
             v = substr(s, RSTART, RLENGTH); sub(/^"repo" *: *"/, "", v); sub(/"$/, "", v); print v
-            s = substr(s, RSTART + RLENGTH) } }' "$STATE_DIR/backups.json" | head -n 20 >"$WORK/repos.txt"
+            s = substr(s, RSTART + RLENGTH) } }' "$_bj" | head -n 20 >"$WORK/repos.txt"
         _i=0
         while IFS= read -r _r; do
             _i=$((_i + 1))
             case $_r in
-            /*) never "backup-repository-$_i" "$_r" ;;
+            /*)
+                if state_in_container; then
+                    never "backup-repository-$_i" "$_r" "not checked: State Directory is in a container"
+                else
+                    never "backup-repository-$_i" "$_r"
+                fi
+                ;;
             *) never "backup-repository-$_i" "$_r" "not a local path, not checked" ;;
             esac
         done <"$WORK/repos.txt"
@@ -697,16 +766,14 @@ collect_logs() {
     case $MODE in
     native | compose)
         collect_tree logs/checkout "$CHECKOUT/logs"
-        collect_file logs/state/vigil.log "$STATE_DIR/vigil.log" 0 "$STATE_DIR"
         ;;
     desktop)
         if [ "$OS_KIND" = Darwin ] && [ -z "$STATE_ARG" ]; then _dl=${HOME:-}/Library/Logs/Vigil; else _dl=$STATE_DIR/logs; fi
         collect_tree logs/desktop "$_dl" \( -name 'vigil-desktop.log*' -o \( -path '*/containers/*' -name 'vigil-*.log' \) \)
         ;;
     esac
-    if [ "$MODE" = native ]; then
-        skip logs/docker/ "native install: container logs are saved under logs/ by start.sh and shutdown"
-    elif [ -n "$CONT_ERR" ]; then
+    collect_state logs/state/vigil.log vigil.log
+    if [ -n "$CONT_ERR" ]; then
         skip logs/docker/ "$CONT_ERR"
     else
         while IFS= read -r _n; do
@@ -714,7 +781,7 @@ collect_logs() {
                 'exec docker logs --timestamps --since "$1" "$2" 2>&1' _ "$((SINCE * 24))h" "$_n"
         done <"$KEPT"
     fi
-    if [ ! -s "$KEPT" ] && [ -z "$CONT_ERR" ] && [ "$MODE" != native ]; then
+    if [ ! -s "$KEPT" ] && [ -z "$CONT_ERR" ]; then
         skip logs/docker/ "no containers of this install"
     fi
 }
@@ -723,6 +790,7 @@ section 2/6 "collecting configuration, health and logs"
 if [ "$N_INSTALLS" = 1 ]; then
     list_containers
     find_compose_files
+    resolve_state_mount
     collect_configuration
     collect_health
     collect_logs
@@ -831,7 +899,12 @@ M_VERSION=$VERSION M_CREATED=$CREATED M_MODE=$MODE M_OS=$HOST_OS M_NOTE=$INSTALL
         printf 'Version mismatch: this tool is %s, /api/health reports %s\n' "$VERSION" "$HEALTH_VERSION"
     fi
     echo
-    awk -F '\t' '$2 != "collected" { n++; l = l "  " $1 ": " $3 "\n" } END { printf "Not collected (%d)\n%s", n, l }' "$ITEMS"
+    # never-included entries are existence-only by design, not failures
+    awk -F '\t' '$2 == "collected" { next }
+        index($3, "never included;") == 1 { v++; vl = vl "  " $1 ": " $3 "\n"; next }
+        { n++; l = l "  " $1 ": " $3 "\n" }
+        END { printf "Not collected (%d)\n%s", n, l
+            if (v) printf "\nNever included (existence only)\n%s", vl }' "$ITEMS"
     echo
     awk -F '\t' '$2 == "collected" { t += $7; if ($7 > 0) { l = l "  " $1 ": " $7 "\n"; k++ } }
         END { printf "Redactions: %d in %d files (other files: none)\n%s", t, k, l }' "$ITEMS"
@@ -872,12 +945,17 @@ echo
 echo "$NOTICE"
 echo
 printf 'Bundle:  %s\nSize:    %s bytes\nSHA-256: %s\n' "$FINAL" "$SIZE" "$SUM"
-if awk -F '\t' '$2 != "collected" { f = 1 } END { exit !f }' "$ITEMS"; then
+if awk -F '\t' '$2 != "collected" && index($3, "never included;") != 1 { f = 1 } END { exit !f }' "$ITEMS"; then
     echo
     echo "Not collected:"
-    awk -F '\t' '$2 != "collected" { print "  " $1 ": " $3 }' "$ITEMS"
+    awk -F '\t' '$2 != "collected" && index($3, "never included;") != 1 { print "  " $1 ": " $3 }' "$ITEMS"
     if awk -F '\t' '$3 == "needs elevation" { f = 1 } END { exit !f }' "$ITEMS"; then
         echo "Run with sudo to include the items marked \"needs elevation\"."
     fi
+fi
+if awk -F '\t' 'index($3, "never included;") == 1 { f = 1 } END { exit !f }' "$ITEMS"; then
+    echo
+    echo "Never included (existence only):"
+    awk -F '\t' 'index($3, "never included;") == 1 { print "  " $1 ": " $3 }' "$ITEMS"
 fi
 exit 0

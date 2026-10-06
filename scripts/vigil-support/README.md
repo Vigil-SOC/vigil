@@ -51,14 +51,14 @@ with no install found each is an empty directory with a `not collected` entry.
 | --- | --- |
 | `configuration/env` | the checkout's `.env` (native, compose) |
 | `configuration/compose-config.yml` | `docker compose -p <project> -f <files> config` (compose, desktop). The project and files come from the `com.docker.compose.project` and `...config_files` container labels, else the checkout's `infra/docker/docker-compose.yml` or the Desktop's staged copy. If interpolation fails (the Desktop injects its tokens at launch) the uninterpolated file is used. |
-| `configuration/state/` | `backups.json` (State Directory), `mcp-config.json`, `INTENT.md`, `.vigil-autostart` (checkout, else State Directory) |
+| `configuration/state/` | `backups.json` and `detection_sources.json` (State Directory, see below), `mcp-config.json`, `INTENT.md`, `.vigil-autostart` (checkout, else State Directory) |
 | `configuration/deployment/` | native, compose: `infra/docker/` compose, OpenTelemetry, Prometheus and Bifrost config plus Grafana provisioning YAML. Desktop: its staged compose file. |
 | `configuration/never-included/` | see below |
 | `health/*.json`, `health/*.txt` | `curl` of the API `/api/health` (`VIGIL_API_URL`), daemon `:9091/health` and `/status`, webhook receiver `:8081/health`, agent `:6989` and `:6990` `/healthz`, Bifrost `:8080/health`, stored as returned. An endpoint that does not answer is `not collected` with curl's message. |
 | `health/containers.txt` | `docker inspect --format` per container: state, restart count, start time, image. Never raw inspect, never container environments. |
 | `logs/checkout/` | native, compose: everything under the checkout's `logs/`, including `.1`-`.4` rotations, PID files and `containers/` |
-| `logs/state/vigil.log` | native, compose: `vigil.log` in the State Directory |
-| `logs/docker/<container>.log` | compose, desktop: `docker logs --timestamps --since <DAYS> days` |
+| `logs/state/vigil.log` | `vigil.log` in the State Directory (all modes, see below) |
+| `logs/docker/<container>.log` | all modes: `docker logs --timestamps --since <DAYS> days`. On native these are Postgres, Redis and Bifrost, in addition to the snapshots `start.sh` saves under `logs/checkout/containers/`. |
 | `logs/desktop/` | desktop: the app log directory (`vigil-desktop.log*` and the `containers/vigil-*.log` snapshots written on quit). Linux `<State Directory>/logs` (`~/.config/Vigil/logs`), macOS `~/Library/Logs/Vigil`. |
 
 Containers are listed from `docker ps -a`: names `deeptempo-*` or the install's
@@ -66,11 +66,28 @@ Compose project (native, compose), project `vigil` (desktop). Lab and demo
 containers (`deeptempo-splunk`, `-kafka`, `-elasticsearch`, `-kibana`,
 `-misp-*`, `-pgadmin`) and any Ollama container are `not collected` with the
 reason `excluded: lab/demo container; state <running state>`. A container that
-cannot be read is `not collected` with docker's message. Native installs take
-no `docker logs`: `start.sh` saves those under the checkout's `logs/`.
+cannot be read is `not collected` with docker's message.
 
-Under Compose and Desktop the State Directory lives in a container volume, which
-is not read; only files on the host are.
+### State Directory
+
+Native reads `backups.json`, `detection_sources.json` and `vigil.log` from the
+host State Directory. Under Compose and Desktop the State Directory is a volume
+of the backend container, so without `--state-dir` they are read from there:
+
+- The backend is the kept container with Compose service label `backend` (else
+  named `deeptempo-backend`). The mount is the destination ending in `/.vigil`
+  in `docker inspect --format` on its `.Mounts` (`/home/vigil/.vigil` in both
+  compose files).
+- Each file comes from `docker cp <backend>:<mount>/<file> -`, a TAR stream that
+  works on a stopped container and runs nothing in it. The one member is
+  extracted to stdout, so it goes through the usual size cap, time limit and
+  redaction. A symlink or directory is `not collected`, never followed.
+- No backend container, no such mount, or a file missing in the container: each
+  file is `not collected` with that reason (docker's message for a missing file).
+- `--state-dir` makes the host copy win; the default `~/.vigil` is not read in
+  these modes, since it may be a stale native directory.
+- The `backup-repository-N` entries are listed from the copied `backups.json`;
+  those paths are inside the container, so they are noted as not checked.
 
 ### Never included
 
@@ -141,7 +158,9 @@ Every item appears exactly once with a `state` and a free-text `reason`.
 
 A short plain list: version, mode, host OS, UTC time; a line when the tool's
 `VERSION` differs from the version `/api/health` reports; the not-collected
-items with reasons; per-file redaction counts; the sentence that credentials in
+items with reasons; the never-included entries under their own heading
+"Never included (existence only)" (they are by design, not failures; the
+manifest records them as `not collected`, reason `never included; ...`); per-file redaction counts; the sentence that credentials in
 free log text matching no known format cannot be guaranteed caught; and the data
 notice.
 
@@ -184,7 +203,7 @@ Printed at the start and end of every run, and ending `SUMMARY.txt`:
 > uploaded. Review the bundle before you share it.
 
 The end of the run then prints the bundle path, size and SHA-256 (`sha256sum`
-or `shasum -a 256`), then the not-collected items.
+or `shasum -a 256`), then the not-collected items and the never-included entries.
 
 ## `VERSION`
 
