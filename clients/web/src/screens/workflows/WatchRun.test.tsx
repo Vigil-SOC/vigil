@@ -7,7 +7,7 @@ import { callFailure, type WfRunDetail } from './runRead'
 import { workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
-  workflowApi: { replayRun: vi.fn() },
+  workflowApi: { replayRun: vi.fn(), getReplay: vi.fn(), steer: vi.fn() },
 }))
 
 const move = (iteration: number, extra = {}) => ({

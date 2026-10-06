@@ -1914,7 +1914,7 @@ function CopyReport({ md }: { md: string }) {
 
 /** A gap the projection reports live. query_intent belongs to the dispatch, which
  *  the finalized report joins in and a live read cannot, so the summary carries it. */
-function liveGap(one: HuntEvidence): HuntGap {
+export function liveGap(one: HuntEvidence): HuntGap {
   return {
     evidence_id: one.evidence_id,
     iteration: one.iteration,
@@ -2679,6 +2679,13 @@ function BearingCell({ tally }: { tally?: Bearing }) {
   )
 }
 
+/** Which belief the operator put up and which is the base rate to beat; any other source is untagged. */
+export function provenanceTag(provenance?: string): { text: string; title?: string } | null {
+  if (provenance === 'operator') return { text: 'yours' }
+  if (provenance === 'base_rate') return { text: 'the claim to beat', title: 'Seeded on every hunt as the claim to beat, not something you asked for.' }
+  return null
+}
+
 function HuntStandings({ hunt }: { hunt: HuntView }) {
   const strengthOf = (id: string) =>
     hunt.report?.hypotheses.find((h) => h.hypothesis_id === id)?.evidence_strength ?? null
@@ -2708,17 +2715,13 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
             <tbody>
               {ordered.map((h) => {
                 const strength = strengthOf(h.hypothesis_id)
+                const tag = provenanceTag(h.provenance)
                 return (
                   <tr key={h.hypothesis_id}>
                     <td className="tight"><Hyp id={h.hypothesis_id} /></td>
                     <td>
                       {h.statement}
-                      {h.provenance === 'operator' && <span className="chip ml-2" style={{ fontSize: 10 }}>yours</span>}
-                      {h.provenance === 'base_rate' && (
-                        <span className="chip ml-2" style={{ fontSize: 10 }} title="Seeded on every hunt as the claim to beat, not something you asked for.">
-                          the claim to beat
-                        </span>
-                      )}
+                      {tag && <span className="chip ml-2" style={{ fontSize: 10 }} title={tag.title}>{tag.text}</span>}
                       {h.resolution_reason && shared === null && <div className="muted text-[11px]">{h.resolution_reason}</div>}
                       {strength && <div className="muted text-[11px]">{strengthLine(strength)}</div>}
                     </td>
@@ -2738,7 +2741,7 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
 
 /** The one thing on this panel waiting on a person, and the approve/reject that
  *  answers it. */
-function OpenCheckpoint({ hunt }: { hunt: HuntView }) {
+export function OpenCheckpoint({ hunt }: { hunt: HuntView }) {
   const open = hunt.open_checkpoint
   const [busy, setBusy] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -3074,7 +3077,7 @@ function HuntCheckpoints({ checkpoints }: { checkpoints: HuntCheckpoint[] }) {
   )
 }
 
-function hypothesisColor(s: string): string {
+export function hypothesisColor(s: string): string {
   if (s === 'proven' || s === 'handed_off') return 'var(--crit)'
   if (s === 'disproven') return 'var(--ok)'
   if (s === 'parked' || s === 'inconclusive') return 'var(--tx-2)'

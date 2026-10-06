@@ -53,6 +53,9 @@ export interface HuntStanding {
   resolution_reason?: string | null
   /** hunt_spec, operator or base_rate — which belief the operator put up themselves. */
   provenance?: string
+  /** Counted from the full link set; absent on a run the projection predates. */
+  supports?: number
+  weakens?: number
 }
 /** One record the hunt gathered. */
 export interface HuntEvidence {
@@ -85,6 +88,14 @@ export interface HuntGap {
   summary: string
   query_intent?: string
   hypothesis_id?: string | null
+}
+/** One critic verdict. The text is model output, not a finding. */
+export interface HuntReview {
+  iteration: number
+  hypothesis_id: string
+  survives: boolean
+  strongest_benign_explanation: string
+  rationale?: string
 }
 export interface HuntCheckpoint {
   checkpoint_id: string
@@ -229,6 +240,8 @@ export interface HuntView {
   /** What this run was granted, extensions included — not the shipped default. */
   budgets?: HuntBudgets
   hypotheses: HuntStanding[]
+  /** Every critic verdict, in ledger order; absent before the projection carried them. */
+  reviews?: HuntReview[]
   open_checkpoint?: {
     checkpoint_id: string
     checkpoint_class?: string
