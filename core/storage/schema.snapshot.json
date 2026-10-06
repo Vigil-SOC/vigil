@@ -1708,6 +1708,10 @@
       "data_type": "jsonb",
       "nullable": false
     },
+    "dropped_total": {
+      "data_type": "integer",
+      "nullable": false
+    },
     "enabled": {
       "data_type": "boolean",
       "nullable": false

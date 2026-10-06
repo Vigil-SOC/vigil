@@ -232,6 +232,11 @@ class FederationSource(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
 
+    # Cumulative records received but lost to a transform or id-less drop.
+    dropped_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")

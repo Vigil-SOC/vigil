@@ -152,6 +152,7 @@ class DataPoller:
             "opensearch_polls": 0,
             "opensearch_findings": 0,
             "webhook_findings": 0,
+            "dropped": 0,
             "errors": 0,
         }
 
@@ -817,8 +818,19 @@ class DataPoller:
             raise IngestionError(f"{label} ingestion failed: {result.get('errors')}")
 
         ingested = result.get("ingested", 0)
+        failed = result.get("failed", 0)
         self.stats[f"{source}_findings"] += ingested
+        # A partial failure is not an outage (no raise, no backoff) but is counted.
+        self.stats["dropped"] += failed
         logger.info("%s: ingested %d %s", label, ingested, noun)
+        if failed:
+            logger.warning(
+                "%s: %d %s failed to ingest (first errors: %s)",
+                label,
+                failed,
+                noun,
+                result.get("errors"),
+            )
 
     async def _poll_ingestion_loop(self, source: str, shutdown_event: asyncio.Event):
         """Poll an ingestion-service source on interval until shutdown."""
@@ -880,16 +892,26 @@ class DataPoller:
             )
 
             new_count = 0
+            dropped = 0
             for alert in alerts:
                 finding = self._elastic_service.transform_alert_to_finding(alert)
-                if finding and not await self._elastic_dedup.is_processed(
-                    finding["finding_id"]
-                ):
+                if not finding:
+                    dropped += 1
+                    continue
+                if not await self._elastic_dedup.is_processed(finding["finding_id"]):
                     if await self._enqueue_finding(
                         finding, "elastic", self._elastic_dedup, finding["finding_id"]
                     ):
                         await self._elastic_dedup.mark_processed(finding["finding_id"])
                         new_count += 1
+
+            if dropped:
+                logger.warning(
+                    "Elastic Security: dropped %d of %d alert(s) that failed to transform",
+                    dropped,
+                    len(alerts),
+                )
+                self.stats["dropped"] += dropped
 
             if new_count > 0:
                 logger.info(f"Polled {new_count} new findings from Elastic Security")

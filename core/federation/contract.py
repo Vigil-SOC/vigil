@@ -26,10 +26,13 @@ class FetchResult:
     of the daemon already consumes — see ``core.ingestion.ingestion_service``).
     ``cursor`` is the new persisted cursor for the next fetch — the runner
     writes it to ``federation_sources.cursor`` after a successful fetch.
+    ``dropped`` counts records the adapter received but could not turn into a
+    finding (deliberate filters such as severity or dedup are not drops).
     """
 
     findings: List[Dict[str, Any]] = field(default_factory=list)
     cursor: Dict[str, Any] = field(default_factory=dict)
+    dropped: int = 0
 
 
 class FederationAdapter(Protocol):

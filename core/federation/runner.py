@@ -176,12 +176,15 @@ class FederationRunner:
             return
 
         candidates = []
+        dropped = result.dropped
         for finding in result.findings:
             if not _severity_passes(finding.get("severity"), min_severity):
                 continue
             ext = finding.get("external_id") or finding.get("finding_id")
             if ext:
                 candidates.append((finding, ext))
+            else:
+                dropped += 1
 
         # One dedup round-trip to check the batch and one to mark it.
         enqueued: List[str] = []
@@ -206,7 +209,9 @@ class FederationRunner:
             self.stats["findings"] = self.stats.get("findings", 0) + new_count
             logger.info("Federation %s ingested %d finding(s)", source_id, new_count)
 
-        store.record_success(source_id, cursor=result.cursor or {})
+        if dropped:
+            self.stats["dropped"] = self.stats.get("dropped", 0) + dropped
+        store.record_success(source_id, cursor=result.cursor or {}, dropped=dropped)
 
     async def _enqueue(
         self,

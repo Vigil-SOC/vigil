@@ -129,19 +129,36 @@ def update_source(source_id: str, fields: Dict[str, Any]) -> Optional[Dict[str, 
 
 
 def record_success(
-    source_id: str, *, cursor: Dict[str, Any], when: Optional[datetime] = None
+    source_id: str,
+    *,
+    cursor: Dict[str, Any],
+    when: Optional[datetime] = None,
+    dropped: int = 0,
 ) -> None:
+    """Advance the cursor and add this tick's ``dropped`` to the running total."""
     when = when or utcnow()
-    update_source(
-        source_id,
-        {
-            "last_poll_at": when,
-            "last_success_at": when,
-            "last_error": None,
-            "consecutive_errors": 0,
-            "cursor": cursor or {},
-        },
-    )
+    try:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import FederationSource
+
+        with get_db_manager().session_scope() as session:
+            # Row lock so concurrent writers add to the total instead of racing it.
+            row = (
+                session.query(FederationSource)
+                .filter_by(source_id=source_id)
+                .with_for_update()
+                .one_or_none()
+            )
+            if row is None:
+                return
+            row.last_poll_at = when
+            row.last_success_at = when
+            row.last_error = None
+            row.consecutive_errors = 0
+            row.cursor = cursor or {}
+            row.dropped_total = (row.dropped_total or 0) + max(dropped, 0)
+    except Exception as e:
+        logger.warning("record_success(%s) failed: %s", source_id, e)
 
 
 def record_failure(source_id: str, error: str) -> None:

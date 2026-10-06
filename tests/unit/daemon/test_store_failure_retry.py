@@ -358,7 +358,7 @@ async def test_webhook_federation_and_kafka_do_not_redeliver(monkeypatch, caplog
     stored: List[Dict[str, Any]] = []
     monkeypatch.setattr(
         "core.federation.runner.store.record_success",
-        lambda source_id, *, cursor: stored.append(cursor),
+        lambda source_id, *, cursor, **_: stored.append(cursor),
     )
     monkeypatch.setattr(
         "core.federation.runner.store.record_failure",

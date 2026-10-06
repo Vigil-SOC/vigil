@@ -471,6 +471,17 @@ def add_custom_agent_fallback_model(conn):
     """))
 
 
+# Cumulative count of records a poll received but could not turn into findings.
+@migration("Add federation_sources.dropped_total")
+def add_federation_dropped_total(conn):
+    if not _table_exists(conn, 'federation_sources'):
+        return
+    conn.execute(text("""
+        ALTER TABLE federation_sources
+            ADD COLUMN IF NOT EXISTS dropped_total INTEGER NOT NULL DEFAULT 0;
+    """))
+
+
 @migration("Set case_templates.usage_count server default to 0")
 def set_case_template_usage_count_default(conn):
     if not _table_exists(conn, 'case_templates'):
