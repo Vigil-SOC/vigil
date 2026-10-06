@@ -11,7 +11,10 @@ namespace (e.g. ``"splunk"``, ``"kafka"``) so dedup sets are isolated.
 If Redis is unavailable at init time or any call fails, the helper falls
 back to an in-memory set so ingestion keeps working — the trade-off is
 that restarts may re-process findings (same behaviour as the old
-``PollState``). A warning is logged on fallback.
+``PollState``). An error is logged when an instance moves from Redis to the
+fallback, and a warning when it reconnects; repeated failed probes while in
+fallback are silent. Ids marked during an outage stay in memory only and are
+not merged back into Redis on recovery.
 """
 
 from __future__ import annotations
@@ -58,7 +61,7 @@ class RedisDedupSet:
         # the sorted set so a failed delete cannot leave the id looking handled.
         # mark_processed clears an id here — a later successful enqueue sticks.
         self._pending_forget: set[str] = set()
-        self._fallback_warned = False
+        self._in_fallback = False
         self._lock = asyncio.Lock()
 
     async def _get_redis(self):
@@ -73,19 +76,29 @@ class RedisDedupSet:
             logger.info(
                 "RedisDedupSet[%s] connected to %s", self.namespace, self.redis_url
             )
+            if self._in_fallback:
+                self._in_fallback = False
+                logger.warning(
+                    "RedisDedupSet[%s] Redis recovered; %d id(s) marked during the"
+                    " outage exist only in memory and are not in Redis",
+                    self.namespace,
+                    len(self._fallback),
+                )
         except Exception as e:
             self._warn_fallback(f"init failed: {e}")
             self._redis = None
         return self._redis
 
     def _warn_fallback(self, reason: str):
-        if not self._fallback_warned:
-            logger.warning(
-                "RedisDedupSet[%s] using in-memory fallback (%s)",
+        """Log once per Redis -> fallback transition, not per failed call."""
+        if not self._in_fallback:
+            logger.error(
+                "RedisDedupSet[%s] Redis unavailable, using in-memory fallback"
+                " (%s); dedup state will not survive restarts or be shared",
                 self.namespace,
                 reason,
             )
-            self._fallback_warned = True
+            self._in_fallback = True
 
     async def is_processed(self, finding_id: str) -> bool:
         if not finding_id:

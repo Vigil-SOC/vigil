@@ -10,7 +10,10 @@ marker.
 from __future__ import annotations
 
 import asyncio
+import logging
+
 import pytest
+import redis.asyncio as aioredis
 
 from core.ingestion.dedup import RedisDedupSet
 
@@ -300,3 +303,46 @@ def test_forget_clears_only_this_instance_fallback(no_redis):
     still_marked, cleared = _run(go())
     assert still_marked is True
     assert cleared is False
+
+
+class _FakeRedis:
+    """Just enough of redis.asyncio for the dedup transition tests."""
+
+    up = True
+
+    async def ping(self):
+        if not _FakeRedis.up:
+            raise ConnectionError("down")
+
+    async def zscore(self, key, member):
+        if not _FakeRedis.up:
+            raise ConnectionError("down")
+        return None
+
+
+class TestRedisDedupOutageLogging:
+    def test_logs_only_on_transitions(self, monkeypatch, caplog):
+        monkeypatch.setattr(aioredis, "from_url", lambda *a, **k: _FakeRedis())
+        caplog.set_level(logging.INFO, logger="core.ingestion.dedup")
+        dedup = _make()
+
+        def lines(level):
+            return [r for r in caplog.records if r.levelno == level]
+
+        async def go():
+            _FakeRedis.up = False
+            for _ in range(3):  # repeated failed probes: one ERROR total
+                await dedup.mark_processed("a")
+            assert len(lines(logging.ERROR)) == 1
+
+            _FakeRedis.up = True  # recovery
+            await dedup.is_processed("a")
+            assert len(lines(logging.WARNING)) == 1
+            assert "only in memory" in lines(logging.WARNING)[0].getMessage()
+
+            _FakeRedis.up = False  # second outage logs again
+            await dedup.is_processed("a")
+            await dedup.is_processed("a")
+            assert len(lines(logging.ERROR)) == 2
+
+        _run(go())

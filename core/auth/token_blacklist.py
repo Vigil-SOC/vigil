@@ -19,6 +19,7 @@ you deliberately prefer availability over security during Redis outages.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -34,6 +35,48 @@ _USER_CUTOFF_PREFIX = "user_revoked_before:"
 # If True, Redis failures during verification allow the request through.
 # Default: False (fail-closed). Set REVOCATION_FAIL_OPEN=true for fail-open.
 _FAIL_OPEN = get_settings().revocation_fail_open
+
+
+# Lookup-failure outage state (process-wide). Logging is throttled to one ERROR
+# per window so an outage does not bury the log in per-request lines.
+_LOG_INTERVAL_SECONDS = 60
+_outage_failures = 0  # failures since the last ERROR (or since the outage began)
+_outage_total = 0
+_outage_last_logged = 0.0
+
+
+def _note_lookup_failed(exc: Exception) -> None:
+    global _outage_failures, _outage_total, _outage_last_logged
+    first = _outage_total == 0
+    _outage_failures += 1
+    _outage_total += 1
+    now = time.monotonic()
+    if not first and now - _outage_last_logged < _LOG_INTERVAL_SECONDS:
+        return
+    logger.error(
+        "is_token_revoked: redis lookup failed (%s); %d failure(s) since last log;"
+        " fail_%s — %s",
+        exc,
+        _outage_failures,
+        "open" if _FAIL_OPEN else "closed",
+        (
+            "revocation checks are skipped"
+            if _FAIL_OPEN
+            else "all authenticated requests are being rejected"
+        ),
+    )
+    _outage_failures = 0
+    _outage_last_logged = now
+
+
+def _note_lookup_ok() -> None:
+    global _outage_failures, _outage_total
+    if _outage_total == 0:
+        return
+    logger.warning(
+        "is_token_revoked: redis lookups recovered after %d failure(s)", _outage_total
+    )
+    _outage_failures = _outage_total = 0
 
 
 def _get_client():
@@ -97,38 +140,41 @@ async def is_token_revoked(payload: dict) -> bool:
         )
         return True
 
+    try:
+        revoked = await _lookup_revoked(client, payload)
+    except Exception as exc:
+        _note_lookup_failed(exc)
+        return not _FAIL_OPEN
+    _note_lookup_ok()
+    return revoked
+
+
+async def _lookup_revoked(client, payload: dict) -> bool:
+    """Raises on Redis errors; the caller decides fail-open/closed."""
     jti = payload.get("jti")
     user_id = payload.get("user_id")
 
-    try:
-        if jti:
-            exists = await client.exists(f"{_JTI_PREFIX}{jti}")
-            if exists:
-                return True
+    if jti:
+        exists = await client.exists(f"{_JTI_PREFIX}{jti}")
+        if exists:
+            return True
 
-        if user_id:
-            cutoff_raw = await client.get(f"{_USER_CUTOFF_PREFIX}{user_id}")
-            if cutoff_raw is not None:
-                try:
-                    cutoff = int(cutoff_raw)
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Malformed user cutoff for %s: %r",
-                        user_id,
-                        cutoff_raw,
-                    )
-                    return not _FAIL_OPEN
-                iat = payload.get("iat")
-                if iat is None:
-                    return True
-                if int(iat) < cutoff:
-                    return True
-    except Exception as exc:
-        logger.warning(
-            "is_token_revoked: redis lookup failed (%s); fail_%s",
-            exc,
-            "open" if _FAIL_OPEN else "closed",
-        )
-        return not _FAIL_OPEN
+    if user_id:
+        cutoff_raw = await client.get(f"{_USER_CUTOFF_PREFIX}{user_id}")
+        if cutoff_raw is not None:
+            try:
+                cutoff = int(cutoff_raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Malformed user cutoff for %s: %r",
+                    user_id,
+                    cutoff_raw,
+                )
+                return not _FAIL_OPEN
+            iat = payload.get("iat")
+            if iat is None:
+                return True
+            if int(iat) < cutoff:
+                return True
 
     return False
