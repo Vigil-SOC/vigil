@@ -85,7 +85,9 @@ def _week_run_stats(now: datetime) -> Dict[str, Dict[str, Any]]:
     by_status: Dict[str, Dict[str, int]] = {}
     for workflow_id, status, count in counts:
         by_status.setdefault(str(workflow_id), {})[status] = int(count)
-    mean = {str(workflow_id): float(avg) for workflow_id, avg in costs if avg is not None}
+    mean = {
+        str(workflow_id): float(avg) for workflow_id, avg in costs if avg is not None
+    }
     stats = {}
     for workflow_id, statuses in by_status.items():
         completed = statuses.get("completed", 0)

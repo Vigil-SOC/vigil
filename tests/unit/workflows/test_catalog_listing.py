@@ -37,7 +37,14 @@ def test_listing_attaches_seven_day_runs_success_and_mean_cost(monkeypatch):
     _run(runs, "cat-b", "cloud-incident", RECENT, "failed", 0.5)
     _run(runs, "cat-open", "cloud-incident", RECENT)
     _run(runs, "cat-edge", "cloud-incident", NOW - timedelta(days=7), "completed", 1.0)
-    _run(runs, "cat-old", "cloud-incident", NOW - timedelta(days=7, seconds=1), "failed", 9)
+    _run(
+        runs,
+        "cat-old",
+        "cloud-incident",
+        NOW - timedelta(days=7, seconds=1),
+        "failed",
+        9,
+    )
     _run(runs, "cat-del", "cloud-incident", RECENT, "failed", 8)
     runs.delete_run("cat-del")
     # Only running runs: counted, but nothing has ended, so no rate or level.
@@ -77,7 +84,9 @@ def test_listing_attaches_seven_day_runs_success_and_mean_cost(monkeypatch):
 
     cloud = by_id["cloud-incident"]
     assert cloud["runs_7d"] == 4  # a, b, open, edge
-    assert cloud["success_rate"] == pytest.approx(2 / 3)  # the running one has not ended
+    assert cloud["success_rate"] == pytest.approx(
+        2 / 3
+    )  # the running one has not ended
     assert cloud["success_level"] == "poor"
     assert cloud["mean_cost_usd"] == pytest.approx(1.0)  # a, b, edge; not open
     assert "updated_at" not in cloud
