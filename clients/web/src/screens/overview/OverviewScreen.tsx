@@ -96,7 +96,7 @@ function Flow({ data }: { data: OverviewPayload }) {
 
 export default function OverviewScreen({ goSettings, openCase, setWallMode }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const alertId = searchParams.get('alert')
+  const alertId = searchParams.get('alert') || null // an empty value is no alert
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
