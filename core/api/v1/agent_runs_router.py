@@ -25,6 +25,7 @@ from core.agents.queue import (
     enqueue_run,
     new_run_id,
 )
+from core.agents.run_limits import OverrideRefused, check_overrides
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.workflows.enablement import disabled_message, is_enabled
 
@@ -133,6 +134,11 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     named = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
     if request.playbook.startswith(WORKFLOW_SCHEME) and not is_enabled(named):
         raise HTTPException(status_code=409, detail=disabled_message(named))
+
+    try:
+        check_overrides(request.overrides)
+    except OverrideRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     run_id = new_run_id()
     payload: Dict[str, Any] = {
