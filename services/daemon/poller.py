@@ -531,6 +531,14 @@ class DataPoller:
                 limit=100,
             )
 
+            # None means the query failed; raise so the loop counts an error
+            # and leaves last_poll_time alone. [] is a clean empty poll.
+            if detections is None:
+                detail = getattr(self._crowdstrike_service, "last_error", None)
+                raise RuntimeError(
+                    "CrowdStrike detections query failed"
+                    + (f": {detail}" if detail else "")
+                )
             if not detections:
                 return
 

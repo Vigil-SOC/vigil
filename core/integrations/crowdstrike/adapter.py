@@ -46,19 +46,17 @@ class CrowdStrikeAdapter:
             return self._service
         if not self.is_configured():
             return None
-        try:
-            from core.integrations.crowdstrike.client import CrowdStrikeService
+        from core.integrations.crowdstrike.client import CrowdStrikeService
 
-            # resolve() reads client_secret from the secrets store; unset fields are None.
-            cfg = resolve(CROWDSTRIKE)
-            self._service = CrowdStrikeService(
-                client_id=cfg["client_id"] or "",
-                client_secret=cfg["client_secret"] or "",
-                base_url=cfg["base_url"] or "https://api.crowdstrike.com",
-            )
-        except Exception as e:
-            logger.warning("CrowdStrike service init failed: %s", e)
-            self._service = None
+        # A configured source whose service cannot be built is failing, not
+        # empty: let the error reach the runner so the cursor is kept.
+        # resolve() reads client_secret from the secrets store; unset fields are None.
+        cfg = resolve(CROWDSTRIKE)
+        self._service = CrowdStrikeService(
+            client_id=cfg["client_id"] or "",
+            client_secret=cfg["client_secret"] or "",
+            base_url=cfg["base_url"] or "https://api.crowdstrike.com",
+        )
         return self._service
 
     async def fetch(
@@ -84,7 +82,11 @@ class CrowdStrikeAdapter:
         )
         if detections is None:
             # Raised so the runner records a failure and keeps the cursor.
-            raise RuntimeError("CrowdStrike detections query failed")
+            detail = getattr(svc, "last_error", None)
+            raise RuntimeError(
+                "CrowdStrike detections query failed"
+                + (f": {detail}" if detail else "")
+            )
 
         findings = []
         for det in detections[:max_items]:

@@ -31,6 +31,9 @@ class CrowdStrikeService:
         self.base_url = base_url.rstrip("/")
         self.access_token: Optional[str] = None
         self.token_expiry: Optional[datetime] = None
+        # Detail of the last failed get_detections call (e.g. "HTTP 500 ..."),
+        # so callers can report why it returned None.
+        self.last_error: Optional[str] = None
         self.session = httpx.Client(
             timeout=DEFAULT_TIMEOUT,
             follow_redirects=_FOLLOW_REDIRECTS,
@@ -65,9 +68,11 @@ class CrowdStrikeService:
                 return True
             else:
                 logger.error(f"CrowdStrike auth failed: {response.status_code}")
+                self.last_error = f"authentication failed: HTTP {response.status_code}"
                 return False
         except Exception as e:
             logger.error(f"CrowdStrike auth error: {e}")
+            self.last_error = f"authentication error: {e}"
             return False
 
     def test_connection(self) -> tuple[bool, str]:
@@ -99,8 +104,9 @@ class CrowdStrikeService:
             limit: Maximum number of detections to return
 
         Returns:
-            List of detection details or None on error
+            List of detection details or None on error (see ``last_error``)
         """
+        self.last_error = None
         try:
             if not self._ensure_authenticated():
                 return None
@@ -116,6 +122,7 @@ class CrowdStrikeService:
 
             if response.status_code != 200:
                 logger.error(f"Failed to query detections: {response.status_code}")
+                self.last_error = f"detections query: HTTP {response.status_code}"
                 return None
 
             data = response.json()
@@ -135,6 +142,9 @@ class CrowdStrikeService:
                 logger.error(
                     f"Failed to get detection details: {detail_response.status_code}"
                 )
+                self.last_error = (
+                    f"detection details: HTTP {detail_response.status_code}"
+                )
                 return None
 
             details = detail_response.json()
@@ -142,6 +152,7 @@ class CrowdStrikeService:
 
         except Exception as e:
             logger.error(f"Error getting detections: {e}")
+            self.last_error = str(e)
             return None
 
     def lift_containment(self, host_id: str) -> Dict[str, Any]:

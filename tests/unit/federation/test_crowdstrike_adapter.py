@@ -88,8 +88,9 @@ def test_falcon_http_errors_raise(route, status):
     method = respx.post if route == "/oauth2/token" else respx.get
     method(f"{BASE}{route}").mock(return_value=httpx.Response(status))
 
-    with pytest.raises(RuntimeError, match="detections query failed"):
+    with pytest.raises(RuntimeError, match="detections query failed") as exc:
         _fetch(CrowdStrikeService(client_id="cid", client_secret="csec"))
+    assert f"HTTP {status}" in str(exc.value)
 
 
 def test_empty_result_is_a_successful_empty_poll():
@@ -131,4 +132,63 @@ async def test_runner_records_failure_and_keeps_cursor(monkeypatch):
         adapter, {"max_items": 10, "cursor": CURSOR, "min_severity": None}
     )
     assert failures == [("crowdstrike", "CrowdStrike detections query failed")]
+    assert runner.stats["errors"] == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_runner_stores_http_status_in_last_error(monkeypatch):
+    respx.post(f"{BASE}/oauth2/token").mock(
+        return_value=httpx.Response(
+            201, json={"access_token": "tok", "expires_in": 1800}
+        )
+    )
+    respx.get(f"{BASE}/detects/queries/detects/v1").mock(
+        return_value=httpx.Response(429)
+    )
+    runner = FederationRunner(output_queue=asyncio.Queue())
+    adapter = _adapter(CrowdStrikeService(client_id="cid", client_secret="csec"))
+
+    failures: List[Any] = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda source_id, error: failures.append((source_id, error)),
+    )
+
+    await runner._do_one_tick(
+        adapter, {"max_items": 10, "cursor": CURSOR, "min_severity": None}
+    )
+    assert len(failures) == 1
+    assert "HTTP 429" in failures[0][1]
+
+
+@pytest.mark.asyncio
+async def test_service_build_failure_is_a_failed_tick(monkeypatch):
+    runner = FederationRunner(output_queue=asyncio.Queue())
+    adapter = CrowdStrikeAdapter()
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        "core.integrations.crowdstrike.adapter.resolve",
+        lambda _d: (_ for _ in ()).throw(ValueError("secrets store down")),
+    )
+
+    failures: List[Any] = []
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure",
+        lambda source_id, error: failures.append((source_id, error)),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success",
+        lambda *a, **k: pytest.fail("record_success should not be called"),
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.update_cursor",
+        lambda *a, **k: pytest.fail("cursor must not advance"),
+        raising=False,
+    )
+
+    await runner._do_one_tick(
+        adapter, {"max_items": 10, "cursor": CURSOR, "min_severity": None}
+    )
+    assert failures == [("crowdstrike", "secrets store down")]
     assert runner.stats["errors"] == 1
