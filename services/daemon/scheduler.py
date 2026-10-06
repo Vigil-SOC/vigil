@@ -416,7 +416,7 @@ class TaskScheduler:
 
         poller = SandboxPoller(data_service=self._data_service)
         stats = await poller.run_once()
-        if stats.get("completed") or stats.get("expired") or stats.get("errors"):
+        if any(stats.get(k) for k in ("completed", "expired", "failed", "errors")):
             logger.info(f"Sandbox poll: {stats}")
         return stats
 
