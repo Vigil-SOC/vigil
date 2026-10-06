@@ -34,6 +34,7 @@ class KafkaIngestor:
         self._service: Optional[KafkaConsumerService] = None
         self._task: Optional[asyncio.Task] = None
         self._consumer_shutdown: Optional[asyncio.Event] = None
+        self._config_sync_failing = False
 
     @property
     def stats(self) -> Dict[str, Any]:
@@ -62,6 +63,9 @@ class KafkaIngestor:
             from core.storage.config_service import get_config_service
 
             db_cfg = get_config_service().get_system_config("kafka.settings")
+            if self._config_sync_failing:
+                self._config_sync_failing = False
+                logger.info("Kafka config sync from DB recovered")
             if not db_cfg or not isinstance(db_cfg, dict):
                 return
             if "enabled" in db_cfg:
@@ -77,7 +81,13 @@ class KafkaIngestor:
             if "security_protocol" in db_cfg:
                 self.config.security_protocol = str(db_cfg["security_protocol"])
         except Exception as e:
-            logger.debug("Kafka config sync from DB failed (non-fatal): %s", e)
+            if not self._config_sync_failing:
+                self._config_sync_failing = True
+                logger.error(
+                    "Kafka config sync from DB failed, UI changes are ignored "
+                    "until it recovers: %s",
+                    e,
+                )
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
         """Start/stop the consumer based on the enabled flag; exit on shutdown."""

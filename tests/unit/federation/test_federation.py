@@ -676,3 +676,44 @@ async def test_unconfigured_integration_is_skipped_not_recorded_as_success(
     assert adapter.fetch_calls == []
     assert runner.stats["polls"] == 0
     assert len([r for r in caplog.records if "not configured" in r.getMessage()]) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_outage_logs_error_once_then_a_recovery_line(monkeypatch, caplog):
+    runner = FederationRunner(output_queue=asyncio.Queue())
+
+    class _FlakyAdapter(_FakeAdapter):
+        down = True
+
+        async def fetch(self, **kwargs):
+            if self.down:
+                raise RuntimeError("boom")
+            return await super().fetch(**kwargs)
+
+    adapter = _FlakyAdapter()
+    runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_failure", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "core.federation.runner.store.record_success", lambda *a, **k: None
+    )
+
+    def tick(prior_errors):
+        return runner._do_one_tick(
+            adapter,
+            {"max_items": 100, "cursor": {}, "consecutive_errors": prior_errors},
+        )
+
+    with caplog.at_level("INFO", logger="core.federation.runner"):
+        # Failures 1..5: ERROR on the first, WARNING on 2 and 4 only.
+        for prior in range(5):
+            await tick(prior)
+        levels = [r.levelname for r in caplog.records]
+        assert levels == ["ERROR", "WARNING", "WARNING"]
+
+        caplog.clear()
+        adapter.down = False
+        await tick(5)
+    assert [r.levelname for r in caplog.records] == ["INFO"]
+    assert "recovered after 5 failure(s)" in caplog.records[0].getMessage()

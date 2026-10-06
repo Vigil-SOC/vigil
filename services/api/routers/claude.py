@@ -473,7 +473,7 @@ async def _relay(
                 page_context=request.page_context,
             )
         except Exception as exc:  # noqa: BLE001 — history never breaks the chat
-            logger.warning("chat history persist failed (non-fatal): %s", exc)
+            logger.error("chat history persist failed (non-fatal): %s", exc)
 
 
 def _frame(event: Dict[str, Any]) -> str:

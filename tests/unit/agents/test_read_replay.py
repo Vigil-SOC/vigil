@@ -68,3 +68,22 @@ async def test_an_unreachable_agent_layer_raises(monkeypatch):
 
     with pytest.raises(RuntimeError, match="could not reach the agent layer"):
         await projections.read_replay(RUN)
+
+
+@pytest.mark.asyncio
+async def test_projection_outage_logs_error_once_then_recovers(monkeypatch, caplog):
+    monkeypatch.setattr(projections, "_read_failing", False)
+    status = {"code": 502}
+    _serve(monkeypatch, lambda _r: httpx.Response(status["code"], json=REPORT))
+
+    with caplog.at_level("DEBUG", logger=projections.logger.name):
+        for _ in range(3):
+            assert await projections.read_projection(RUN) is None
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(errors) == 1
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+        caplog.clear()
+        status["code"] = 200
+        assert await projections.read_projection(RUN) == REPORT
+    assert [r.levelname for r in caplog.records] == ["INFO"]

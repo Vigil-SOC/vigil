@@ -217,7 +217,7 @@ def _load_connection_string_secret() -> Optional[str]:
             else None
         )
     except Exception as e:  # noqa: BLE001
-        logger.debug("Could not read POSTGRESQL_CONNECTION_STRING: %s", e)
+        logger.warning("Could not read POSTGRESQL_CONNECTION_STRING: %s", e)
         return None
 
 

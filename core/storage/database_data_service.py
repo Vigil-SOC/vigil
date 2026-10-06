@@ -45,6 +45,7 @@ class DatabaseDataService:
     def __init__(self, demo_data=None):
         self._db_service = None
         self._db_connected = False
+        self._db_was_down = False
         # Connection is deferred to first use (`_db_available`) so importing a
         # module that builds a module-level service opens no connection (#1456).
         # -inf, not 0.0: monotonic() can be under the interval on a fresh boot.
@@ -67,6 +68,9 @@ class DatabaseDataService:
             self._db_service = DatabaseService()
             self._db_connected = True
             logger.info("PostgreSQL connection established")
+            if self._db_was_down:
+                self._db_was_down = False
+                logger.info("PostgreSQL reconnected")
         except SchemaDriftError:
             # DB_STRICT_SCHEMA is set, so the operator asked for this to be
             # fatal (#562).
@@ -76,7 +80,8 @@ class DatabaseDataService:
         except Exception as e:
             self._db_connected = False
             self._db_service = None
-            logger.warning(f"PostgreSQL not available: {e}")
+            self._db_was_down = True
+            logger.error(f"PostgreSQL not available: {e}")
 
     @property
     def _db_available(self) -> bool:

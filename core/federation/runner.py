@@ -208,7 +208,17 @@ class FederationRunner:
                 max_items=max_items,
             )
         except Exception as e:
-            logger.warning("Federation %s fetch raised: %s", source_id, e)
+            # ``row`` predates this tick, so its count is the failures so far.
+            failures = int(row.get("consecutive_errors") or 0) + 1
+            if failures == 1:
+                logger.error("Federation %s fetch raised: %s", source_id, e)
+            elif failures & (failures - 1) == 0:  # powers of two
+                logger.warning(
+                    "Federation %s fetch still failing (%d consecutive): %s",
+                    source_id,
+                    failures,
+                    e,
+                )
             self.stats["errors"] = self.stats.get("errors", 0) + 1
             store.record_failure(source_id, str(e))
             return
@@ -249,6 +259,13 @@ class FederationRunner:
 
         if dropped:
             self.stats["dropped"] = self.stats.get("dropped", 0) + dropped
+        prior_failures = int(row.get("consecutive_errors") or 0)
+        if prior_failures:
+            logger.info(
+                "Federation %s fetch recovered after %d failure(s)",
+                source_id,
+                prior_failures,
+            )
         store.record_success(source_id, cursor=result.cursor or {}, dropped=dropped)
 
     async def _enqueue(

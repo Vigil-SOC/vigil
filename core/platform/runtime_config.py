@@ -44,6 +44,8 @@ ENV_FALLBACKS = {
 _cache_lock = threading.Lock()
 _cache: Dict[str, Any] = {}
 _cache_expires_at: float = 0.0
+# True while DB reads fail: one ERROR on entry, one INFO on recovery.
+_db_failing = False
 
 
 def clear_cache() -> None:
@@ -62,12 +64,23 @@ def _fetch_db_config() -> Optional[Dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("runtime_config: config_service import failed: %s", exc)
         return None
+    global _db_failing
     try:
         svc = get_config_service()
-        return svc.get_system_config(_CONFIG_KEY) or {}
+        config = svc.get_system_config(_CONFIG_KEY) or {}
     except Exception as exc:  # noqa: BLE001
-        logger.debug("runtime_config: DB fetch failed: %s", exc)
+        if not _db_failing:
+            _db_failing = True
+            logger.error(
+                "runtime_config: DB fetch failed, Settings-UI changes are ignored "
+                "until it recovers: %s",
+                exc,
+            )
         return None
+    if _db_failing:
+        _db_failing = False
+        logger.info("runtime_config: DB fetch recovered")
+    return config
 
 
 def _load_cache() -> Dict[str, Any]:

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 READ_TIMEOUT_S = 10
 
+# True while reads are failing, so an outage logs one ERROR and one recovery line.
+_read_failing = False
+
 # An investigation id is ours and is not a uuid; a run id is. Derived rather than
 # stored so the same investigation always addresses the same run.
 RUNS = uuid.UUID("6ba7b813-9dad-11d1-80b4-00c04fd430c8")
@@ -38,6 +41,20 @@ def _headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _note_read(ok: bool, message: str, *args: Any) -> None:
+    """ERROR when reads start failing, DEBUG while they keep failing, INFO on recovery."""
+    global _read_failing
+    if ok:
+        if _read_failing:
+            logger.info("agent service reads recovered")
+        _read_failing = False
+    elif _read_failing:
+        logger.debug(message, *args)
+    else:
+        _read_failing = True
+        logger.error(message, *args)
+
+
 async def _read_fold(run_id: str, view: str) -> Optional[Dict[str, Any]]:
     import httpx
 
@@ -46,14 +63,17 @@ async def _read_fold(run_id: str, view: str) -> Optional[Dict[str, Any]]:
         async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
             response = await client.get(url, headers=_headers())
     except Exception as exc:  # noqa: BLE001 — unreachable is not terminal
-        logger.debug("could not read the %s for %s: %s", view, run_id, exc)
+        _note_read(False, "could not read the %s for %s: %s", view, run_id, exc)
         return None
 
+    # A 404 is an answer: the service is up, the run just has nothing yet.
     if response.status_code == 404:
+        _note_read(True, "")
         return None
     if response.status_code != 200:
-        logger.warning("%s for %s answered %s", view, run_id, response.status_code)
+        _note_read(False, "%s for %s answered %s", view, run_id, response.status_code)
         return None
+    _note_read(True, "")
     return response.json()
 
 

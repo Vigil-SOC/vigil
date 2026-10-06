@@ -191,7 +191,7 @@ class DataPoller:
                     )
                     logger.info("Splunk service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize Splunk service: {e}")
+                    logger.error(f"Failed to initialize Splunk service: {e}")
 
             # Initialize CrowdStrike service if configured
             if is_integration_enabled("crowdstrike"):
@@ -207,7 +207,7 @@ class DataPoller:
                     )
                     logger.info("CrowdStrike service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize CrowdStrike service: {e}")
+                    logger.error(f"Failed to initialize CrowdStrike service: {e}")
 
             # Initialize Azure Sentinel service if configured
             if is_integration_enabled("azure-sentinel"):
@@ -219,7 +219,7 @@ class DataPoller:
                     self._azure_sentinel_service = AzureSentinelIngestion()
                     logger.info("Azure Sentinel service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize Azure Sentinel service: {e}")
+                    logger.error(f"Failed to initialize Azure Sentinel service: {e}")
 
             # Initialize AWS Security Hub service if configured
             if is_integration_enabled("aws-security-hub"):
@@ -231,9 +231,7 @@ class DataPoller:
                     self._aws_security_hub_service = AWSSecurityHubIngestion()
                     logger.info("AWS Security Hub service initialized")
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize AWS Security Hub service: {e}"
-                    )
+                    logger.error(f"Failed to initialize AWS Security Hub service: {e}")
 
             # Initialize Microsoft Defender service if configured
             if is_integration_enabled("microsoft-defender"):
@@ -245,7 +243,7 @@ class DataPoller:
                     self._microsoft_defender_service = MicrosoftDefenderIngestion()
                     logger.info("Microsoft Defender service initialized")
                 except Exception as e:
-                    logger.warning(
+                    logger.error(
                         f"Failed to initialize Microsoft Defender service: {e}"
                     )
 
@@ -257,9 +255,7 @@ class DataPoller:
                     self._elastic_service = ElasticIngestion()
                     logger.info("Elastic Security service initialized")
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize Elastic Security service: {e}"
-                    )
+                    logger.error(f"Failed to initialize Elastic Security service: {e}")
 
             # Initialize OpenSearch service if configured
             if is_integration_enabled("opensearch"):
@@ -271,7 +267,7 @@ class DataPoller:
                     self._opensearch_service = OpenSearchIngestion()
                     logger.info("OpenSearch service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize OpenSearch service: {e}")
+                    logger.error(f"Failed to initialize OpenSearch service: {e}")
 
             # Initialize data service for database access
             from core.storage.database_data_service import DatabaseDataService
@@ -740,7 +736,15 @@ class DataPoller:
         site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
 
         logger.info(f"Webhook server starting on port {self.config.webhook_port}")
-        await site.start()
+        try:
+            await site.start()
+        except OSError as e:
+            # Don't re-raise: the other polling tasks must keep running.
+            logger.error(
+                f"Webhook server failed to bind port {self.config.webhook_port}: {e}"
+            )
+            await runner.cleanup()
+            return
 
         # Wait for shutdown
         await shutdown_event.wait()

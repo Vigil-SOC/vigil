@@ -90,7 +90,7 @@ class WorkflowRunService:
             logger.info("Workflow run started: %s (workflow=%s)", run_id, workflow_id)
             return run_id
         except SQLAlchemyError as e:
-            logger.warning("Could not persist workflow run start: %s", e)
+            logger.error("Could not persist workflow run start: %s", e)
             return None
 
     def set_status(self, run_id: str, status: str) -> bool:
@@ -109,7 +109,7 @@ class WorkflowRunService:
                 row.status = status
             return True
         except SQLAlchemyError as e:
-            logger.warning("Could not set run status %s: %s", run_id, e)
+            logger.error("Could not set run status %s: %s", run_id, e)
             return False
 
     def finalize_run(
@@ -163,7 +163,7 @@ class WorkflowRunService:
                     delta = now - row.started_at
                     row.duration_ms = int(delta.total_seconds() * 1000)
         except SQLAlchemyError as e:
-            logger.warning("Could not finalise workflow run %s: %s", run_id, e)
+            logger.error("Could not finalise workflow run %s: %s", run_id, e)
             return False
         # After the commit, so a write that fails is not counted as an outcome.
         _runs_finished_counter().add(1, {"run_kind": str(run_kind), "status": status})

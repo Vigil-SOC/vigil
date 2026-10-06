@@ -251,7 +251,7 @@ class AutonomousResponder:
             if response.status_code == 200 and response.json().get("ok"):
                 logger.debug("Slack alert sent successfully")
             else:
-                logger.warning(f"Slack alert failed: {response.text}")
+                logger.error(f"Slack alert failed: {response.text}")
 
         except Exception as e:
             logger.error(f"Slack escalation error: {e}")
@@ -295,7 +295,7 @@ class AutonomousResponder:
             if data.get("status") == "success":
                 logger.debug(f"PagerDuty alert triggered: {data.get('dedup_key')}")
             else:
-                logger.warning(f"PagerDuty alert failed: {data}")
+                logger.error(f"PagerDuty alert failed: {data}")
 
         except Exception as e:
             logger.error(f"PagerDuty escalation error: {e}")

@@ -461,5 +461,12 @@ class TaskScheduler:
             "status": "healthy" if self._claude_service else "unavailable"
         }
 
-        logger.info(f"Health check: {health['status']}")
+        db_status = health["components"]["database"]["status"]
+        if db_status == "error":
+            level = logging.ERROR
+        elif health["status"] != "healthy":
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+        logger.log(level, f"Health check: {health['status']}")
         return health

@@ -31,8 +31,10 @@ def _reset_cache():
     from core.platform import runtime_config
 
     runtime_config.clear_cache()
+    runtime_config._db_failing = False
     yield
     runtime_config.clear_cache()
+    runtime_config._db_failing = False
 
 
 class TestResolutionOrder:
@@ -282,3 +284,22 @@ class TestCacheBehavior:
                 "local_ollama_recovery_retry_limit", 1
             )
             assert m.call_count == 2
+
+
+class TestDbOutageLogging:
+    def test_outage_logs_error_once_then_recovery(self, caplog):
+        from core.platform import runtime_config
+
+        svc = MagicMock()
+        svc.get_system_config.side_effect = RuntimeError("db down")
+        with patch("core.storage.config_service.get_config_service", return_value=svc):
+            with caplog.at_level("INFO", logger=runtime_config.logger.name):
+                for _ in range(3):
+                    assert runtime_config._fetch_db_config() is None
+                assert [r.levelname for r in caplog.records] == ["ERROR"]
+
+                caplog.clear()
+                svc.get_system_config.side_effect = None
+                svc.get_system_config.return_value = {}
+                assert runtime_config._fetch_db_config() == {}
+                assert [r.levelname for r in caplog.records] == ["INFO"]

@@ -122,7 +122,7 @@ def ensure_conversation(
                 _apply_case_and_page(conv, case_id, page_context)
         return session_id
     except Exception as exc:  # noqa: BLE001 — fail-open, must not break chat
-        logger.warning("ensure_conversation failed (non-fatal): %s", exc)
+        logger.error("ensure_conversation failed (non-fatal): %s", exc)
         return None
 
 
@@ -191,7 +191,7 @@ def append_message(
             session.flush()
             return msg.id
     except Exception as exc:  # noqa: BLE001 — fail-open, must not break chat
-        logger.warning("append_message failed (non-fatal): %s", exc)
+        logger.error("append_message failed (non-fatal): %s", exc)
         return None
 
 
