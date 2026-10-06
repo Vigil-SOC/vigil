@@ -234,28 +234,19 @@ store() { # dest stem source
     fi
 }
 
-# Exact secret values, for the filter's -v values=. Anything the filter would
-# redact by name in this input is learned, so the same value is also caught
-# where it shows up in free text (container logs, the process list).
+# Exact secret values, for the filter's -v values=. The filter itself says which
+# values to learn (credential-class fields and URL passwords, not comments or
+# usernames), so the same value is also caught where it shows up in free text
+# (container logs, the process list).
 LEARN=0
 learn() { # file
     [ -s "$1" ] || return 0
     _lr=$WORK/learn
     tr -d '\000' <"$1" >"$_lr.in"
-    awk -f "$REDACT" -v names="$NAMES" <"$_lr.in" >"$_lr.red" 2>/dev/null || return 0
-    awk '
-        NR == FNR { a[FNR] = $0; n = FNR; next }
-        {
-            m = FNR; o = a[FNR]; b = $0
-            if (o == b) next
-            la = length(o); lb = length(b); lim = la < lb ? la : lb
-            for (p = 0; p < lim && substr(o, p + 1, 1) == substr(b, p + 1, 1); p++) ;
-            for (s = 0; s < lim - p && substr(o, la - s, 1) == substr(b, lb - s, 1); s++) ;
-            v = substr(o, p + 1, la - p - s)
-            if (length(v) >= 6) out = out v "\n"
-        }
-        END { if (m == n) printf "%s", out }' "$_lr.in" "$_lr.red" >>"$VALUES"
-    rm -f "$_lr.in" "$_lr.red"
+    if awk -f "$REDACT" -v names="$NAMES" -v learn=1 <"$_lr.in" >"$_lr.out" 2>/dev/null; then
+        cat "$_lr.out" >>"$VALUES"
+    fi
+    rm -f "$_lr.in" "$_lr.out"
 }
 
 # First line of a failed command's stderr (else stdout, for the ones that merge

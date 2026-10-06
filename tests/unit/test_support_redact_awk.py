@@ -50,11 +50,16 @@ CONTROLS = [
     "2026-10-05 12:00:00,123 - vigil.daemon - INFO - polled https://api.example.com/v1/x",
     'INFO:     10.0.0.5:4242 - "GET /api/health HTTP/1.1" 200 OK',
     "git+ssh://git@github.com/Vigil-SOC/vigil.git",
+    "docker.elastic.co/elasticsearch/elasticsearch:8.15.0 deeptempo-elasticsearch elastic_data:",
+    '"elastic": { "args": ["core/integrations/elastic/tool.py"] }',
+    "worker monitor reported 3 events",
+    "/usr/bin/vigil --port 6987 --log-level info --workers 4",
+    "image: sha256:" + "0123456789abcdef" * 4,
 ]
 
 
-def run_awk(awk, text, values=(), counts=None, names=NAMES):
-    args = [awk, "-f", str(REDACT), "-v", f"names={names}"]
+def run_awk(awk, text, values=(), counts=None, names=NAMES, extra=()):
+    args = [awk, "-f", str(REDACT), "-v", f"names={names}", *extra]
     if values:
         path = counts.parent / "values.txt"
         path.write_text("\n".join(values) + "\n")
@@ -108,6 +113,98 @@ def test_exact_values_are_replaced_as_fixed_strings(awk, tmp_path):
         "login failed for [REDACTED]\nretry [REDACTED] and axbbbcd9\nshort abc12 ok\n"
     )
     assert counts.read_text() == "probe\t2\n"
+
+
+@pytest.mark.parametrize("awk", AWKS)
+def test_exact_values_replace_only_where_they_stand_alone(awk, tmp_path):
+    counts = tmp_path / "counts.tsv"
+    text = (
+        "pw=hunter2hunter2 hunter2hunter2x xhunter2hunter2 hunter2hunter2.\n"
+        "end p@ssw0rd!word,p@ssw0rd!\n"
+        'postgresql://vigil:hunter2hunter2@db and {"a":"x\\nhunter2hunter2"}\n'
+    )
+    out = run_awk(awk, text, values=["hunter2hunter2", "p@ssw0rd!"], counts=counts)
+    assert out == (
+        "pw=[REDACTED] hunter2hunter2x xhunter2hunter2 [REDACTED].\n"
+        "end [REDACTED]word,[REDACTED]\n"
+        'postgresql://vigil:[REDACTED]@db and {"a":"x\\n[REDACTED]"}\n'
+    )
+    assert counts.read_text() == "probe\t6\n"
+
+
+@pytest.mark.parametrize("awk", AWKS)
+def test_longest_value_wins_and_replacement_is_not_rescanned(awk, tmp_path):
+    counts = tmp_path / "counts.tsv"
+    out = run_awk(
+        awk,
+        "a hunter2hunter2-long b hunter2hunter2 c\n",
+        values=["hunter2hunter2", "hunter2hunter2-long", "REDACTED]x"],
+        counts=counts,
+    )
+    assert out == "a [REDACTED] b [REDACTED] c\n"
+    assert counts.read_text() == "probe\t2\n"
+
+
+FLAG_CASES = [
+    (
+        "ps -ef: vigil --auth-token " + "0123456789abcdef" * 4 + " --port 6987",
+        "ps -ef: vigil --auth-token [REDACTED] --port 6987",
+    ),
+    (
+        "vigil --api-key=abc123def456 --log-level info",
+        "vigil --api-key=[REDACTED] --log-level info",
+    ),
+    (
+        "vigil --password hunter2 --log-level info",
+        "vigil --password [REDACTED] --log-level info",
+    ),
+    ("vigil --db-password 'a b' x", "vigil --db-password '[REDACTED]' x"),
+    ("vigil --token --verbose", "vigil --token --verbose"),
+    ("vigil --token", "vigil --token"),
+    ("vigil --password [REDACTED] --x", "vigil --password [REDACTED] --x"),
+    (
+        "vigil -p hunter2hunter2 --max-tokens 4096",
+        "vigil -p hunter2hunter2 --max-tokens 4096",
+    ),
+    ("a--token hunter2", "a--token hunter2"),
+]
+
+
+@pytest.mark.parametrize("awk", AWKS)
+@pytest.mark.parametrize(("line", "expected"), FLAG_CASES)
+def test_long_credential_flags(awk, line, expected, tmp_path):
+    counts = tmp_path / "counts.tsv"
+    assert run_awk(awk, line + "\n", counts=counts) == expected + "\n"
+    assert counts.read_text() == (
+        f"probe\t{expected.count('[REDACTED]') - line.count('[REDACTED]')}\n"
+    )
+
+
+@pytest.mark.parametrize("awk", AWKS)
+def test_learn_prints_only_credential_class_values(awk):
+    text = "\n".join(
+        [
+            '# ELASTIC_SIEM_USERNAME="elastic"',
+            "  # POSTGRES_PASSWORD=commentedpw",
+            'ELASTIC_SIEM_USERNAME="elastic"',
+            'SPLUNK_USERNAME="admin"',
+            "POSTGRES_PASSWORD=hunter2hunter2",
+            "SERVICE_API_KEY=short",
+            'SERVICE_API_KEY: "quoted-key-value"',
+            "DATABASE_URL=postgresql://vigil:urlpassword@db/vigil",
+            "- name: SMTP_PASSWORD\n  value: from-name-value",
+            "- name: SPLUNK_USERNAME\n  value: not-learned-user",
+            "vigil --auth-token flagtokenvalue",
+        ]
+    )
+    out = run_awk(awk, text + "\n", extra=("-v", "learn=1"))
+    assert out.splitlines() == [
+        "hunter2hunter2",
+        "quoted-key-value",
+        "urlpassword",
+        "from-name-value",
+        "flagtokenvalue",
+    ]
 
 
 @pytest.mark.parametrize("awk", AWKS)

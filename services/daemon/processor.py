@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.ingestion.dedup import RedisDedupSet
+from core.llm.outage import report_outage, report_recovered
 from core.time import utcnow
 from services.daemon.config import ProcessingConfig, ResponseConfig
 from services.daemon.probes import PROBE_DATA_SOURCE
@@ -16,6 +17,9 @@ from services.daemon.vendor_errors import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GATEWAY_OUTAGE = "daemon-triage-gateway"
+_PROVIDER_OUTAGE = "daemon-triage-provider"
 
 # After this many consecutive failures (e.g. no provider key), pause enrichment
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
@@ -74,6 +78,7 @@ class FindingProcessor:
         self._enrich_tasks = set()
         self._enrich_failures = 0
         self._enrich_paused_until = 0.0
+        self._enrich_breaker_tripped = False
 
         # Stats
         self.stats = {
@@ -357,6 +362,9 @@ class FindingProcessor:
 
                     if triaged_ok:
                         self._enrich_failures = 0
+                        if self._enrich_breaker_tripped:
+                            self._enrich_breaker_tripped = False
+                            logger.info("AI enrichment resumed after a pause")
                     else:
                         self._note_enrich_failure(finding_id)
                 except Exception as e:
@@ -383,7 +391,8 @@ class FindingProcessor:
         if self._enrich_failures >= _ENRICH_BREAKER_THRESHOLD:
             self._enrich_paused_until = time.monotonic() + _ENRICH_BREAKER_COOLDOWN
             self._enrich_failures = 0
-            logger.warning(
+            self._enrich_breaker_tripped = True
+            logger.error(
                 "Pausing AI enrichment %ss after repeated failures "
                 "(gateway/provider key?); findings still ingest, enrichment "
                 "backfills on recovery. Last: %s",
@@ -594,9 +603,18 @@ REASONING: [Brief explanation]
                 from core.llm.gateway.gateway import get_llm_gateway
 
                 self._llm_gateway = await get_llm_gateway()
-                logger.info("LLM gateway connected for AI triage")
+                if not report_recovered(
+                    logger, _GATEWAY_OUTAGE, "LLM gateway connected for AI triage"
+                ):
+                    logger.info("LLM gateway connected for AI triage")
             except Exception as e:
-                logger.warning(f"Failed to connect LLM gateway: {e}")
+                report_outage(
+                    logger,
+                    _GATEWAY_OUTAGE,
+                    "Failed to connect LLM gateway, AI triage is skipped until it "
+                    "connects: %s",
+                    e,
+                )
                 self._llm_gateway = None
 
     @staticmethod
@@ -631,12 +649,16 @@ REASONING: [Brief explanation]
         was stored indistinguishable from a triaged, unremarkable one."""
         await self._ensure_gateway()
         if self._llm_gateway is None:
-            logger.warning("LLM gateway unavailable, skipping AI triage")
             return None, "LLM gateway unavailable"
         target = self._resolve_triage_target()
         if target is None:
-            logger.warning("No LLM provider configured, skipping AI triage")
+            report_outage(
+                logger,
+                _PROVIDER_OUTAGE,
+                "No LLM provider configured, AI triage is skipped until one is set up",
+            )
             return None, "no LLM provider configured"
+        report_recovered(logger, _PROVIDER_OUTAGE, "LLM provider configured")
         provider_id, model = target
         try:
             # The gateway's own default (90s) would otherwise cap the wait.

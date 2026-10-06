@@ -1,18 +1,21 @@
 /* Watch a run (PRD AW-W5): one run replayed step by step from its record. Board:
    docs/design/console/boards/WorkflowRun.dc.html. The page reads the run; it asks
    for nothing new except the investigate replay RunDetail already reads. */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { Cost } from '../../shared/cost'
 import {
   IN_FLIGHT, callFailure, callLine, fmtDuration, useInvestigateReplay,
   type CallFailure, type HuntView, type InvestigateDecisionView, type WfRunDetail,
 } from './runRead'
+import { Heading, HuntPanels, InvestigatePanels, OtherPanels } from './WatchPanels'
 
 /** What each kind of run is reduced to: one row per decision. `calls` is null when
  *  the record cannot say which calls followed (an older agent service). */
 interface Step {
   key: string
+  /** The ledger iteration the panels read as of; an investigate step is its own number. */
+  iteration: number
   action: string
   worker: string | null
   at: string | null
@@ -48,6 +51,7 @@ function huntSteps(hunt: HuntView): Step[] {
   const tied = calls.length === 0 || calls.some((c) => c.iteration !== undefined)
   return [...(hunt.moves ?? [])].reverse().map((m) => ({
     key: m.decision_id,
+    iteration: m.iteration,
     action: m.action,
     worker: m.worker_agent_id ?? null,
     at: m.created_at ?? null,
@@ -65,6 +69,7 @@ function huntSteps(hunt: HuntView): Step[] {
 function investigateSteps(decisions: InvestigateDecisionView[]): Step[] {
   return decisions.map((d) => ({
     key: String(d.iteration),
+    iteration: d.iteration,
     action: d.action,
     worker: d.worker ?? null,
     at: d.at ?? null,
@@ -245,37 +250,8 @@ function Segments({ n, cursor, playing, onJump, labels }: { n: number; cursor: n
   )
 }
 
-function Heading({ children }: { children: React.ReactNode }) {
-  return <span className="text-[12px] font-semibold leading-[1.3] text-[var(--tx2)]">{children}</span>
-}
-function NoData({ children }: { children: React.ReactNode }) {
-  return <span className="text-[12px] leading-[1.45] text-[var(--tx2)] px-3 py-2.5 rounded-[12px] bg-[var(--bg1)] border border-[var(--ln0)]">{children}</span>
-}
-
-/** The columns the sibling child fills (#1622); until then each says it has nothing to show. */
-function Explanations() {
-  return (
-    <div className="flex flex-col gap-2 min-w-0">
-      <Heading>Explanations being tested</Heading>
-      <NoData>No explanations tested are shown for this run yet.</NoData>
-    </div>
-  )
-}
-function Limits() {
-  return (
-    <div className="flex flex-col gap-2.5 min-w-0">
-      <Heading>Limits used</Heading>
-      <NoData>No limits are shown for this run yet.</NoData>
-      <Heading>Reviewer</Heading>
-      <NoData>No reviewer is shown for this run yet.</NoData>
-      <Heading>Blind spots hit</Heading>
-      <NoData>No blind spots are shown for this run yet.</NoData>
-    </div>
-  )
-}
-
 /** The player and the three columns. Owns the one selected step the panels read. */
-function Replay({ steps, live, note }: { steps: Step[]; live: boolean; note: string | null }) {
+function Replay({ steps, live, note, panels }: { steps: Step[]; live: boolean; note: string | null; panels: (at: number) => ReactNode }) {
   const last = steps.length - 1
   // a run in flight follows its newest step until the viewer moves; a finished one starts at 1
   const [cursor, setCursor] = useState(live ? last : 0)
@@ -334,8 +310,7 @@ function Replay({ steps, live, note }: { steps: Step[]; live: boolean; note: str
             />
           ))}
         </div>
-        <Explanations />
-        <Limits />
+        {panels(at)}
       </div>
     </>
   )
@@ -350,7 +325,10 @@ function HuntReplay({ d, hunt, live }: { d: WfRunDetail; hunt: HuntView; live: b
   if (steps.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
   // moves are capped at the newest few; a shorter list than the iteration count is a prefix cut off
   const cut = steps.length < hunt.iteration
-  return <Replay key={d.run_id} steps={steps} live={live} note={cut ? `Showing the last ${steps.length} steps` : null} />
+  const panels = (at: number) => (
+    <HuntPanels runId={d.run_id} hunt={hunt} iteration={steps[at].iteration} decisionId={steps[at].key} last={at === steps.length - 1} />
+  )
+  return <Replay key={d.run_id} steps={steps} live={live} note={cut ? `Showing the last ${steps.length} steps` : null} panels={panels} />
 }
 
 function InvestigateReplay({ d, live }: { d: WfRunDetail; live: boolean }) {
@@ -358,16 +336,17 @@ function InvestigateReplay({ d, live }: { d: WfRunDetail; live: boolean }) {
   // a failed poll must not tear down a player that already has steps
   const held = useRef<InvestigateDecisionView[] | null>(null)
   if (read.kind === 'investigate') held.current = read.decisions
-  if (read.kind === 'failed' && held.current) return <InvestigateSteps decisions={held.current} live={live} runId={d.run_id} />
+  if (read.kind === 'failed' && held.current) return <InvestigateSteps decisions={held.current} live={live} d={d} />
   if (read.kind === 'pending') return <OneLine>Loading steps…</OneLine>
   if (read.kind === 'absent') return <OneLine>{UNSUPPORTED}</OneLine>
   if (read.kind === 'failed') return <OneLine>Couldn’t read the steps — {read.message}</OneLine>
-  return <InvestigateSteps decisions={read.decisions} live={live} runId={d.run_id} />
+  return <InvestigateSteps decisions={read.decisions} live={live} d={d} />
 }
 
-function InvestigateSteps({ decisions, live, runId }: { decisions: InvestigateDecisionView[]; live: boolean; runId: string }) {
+function InvestigateSteps({ decisions, live, d }: { decisions: InvestigateDecisionView[]; live: boolean; d: WfRunDetail }) {
   if (decisions.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
-  return <Replay key={runId} steps={investigateSteps(decisions)} live={live} note={null} />
+  const costs = decisions.map((x) => x.cost_usd)
+  return <Replay key={d.run_id} steps={investigateSteps(decisions)} live={live} note={null} panels={(at) => <InvestigatePanels d={d} costs={costs} at={at} />} />
 }
 
 function versionText(d: WfRunDetail): string {
@@ -413,7 +392,7 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
       {kind === 'other' && (
         <>
           <OneLine>{UNSUPPORTED}</OneLine>
-          <div className="max-w-[360px]"><Limits /></div>
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
         </>
       )}
     </div>

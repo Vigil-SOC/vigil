@@ -40,10 +40,13 @@ from urllib.parse import urlparse
 import httpx
 
 from core.config import get_settings
+from core.llm.outage import report_outage, report_recovered
 from core.llm.providers.discovery import is_embedding_model_id
 from core.platform.url_safety import DEFAULT_ALLOWED_PROVIDER_HOSTS
 
 logger = logging.getLogger(__name__)
+
+_RATES_OUTAGE = "bifrost-gateway-rates"
 
 _DEFAULT_TIMEOUT = 5.0
 
@@ -141,7 +144,7 @@ def _log_key_health(provider_name: str, payload: Dict[str, Any]) -> None:
     """
     status = payload.get("status")
     if status and status not in _KEY_STATUS_OK:
-        logger.warning(
+        logger.error(
             "Bifrost: provider %s key stored but reports status=%s (%s)",
             provider_name,
             status,
@@ -363,7 +366,7 @@ def sync_provider_models(
         normalized.append(mid)
 
     if not key_value:
-        logger.info(
+        logger.warning(
             "Bifrost sync: no resolved secret for provider %s — "
             "skipping model allow-list sync",
             provider_type,
@@ -1024,8 +1027,14 @@ async def refresh_gateway_rates() -> None:
                 .distinct()
             ]
         await record_gateway_rates(types)
+        report_recovered(logger, _RATES_OUTAGE, "Gateway rate refresh works again")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Gateway rate refresh failed: %s", exc)
+        report_outage(
+            logger,
+            _RATES_OUTAGE,
+            "Gateway rate refresh failed, LLM calls are recorded unpriced: %s",
+            exc,
+        )
 
 
 async def run_gateway_rates_refresher() -> None:
@@ -1069,7 +1078,7 @@ async def _list_ollama_models(
         try:
             return await discovery.fetch_ollama_models(candidate, allow_loopback=True)
         except Exception as exc:  # noqa: BLE001 - try the next endpoint
-            logger.debug("Could not list Ollama models at %s: %s", candidate, exc)
+            logger.warning("Could not list Ollama models at %s: %s", candidate, exc)
     return None
 
 
@@ -1203,5 +1212,5 @@ def sync_after_ollama_start() -> dict:
         asyncio.get_running_loop().create_task(sync_all_provider_models())
         return {"bifrost_synced": False, "bifrost_sync_scheduled": True}
     except Exception as e:  # noqa: BLE001
-        logger.info("Bifrost model sync after Ollama start did not complete: %s", e)
+        logger.warning("Bifrost model sync after Ollama start did not complete: %s", e)
         return {"bifrost_synced": False, "bifrost_sync_error": str(e)}
