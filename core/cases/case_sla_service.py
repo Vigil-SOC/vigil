@@ -266,7 +266,7 @@ class CaseSLAService:
                     )
 
             if not policy:
-                logger.warning(f"No SLA policy found for case {case_id}")
+                logger.warning("No SLA policy found for case %s", case_id)
                 return SlaAssignment(
                     named_but_unusable or SlaOutcome.NO_DEFAULT_POLICY,
                     policy_id=sla_policy_id,
