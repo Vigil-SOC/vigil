@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from core.agents.projections import run_id_for
+from core.workflows.routing import SHADOW_WORKFLOW_ID
 from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import (
@@ -376,25 +377,33 @@ class TestShadowAdjudication:
         finding=None,
     ):
         orch = _opening(tmp_path)
-        orch.config.shadow_adjudication = shadow
-        await orch._create_investigation(
-            "incident-response",
-            [finding or C2_FINDING],
-            trigger_type,
-            "high",
-            case_id="case-1",
-        )
-        record = orch._save_investigation.call_args[0][0]
-        if runs is None:
-            runs = MagicMock()
-            runs.get_run.return_value = None
-        with (
-            patch(
-                "services.daemon.orchestrator.enqueue_run", new=queue or AsyncMock()
-            ) as enqueued,
-            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        # The switch is the disabled list; no row means the shadow is off.
+        disabled = set() if shadow else {SHADOW_WORKFLOW_ID}
+        with patch(
+            "core.workflows.enablement.disabled_workflow_ids", return_value=disabled
         ):
-            await orch._enqueue_investigation(record)
+            await orch._create_investigation(
+                "incident-response",
+                [finding or C2_FINDING],
+                trigger_type,
+                "high",
+                case_id="case-1",
+            )
+            record = orch._save_investigation.call_args[0][0]
+            if runs is None:
+                runs = MagicMock()
+                runs.get_run.return_value = None
+            with (
+                patch(
+                    "services.daemon.orchestrator.enqueue_run",
+                    new=queue or AsyncMock(),
+                ) as enqueued,
+                patch(
+                    "services.daemon.orchestrator.WorkflowRunService",
+                    return_value=runs,
+                ),
+            ):
+                await orch._enqueue_investigation(record)
         return orch, record, enqueued, runs.begin_run
 
     @pytest.mark.asyncio

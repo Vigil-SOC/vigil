@@ -10,6 +10,8 @@ from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.storage.connection import get_db_manager
 from core.time import utcnow
+from core.workflows.enablement import is_enabled
+from core.workflows.routing import SCHEDULED_WORKFLOW
 from services.daemon.config import SchedulerConfig
 from services.daemon.probes import inject_probes, score_probes
 
@@ -65,16 +67,16 @@ class TaskScheduler:
 
     def _register_default_tasks(self):
         """Register default scheduled tasks."""
-        if self.config.threat_hunt_enabled:
-            self._tasks.append(
-                ScheduledTask(
-                    name="threat_hunt",
-                    func=self._run_threat_hunt,
-                    interval=self.config.threat_hunt_interval,
-                    enabled=True,
-                    run_on_start=False,
-                )
+        # Always registered: each tick asks whether the hunt is turned off.
+        self._tasks.append(
+            ScheduledTask(
+                name="threat_hunt",
+                func=self._run_threat_hunt,
+                interval=self.config.threat_hunt_interval,
+                enabled=True,
+                run_on_start=False,
             )
+        )
 
         if self.config.report_generation_enabled:
             self._tasks.append(
@@ -231,6 +233,11 @@ class TaskScheduler:
         record, the budget and the reconcile, and a second path to any of those
         would be a second set of guardrails.
         """
+        if not is_enabled(SCHEDULED_WORKFLOW):
+            logger.info(
+                "Scheduled threat hunt skipped: %s is turned off", SCHEDULED_WORKFLOW
+            )
+            return
         logger.info("Starting scheduled threat hunt...")
         self.stats["threat_hunts"] += 1
 
@@ -241,7 +248,7 @@ class TaskScheduler:
             kind="schedule",
             priority="low",
             payload={
-                "workflow_id": "threat-hunt",
+                "workflow_id": SCHEDULED_WORKFLOW,
                 "trigger_type": "scheduled",
                 "finding_ids": [],
                 "hypothesis": hypothesis,

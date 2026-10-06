@@ -4,6 +4,7 @@ import api, { casesApi, configApi, findingsApi, workflowApi } from '../services/
 import { useToast } from './toast'
 import {
   buildRows,
+  COMMANDS,
   commandPreview,
   commandRemainder,
   firstEnabled,
@@ -197,6 +198,8 @@ export default function CommandBar({
   const run = useCallback(async () => {
     if (!preview || commandPreview(preview.id, preview.arg, jira).disabled) return
     const arg = preview.arg.trim()
+    // The workflow this command starts, from the command table.
+    const workflowId = COMMANDS.find((c) => c.id === preview.id)?.workflowId ?? ''
     try {
       switch (preview.id) {
         case 'investigate': {
@@ -207,12 +210,11 @@ export default function CommandBar({
           } catch {
             finding = false
           }
-          if (finding) await workflowApi.execute('incident-response', { finding_id: arg })
-          else await workflowApi.execute('incident-response', { context: arg })
+          await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
           break
         }
         case 'hunt':
-          await workflowApi.execute('threat-hunt', { hypothesis: arg })
+          await workflowApi.execute(workflowId, { hypothesis: arg })
           break
         case 'replay':
           onOpenCase(arg)

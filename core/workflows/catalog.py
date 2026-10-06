@@ -23,6 +23,8 @@ from core.llm.providers.registry import get_registry, model_display_name
 from core.storage.connection import get_db_manager
 from core.storage.models import WorkflowRun
 from core.time import utcnow
+from core.workflows.enablement import disabled_workflow_ids
+from core.workflows.routing import can_disable, triggers_for
 from core.workflows.workflows_service import (
     ROOT_CAUSE_RUN_KIND,
     WorkflowsService,
@@ -81,14 +83,20 @@ def listing(service: WorkflowsService) -> Dict[str, Any]:
     """Every available workflow, file-based and database-backed alike.
 
     Each row carries today's run count and the mean cost of the finished
-    ones. Both keys are present when nothing matches (0 and null).
+    ones. Both keys are present when nothing matches (0 and null). ``triggers``
+    says what starts it, ``can_disable`` whether it may be turned off, and
+    ``enabled`` whether it is on.
     """
     workflows = service.list_workflows()
     stats = _today_run_stats(utcnow())
+    disabled = disabled_workflow_ids()
     for row in workflows:
         runs, mean = stats.get(row["id"], (0, None))
         row["runs_today"] = runs
         row["mean_cost_usd"] = mean
+        row["triggers"] = triggers_for(row["id"])
+        row["can_disable"] = can_disable(row["id"])
+        row["enabled"] = row["id"] not in disabled
     return {"workflows": workflows, "count": len(workflows)}
 
 

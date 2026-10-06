@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from core.time import utcnow
+from core.workflows.routing import FALLBACK_WORKFLOW
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,7 @@ def select_workflow(finding: Dict[str, Any]) -> str:
     mitre = finding.get("mitre_predictions") or {}
 
     if recommended in ("isolate", "block") or severity == "critical":
-        return "incident-response"
+        return FALLBACK_WORKFLOW
 
     if category in ("malware", "ransomware"):
         return "forensic-analysis"
@@ -206,7 +207,7 @@ def select_workflow(finding: Dict[str, Any]) -> str:
     if severity == "high":
         return "full-investigation"
 
-    return "incident-response"
+    return FALLBACK_WORKFLOW
 
 
 def _build_entity_section(finding: Dict[str, Any]) -> str:

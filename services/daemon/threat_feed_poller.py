@@ -16,6 +16,8 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set
 
 from core.config import get_settings
 from core.time import utcnow
+from core.workflows.enablement import is_enabled
+from core.workflows.routing import SCHEDULED_WORKFLOW
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +238,9 @@ class ThreatFeedPoller:
             logger.warning("intel intake producer unavailable: %s", e)
             return {"error": str(e)}
 
+        if not is_enabled(SCHEDULED_WORKFLOW):
+            return {"inserted": 0, "skipped": "workflow_disabled"}
+
         # Read before proposing, not after: a poll that cannot offer anything
         # should not spend a coverage check per recent indicator finding that out.
         intake = _intel_intake_state()
@@ -272,7 +277,7 @@ class ThreatFeedPoller:
                 kind="schedule",
                 priority="low",
                 payload={
-                    "workflow_id": "threat-hunt",
+                    "workflow_id": SCHEDULED_WORKFLOW,
                     "trigger_type": "intel",
                     "finding_ids": [],
                     "hypothesis": body["hypothesis"],

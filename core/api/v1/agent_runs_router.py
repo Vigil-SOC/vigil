@@ -26,6 +26,7 @@ from core.agents.queue import (
     new_run_id,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.workflows.enablement import disabled_message, is_enabled
 
 router = APIRouter()
 
@@ -36,6 +37,10 @@ ROUTER_META = RouterMeta(
     legacy_prefixes=("/api/agent-runs",),
 )
 logger = logging.getLogger(__name__)
+
+# The scheme the agent layer resolves against /internal/playbooks
+# (services/agent/core/playbooks.ts::WORKFLOW_SCHEME).
+WORKFLOW_SCHEME = "workflow:"
 
 
 class StartRunRequest(BaseModel):
@@ -124,6 +129,11 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
             status_code=400, detail=f"unknown run_kind: {request.run_kind}"
         )
 
+    # A run that names a workflow is a start of that workflow.
+    named = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
+    if request.playbook.startswith(WORKFLOW_SCHEME) and not is_enabled(named):
+        raise HTTPException(status_code=409, detail=disabled_message(named))
+
     run_id = new_run_id()
     payload: Dict[str, Any] = {
         "arch": request.arch,
@@ -160,16 +170,15 @@ def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
     from core.workflows.workflow_run_service import WorkflowRunService
     from core.workflows.workflows_service import WorkflowsService
 
-    # The scheme the agent layer resolves against /internal/playbooks
-    # (services/agent/core/playbooks.ts::WORKFLOW_SCHEME).
-    scheme = "workflow:"
-    named = request.playbook.removeprefix(scheme).strip()
-    workflow_id = named if request.playbook.startswith(scheme) else request.run_kind
+    named = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
+    workflow_id = (
+        named if request.playbook.startswith(WORKFLOW_SCHEME) else request.run_kind
+    )
     # A bare run_kind names no definition, so it has no version to record.
     try:
         version = (
             WorkflowsService().version_of(workflow_id)
-            if request.playbook.startswith(scheme)
+            if request.playbook.startswith(WORKFLOW_SCHEME)
             else None
         )
     except Exception as exc:  # noqa: BLE001 — the row is best-effort

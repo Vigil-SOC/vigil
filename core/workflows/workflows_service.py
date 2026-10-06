@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.agents.queue import new_run_id
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
+from core.workflows.enablement import disabled_message, is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflow_run_service import WorkflowRunService
 
@@ -540,6 +541,13 @@ class WorkflowsService:
         workflow = self.get_workflow(workflow_id)
         if not workflow:
             return {"success": False, "error": f"Workflow not found: {workflow_id}"}
+        # The one check every starter reaches, the router and the handoff alike.
+        if not is_enabled(workflow_id):
+            return {
+                "success": False,
+                "error": disabled_message(workflow_id),
+                "disabled": True,
+            }
         # Caught here as well as in the resolver, so a definition with nothing to
         # run is refused before it leaves a run record behind. The two loops read
         # different sections, so they are empty in different ways.

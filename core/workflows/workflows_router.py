@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_projection, read_replay, read_verify
+from core.auth.current_user import get_current_user
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,
@@ -17,8 +18,10 @@ from core.deps import (
 )
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
 from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
+from core.workflows.enablement import set_workflow_enabled
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
@@ -144,6 +147,33 @@ class WorkflowRunCancelRequest(BaseModel):
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """List all available workflows."""
     return catalog.listing(service)
+
+
+class WorkflowEnabledRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/workflows/{workflow_id}/enabled")
+async def set_enabled(
+    workflow_id: str,
+    body: WorkflowEnabledRequest,
+    service: WorkflowsService = Depends(provide_workflows),
+    current_user: User = Depends(get_current_user),
+):
+    """Turn a workflow (built-in or custom) on or off. Setting the current state is a no-op."""
+    if service.get_workflow(workflow_id) is None:
+        raise HTTPException(
+            status_code=404, detail=f"Workflow not found: {workflow_id}"
+        )
+    try:
+        saved = set_workflow_enabled(
+            workflow_id, body.enabled, str(current_user.user_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not saved:
+        raise HTTPException(status_code=500, detail="Could not save workflow setting")
+    return {"id": workflow_id, "enabled": body.enabled}
 
 
 # Static routes MUST come before parameterized {workflow_id} routes
@@ -399,7 +429,9 @@ async def execute_workflow(
 
     if not result.get("success"):
         error = result.get("error", "Unknown error during workflow execution")
-        raise HTTPException(status_code=500, detail=error)
+        raise HTTPException(
+            status_code=409 if result.get("disabled") else 500, detail=error
+        )
 
     return result
 

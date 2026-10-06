@@ -92,7 +92,9 @@ from core.storage.models import (
     Investigation,
 )
 from core.threat_intel.mitre_lookup import iter_techniques, resolve_technique
+from core.workflows.enablement import is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
+from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
@@ -314,7 +316,6 @@ def _human_ask_case_title(
 # from the investigation id like the real one, so the pair joins by recomputing
 # rather than by a column. A uuid5 of the suffixed id rather than a suffixed uuid:
 # agent_events.run_id is a uuid column and would refuse the string.
-SHADOW_WORKFLOW_ID = "shadow-adjudication"
 SHADOW_HYPOTHESIS_FILE = "shadow_hypothesis.txt"
 
 
@@ -775,6 +776,14 @@ class Orchestrator:
             return
 
         workflow_id = select_workflow(finding)
+        if not is_enabled(workflow_id):
+            logger.info(
+                "workflow %s is turned off; routing finding %s to %s",
+                workflow_id,
+                finding.get("finding_id"),
+                FALLBACK_WORKFLOW,
+            )
+            workflow_id = FALLBACK_WORKFLOW
         finding_id = finding.get("finding_id")
         await self._create_investigation(
             workflow_id=workflow_id,
@@ -939,7 +948,7 @@ class Orchestrator:
         # The shadow run's one hypothesis, derived here where the finding is in
         # hand and read back at enqueue, which sees only ids. Only a detection
         # finding gets a shadow; a manual or scheduled run has nothing to adjudicate.
-        if self.config.shadow_adjudication and trigger_type == "finding":
+        if trigger_type == "finding" and is_enabled(SHADOW_WORKFLOW_ID):
             try:
                 line = _shadow_hypothesis(findings)
             except (
@@ -1350,7 +1359,7 @@ class Orchestrator:
     async def _enqueue_shadow_adjudication(
         self, inv_record: Dict, request: Dict[str, Any]
     ) -> None:
-        if not self.config.shadow_adjudication:
+        if not is_enabled(SHADOW_WORKFLOW_ID):
             return
         if inv_record.get("trigger_type") != "finding":
             return

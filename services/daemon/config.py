@@ -58,7 +58,6 @@ class EscalationConfig:
 
 @dataclass
 class SchedulerConfig:
-    threat_hunt_enabled: bool = True
     threat_hunt_interval: int = 86400  # Daily (24 hours)
     probes_enabled: bool = True  # known-answer probes (#923)
     probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
@@ -89,9 +88,6 @@ class OrchestratorConfig:
     stale_threshold: int = 300
     workdir_base: str = "data/investigations"
     dry_run: bool = False
-    # ORCHESTRATOR_SHADOW_ADJUDICATION: enqueue a second, non-executing
-    # `adjudicate` run beside every detection-finding investigation (#880).
-    shadow_adjudication: bool = False
     # How long a queued trigger may wait, the last-quarter promotion
     # window, and the queued depth that warrants one human signal.
     # Constants, not settings: one policy, not an operator dial.
@@ -176,7 +172,6 @@ class DaemonConfig:
             settings.daemon_escalate_severities
         )
 
-        config.scheduler.threat_hunt_enabled = settings.daemon_threat_hunt_enabled
         config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
         config.scheduler.probes_enabled = settings.daemon_probes_enabled
         config.scheduler.probe_interval = settings.daemon_probe_interval
@@ -202,9 +197,6 @@ class DaemonConfig:
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
-        config.orchestrator.shadow_adjudication = (
-            settings.orchestrator_shadow_adjudication
-        )
 
         config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
         config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent

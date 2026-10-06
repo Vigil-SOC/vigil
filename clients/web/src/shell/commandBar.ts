@@ -13,11 +13,13 @@ export interface CommandDef {
   /** What it starts, as the bar's run() does; "—" for a Later row. */
   runs: string
   later: boolean
+  /** The workflow a live command starts, when it starts one. */
+  workflowId?: string
 }
 
 export const COMMANDS: CommandDef[] = [
-  { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false },
-  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false },
+  { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false, workflowId: 'incident-response' },
+  { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false, workflowId: 'threat-hunt' },
   { id: 'replay', name: '/replay', hint: '<case>', desc: 'Open a case by id', runs: 'Opens the case', later: false },
   { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false },
   { id: 'ticket', name: '/ticket', hint: '<case>', desc: 'Create a Jira ticket from a case', runs: 'Exports the case to Jira', later: false },

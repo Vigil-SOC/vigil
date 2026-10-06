@@ -276,7 +276,6 @@ class Settings(BaseSettings):
     daemon_slack_enabled: Optional[bool] = None
     daemon_slack_channel: str = "#soc-alerts"
     daemon_pagerduty_enabled: bool = False
-    daemon_threat_hunt_enabled: bool = True
     daemon_threat_hunt_interval: int = 86400
     # Known-answer probes (#923): an hourly sweep, injected once a day by id.
     daemon_probes_enabled: bool = True
@@ -302,9 +301,6 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
-    # Shadow mode (#880): every admitted finding also gets an `adjudicate` run
-    # beside the real one. Off by default; env only, no SystemConfig override.
-    orchestrator_shadow_adjudication: bool = False
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False
