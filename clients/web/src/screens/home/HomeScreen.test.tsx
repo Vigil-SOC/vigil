@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomeScreen, { parseCreatedAt } from './HomeScreen'
+import { ToastProvider } from '../../shell/toast'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
@@ -41,11 +42,20 @@ function item(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
 }
 
 function renderHome() {
-  render(
-    <MemoryRouter>
-      <HomeScreen {...props} />
-    </MemoryRouter>,
+  return render(
+    <ToastProvider>
+      <MemoryRouter>
+        <HomeScreen {...props} />
+      </MemoryRouter>
+    </ToastProvider>,
   )
+}
+
+const flush = () => act(async () => { await Promise.resolve() })
+const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+
+function mockQueue(items: NeedsYouItem[]) {
+  vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: items.length, items } } as never)
 }
 
 const doneSteps = [
@@ -82,11 +92,7 @@ describe('Home', () => {
     vi.mocked(triageApi.get).mockResolvedValue({
       data: { strip: { picked_up: { share: 0.423 } } },
     } as never)
-    const { unmount } = render(
-      <MemoryRouter>
-        <HomeScreen {...props} />
-      </MemoryRouter>,
-    )
+    const { unmount } = renderHome()
     expect(await screen.findByText('42.3% of alerts picked up automatically today')).toBeInTheDocument()
     expect(screen.getByText('Board clear.')).toBeInTheDocument()
 
@@ -178,38 +184,111 @@ describe('Home', () => {
     expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
   })
 
-  it('approves a reversible row on one press, and an irreversible row only after a hold', async () => {
-    vi.mocked(approvalsApi.needsYou).mockResolvedValue({
-      data: {
-        count: 2,
-        items: [
-          item({ source_id: 'act-rev', reversibility: 'reversible', case_id: 'case-9' }),
-          item({
-            source_id: 'act-irr',
-            title: 'Isolate host',
-            kind: 'checkpoint',
-            reversibility: 'irreversible',
-            case_id: null,
-          }),
-        ],
-      },
-    } as never)
+  it('approves a reversible row after the 8 s fuse, not before', async () => {
+    mockQueue([item({ source_id: 'act-rev' })])
     vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
     renderHome()
+    expect(await screen.findByText('1 decision waits on you. Everything else is running.')).toBeInTheDocument()
 
-    expect(await screen.findByText('2 decisions wait on you. Everything else is running.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open case' })).toHaveAttribute('href', '/cases?case=case-9')
-    expect(screen.getAllByRole('link', { name: 'Open case' })).toHaveLength(1)
-    fireEvent.click(screen.getByRole('link', { name: 'Open case' }))
-    expect(props.openCase).toHaveBeenCalledWith('case-9')
-
+    vi.useFakeTimers()
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    expect(approvalsApi.approve).toHaveBeenCalledWith('act-rev')
-    await act(async () => {
-      await Promise.resolve()
-    })
+    expect(screen.getByText('Approving: Block 1.2.3.4')).toBeInTheDocument()
+    expect(screen.getByText('Board clear.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
 
-    const hold = screen.getByRole('button', { name: /Press and hold to confirm/ })
+    await tick(7999)
+    expect(approvalsApi.approve).not.toHaveBeenCalled()
+    mockQueue([])
+    await tick(1)
+    expect(approvalsApi.approve).toHaveBeenCalledWith('act-rev')
+    expect(screen.getByText('Approved: Block 1.2.3.4')).toBeInTheDocument()
+    expect(vi.mocked(approvalsApi.needsYou).mock.calls.length).toBeGreaterThan(1) // reloaded
+  })
+
+  it('Undo before 8 s sends nothing and brings the card back', async () => {
+    mockQueue([item({ source_id: 'act-rev' })])
+    renderHome()
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await tick(3000)
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+    expect(screen.getByText('1 decision waits on you. Everything else is running.')).toBeInTheDocument()
+    await tick(10_000)
+    expect(approvalsApi.approve).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Approved:/)).not.toBeInTheDocument()
+  })
+
+  it('rejects through the fuse with the typed reason', async () => {
+    mockQueue([item({ source_id: 'act-no', title: 'Disable account' })])
+    vi.mocked(approvalsApi.reject).mockResolvedValue({} as never)
+    renderHome()
+    await screen.findByRole('heading', { name: 'Disable account' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rejection reason' }), {
+      target: { value: 'not our host' },
+    })
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    expect(approvalsApi.reject).not.toHaveBeenCalled()
+    await tick(8000)
+    expect(approvalsApi.reject).toHaveBeenCalledWith('act-no', 'not our host')
+    expect(screen.getByText('Rejected: Disable account')).toBeInTheDocument()
+  })
+
+  it('raises an error toast when the commit fails, and the card comes back on reload', async () => {
+    mockQueue([item({ source_id: 'act-rev' })])
+    vi.mocked(approvalsApi.approve).mockRejectedValue({ response: { data: { detail: 'already decided' } } })
+    renderHome()
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await tick(8000)
+    expect(screen.getByRole('alert')).toHaveTextContent('already decided')
+    expect(screen.getByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+  })
+
+  it('keeps the fuse running when Home is left, and keeps the card hidden when it is reopened', async () => {
+    mockQueue([item({ source_id: 'act-rev' })])
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    const first = renderHome()
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await tick(3000)
+    // leave Home, keep the shell (provider) alive
+    first.rerender(<ToastProvider>{null}</ToastProvider>)
+    await tick(2000)
+    first.rerender(
+      <ToastProvider>
+        <MemoryRouter>
+          <HomeScreen {...props} />
+        </MemoryRouter>
+      </ToastProvider>,
+    )
+    await flush()
+    await tick(0)
+    // the server still lists the item; the fuse keeps it off the board
+    expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+    expect(screen.getByText('Board clear.')).toBeInTheDocument()
+
+    expect(approvalsApi.approve).not.toHaveBeenCalled()
+    await tick(3000)
+    expect(approvalsApi.approve).toHaveBeenCalledTimes(1)
+    expect(approvalsApi.approve).toHaveBeenCalledWith('act-rev')
+  })
+
+  it('keeps an irreversible approve on hold-to-confirm, with no fuse', async () => {
+    mockQueue([item({ source_id: 'act-irr', title: 'Isolate host', kind: 'checkpoint', reversibility: 'irreversible', case_id: null })])
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    renderHome()
+    const hold = await screen.findByRole('button', { name: /Press and hold to confirm/ })
+
     vi.useFakeTimers()
     fireEvent.pointerDown(hold)
     act(() => {
@@ -219,28 +298,15 @@ describe('Home', () => {
     act(() => {
       vi.advanceTimersByTime(1600)
     })
-    expect(approvalsApi.approve).not.toHaveBeenCalledWith('act-irr')
+    expect(approvalsApi.approve).not.toHaveBeenCalled()
 
     fireEvent.pointerDown(hold)
     act(() => {
       vi.advanceTimersByTime(1600)
     })
-    expect(approvalsApi.approve).toHaveBeenCalledWith('act-irr')
-  })
-
-  it('sends the typed reason when rejecting', async () => {
-    vi.mocked(approvalsApi.needsYou).mockResolvedValue({
-      data: { count: 1, items: [item({ source_id: 'act-no', title: 'Disable account' })] },
-    } as never)
-    vi.mocked(approvalsApi.reject).mockResolvedValue({} as never)
-    renderHome()
-
-    expect(await screen.findByText('1 decision waits on you. Everything else is running.')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Rejection reason' }), {
-      target: { value: 'not our host' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
-    expect(approvalsApi.reject).toHaveBeenCalledWith('act-no', 'not our host')
+    expect(approvalsApi.approve).toHaveBeenCalledWith('act-irr') // at once, no 8 s wait
+    await flush()
+    expect(screen.getByText('Approved: Isolate host')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
   })
 })
