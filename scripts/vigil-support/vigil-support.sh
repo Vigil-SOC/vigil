@@ -281,7 +281,7 @@ ELEV_RE='permission denied|not permitted|insufficient permissions|must be root|a
 # ABSENT_RE / ABSENT_WHY: a failure matching this is an expected absence.
 failure_reason() { # stem elev limit
     if [ "$RC" = 124 ]; then
-        echo "timed out after ${3} s"
+        printf '%s\n' "timed out after ${3} s"
         return
     fi
     case $2 in
@@ -290,25 +290,25 @@ failure_reason() { # stem elev limit
         _re=$ELEV_RE
         [ "$RC" = 0 ] && _re='insufficient permissions'
         if { cat "$1.err"; [ "$(wc -c <"$1.out")" -lt 2048 ] && cat "$1.out"; } 2>/dev/null | grep -qiE "$_re"; then
-            echo "needs elevation"
+            printf '%s\n' "needs elevation"
             return
         fi
         ;;
     2)
         if [ "$RC" != 0 ] && grep -qi forbidden "$1.err" 2>/dev/null; then
             _e=$(err_line "$1")
-            echo "needs elevation${_e:+: $_e}"
+            printf '%s\n' "needs elevation${_e:+: $_e}"
             return
         fi
         ;;
     esac
     [ "$RC" = 0 ] && return
     if [ -n "$ABSENT_RE" ] && grep -qiE "$ABSENT_RE" "$1.err" 2>/dev/null; then
-        echo "$ABSENT_WHY"
+        printf '%s\n' "$ABSENT_WHY"
         return
     fi
     _e=$(err_line "$1")
-    echo "exit status $RC${_e:+: $_e}"
+    printf '%s\n' "exit status $RC${_e:+: $_e}"
 }
 
 ABSENT_RE=
@@ -423,11 +423,13 @@ find_checkout() {
 # name, namespace, chart and app version, tab separated.
 HELM_RELS=$WORK/helm-releases.txt
 HELM_WHY=
+HELM_TOOL_WHY=
 detect_helm() {
     : >"$HELM_RELS"
     for _t in helm kubectl; do
         if ! has "$_t"; then
             HELM_WHY="$_t not found"
+            HELM_TOOL_WHY=$HELM_WHY
             echo "$_t: not found; no release looked for" >>"$LOOKED"
             return
         fi
@@ -439,6 +441,9 @@ detect_helm() {
     if [ "$RC" != 0 ]; then
         _e=$(err_line "$RAW/$ITEM")
         HELM_WHY="helm list failed (exit $RC)"
+        if grep -qi forbidden "$RAW/$ITEM.err" 2>/dev/null; then
+            HELM_WHY="needs elevation${_e:+: $_e} (try --namespace NS)"
+        fi
         printf 'helm list %s: failed (exit %s)%s\n' "$_scope" "$RC" "${_e:+: $_e}" >>"$LOOKED"
         return
     fi
@@ -859,7 +864,7 @@ api_via_forward() { # service
         fi
         sleep 1
     done
-    curl -fsS --max-time 5 "http://127.0.0.1:$_port/api/health"
+    curl -fsS --noproxy '*' --max-time 5 "http://127.0.0.1:$_port/api/health"
     _rc=$?
     kill_tree "$_pid" KILL
     return $_rc
@@ -983,8 +988,8 @@ collect_helm() {
 }
 
 collect_helm_system() {
-    if [ -n "$HELM_WHY" ]; then
-        skip system/tools.txt "$HELM_WHY"
+    if [ -n "$HELM_TOOL_WHY" ]; then
+        skip system/tools.txt "$HELM_TOOL_WHY"
     else
         collect_cmd system/tools.txt "$SRC_SECS" "kubectl version --client; helm version" 0 tools_info
     fi

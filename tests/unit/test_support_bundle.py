@@ -588,7 +588,9 @@ esac
 HELM_STUB = r"""
 echo "helm $*" >>"$FAKE_KUBE_LOG"
 case "$1" in
-list) printf '%s' "$FAKE_HELM_LIST" ;;
+list)
+    if [ -n "${FAKE_HELM_LIST_ERR:-}" ]; then echo "$FAKE_HELM_LIST_ERR" >&2; exit 1; fi
+    printf '%s' "$FAKE_HELM_LIST" ;;
 get) case "$*" in *--all*) printf '%s\n' "$FAKE_VALUES" "defaultsOnly: true" ;; *) printf '%s\n' "$FAKE_VALUES" ;; esac ;;
 version) echo 'version.BuildInfo{Version:"v3.17.0"}' ;;
 esac
@@ -597,7 +599,9 @@ esac
 
 def _table(rows: list[list[str]]) -> str:
     widths = [max(len(r[i]) for r in rows) + 3 for i in range(len(rows[0]))]
-    return "\n".join("".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows)
+    return "\n".join(
+        "".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows
+    )
 
 
 @pytest.fixture(scope="module")
@@ -683,7 +687,9 @@ def helm_env(env, tmp_path, chart_pods):
                 + [f"node-{'ab'[i % 2]}", "<none>", "<none>"]
                 for i, p in enumerate(chart_pods)
             ]
-        ).replace("NOMINATED_NODE", "NOMINATED NODE").replace("READINESS_GATES", "READINESS GATES"),
+        )
+        .replace("NOMINATED_NODE", "NOMINATED NODE")
+        .replace("READINESS_GATES", "READINESS GATES"),
     )
     (tmp_path / "kube.log").write_text("")
     return env
@@ -737,7 +743,9 @@ def test_helm_release_is_collected_and_secrets_stay_out(helm_env, tmp_path, char
     for name in ("journal", "syslog", "kernel", "processes", "disk", "timezone-sync"):
         entry = entries[f"system/{name}.txt"]
         assert entry["reason"] == "Helm: the host is not the install"
-    assert entries["health/daemon-health.json"]["reason"].startswith("Helm: only /api/health")
+    assert entries["health/daemon-health.json"]["reason"].startswith(
+        "Helm: only /api/health"
+    )
     assert (root / "system" / "nodes.txt").read_text().split() == ["node-a", "node-b"]
 
     # every replica's every container, init containers too; lab pods excluded
@@ -757,7 +765,9 @@ def test_helm_release_is_collected_and_secrets_stay_out(helm_env, tmp_path, char
                 assert entries[f"{base}.previous.log"]["state"] == "collected"
                 assert "before restart" in (root / f"{base}.previous.log").read_text()
             else:
-                assert entries[f"{base}.previous.log"]["reason"] == "no previous container"
+                assert (
+                    entries[f"{base}.previous.log"]["reason"] == "no previous container"
+                )
     assert "replaced or rescheduled" in entries["logs/pods/"]["reason"]
 
     # planted secrets appear nowhere; the Secret names and keys stay readable
@@ -768,7 +778,9 @@ def test_helm_release_is_collected_and_secrets_stay_out(helm_env, tmp_path, char
     assert "existingSecretKey: POSTGRES_PASSWORD" in values
     assert "existingSecretPasswordKey: redis-password" in values
     assert "postgresPassword: [REDACTED]" in values
-    assert "[REDACTED]" in next((root / "logs" / "pods").rglob("backend.log")).read_text()
+    assert (
+        "[REDACTED]" in next((root / "logs" / "pods").rglob("backend.log")).read_text()
+    )
     assert (root / "configuration" / "kubernetes-secrets.txt").read_text() == (
         "vigil-prod-secrets Opaque POSTGRES_PASSWORD ANTHROPIC_API_KEY\n"
     )
@@ -805,7 +817,9 @@ def test_helm_external_postgres_and_redis_are_not_applicable(helm_env, tmp_path)
 def test_helm_two_releases_write_nothing_until_one_is_named(helm_env, tmp_path):
     helm_env["FAKE_HELM_LIST"] = HELM_LIST.replace(
         "grafana-8.0.0", "vigil-0.5.0"
-    ).replace('"name":"grafana","namespace":"mon"', '"name":"vigil-lab","namespace":"lab"')
+    ).replace(
+        '"name":"grafana","namespace":"mon"', '"name":"vigil-lab","namespace":"lab"'
+    )
     proc = helm_run(helm_env, tmp_path)
     assert proc.returncode == 1
     assert bundles(tmp_path) == [] and list((tmp_path / "tmp").iterdir()) == []
@@ -814,14 +828,19 @@ def test_helm_two_releases_write_nothing_until_one_is_named(helm_env, tmp_path):
 
     proc = helm_run(helm_env, tmp_path, "--release", "vigil-lab", "--namespace", "lab")
     assert proc.returncode == 0, proc.stderr
-    assert "Helm release vigil-lab, namespace lab" in manifest_of(tmp_path)["install"]["description"]
+    assert (
+        "Helm release vigil-lab, namespace lab"
+        in manifest_of(tmp_path)["install"]["description"]
+    )
     calls = (tmp_path / "kube.log").read_text()
     assert "helm list -o json -n lab" in calls
     assert "kubectl -n lab " in calls and "kubectl -n vigil " not in calls
 
 
 def test_helm_no_vigil_release_writes_a_host_bundle(helm_env, tmp_path):
-    helm_env["FAKE_HELM_LIST"] = '[{"name":"g","namespace":"m","chart":"grafana-1.0.0"}]'
+    helm_env["FAKE_HELM_LIST"] = (
+        '[{"name":"g","namespace":"m","chart":"grafana-1.0.0"}]'
+    )
     assert helm_run(helm_env, tmp_path).returncode == 0
     manifest = manifest_of(tmp_path)
     entries = {e["path"]: e for e in manifest["entries"]}
@@ -849,8 +868,17 @@ def test_helm_missing_tool_writes_a_host_bundle(helm_env, tmp_path):
     entries = {e["path"]: e for e in manifest["entries"]}
     assert manifest["mode"] == "host"
     assert any(line.startswith("helm: not found") for line in manifest["looked"])
-    for path in ("configuration/", "health/", "logs/", "system/tools.txt", "system/nodes.txt"):
-        assert entries[path]["state"] == "not collected" and "helm not found" in entries[path]["reason"], path
+    for path in (
+        "configuration/",
+        "health/",
+        "logs/",
+        "system/tools.txt",
+        "system/nodes.txt",
+    ):
+        assert (
+            entries[path]["state"] == "not collected"
+            and "helm not found" in entries[path]["reason"]
+        ), path
     assert entries["system/host.txt"]["state"] == "collected"
 
 
@@ -860,8 +888,16 @@ def test_helm_forbidden_pods_name_the_missing_permission(helm_env, tmp_path):
     assert proc.returncode == 0, proc.stderr
     entries = entries_of(tmp_path)
     reason = f"needs elevation: {FORBIDDEN}"
-    for path in ("logs/pods/", "health/pods.txt", "health/pods-describe.txt", "system/nodes.txt"):
-        assert entries[path]["state"] == "not collected" and entries[path]["reason"] == reason, path
+    for path in (
+        "logs/pods/",
+        "health/pods.txt",
+        "health/pods-describe.txt",
+        "system/nodes.txt",
+    ):
+        assert (
+            entries[path]["state"] == "not collected"
+            and entries[path]["reason"] == reason
+        ), path
     assert not any(p.startswith("logs/pods/") and p != "logs/pods/" for p in entries)
     assert entries["configuration/helm-values.yaml"]["state"] == "collected"
     assert reason in proc.stdout
@@ -876,7 +912,9 @@ def test_helm_port_forward_that_never_answers_is_killed(helm_env, tmp_path):
     assert helm_run(helm_env, tmp_path).returncode == 0
     assert time.time() - started < 60
     entry = entries_of(tmp_path)["health/api.json"]
-    assert entry["state"] == "not collected" and entry["reason"] == "timed out after 2 s"
+    assert (
+        entry["state"] == "not collected" and entry["reason"] == "timed out after 2 s"
+    )
     assert marker_pids(helm_env["FAKE_PF_MARKER"]) == []
 
 
@@ -904,10 +942,31 @@ def test_helm_signal_takes_the_port_forward_with_it(helm_env, tmp_path, sig):
 
 
 def test_helm_options_need_helm_mode(env, tmp_path):
-    for args in (("--release", "vigil"), ("--namespace", "vigil"), ("--mode", "compose", "--release", "x")):
+    for args in (
+        ("--release", "vigil"),
+        ("--namespace", "vigil"),
+        ("--mode", "compose", "--release", "x"),
+    ):
         proc = run(env, tmp_path, *args)
         assert proc.returncode == 1 and "need --mode helm" in proc.stderr
     assert bundles(tmp_path) == []
     # without --mode, Helm is named but never probed
     assert run(env, tmp_path).returncode == 0
     assert "helm: not probed, use --mode helm" in manifest_of(tmp_path)["looked"]
+
+
+def test_helm_list_forbidden_is_named_and_the_tools_are_still_recorded(
+    helm_env, tmp_path
+):
+    helm_env["FAKE_HELM_LIST_ERR"] = (
+        "Error: list: secrets is forbidden: cannot list at the cluster scope"
+    )
+    proc = helm_run(helm_env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    entries = entries_of(tmp_path)
+    assert entries["logs/"]["reason"].startswith(
+        "needs elevation: Error: list: secrets is forbidden"
+    )
+    assert "--namespace NS" in entries["logs/"]["reason"]
+    assert entries["system/tools.txt"]["state"] == "collected"
+    assert "Cluster permissions are missing" in proc.stdout

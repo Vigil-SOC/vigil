@@ -118,9 +118,8 @@ entry.
 **By-hand release check** (against a real cluster, before a release): install the
 chart with planted secrets (`--set secrets.postgresPassword=PLANTED-pg
 --set secrets.jwtSecretKey=PLANTED-jwt`, plus `existingSecret` pointing at a
-real Secret), restart one pod (`kubectl delete pod` of a backend replica is not
-enough; make a container crash, for example with `kubectl exec <pod> -- kill 1`),
-then run `sh vigil-support.sh --mode helm`. Check that every section above is
+real Secret), force a container restart (for example `kubectl exec <pod> -- kill 1`; deleting the pod
+creates a new one with no previous log), then run `sh vigil-support.sh --mode helm`. Check that every section above is
 present or `not collected` with a reason, that `PLANTED-*` appears nowhere in the
 unpacked bundle (`grep -r PLANTED`), that the Secret name from `existingSecret`
 does, that `kubernetes-secrets.txt` holds no values, and that the restarted
