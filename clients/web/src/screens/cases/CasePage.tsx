@@ -7,6 +7,7 @@ import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
+import { InfoTip } from '../../shared/InfoTip'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
@@ -52,7 +53,7 @@ function money(value: number | null | undefined): string {
 }
 
 function latency(ms: number | undefined): string {
-  return ms == null ? '—' : `${ms} ms`
+  return ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`
 }
 
 function detailOf(error: unknown, fallback: string): string {
@@ -763,25 +764,44 @@ export function CasePage({
           )}
 
           {tab === 'Checked' && (
-            !fold || fold.calls.length === 0 ? (
+            foldPhase === 'loading' ? (
+              <EmptyState loading compact icon="search" title="Loading the run…" />
+            ) : foldPhase === 'error' ? (
+              <EmptyState error compact icon="search" title="The run could not be read." />
+            ) : !fold || (fold.calls.length === 0 && gaps.length === 0) ? (
               <EmptyState compact icon="search" title="No questions asked yet" />
             ) : (
-              <div className="table-wrap">
-                <table className="tbl">
-                  <thead><tr><th>Question</th><th>Tool</th><th>Result size</th><th>Cost</th><th>Latency</th></tr></thead>
-                  <tbody>
-                    {fold.calls.map((call, i) => (
-                      <tr key={`${call.tool}-${i}`}>
-                        <td>{call.question || '—'}</td>
-                        <td>{call.tool || '—'}</td>
-                        <td>{call.result_length}</td>
-                        <td>{money(call.cost_usd)}</td>
-                        <td>{latency(call.duration_ms)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <section className="case-card case-checked">
+                <h3>
+                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {money(fold.costUsd)}
+                  <InfoTip
+                    label="About the cost"
+                    source="The run's total spend."
+                    calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
+                  />
+                  {gaps.length > 0 && ` · ${gaps.length} with no source`}
+                </h3>
+                <ul className="case-stack">
+                  {fold.calls.map((call, i) => (
+                    <li key={`${call.tool}-${i}`}>
+                      <span>{call.question || '—'}</span>
+                      <span className="src">{call.tool || '—'}</span>
+                      <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
+                      <span className="num">{money(call.cost_usd)}</span>
+                      <span className="num">{latency(call.duration_ms)}</span>
+                    </li>
+                  ))}
+                  {gaps.map((gap) => (
+                    <li key={gap.id} className="gap">
+                      <span>{gap.text}</span>
+                      <span className="src">No source</span>
+                      <span className="num">—</span>
+                      <span className="num">—</span>
+                      <span className="num">—</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )
           )}
 
