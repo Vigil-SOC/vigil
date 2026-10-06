@@ -95,7 +95,7 @@ const HUNT = {
     { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null, provenance: '' },
   ],
   evidence: [
-    { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
+    { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
   ],
   evidence_count: 1,
   calls: [
@@ -309,6 +309,116 @@ describe('case page', () => {
     expect((await screen.findAllByText('The run could not be read.')).length).toBeGreaterThan(0)
   })
 
+  it('lays a hunt evidence trail out: stance, tier, by, a disabled row action, header counts', async () => {
+    testState.cases = [{
+      case_id: 'case-trail',
+      title: 'Trail case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-trail')],
+    }]
+    const base = { gap_detail: null, is_gap: false, source_tier: 'feed' }
+    testState.runs['run-trail'] = {
+      hunt: {
+        ...HUNT,
+        evidence_count: 7,
+        evidence: [
+          { ...HUNT.evidence[0] },
+          // Supports one explanation and weakens another: Mixed, each link named beneath.
+          { ...base, evidence_id: 'e2', iteration: 3, source_system: 'okta', summary: 'new session', bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }, { hypothesis_id: 'h1', relation: 'weakens' }] },
+          { ...base, evidence_id: 'e3', iteration: 1, source_system: 'dns', summary: 'plain lookup', source_tier: 'not_evidence', bears_on: [] },
+          // Gap row with no stamped tier, and an iteration the capped moves do not cover.
+          { ...base, evidence_id: 'e4', iteration: 9, source_system: 'mfa', summary: 'no push logs', is_gap: true, gap_detail: 'no source', source_tier: undefined, bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }] },
+        ],
+      },
+    }
+    renderCase('case-trail')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · 2 for / 2 against / 1 neither (shown)' })).toBeInTheDocument()
+
+    const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
+    const first = row('e1')
+    expect(within(first).getByText('Goes against')).toBeInTheDocument()
+    expect(within(first).getByText('Telemetry')).toBeInTheDocument()
+    expect(within(first).getByText('threat_hunter')).toBeInTheDocument()
+    expect(within(first).getByText('The host is owned')).toBeInTheDocument()
+    const second = row('e2')
+    expect(within(second).getByText('Mixed')).toBeInTheDocument()
+    expect(within(second).getByText('Feed')).toBeInTheDocument()
+    expect(within(second).getByText('threat_hunter')).toBeInTheDocument()
+    expect(within(second).getByText('Supports Still forming · Goes against The host is owned')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Neither')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Not evidence')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('network_analyst')).toBeInTheDocument()
+    const gap = row('e4')
+    expect(within(gap).getByText('no push logs (gap)')).toBeInTheDocument()
+    expect(within(gap).getAllByText('—')).toHaveLength(2) // no tier, move not in the capped list
+
+    const act = within(first).getByRole('button', { name: 'Actions for this row' })
+    expect(act).toBeDisabled()
+    expect(act).toHaveAttribute('title', 'Coming in a later release')
+  })
+
+  it('shows loading, then a read error, instead of an empty evidence trail', async () => {
+    testState.cases = [{
+      case_id: 'case-err',
+      title: 'Error case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-err')],
+    }]
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
+    renderCase('case-err')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('The run could not be read.')).toBeInTheDocument()
+    expect(screen.queryByText('No evidence yet')).not.toBeInTheDocument()
+  })
+
+  it('says the run is loading while the fold is unread', async () => {
+    testState.cases = [{
+      case_id: 'case-wait',
+      title: 'Waiting case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-wait')],
+    }]
+    vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
+    renderCase('case-wait')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(screen.getByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('No evidence yet')).not.toBeInTheDocument()
+  })
+
+  it('says a hunt with no evidence rows has none yet', async () => {
+    testState.cases = [{
+      case_id: 'case-none',
+      title: 'Bare case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-none')],
+    }]
+    testState.runs['run-none'] = { hunt: { ...HUNT, evidence: [], evidence_count: 0 } }
+    renderCase('case-none')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('No evidence yet')).toBeInTheDocument()
+  })
+
   it('gives an investigate run the honest line and puts findings in the evidence table', async () => {
     testState.cases = [{
       case_id: 'case-inv',
@@ -343,7 +453,10 @@ describe('case page', () => {
     expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'About explanations' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
-    expect(await screen.findByText('benign traffic')).toBeInTheDocument()
+    const finding = (await screen.findByText('benign traffic')).closest('[data-evidence-id]') as HTMLElement
+    expect(screen.getByRole('heading', { name: 'Evidence trail · 1 row' })).toBeInTheDocument()
+    expect(within(finding).getAllByText('—')).toHaveLength(2) // no tier, no stance
+    expect(within(finding).getAllByText('lead')).toHaveLength(2) // source and by
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
     expect(await screen.findByText(/list users/)).toBeInTheDocument()
     expect(screen.getByText(/tool down/)).toBeInTheDocument()
@@ -787,8 +900,9 @@ describe('case page', () => {
     expect(screen.queryByText('no login')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'e1' }))
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
-    const row = (await screen.findByText('no login')).closest('tr')
+    const row = (await screen.findByText('no login')).closest('[data-evidence-id]')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
+    expect(row).toHaveClass('cite-target')
 
     showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
