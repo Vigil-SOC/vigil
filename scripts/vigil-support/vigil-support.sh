@@ -135,6 +135,8 @@ RAW=$WORK/raw
 ITEMS=$WORK/items.tsv
 mkdir "$RAW"
 : >"$ITEMS"
+VALUES=$WORK/values.txt
+: >"$VALUES"
 T0=$(date +%s)
 STAMP=${VIGIL_SUPPORT_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}
 CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -211,7 +213,7 @@ store() { # dest stem source
     rm -f "$2.r.st" "$2.r.to"
     (
         tr -d '\000' <"$2.out" |
-            awk -f "$REDACT" -v names="$NAMES" -v counts="$_cf" -v name="$1" >"$STAGE/$1"
+            awk -f "$REDACT" -v names="$NAMES" -v values="$VALUES" -v counts="$_cf" -v name="$1" >"$STAGE/$1"
         echo $? >"$2.r.st"
     ) &
     supervise "$SRC_SECS" "$2.r" $!
@@ -230,6 +232,40 @@ store() { # dest stem source
             skip "$1" "redaction failed (exit $RC); not copied unredacted" "$3"
         fi
     fi
+}
+
+# Exact secret values, for the filter's -v values=. Anything the filter would
+# redact by name in this input is learned, so the same value is also caught
+# where it shows up in free text (container logs, the process list).
+LEARN=0
+learn() { # file
+    [ -s "$1" ] || return 0
+    _lr=$WORK/learn
+    tr -d '\000' <"$1" >"$_lr.in"
+    awk -f "$REDACT" -v names="$NAMES" <"$_lr.in" >"$_lr.red" 2>/dev/null || return 0
+    awk '
+        NR == FNR { a[FNR] = $0; n = FNR; next }
+        {
+            m = FNR; o = a[FNR]; b = $0
+            if (o == b) next
+            la = length(o); lb = length(b); lim = la < lb ? la : lb
+            for (p = 0; p < lim && substr(o, p + 1, 1) == substr(b, p + 1, 1); p++) ;
+            for (s = 0; s < lim - p && substr(o, la - s, 1) == substr(b, lb - s, 1); s++) ;
+            v = substr(o, p + 1, la - p - s)
+            if (length(v) >= 6) out = out v "\n"
+        }
+        END { if (m == n) printf "%s", out }' "$_lr.in" "$_lr.red" >>"$VALUES"
+    rm -f "$_lr.in" "$_lr.red"
+}
+
+# First line of a failed command's stderr (else stdout, for the ones that merge
+# the two), through the filter: it goes into the manifest.
+err_line() { # stem
+    _el=$1.err
+    [ -s "$_el" ] || _el=$1.out
+    [ -s "$_el" ] || return 0
+    sed -n 1p "$_el" | cut -c1-200 | tr -d '\000-\037' |
+        awk -f "$REDACT" -v names="$NAMES" -v values="$VALUES" 2>/dev/null
 }
 
 ELEV_RE='permission denied|not permitted|insufficient permissions|must be root|access denied|administrator'
@@ -271,8 +307,10 @@ collect_cmd() {
     elif [ "$_denied" = 1 ]; then
         skip "$_dest" "needs elevation" "$_src"
     elif [ "$RC" != 0 ]; then
-        skip "$_dest" "exit status $RC" "$_src"
+        _e=$(err_line "$_stem")
+        skip "$_dest" "exit status $RC${_e:+: $_e}" "$_src"
     else
+        [ "$LEARN" = 1 ] && learn "$_stem.out"
         store "$_dest" "$_stem" "$_src"
     fi
     EXTRA_CUT=0
@@ -350,17 +388,29 @@ detect() {
     find_checkout
     SRC_NAMES=
     DESK_NAMES=
+    SRC_PROJECT=
+    SRC_CFG=
+    DESK_CFG=
     if ! has docker; then
         echo "docker: not installed" >>"$LOOKED"
     else
         ITEM=$((ITEM + 1))
-        run_limited 20 "$RAW/$ITEM" docker ps --format '{{.Names}}|{{.Label "com.docker.compose.project"}}'
+        run_limited 20 "$RAW/$ITEM" docker ps --format '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.project.config_files"}}'
         if [ "$RC" != 0 ]; then
             printf "docker ps: failed (exit %s); containers not seen\n" "$RC" >>"$LOOKED"
         else
-            while IFS='|' read -r _name _proj; do
-                case $_name in deeptempo-*) SRC_NAMES="$SRC_NAMES $_name" ;; esac
-                [ "$_proj" = vigil ] && DESK_NAMES="$DESK_NAMES $_name"
+            while IFS='|' read -r _name _proj _cfg; do
+                case $_name in
+                deeptempo-*)
+                    SRC_NAMES="$SRC_NAMES $_name"
+                    [ -z "$SRC_PROJECT" ] && SRC_PROJECT=$_proj
+                    [ -z "$SRC_CFG" ] && SRC_CFG=$_cfg
+                    ;;
+                esac
+                if [ "$_proj" = vigil ]; then
+                    DESK_NAMES="$DESK_NAMES $_name"
+                    [ -z "$DESK_CFG" ] && DESK_CFG=$_cfg
+                fi
             done <"$RAW/$ITEM.out"
             printf "docker ps: deeptempo-* containers:%s; Compose project vigil:%s\n" "${SRC_NAMES:- none}" "${DESK_NAMES:- none}" >>"$LOOKED"
         fi
@@ -427,15 +477,261 @@ if [ "$N_INSTALLS" = 1 ] && has curl; then
     case $HEALTH_VERSION in *[!0-9A-Za-z.+_-]*) HEALTH_VERSION= ;; esac # it lands in the manifest
 fi
 
-# --- per-install parts belong to the install collector -----------------------
+# --- per-install collection --------------------------------------------------
 
-section 2/6 "recording the install parts"
+collect_secret_file() { # as collect_file; the file's secret values are learned first
+    LEARN=1
+    collect_file "$@"
+    LEARN=0
+}
+
+collect_secret_cmd() { # as collect_cmd
+    LEARN=1
+    collect_cmd "$@"
+    LEARN=0
+}
+
+# collect_where DEST NAME DIR...   the first DIR holding NAME wins
+collect_where() {
+    _wd=$1
+    _wn=$2
+    shift 2
+    for _dir in "$@"; do
+        [ -n "$_dir" ] || continue
+        if [ -e "$_dir/$_wn" ] || [ -L "$_dir/$_wn" ]; then
+            collect_file "$_wd" "$_dir/$_wn" 0 "$_dir"
+            return
+        fi
+    done
+    skip "$_wd" "$_wn not found in: $*"
+}
+
+# Existence only: the path and whether it is there, never its content.
+never() { # label path [note]
+    if [ -e "$2" ] || [ -L "$2" ]; then _p=present; else _p=absent; fi
+    skip "configuration/never-included/$1" "never included; ${3:-$_p}" "$2"
+}
+
+# Containers of this install, from docker rather than a fixed list: KEPT holds
+# names, EXCLUDED "name<TAB>state" for lab/demo containers and a user-run Ollama.
+KEPT=$WORK/containers.kept
+EXCLUDED=$WORK/containers.excluded
+CONT_ERR=
+list_containers() {
+    : >"$KEPT"
+    : >"$EXCLUDED"
+    if ! has docker; then
+        CONT_ERR="docker not found"
+        return
+    fi
+    ITEM=$((ITEM + 1))
+    run_limited 20 "$RAW/$ITEM" docker ps -a --format '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.State}}'
+    if [ "$RC" != 0 ]; then
+        CONT_ERR="docker ps -a failed (exit $RC)"
+        return
+    fi
+    while IFS='|' read -r _name _proj _state; do
+        case $_name in '' | *[!A-Za-z0-9_.-]*) continue ;; esac
+        case $_name in
+        deeptempo-splunk | deeptempo-kafka | deeptempo-elasticsearch | deeptempo-kibana | deeptempo-misp-* | deeptempo-pgadmin | *ollama*)
+            printf '%s\t%s\n' "$_name" "${_state:-unknown}" >>"$EXCLUDED"
+            continue
+            ;;
+        esac
+        if [ "$MODE" = desktop ]; then
+            [ "$_proj" = vigil ] || continue
+        else
+            case $_name in
+            deeptempo-*) ;;
+            *) [ -n "$SRC_PROJECT" ] && [ "$_proj" = "$SRC_PROJECT" ] || continue ;;
+            esac
+        fi
+        echo "$_name" >>"$KEPT"
+    done <"$RAW/$ITEM.out"
+}
+
+# Compose project and files of this install, from the container labels read by
+# detect(), else the checkout's or the Desktop's own compose file.
+COMPOSE_PROJECT=
+COMPOSE_FILES=$WORK/compose-files.txt
+find_compose_files() {
+    : >"$COMPOSE_FILES"
+    if [ "$MODE" = desktop ]; then
+        COMPOSE_PROJECT=vigil
+        _cfg=$DESK_CFG
+        _def=$STATE_DIR/standalone/docker-compose.yml
+    else
+        COMPOSE_PROJECT=$SRC_PROJECT
+        _cfg=$SRC_CFG
+        _def=$CHECKOUT/infra/docker/docker-compose.yml
+    fi
+    _oifs=$IFS
+    IFS=,
+    for _f in $_cfg; do
+        case $_f in *.yml | *.yaml) [ -f "$_f" ] && echo "$_f" >>"$COMPOSE_FILES" ;; esac
+    done
+    IFS=$_oifs
+    [ -s "$COMPOSE_FILES" ] || { [ -f "$_def" ] && echo "$_def" >>"$COMPOSE_FILES"; }
+}
+
+collect_compose_config() {
+    _dest=configuration/compose-config.yml
+    if [ "$MODE" = native ]; then
+        skip "$_dest" "native install: Compose is not what runs Vigil"
+        return
+    fi
+    if ! has docker; then
+        skip "$_dest" "docker not found"
+        return
+    fi
+    if [ ! -s "$COMPOSE_FILES" ]; then
+        skip "$_dest" "no compose file found"
+        return
+    fi
+    set -- compose
+    [ -n "$COMPOSE_PROJECT" ] && set -- "$@" -p "$COMPOSE_PROJECT"
+    [ "$MODE" = compose ] && [ -r "$CHECKOUT/.env" ] && set -- "$@" --env-file "$CHECKOUT/.env"
+    while IFS= read -r _f; do set -- "$@" -f "$_f"; done <"$COMPOSE_FILES"
+    # A variable the app injects at launch (the Desktop's tokens) fails interpolation;
+    # the uninterpolated file is still worth having.
+    collect_secret_cmd "$_dest" "$SRC_SECS" "docker compose config" 0 sh -c \
+        'docker compose "$@" config 2>/dev/null || docker compose "$@" config --no-interpolate' _ "$@"
+}
+
+collect_configuration() {
+    # The files that hold secret values go first, so their values are known
+    # before anything else is stored.
+    if [ "$MODE" = desktop ]; then
+        skip configuration/env "the Desktop has no .env"
+    else
+        collect_secret_file configuration/env "$CHECKOUT/.env" 0 "$CHECKOUT"
+    fi
+    collect_compose_config
+
+    _ck=$CHECKOUT
+    [ "$MODE" = desktop ] && _ck=
+    collect_where configuration/state/backups.json backups.json "$STATE_DIR" "$_ck"
+    collect_where configuration/state/mcp-config.json mcp-config.json "$_ck" "$STATE_DIR"
+    collect_where configuration/state/INTENT.md INTENT.md "$_ck" "$STATE_DIR"
+    collect_where configuration/state/vigil-autostart .vigil-autostart "$_ck" "$STATE_DIR"
+
+    if [ "$MODE" = desktop ]; then
+        while IFS= read -r _f; do
+            collect_file "configuration/deployment/$(basename "$_f")" "$_f" 0 "$(dirname "$_f")"
+        done <"$COMPOSE_FILES"
+    else
+        _d=$CHECKOUT/infra/docker
+        for _f in docker-compose.yml otel-collector.yaml prometheus.yml bifrost/config.json; do
+            collect_file "configuration/deployment/$_f" "$_d/$_f" 0 "$_d"
+        done
+        if [ -d "$_d/grafana" ]; then
+            find "$_d/grafana" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort >"$WORK/grafana.txt"
+            while IFS= read -r _f; do
+                collect_file "configuration/deployment/${_f#"$CHECKOUT"/infra/docker/}" "$_f" 0 "$_d"
+            done <"$WORK/grafana.txt"
+        fi
+    fi
+
+    never secrets.enc "$STATE_DIR/secrets.enc"
+    never master.key "$STATE_DIR/master.key"
+    never jwt_secret "$STATE_DIR/jwt_secret"
+    never state-dir-env "$STATE_DIR/.env"
+    never home-deeptempo-env "${HOME:-}/.deeptempo/.env"
+    never bifrost-data "$STATE_DIR/bifrost"
+    [ "$MODE" = desktop ] && never desktop-config "$STATE_DIR/config.json"
+    if [ -r "$STATE_DIR/backups.json" ]; then
+        awk '{ s = $0; while (match(s, /"repo" *: *"[^"]*"/)) {
+            v = substr(s, RSTART, RLENGTH); sub(/^"repo" *: *"/, "", v); sub(/"$/, "", v); print v
+            s = substr(s, RSTART + RLENGTH) } }' "$STATE_DIR/backups.json" | head -n 20 >"$WORK/repos.txt"
+        _i=0
+        while IFS= read -r _r; do
+            _i=$((_i + 1))
+            case $_r in
+            /*) never "backup-repository-$_i" "$_r" ;;
+            *) never "backup-repository-$_i" "$_r" "not a local path, not checked" ;;
+            esac
+        done <"$WORK/repos.txt"
+    fi
+}
+
+collect_health() {
+    _api=${API_URL%/}
+    for _h in "api.json|$_api/api/health" \
+        "daemon-health.json|http://localhost:9091/health" \
+        "daemon-status.json|http://localhost:9091/status" \
+        "webhook-health.json|http://localhost:8081/health" \
+        "agent-serve-healthz.txt|http://localhost:6989/healthz" \
+        "agent-worker-healthz.txt|http://localhost:6990/healthz" \
+        "bifrost-health.json|http://localhost:8080/health"; do
+        _url=${_h#*|}
+        collect_cmd "health/${_h%%|*}" "$SRC_SECS" "GET $(printf '%s' "$_url" | sed 's|//[^/@]*@|//|')" 0 \
+            curl -fsS --max-time 5 "$_url"
+    done
+    if [ -n "$CONT_ERR" ]; then
+        skip health/containers.txt "$CONT_ERR"
+    elif [ ! -s "$KEPT" ]; then
+        skip health/containers.txt "no containers of this install"
+    else
+        # --format only: raw inspect output and container environments stay out.
+        collect_cmd health/containers.txt "$SRC_SECS" "docker inspect --format" 0 sh -c \
+            'for n; do docker inspect --format "{{.Name}} state={{.State.Status}} restarts={{.RestartCount}} started={{.State.StartedAt}} image={{.Config.Image}}" "$n" 2>&1; done' _ $(cat "$KEPT")
+    fi
+}
+
+# collect_tree DEST_PREFIX DIR [find tests...]   every matching file under DIR, in place
+collect_tree() {
+    _pre=$1
+    _root=$2
+    shift 2
+    if [ ! -d "$_root" ]; then
+        skip "$_pre/" "$_root not found"
+        return
+    fi
+    find "$_root" \( -type f -o -type l \) "$@" | sort >"$WORK/tree.txt"
+    while IFS= read -r _f; do
+        collect_file "$_pre/${_f#"$_root"/}" "$_f" 0 "$_root"
+    done <"$WORK/tree.txt"
+}
+
+collect_logs() {
+    case $MODE in
+    native | compose)
+        collect_tree logs/checkout "$CHECKOUT/logs"
+        collect_file logs/state/vigil.log "$STATE_DIR/vigil.log" 0 "$STATE_DIR"
+        ;;
+    desktop)
+        if [ "$OS_KIND" = Darwin ] && [ -z "$STATE_ARG" ]; then _dl=${HOME:-}/Library/Logs/Vigil; else _dl=$STATE_DIR/logs; fi
+        collect_tree logs/desktop "$_dl" \( -name 'vigil-desktop.log*' -o \( -path '*/containers/*' -name 'vigil-*.log' \) \)
+        ;;
+    esac
+    if [ "$MODE" = native ]; then
+        skip logs/docker/ "native install: container logs are saved under logs/ by start.sh and shutdown"
+    elif [ -n "$CONT_ERR" ]; then
+        skip logs/docker/ "$CONT_ERR"
+    else
+        while IFS= read -r _n; do
+            collect_cmd "logs/docker/$_n.log" "$LOG_SECS" "docker logs --since ${SINCE}d" 0 sh -c \
+                'exec docker logs --timestamps --since "$1" "$2" 2>&1' _ "$((SINCE * 24))h" "$_n"
+        done <"$KEPT"
+    fi
+    if [ ! -s "$KEPT" ] && [ -z "$CONT_ERR" ] && [ "$MODE" != native ]; then
+        skip logs/docker/ "no containers of this install"
+    fi
+}
+
+section 2/6 "collecting configuration, health and logs"
 if [ "$N_INSTALLS" = 1 ]; then
-    _why="per-install collection is not part of this version"
+    list_containers
+    find_compose_files
+    collect_configuration
+    collect_health
+    collect_logs
+    while IFS='	' read -r _n _s; do
+        skip "logs/docker/$_n.log" "excluded: lab/demo container; state $_s" "docker ps -a"
+    done <"$EXCLUDED"
 else
-    _why="no Vigil install found"
+    for _p in configuration health logs; do skip "$_p/" "no Vigil install found"; done
 fi
-for _p in configuration health logs; do skip "$_p/" "$_why"; done
 
 # --- system ------------------------------------------------------------------
 

@@ -43,9 +43,46 @@ logs/
 system/
 ```
 
-`configuration/`, `health/` and `logs/` hold per-install collection, which this
-version does not do: each is an empty directory with a `not collected` entry in
-the manifest. `system/` holds the host-level files below.
+`configuration/`, `health/` and `logs/` hold the install's own files (below);
+with no install found each is an empty directory with a `not collected` entry.
+`system/` holds the host-level files in the second table.
+
+| Path | Source |
+| --- | --- |
+| `configuration/env` | the checkout's `.env` (native, compose) |
+| `configuration/compose-config.yml` | `docker compose -p <project> -f <files> config` (compose, desktop). The project and files come from the `com.docker.compose.project` and `...config_files` container labels, else the checkout's `infra/docker/docker-compose.yml` or the Desktop's staged copy. If interpolation fails (the Desktop injects its tokens at launch) the uninterpolated file is used. |
+| `configuration/state/` | `backups.json` (State Directory), `mcp-config.json`, `INTENT.md`, `.vigil-autostart` (checkout, else State Directory) |
+| `configuration/deployment/` | native, compose: `infra/docker/` compose, OpenTelemetry, Prometheus and Bifrost config plus Grafana provisioning YAML. Desktop: its staged compose file. |
+| `configuration/never-included/` | see below |
+| `health/*.json`, `health/*.txt` | `curl` of the API `/api/health` (`VIGIL_API_URL`), daemon `:9091/health` and `/status`, webhook receiver `:8081/health`, agent `:6989` and `:6990` `/healthz`, Bifrost `:8080/health`, stored as returned. An endpoint that does not answer is `not collected` with curl's message. |
+| `health/containers.txt` | `docker inspect --format` per container: state, restart count, start time, image. Never raw inspect, never container environments. |
+| `logs/checkout/` | native, compose: everything under the checkout's `logs/`, including `.1`-`.4` rotations, PID files and `containers/` |
+| `logs/state/vigil.log` | native, compose: `vigil.log` in the State Directory |
+| `logs/docker/<container>.log` | compose, desktop: `docker logs --timestamps --since <DAYS> days` |
+| `logs/desktop/` | desktop: the app log directory (`vigil-desktop.log*` and the `containers/vigil-*.log` snapshots written on quit). Linux `<State Directory>/logs` (`~/.config/Vigil/logs`), macOS `~/Library/Logs/Vigil`. |
+
+Containers are listed from `docker ps -a`: names `deeptempo-*` or the install's
+Compose project (native, compose), project `vigil` (desktop). Lab and demo
+containers (`deeptempo-splunk`, `-kafka`, `-elasticsearch`, `-kibana`,
+`-misp-*`, `-pgadmin`) and any Ollama container are `not collected` with the
+reason `excluded: lab/demo container; state <running state>`. A container that
+cannot be read is `not collected` with docker's message. Native installs take
+no `docker logs`: `start.sh` saves those under the checkout's `logs/`.
+
+Under Compose and Desktop the State Directory lives in a container volume, which
+is not read; only files on the host are.
+
+### Never included
+
+Recorded as `configuration/never-included/<name>`, `not collected`, reason
+`never included; present` or `never included; absent`, source the path. The
+content is not read: `secrets.enc`, `master.key`, `jwt_secret`, the State
+Directory `.env`, `~/.deeptempo/.env`, the Desktop app's `config.json`, the
+State Directory's `bifrost/` data, and each local backup repository named by
+`backups.json` (a remote repository is noted as not checked). Passphrases live
+in `secrets.enc`.
+
+### System
 
 | File | Source |
 | --- | --- |
@@ -111,8 +148,13 @@ notice.
 ## Redaction
 
 Every captured byte goes through `redact.awk` with `secret-names.txt`
-(`awk -f redact.awk -v names=... -v counts=... -v name=<file>`) before it enters
-the bundle. If the filter cannot run, the item is `not collected`; the
+(`awk -f redact.awk -v names=... -v values=... -v counts=... -v name=<file>`)
+before it enters the bundle. The `.env` and the rendered Compose config are read
+first: each value the filter redacts by name there (6+ characters) goes into a
+file in the private work directory and is passed as `values`, so the same value
+is also replaced in free text such as container logs and the process list. The
+values never reach the bundle, the manifest or the output. A not-collected
+reason that quotes a command's error message goes through the filter too. If the filter cannot run, the item is `not collected`; the
 unredacted input is never copied. `SUMMARY.txt` and `manifest.json` are written
 by the script itself and hold only paths, versions and reasons.
 
