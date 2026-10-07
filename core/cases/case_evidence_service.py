@@ -42,7 +42,8 @@ class CaseEvidenceService:
         Returns:
             Dictionary with md5 and sha256 hashes
         """
-        md5_hash = hashlib.md5()
+        # md5 is a lookup key for threat-intel feeds; sha256 is the integrity hash
+        md5_hash = hashlib.md5(usedforsecurity=False)
         sha256_hash = hashlib.sha256()
 
         with open(file_path, "rb") as f:

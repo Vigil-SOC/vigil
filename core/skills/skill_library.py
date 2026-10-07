@@ -365,7 +365,7 @@ def _copy_skill_dir(source: Path, dest: Path) -> None:
         source, dest, symlinks=True, ignore=skip_hidden, copy_function=shutil.copyfile
     )
     for directory, _, _ in os.walk(dest):
-        os.chmod(directory, 0o755)
+        os.chmod(directory, 0o755)  # nosec B103 - skill dirs are world-readable
 
 
 def write_operator_skill(

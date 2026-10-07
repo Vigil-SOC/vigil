@@ -30,7 +30,9 @@ def _finding_id(prefix: str, stable_key: str, ts: datetime) -> str:
     ``stable_key`` is hashed so the same Darktrace event always produces the
     same finding_id (idempotent replay through the webhook).
     """
-    digest = hashlib.sha1(f"{prefix}:{stable_key}".encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha1(  # identifier only; changing it would break replay dedup
+        f"{prefix}:{stable_key}".encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:8]
     return f"f-{ts.strftime('%Y%m%d')}-{digest}"
 
 
@@ -237,7 +239,8 @@ class DarktraceIngestionService(SIEMIngestionService):
         # on every worker restart and break idempotent replay dedup. Use a
         # stable SHA-1 digest over sorted JSON instead.
         fallback_key = hashlib.sha1(
-            json.dumps({k: str(v) for k, v in sorted(alert.items())}).encode("utf-8")
+            json.dumps({k: str(v) for k, v in sorted(alert.items())}).encode("utf-8"),
+            usedforsecurity=False,
         ).hexdigest()
         key = (
             alert.get("id") or alert.get("eventId") or alert.get("name") or fallback_key

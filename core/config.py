@@ -33,7 +33,8 @@ def _safe_home() -> Path:
         # with PermissionError (Errno 13).
         if Path("/home/vigil").is_dir():
             return Path("/home/vigil")
-        return Path("/tmp")
+        # Last-resort writable fallback when HOME is unusable.
+        return Path("/tmp")  # nosec B108
     return home
 
 
@@ -291,7 +292,7 @@ class Settings(BaseSettings):
     # Address the daemon's own listeners bind to (health/status/metrics/webhook).
     # Separate from daemon_health_host, which is the client address the backend
     # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.
-    daemon_bind_host: str = "0.0.0.0"
+    daemon_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_health_port: int = 9091
 
     # Orchestrator

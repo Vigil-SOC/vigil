@@ -968,7 +968,7 @@ if __name__ == "__main__":
     logger.info("Starting Vigil SOC API server...")
     uvicorn.run(
         "services.api.main:app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # nosec B104 - containers must bind all interfaces
         port=6987,
         reload=True,
         log_level="info",

@@ -43,7 +43,7 @@ from scripts.generate_api_v1_contract import serialize  # noqa: E402
 
 # CREATE/DROP is only safe against a loopback server. Same set as
 # tests/integration/test_schema_drift_upgrade.py.
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "0.0.0.0"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "0.0.0.0"}  # nosec B104 - connect allowlist, not a bind
 _CONNECT_ARGS = {"connect_timeout": 5}
 
 
