@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { configApi } from '../../services/api'
 import { fmtCost } from '../../shared/cost'
 import { Icon } from '../../shared/icons'
-import { ConfirmDialog } from '../../shared/ui'
+import { ConfirmDialog, SettingsCard } from '../../shared/ui'
 import {
   matchesProfile,
   ORCHESTRATOR_DEFAULTS,
@@ -13,7 +13,10 @@ import {
   type InvestigationProfileValues,
   type OrchestratorConfig,
 } from '../settings/useSettings'
+import ChoiceCard from './ChoiceCard'
 import { errorText } from './errorText'
+import MonthlyCeiling from './MonthlyCeiling'
+import SlackRoute from './SlackRoute'
 
 function fmtRuntime(seconds: number): string {
   if (seconds < 60) return `${seconds} s`
@@ -46,6 +49,7 @@ export default function LimitsStep() {
   const [config, setConfig] = useState<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [pendingLimits, setPendingLimits] = useState<OrchestratorConfig | null>(null)
   const [savingLimits, setSavingLimits] = useState(false)
+  const [showLimits, setShowLimits] = useState(false)
   const [profilesPhase, setProfilesPhase] = useState<LoadPhase>('loading')
   const [error, setError] = useState<string | null>(null)
 
@@ -87,58 +91,71 @@ export default function LimitsStep() {
     else saveLimits(next)
   }
 
-  if (profilesPhase === 'loading') {
-    return <p className="text-tx-3 text-sm">Loading limits…</p>
-  }
-
   const entries = Object.entries(profiles)
   const activeKey = entries.find(([, profile]) => matchesProfile(config, profile.values))?.[0] ?? null
   // Custom shows the saved values, since no profile describes them
   const shown = activeKey === null ? config : profiles[activeKey].values
 
   return (
-    <div className="flex flex-col gap-4">
-      {profilesPhase === 'error' ? (
-        <p className="text-sm text-high">Could not read investigation profiles.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <div
-            role="radiogroup"
-            aria-label="Limits profile"
-            className="settings-grid-2"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}
-          >
-            {entries.map(([key, profile]) => (
-              <ProfileCard
-                key={key}
-                profile={profile}
-                selected={key === activeKey}
-                disabled={savingLimits}
-                onPick={() => pickProfile(profile)}
-              />
-            ))}
-          </div>
-          {activeKey === null && (
-            <div className="settings-banner info">
-              <Icon name="info" size={14} />
-              <span>Custom limits in effect. Your saved values match no profile.</span>
-            </div>
-          )}
-          <div>
-            <h4 className="text-xs font-semibold text-tx-2 mb-1">Default case limits</h4>
-            <dl className="grid gap-0.5">
-              {PROFILE_FIELDS.map((field) => (
-                <div key={field.key} className="flex justify-between gap-3 text-xs">
-                  <dt className="text-tx-3">{field.label}</dt>
-                  <dd className="text-tx-2">{field.fmt(shown[field.key])}</dd>
+    <>
+      <SettingsCard
+        title="Spending"
+        desc="Pick a starting profile. Vigil stops an investigation that reaches its limits."
+      >
+        <div className="flex flex-col gap-3.5">
+          {profilesPhase === 'loading' && <p className="text-tx-3 text-sm">Loading limits…</p>}
+          {profilesPhase === 'error' && <p className="text-sm text-high">Could not read investigation profiles.</p>}
+          {profilesPhase === 'ready' && (
+            <>
+              <div role="group" aria-label="Limits profile" className="su-choices three">
+                {entries.map(([key, profile]) => (
+                  <ChoiceCard
+                    key={key}
+                    title={profile.label}
+                    body={profileLine(profile.values)}
+                    badge={profile.recommended && <span className="su-chip good">Recommended</span>}
+                    selected={key === activeKey}
+                    onSelect={() => !savingLimits && pickProfile(profile)}
+                  />
+                ))}
+              </div>
+              {activeKey === null && (
+                <div className="settings-banner info">
+                  <Icon name="info" size={14} />
+                  <span>Custom limits in effect. Your saved values match no profile.</span>
                 </div>
-              ))}
-            </dl>
-          </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  className="su-toggle"
+                  aria-expanded={showLimits}
+                  onClick={() => setShowLimits((o) => !o)}
+                >
+                  <Icon name={showLimits ? 'chevD' : 'chevR'} size={14} />
+                  Show the limits
+                </button>
+                {showLimits && (
+                  <dl className="grid gap-0.5">
+                    {PROFILE_FIELDS.map((field) => (
+                      <div key={field.key} className="flex justify-between gap-3 text-xs">
+                        <dt className="text-tx-3">{field.label}</dt>
+                        <dd className="text-tx-2">{field.fmt(shown[field.key])}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </div>
+            </>
+          )}
+          {error && <p className="text-sm text-high">{error}</p>}
+          <MonthlyCeiling />
         </div>
-      )}
+      </SettingsCard>
 
-      {error && <p className="text-sm text-high">{error}</p>}
+      <SettingsCard title="When a decision needs you" desc="Decisions that can wait never page anyone.">
+        <SlackRoute />
+      </SettingsCard>
 
       <ConfirmDialog
         open={pendingLimits !== null}
@@ -153,37 +170,12 @@ export default function LimitsStep() {
         }}
         onClose={() => setPendingLimits(null)}
       />
-    </div>
+    </>
   )
 }
 
-function ProfileCard({
-  profile,
-  selected,
-  disabled,
-  onPick,
-}: {
-  profile: InvestigationProfile
-  selected: boolean
-  disabled: boolean
-  onPick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      disabled={disabled}
-      onClick={onPick}
-      className={`card card-sq text-left p-3.5 flex flex-col items-start justify-start gap-1 ${selected ? 'border-accent-line bg-[var(--accent-dim)]' : ''}`}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-tx">
-        {profile.label}
-        {profile.recommended && <span className="chip">Recommended</span>}
-      </div>
-      <span className="text-xs text-tx-3">
-        {profile.values.max_concurrent_agents} agents · {fmtCost(profile.values.max_cost_per_investigation)} / case
-      </span>
-    </button>
-  )
-}
+/** "3 agents at once, $5.00 per investigation", from the served values; 0 means no cap. */
+const profileLine = ({ max_concurrent_agents: agents, max_cost_per_investigation: cost }: InvestigationProfileValues) =>
+  `${agents === 0 ? 'Any number of agents' : `${agents} agent${agents === 1 ? '' : 's'}`} at once, ${
+    cost === 0 ? 'no cost cap' : `${fmtCost(cost)} per investigation`
+  }`

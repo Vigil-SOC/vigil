@@ -24,6 +24,7 @@ vi.mock('../../services/api', () => ({
   storageApi: { getStatus: vi.fn(() => Promise.resolve({ data: { backend: 'none' } })) },
   llmProviderApi: { list: vi.fn(() => Promise.resolve({ data: [] })) },
   aiConfigApi: { getConfig: vi.fn(() => Promise.resolve({ data: { components: [], assignments: {} } })) },
+  budgetsApi: { getQuota: vi.fn(() => Promise.resolve({ data: { configured: false } })) },
   workflowApi: { listAll: vi.fn(() => Promise.resolve({ data: { workflows: [] } })) },
   configApi: {
     getOrchestrator: vi.fn(() => Promise.resolve({ data: { profiles: {} } })),
@@ -273,7 +274,7 @@ describe('SetupScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
-    expect(await screen.findByRole('radiogroup', { name: 'Limits profile' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: 'Limits profile' })).toBeInTheDocument()
     expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
   })
 

@@ -803,6 +803,123 @@
   flex: 1 1 220px;
 }
 
+/* Limits and alerts. Board: boards/OnboardingLimits.dc.html */
+.su-choices.three {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.su-ceiling {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: flex-start;
+}
+
+.su-ceiling-field {
+  display: flex;
+  flex: 0 1 320px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: min(100%, 220px);
+}
+
+.su-ceiling-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.su-money {
+  position: relative;
+  display: flex;
+  flex: 1 1 140px;
+  min-width: 0;
+  align-items: center;
+}
+
+.su-money > span {
+  position: absolute;
+  left: 10px;
+  font-size: 13px;
+  color: var(--tx2);
+  pointer-events: none;
+}
+
+.su-money .field-input {
+  padding-left: 22px;
+}
+
+.su-later {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px dashed var(--ln1);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--tx2);
+}
+
+.su-estimate {
+  display: flex;
+  flex: 1 1 220px;
+  align-items: center;
+  min-height: 34px;
+  margin-top: 21px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--bg2);
+  font-size: 13px;
+}
+
+.su-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.su-route-ico {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.su-route-text {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.su-route-t {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-route-s {
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.su-route-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--good);
+}
+
 /* Narrow: the trigger drops under the name and the switch stays at the right */
 @media (max-width: 640px) {
   .su-wf-row {

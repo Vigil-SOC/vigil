@@ -183,6 +183,8 @@ export interface BifrostVirtualKey {
   allowed_models?: string[]
   allowed_providers?: string[]
   budget?: BifrostBudget | null
+  /** What the pinned gateway returns and accepts; `budget` above is the older single-budget shape. */
+  budgets?: BifrostBudget[]
   rate_limit?: BifrostRateLimit | null
   team_id?: string | null
   customer_id?: string | null
@@ -195,6 +197,8 @@ export interface BifrostVirtualKeyWrite {
   allowed_models?: string[]
   allowed_providers?: string[]
   budget?: BifrostBudget | null
+  /** An empty list removes the key's budget. */
+  budgets?: BifrostBudget[]
   rate_limit?: BifrostRateLimit | null
 }
 
