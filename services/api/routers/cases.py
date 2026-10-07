@@ -756,10 +756,10 @@ async def attach_case_document(
             pages=pages,
             collected_by=current_user.username or current_user.user_id,
         )
-    except Exception as exc:  # noqa: BLE001 -- the operator is owed the reason
+    except Exception as exc:  # noqa: BLE001 -- the reason is in the log
         logger.error("could not attach a document to %s: %s", case_id, exc)
         raise HTTPException(
-            status_code=500, detail=f"Could not attach: {exc}"
+            status_code=500, detail="The document could not be kept on the case"
         ) from None
     finally:
         path.unlink(missing_ok=True)

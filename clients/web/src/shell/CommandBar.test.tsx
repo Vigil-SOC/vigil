@@ -506,13 +506,13 @@ describe('CommandBar', () => {
       })
 
       it('says so when the hunt started but the original could not be kept', async () => {
-        attachDocument.mockRejectedValue({ response: { data: { detail: 'Could not attach: disk full' } } })
+        attachDocument.mockRejectedValue({ response: { data: { detail: 'The document could not be kept on the case' } } })
         const { onOpenCase, input } = renderHunt()
         await openHunt(input, 'credential access')
         pick(pdf())
         await screen.findByText('advisory.pdf')
         fireEvent.click(screen.getByRole('button', { name: 'Run' }))
-        expect(await screen.findByText(/could not be kept on the case: Could not attach: disk full/)).toBeInTheDocument()
+        expect(await screen.findByText(/could not be kept on the case: The document could not be kept on the case/)).toBeInTheDocument()
         expect(onOpenCase).toHaveBeenCalledWith('case-new')
       })
     })
