@@ -39,6 +39,7 @@ vi.mock('../../services/api', () => ({
     ),
     setIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false, source: 'file' } })),
+    getSetupSteps: vi.fn(() => Promise.resolve({ data: { steps: [] } })),
     setDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: true } })),
   },
   mcpApi: {
@@ -143,7 +144,7 @@ describe('SetupScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
     expect(screen.getByText('Setup complete', { selector: '.su-eyebrow' })).toBeInTheDocument()
     expect(screen.queryByText(/of 5/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Go to console/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Go to Home' })).toBeInTheDocument()
     expect(rail().getAllByRole('button').filter((b) => b.querySelector('svg'))).toHaveLength(5)
     expect(saved().passed).toContain(5)
   })
@@ -257,7 +258,7 @@ describe('SetupScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
     expect(await screen.findByText('Nothing connected yet')).toBeInTheDocument()
     expect(screen.getByText('No provider')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Go to console/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Go to Home' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Change Workflows' }))
     expect(await screen.findByText('No workflows yet.')).toBeInTheDocument()

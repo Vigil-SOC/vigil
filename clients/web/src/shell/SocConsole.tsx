@@ -222,6 +222,14 @@ function SocConsoleInner() {
     setTourOn(true)
   }, [])
 
+  // the setup hand-off asks for the tour in router state; read it once, then clear it
+  const wantsTour = (location.state as { startTour?: boolean } | null)?.startTour === true
+  useEffect(() => {
+    if (!wantsTour) return
+    startTour()
+    navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: null })
+  }, [wantsTour, startTour, navigate, location.pathname, location.search])
+
   const dismissTour = useCallback(() => {
     markConsoleTourSeen()
     setTourOn(false)

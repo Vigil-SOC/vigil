@@ -15,7 +15,7 @@ import { DEMO_ENV_NOTICE, turnOnDemoMode } from './demoMode'
 import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
 import LimitsStep from './LimitsStep'
-import SummaryStep, { type SummaryTarget } from './SummaryStep'
+import SummaryStep from './SummaryStep'
 import { Rail, TopBar } from './SetupChrome'
 import {
   SETUP_STEP_COUNT,
@@ -37,8 +37,6 @@ interface StepCopy {
   sub: string
   title: string
   desc: string
-  /** the existing panel's own card; absent when the step renders its own cards */
-  card?: { title: string; desc?: string }
 }
 
 const STEP_COPY: Record<StepId, StepCopy> = {
@@ -72,13 +70,8 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     title: 'Set limits and where Vigil reaches you',
     desc: 'Limits stop runaway cost. Notifications tell you when a decision needs your attention. Both can be changed later in Settings.',
   },
-  done: {
-    rail: '',
-    sub: '',
-    title: 'Vigil is ready',
-    desc: 'The console works from here. Reopen this pass from the account menu.',
-    card: { title: 'Summary' },
-  },
+  // the done page draws its own head, cards and footer (SummaryStep)
+  done: { rail: '', sub: '', title: '', desc: '' },
 }
 
 const RAIL = STEPS.slice(0, DONE).map((id) => ({
@@ -90,7 +83,6 @@ function stepPanel(
   id: StepId,
   onAdvance: () => void,
   onRoutable: () => void,
-  onChange: (target: SummaryTarget) => void,
 ) {
   switch (id) {
     case 'checks':
@@ -104,7 +96,7 @@ function stepPanel(
     case 'limits':
       return <LimitsStep />
     case 'done':
-      return <SummaryStep onChange={onChange} />
+      return null
     default: {
       const _exhaustive: never = id
       return _exhaustive
@@ -178,9 +170,7 @@ const SetupWizard = () => {
     }
   }
 
-  const panel = stepPanel(step, advance, markRoutable, (target) =>
-    setIndex(STEPS.indexOf(target)),
-  )
+  const panel = stepPanel(step, advance, markRoutable)
 
   if (!hasPermission('settings.write')) {
     return (
@@ -224,33 +214,24 @@ const SetupWizard = () => {
           demoBusy={demoBusy}
         />
         <div className="su-main">
-          <div className="su-scroll">
-            <div className="su-col">
-              <div className="su-head">
-                <span className="su-eyebrow">{done ? 'Setup complete' : `Step ${index + 1} of ${SETUP_STEP_COUNT}`}</span>
-                <h1>{copy.title}</h1>
-                <p>{copy.desc}</p>
-              </div>
-              {copy.card ? (
-                <SettingsCard title={copy.card.title} desc={copy.card.desc}>
+          {done ? (
+            <SummaryStep onChange={(target) => setIndex(STEPS.indexOf(target))} />
+          ) : (
+            <>
+              <div className="su-scroll">
+                <div className="su-col">
+                  <div className="su-head">
+                    <span className="su-eyebrow">{`Step ${index + 1} of ${SETUP_STEP_COUNT}`}</span>
+                    <h1>{copy.title}</h1>
+                    <p>{copy.desc}</p>
+                  </div>
                   {panel}
-                </SettingsCard>
-              ) : (
-                panel
-              )}
-            </div>
-          </div>
-          <footer className="su-foot">
-            <span className="su-foot-note">
-              {!done && `Step ${index + 1} of ${SETUP_STEP_COUNT} · your progress is saved`}
-            </span>
-            {done ? (
-              <button className="btn primary" onClick={dismiss}>
-                Go to console
-                <Icon name="arrowR" size={15} />
-              </button>
-            ) : (
-              <>
+                </div>
+              </div>
+              <footer className="su-foot">
+                <span className="su-foot-note">
+                  {`Step ${index + 1} of ${SETUP_STEP_COUNT} · your progress is saved`}
+                </span>
                 {index > 0 && (
                   <button className="btn ghost" onClick={() => setIndex(index - 1)}>
                     Back
@@ -263,9 +244,9 @@ const SetupWizard = () => {
                   {last ? 'Finish setup' : 'Continue'}
                   <Icon name="arrowR" size={15} />
                 </button>
-              </>
-            )}
-          </footer>
+              </footer>
+            </>
+          )}
         </div>
       </div>
     </>

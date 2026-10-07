@@ -939,3 +939,73 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Vigil is ready. Board: boards/OnboardingDone.dc.html */
+.su-done-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.su-done-tile {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 20px;
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.su-eyebrow.good {
+  color: var(--good);
+}
+
+.su-sum-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 2px;
+  border-top: 1px solid var(--ln0);
+}
+
+.su-sum-row .btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.su-sum-k {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx1);
+}
+
+.su-sum-v {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.su-sum-v.wait {
+  color: var(--tx3);
+}
+
+.su-sum-v.err {
+  color: var(--poor);
+}
+
+.su-next .su-choice-icon {
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.su-foot .btn svg {
+  flex: none;
+}
