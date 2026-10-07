@@ -125,7 +125,7 @@ class DatabaseService:
             anomaly_score: Anomaly score (0-1), or None when the source omitted it
             timestamp: Finding timestamp, or None when the source omitted it
             data_source: Data source type
-            **kwargs: Additional fields (entity_context, evidence_links, cluster_id, severity, status)
+            **kwargs: Additional fields (title, entity_context, evidence_links, cluster_id, severity, status)
 
         Returns:
             Created Finding object or None if failed
@@ -137,6 +137,7 @@ class DatabaseService:
                 timestamp=timestamp,
                 data_source=data_source,
                 external_id=kwargs.get("external_id"),
+                title=kwargs.get("title"),
                 description=kwargs.get("description"),
                 entity_context=kwargs.get("entity_context"),
                 evidence_links=kwargs.get("evidence_links"),
@@ -152,7 +153,7 @@ class DatabaseService:
             logger.info(f"Created finding: {finding_id}")
             return finding
 
-    def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Dedup + insert many findings in one transaction; per-row create_finding
         doesn't scale to hundred-thousand-row parquet files.
 
@@ -173,7 +174,12 @@ class DatabaseService:
         except Exception as e:
             if _is_connection_error(e):
                 logger.error(f"Error bulk-creating findings: {e}")
-                return {"imported": 0, "skipped": 0, "errors": len(rows)}
+                return {
+                    "imported": 0,
+                    "skipped": 0,
+                    "errors": len(rows),
+                    "first_error": f"Database unavailable: {e}",
+                }
             logger.warning(
                 "Bulk insert of %d findings failed (%s); retrying row by row",
                 len(by_id),
@@ -181,6 +187,7 @@ class DatabaseService:
             )
 
         imported = skipped = errors = 0
+        first_error = None
         for finding_id, r in by_id.items():
             try:
                 if self._insert_new_findings([r]):
@@ -189,6 +196,7 @@ class DatabaseService:
                     skipped += 1
             except Exception as e:
                 logger.error(f"Error creating finding {finding_id!r}: {e}")
+                first_error = first_error or f"Finding {finding_id}: {e}"
                 if _is_connection_error(e):
                     # Count this row and every row not yet tried.
                     errors += len(by_id) - imported - skipped - errors
@@ -198,6 +206,7 @@ class DatabaseService:
             "imported": imported,
             "skipped": skipped + in_batch_dupes,
             "errors": errors,
+            "first_error": first_error,
         }
 
     def _insert_new_findings(self, rows: List[Dict[str, Any]]) -> int:
@@ -220,6 +229,7 @@ class DatabaseService:
                     timestamp=r.get("timestamp"),
                     data_source=r.get("data_source", "imported"),
                     external_id=r.get("external_id"),
+                    title=r.get("title"),
                     description=r.get("description"),
                     entity_context=r.get("entity_context"),
                     evidence_links=r.get("evidence_links"),

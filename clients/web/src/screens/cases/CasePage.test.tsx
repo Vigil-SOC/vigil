@@ -426,7 +426,7 @@ describe('case page', () => {
       combined_state: 'executing',
       investigations: [investigation('executing', true, 'run-links')],
       linked_findings: [
-        { finding_id: 'f1', description: 'console alert', source_link: 'https://example.test/alert/1' },
+        { finding_id: 'f1', title: 'Beacon to rare host', description: 'console alert', source_link: 'https://example.test/alert/1' },
         { finding_id: 'f2', description: 'no door', source_link: null },
       ],
     }]
@@ -438,7 +438,9 @@ describe('case page', () => {
     expect(within(header).queryByText('console alert')).not.toBeInTheDocument()
     const side = screen.getByRole('complementary', { name: 'Case details' })
     expect(within(side).getByText('Alerts (2)')).toBeInTheDocument()
-    expect(within(side).getByText('console alert')).toBeInTheDocument()
+    // The title names the alert; a row without one keeps its description.
+    expect(within(side).getByText('Beacon to rare host')).toBeInTheDocument()
+    expect(within(side).queryByText('console alert')).not.toBeInTheDocument()
     expect(within(side).getByText('no door')).toBeInTheDocument()
     expect(within(side).queryByText('gone')).not.toBeInTheDocument()
     const link = within(side).getByRole('link', { name: 'Open in source' })

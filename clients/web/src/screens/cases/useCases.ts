@@ -28,6 +28,7 @@ export interface CaseClosureView {
 
 export interface CaseLinkedFinding {
   finding_id: string
+  title: string | null
   description: string | null
   source_link: string | null
 }
@@ -168,6 +169,7 @@ function asLinkedFindings(raw: unknown): CaseLinkedFinding[] {
     if (typeof o.finding_id !== 'string' || !o.finding_id) return []
     return [{
       finding_id: o.finding_id,
+      title: typeof o.title === 'string' ? o.title : null,
       description: typeof o.description === 'string' ? o.description : null,
       source_link: typeof o.source_link === 'string' && o.source_link ? o.source_link : null,
     }]

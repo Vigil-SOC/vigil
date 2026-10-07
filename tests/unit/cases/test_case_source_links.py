@@ -21,6 +21,7 @@ class _Row:
     def __init__(self, finding_id, description, **kw):
         self.finding_id = finding_id
         self.description = description
+        self.title = kw.get("title")
         self.evidence_links = kw.get("evidence_links")
         self.data_source = kw.get("data_source")
         self.external_id = kw.get("external_id")
@@ -37,6 +38,7 @@ def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
         _Row(
             "f-http",
             "console alert",
+            title="Beacon to rare host",
             evidence_links=[{"ref": "note"}, {"ref": "https://console.example/a"}],
             data_source="tr-link-src",
             external_id="http-1",
@@ -109,6 +111,8 @@ def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
     assert list(by_id) == ["f-http", "f-tpl", "f-tpl-2", "f-empty"]
     assert by_id["f-http"]["source_link"] == "https://console.example/a"
     assert by_id["f-http"]["description"] == "console alert"
+    assert by_id["f-http"]["title"] == "Beacon to rare host"
+    assert by_id["f-empty"]["title"] is None
     assert by_id["f-tpl"]["source_link"] == "https://host.example/alert/abc"
     assert by_id["f-tpl-2"]["source_link"] == "https://host.example/alert/def"
     assert by_id["f-empty"]["description"] == "no door"

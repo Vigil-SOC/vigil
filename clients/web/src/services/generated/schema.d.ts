@@ -8977,6 +8977,8 @@ export interface components {
             finding_id: string;
             /** Source Link */
             source_link?: string | null;
+            /** Title */
+            title?: string | null;
         };
         /** CaseListResponse */
         CaseListResponse: {
@@ -10191,6 +10193,8 @@ export interface components {
             status?: string | null;
             /** Timestamp */
             timestamp?: string | null;
+            /** Title */
+            title?: string | null;
             /** Updated At */
             updated_at?: string | null;
         };

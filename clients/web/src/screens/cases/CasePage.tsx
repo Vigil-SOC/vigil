@@ -98,7 +98,7 @@ function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
       <ul className="case-linked">
         {items.map((item) => (
           <li key={item.finding_id}>
-            <span>{item.description || item.finding_id}</span>
+            <span>{item.title || item.description || item.finding_id}</span>
             {item.source_link && (
               <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>
             )}
