@@ -763,6 +763,47 @@ describe('SocConsole', () => {
     clickSpy.mockRestore()
   })
 
+  it('sends the whole selected calendar days to the timeline and clears the range', async () => {
+    const range = vi.mocked(timelineApi.getTimelineRange)
+    range.mockClear()
+    renderConsole()
+    fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
+    await screen.findByText('2 events')
+    expect(range).toHaveBeenLastCalledWith({ limit: 200, start: undefined, end: undefined })
+
+    fireEvent.change(screen.getByLabelText('Timeline start date'), { target: { value: '2026-06-13' } })
+    fireEvent.change(screen.getByLabelText('Timeline end date'), { target: { value: '2026-06-13' } })
+    await screen.findByText('1 event')
+    expect(range).toHaveBeenLastCalledWith({
+      limit: 200,
+      start: new Date('2026-06-13T00:00:00').toISOString(),
+      end: new Date('2026-06-13T23:59:59.999').toISOString(),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    await screen.findByText('2 events')
+    expect(range).toHaveBeenLastCalledWith({ limit: 200, start: undefined, end: undefined })
+    expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument()
+  })
+
+  it('rejects an inverted timeline date range without calling the API', async () => {
+    const range = vi.mocked(timelineApi.getTimelineRange)
+    renderConsole()
+    fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
+    await screen.findByText('2 events')
+    fireEvent.change(screen.getByLabelText('Timeline start date'), { target: { value: '2026-06-14' } })
+    await screen.findByText('0 events')
+    range.mockClear()
+
+    fireEvent.change(screen.getByLabelText('Timeline end date'), { target: { value: '2026-06-13' } })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Start date must be on or before end date.')
+    expect(screen.getByLabelText('Timeline start date')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('Timeline end date')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('Invalid date range')).toBeInTheDocument()
+    expect(range).not.toHaveBeenCalled()
+  })
+
   it('shows Act, and Assist when force-manual is set or auto-response is off', async () => {
     const { unmount } = renderConsole()
     expect(await screen.findByText('Autonomy · Act · reversible changes on its own')).toBeInTheDocument()
