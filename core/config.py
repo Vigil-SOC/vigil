@@ -282,9 +282,9 @@ class Settings(BaseSettings):
     daemon_probes_enabled: bool = True
     daemon_probe_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
-    # Separate from cleanup_retention_days on purpose: that governs bulk data
-    # retention and wants a long horizon, while an unanswered containment
-    # proposal goes stale in days (#675).
+    # Separate from cleanup_retention_days on purpose: that only ages out the
+    # episodic read log, while an unanswered containment proposal goes stale
+    # in days (#675).
     daemon_approval_expiry_days: int = 7
     daemon_metrics_enabled: bool = True
     daemon_metrics_port: int = 9090
