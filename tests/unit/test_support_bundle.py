@@ -19,6 +19,11 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import pwd
+except ImportError:  # Windows: this module is skipped there anyway
+    pwd = None  # type: ignore[assignment]
+
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.skipif(sys.platform == "win32", reason="POSIX sh script"),
@@ -61,7 +66,16 @@ logs)
 inspect)
     case "$*" in
     *.Mounts*) printf "%b" "${FAKE_DOCKER_MOUNTS-/app/data\n/home/vigil/.vigil\n}" ;;
-    *) echo "$(for last; do :; done; echo "$last") state=running restarts=0" ;;
+    *)
+        fmt= prev=
+        for a; do [ "$prev" = --format ] && fmt=$a; prev=$a; done
+        for last; do :; done
+        if [ -n "$fmt" ]; then
+            printf '%s' "$fmt" | sed -e "s|{{.Name}}|/$last|g" -e 's|{{.State.Status}}|running|g' -e 's|{{.RestartCount}}|0|g' -e 's|{{.Created}}|2026-01-02T03:04:05Z|g' -e 's|{{.State.StartedAt}}|2026-01-02T03:04:06Z|g' -e 's|{{.Config.Image}}|vigil:test|g'
+            echo
+        else
+            echo "$last state=running restarts=0"
+        fi ;;
     esac ;;
 cp)
     src=${2#*:}; f=${src##*/}
@@ -693,6 +707,133 @@ def test_summary_lists_never_included_apart_from_not_collected(env, tmp_path):
     assert (
         entries["configuration/never-included/secrets.enc"]["state"] == "not collected"
     )
+
+
+def _add_stub(tmp_path: Path, name: str, body: str) -> None:
+    stub = tmp_path / "bin" / name
+    stub.write_text(f"#!/bin/sh\n{body}\n")
+    stub.chmod(0o755)
+
+
+def _stub_id_and_chown(tmp_path: Path, env: dict) -> Path:
+    """An `id` that reports uid 0 for -u (and delegates to the real one
+    otherwise, so nothing else in the harness changes) and a `chown` that
+    only records its argv: together they play a run under sudo."""
+    real_id = shutil.which("id")
+    _add_stub(
+        tmp_path,
+        "id",
+        'if [ "${1:-}" = -u ]; then echo "${FAKE_ID_UID:-0}"; '
+        f'else exec {real_id} "$@"; fi',
+    )
+    log = tmp_path / "chown.log"
+    _add_stub(
+        tmp_path, "chown", 'echo "$@" >>"$FAKE_CHOWN_LOG"; exit "${FAKE_CHOWN_EXIT:-0}"'
+    )
+    env["FAKE_CHOWN_LOG"] = str(log)
+    return log
+
+
+def _invoking_user():
+    """A non-root account with a real home, to play SUDO_USER: the test's own
+    user normally; under a root test runner, any such account will do."""
+    if pwd is None:
+        return None
+    try:
+        candidates = [pwd.getpwuid(os.getuid()), *pwd.getpwall()]
+    except KeyError:
+        candidates = pwd.getpwall()
+    for entry in candidates:
+        if (
+            entry.pw_uid != 0
+            and entry.pw_name != "root"
+            and Path(entry.pw_dir).is_dir()
+        ):
+            return entry
+    return None
+
+
+def test_sudo_run_uses_the_invoking_users_home_and_hands_over_the_bundle(env, tmp_path):
+    invoker = _invoking_user()
+    if invoker is None:
+        pytest.skip("no non-root account with a home to play the invoking user")
+    chown_log = _stub_id_and_chown(tmp_path, env)
+    env["SUDO_USER"] = invoker.pw_name
+    env["SUDO_UID"] = str(invoker.pw_uid)
+    env["SUDO_GID"] = str(invoker.pw_gid)
+
+    proc = run(env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    (bundle,) = bundles(tmp_path)
+    assert oct(bundle.stat().st_mode & 0o777) == "0o600"
+
+    looked = manifest_of(tmp_path)["looked"]
+    assert f"sudo: elevated for {invoker.pw_name}; home paths are theirs" in looked
+    # The State Directory probed is the invoking user's, not the fixture
+    # HOME's (which is what root's HOME would have made it before #1760).
+    assert any(f"{invoker.pw_dir}/.vigil" in line for line in looked)
+    assert not any(
+        "state dir" in line and str(tmp_path / "home") in line for line in looked
+    )
+    # The finished bundle was handed to the invoking user.
+    assert chown_log.read_text().splitlines() == [
+        f"{invoker.pw_uid}:{invoker.pw_gid} {bundle}"
+    ]
+
+
+def test_sudo_chown_failure_still_succeeds_and_says_the_bundle_is_root_owned(
+    env, tmp_path
+):
+    invoker = _invoking_user()
+    if invoker is None:
+        pytest.skip("no non-root account with a home to play the invoking user")
+    _stub_id_and_chown(tmp_path, env)
+    env["FAKE_CHOWN_EXIT"] = "1"
+    env["SUDO_USER"] = invoker.pw_name
+    env["SUDO_UID"] = str(invoker.pw_uid)
+    env["SUDO_GID"] = str(invoker.pw_gid)
+
+    proc = run(env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    (bundle,) = bundles(tmp_path)
+    assert f"owned by root, not the invoking user: {bundle}" in proc.stdout
+
+
+def test_without_sudo_user_nothing_is_handed_over(env, tmp_path):
+    # The id stub reports uid 0 here too: SUDO_USER is the trigger, not the
+    # uid alone (a root shell that is not sudo changes nothing).
+    chown_log = _stub_id_and_chown(tmp_path, env)
+    for var in ("SUDO_USER", "SUDO_UID", "SUDO_GID"):
+        env.pop(var, None)
+
+    proc = run(env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert not chown_log.exists()
+    assert not any(line.startswith("sudo:") for line in manifest_of(tmp_path)["looked"])
+
+
+def test_disk_names_each_location_and_containers_carry_created(env, tmp_path):
+    checkout, state = install(tmp_path)
+    env["VIGIL_REPO_ROOT"] = str(checkout)
+    env["FAKE_DOCKER_PS"] = "deeptempo-backend|docker|/x/docker-compose.yml\n"
+    proc = run(env, tmp_path, "--state-dir", str(state))
+    assert proc.returncode == 0, proc.stderr
+    root = unpack(bundles(tmp_path)[0], tmp_path / "x")
+
+    # One df block per location, the path on its own line above its block:
+    # a bare `df` over all of them prints no path column (R8, #1760).
+    disk = (root / "system" / "disk.txt").read_text().splitlines()
+    for path in (str(state), str(tmp_path / "out"), str(checkout / "logs")):
+        i = disk.index(path)
+        assert disk[i + 1].startswith("Filesystem"), disk
+
+    containers = (root / "health" / "containers.txt").read_text()
+    assert "created=2026-01-02T03:04:05Z" in containers
+
+    summary = (root / "SUMMARY.txt").read_text()
+    assert "reaches back to each container's creation" in summary
+    assert "logs/state/vigil.log" in summary
+    assert summary.index("reaches back") < summary.index("Redactions:")
 
 
 def test_learning_skips_comments_and_usernames_and_respects_word_edges(env, tmp_path):
