@@ -33,10 +33,11 @@ interface CallRow {
   durationMs: number | null
   failure: CallFailure | null
 }
-type Mark = 'done' | 'failed' | 'running' | 'pending'
+type Mark = 'done' | 'failed' | 'running' | 'warn' | 'pending'
 
 export const STEP_MS = 1400
 export const UNSUPPORTED = 'Replay isn’t available for this kind of run yet.'
+export const PLAYBOOK = 'A playbook runs its phases in order, with no lead agent to watch. Its phases are listed in History.'
 
 const hhmm = (iso?: string | null): string | null => {
   const t = iso ? new Date(iso) : null
@@ -61,10 +62,9 @@ function huntSteps(hunt: HuntView): Step[] {
     cost: m.cost_usd ?? null,
     thoughtMs: m.duration_ms ?? null,
     rationale: m.rationale,
-    // a hunt call's result is only a length, so a failure mark is not known here
     calls: tied
       ? calls.filter((c) => c.iteration === m.iteration)
-          .map((c) => ({ tool: c.tool, length: c.result_length, durationMs: c.duration_ms ?? null, failure: null }))
+          .map((c) => ({ tool: c.tool, length: c.result_length, durationMs: c.duration_ms ?? null, failure: c.failed ?? null }))
       : null,
   }))
 }
@@ -110,14 +110,16 @@ function rootCauseSteps(entries: RootCauseEntry[]): Step[] {
   }))
 }
 
-/** No status is stored per decision, so the mark comes from where the cursor is. */
-function markOf(i: number, cursor: number, step: Step, newest: boolean, live: boolean): Mark {
+/** No status is stored per decision, so the mark comes from where the cursor is. A run
+ *  waiting on a person is stopped, not working, and that wins over a failed call. */
+function markOf(i: number, cursor: number, step: Step, newest: boolean, live: boolean, waiting: boolean): Mark {
   if (i > cursor) return 'pending'
+  if (newest && waiting) return 'warn'
   if (live && newest) return 'running'
   return step.calls?.some((c) => c.failure) ? 'failed' : 'done'
 }
 
-const MARK_LABEL: Record<Mark, string> = { done: 'Done', failed: 'Failed', running: 'Working on it', pending: 'Not started' }
+const MARK_LABEL: Record<Mark, string> = { done: 'Done', failed: 'Failed', running: 'Working on it', warn: 'Needs you', pending: 'Not started' }
 
 function StepMark({ mark }: { mark: Mark }) {
   return (
@@ -137,6 +139,12 @@ function StepMark({ mark }: { mark: Mark }) {
           <>
             <circle cx="12" cy="12" r="9" fill="var(--good)" fillOpacity="0.14" stroke="var(--good)" strokeWidth="2" />
             <path d="M7.8 12.4l2.9 2.9 5.6-5.8" stroke="var(--good)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
+        {mark === 'warn' && (
+          <>
+            <circle cx="12" cy="12" r="9" fill="var(--fair)" fillOpacity="0.14" stroke="var(--fair)" strokeWidth="2" />
+            <path d="M12 7.6v5.4M12 16.3v.1" stroke="var(--fair)" strokeWidth="2.4" strokeLinecap="round" />
           </>
         )}
         {mark === 'failed' && (
@@ -303,7 +311,7 @@ function Segments({ n, cursor, playing, onJump, labels }: { n: number; cursor: n
 }
 
 /** The player and the three columns. Owns the one selected step the panels read. */
-function Replay({ steps, live, note, panels }: { steps: Step[]; live: boolean; note: string | null; panels: (at: number) => ReactNode }) {
+function Replay({ steps, live, waiting, note, panels }: { steps: Step[]; live: boolean; waiting: boolean; note: string | null; panels: (at: number) => ReactNode }) {
   const last = steps.length - 1
   // a run in flight follows its newest step until the viewer moves; a finished one starts at 1
   const [cursor, setCursor] = useState(live ? last : 0)
@@ -333,7 +341,8 @@ function Replay({ steps, live, note, panels }: { steps: Step[]; live: boolean; n
   const step = steps[at]
   const time = hhmm(step.at)
   const finished = at >= last && !playing
-  const clock = live && at === last ? 'in progress' : 'replayed from the record'
+  const stopped = waiting && at === last
+  const clock = stopped ? 'waiting on you' : live && at === last ? 'in progress' : 'replayed from the record'
 
   return (
     <>
@@ -346,7 +355,7 @@ function Replay({ steps, live, note, panels }: { steps: Step[]; live: boolean; n
           <Icon name={playing ? 'pause' : 'play'} size={15} style={playing ? undefined : { fill: 'currentColor' }} />
         </button>
         <Segments n={steps.length} cursor={at} playing={playing} onJump={jump} labels={steps.map((s, i) => `Step ${i + 1}: ${titled(s.action)}`)} />
-        <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">Step {at + 1} of {steps.length} · {titled(step.action)}</span>
+        <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">{stopped ? 'Stopped · needs you' : `Step ${at + 1} of ${steps.length} · ${titled(step.action)}`}</span>
         <span className="text-[12px] text-[var(--tx2)] whitespace-nowrap">{time ? `${time} · ${clock}` : clock}</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.8fr)] gap-3.5 items-start">
@@ -355,7 +364,7 @@ function Replay({ steps, live, note, panels }: { steps: Step[]; live: boolean; n
           {note && <span className="text-[12px] text-[var(--tx2)]">{note}</span>}
           {steps.map((s, i) => (
             <StepCard
-              key={s.key} step={s} i={i} mark={markOf(i, at, s, i === last, live)} selected={i === at}
+              key={s.key} step={s} i={i} mark={markOf(i, at, s, i === last, live, waiting)} selected={i === at}
               open={Boolean(opened[s.key])} onPick={() => jump(i)}
               onToggle={() => setOpened((o) => ({ ...o, [s.key]: !o[s.key] }))}
               cardRef={(el) => { cards.current[i] = el }}
@@ -372,7 +381,7 @@ function OneLine({ children }: { children: React.ReactNode }) {
   return <div className="text-[12px] leading-[1.45] text-[var(--tx2)] px-3.5 py-2.5 rounded-[12px] bg-[var(--bg1)] border border-[var(--ln0)]">{children}</div>
 }
 
-function HuntReplay({ d, hunt, live }: { d: WfRunDetail; hunt: HuntView; live: boolean }) {
+function HuntReplay({ d, hunt, live, waiting }: { d: WfRunDetail; hunt: HuntView; live: boolean; waiting: boolean }) {
   const steps = huntSteps(hunt)
   if (steps.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
   // moves are capped at the newest few; a shorter list than the iteration count is a prefix cut off
@@ -380,33 +389,33 @@ function HuntReplay({ d, hunt, live }: { d: WfRunDetail; hunt: HuntView; live: b
   const panels = (at: number) => (
     <HuntPanels runId={d.run_id} hunt={hunt} iteration={steps[at].iteration} decisionId={steps[at].key} last={at === steps.length - 1} />
   )
-  return <Replay key={d.run_id} steps={steps} live={live} note={cut ? `Showing the last ${steps.length} steps` : null} panels={panels} />
+  return <Replay key={d.run_id} steps={steps} live={live} waiting={waiting} note={cut ? `Showing the last ${steps.length} steps` : null} panels={panels} />
 }
 
-function InvestigateReplay({ d, live }: { d: WfRunDetail; live: boolean }) {
+function InvestigateReplay({ d, live, waiting }: { d: WfRunDetail; live: boolean; waiting: boolean }) {
   const read = useInvestigateReplay(d.run_id, live)
   // a failed poll must not tear down a player that already has steps
   const held = useRef<InvestigateDecisionView[] | null>(null)
   if (read.kind === 'investigate') held.current = read.decisions
-  if (read.kind === 'failed' && held.current) return <InvestigateSteps decisions={held.current} live={live} d={d} />
+  if (read.kind === 'failed' && held.current) return <InvestigateSteps decisions={held.current} live={live} waiting={waiting} d={d} />
   if (read.kind === 'pending') return <OneLine>Loading steps…</OneLine>
   if (read.kind === 'absent' || read.kind === 'root_cause') return <OneLine>{UNSUPPORTED}</OneLine>
   if (read.kind === 'failed') return <OneLine>Couldn’t read the steps — {read.message}</OneLine>
-  return <InvestigateSteps decisions={read.decisions} live={live} d={d} />
+  return <InvestigateSteps decisions={read.decisions} live={live} waiting={waiting} d={d} />
 }
 
-function InvestigateSteps({ decisions, live, d }: { decisions: InvestigateDecisionView[]; live: boolean; d: WfRunDetail }) {
+function InvestigateSteps({ decisions, live, waiting, d }: { decisions: InvestigateDecisionView[]; live: boolean; waiting: boolean; d: WfRunDetail }) {
   if (decisions.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
   const costs = decisions.map((x) => x.cost_usd)
-  return <Replay key={d.run_id} steps={investigateSteps(decisions)} live={live} note={null} panels={(at) => <InvestigatePanels d={d} costs={costs} at={at} />} />
+  return <Replay key={d.run_id} steps={investigateSteps(decisions)} live={live} waiting={waiting} note={null} panels={(at) => <InvestigatePanels d={d} costs={costs} at={at} />} />
 }
 
-function RootCauseReplay({ d, live }: { d: WfRunDetail; live: boolean }) {
+function RootCauseReplay({ d, live, waiting }: { d: WfRunDetail; live: boolean; waiting: boolean }) {
   const read = useInvestigateReplay(d.run_id, live)
   const held = useRef<Extract<typeof read, { kind: 'root_cause' }> | null>(null)
   if (read.kind === 'root_cause') held.current = read
   const shown = read.kind === 'root_cause' ? read : read.kind === 'failed' ? held.current : null
-  if (shown) return <RootCauseSteps entries={shown.entries} budgets={shown.budgets} live={live} d={d} />
+  if (shown) return <RootCauseSteps entries={shown.entries} budgets={shown.budgets} live={live} waiting={waiting} d={d} />
   if (read.kind === 'pending') return <OneLine>Loading steps…</OneLine>
   // an agent service that cannot replay this run still gets the run as it stands
   return (
@@ -417,9 +426,9 @@ function RootCauseReplay({ d, live }: { d: WfRunDetail; live: boolean }) {
   )
 }
 
-function RootCauseSteps({ entries, budgets, live, d }: { entries: RootCauseEntry[]; budgets: RootCauseBudgets; live: boolean; d: WfRunDetail }) {
+function RootCauseSteps({ entries, budgets, live, waiting, d }: { entries: RootCauseEntry[]; budgets: RootCauseBudgets; live: boolean; waiting: boolean; d: WfRunDetail }) {
   if (entries.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
-  return <Replay key={d.run_id} steps={rootCauseSteps(entries)} live={live} note={null} panels={(at) => <RootCausePanels d={d} entries={entries} budgets={budgets} at={at} />} />
+  return <Replay key={d.run_id} steps={rootCauseSteps(entries)} live={live} waiting={waiting} note={null} panels={(at) => <RootCausePanels d={d} entries={entries} budgets={budgets} at={at} />} />
 }
 
 function versionText(d: WfRunDetail): string {
@@ -427,13 +436,13 @@ function versionText(d: WfRunDetail): string {
   return typeof v === 'number' ? `version ${v}` : 'version not recorded'
 }
 
-function Header({ d, onBack }: { d: WfRunDetail; onBack: () => void }) {
+function Header({ d, replayed, onBack }: { d: WfRunDetail; replayed: boolean; onBack: () => void }) {
   const name = d.workflow_name
   const caseId = d.hunt?.scope?.case_id ?? d.trigger_context?.case_id
   const about = [typeof caseId === 'string' && caseId ? `case ${caseId}` : null, d.hunt?.name].filter(Boolean).join(': ')
   const workflow = name ? `${name} ${typeof d.workflow_version === 'number' ? versionText(d) : `(${versionText(d)})`}` : versionText(d)
   const lead = `${workflow}${about ? ` · ${about}` : ''}`
-  const subtitle = ['Run ', <span key="id" className="font-mono" title={d.run_id}>{d.run_id.slice(0, 8)}</span>, ` · ${lead}${/[.?!]$/.test(lead) ? ' ' : '. '}Replayed step by step from the record.`]
+  const subtitle = ['Run ', <span key="id" className="font-mono" title={d.run_id}>{d.run_id.slice(0, 8)}</span>, ` · ${lead}${replayed ? `${/[.?!]$/.test(lead) ? ' ' : '. '}Replayed step by step from the record.` : ''}`]
   return (
     <div className="flex items-center gap-3">
       <button
@@ -456,17 +465,19 @@ function Header({ d, onBack }: { d: WfRunDetail; onBack: () => void }) {
 /** `d` is the run as getRun last saw it; RunView keeps it fresh while the run is in flight. */
 export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) {
   const live = IN_FLIGHT.includes(d.status)
+  // parked on a person: stopped, not working, though the run stays in flight and keeps polling
+  const waiting = d.status === 'paused' || Boolean(d.hunt?.open_checkpoint)
   const runKind = (d.projection as { run_kind?: unknown } | null | undefined)?.run_kind
-  const kind = d.hunt ? 'hunt' : runKind === 'investigate' ? 'investigate' : runKind === 'root_cause' ? 'root_cause' : 'other'
+  const kind = d.hunt ? 'hunt' : runKind === 'investigate' ? 'investigate' : runKind === 'root_cause' ? 'root_cause' : 'playbook'
   return (
     <div className="flex flex-col gap-3.5 px-[22px] py-5 pb-[110px]">
-      <Header d={d} onBack={onBack} />
-      {kind === 'hunt' && d.hunt && <HuntReplay d={d} hunt={d.hunt} live={live} />}
-      {kind === 'investigate' && <InvestigateReplay d={d} live={live} />}
-      {kind === 'root_cause' && <RootCauseReplay d={d} live={live} />}
-      {kind === 'other' && (
+      <Header d={d} replayed={kind !== 'playbook'} onBack={onBack} />
+      {kind === 'hunt' && d.hunt && <HuntReplay d={d} hunt={d.hunt} live={live} waiting={waiting} />}
+      {kind === 'investigate' && <InvestigateReplay d={d} live={live} waiting={waiting} />}
+      {kind === 'root_cause' && <RootCauseReplay d={d} live={live} waiting={waiting} />}
+      {kind === 'playbook' && (
         <>
-          <OneLine>{UNSUPPORTED}</OneLine>
+          <OneLine>{PLAYBOOK}</OneLine>
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
         </>
       )}

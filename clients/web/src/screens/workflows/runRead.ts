@@ -217,6 +217,8 @@ export interface HuntCall {
   cost_usd: number
   duration_ms?: number
   iteration?: number
+  /** How the call failed; absent when it did not, and from an older agent service. */
+  failed?: CallFailure
 }
 export interface HuntBudgets {
   max_iterations: number

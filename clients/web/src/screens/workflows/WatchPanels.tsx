@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'
-import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag } from './WorkflowsScreen'
+import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag } from './huntParts'
 import type { HuntEvidence, HuntStanding, HuntView, RootCauseBudgets, RootCauseEntry, WfRunDetail } from './runRead'
 
 export function Heading({ children }: { children: ReactNode }) {
@@ -253,7 +253,7 @@ export function HuntPanels({ runId, hunt, iteration, decisionId, last }: { runId
   const recorded = useRecorded(runId, last ? null : decisionId)
   return (
     <Columns
-      explanations={<><HuntExplanations hunt={hunt} iteration={iteration} last={last} recorded={recorded} /><OpenCheckpoint hunt={hunt} /></>}
+      explanations={<><HuntExplanations hunt={hunt} iteration={iteration} last={last} recorded={recorded} />{last && <OpenCheckpoint hunt={hunt} />}</>}
       rows={huntRows(hunt, iteration, last, recorded)}
       reviewer={<Reviewer hunt={hunt} iteration={iteration} />}
       blind={<Spots lines={huntSpots(hunt, iteration)} empty="None so far." />}
