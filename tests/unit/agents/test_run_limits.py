@@ -18,7 +18,7 @@ BODY = {"run_kind": "hunt", "playbook": "p.md", "config": "c.yaml"}
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def client(monkeypatch, authenticate_app):
     queued = []
 
     async def _enqueue(job):
@@ -28,6 +28,7 @@ def client(monkeypatch):
     monkeypatch.setattr(agent_runs_router, "enqueue_run", _enqueue)
     monkeypatch.setattr(agent_runs_router, "_begin_run_row", lambda *a, **k: None)
     app = FastAPI()
+    authenticate_app(app)
     app.include_router(agent_runs_router.router, prefix="/api/agent-runs")
     app.dependency_overrides[request_unit_of_work] = lambda: None
     http = TestClient(app, raise_server_exceptions=False)
