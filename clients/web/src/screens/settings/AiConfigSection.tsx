@@ -8,6 +8,7 @@
    Operations are Vigil runtime knobs.
    ============================================================ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import {
   EmptyState,
@@ -42,8 +43,19 @@ const TABS: [AiTab, string][] = [
   ['operations', 'Operations'],
 ]
 
+function tabFromQuery(value: string | null): AiTab {
+  if (value && TABS.some(([k]) => k === value)) return value as AiTab
+  return 'providers'
+}
+
 export default function AiConfigSection({ notify }: SectionProps) {
-  const [tab, setTab] = useState<AiTab>('providers')
+  const [searchParams] = useSearchParams()
+  const requested = tabFromQuery(searchParams.get('tab'))
+  const [tab, setTab] = useState<AiTab>(requested)
+
+  useEffect(() => {
+    setTab(requested)
+  }, [requested])
   return (
     <>
       <div className="tabs" style={{ gap: 4 }}>
