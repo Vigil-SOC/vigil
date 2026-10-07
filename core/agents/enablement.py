@@ -1,7 +1,8 @@
 """Which agents are turned off: one SystemConfig row, ``agents.disabled``.
 
-Every agent is on unless its id is listed. Unknown or deleted ids in the list
-are harmless: nothing looks them up.
+Every agent is on unless its id is listed. Unknown ids in the list are harmless:
+nothing looks them up. Deleting a custom agent clears its id, though: custom ids
+are derived from the name, so a stale entry would switch a re-created agent off.
 """
 
 import logging
