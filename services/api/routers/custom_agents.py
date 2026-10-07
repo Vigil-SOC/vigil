@@ -16,6 +16,7 @@ from core.agents.custom_agent_service import (
     CustomAgentNotFound,
     CustomAgentService,
 )
+from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.deps import provide_agent_ai, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
@@ -327,6 +328,11 @@ def delete_custom_agent(
         if not deleted:
             raise HTTPException(
                 status_code=404, detail=f"Custom agent not found: {agent_id}"
+            )
+        # Ids derive from the name; a stale off entry would switch a re-created agent off.
+        if not set_agent_enabled(agent_id, True, str(current_user.user_id)):
+            logger.warning(
+                "Could not clear disabled state for deleted agent %s", agent_id
             )
         _refresh_manager()
         return None
