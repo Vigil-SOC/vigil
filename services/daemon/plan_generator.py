@@ -134,28 +134,6 @@ WORKFLOW_STEP_MAP = {
             "description": "Detailed forensic report with evidence chain and conclusions",
         },
     ],
-    "case-review": [
-        {
-            "title": "Review Findings",
-            "description": "Use get_case to load the case, then get_finding for each finding; review IOCs, timeline, and activities already logged",
-        },
-        {
-            "title": "Root Cause Analysis",
-            "description": "Determine root cause from aggregated evidence across all findings; identify the initial access vector and attack chain",
-        },
-        {
-            "title": "Resolution Planning",
-            "description": "Generate concrete resolution steps using add_resolution_step for containment, eradication, and recovery actions",
-        },
-        {
-            "title": "Recommendations",
-            "description": "Write preventive recommendations, lessons learned, and update case description with executive summary using update_case",
-        },
-        {
-            "title": "Finalize Case",
-            "description": "Ensure all resolution steps are recorded, case description updated, and signal_complete",
-        },
-    ],
 }
 
 # Admitted detections always arrive with a Case (#1000). This pending branch
@@ -331,82 +309,6 @@ def generate_plan(
     lines.append("## Notes")
     lines.append("")
 
-    return "\n".join(lines)
-
-
-def generate_case_review_plan(
-    investigation_id: str,
-    case_id: str,
-    case_title: str,
-    finding_ids: List[str],
-    priority: str = "medium",
-) -> str:
-    """Generate a plan.md for a case-review investigation."""
-    steps = WORKFLOW_STEP_MAP["case-review"]
-
-    lines = [
-        "---",
-        f"investigation_id: {investigation_id}",
-        f"case_id: {case_id}",
-        "workflow: case-review",
-        f"priority: {priority}",
-        f"created: {utcnow().isoformat()}Z",
-        "status: planning",
-        "current_step: 1",
-        "---",
-        "",
-        f"# Case Review Plan: {case_title}",
-        "",
-        "## Objective",
-        f"Review case {case_id} and generate resolution steps, root cause analysis,",
-        "and recommendations based on all findings and investigation results.",
-        "",
-        f"### Associated Findings ({len(finding_ids)})",
-    ]
-
-    for fid in finding_ids[:10]:
-        lines.append(f"- {fid}")
-    if len(finding_ids) > 10:
-        lines.append(f"- ... and {len(finding_ids) - 10} more")
-
-    lines.append("")
-    lines.append("## Steps")
-    lines.append("")
-
-    for i, step in enumerate(steps, 1):
-        lines.append(f"### Step {i}: {step['title']} [pending]")
-        lines.append(f"- {step['description']}")
-        lines.append("")
-
-    lines.append("## Blockers")
-    lines.append("(none)")
-    lines.append("")
-    lines.append("## Notes")
-    lines.append("")
-
-    return "\n".join(lines)
-
-
-def generate_case_review_context(
-    case_id: str, case_title: str, finding_ids: List[str]
-) -> str:
-    """Generate the initial context.md for a case-review investigation."""
-    lines = [
-        "# Case Review Context",
-        "",
-        f"## Case: {case_id}",
-        f"**Title:** {case_title}",
-        "",
-        f"## Findings to Review ({len(finding_ids)})",
-        "",
-    ]
-    for fid in finding_ids[:10]:
-        lines.append(f"- {fid}")
-    if len(finding_ids) > 10:
-        lines.append(f"- ... and {len(finding_ids) - 10} more")
-    lines.append("")
-    lines.append("## Progress Notes")
-    lines.append("")
     return "\n".join(lines)
 
 
