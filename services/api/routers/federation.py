@@ -140,7 +140,9 @@ async def list_sources() -> Dict[str, Any]:
             }
         # Rows the lag read doesn't cover (unseeded) have never collected.
         lag = lag_by_id.get(adapter.name, {})
-        row = dict(row, lag_seconds=lag.get("lag_seconds"), quiet=lag.get("quiet", True))
+        row = dict(
+            row, lag_seconds=lag.get("lag_seconds"), quiet=lag.get("quiet", True)
+        )
         out.append(_enrich_with_adapter(row))
 
     return {"sources": out, "global": fed_store.get_global_settings()}
