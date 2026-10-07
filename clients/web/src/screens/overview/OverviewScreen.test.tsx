@@ -26,31 +26,42 @@ vi.mock('../../services/api', () => ({
 const SOURCE = 'Findings created today (UTC) with this data source.'
 const OUTCOME = 'Alerts that arrived today (UTC) and reached this state. Each alert is counted once.'
 
+const measured = (state: string, label: string, count: number, info: string | null = null) => ({
+  state,
+  label,
+  count,
+  source_text: OUTCOME,
+  info,
+  unmeasured_text: null,
+})
+const unmeasured = (state: string, label: string) => ({
+  state,
+  label,
+  count: null,
+  source_text: `${label} is not measured.`,
+  info: `${label} is not measured.`,
+  unmeasured_text: 'Not measured yet',
+})
+const OUTCOMES = [
+  measured('resolved_auto', 'Resolved automatically', 0),
+  measured('resolved_person', 'Closed by a person', 0),
+  measured('working', 'Still working', 0),
+  measured('needs_you', 'Needs you', 0, 'This count is alerts, not decisions.'),
+  measured('waiting', 'Not in a case', 2),
+  unmeasured('ticketed', 'Ticket created'),
+  unmeasured('dropped', 'Dropped as noise'),
+  unmeasured('paused', 'Paused'),
+  unmeasured('stuck', 'Stuck'),
+  unmeasured('incidents', 'Incidents'),
+]
+
 function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
   return {
     day: '2026-10-01',
     empty: false,
     arrivals: [{ data_source: 'splunk', count: 2, source_text: SOURCE }],
     engine: { source_text: 'No count. The outcome counts partition today\'s arrivals.' },
-    outcomes: [
-      { state: 'waiting', label: 'Not in a case', count: 2, source_text: OUTCOME, info: null, unmeasured_text: null },
-      {
-        state: 'needs_you',
-        label: 'Needs you',
-        count: 0,
-        source_text: OUTCOME,
-        info: 'This count is alerts, not decisions.',
-        unmeasured_text: null,
-      },
-      {
-        state: 'dropped',
-        label: 'Dropped as noise',
-        count: null,
-        source_text: 'There is no score floor, and a noise mark is not a disposition.',
-        info: 'There is no score floor, and a noise mark is not a disposition.',
-        unmeasured_text: 'Not measured yet',
-      },
-    ],
+    outcomes: OUTCOMES,
     running_source: 'Runs still in history whose status is running or paused.',
     step_source: 'The open phase on the newest live run, or that run\'s status when it has no phase row.',
     rate_info: 'A run that stopped at its budget counts as completed, because that is how the row is stored.',
@@ -111,39 +122,58 @@ function renderScreen(url = '/overview') {
 const where = () => screen.getByTestId('where').textContent
 
 describe('OverviewScreen', () => {
-  it('keeps every card when nothing is connected, with the empty copy in place', async () => {
+  it('empty: four connect slots, five outcome slots, no counts, and every card kept', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
     renderScreen()
-    const flow = await screen.findByLabelText("Today's flow")
-    expect(within(flow).getByText(/Nothing is connected yet/)).toBeInTheDocument()
-    expect(within(flow).getByLabelText('Engine')).toBeInTheDocument()
-    expect(within(flow).getByLabelText('Needs you')).toBeInTheDocument()
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    expect(within(flow).getByText(/Nothing is connected yet\. Connect a source on the left/)).toBeInTheDocument()
+    expect(within(flow).getByText('Waiting for data')).toBeInTheDocument()
+    for (const name of ['Connect a SIEM', 'Connect an EDR', 'Connect identity', 'Connect the LogLM pipeline']) {
+      expect(within(flow).getByRole('link', { name: new RegExp(name) })).toHaveAttribute('href', '/settings?section=data')
+    }
+    for (const label of ['Resolved automatically', 'Closed by a person', 'Still working', 'Needs you', 'Not in a case']) {
+      expect(within(flow).getByText(label)).toBeInTheDocument()
+    }
+    expect(flow.textContent).not.toMatch(/\d/)
+    expect(within(flow).queryByText(/Not measured yet/)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
     expect(screen.getByText('Incident Response')).toBeInTheDocument()
     expect(screen.getByText(/No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline/)).toBeInTheDocument()
-    const links = screen.getAllByRole('link', { name: 'Connect data' })
-    expect(links).toHaveLength(2)
-    links.forEach((link) => expect(link).toHaveAttribute('href', '/settings?section=data'))
+    expect(screen.getByRole('link', { name: 'Connect data' })).toHaveAttribute('href', '/settings?section=data')
+    expect(screen.getByText(/Nothing is connected yet, so each part below shows where to connect/)).toBeInTheDocument()
   })
 
-  it('shows arrival nodes and no connect copy when something is connected', async () => {
+  it('with data: its own heading and legend, a source node per arrival, no connect copy', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [] }) } as never)
     renderScreen()
-    expect(within(await screen.findByLabelText("Today's flow")).getByLabelText('splunk')).toBeInTheDocument()
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    expect(screen.getByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
+    expect(screen.getByText(/Today, UTC 2026-10-01\./)).toBeInTheDocument()
+    expect(screen.getByTitle('Health: Good 95% and up, Fair 85 to 95%, Poor under 85%.')).toBeInTheDocument()
+    const source = within(flow).getByRole('link', { name: /Splunk/ })
+    expect(source).toHaveAttribute('href', '/triage?source=splunk')
+    expect(source).toHaveTextContent('2 alerts')
+    expect(source).toHaveAttribute('title', 'Splunk: 2 alerts today. Opens the Triage queue for this source.')
     expect(screen.getByText('No alerts.')).toBeInTheDocument()
     expect(screen.queryByText(/Nothing is connected yet/)).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
   })
 
-  it('shows arrival counts, an engineless number, and the feed', async () => {
+  it('shows five outcome nodes with counts, names the unmeasured ones, and opens the feed', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     const { setWallMode } = renderScreen()
-    const flow = await screen.findByLabelText("Today's flow")
-    const source = within(flow).getByLabelText('splunk')
-    expect(within(source).getByRole('link', { name: '2' })).toHaveAttribute('href', '/triage?source=splunk')
-    expect(within(flow).getByLabelText('Not in a case').querySelector('a')).toBeNull()
-    const engine = within(flow).getByLabelText('Engine')
-    expect(engine.textContent).not.toMatch(/\d/)
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    const counts = { 'Resolved automatically': '0', 'Closed by a person': '0', 'Still working': '0', 'Needs you': '0', 'Not in a case': '2' }
+    for (const [label, count] of Object.entries(counts)) {
+      const node = within(flow).getByLabelText(label)
+      expect(node).toHaveTextContent(count)
+      expect(node.querySelector('a')).toBeNull()
+    }
+    expect(within(flow).getByRole('button', { name: 'This count is alerts, not decisions.' })).toBeInTheDocument()
+    expect(within(flow).queryByLabelText('Dropped as noise')).not.toBeInTheDocument()
+    const line = within(flow).getByText(/Not measured yet:/)
+    expect(line).toHaveTextContent('Not measured yet: Ticket created · Dropped as noise · Paused · Stuck · Incidents')
+    expect(within(line).getByText('Paused')).toHaveAttribute('title', 'Paused is not measured.')
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(setWallMode).toHaveBeenCalledWith(true)
     fireEvent.click(await screen.findByText('f-1'))
@@ -155,12 +185,18 @@ describe('OverviewScreen', () => {
     expect(screen.getByText(/records omitted from this list/)).toBeInTheDocument()
   })
 
-  it('renders an unmeasured outcome as words rather than zero', async () => {
-    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+  it('totals every arrival, and folds sources past the sixth into "+N more sources"', async () => {
+    const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+    const arrivals = names.map((data_source, i) => ({ data_source, count: 10 - i, source_text: SOURCE }))
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ arrivals, feed: [] }) } as never)
     renderScreen()
-    const node = await screen.findByLabelText('Dropped as noise')
-    expect(within(node).getByText('Not measured yet')).toBeInTheDocument()
-    expect(within(node).queryByText('0')).not.toBeInTheDocument()
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    expect(within(flow).getByText('52')).toBeInTheDocument() // 10+9+8+7+6+5+4+3, folded ones included
+    expect(within(flow).getAllByRole('link', { name: /alerts/ })).toHaveLength(6)
+    const more = within(flow).getByText('+2 more sources').closest('.ov-src')!
+    expect(more).toHaveTextContent('7 alerts')
+    expect(more.tagName).not.toBe('A')
+    expect(within(flow).queryByText('g')).not.toBeInTheDocument()
   })
 
   it('marks then clears, says a second launch is already queued, and shows a Jira error', async () => {
@@ -199,16 +235,18 @@ describe('OverviewScreen', () => {
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
   })
 
-  it('full screen hides Agents, keeps the flow and feed, and Escape leaves it', async () => {
+  it('full screen hides the page heading and Agents, puts Exit in the diagram heading, and Escape leaves it', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     const { setWallMode } = renderScreen()
-    await screen.findByLabelText("Today's flow")
+    const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(setWallMode).toHaveBeenLastCalledWith(true)
-    expect(screen.getByRole('button', { name: 'Exit full screen' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByRole('button', { name: 'Exit full screen' })).toHaveLength(1)
+    expect(within(flow).getByRole('button', { name: 'Exit full screen' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('heading', { name: 'Overview', level: 1 })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
-    expect(screen.getByLabelText("Today's flow")).toBeInTheDocument()
     expect(screen.getByText('f-1')).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(setWallMode).toHaveBeenLastCalledWith(false)
@@ -219,7 +257,7 @@ describe('OverviewScreen', () => {
   it('Escape with an alert open closes only the popup, not full screen', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     const { setWallMode } = renderScreen()
-    await screen.findByLabelText("Today's flow")
+    await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     fireEvent.click(screen.getByText('f-1'))
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
@@ -229,7 +267,7 @@ describe('OverviewScreen', () => {
     expect(setWallMode).not.toHaveBeenCalledWith(false)
   })
 
-  it('renders the toolbar and full screen button while loading, on error and when empty, with no Agents while loading or on error', async () => {
+  it('renders the heading and full screen button while loading, on error and when empty, with no Agents while loading or on error', async () => {
     vi.mocked(overviewApi.get).mockReturnValueOnce(new Promise(() => {}) as never)
     const first = renderScreen()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
@@ -243,7 +281,7 @@ describe('OverviewScreen', () => {
     second.unmount()
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
     renderScreen()
-    expect(await screen.findByText(/Nothing is connected yet/)).toBeInTheDocument()
+    expect(await screen.findAllByText(/Nothing is connected yet/)).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
   })
 
