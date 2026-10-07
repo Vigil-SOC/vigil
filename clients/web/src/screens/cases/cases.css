@@ -166,6 +166,73 @@
 .case-needs .needs-reject label { font-size: 12px; color: var(--tx2); }
 .case-needs .needs-reject textarea { box-sizing: border-box; }
 
+/* Checked tab: a card holding a row stack (card.md, row-stack.md) */
+.case-page .case-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+  container-type: inline-size;
+}
+
+.case-page .case-card > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.case-page .case-card > h3 .info-tip { margin: -4px 2px; }
+
+.case-page .case-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-page .case-checked li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 84px 60px 64px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  background: var(--stack-row-bg);
+  font-size: 13px;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-checked li .src { color: var(--tx2); font-size: 12px; }
+
+.case-page .case-checked li .num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: normal;
+}
+
+.case-page .case-checked li.gap {
+  background: var(--poor-bg);
+  color: var(--poor);
+}
+
+/* Narrow card (phone, or the drawer): the question takes a line, the figures share the next */
+@container (max-width: 520px) {
+  .case-page .case-checked li { grid-template-columns: auto auto auto 1fr; gap: 6px 16px; }
+  .case-page .case-checked li > :first-child,
+  .case-page .case-checked li .src { grid-column: 1 / -1; }
+  .case-page .case-checked li .src { margin-top: -6px; }
+}
+
 .case-needs-strip {
   flex-shrink: 0;
   display: flex;
