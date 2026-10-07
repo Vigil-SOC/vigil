@@ -454,8 +454,8 @@ export const slaPoliciesApi = {
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
   
-  getUsage: (policyId: string) =>
-    api.get(`/sla-policies/${policyId}/usage`),
+  getUsage: (policyId: string, params?: { since?: string }) =>
+    api.get(`/sla-policies/${policyId}/usage`, { params }),
   
   getCases: (policyId: string, params?: {
     status?: string
