@@ -70,11 +70,7 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     rail: 'Limits and alerts',
     sub: 'Spend and notifications',
     title: 'Set limits and where Vigil reaches you',
-    desc: 'Limits stop runaway cost. You can change them later in Settings.',
-    card: {
-      title: 'Limits',
-      desc: 'A profile sets the default case limits.',
-    },
+    desc: 'Limits stop runaway cost. Notifications tell you when a decision needs your attention. Both can be changed later in Settings.',
   },
   done: {
     rail: '',

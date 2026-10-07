@@ -822,3 +822,61 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Limits and alerts. Board: boards/OnboardingLimits.dc.html */
+.su-choices.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.su-ceiling {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  align-items: end;
+}
+
+.su-ceiling-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.su-ceiling-field .field-input {
+  min-width: 0;
+}
+
+.su-estimate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--bg2);
+  font-size: 13px;
+  color: var(--tx0);
+}
+
+.su-notify-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 2px;
+  border-top: 1px solid var(--ln0);
+}
+
+.su-notify-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.su-notify-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}

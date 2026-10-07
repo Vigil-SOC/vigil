@@ -40,6 +40,12 @@ vi.mock('../../services/api', () => ({
     getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false, source: 'file' } })),
     setDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: true } })),
   },
+  budgetsApi: {
+    get: vi.fn(() =>
+      Promise.resolve({ data: { default_vk: '', budget_limit_usd: 0, enforcement_mode: 'warning' } }),
+    ),
+    getQuota: vi.fn(() => Promise.resolve({ data: { configured: false } })),
+  },
   mcpApi: {
     listServers: vi.fn(() => Promise.resolve({ data: { servers: [] } })),
     setServerEnabled: vi.fn(() => Promise.resolve({ data: { connected: true } })),
@@ -70,6 +76,8 @@ vi.mock('../../services/bifrostApi', () => ({
     routability: vi.fn(() => Promise.resolve({ data: { providers: {} } })),
     createProvider: vi.fn(),
     createKey: vi.fn(),
+    listVirtualKeys: vi.fn(() => Promise.resolve({ data: { virtual_keys: [], count: 0 } })),
+    updateVirtualKey: vi.fn(() => Promise.resolve({ data: {} })),
   },
 }))
 
@@ -273,7 +281,10 @@ describe('SetupScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
-    expect(await screen.findByRole('radiogroup', { name: 'Limits profile' })).toBeInTheDocument()
+    expect(await screen.findByText('Spending')).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: 'Limits profile' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show the limits' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Assist/ })).not.toBeInTheDocument()
     expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
   })
 
