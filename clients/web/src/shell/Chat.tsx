@@ -265,6 +265,7 @@ export default function Chat({
   lockedCaseId,
   evidenceIds = [],
   onCite,
+  onTurnDone,
 }: {
   open: boolean
   onClose: () => void
@@ -280,6 +281,8 @@ export default function Chat({
   /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
   evidenceIds?: readonly string[]
   onCite?: (id: string) => void
+  /** Called when a turn ends, so a page can re-read what the answer may cite. */
+  onTurnDone?: () => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
@@ -521,8 +524,6 @@ export default function Chat({
               type?: string
               content?: string
               error?: string
-              windowed_messages?: number
-              remaining_messages?: number
             }
             try {
               ev = JSON.parse(data)
@@ -535,11 +536,7 @@ export default function Chat({
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
             } else if (ev.type === 'context_windowed') {
-              curText +=
-                `_[Context compressed: ${ev.windowed_messages ?? 0} older ` +
-                `messages condensed to stay within the model's limits; recent ` +
-                `messages and key details are preserved.]_\n\n`
-              setStreamText(curText)
+              // an engine detail: not part of the answer, so it is not written into it
             } else if (ev.type === 'text') {
               setIsProcessingTools(false)
               curText += ev.content || ''
@@ -594,6 +591,7 @@ export default function Chat({
         setStreamText('')
         setIsProcessingTools(false)
         abortRef.current = null
+        if (accepted) onTurnDone?.()
       }
     }
   }

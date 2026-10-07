@@ -40,6 +40,8 @@
   font-size: 12px;
   color: var(--tx2);
   overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .case-page .dh-meta {
@@ -435,6 +437,29 @@
   color: var(--tx2);
   overflow-wrap: anywhere;
 }
+
+.case-page .clamp2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Paused or stopped: the Now card's place, without its accent or breathing dot. */
+.case-page .case-stopped {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.case-page .case-stopped b { flex-shrink: 0; font-weight: 700; color: var(--tx1); }
+.case-page .case-stopped .clamp2 { min-width: 0; color: var(--tx2); overflow-wrap: anywhere; }
 
 .case-page .case-later {
   align-items: center;

@@ -18,7 +18,7 @@ import api, {
 } from '../../services/api'
 
 const NOISE_INFO = 'The mark is stored and does not change scoring.'
-const ALREADY_QUEUED = 'This finding is already queued.'
+const CONNECT_DATA = '/settings?section=data'
 
 const POLL_MS = 10_000
 
@@ -58,9 +58,26 @@ function EvidenceBody({ item }: { item: OverviewFeedItem }) {
   )
 }
 
+function ConnectData() {
+  return (
+    <Link className="btn primary no-underline" to={CONNECT_DATA}>
+      Connect data
+    </Link>
+  )
+}
+
 function Flow({ data }: { data: OverviewPayload }) {
   return (
     <div className="kpi-strip" aria-label="Today's flow">
+      {data.empty && (
+        <div className="kpi col-span-2 items-start" aria-label="Sources">
+          <div className="k-note">
+            Nothing is connected yet. Connect a source on the left and its alerts flow through the Vigil engine to the
+            outcomes on the right.
+          </div>
+          <ConnectData />
+        </div>
+      )}
       {data.arrivals.map((arrival) => (
         <div className="kpi" key={arrival.data_source} aria-label={arrival.data_source}>
           <div className="k-label as-stored">{arrival.data_source}</div>
@@ -94,7 +111,7 @@ function Flow({ data }: { data: OverviewPayload }) {
   )
 }
 
-export default function OverviewScreen({ goSettings, openCase, setWallMode }: ConsoleScreenProps) {
+export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const alertId = searchParams.get('alert') || null // an empty value is no alert
   const [phase, setPhase] = useState<Phase>('loading')
@@ -207,6 +224,19 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
     setWallMode?.(next)
   }
 
+  // Escape leaves full screen. The popup's own Escape handler runs first and stops propagation,
+  // so with an alert open one keypress closes only the popup.
+  useEffect(() => {
+    if (!wall) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setWall(false)
+      setWallMode?.(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wall, setWallMode])
+
   const agentColumns = useMemo<ColumnDef<OverviewAgent>[]>(() => [
     { key: 'name', label: 'Workflow', render: (row) => row.name, sortVal: (row) => row.name, searchVal: (row) => row.name },
     { key: 'running', label: 'Running', render: (row) => row.running, sortVal: (row) => row.running },
@@ -281,9 +311,9 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
     try {
       const res = await findingsApi.launchIntake(findingId)
       if (!stillOpen(findingId)) return
-      setLaunchNote(res.data.already_queued ? ALREADY_QUEUED : 'Queued for intake.')
+      setLaunchNote(res.data.already_queued ? 'Already waiting in the Triage queue.' : 'Waiting in the Triage queue')
     } catch (error) {
-      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t launch this finding'))
+      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t send this finding to triage'))
     }
   }
 
@@ -317,7 +347,8 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
         </span>
         <div className="flex-1" />
         <button type="button" className="btn ghost" aria-pressed={wall} onClick={toggleWall}>
-          {wall ? 'Exit wall' : 'Wall'}
+          <Icon name="fit" size={13} />
+          {wall ? 'Exit full screen' : 'Full screen'}
         </button>
         <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
           <Icon name="refresh" />
@@ -328,37 +359,31 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
       {phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load overview" body={error} primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />
       )}
-      {phase === 'ready' && data?.empty && (
-        <EmptyState
-          icon="gear"
-          title="No sources enabled"
-          body="Enable a federation source to see what arrives today."
-          primary={{ label: 'Settings', onClick: () => goSettings('federation') }}
-        />
-      )}
-      {phase === 'ready' && data && !data.empty && (
+      {phase === 'ready' && data && (
         <>
           <Flow data={data} />
-          <section className="section">
-            <div className="card">
-              <div className="card-h">
-                <h3>Agents</h3>
-                <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
-                  <Icon name="info" size={14} />
-                </button>
+          {!wall && (
+            <section className="section">
+              <div className="card">
+                <div className="card-h">
+                  <h3>Agents</h3>
+                  <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
+                    <Icon name="info" size={14} />
+                  </button>
+                </div>
+                <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
+                <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
+                <DataTable
+                  columns={agentColumns}
+                  rows={sortRows(data.agents, agentColumns, agentSort.sort)}
+                  rowKey={(row) => row.workflow_id}
+                  sort={agentSort.sort}
+                  onSort={agentSort.toggle}
+                  emptyMessage="No workflows."
+                />
               </div>
-              <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
-              <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
-              <DataTable
-                columns={agentColumns}
-                rows={sortRows(data.agents, agentColumns, agentSort.sort)}
-                rowKey={(row) => row.workflow_id}
-                sort={agentSort.sort}
-                onSort={agentSort.toggle}
-                emptyMessage="No workflows."
-              />
-            </div>
-          </section>
+            </section>
+          )}
           <section className="section">
             <div className="card">
               <div className="card-h"><h3>Alerts</h3></div>
@@ -369,7 +394,16 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
                 sort={feedSort.sort}
                 onSort={feedSort.toggle}
                 onRowClick={(row) => setAlert(row.finding_id)}
-                emptyMessage="No alerts."
+                emptyMessage={
+                  data.empty ? (
+                    <span className="flex flex-col items-center gap-3">
+                      No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline
+                      <ConnectData />
+                    </span>
+                  ) : (
+                    'No alerts.'
+                  )
+                }
               />
             </div>
           </section>
@@ -400,7 +434,7 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
               <button type="button" className="btn ghost icon" aria-label={NOISE_INFO} title={NOISE_INFO}>
                 <Icon name="info" size={14} />
               </button>
-              <button type="button" className="btn ghost" onClick={launch}>Launch</button>
+              <button type="button" className="btn ghost" onClick={launch}>Send to triage</button>
               {open.case_id && (
                 <button
                   type="button"
@@ -420,7 +454,11 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
                 <button type="button" className="btn ghost" disabled>ServiceNow</button>
               </span>
             </div>
-            {launchNote && <p>{launchNote}</p>}
+            {launchNote && (
+              <p>
+                <Link to="/triage">{launchNote}</Link>
+              </p>
+            )}
             {ticketNote && <p>{ticketNote}</p>}
             {actionError && <p role="alert">{actionError}</p>}
           </>

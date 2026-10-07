@@ -435,11 +435,11 @@ describe('SocConsole', () => {
     renderConsole('/overview')
     expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
-    fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument()
     expect(document.querySelector('[data-command-slot]')).toBeNull()
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Exit wall' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }))
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
@@ -975,10 +975,10 @@ describe('SocConsole', () => {
 
     it('closes the dock and leaves wall mode so the stop target is mounted', async () => {
       renderConsole('/overview')
-      await screen.findByRole('button', { name: 'Wall' })
+      await screen.findByRole('button', { name: 'Full screen' })
       fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
       expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
