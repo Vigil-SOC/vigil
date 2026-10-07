@@ -74,8 +74,9 @@ def throwaway_database():
     # Whatever the environment points at -- the developer's dev database, or the
     # test database CI provisions. Only ever the maintenance connection.
     origin = DatabaseConfig()
-    if manager._engine is None:
-        manager.initialize()
+    # Never reuse an engine already on the manager: an unmarked test that
+    # initialised it ran under the blocked POSTGRES_HOST (#1849).
+    manager.retarget(origin, validate=False)
 
     # pid alone collides across PID namespaces: two containers sharing one
     # server can pick the same name, and the second run's DROP would take the
