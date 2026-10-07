@@ -196,6 +196,10 @@ vi.mock('../services/api', () => ({
     setTheme: () => Promise.resolve({ data: {} }),
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
     getGeneral: () => Promise.resolve({ data: { show_notifications: false } }),
+    getOrchestrator: () => Promise.resolve({ data: {} }),
+    getForceManualApproval: () => Promise.resolve({ data: { enabled: false, environment_wins: false } }),
+    // the intent report card shows its own failed state; its contents aren't under test here
+    getIntent: () => Promise.reject(new Error('not under test')),
     getAutonomy: vi.fn(() => Promise.resolve({
       data: { auto_response_enabled: true, force_manual_approval: false },
     })),
