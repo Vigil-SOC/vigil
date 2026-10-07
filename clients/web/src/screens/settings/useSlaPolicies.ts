@@ -53,7 +53,8 @@ export function useSlaPolicies() {
 
   useEffect(() => {
     let cancelled = false
-    setPhase('loading')
+    // a refresh keeps the table (and an open editor) on screen
+    setPhase((p) => (p === 'ready' ? p : 'loading'))
     setError(null)
     slaPoliciesApi
       .getAll()

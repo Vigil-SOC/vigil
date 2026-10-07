@@ -76,14 +76,12 @@ export function DurationPicker({ value, onChange, label }: DurationPickerProps) 
     if (e.key === 'Enter') {
       e.preventDefault()
       close()
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      close()
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault()
-      const step = field === 'h' ? 60 : 5
-      commit(total + (e.key === 'ArrowUp' ? step : -step))
+      const step = (field === 'h' ? 60 : 5) * (e.key === 'ArrowUp' ? 1 : -1)
+      // a step past a bound is refused, not clamped, so it cannot eat the other field
+      if (total + step < MIN_TOTAL || total + step > MAX_TOTAL) setShaking(true)
+      else commit(total + step)
     }
   }
 
@@ -104,7 +102,19 @@ export function DurationPicker({ value, onChange, label }: DurationPickerProps) 
   )
 
   return (
-    <span className="dp" ref={root}>
+    <span
+      className="dp"
+      ref={root}
+      onKeyDown={(e) => {
+        if (open && e.key === 'Escape') {
+          e.stopPropagation()
+          close()
+        }
+      }}
+      onBlur={(e) => {
+        if (open && !root.current?.contains(e.relatedTarget as Node | null)) setOpen(false)
+      }}
+    >
       <button
         ref={pill}
         type="button"
