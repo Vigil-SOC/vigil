@@ -5,14 +5,13 @@ dedup key that was marked at enqueue, on the same ``RedisDedupSet`` instance.
 
 Splunk, CrowdStrike, and Elastic re-read a lookback of
 ``max(interval // 60 + 1, 5)`` minutes, so an unmarked id is queued again.
-Webhook, federation, and Kafka do not: the HTTP response, the cursor, and
-the offset have already moved.
+The webhook does not: the HTTP response has already moved. Federation and
+Kafka hold their cursor/offset until the store is acked (test_ack_before_advance).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import socket
 from datetime import datetime, timedelta
@@ -23,11 +22,7 @@ import pytest
 from aiohttp import ClientConnectorError, ClientSession
 
 from core.config import get_settings
-from core.federation.contract import FetchResult
-from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
-from core.ingestion.kafka_config import KafkaConfig
-from core.ingestion.kafka_consumer_service import KafkaConsumerService
 from services.daemon.config import PollingConfig, ProcessingConfig
 from services.daemon.poller import DataPoller
 from services.daemon.processor import FindingProcessor, _STORE_ATTEMPTS
@@ -270,50 +265,12 @@ async def test_a_probe_without_a_dedup_key_is_dropped_quietly(monkeypatch):
     assert processor.stats["processed"] == 0
 
 
-class _Msg:
-    def __init__(self, value: bytes):
-        self.value = value
-
-
-class _Topic:
-    def __init__(self, topic: str):
-        self.topic = topic
-
-
-class _CursorAdapter:
-    name = "fake"
-
-    def __init__(self):
-        self.fetch_calls: List[Dict[str, Any]] = []
-
-    def is_configured(self) -> bool:
-        return True
-
-    async def fetch(
-        self, *, since: Optional[datetime], cursor: Dict[str, Any], max_items: int
-    ) -> FetchResult:
-        self.fetch_calls.append(cursor)
-        if cursor.get("done"):
-            return FetchResult(findings=[], cursor=cursor)
-        return FetchResult(
-            findings=[
-                {
-                    "finding_id": "f-1",
-                    "external_id": "ext-1",
-                    "severity": "high",
-                    "data_source": "fake",
-                }
-            ],
-            cursor={"done": True},
-        )
-
-
 @pytest.mark.asyncio
-async def test_webhook_federation_and_kafka_do_not_redeliver(monkeypatch, caplog):
-    """The 200, the cursor, and the offset move before the store is attempted."""
+async def test_webhook_does_not_redeliver(monkeypatch, caplog):
+    """The 200 moves before the store is attempted."""
     _dead_redis(monkeypatch)
     processor = _processor(monkeypatch)
-    ingest = _Ingest(_down() + _down() + _down())
+    ingest = _Ingest(_down())
     _patch_ingest(monkeypatch, ingest)
     caplog.set_level(logging.ERROR)
 
@@ -351,96 +308,6 @@ async def test_webhook_federation_and_kafka_do_not_redeliver(monkeypatch, caplog
     finally:
         shutdown.set()
         await server
-
-    # Federation: record_success advances the cursor even though the store
-    # later fails, and the next tick's window does not contain the finding.
-    queue: asyncio.Queue = asyncio.Queue()
-    runner = FederationRunner(output_queue=queue)
-    adapter = _CursorAdapter()
-    runner._dedup[adapter.name] = RedisDedupSet("federation:fake")
-    stored: List[Dict[str, Any]] = []
-    monkeypatch.setattr(
-        "core.federation.runner.store.record_success",
-        lambda source_id, *, cursor, **_: stored.append(cursor),
-    )
-    monkeypatch.setattr(
-        "core.federation.runner.store.record_failure",
-        lambda *args, **kwargs: None,
-    )
-    row: Dict[str, Any] = {"max_items": 100, "cursor": {}, "min_severity": None}
-    await runner._do_one_tick(adapter, row)
-    item = await _drain(processor, queue)
-    assert item["dedup_key"] == "ext-1"
-    assert item["dedup"] is runner._dedup["fake"]
-    assert stored == [{"done": True}]
-    assert await runner._dedup["fake"].is_processed("ext-1") is False
-    assert await runner._dedup["fake"].is_processed("f-1") is False
-
-    await runner._do_one_tick(adapter, {**row, "cursor": stored[0]})
-    assert adapter.fetch_calls[1] == {"done": True}
-    assert queue.empty()
-
-    # No output queue: the put never happens, so the key stays unmarked.
-    unmarked = FederationRunner(output_queue=None)
-    unmarked._dedup[adapter.name] = RedisDedupSet("federation:nowhere")
-    await unmarked._do_one_tick(adapter, row)
-    assert await unmarked._dedup["fake"].is_processed("ext-1") is False
-    assert unmarked.stats["findings"] == 0
-
-    # Kafka: the offset is committed when the message is handled, before
-    # the processor stores. The next poll is empty.
-    kqueue: asyncio.Queue = asyncio.Queue()
-    kdedup = RedisDedupSet("kafka-drop")
-    consumer_shutdown = asyncio.Event()
-
-    class _Consumer:
-        def __init__(self):
-            self.commits = 0
-            self.polls = 0
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-        async def commit(self) -> None:
-            self.commits += 1
-
-        async def getmany(self, timeout_ms: int = 1000):
-            self.polls += 1
-            if self.polls == 1:
-                payload = json.dumps({"finding_id": "k-1"}).encode()
-                return {_Topic("security.findings"): [_Msg(payload)]}
-            consumer_shutdown.set()
-            return {}
-
-    fake = _Consumer()
-    service = KafkaConsumerService(
-        KafkaConfig(
-            enabled=True,
-            bootstrap_servers="localhost:9092",
-            consumer_group="test",
-            topics=["security.findings"],
-        ),
-        kqueue,
-        kdedup,
-    )
-
-    async def _build():
-        return fake
-
-    monkeypatch.setattr(service, "_build_consumer", _build)
-    await service.run(consumer_shutdown)
-
-    assert fake.commits == 1
-    assert fake.polls == 2
-    assert service.stats["messages_enqueued"] == 1
-    await _drain(processor, kqueue)
-    assert await kdedup.is_processed("k-1") is False
-    assert kqueue.empty()
-    assert service.stats["messages_enqueued"] == 1
-    assert processor.stats["processed"] == 0
 
 
 async def _post_when_up(session: ClientSession, port: int):

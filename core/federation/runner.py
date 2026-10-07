@@ -22,11 +22,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.federation import registry, store
 from core.federation.seed import seed_federation_sources
+from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
 
@@ -234,8 +235,13 @@ class FederationRunner:
             else:
                 dropped += 1
 
-        # One dedup round-trip to check the batch and one to mark it.
-        enqueued: List[str] = []
+        # One dedup round-trip to check the batch and one to mark it. Ids are
+        # marked, and the cursor advances, only once the processor reports the
+        # rows stored: the queue is in memory, so a stop before that would
+        # otherwise lose the page. The source replays it from the old cursor.
+        pending: Pending = []
+        all_enqueued = True
+        new_count = 0
         if candidates:
             dedup = self._dedup[source_id]
             seen = await dedup.are_processed(ext for _, ext in candidates)
@@ -243,19 +249,33 @@ class FederationRunner:
                 for finding, ext in candidates:
                     if ext in seen:
                         continue
-                    # No queue means the put never happened — leave it unmarked.
-                    if not await self._enqueue(finding, source_id, dedup, ext):
+                    ack = await self._enqueue(finding, source_id, dedup, ext)
+                    if ack is None:  # no queue: nothing was handed off
+                        all_enqueued = False
                         continue
                     # A repeat of this id later in the batch is a duplicate.
                     seen.add(ext)
-                    enqueued.append(ext)
+                    pending.append((ext, ack))
+                await wait_all(pending)
             finally:
-                await dedup.mark_many(enqueued)
-        new_count = len(enqueued)
+                # Also on cancellation: mark what was stored before the stop.
+                stored = stored_keys(pending)
+                await dedup.mark_many(stored)
+                new_count = len(stored)
 
         if new_count:
             self.stats["findings"] = self.stats.get("findings", 0) + new_count
             logger.info("Federation %s ingested %d finding(s)", source_id, new_count)
+
+        if not all_enqueued or new_count < len(pending):
+            # Cursor stays put; stored ids are marked, so the re-read retries the rest.
+            msg = (
+                f"{len(pending) - new_count} finding(s) not stored; cursor not advanced"
+            )
+            logger.warning("Federation %s: %s", source_id, msg)
+            self.stats["errors"] = self.stats.get("errors", 0) + 1
+            store.record_failure(source_id, msg)
+            return
 
         if dropped:
             self.stats["dropped"] = self.stats.get("dropped", 0) + dropped
@@ -274,10 +294,12 @@ class FederationRunner:
         source_id: str,
         dedup: RedisDedupSet,
         dedup_key: str,
-    ) -> bool:
-        """True when the finding was put. False leaves it unmarked."""
+    ) -> Optional["asyncio.Future[bool]"]:
+        """Put the finding (waits while the queue is full) and return its
+        stored-ack; None when there is no queue."""
         if self._output_queue is None:
-            return False
+            return None
+        ack = new_ack()
         await self._output_queue.put(
             {
                 "type": "finding",
@@ -286,9 +308,10 @@ class FederationRunner:
                 "timestamp": utcnow().isoformat(),
                 "dedup": dedup,
                 "dedup_key": dedup_key,
+                "ack": ack,
             }
         )
-        return True
+        return ack
 
     # ------------------------------------------------------------------
     # Poll-now bypass (Redis flag set by the API)

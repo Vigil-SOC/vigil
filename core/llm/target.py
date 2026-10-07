@@ -7,9 +7,11 @@ provider claims it first, so the pair has to travel together.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+_substitutions_logged: Set[Tuple[str, str]] = set()
 
 # Vertex and Bedrock resell Claude, so this is an allowlist, not a test for
 # Anthropic.
@@ -56,12 +58,15 @@ def model_for(provider, requested_model: Optional[str]) -> str:
         )
         return model
 
-    logger.info(
-        "Provider %s cannot serve %s — falling back to %s",
-        provider.provider_id,
-        model,
-        provider.default_model,
-    )
+    # Can fire per call; one line per pair is enough.
+    if (provider.provider_id, model) not in _substitutions_logged:
+        _substitutions_logged.add((provider.provider_id, model))
+        logger.warning(
+            "Provider %s cannot serve %s — falling back to %s",
+            provider.provider_id,
+            model,
+            provider.default_model,
+        )
     return provider.default_model
 
 

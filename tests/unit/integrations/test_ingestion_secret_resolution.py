@@ -85,7 +85,7 @@ def test_splunk_password_reaches_service_from_poller():
         server_url="https://splunk:8089",
         username="svc",
         password="splunk-pw",
-        verify_ssl=False,
+        verify_ssl=True,
         ca_cert_path=None,
     )
 
@@ -101,7 +101,7 @@ def test_splunk_password_reaches_service_from_adapter():
         server_url="https://splunk:8089",
         username="svc",
         password="splunk-pw",
-        verify_ssl=False,
+        verify_ssl=True,
         ca_cert_path=None,
     )
 

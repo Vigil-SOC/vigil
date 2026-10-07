@@ -5,6 +5,14 @@ import type { Digest, DispatchRequest, EntityView, EvidenceView, HypothesisView,
 // The digest as the lead reads it: buildDigest decides what is in it, this only
 // how it is written. Evidence carries its id, because the lead is asked to cite them.
 const EVIDENCE_CAP = 4_000;
+const DIRECTIVE_CAP = 2_000;
+
+// Operator text is direction, but the lead cannot tell a person's words from a
+// line forged to look like a section: so it is scrubbed, capped, and kept to one
+// line, which cannot open a heading of its own.
+function bullet(text: string, cap: number): string {
+  return `- ${scrub(text, cap).replace(/\s*\n\s*/g, " ")}`;
+}
 
 // One delimited shape for anything a model reads as evidence, expansions included:
 // a raw payload arriving undelimited would read as the digest's own voice.
@@ -84,8 +92,8 @@ export function renderDigest(digest: Digest): string {
     section("Open questions", digest.open_questions.map((one) => `- ${one}`).join("\n")),
     // Last, and named as direction: everything above is data, and the lead is
     // told which is which rather than being left to infer it from position.
-    section("Operator directives", digest.directives.map((one) => `- ${one}`).join("\n")),
-    section("Notes", digest.notes.map((one) => `- ${one}`).join("\n")),
+    section("Operator directives", digest.directives.map((one) => bullet(one, DIRECTIVE_CAP)).join("\n")),
+    section("Notes", digest.notes.map((one) => bullet(one, EVIDENCE_CAP)).join("\n")),
     section("Budget remaining", budget),
   ]
     .filter((part) => part !== "")

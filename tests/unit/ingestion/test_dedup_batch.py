@@ -19,6 +19,7 @@ from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.kafka_consumer_service import KafkaConsumerService
+from tests.unit._acking_queue import AckingQueue
 
 
 class _StubRedis:
@@ -259,7 +260,7 @@ def test_federation_tick_batches_and_skips_in_batch_repeat(stub_redis, monkeypat
     ]
 
     async def go():
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = AckingQueue()
         runner = FederationRunner(output_queue=queue)
         adapter = _Adapter(findings)
         dedup = RedisDedupSet("federation:fake")
@@ -294,7 +295,7 @@ def test_kafka_batch_matches_per_message(no_redis, batched):
     ]
 
     async def go():
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = AckingQueue()
         dedup = RedisDedupSet("test-kafka-batch", max_size=32)
         await dedup.mark_many(["k-3"])
         cfg = KafkaConfig(
@@ -325,7 +326,7 @@ def test_kafka_batch_matches_per_message(no_redis, batched):
 
 def test_kafka_batch_is_one_round_trip_each_way(stub_redis):
     async def go():
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = AckingQueue()
         dedup = RedisDedupSet("test-kafka-rt")
         await dedup.are_processed(["warm-up"])
         redis = stub_redis[0]

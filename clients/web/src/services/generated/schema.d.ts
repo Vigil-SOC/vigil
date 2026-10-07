@@ -1134,8 +1134,8 @@ export interface paths {
          *     emails are registered.
          *
          *     The actual email (with the signed reset token) is sent asynchronously
-         *     via the configured email backend. In dev, the default ConsoleBackend
-         *     just logs the link.
+         *     via the configured email backend. The default ConsoleBackend sends nothing;
+         *     with DEV_MODE on it logs the link.
          */
         post: operations["post_api_auth_password-reset_request"];
         delete?: never;
@@ -5566,7 +5566,11 @@ export interface paths {
         put?: never;
         /**
          * Kill Orchestrator
-         * @description Emergency kill: cancel all running agents immediately.
+         * @description Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+         *
+         *     The daemon is a separate process that learns of a stop only through the
+         *     persisted `enabled` flag, so that is written first. A run already executing
+         *     on the agent worker is not cancelled; it stops at its own ceiling (#633).
          */
         post: operations["post_api_orchestrator_kill"];
         delete?: never;
@@ -5631,6 +5635,26 @@ export interface paths {
          * @description Arrivals, outcome nodes, agent rows, and the latest findings. Polled.
          */
         get: operations["get_api_overview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/overview/alerts/{finding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Overview Alert
+         * @description One alert in the feed item's shape, including noise-marked and older ones.
+         */
+        get: operations["get_api_overview_alerts_finding_id"];
         put?: never;
         post?: never;
         delete?: never;
@@ -22250,6 +22274,39 @@ export interface operations {
                 authorization?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_overview_alerts_finding_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

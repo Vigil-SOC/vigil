@@ -22,8 +22,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.time import utcnow
 from core.webhook_rejections import (
     BAD_TOKEN,
@@ -186,7 +188,7 @@ class DataPoller:
                         server_url=splunk_config["server_url"] or "",
                         username=splunk_config["username"] or "",
                         password=splunk_config["password"] or "",
-                        verify_ssl=bool(splunk_config["verify_ssl"]),
+                        verify_ssl=splunk_config["verify_ssl"],
                         ca_cert_path=splunk_config["ca_cert_path"],
                     )
                     logger.info("Splunk service initialized")
@@ -575,7 +577,7 @@ class DataPoller:
         if not detection_id:
             return None
 
-        finding_id = f"cs-{detection_id[:32]}"
+        finding_id = fit_id("cs-", detection_id, FINDING_ID_MAX)
 
         # Map severity
         severity_raw = detection.get("max_severity_displayname", "Medium")
@@ -724,7 +726,7 @@ class DataPoller:
 
         async def health_check(request: web.Request) -> web.Response:
             """Health check endpoint."""
-            return web.json_response({"status": "healthy", "stats": self.stats})
+            return web.json_response({"status": "healthy"})
 
         app = web.Application()
         app.router.add_post("/ingest", handle_webhook)
@@ -733,7 +735,9 @@ class DataPoller:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
+        site = web.TCPSite(
+            runner, get_settings().daemon_bind_host, self.config.webhook_port
+        )
 
         logger.info(f"Webhook server starting on port {self.config.webhook_port}")
         try:

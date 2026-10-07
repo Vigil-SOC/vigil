@@ -118,7 +118,7 @@ export function rootCauseProjection(runId: string, events: readonly AgentEvent<R
 }
 
 // record and finish are the trace's own tools, journaled as steps, not searches.
-function searchOf(payload: DispatchPayload): SearchView | null {
+export function searchOf(payload: DispatchPayload): SearchView | null {
   const call = Array.isArray(payload.calls) ? payload.calls[0] : undefined;
   if (call === null || typeof call !== "object") return null;
   const record = call as { tool?: unknown; arguments?: unknown };

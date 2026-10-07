@@ -1269,7 +1269,12 @@ def create_approval_action(
     ``evidence`` is optional here as it always was in practice: the old
     server declared it required in the schema and then accepted a call
     without it, so requiring it now would refuse calls that used to work.
+
+    The caller's ``confidence`` is its own claim, so it never releases the
+    action: the row waits in the queue for a person.
     """
+    if not 0.0 <= confidence <= 1.0:
+        return jdump({"error": "confidence must be between 0 and 1"})
     try:
         svc, ActionType, ActionStatus = get_approval_svc()
     except Exception as e:
@@ -1285,16 +1290,14 @@ def create_approval_action(
             reason=reason,
             evidence=evidence or [],
             created_by=caller(),
+            human_only=True,
         )
-        msg = f"Action created. Status: {action.status}"
-        if action.status == "approved":
-            msg += f" (auto-approved, conf: {confidence:.0%})"
         return jdump(
             {
                 "success": True,
                 "action_id": action.action_id,
                 "status": action.status,
-                "message": msg,
+                "message": f"Action created. Status: {action.status}",
             }
         )
     except Exception as e:

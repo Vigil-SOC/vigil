@@ -249,6 +249,19 @@ describe("replaying what the hunt lead was shown", () => {
     expect((await get(`/runs/${compose}/replay`)).status).toBe(404);
   });
 
+  it("returns a root-cause run's steps in ledger order", async () => {
+    await listen([]);
+    const trace = "5a2c2d3e-0000-4000-8000-000000000893";
+    await state.append(trace, [
+      { run_id: trace, run_kind: "root_cause", kind: "run", payload: { run_kind: "root_cause" } },
+      { run_id: trace, run_kind: "root_cause", kind: "notice", payload: { text: "no flow logs" } },
+    ] as never);
+
+    const res = await get(`/runs/${trace}/replay`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ run_kind: "root_cause", steps: [{ kind: "notice", text: "no flow logs" }] });
+  });
+
   it("404s a run that is not a hunt, and one that does not exist", async () => {
     await listen([{ content: "ok" }]);
     await post(asked()).then((res) => res.text());

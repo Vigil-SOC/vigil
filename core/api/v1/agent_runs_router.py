@@ -7,10 +7,11 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from core.agents import run_limits
 from core.agents.directives import (
     DIRECTIVE_FIELDS,
     DIRECTIVE_KINDS,
@@ -25,10 +26,15 @@ from core.agents.queue import (
     enqueue_run,
     new_run_id,
 )
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.models import User
 from core.workflows.enablement import disabled_message, is_enabled
 
 router = APIRouter()
+
+_RUN_AGENTS = [permission_gate("ai_chat.use")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/agent-runs",
@@ -122,7 +128,9 @@ def list_runs(
 
 
 # Mint a run id and enqueue it. The worker opens the ledger, not this call.
-@router.post("", response_model=StartRunResponse, status_code=202)
+@router.post(
+    "", dependencies=_RUN_AGENTS, response_model=StartRunResponse, status_code=202
+)
 async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.run_kind not in RUN_KINDS:
         raise HTTPException(
@@ -133,6 +141,11 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     named = request.playbook.removeprefix(WORKFLOW_SCHEME).strip()
     if request.playbook.startswith(WORKFLOW_SCHEME) and not is_enabled(named):
         raise HTTPException(status_code=409, detail=disabled_message(named))
+
+    try:
+        run_limits.check_overrides(request.overrides)
+    except run_limits.OverrideRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     run_id = new_run_id()
     payload: Dict[str, Any] = {
@@ -249,7 +262,11 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
 
 class DirectiveRequest(BaseModel):
     kind: str = Field(..., description=f"One of {', '.join(DIRECTIVE_KINDS)}.")
-    text: str = Field(default="", description="What the operator is telling the run.")
+    text: str = Field(
+        default="",
+        max_length=2000,
+        description="What the operator is telling the run.",
+    )
     actor: Optional[str] = Field(
         default=None, description="Who is steering. Defaults to the session user."
     )
@@ -266,9 +283,17 @@ class DirectiveResponse(BaseModel):
 
 # Steer a run that is already going. It queues rather than journals: the run
 # holding the ledger is what turns a directive into a ledger event.
-@router.post("/{run_id}/directives", response_model=DirectiveResponse, status_code=202)
+@router.post(
+    "/{run_id}/directives",
+    dependencies=_RUN_AGENTS,
+    response_model=DirectiveResponse,
+    status_code=202,
+)
 def queue_directive(
-    run_id: str, body: DirectiveRequest, session: UnitOfWorkSession
+    run_id: str,
+    body: DirectiveRequest,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
 ) -> DirectiveResponse:
     try:
         directive = enqueue_directive(
@@ -276,7 +301,7 @@ def queue_directive(
             run_id=run_id,
             kind=body.kind,
             body=body.text,
-            actor=body.actor or "analyst",
+            actor=current_user.username,
             fields=body.fields,
         )
     except UnknownRun as exc:

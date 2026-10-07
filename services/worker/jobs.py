@@ -74,11 +74,16 @@ async def llm_call(
                 )
             finally:
                 in_flight.release()
-            result = (
-                {"content": response, "type": "text"}
-                if response is not None
-                else {"content": "", "type": "error", "error": "Empty response"}
-            )
+            if response is not None:
+                result = {"content": response, "type": "text"}
+            else:
+                # ClaudeService.chat returns None when no API key is configured.
+                logger.error(
+                    "llm_call failed (returning error dict): Empty response "
+                    "(model=%s; ClaudeService returned None - is an API key configured?)",
+                    model,
+                )
+                result = {"content": "", "type": "error", "error": "Empty response"}
 
         if worker_span is not None:
             try:

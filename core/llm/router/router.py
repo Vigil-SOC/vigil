@@ -635,7 +635,7 @@ def discover_anthropic_api_key() -> Optional[str]:
         from core.storage.connection import get_db_session
         from core.storage.models import LLMProviderConfig
     except Exception as exc:  # noqa: BLE001
-        logger.debug("anthropic key discovery: DB unavailable (%s)", exc)
+        logger.warning("anthropic key discovery: DB unavailable (%s)", exc)
         return None
 
     session = get_db_session()
@@ -661,7 +661,7 @@ def discover_anthropic_api_key() -> Optional[str]:
                 return value
         return None
     except Exception as exc:  # noqa: BLE001
-        logger.debug("anthropic key discovery failed: %s", exc)
+        logger.warning("anthropic key discovery failed: %s", exc)
         return None
     finally:
         session.close()

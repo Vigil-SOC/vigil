@@ -11,6 +11,7 @@ from pydantic import BaseModel, field_validator
 
 from core.agents.projections import read_events, run_id_for
 from core.auth.auth_service import AuthService
+from core.auth.permissions import permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
@@ -47,6 +48,8 @@ from services.api.middleware.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_CASES_WRITE = [permission_gate("cases.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/cases",
@@ -100,7 +103,7 @@ def _mark_workdirs_failed(investigation_ids: List[str], reason: str) -> None:
             )
 
 
-@router.delete("/all", response_model=CasePurgeResponse)
+@router.delete("/all", dependencies=_CASES_WRITE, response_model=CasePurgeResponse)
 async def clear_all_cases(
     session: UnitOfWorkSession,
     background_tasks: BackgroundTasks,
@@ -131,7 +134,9 @@ async def clear_all_cases(
     }
 
 
-@router.post("/{case_id}/activities", response_model=CaseSchema)
+@router.post(
+    "/{case_id}/activities", dependencies=_CASES_WRITE, response_model=CaseSchema
+)
 async def add_case_activity(case_id: str, activity: ActivityAdd):
     """
     Add an activity/action to a case.
@@ -159,7 +164,9 @@ async def add_case_activity(case_id: str, activity: ActivityAdd):
     return data_service.get_case(case_id)
 
 
-@router.post("/{case_id}/resolution-steps", response_model=CaseSchema)
+@router.post(
+    "/{case_id}/resolution-steps", dependencies=_CASES_WRITE, response_model=CaseSchema
+)
 async def add_resolution_step(case_id: str, step: ResolutionStepAdd):
     """
     Add a resolution step to a case.
@@ -242,7 +249,11 @@ async def generate_case_report(case_id: str):
     }
 
 
-@router.delete("/{case_id}", response_model=CaseSuccessResponse)
+@router.delete(
+    "/{case_id}",
+    response_model=CaseSuccessResponse,
+    dependencies=[permission_gate("cases.delete")],
+)
 async def delete_case(case_id: str, session: UnitOfWorkSession):
     """Delete a case that has no live Investigation (#1001)."""
     # Demo cases live in memory, not in the session, and nothing investigates
@@ -300,7 +311,7 @@ _SLA_REFUSALS = {
 }
 
 
-@router.post("/{case_id}/sla", response_model=CaseSLASchema)
+@router.post("/{case_id}/sla", dependencies=_CASES_WRITE, response_model=CaseSLASchema)
 async def assign_sla(case_id: str, data: SLAAssign):
     """Assign SLA policy to case."""
     sla_service = CaseSLAService()
@@ -329,7 +340,11 @@ async def get_case_sla(case_id: str):
     return status
 
 
-@router.post("/{case_id}/sla/pause", response_model=CaseSuccessResponse)
+@router.post(
+    "/{case_id}/sla/pause",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def pause_sla(case_id: str):
     """Pause SLA timer."""
     sla_service = CaseSLAService()
@@ -339,7 +354,11 @@ async def pause_sla(case_id: str):
     return {"success": True}
 
 
-@router.post("/{case_id}/sla/resume", response_model=CaseSuccessResponse)
+@router.post(
+    "/{case_id}/sla/resume",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def resume_sla(case_id: str):
     """Resume SLA timer."""
     sla_service = CaseSLAService()
@@ -366,7 +385,9 @@ async def get_comments(case_id: str):
     return {"comments": CaseCommentSchema.dump_many(comments)}
 
 
-@router.post("/{case_id}/comments", response_model=CaseCommentSchema)
+@router.post(
+    "/{case_id}/comments", dependencies=_CASES_WRITE, response_model=CaseCommentSchema
+)
 async def add_comment(case_id: str, data: CommentAdd):
     """Add comment to case."""
     collab_service = CaseCollaborationService()
@@ -384,7 +405,11 @@ class CommentUpdate(BaseModel):
     content: str
 
 
-@router.put("/{case_id}/comments/{comment_id}", response_model=CaseSuccessResponse)
+@router.put(
+    "/{case_id}/comments/{comment_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def update_comment(case_id: str, comment_id: int, data: CommentUpdate):
     """Update comment."""
     collab_service = CaseCollaborationService()
@@ -394,7 +419,11 @@ async def update_comment(case_id: str, comment_id: int, data: CommentUpdate):
     return {"success": True}
 
 
-@router.delete("/{case_id}/comments/{comment_id}", response_model=CaseSuccessResponse)
+@router.delete(
+    "/{case_id}/comments/{comment_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def delete_comment(case_id: str, comment_id: int):
     """Delete comment."""
     collab_service = CaseCollaborationService()
@@ -429,7 +458,9 @@ class WatcherAdd(BaseModel):
         return v
 
 
-@router.post("/{case_id}/watchers", response_model=CaseWatcherSchema)
+@router.post(
+    "/{case_id}/watchers", dependencies=_CASES_WRITE, response_model=CaseWatcherSchema
+)
 async def add_watcher(case_id: str, data: WatcherAdd):
     """Add watcher to case."""
     collab_service = CaseCollaborationService()
@@ -441,7 +472,11 @@ async def add_watcher(case_id: str, data: WatcherAdd):
     return CaseWatcherSchema.dump(watcher)
 
 
-@router.delete("/{case_id}/watchers/{user_id}", response_model=CaseSuccessResponse)
+@router.delete(
+    "/{case_id}/watchers/{user_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def remove_watcher(case_id: str, user_id: str):
     """Remove watcher from case."""
     collab_service = CaseCollaborationService()
@@ -472,6 +507,7 @@ class ChainOfCustodyAdd(BaseModel):
 
 @router.post(
     "/{case_id}/evidence/{evidence_id}/chain-of-custody",
+    dependencies=_CASES_WRITE,
     response_model=CaseSuccessResponse,
 )
 async def add_custody_entry(case_id: str, evidence_id: int, data: ChainOfCustodyAdd):
@@ -500,7 +536,9 @@ class TaskAdd(BaseModel):
     checklist_items: Optional[List[Dict]] = None
 
 
-@router.post("/{case_id}/tasks", response_model=CaseTaskSchema)
+@router.post(
+    "/{case_id}/tasks", dependencies=_CASES_WRITE, response_model=CaseTaskSchema
+)
 async def add_task(case_id: str, data: TaskAdd, session: UnitOfWorkSession):
     """Add task to case."""
 
@@ -537,7 +575,11 @@ class TaskUpdate(BaseModel):
     actual_hours: Optional[float] = None
 
 
-@router.put("/{case_id}/tasks/{task_id}", response_model=CaseTaskSchema)
+@router.put(
+    "/{case_id}/tasks/{task_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseTaskSchema,
+)
 async def update_task(
     case_id: str, task_id: int, data: TaskUpdate, session: UnitOfWorkSession
 ):
@@ -559,7 +601,11 @@ class RelationshipAdd(BaseModel):
     notes: Optional[str] = None
 
 
-@router.post("/{case_id}/relationships", response_model=CaseRelationshipSchema)
+@router.post(
+    "/{case_id}/relationships",
+    dependencies=_CASES_WRITE,
+    response_model=CaseRelationshipSchema,
+)
 async def add_relationship(
     case_id: str, data: RelationshipAdd, session: UnitOfWorkSession
 ):
@@ -597,7 +643,9 @@ class EscalationAdd(BaseModel):
     urgency_level: str = "high"
 
 
-@router.post("/{case_id}/escalate", response_model=CaseSuccessResponse)
+@router.post(
+    "/{case_id}/escalate", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
+)
 async def escalate_case(case_id: str, data: EscalationAdd):
     """Escalate case."""
     from core.cases.case_workflow_service import CaseWorkflowService

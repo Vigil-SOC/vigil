@@ -332,14 +332,14 @@ redis:
     storageClassName: ""
     accessModes:
       - ReadWriteOnce
-  # Match docker-compose defaults: AOF on, 512MB cap, LRU eviction.
+  # Match docker-compose defaults: AOF on, 512MB cap, noeviction (a full Redis rejects writes loudly; it holds queues and dedup state, so it must never silently evict).
   args:
     - --appendonly
     - "yes"
     - --maxmemory
     - 512mb
     - --maxmemory-policy
-    - allkeys-lru
+    - noeviction
   resources:
     requests:
       cpu: 100m
@@ -686,6 +686,7 @@ config:
   # Integrations — non-secret URLs/usernames
   SPLUNK_URL: ""
   SPLUNK_USERNAME: ""
+  SPLUNK_VERIFY_SSL: "true"
   CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
   ELASTIC_SIEM_ELASTICSEARCH_URL: ""
   ELASTIC_SIEM_KIBANA_URL: ""
@@ -738,6 +739,8 @@ config:
   DAEMON_SLACK_CHANNEL: "#soc-alerts"
   DAEMON_PAGERDUTY_ENABLED: "false"
   DAEMON_THREAT_HUNT_INTERVAL: "86400"
+  # Ages out only the episodic read log; findings and processed events are
+  # kept until an admin deletes them.
   DAEMON_CLEANUP_RETENTION_DAYS: "90"
   DAEMON_METRICS_ENABLED: "true"
   DAEMON_METRICS_PORT: "9090"

@@ -20,6 +20,7 @@ import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
 import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
 import { investigateReplay } from "./workflows/lead/replay.js";
+import { rootCauseReplay } from "./workflows/rootcause/replay.js";
 
 const log = logger("agent.serve");
 
@@ -196,14 +197,19 @@ async function writeNarrative(state: State, runId: string, res: ServerResponse, 
 
 // What the hunt lead was shown at each decision, rebuilt from the ledger alone: no
 // Memory, no verify, no append. An investigate run has no digest to rebuild, so it
-// returns the journaled decisions and the calls that followed them. Compose and
-// chat stay 404.
+// returns the journaled decisions and the calls that followed them, and a root-cause
+// run its searches, steps and notices in order. Compose and chat stay 404.
 async function readReplay(state: State, runId: string, decisionId: string | null, res: ServerResponse): Promise<void> {
   const events = await state.read(runId);
   const opened = events[0];
   if (opened?.run_kind === "investigate") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(investigateReplay(runId, events)));
+    return;
+  }
+  if (opened?.run_kind === "root_cause") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(rootCauseReplay(runId, events)));
     return;
   }
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);

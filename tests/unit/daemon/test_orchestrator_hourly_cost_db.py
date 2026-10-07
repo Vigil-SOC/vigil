@@ -174,3 +174,29 @@ async def test_an_unreadable_hour_keeps_intake_paused():
     orch._process_intake_row.assert_not_awaited()
     orch._enqueue_investigation.assert_not_awaited()
     assert orch.get_cost_summary()["hourly_paused"] is True
+
+
+def test_in_flight_count_is_one_query_over_the_in_flight_statuses():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Investigation
+    from services.daemon.orchestrator import _count_investigations_in_flight
+
+    _seed()
+    with get_db_manager().session_scope() as session:
+        for inv_id, status in (
+            ("inv-a", "assigned"),
+            ("inv-b", "executing"),
+            ("inv-c", "waiting_approval"),
+            ("inv-d", "completed"),
+            ("inv-e", "failed"),
+        ):
+            session.add(
+                Investigation(
+                    investigation_id=inv_id,
+                    workflow_id="incident-response",
+                    trigger_type="manual",
+                    workdir=f"/tmp/{inv_id}",
+                    status=status,
+                )
+            )
+    assert _count_investigations_in_flight() == 3

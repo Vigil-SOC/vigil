@@ -25,6 +25,8 @@ from core.storage.models import User
 
 logger = logging.getLogger(__name__)
 
+ACCESS_TOKEN_TYPE = "access"
+
 # Dev mode flag - ONLY for development, never in production!
 DEV_MODE = get_settings().dev_mode
 
@@ -153,6 +155,15 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Only an access token is a session. A refresh token (or one with a missing
+    # or unknown type) must not work as a bearer credential on protected routes.
+    if payload.get("token_type") != ACCESS_TOKEN_TYPE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

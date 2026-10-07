@@ -29,6 +29,7 @@ from pydantic import (
     WrapValidator,
 )
 
+from core.auth.permissions import permission_gate
 from core.findings.exclusions import current_active_ips, excluded_ips_of
 from core.findings.source_evidence import (
     StoredSourceEvidence,
@@ -40,6 +41,8 @@ from core.storage.database_data_service import DatabaseDataService
 from core.storage.schemas.finding import FindingSchema
 
 router = APIRouter()
+
+_FINDINGS_WRITE = [permission_gate("findings.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/findings",
@@ -244,7 +247,9 @@ def get_findings_summary(exclusions: ExclusionView = _SUMMARY_EXCLUSIONS_QUERY):
     return data_service.get_findings_summary(exclusions=exclusions)
 
 
-@router.patch("/{finding_id}", response_model=FindingUpdateResponse)
+@router.patch(
+    "/{finding_id}", dependencies=_FINDINGS_WRITE, response_model=FindingUpdateResponse
+)
 def update_finding(finding_id: str, update: FindingUpdate):
     """
     Update/enrich an existing finding.

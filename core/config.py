@@ -33,7 +33,8 @@ def _safe_home() -> Path:
         # with PermissionError (Errno 13).
         if Path("/home/vigil").is_dir():
             return Path("/home/vigil")
-        return Path("/tmp")
+        # Last-resort writable fallback when HOME is unusable.
+        return Path("/tmp")  # nosec B108
     return home
 
 
@@ -281,13 +282,17 @@ class Settings(BaseSettings):
     daemon_probes_enabled: bool = True
     daemon_probe_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
-    # Separate from cleanup_retention_days on purpose: that governs bulk data
-    # retention and wants a long horizon, while an unanswered containment
-    # proposal goes stale in days (#675).
+    # Separate from cleanup_retention_days on purpose: that only ages out the
+    # episodic read log, while an unanswered containment proposal goes stale
+    # in days (#675).
     daemon_approval_expiry_days: int = 7
     daemon_metrics_enabled: bool = True
     daemon_metrics_port: int = 9090
     daemon_health_host: str = "localhost"
+    # Address the daemon's own listeners bind to (health/status/metrics/webhook).
+    # Separate from daemon_health_host, which is the client address the backend
+    # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.
+    daemon_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_health_port: int = 9091
 
     # Orchestrator

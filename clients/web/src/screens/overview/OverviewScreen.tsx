@@ -7,7 +7,7 @@ import { EmptyState, Popup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
-import { jiraReadiness, type JiraReadiness } from '../../shell/commandBar'
+import { jiraReadiness, type JiraReadiness } from '../../shell/commandBarModel'
 import api, {
   configApi,
   findingsApi,

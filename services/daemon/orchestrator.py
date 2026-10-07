@@ -123,6 +123,15 @@ def _count_queued_intake_rows() -> int:
 SCHEDULE_RUN_CEILING = 1
 
 
+def _count_investigations_in_flight() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(Investigation)
+            .filter(Investigation.status.in_(IN_FLIGHT_INVESTIGATION_STATUSES))
+            .count()
+        )
+
+
 def _count_schedule_runs_in_flight() -> int:
     with get_db_manager().session_scope() as session:
         return (
@@ -1195,7 +1204,12 @@ class Orchestrator:
     IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
 
     def _in_flight(self) -> int:
-        return sum(len(self._get_investigations_by_status(s)) for s in self.IN_FLIGHT)
+        try:
+            return _count_investigations_in_flight()
+        except Exception as e:
+            # Unknown reads as full: a failed count must not lift the cap.
+            logger.error("Failed to count in-flight investigations: %s", e)
+            return self.config.max_concurrent_agents
 
     # A run belongs to the worker, so nothing here stops one. The record is marked
     # and the run finishes or hits its ceiling; reaping a stalled worker is #633.
@@ -1538,7 +1552,7 @@ class Orchestrator:
                     if saved is not None:
                         return float(saved)
         except Exception as e:
-            logger.debug(f"Hourly cost limit read failed, using config: {e}")
+            logger.warning("Hourly cost limit read failed, using config: %s", e)
         return self.config.max_total_hourly_cost
 
     def _hourly_budget_exhausted(self) -> bool:
@@ -1564,10 +1578,8 @@ class Orchestrator:
         return paused
 
     def _hourly_pause_decision(self, spent: Optional[float], limit: float) -> bool:
-        # Unknown spend keeps the last decision rather than releasing a pause.
-        if spent is None:
-            return getattr(self, "_hourly_paused", False)
-        return spent >= limit
+        # Unknown spend reads as over the cap, including on a cold start.
+        return spent is None or spent >= limit
 
     # -------------------------------------------------------------------------
     # Review Loop
@@ -1765,6 +1777,8 @@ class Orchestrator:
                 reason=f"[Auto-investigation {inv_id}] {action.get('reason', '')}",
                 evidence=[inv_id],
                 created_by=ORCHESTRATOR_ACTOR,
+                # The 0.8 is a constant, and the proposal is the agent's.
+                human_only=True,
             )
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:

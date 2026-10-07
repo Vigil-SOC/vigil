@@ -23,6 +23,7 @@ from core.federation.adapters._base import (
 from core.federation.adapters._siem_base import SIEMIngestionAdapter
 from core.federation.runner import FederationRunner
 from core.time import utcnow
+from tests.unit._acking_queue import AckingQueue
 
 pytestmark = pytest.mark.unit
 
@@ -247,7 +248,7 @@ class _FakeDedup:
 
 @pytest.mark.asyncio
 async def test_runner_persists_the_newest_time_and_the_next_tick_drains(monkeypatch):
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     svc = _WindowService([_alert(i, T0 + timedelta(minutes=i)) for i in range(1, 6)])
     adapter = _adapter(svc, monkeypatch)

@@ -21,6 +21,7 @@ from sqlalchemy import case as sql_case
 from sqlalchemy import cast, func, literal_column, select, true
 from sqlalchemy.sql.elements import ColumnElement
 
+from core.auth.permissions import permission_gate
 from core.cases.case_metrics_service import CaseMetricsService
 from core.cases.case_sla_service import CaseSLAService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -338,7 +339,9 @@ def get_velocity(days: int = 30):
     return velocity
 
 
-@router.post("/calculate/{case_id}", **_BETA)
+@router.post(
+    "/calculate/{case_id}", dependencies=[permission_gate("cases.write")], **_BETA
+)
 def calculate_case_metrics(case_id: str):
     """
     Calculate/update metrics for a case.

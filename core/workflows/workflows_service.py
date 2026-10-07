@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.queue import new_run_id
+from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import disabled_message, is_enabled
@@ -44,8 +45,8 @@ def _objectives(metadata: Dict[str, Any]) -> List[str]:
 def _asked_iterations(parameters: Optional[Dict[str, Any]]) -> Optional[int]:
     stated = (parameters or {}).get("iterations")
     try:
-        return int(stated) if stated is not None else None
-    except (TypeError, ValueError):
+        return min(int(stated), MAX_ITERATIONS) if stated is not None else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -59,7 +60,9 @@ def _asked_overrides(parameters: Optional[Dict[str, Any]]) -> Optional[Dict[str,
         ceiling = float(stated)
     except (TypeError, ValueError):
         return None
-    return {"budgets": {"max_cost_usd": ceiling}} if ceiling > 0 else None
+    if not 0 < ceiling < float("inf"):
+        return None
+    return {"budgets": {"max_cost_usd": min(ceiling, MAX_COST_USD)}}
 
 
 # A key carrying None is not an absent key: JSON null reaches TypeScript as a value,

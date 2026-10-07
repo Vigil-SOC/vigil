@@ -9,6 +9,7 @@ from dataclasses import asdict
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
+from core.auth.permissions import APPROVE_PERMISSION, username_has_permission
 from core.integrations.mcp.surface import current_caller
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
@@ -468,6 +469,18 @@ def get_approval_action(*, action_id: str) -> Args:
     return _decided(_approvals().get_action(action_id), "read")
 
 
+# Chat and /mcp reach approvals without passing the HTTP routes, so the right is
+# checked here against the bound person. No principal (a hunt) holds none to
+# check; rejecting then only keeps a row held, and approving is refused above.
+def _without_approval_right() -> Optional[Args]:
+    caller = current_caller()
+    if caller is None or username_has_permission(caller, APPROVE_PERMISSION):
+        return None
+    return {
+        "error": f"{caller} may not decide approvals: {APPROVE_PERMISSION} required"
+    }
+
+
 # The actor is the caller, not an argument. A model that names one is choosing
 # what the record will say. A hunt reaches this with nobody bound; approving
 # would stamp "agent" and release a row the requirement already held.
@@ -476,12 +489,16 @@ def approve_action(*, action_id: str) -> Args:
 
     if current_caller() is None:
         return {"error": "Action cannot be approved: no principal is bound"}
+    if refusal := _without_approval_right():
+        return refusal
     return _decided(_approvals().approve_action(action_id, actor()), "approved")
 
 
 def reject_action(*, action_id: str, reason: str) -> Args:
     from core.cases.agent_closure import actor
 
+    if refusal := _without_approval_right():
+        return refusal
     return _decided(_approvals().reject_action(action_id, reason, actor()), "rejected")
 
 

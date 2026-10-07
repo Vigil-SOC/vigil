@@ -179,6 +179,34 @@ describe("what the evidence actually says", () => {
       { question: "who owns it", tool: "whois", result_length: 2, cost_usd: 0.1, iteration: 2 },
     ]);
   });
+
+  it("marks a call that failed with its kind, and no other", async () => {
+    const started = await newLedger();
+    const wrapped = (body: string) => `<vigil:tool_result tool="x">\n${body}\n</vigil:tool_result>`;
+    started.ledger.append({
+      kind: "dispatch",
+      payload: {
+        dispatch_id: "dsp-1",
+        iteration: 1,
+        agent_id: "threat_intel",
+        status: "complete",
+        query_intent: "is it known",
+        target_hypothesis_id: null,
+        question_id: null,
+        failure_reason: null,
+        cost_usd: 0.1,
+        calls: [
+          { tool: "virustotal", arguments: "{}", result: wrapped("failed: timeout -- after 30000ms") },
+          { tool: "whois", arguments: "{}", result: "failed: refused -- not allowed" },
+          { tool: "telemetry_search", arguments: "{}", result: wrapped('1 row(s) from splunk\n[{"msg":"failed: timeout -- retry"}]') },
+          { tool: "case_records", arguments: "{}", result: 'rows say failed: timeout -- inside the data' },
+        ],
+      },
+    } as never);
+
+    expect((await project(started)).calls?.map((call) => call.failed)).toEqual(["timeout", "refused", undefined, undefined]);
+    expect(Object.keys((await project(started)).calls![2]!)).not.toContain("failed");
+  });
 });
 
 // The standings say what a hunt believes; nothing said how it got there. An operator

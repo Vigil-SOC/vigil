@@ -2,12 +2,12 @@
    and which mark a step wears from where the cursor is. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { WatchRun, STEP_MS, UNSUPPORTED } from './WatchRun'
+import { WatchRun, STEP_MS, UNSUPPORTED, PLAYBOOK } from './WatchRun'
 import { callFailure, type WfRunDetail } from './runRead'
 import { workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
-  workflowApi: { replayRun: vi.fn() },
+  workflowApi: { replayRun: vi.fn(), getReplay: vi.fn(), steer: vi.fn() },
 }))
 
 const move = (iteration: number, extra = {}) => ({
@@ -107,6 +107,34 @@ describe('a hunt', () => {
     expect(screen.queryByRole('img', { name: 'Working on it' })).not.toBeInTheDocument()
   })
 
+  it('draws a paused run waiting on a person: warn mark, stopped caption, waiting clock, no spinner', () => {
+    const open = { checkpoint_id: 'c1', checkpoint_class: 'scope_extension', question: 'Widen?' }
+    render(<WatchRun d={hunt('paused', [move(2), move(1)], { open_checkpoint: open })} onBack={vi.fn()} />)
+    expect(screen.getByText('Stopped · needs you', { selector: 'span.whitespace-nowrap' })).toBeInTheDocument()
+    expect(screen.getByText(/13:12 · waiting on you/)).toBeInTheDocument()
+    expect(screen.getAllByRole('img', { name: 'Needs you' })).toHaveLength(1)
+    expect(screen.queryByRole('img', { name: 'Working on it' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Working on it…')).not.toBeInTheDocument()
+    expect(screen.queryByText(/in progress/)).not.toBeInTheDocument()
+    // the stopped step still says what it did
+    expect(screen.getByText('why 2')).toBeInTheDocument()
+  })
+
+  it('reads a paused status as waiting even before a checkpoint is on the projection, and wins over a failed call', () => {
+    const calls = [{ question: 'q', tool: 'virustotal', result_length: 1, cost_usd: 0, iteration: 1, failed: 'timeout' }]
+    render(<WatchRun d={hunt('paused', [move(1)], { calls })} onBack={vi.fn()} />)
+    expect(screen.getAllByRole('img', { name: 'Needs you' })).toHaveLength(1)
+    expect(screen.queryByRole('img', { name: 'Failed' })).not.toBeInTheDocument()
+  })
+
+  it('marks a hunt step failed when a call carries its failure, and its line reads timed out', () => {
+    const calls = [{ question: 'q', tool: 'virustotal', result_length: 40, cost_usd: 0, duration_ms: 30000, iteration: 1, failed: 'timeout' }]
+    render(<WatchRun d={hunt('completed', [move(1, { duration_ms: 900 })], { calls })} onBack={vi.fn()} />)
+    expect(screen.getByRole('img', { name: 'Failed' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Thought for 900ms/ }))
+    expect(screen.getByText(/timed out/)).toBeInTheDocument()
+  })
+
   it('says when older steps were dropped, and counts only what is shown', () => {
     const d = hunt('completed', [move(52), move(51)], { iteration: 52 })
     render(<WatchRun d={d} onBack={vi.fn()} />)
@@ -195,13 +223,75 @@ describe('an investigate run', () => {
   })
 })
 
+describe('a root-cause run', () => {
+  beforeEach(() => { vi.useRealTimers() })
+  const trace = (status = 'completed') => ({ run_id: 'run-3', status, workflow_name: 'Root cause', projection: { run_kind: 'root_cause' } }) as unknown as WfRunDetail
+
+  it('plays its searches, steps and notices as cards, and marks a failed search', async () => {
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({
+      data: {
+        run_kind: 'root_cause',
+        steps: [
+          { kind: 'search', recorded_at: '2026-10-06T13:01:00Z', tool: 'splunk', args: 'index=a | head', rows: 3, failed: false },
+          { kind: 'search', recorded_at: '2026-10-06T13:02:00Z', tool: 'splunk', args: 'index=b', rows: 0, failed: true, failure: 'timeout' },
+          { kind: 'step', recorded_at: '2026-10-06T13:03:00Z', step_id: 'step-1', event: 'beacon out', who: 'host-a', at: '2026-10-06T12:00:00Z', link: '', cause_id: 'step-0', origin: false, link_status: 'unproven', origin_status: 'none' },
+          { kind: 'notice', recorded_at: '2026-10-06T13:04:00Z', text: 'No flow logs.' },
+          { kind: 'mystery', recorded_at: 'x' },
+        ],
+      },
+    } as never)
+    render(<WatchRun d={trace()} onBack={vi.fn()} />)
+
+    expect(await screen.findByText('Step 1 of 4 · Search')).toBeInTheDocument()
+    expect(screen.queryByText(UNSUPPORTED)).not.toBeInTheDocument()
+    expect(screen.getByText('What the lead agent did')).toBeInTheDocument()
+    expect(screen.getByText('index=a | head')).toBeInTheDocument()
+    expect(screen.getByText(/3 rows/)).toBeInTheDocument()
+    // the cursor step is done, the rest say nothing yet
+    expect(screen.getAllByRole('img', { name: 'Not started' })).toHaveLength(3)
+    expect(screen.queryByText('Recorded step-1 · beacon out')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('listitem', { name: 'Step 2: Search' }))
+    expect(screen.getByRole('img', { name: 'Failed' })).toBeInTheDocument()
+    expect(screen.getByText(/timed out/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('listitem', { name: 'Step 3: Record' }))
+    expect(screen.getByText('Recorded step-1 · beacon out')).toBeInTheDocument()
+    expect(screen.getByText('host-a')).toBeInTheDocument()
+    expect(screen.getByText('caused by step-0')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('listitem', { name: 'Step 4: Notice' }))
+    expect(screen.getAllByText('No flow logs.').length).toBeGreaterThan(0)
+  })
+
+  it('says so when the record has no steps, and falls back to the run as it stands when there is no replay', async () => {
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({ data: { run_kind: 'root_cause', steps: [] } } as never)
+    const { unmount } = render(<WatchRun d={trace()} onBack={vi.fn()} />)
+    expect(await screen.findByText('No steps were recorded for this run.')).toBeInTheDocument()
+    unmount()
+
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404 } })
+    render(<WatchRun d={trace()} onBack={vi.fn()} />)
+    expect(await screen.findByText(UNSUPPORTED)).toBeInTheDocument()
+    expect(screen.getByText('Limits used')).toBeInTheDocument()
+    expect(screen.queryByText('What the lead agent did')).not.toBeInTheDocument()
+  })
+})
+
 describe('a run that is neither', () => {
   it('opens with the header and the limits, and one line where the player would be', () => {
-    render(<WatchRun d={{ run_id: 'run-3', status: 'completed', workflow_name: 'Root cause', projection: { run_kind: 'root_cause' } } as WfRunDetail} onBack={vi.fn()} />)
-    expect(screen.getByText(UNSUPPORTED)).toBeInTheDocument()
+    render(<WatchRun d={{ run_id: 'run-4', status: 'completed', workflow_name: 'Compose', projection: { results: [] } } as unknown as WfRunDetail} onBack={vi.fn()} />)
+    expect(screen.getByText(PLAYBOOK)).toBeInTheDocument()
     expect(screen.getByText('Limits used')).toBeInTheDocument()
     expect(screen.queryByText('What the lead agent did')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /replay/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('a playbook run', () => {
+  it('says why there is nothing to watch and where to look, and does not claim a replay', () => {
+    render(<WatchRun d={{ run_id: 'run-4', status: 'completed', workflow_name: 'Triage playbook' } as WfRunDetail} onBack={vi.fn()} />)
+    expect(screen.getByText(PLAYBOOK)).toBeInTheDocument()
+    expect(screen.queryByText(UNSUPPORTED)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Replayed step by step/)).not.toBeInTheDocument()
   })
 })
 

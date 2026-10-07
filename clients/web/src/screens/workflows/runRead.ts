@@ -53,6 +53,9 @@ export interface HuntStanding {
   resolution_reason?: string | null
   /** hunt_spec, operator or base_rate — which belief the operator put up themselves. */
   provenance?: string
+  /** Counted from the full link set; absent on a run the projection predates. */
+  supports?: number
+  weakens?: number
 }
 /** One record the hunt gathered. */
 export interface HuntEvidence {
@@ -85,6 +88,14 @@ export interface HuntGap {
   summary: string
   query_intent?: string
   hypothesis_id?: string | null
+}
+/** One critic verdict. The text is model output, not a finding. */
+export interface HuntReview {
+  iteration: number
+  hypothesis_id: string
+  survives: boolean
+  strongest_benign_explanation: string
+  rationale?: string
 }
 export interface HuntCheckpoint {
   checkpoint_id: string
@@ -206,6 +217,8 @@ export interface HuntCall {
   cost_usd: number
   duration_ms?: number
   iteration?: number
+  /** How the call failed; absent when it did not, and from an older agent service. */
+  failed?: CallFailure
 }
 export interface HuntBudgets {
   max_iterations: number
@@ -229,6 +242,8 @@ export interface HuntView {
   /** What this run was granted, extensions included — not the shipped default. */
   budgets?: HuntBudgets
   hypotheses: HuntStanding[]
+  /** Every critic verdict, in ledger order; absent before the projection carried them. */
+  reviews?: HuntReview[]
   open_checkpoint?: {
     checkpoint_id: string
     checkpoint_class?: string
@@ -290,7 +305,7 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
   return { detail, dphase, setDphase, load }
 }
 
-/** What replay already returns for an investigate run. Compose and root cause 404
+/** What replay returns for an investigate run. Compose 404s
  *  here; that is not a failure, and the phase view stays as it was. */
 export interface InvestigateDecisionView {
   iteration: number
@@ -304,11 +319,25 @@ export interface InvestigateDecisionView {
   duration_ms?: number
 }
 
+/** One entry of a root-cause replay, in ledger order. `recorded_at` is when the
+ *  ledger wrote it; a step's own `at` is when its event happened. */
+export type RootCauseEntry =
+  | { kind: 'search'; recorded_at: string; tool: string; args: string; rows: number; failed: boolean; failure?: CallFailure }
+  | {
+      kind: 'step'; recorded_at: string; step_id: string; event: string; who: string; at: string; link: string
+      cause_id: string | null; origin: boolean; link_status: string; origin_status: string
+    }
+  | { kind: 'notice'; recorded_at: string; text: string }
+
+/** Absent on a ledger that predates the run event's budgets. */
+export interface RootCauseBudgets { max_calls?: number }
+
 export type ReplayRead =
   | { kind: 'pending' }
   | { kind: 'absent' }
   | { kind: 'failed'; message: string }
   | { kind: 'investigate'; decisions: InvestigateDecisionView[] }
+  | { kind: 'root_cause'; entries: RootCauseEntry[]; budgets: RootCauseBudgets }
 
 export function statusOf(e: unknown): number | undefined {
   return (e as { response?: { status?: number } }).response?.status
@@ -330,17 +359,46 @@ export function decisionsOf(raw: unknown[]): InvestigateDecisionView[] {
   })
 }
 
+const FAILURES: readonly string[] = ['timeout', 'unavailable', 'backend_error', 'refused', 'invalid_args']
+const str = (v: unknown) => (typeof v === 'string' ? v : '')
+
+/** Unknown entry kinds are dropped, so a newer agent service cannot break the page. */
+export function entriesOf(raw: unknown[]): RootCauseEntry[] {
+  return raw.flatMap((item): RootCauseEntry[] => {
+    const row = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>
+    const recorded_at = str(row.recorded_at)
+    if (row.kind === 'search') {
+      const failure = FAILURES.includes(str(row.failure)) ? (row.failure as CallFailure) : undefined
+      return [{
+        kind: 'search', recorded_at, tool: str(row.tool) || 'search', args: str(row.args),
+        rows: typeof row.rows === 'number' ? row.rows : 0, failed: row.failed === true, ...(failure ? { failure } : {}),
+      }]
+    }
+    if (row.kind === 'step') {
+      return [{
+        kind: 'step', recorded_at, step_id: str(row.step_id), event: str(row.event), who: str(row.who), at: str(row.at),
+        link: str(row.link), cause_id: typeof row.cause_id === 'string' ? row.cause_id : null, origin: row.origin === true,
+        link_status: str(row.link_status) || 'none', origin_status: str(row.origin_status) || 'none',
+      }]
+    }
+    return row.kind === 'notice' ? [{ kind: 'notice', recorded_at, text: str(row.text) }] : []
+  })
+}
+
 export function pullReplay(runId: string, live: () => boolean, setRead: (next: ReplayRead) => void) {
   workflowApi
     .replayRun(runId)
     .then((res) => {
       if (!live()) return
-      const body = res.data as { run_kind?: unknown; decisions?: unknown }
-      if (body?.run_kind !== 'investigate' || !Array.isArray(body.decisions)) {
+      const body = res.data as { run_kind?: unknown; decisions?: unknown; steps?: unknown; budgets?: { max_calls?: unknown } }
+      if (body?.run_kind === 'root_cause' && Array.isArray(body.steps)) {
+        const max = body.budgets?.max_calls
+        setRead({ kind: 'root_cause', entries: entriesOf(body.steps), budgets: typeof max === 'number' ? { max_calls: max } : {} })
+      } else if (body?.run_kind === 'investigate' && Array.isArray(body.decisions)) {
+        setRead({ kind: 'investigate', decisions: decisionsOf(body.decisions) })
+      } else {
         setRead({ kind: 'absent' })
-        return
       }
-      setRead({ kind: 'investigate', decisions: decisionsOf(body.decisions) })
     })
     .catch((e: unknown) => {
       if (!live()) return

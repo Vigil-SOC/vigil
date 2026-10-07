@@ -16,9 +16,17 @@ export interface Workflow {
    *  Derived by the backend from its own set, so this stays true of a kind added
    *  there without a change here. What the Run dialog gates its hunt fields on. */
   huntLike: boolean
-  /** Runs started since UTC midnight. */
-  runsToday: number
-  /** Mean cost of today's finished runs. Null when none have finished. */
+  /** Runs started in the last 7 days, running ones included. */
+  runs7d: number
+  /** Completed over finished runs in those 7 days, 0..1. Null when none has finished. */
+  successRate: number | null
+  successLevel: 'good' | 'fair' | 'poor' | null
+  /** What starts it: "alerts", "schedule", "shadow". Empty means a person does;
+   *  absent means the backend did not say. */
+  triggers?: string[]
+  /** False only when switched off. */
+  enabled: boolean
+  /** Mean cost of those 7 days' finished runs. Null when none have finished. */
   meanCostUsd: number | null
   /** Custom workflows only; file workflows omit it. */
   updatedAt?: string

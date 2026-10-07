@@ -23,7 +23,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from core.response.config import ResponseConfig, approval_requirement
+from core.response.config import ResponseConfig, approval_requirement, decision_rule
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
@@ -179,7 +179,7 @@ class ApprovalService:
                 the no-arg form callers use still honours env (#916).
         """
         self.config = config or ResponseConfig.from_settings()
-        self._load_config()
+        self.force_manual_approval = False
 
     # ------------------------------------------------------------------
     # Config (force_manual_approval) — db/config-backed, read per decision
@@ -187,48 +187,20 @@ class ApprovalService:
     #
     # ``self.force_manual_approval`` is this process forcing approval on
     # (the daemon does when DAEMON_FORCE_APPROVAL is set) and is never
-    # written to the row. The row is what Settings writes; it is read at each
-    # decision so a long-lived service sees a change without a restart.
-
-    def _load_config(self):
-        """Create the stored flag, off, when no row exists yet."""
-        self.force_manual_approval = False
-        self._last_stored = False
-        try:
-            config_service = get_config_service()
-            value = config_service.get_system_config(APPROVAL_CONFIG_KEY)
-            if value:
-                self._last_stored = bool(value.get("enabled", False))
-            else:
-                self._save_default()
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error loading approval config: %s", e)
+    # written to the row. The row is what Settings writes and the SQL seed
+    # creates (Act); it is read at each decision so a long-lived service sees
+    # a change without a restart. Nothing here writes it.
 
     def _stored_force_manual_approval(self) -> bool:
-        """The stored flag, or the last one read when the read fails."""
+        """The stored flag; Act when no row exists, Assist when the read fails."""
         try:
-            value = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
+            value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
         except Exception as e:  # noqa: BLE001
-            logger.error("Error reading approval config: %s", e)
-            value = None
-        if value is not None:
-            self._last_stored = bool(value.get("enabled", False))
-        return self._last_stored
-
-    def _save_default(self):
-        """Store the flag off, for an install that has no row yet."""
-        try:
-            config_value = {"enabled": False}
-            config_service = get_config_service(user_id="approval_service")
-            config_service.set_system_config(
-                key=APPROVAL_CONFIG_KEY,
-                value=config_value,
-                description="Force manual approval for all actions",
-                config_type="approval",
-                change_reason="Updated by approval service",
+            logger.error(
+                "Cannot read the approval setting; requiring manual approval: %s", e
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error saving approval config: %s", e)
+            return True
+        return bool(value.get("enabled", False)) if value else False
 
     def set_force_manual_approval(self, force: bool):
         """Force manual approval for this process; the stored row is left as is."""
@@ -254,6 +226,7 @@ class ApprovalService:
         workflow_phase_id: Optional[str] = None,
         reversibility: Reversibility = Reversibility.REVERSIBLE,
         idempotency_key: Optional[str] = None,
+        human_only: bool = False,
     ) -> PendingAction:
         """Create a new pending action.
 
@@ -261,7 +234,10 @@ class ApprovalService:
         ``workflow_phase_id`` so the approvals UI / resume endpoint can
         link back to the paused run.
 
-        Irreversible actions always require approval. A second call with
+        Irreversible actions always require approval. ``human_only`` holds the
+        row for a person whatever ``confidence`` says: for callers whose
+        confidence is their own claim (an agent, a model's reading of alert
+        text) and so cannot be what releases the action. A second call with
         the same ``idempotency_key`` returns the existing non-failed row.
         """
         action, _inserted = self._put_action(
@@ -278,6 +254,7 @@ class ApprovalService:
             workflow_phase_id=workflow_phase_id,
             reversibility=reversibility,
             idempotency_key=idempotency_key,
+            human_only=human_only,
         )
         return action
 
@@ -296,6 +273,7 @@ class ApprovalService:
         workflow_phase_id: Optional[str] = None,
         reversibility: Reversibility = Reversibility.REVERSIBLE,
         idempotency_key: Optional[str] = None,
+        human_only: bool = False,
     ) -> tuple[PendingAction, bool]:
         """Insert an approval row, or return the existing non-failed one.
 
@@ -306,10 +284,16 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
-        forced = self.force_manual_approval or self._stored_force_manual_approval()
+        forced = (
+            human_only
+            or self.force_manual_approval
+            or self._stored_force_manual_approval()
+        )
         requires_approval, rule = approval_requirement(
             forced, reversibility, confidence, self.config
         )
+        if human_only:
+            rule = decision_rule("approval.human_only", True)
         reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
