@@ -189,6 +189,7 @@
 
 .vg-command-preview {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-top: 4px;
@@ -198,9 +199,97 @@
 
 .vg-command-preview p {
   flex: 1;
+  min-width: 0;
   margin: 0;
   color: var(--tx1);
   font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* /hunt: the preview is a drop target, and carries the attach controls under the argument. */
+.vg-command-preview.dragging {
+  outline: 1px dashed var(--ac-ln);
+  outline-offset: -4px;
+  background: var(--ac-bg);
+}
+
+.vg-command-attach {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The board's secondary button: 28px, radius 10. */
+.vg-command-attach .btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-command-attach .btn:hover {
+  background: var(--bg3);
+  border-color: var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-command-file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.vg-command-file-name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vg-command-file-meta,
+.vg-command-note {
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.vg-command-note {
+  flex: 0 0 100%;
+}
+
+.vg-command-paste {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.vg-command-paste textarea {
+  width: 100%;
+  height: 96px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--ln1);
+  border-radius: 10px;
+  background: var(--bg1);
+  color: var(--tx0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.vg-command-paste textarea:focus {
+  border-color: var(--ac-ln);
 }
 
 .vg-drawer-scrim {

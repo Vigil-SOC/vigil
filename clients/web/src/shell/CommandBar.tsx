@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api, { casesApi, configApi, findingsApi, workflowApi } from '../services/api'
 import { useToast } from './toast'
 import {
+  ATTACH_TYPES,
+  attachRefusal,
   buildRows,
   COMMANDS,
   commandPreview,
   commandRemainder,
   firstEnabled,
+  huntHypothesis,
   huntTitle,
   isLiveCommand,
   jiraReadiness,
   moveEnabled,
+  PASTED_NAME,
+  proposalFrom,
   readRecents,
   writeRecent,
   type BoardLink,
+  type HuntAttachment,
   type JiraReadiness,
   type LiveCommandId,
   type PaletteRow,
@@ -93,6 +99,11 @@ export default function CommandBar({
   const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
   const [preview, setPreview] = useState<{ id: LiveCommandId; arg: string } | null>(null)
   const [running, setRunning] = useState(false)
+  const [attachment, setAttachment] = useState<HuntAttachment | null>(null)
+  const [pasting, setPasting] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const attachSeq = useRef(0)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (userId) setRecents(readRecents(userId))
@@ -156,13 +167,71 @@ export default function CommandBar({
 
   const rows = useMemo(() => buildRows(query, hits, recents, boards), [query, hits, recents, boards])
   const highlighted = rows[active] && !rows[active].disabled ? active : firstEnabled(rows)
-  const previewView = preview ? commandPreview(preview.id, preview.arg, jira) : null
+  const previewView = preview ? commandPreview(preview.id, preview.arg, jira, attachment) : null
   const previewKey = preview ? `${preview.id}:${preview.arg}` : ''
   const previewDisabled = previewView?.disabled ?? true
 
   useEffect(() => {
     if (previewKey && !previewDisabled) runRef.current?.focus()
   }, [previewKey, previewDisabled])
+
+  // With no hypothesis typed, the coverage check proposes one from the document.
+  const huntNoArg = preview?.id === 'hunt' && !preview.arg.trim()
+  const needsProposal = attachment?.status === 'ready' && attachment.proposal === null
+  useEffect(() => {
+    if (!huntNoArg || !needsProposal) return
+    const seq = attachSeq.current
+    const ready = attachment
+    if (ready?.status !== 'ready') return
+    setAttachment({ ...ready, proposal: { status: 'checking' } })
+    const settle = (proposal: Extract<HuntAttachment, { status: 'ready' }>['proposal']) => {
+      if (attachSeq.current === seq) setAttachment((now) => (now?.status === 'ready' ? { ...now, proposal } : now))
+    }
+    workflowApi
+      .checkCoverage({ report: ready.text })
+      .then((res) => settle(proposalFrom(res.data)))
+      .catch((error: unknown) => {
+        const status = (error as { response?: { status?: number } })?.response?.status
+        settle({
+          status: 'none',
+          reason: status === 400
+            ? 'Nothing in this document to propose a hypothesis from. Type one to hunt with it.'
+            : `A hypothesis could not be proposed: ${errorText(error, 'the coverage check failed')}`,
+        })
+      })
+    // `attachment` is read once, when the proposal is first asked for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [huntNoArg, needsProposal])
+
+  const attach = useCallback(async (file: File, pasted = false) => {
+    const name = pasted ? PASTED_NAME : file.name
+    const seq = ++attachSeq.current
+    const refusal = attachRefusal(file)
+    if (refusal) {
+      setAttachment({ status: 'refused', name, reason: refusal })
+      return
+    }
+    setAttachment({ status: 'reading', name })
+    try {
+      const { data } = await workflowApi.readHuntDocument(file)
+      if (attachSeq.current !== seq) return
+      setAttachment({ status: 'ready', name, file, pasted, pages: data.pages, condensed: data.condensed, text: data.text, proposal: null })
+    } catch (error) {
+      if (attachSeq.current === seq) setAttachment({ status: 'refused', name, reason: errorText(error, `${name} could not be read`) })
+    }
+  }, [])
+
+  const removeAttachment = useCallback(() => {
+    attachSeq.current += 1
+    setAttachment(null)
+  }, [])
+
+  const onDropFile = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setDragging(false)
+    const file = event.dataTransfer.files?.[0]
+    if (file) void attach(file)
+  }
 
   const remember = useCallback((text: string) => {
     if (!userId) return
@@ -198,7 +267,7 @@ export default function CommandBar({
   }, [follow, query])
 
   const run = useCallback(async () => {
-    if (!preview || commandPreview(preview.id, preview.arg, jira).disabled) return
+    if (!preview || commandPreview(preview.id, preview.arg, jira, attachment).disabled) return
     const arg = preview.arg.trim()
     // The workflow this command starts, from the command table.
     const workflowId = COMMANDS.find((c) => c.id === preview.id)?.workflowId ?? ''
@@ -217,11 +286,14 @@ export default function CommandBar({
           break
         }
         case 'hunt': {
+          // What was typed, else what the attached document proposed.
+          const hypothesis = huntHypothesis(arg, attachment)
+          const document = attachment?.status === 'ready' ? attachment : null
           // The run goes on a case of its own, so the drawer has something to open on.
-          const title = huntTitle(arg)
+          const title = huntTitle(hypothesis)
           const created = await casesApi.create({
             title,
-            description: arg,
+            description: hypothesis,
             finding_ids: [],
             priority: 'medium',
             status: 'open',
@@ -229,7 +301,16 @@ export default function CommandBar({
           const caseId = created.data.case_id
           if (!caseId) throw new Error('The case was created without an id')
           try {
-            await workflowApi.execute(workflowId, { hypothesis: arg, case_id: caseId })
+            await workflowApi.execute(workflowId, {
+              hypothesis,
+              case_id: caseId,
+              ...(document && { document: document.text }),
+              // The proposal's own subjects and approval ride with it, unedited.
+              ...(!arg && document?.proposal?.status === 'proposed' && {
+                hypothesis_subjects: document.proposal.subjects,
+                approve_hypotheses: document.proposal.approve,
+              }),
+            })
           } catch (error) {
             // A refusal (disabled workflow, not a claim) leaves no case behind. With
             // no response the run may have been queued, and its case stays.
@@ -238,8 +319,15 @@ export default function CommandBar({
             }
             throw error
           }
+          // After the run is queued, so a refused hunt leaves no original behind.
+          if (document) {
+            await casesApi
+              .attachDocument(caseId, document.file, { name: document.pasted ? PASTED_NAME : undefined, pages: document.pages })
+              .catch((error: unknown) => notify('err', `The hunt started, but ${document.name} could not be kept on the case: ${errorText(error, 'upload failed')}`))
+          }
           onOpenCase(caseId)
           setQuery('')
+          removeAttachment()
           notify('ok', `Hunt started on case "${title}"`)
           break
         }
@@ -272,7 +360,7 @@ export default function CommandBar({
     } finally {
       setRunning(false)
     }
-  }, [jira, notify, onOpenCase, onOpenChat, preview])
+  }, [attachment, jira, notify, onOpenCase, onOpenChat, preview, removeAttachment])
 
   const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
@@ -325,6 +413,7 @@ export default function CommandBar({
         value={query}
         onChange={(event) => {
           setQuery(event.target.value)
+          if (!/^\/hunt(\s|$)/i.test(event.target.value.trim())) removeAttachment()
           setHits(null)
           setPreview(null)
           setOpen(true)
@@ -353,8 +442,13 @@ export default function CommandBar({
               <span className="vg-command-dest">{row.dest}</span>
             </button>
           ))}
-          {previewView && (
-            <div className="vg-command-preview">
+          {previewView && preview && (
+            <div
+              className={`vg-command-preview${dragging ? ' dragging' : ''}`}
+              onDragOver={preview.id === 'hunt' ? (event) => { event.preventDefault(); setDragging(true) } : undefined}
+              onDragLeave={preview.id === 'hunt' ? () => setDragging(false) : undefined}
+              onDrop={preview.id === 'hunt' ? onDropFile : undefined}
+            >
               <p>{previewView.line}</p>
               <button
                 ref={runRef}
@@ -365,6 +459,66 @@ export default function CommandBar({
               >
                 Run
               </button>
+              {preview.id === 'hunt' && (
+                <div className="vg-command-attach">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    hidden
+                    accept={ATTACH_TYPES.join(',')}
+                    aria-label="Attach intelligence file"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      if (file) void attach(file)
+                    }}
+                  />
+                  <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
+                    Attach intelligence
+                  </button>
+                  <button type="button" className="btn" aria-expanded={pasting !== null} onClick={() => setPasting((text) => (text === null ? '' : null))}>
+                    Paste text
+                  </button>
+                  {attachment && attachment.status !== 'refused' && (
+                    <span className="vg-command-file" title={attachment.name}>
+                      <span className="vg-command-file-name">{attachment.name}</span>
+                      {attachment.status === 'ready' && (
+                        <span className="vg-command-file-meta">
+                          {attachment.pages} page{attachment.pages === 1 ? '' : 's'}
+                          {attachment.condensed ? ' · condensed' : ''}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {attachment && (
+                    <button type="button" className="btn" aria-label={`Remove ${attachment.name}`} onClick={removeAttachment}>
+                      Remove
+                    </button>
+                  )}
+                  {previewView.note && <span className="vg-command-note">{previewView.note}</span>}
+                  {pasting !== null && (
+                    <div className="vg-command-paste">
+                      <textarea
+                        aria-label="Intelligence text"
+                        placeholder="Paste a report, an advisory or a list of indicators"
+                        value={pasting}
+                        onChange={(event) => setPasting(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={!pasting.trim()}
+                        onClick={() => {
+                          void attach(new File([pasting], `${PASTED_NAME}.txt`, { type: 'text/plain' }), true)
+                          setPasting(null)
+                        }}
+                      >
+                        Attach text
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
