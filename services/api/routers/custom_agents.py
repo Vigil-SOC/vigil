@@ -332,7 +332,7 @@ def delete_custom_agent(
         # Ids derive from the name; a stale off entry would switch a re-created agent off.
         if not set_agent_enabled(agent_id, True, str(current_user.user_id)):
             logger.warning(
-                f"Could not clear disabled state for deleted agent {agent_id}"
+                "Could not clear disabled state for deleted agent %s", agent_id
             )
         _refresh_manager()
         return None
