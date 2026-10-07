@@ -236,7 +236,7 @@ async def kill_orchestrator(
             ),
         }
     except Exception as e:
-        logger.error(f"Error killing orchestrator: {e}")
+        logger.error("Error killing orchestrator: %s", e)
         raise HTTPException(status_code=500, detail="Failed to kill the orchestrator")
 
 

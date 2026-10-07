@@ -1208,7 +1208,7 @@ class Orchestrator:
             return _count_investigations_in_flight()
         except Exception as e:
             # Unknown reads as full: a failed count must not lift the cap.
-            logger.error(f"Failed to count in-flight investigations: {e}")
+            logger.error("Failed to count in-flight investigations: %s", e)
             return self.config.max_concurrent_agents
 
     # A run belongs to the worker, so nothing here stops one. The record is marked
@@ -1552,7 +1552,7 @@ class Orchestrator:
                     if saved is not None:
                         return float(saved)
         except Exception as e:
-            logger.warning(f"Hourly cost limit read failed, using config: {e}")
+            logger.warning("Hourly cost limit read failed, using config: %s", e)
         return self.config.max_total_hourly_cost
 
     def _hourly_budget_exhausted(self) -> bool:
