@@ -94,7 +94,7 @@ describe('Home', () => {
       data: { strip: { picked_up: { launched_or_merged: 3, created_today: 7, share: 0.423 } } },
     } as never)
     const { unmount } = renderHome()
-    expect(await screen.findByText('42.3% of alerts picked up automatically today')).toBeInTheDocument()
+    expect(await screen.findByText('42% of alerts picked up automatically today')).toBeInTheDocument()
     expect(screen.getByText('Board clear.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How the pickup share is calculated' }))
     expect(screen.getByRole('tooltip')).toHaveTextContent('Source Intake triggers')
@@ -185,6 +185,103 @@ describe('Home', () => {
     expect(screen.queryByRole('heading', { name: 'Connect more tools' })).not.toBeInTheDocument()
     expect(JSON.parse(sessionStorage.getItem('vigil.home.setup.hidden') || '[]')).toEqual(['connect_tools'])
     expect(screen.getByRole('link', { name: 'Browse integrations →' })).toBeInTheDocument()
+  })
+
+  it('lays the open steps out in one numbered row and Not now renumbers the rest', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: {
+        steps: [
+          { ...doneSteps[0], done: false },
+          doneSteps[1],
+          { ...doneSteps[2], done: false },
+          { ...doneSteps[3], done: false },
+        ],
+        alerts_exist: 5,
+        demo_enabled: false,
+      },
+    } as never)
+    renderHome()
+    await screen.findByRole('heading', { name: 'Connect more tools' })
+    const rows = () => Array.from(document.querySelectorAll<HTMLElement>('.home-step'))
+    expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '2', '3'])
+    expect((document.querySelector('.home-steps') as HTMLElement).style.gridTemplateColumns).toBe(
+      'repeat(3, minmax(0, 1fr))',
+    )
+    expect(screen.getByText('Fixed order · most impact first')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'How Get more from Vigil is calculated' }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Setup steps (B8)')
+
+    fireEvent.click(within(rows()[0]).getByRole('button', { name: 'Not now' }))
+    expect(rows().map((row) => row.querySelector('h3')?.textContent)).toEqual([
+      'Link detection rules',
+      'Pick a model per agent',
+    ])
+    expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '2'])
+  })
+
+  it('says there is nothing to suggest when no step is open', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    renderHome()
+    expect(await screen.findByText('Nothing to suggest right now.')).toBeInTheDocument()
+  })
+
+  it('first run puts the checklist under Needs your attention with no sub-line, Board clear or Get more', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+    await screen.findByText('Get Vigil ready')
+    const needs = screen.getByRole('region', { name: 'Needs your attention' })
+    expect(within(needs).getByText('No alerts yet')).toBeInTheDocument()
+    expect(within(needs).queryByText(/open · oldest first/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Get more from Vigil' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Nothing to suggest right now.')).not.toBeInTheDocument()
+  })
+
+  it('shows the kind chip for an approval and a checkpoint, and the case and reason in one line', async () => {
+    mockQueue([
+      item({ source_id: 'a', title: 'Block IP', kind: 'approval', reason: 'beacon', case_id: 'case-9' }),
+      item({ source_id: 'b', title: 'Declare incident', kind: 'checkpoint', reason: '', case_id: null }),
+    ])
+    renderHome()
+    const first = (await screen.findByRole('heading', { name: 'Block IP' })).closest('article') as HTMLElement
+    expect(within(first).getByText('Approval')).toBeInTheDocument()
+    expect(within(first).getByText('Case case-9 · beacon')).toHaveAttribute('title', 'Case case-9 · beacon')
+    const second = screen.getByRole('heading', { name: 'Declare incident' }).closest('article') as HTMLElement
+    expect(within(second).getByText('Checkpoint')).toBeInTheDocument()
+    expect(second.querySelector('.home-card-meta')).toBeNull()
+    expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+  })
+
+  it('the Needs sub-line says showing 4 only while more wait, and the +N tile expands the list', async () => {
+    const six = [
+      ...Array.from({ length: 4 }, (_, i) => item({ source_id: `a${i}`, title: `Card ${i}` })),
+      item({ source_id: 'r1', title: 'Rest 1', kind: 'approval' }),
+      item({ source_id: 'r2', title: 'Rest 2', kind: 'checkpoint' }),
+    ]
+    mockQueue(six.slice(0, 3))
+    const { unmount } = renderHome()
+    expect(await screen.findByText('3 open · oldest first')).toBeInTheDocument()
+    expect(screen.queryByLabelText('More waiting')).not.toBeInTheDocument()
+    unmount()
+
+    mockQueue(six)
+    renderHome()
+    expect(await screen.findByText('6 open · oldest first · showing 4')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Rest 1' })).not.toBeInTheDocument()
+    const tile = screen.getByLabelText('More waiting')
+    expect(within(tile).getByRole('heading', { name: '+2 more waiting' })).toBeInTheDocument()
+    expect(within(tile).getByText('Approval').nextSibling).toHaveTextContent('1')
+    expect(within(tile).getByText('Checkpoint').nextSibling).toHaveTextContent('1')
+
+    fireEvent.click(within(tile).getByRole('button', { name: 'Show all' }))
+    expect(screen.getByRole('heading', { name: 'Rest 1' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Rest 2' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('More waiting')).not.toBeInTheDocument()
+    expect(screen.getByText('6 open · oldest first')).toBeInTheDocument()
   })
 
   it('first run lists every step with done ones ticked and counts them from the response', async () => {
