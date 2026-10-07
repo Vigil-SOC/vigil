@@ -16,8 +16,8 @@ MICROSOFT_DEFENDER = register_descriptor(
             IntegrationField("client_id"),
             IntegrationField("client_secret", secret=True),
         ),
-        # Portal alert page: the ``alertWebUrl`` example in
-        # https://learn.microsoft.com/graph/api/resources/security-alert
+        # Portal alert page: the ``alertWebUrl`` in the example response at
+        # https://learn.microsoft.com/graph/api/security-alert-get
         # (https://security.microsoft.com/alerts/<id>?tid=<tenant>). The id is
         # the Defender alert id Vigil stores as ``external_id``. Public cloud
         # only; sovereign-cloud portal hosts are not supported.
