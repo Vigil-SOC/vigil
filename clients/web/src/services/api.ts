@@ -1339,6 +1339,7 @@ export interface OverviewFeedItem {
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
+  noise_marked: boolean
 }
 
 export interface OverviewPayload {
@@ -1358,6 +1359,8 @@ export interface OverviewPayload {
 
 export const overviewApi = {
   get: () => api.get<OverviewPayload>('/overview'),
+  alert: (findingId: string) =>
+    api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
 export interface TriageRow {
