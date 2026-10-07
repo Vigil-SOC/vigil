@@ -1,5 +1,5 @@
 /* Technique isn't in the range payload, so `tech` is left blank. */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { timelineApi } from '../../services/api'
 import type { TimelineEvent, TimelineKind } from './attackData'
 import type { Phase } from '../cases/useCases'
@@ -22,6 +22,8 @@ export function useTimeline(start?: string, end?: string, enabled = true) {
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
   useEffect(() => {
     let cancelled = false
@@ -64,7 +66,7 @@ export function useTimeline(start?: string, end?: string, enabled = true) {
     return () => {
       cancelled = true
     }
-  }, [start, end, enabled])
+  }, [start, end, enabled, reloadKey])
 
-  return { events, phase, error }
+  return { events, phase, error, reload }
 }

@@ -791,6 +791,18 @@ describe('SocConsole', () => {
       expect(range).toHaveBeenLastCalledWith({ limit: 200, start: undefined, end: undefined })
     })
 
+    it('offers Retry when a reload fails instead of leaving the timeline blank', async () => {
+      await openTimeline()
+      range.mockRejectedValueOnce(new Error('boom'))
+      setDate('Timeline start date', '2026-06-10')
+
+      expect(await screen.findByText('Couldn’t load the timeline')).toBeInTheDocument()
+      expect(screen.getByText('Couldn’t load')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      expect(await screen.findByText('2 events')).toBeInTheDocument()
+    })
+
     it('flags an inverted range and sends no request for it', async () => {
       await openTimeline()
       setDate('Timeline start date', '2026-06-13')

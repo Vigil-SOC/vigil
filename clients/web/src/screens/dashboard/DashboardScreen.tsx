@@ -651,7 +651,7 @@ function TimelineTab() {
   const dateEnd = calendarDayIso(dateTo, true)
   const validDateRange = !dateFrom || !dateTo || dateFrom <= dateTo
   const hasDateFilter = Boolean(dateFrom || dateTo)
-  const { events: tlEvents, phase: tlPhase } = useTimeline(dateStart, dateEnd, validDateRange)
+  const { events: tlEvents, phase: tlPhase, error: tlError, reload: reloadTimeline } = useTimeline(dateStart, dateEnd, validDateRange)
   const events = useMemo(() => tlEvents.filter((e) => filter === 'all' || e.kind === 'finding'), [tlEvents, filter])
   const eventCountLabel = `${events.length} event${events.length === 1 ? '' : 's'}`
   const layout = useMemo(() => computeLayout(events, zoom, containerW), [events, zoom, containerW])
@@ -803,7 +803,7 @@ function TimelineTab() {
           <button className={filter === 'all' ? 'active' : ''} onClick={() => changeFilter('all')}>All</button>
           <button className={filter === 'finding' ? 'active' : ''} onClick={() => changeFilter('finding')}>finding</button>
         </div>
-        <span className="tl-count">{tlPhase === 'loading' ? 'Loading…' : eventCountLabel}</span>
+        <span className="tl-count">{tlPhase === 'loading' ? 'Loading…' : tlPhase === 'error' ? 'Couldn’t load' : eventCountLabel}</span>
         <div className="tl-date-filter" role="group" aria-label="Timeline date range">
           <span className="tl-date-filter-title">Date range</span>
           <label className="tl-date-field">
@@ -850,6 +850,9 @@ function TimelineTab() {
         <button className="tl-iconbtn" title="Export visible events (CSV)" onClick={exportCsv}><Icon name="download" /></button>
       </div>
       <div className="tl-hint">Drag anywhere to scrub · click a bar to investigate · scroll to pan</div>
+      {tlPhase === 'error' && (
+        <EmptyState error icon="alert" title="Couldn’t load the timeline" body={tlError} primary={{ label: 'Retry', onClick: () => { resetTimelineState(); reloadTimeline() }, icon: 'refresh' }} />
+      )}
       {tlPhase === 'ready' && events.length === 0 && (
         <EmptyState
           icon="clock"
