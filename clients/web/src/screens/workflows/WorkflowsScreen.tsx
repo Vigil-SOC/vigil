@@ -352,7 +352,7 @@ function WatchButton({ wf, className = 'btn ghost' }: { wf: Workflow; className?
 
 const INPUT_CLS = 'w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line'
 
-function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxLength, list, rows = 3 }: {
+function Field({ label, value, onChange, placeholder, textarea, mono, hint, rows = 3 }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -360,8 +360,6 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
   textarea?: boolean
   mono?: boolean
   hint?: string
-  maxLength?: number
-  list?: string
   rows?: number
 }) {
   const cls = `${INPUT_CLS}${mono ? ' font-mono' : ''}`
@@ -372,7 +370,7 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
         // resize-y + max-w-full: grow vertically only, never wider than the modal
         <textarea className={`${cls} resize-y max-w-full`} rows={rows} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       ) : (
-        <input className={cls} value={value} placeholder={placeholder} maxLength={maxLength} list={list} onChange={(e) => onChange(e.target.value)} />
+        <input className={cls} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       )}
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
     </label>

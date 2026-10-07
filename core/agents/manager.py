@@ -179,7 +179,9 @@ class AgentManager:
                     "component_category": a.component_category,
                     "skills": library if READ_SKILL_TOOL in a.recommended_tools else 0,
                     "changes": changes_for_tools(a.recommended_tools),
-                    "tool_changes": {t: changes_for_tool(t) for t in a.recommended_tools},
+                    "tool_changes": {
+                        t: changes_for_tool(t) for t in a.recommended_tools
+                    },
                     **run,
                     "enabled": a.id not in disabled,
                 }

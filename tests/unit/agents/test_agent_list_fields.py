@@ -232,7 +232,9 @@ def test_runs_success_and_level_from_phases_and_chats(throwaway_database, monkey
 
 
 def test_tool_changes_marks_each_tool_an_agent_holds(agents):
-    row = agents(custom("custom-mix", ["create_case", "create_approval_action", "isolate_host"]))["custom-mix"]
+    row = agents(
+        custom("custom-mix", ["create_case", "create_approval_action", "isolate_host"])
+    )["custom-mix"]
     assert row["tool_changes"] == {
         "create_case": "read_only",
         "create_approval_action": "asks_first",

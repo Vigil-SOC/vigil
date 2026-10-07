@@ -11,7 +11,12 @@ def registry(*names):
 
 def test_changes_marks_connected_and_built_in_tools():
     body = list_available_tools(
-        registry("splunk_search", "crowdstrike_isolate_host", "splunk_get_events", "create_approval_action")
+        registry(
+            "splunk_search",
+            "crowdstrike_isolate_host",
+            "splunk_get_events",
+            "create_approval_action",
+        )
     )
     assert "splunk_search" in body["tools"]
     changes = body["changes"]

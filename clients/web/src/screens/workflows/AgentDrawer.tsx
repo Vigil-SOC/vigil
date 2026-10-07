@@ -137,7 +137,7 @@ export function AgentDrawer({
           specialization: a.specialization || '',
           description: a.description || '',
           icon: a.icon || '',
-          color: a.color || BLANK_FORM.color,
+          color: a.color || '', // a stored null stays null
           role: a.role || '',
           extra_principles: a.extra_principles || '',
           methodology: a.methodology || '',
