@@ -87,7 +87,7 @@ describe('SummaryStep', () => {
       ['Change Data', 'data'],
       ['Change AI', 'ai'],
       ['Change Workflows', 'workflows'],
-      ['Change On their own', 'limits'],
+      ['Change On their own', 'workflows'],
       ['Change Limits', 'limits'],
     ]) {
       fireEvent.click(screen.getByRole('button', { name }))

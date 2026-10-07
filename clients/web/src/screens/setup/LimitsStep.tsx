@@ -40,11 +40,6 @@ const PROFILE_FIELDS: {
 
 type LoadPhase = 'loading' | 'ready' | 'error'
 
-interface Approval {
-  enabled: boolean
-  environment_wins: boolean
-}
-
 export default function LimitsStep() {
   const [profiles, setProfiles] = useState<InvestigationProfiles>({})
   // The one current copy of the stored config; every save writes the whole of it.
@@ -52,9 +47,6 @@ export default function LimitsStep() {
   const [pendingLimits, setPendingLimits] = useState<OrchestratorConfig | null>(null)
   const [savingLimits, setSavingLimits] = useState(false)
   const [profilesPhase, setProfilesPhase] = useState<LoadPhase>('loading')
-  const [approval, setApproval] = useState<Approval>({ enabled: false, environment_wins: false })
-  const [approvalPhase, setApprovalPhase] = useState<LoadPhase>('loading')
-  const [confirmAct, setConfirmAct] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -70,20 +62,6 @@ export default function LimitsStep() {
       })
       .catch(() => {
         if (live) setProfilesPhase('error')
-      })
-    configApi
-      .getForceManualApproval()
-      .then(({ data }) => {
-        if (!live) return
-        const row = data as Partial<Approval>
-        setApproval({
-          enabled: Boolean(row.enabled),
-          environment_wins: Boolean(row.environment_wins),
-        })
-        setApprovalPhase('ready')
-      })
-      .catch(() => {
-        if (live) setApprovalPhase('error')
       })
     return () => {
       live = false
@@ -109,39 +87,10 @@ export default function LimitsStep() {
     else saveLimits(next)
   }
 
-  const saveApproval = async (enabled: boolean) => {
-    setError(null)
-    try {
-      const { data } = await configApi.setForceManualApproval(enabled)
-      const row = data as Partial<Approval>
-      setApproval({
-        enabled: Boolean(row.enabled),
-        environment_wins: Boolean(row.environment_wins),
-      })
-    } catch (err) {
-      setError(errorText(err, 'Could not save the response mode.'))
-    }
-  }
-
-  const selectAssist = () => {
-    if (approval.enabled) return
-    saveApproval(true)
-  }
-
-  const selectAct = () => {
-    if (approval.environment_wins) {
-      saveApproval(false)
-      return
-    }
-    if (!approval.enabled) return
-    setConfirmAct(true)
-  }
-
-  if (profilesPhase === 'loading' || approvalPhase === 'loading') {
+  if (profilesPhase === 'loading') {
     return <p className="text-tx-3 text-sm">Loading limits…</p>
   }
 
-  const actOn = approvalPhase === 'ready' && !approval.enabled
   const entries = Object.entries(profiles)
   const activeKey = entries.find(([, profile]) => matchesProfile(config, profile.values))?.[0] ?? null
   // Custom shows the saved values, since no profile describes them
@@ -189,41 +138,7 @@ export default function LimitsStep() {
         </div>
       )}
 
-      {approvalPhase === 'error' ? (
-        <p className="text-sm text-high">Could not read the response mode.</p>
-      ) : (
-        <>
-          {approval.environment_wins && (
-            <div className="settings-banner info">
-              <Icon name="info" size={14} />
-              <span>The environment wins. Act cannot be saved.</span>
-            </div>
-          )}
-          {error && <p className="text-sm text-high">{error}</p>}
-          <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))' }}>
-            <button
-              type="button"
-              aria-pressed={!actOn}
-              onClick={selectAssist}
-              className={`card card-sq text-left p-3.5 ${actOn ? '' : 'border-accent-line bg-[var(--accent-dim)]'}`}
-            >
-              <div className="text-[13px] font-semibold text-tx">Assist</div>
-              <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={actOn}
-              onClick={selectAct}
-              className={`card card-sq text-left p-3.5 ${actOn ? 'border-accent-line bg-[var(--accent-dim)]' : ''}`}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-tx">
-                Act <span className="chip">Recommended</span>
-              </div>
-              <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
-            </button>
-          </div>
-        </>
-      )}
+      {error && <p className="text-sm text-high">{error}</p>}
 
       <ConfirmDialog
         open={pendingLimits !== null}
@@ -237,18 +152,6 @@ export default function LimitsStep() {
           if (next) saveLimits(next)
         }}
         onClose={() => setPendingLimits(null)}
-      />
-      <ConfirmDialog
-        open={confirmAct}
-        title="Switch to Act?"
-        body="Act stops forcing manual approval, so autonomous response can proceed on its own."
-        confirmLabel="Save"
-        danger={false}
-        onConfirm={() => {
-          setConfirmAct(false)
-          saveApproval(false)
-        }}
-        onClose={() => setConfirmAct(false)}
       />
     </div>
   )

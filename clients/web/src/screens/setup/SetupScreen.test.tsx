@@ -264,8 +264,15 @@ describe('SetupScreen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Change On their own' }))
     expect(await screen.findByRole('button', { name: /Assist/ })).toBeInTheDocument()
+    expect(screen.getByText('Step 4 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
+    expect(await screen.findByText('Default case limits')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Assist/ })).not.toBeInTheDocument()
     expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
   })
 

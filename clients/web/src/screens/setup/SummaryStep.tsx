@@ -10,7 +10,7 @@ const ROWS: { key: string; label: string; target: SummaryTarget }[] = [
   { key: 'data', label: 'Data', target: 'data' },
   { key: 'ai', label: 'AI', target: 'ai' },
   { key: 'workflows', label: 'Workflows', target: 'workflows' },
-  { key: 'autonomy', label: 'On their own', target: 'limits' },
+  { key: 'autonomy', label: 'On their own', target: 'workflows' },
   { key: 'limits', label: 'Limits', target: 'limits' },
 ]
 

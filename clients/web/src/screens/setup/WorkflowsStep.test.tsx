@@ -1,17 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import WorkflowsStep from './WorkflowsStep'
 import { configApi, workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   workflowApi: { listAll: vi.fn(), setEnabled: vi.fn() },
-  configApi: { getOrchestrator: vi.fn(), setOrchestrator: vi.fn() },
+  configApi: {
+    getOrchestrator: vi.fn(),
+    setOrchestrator: vi.fn(),
+    getForceManualApproval: vi.fn(),
+    setForceManualApproval: vi.fn(),
+  },
 }))
 
+const renderStep = () =>
+  render(
+    <MemoryRouter>
+      <WorkflowsStep />
+    </MemoryRouter>,
+  )
+
 const workflows = [
-  { id: 'triage', name: 'Alert triage', description: 'Every alert', enabled: true, can_disable: false },
-  { id: 'phish', name: 'Phishing triage', description: 'Mail alerts', enabled: true, can_disable: true },
-  { id: 'hunt', name: 'Hypothesis hunt', description: '', enabled: false, can_disable: true },
+  { id: 'triage', name: 'Alert triage', description: 'Every alert', enabled: true, can_disable: false, triggers: ['alerts'] },
+  { id: 'phish', name: 'Phishing triage', description: 'Mail alerts', enabled: true, can_disable: true, triggers: [] },
+  { id: 'hunt', name: 'Hypothesis hunt', description: '', enabled: false, can_disable: true, triggers: ['schedule'] },
+  { id: 'old', name: 'Legacy flow', description: '', enabled: true, can_disable: true },
 ]
 
 const orchestrator = {
@@ -29,10 +43,16 @@ describe('WorkflowsStep', () => {
     vi.mocked(workflowApi.setEnabled).mockResolvedValue({ data: {} } as never)
     vi.mocked(configApi.getOrchestrator).mockResolvedValue({ data: orchestrator } as never)
     vi.mocked(configApi.setOrchestrator).mockResolvedValue({ data: {} } as never)
+    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
+      data: { enabled: false, environment_wins: false },
+    } as never)
+    vi.mocked(configApi.setForceManualApproval).mockImplementation(async (enabled: boolean) => ({
+      data: { enabled, environment_wins: false },
+    }) as never)
   })
 
   it('shows a loading line, then a switch per workflow bound to enabled', async () => {
-    render(<WorkflowsStep />)
+    renderStep()
     expect(screen.getByText('Loading workflows…')).toBeInTheDocument()
     expect(await screen.findByRole('switch', { name: 'Phishing triage' })).toBeChecked()
     expect(screen.getByRole('switch', { name: 'Hypothesis hunt' })).not.toBeChecked()
@@ -40,12 +60,12 @@ describe('WorkflowsStep', () => {
 
   it('says when the list cannot be read', async () => {
     vi.mocked(workflowApi.listAll).mockRejectedValue(new Error('down'))
-    render(<WorkflowsStep />)
+    renderStep()
     expect(await screen.findByText('Could not read workflows.')).toBeInTheDocument()
   })
 
   it('saves a switch flip', async () => {
-    render(<WorkflowsStep />)
+    renderStep()
     const hunt = await screen.findByRole('switch', { name: 'Hypothesis hunt' })
     await act(async () => {
       fireEvent.click(hunt)
@@ -58,7 +78,7 @@ describe('WorkflowsStep', () => {
     vi.mocked(workflowApi.setEnabled).mockRejectedValue({
       response: { data: { detail: 'Nope, in use.' } },
     })
-    render(<WorkflowsStep />)
+    renderStep()
     const target = await screen.findByRole('switch', { name: 'Phishing triage' })
     await act(async () => {
       fireEvent.click(target)
@@ -67,17 +87,36 @@ describe('WorkflowsStep', () => {
     expect(screen.getByRole('switch', { name: 'Phishing triage' })).toBeChecked()
   })
 
-  it('renders a locked workflow on and disabled, with its note', async () => {
-    render(<WorkflowsStep />)
-    const locked = await screen.findByRole('switch', { name: 'Alert triage' })
-    expect(locked).toBeChecked()
-    expect(locked).toBeDisabled()
+  it('shows when each workflow runs, and nothing for an older backend', async () => {
+    renderStep()
+    await screen.findByRole('switch', { name: 'Phishing triage' })
+    const when = (name: string) => screen.getByText(name).closest('[role=row]') as HTMLElement
+    expect(when('Alert triage')).toHaveTextContent('On alerts')
+    expect(when('Phishing triage')).toHaveTextContent('Started by hand')
+    expect(when('Hypothesis hunt')).toHaveTextContent('On a schedule')
+    expect(when('Legacy flow')).not.toHaveTextContent(/On alerts|Started by hand|On a schedule/)
+    expect(within(when('Alert triage')).getByText('triage')).toBeInTheDocument()
+  })
+
+  it('renders a locked workflow as Always on with no switch, keeping its note', async () => {
+    renderStep()
+    await screen.findByRole('switch', { name: 'Phishing triage' })
+    expect(screen.queryByRole('switch', { name: 'Alert triage' })).not.toBeInTheDocument()
+    expect(screen.getByText('Always on')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /always on/ }))
     expect(screen.getByText('Where alerts land when nothing else fits')).toBeInTheDocument()
   })
 
+  it('links to the console workflows screen', async () => {
+    renderStep()
+    expect(await screen.findByRole('link', { name: /See how an investigation runs/ })).toHaveAttribute(
+      'href',
+      '/workflows',
+    )
+  })
+
   it('saves the automatic-investigation switch on the fresh config, without profiles', async () => {
-    render(<WorkflowsStep />)
+    renderStep()
     const auto = await screen.findByRole('switch', { name: 'Investigate new alerts automatically' })
     expect(auto).not.toBeChecked()
     // Another tab changes a limit after this step opened
@@ -95,7 +134,7 @@ describe('WorkflowsStep', () => {
 
   it('reverts the automatic-investigation switch when saving fails', async () => {
     vi.mocked(configApi.setOrchestrator).mockRejectedValue(new Error('500'))
-    render(<WorkflowsStep />)
+    renderStep()
     const target = await screen.findByRole('switch', { name: 'Investigate new alerts automatically' })
     await act(async () => {
       fireEvent.click(target)
@@ -104,5 +143,54 @@ describe('WorkflowsStep', () => {
       await screen.findByText('Could not save the automatic investigation setting.'),
     ).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Investigate new alerts automatically' })).not.toBeChecked()
+  })
+
+  it('saves Assist immediately and Act only after confirm', async () => {
+    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
+      data: { enabled: true, environment_wins: false },
+    } as never)
+    renderStep()
+    const assist = await screen.findByRole('button', { name: /Assist/ })
+    expect(assist).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: /Act/ }))
+    expect(configApi.setForceManualApproval).not.toHaveBeenCalled()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(false)
+    expect(configApi.setOrchestrator).not.toHaveBeenCalled()
+
+    vi.mocked(configApi.setForceManualApproval).mockClear()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Assist/ }))
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(true)
+  })
+
+  it('says the environment wins and leaves Act unsaved on 409', async () => {
+    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
+      data: { enabled: true, environment_wins: true },
+    } as never)
+    vi.mocked(configApi.setForceManualApproval).mockRejectedValue({
+      response: { data: { detail: 'The environment wins; Act was not saved.' } },
+    })
+    renderStep()
+    expect(await screen.findByText(/The environment wins\. Act cannot be saved/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: /Act/ }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(false)
+    expect(await screen.findByText('The environment wins; Act was not saved.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(configApi.setOrchestrator).not.toHaveBeenCalled()
+  })
+
+  it('says so when the response mode cannot be read, leaving the workflows usable', async () => {
+    vi.mocked(configApi.getForceManualApproval).mockRejectedValue(new Error('down'))
+    renderStep()
+    expect(await screen.findByText('Could not read the response mode.')).toBeInTheDocument()
+    expect(await screen.findByRole('switch', { name: 'Phishing triage' })).toBeInTheDocument()
   })
 })
