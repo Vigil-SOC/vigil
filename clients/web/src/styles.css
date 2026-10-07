@@ -4714,6 +4714,71 @@
       color: var(--tx2);
    }
 
+   /* setup drawer: reuses the vg-skill-drawer shell; board SettingsIntegrations.dc.html */
+   .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
+   .int-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.2px; color: var(--tx0); }
+   .int-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+   .int-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      height: 40px;
+      padding: 0 10px;
+      background: var(--bg1);
+      border: 1px solid var(--ln1);
+      border-radius: 10px;
+      color: var(--tx1);
+      font-size: 12px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+   }
+   .int-step > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+   .int-step[aria-selected="true"] { background: var(--ac-bg); border-color: var(--ac); color: var(--tx0); }
+   .int-step:disabled { opacity: .5; cursor: default; }
+   .int-step-n {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 1px solid var(--ln1);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx2);
+   }
+   .int-step[aria-selected="true"] .int-step-n { background: var(--ac); border-color: var(--ac); color: var(--ac-tx); }
+   .int-step.done .int-step-n { color: var(--good); border-color: var(--good-ln); background: var(--good-bg); }
+   .int-probe {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg2);
+      border-radius: 10px;
+      font-size: 12.5px;
+      color: var(--tx1);
+   }
+   .int-probe-name { flex-shrink: 0; font-family: var(--font-mono); color: var(--tx0); }
+   .int-probe-ic { flex-shrink: 0; display: inline-flex; padding-top: 1px; }
+   .int-probe-detail { margin-left: auto; text-align: right; color: var(--poor); min-width: 0; overflow-wrap: anywhere; }
+   .int-probe.pass .int-probe-ic { color: var(--good); }
+   .int-probe.fail .int-probe-ic { color: var(--poor); }
+   .int-sec {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border: 1px solid var(--ln0);
+      border-radius: 12px;
+   }
+   .int-sec-h { font-size: 13px; font-weight: 700; color: var(--tx0); }
+   .int-sec-row { display: flex; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--tx1); }
+   .int-sec-row svg { flex-shrink: 0; margin-top: 2px; color: var(--good); }
+
    .int-neutral { font-size: 12px; font-weight: 650; color: var(--tx2); }
    .int-time { white-space: nowrap; }
    .int-note.poor { color: var(--poor); }

@@ -318,6 +318,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           integration={wizardFor}
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
           secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
+          lastTest={intCfg.last_test[wizardFor.id]}
+          category={categoryOf(rows.find((r) => r.integration?.id === wizardFor.id)?.name ?? '')}
+          onTested={reloadInt}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)
