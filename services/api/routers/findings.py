@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.api.v1.findings_router import FindingUpdate
+from core.auth.permissions import permission_gate
 from core.config import vigil_path
 from core.findings.enrichment import (
     FindingNotFound,
@@ -26,6 +27,7 @@ from core.findings.enrichment import (
     enrich,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Finding, User
 from core.time import utcnow
@@ -187,10 +189,22 @@ async def get_or_generate_enrichment(
     return {"finding_id": finding_id, "cached": False, "enrichment": enrichment}
 
 
-@router.delete("/all")
-def clear_all_findings(session: UnitOfWorkSession):
+@router.delete("/all", dependencies=[permission_gate("findings.delete")])
+def clear_all_findings(
+    session: UnitOfWorkSession,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
     """Delete all findings from the database."""
     count = session.query(Finding).count()
+    # The wipe cascades to the AI decision log, so name who did it first.
+    get_config_service(user_id=str(current_user.user_id)).record_audit(
+        config_type="findings",
+        config_key="findings",
+        action="delete_all",
+        old_value={"count": count},
+        new_value=None,
+        change_reason="All findings deleted via API",
+    )
     session.query(Finding).delete()
 
     logger.info(f"Cleared {count} findings")
