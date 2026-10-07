@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
@@ -232,8 +232,9 @@ function SocConsoleInner() {
     prepareStop(tourIndex)
   }, [tourOn, tourIndex, prepareStop, wallMode, chatOpen, viewFull])
 
-  // screens that deep-link a detail re-assert viewFull from their own URL state
-  useEffect(() => {
+  // screens that deep-link a detail re-assert viewFull from their own URL state; a layout effect,
+  // so it runs before the new screen's own effects instead of undoing them on first mount
+  useLayoutEffect(() => {
     setViewFull(false)
     setWallMode(false)
   }, [current])
@@ -505,7 +506,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} chatOpen={chatOpen} />
                 )}
               </ErrorBoundary>
             </div>

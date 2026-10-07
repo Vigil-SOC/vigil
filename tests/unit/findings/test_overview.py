@@ -414,6 +414,7 @@ def test_rate_includes_deleted_rows_and_phase_falls_back():
     assert idle["running"] == 0
     assert idle["current_step"] is None
     assert by_id["ov-phase"]["current_step"] == "contain"
+    assert payload["feed_limit"] == FEED_LIMIT
     assert "budget" in payload["rate_info"]
     assert "completed" in payload["rate_info"]
 

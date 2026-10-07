@@ -31,4 +31,6 @@ export interface ConsoleScreenProps {
   setViewFull: (full: boolean) => void
   /** Overview's wall mode. Hides the nav row and the top bar. */
   setWallMode?: (wall: boolean) => void
+  /** The chat dock is open. Overview hides its alert rail then. */
+  chatOpen?: boolean
 }
