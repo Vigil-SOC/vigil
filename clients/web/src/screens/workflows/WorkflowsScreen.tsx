@@ -495,17 +495,20 @@ function turnsHint(asked: string, cost: string, limits: WfLimits | null): string
   return `${turns} turn(s): each is a lead decision, the workers it dispatches and the pass that argues against them.${where}`
 }
 
-/** What the hunt will not be able to look at, said before the run costs anything.
+/** What the run will not be able to look at, said before it costs anything.
  *  The same fact reaches the journal only once the run is over. */
-function Blindness({ unbound }: { unbound: string[] }) {
+function Blindness({ unbound, investigation = false }: { unbound: string[]; investigation?: boolean }) {
   if (unbound.length === 0) return null
   const blind = unbound.includes('telemetry_search')
+  const noun = investigation ? 'investigation' : 'hunt'
   return (
     <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>
       No tool here answers {unbound.join(', ')}.{' '}
       {blind
-        ? 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
-        : 'The roles that need it will run without it, and the hunt will record the gap.'}
+        ? investigation
+          ? 'Without telemetry_search the investigation can read findings and indicators but not the SIEM, and will record the gap.'
+          : 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
+        : `The roles that need it will run without it, and the ${noun} will record the gap.`}
     </div>
   )
 }
@@ -870,6 +873,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   // the ceilings and the unbound-tool warning. Everything else, root-cause included,
   // gets the finding, case, and context dialog.
   const isHuntLike = wf.huntLike
+  const isInvestigate = wf.runKind === 'investigate'
   const turns = Number(iterations)
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)
   const cost = Number(maxCost)
@@ -942,7 +946,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
         {isHuntLike && <Unpriced pricing={limits?.pricing} />}
-        {isHuntLike && <Blindness unbound={limits?.capabilities?.unbound ?? []} />}
+        {(isHuntLike || isInvestigate) && (
+          <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
+        )}
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />

@@ -90,6 +90,15 @@ describe('what the hunt will not be able to see', () => {
     expect(await screen.findByText(/a fact about this deployment, not about your estate/)).toBeInTheDocument()
   })
 
+  it('warns an investigation in its own words, with no hunt-only fields', async () => {
+    preflight.mockResolvedValueOnce({ data: { capabilities: { bound: ['findings_search'], unbound: ['telemetry_search'] } } })
+    open('investigate')
+
+    expect(await screen.findByText(/the investigation can read findings and indicators but not the SIEM/)).toBeInTheDocument()
+    expect(screen.queryByText(/the hunt/)).toBeNull()
+    expect(screen.queryByLabelText(/Iterations/)).toBeNull()
+  })
+
   it('says nothing at all when every capability bound', async () => {
     preflight.mockResolvedValueOnce(limits([]))
     open()
