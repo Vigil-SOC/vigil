@@ -4,10 +4,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import CommandBar from './CommandBar'
 import CaseDrawer from './CaseDrawer'
+import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 
-const { execute, getCase, getFinding, getIntegrations, apiGet } = vi.hoisted(() => ({
+const { execute, createCase, deleteCase, getCase, getFinding, getIntegrations, apiGet } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
+  createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
+  deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   getCase: vi.fn(),
   getFinding: vi.fn(),
   getIntegrations: vi.fn(),
@@ -31,6 +34,8 @@ vi.mock('../services/api', () => ({
         ],
       },
     }),
+    create: (data: unknown) => createCase(data),
+    delete: (id: string) => deleteCase(id),
     getSLA: () => Promise.resolve({ data: {} }),
     getRecord: () => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } }),
     getComments: () => Promise.resolve({ data: { comments: [] } }),
@@ -114,6 +119,9 @@ beforeEach(() => {
   localStorage.clear()
   execute.mockClear()
   execute.mockResolvedValue({ data: {} })
+  createCase.mockClear()
+  deleteCase.mockClear()
+  createCase.mockResolvedValue({ data: { case_id: 'case-new' } })
   getIntegrations.mockResolvedValue({ data: { enabled_integrations: [], integrations: {}, secrets_set: {} } })
   getCase.mockImplementation((id: string) => {
     if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', finding_ids: [] } })
@@ -242,12 +250,6 @@ describe('CommandBar', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
     await waitFor(() => expect(execute).toHaveBeenCalledWith('incident-response', { context: 'not a finding' }))
 
-    execute.mockClear()
-    fireEvent.change(input, { target: { value: '/hunt rare beacon' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
-    await waitFor(() => expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'rare beacon' }))
-
     fireEvent.change(input, { target: { value: '/ask where did it go' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
@@ -297,5 +299,71 @@ describe('CommandBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
     expect(screen.getByTestId('where')).toHaveTextContent('/cases?case=case-9')
     expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
+  })
+
+  describe('/hunt', () => {
+    const HYPOTHESIS = 'a service account key was used from a new network and then read customer exports'
+
+    function renderHunt() {
+      const onOpenCase = vi.fn()
+      render(
+        <ToastProvider>
+          <CommandBar boards={BOARDS} onOpenChat={vi.fn()} onOpenCase={onOpenCase} onGo={vi.fn()} />
+        </ToastProvider>,
+      )
+      return { onOpenCase, input: screen.getByRole('combobox') as HTMLInputElement }
+    }
+
+    async function runHunt(input: HTMLInputElement, text: string) {
+      fireEvent.change(input, { target: { value: `/hunt ${text}` } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    }
+
+    it('opens a case with a short title, runs the hunt on it, and clears the bar', async () => {
+      const { onOpenCase, input } = renderHunt()
+      await runHunt(input, HYPOTHESIS)
+      await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-new'))
+      expect(createCase).toHaveBeenCalledWith({
+        title: 'a service account key was used from a new network and then',
+        description: HYPOTHESIS,
+        finding_ids: [],
+        priority: 'medium',
+        status: 'open',
+      })
+      expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: HYPOTHESIS, case_id: 'case-new' })
+      expect(createCase.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[0])
+      expect(input.value).toBe('')
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+      expect(await screen.findByText(/Hunt started on case "a service account key/)).toBeInTheDocument()
+      expect(deleteCase).not.toHaveBeenCalled()
+    })
+
+    it('removes the case when the server refuses the hunt, and leaves the preview open', async () => {
+      execute.mockRejectedValue({ response: { data: { detail: 'Workflow threat-hunt is disabled' } } })
+      const { onOpenCase, input } = renderHunt()
+      await runHunt(input, 'credential access')
+      expect(await screen.findByText('Workflow threat-hunt is disabled')).toBeInTheDocument()
+      expect(deleteCase).toHaveBeenCalledWith('case-new')
+      expect(onOpenCase).not.toHaveBeenCalled()
+      expect(input.value).toBe('/hunt credential access')
+      expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
+    })
+
+    it('keeps the case when the request got no answer, since the run may be queued', async () => {
+      execute.mockRejectedValue(new Error('timeout of 120000ms exceeded'))
+      const { input } = renderHunt()
+      await runHunt(input, 'credential access')
+      expect(await screen.findByText('timeout of 120000ms exceeded')).toBeInTheDocument()
+      expect(deleteCase).not.toHaveBeenCalled()
+    })
+
+    it('starts no run when the case cannot be created', async () => {
+      createCase.mockRejectedValue({ response: { data: { detail: 'Failed to create case' } } })
+      const { input } = renderHunt()
+      await runHunt(input, HYPOTHESIS)
+      expect(await screen.findByText('Failed to create case')).toBeInTheDocument()
+      expect(execute).not.toHaveBeenCalled()
+    })
   })
 })

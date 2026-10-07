@@ -94,6 +94,9 @@ def test_get_case_links_rows_that_exist_and_skips_a_missing_id(monkeypatch):
         "list_case_investigations",
         lambda session, case_id: [],
     )
+    monkeypatch.setattr(
+        cases.case_records_service, "list_case_runs", lambda session, case_id: []
+    )
     session = MagicMock()
     session.get.return_value = None
 

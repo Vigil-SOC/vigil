@@ -8,6 +8,7 @@ import {
   commandPreview,
   commandRemainder,
   firstEnabled,
+  huntTitle,
   isLiveCommand,
   jiraReadiness,
   moveEnabled,
@@ -91,6 +92,7 @@ export default function CommandBar({
   const [hits, setHits] = useState<SearchHits | null>(null)
   const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
   const [preview, setPreview] = useState<{ id: LiveCommandId; arg: string } | null>(null)
+  const [running, setRunning] = useState(false)
 
   useEffect(() => {
     if (userId) setRecents(readRecents(userId))
@@ -200,6 +202,7 @@ export default function CommandBar({
     const arg = preview.arg.trim()
     // The workflow this command starts, from the command table.
     const workflowId = COMMANDS.find((c) => c.id === preview.id)?.workflowId ?? ''
+    setRunning(true)
     try {
       switch (preview.id) {
         case 'investigate': {
@@ -213,9 +216,33 @@ export default function CommandBar({
           await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
           break
         }
-        case 'hunt':
-          await workflowApi.execute(workflowId, { hypothesis: arg })
+        case 'hunt': {
+          // The run goes on a case of its own, so the drawer has something to open on.
+          const title = huntTitle(arg)
+          const created = await casesApi.create({
+            title,
+            description: arg,
+            finding_ids: [],
+            priority: 'medium',
+            status: 'open',
+          })
+          const caseId = created.data.case_id
+          if (!caseId) throw new Error('The case was created without an id')
+          try {
+            await workflowApi.execute(workflowId, { hypothesis: arg, case_id: caseId })
+          } catch (error) {
+            // A refusal (disabled workflow, not a claim) leaves no case behind. With
+            // no response the run may have been queued, and its case stays.
+            if ((error as { response?: unknown })?.response) {
+              await casesApi.delete(caseId).catch(() => undefined)
+            }
+            throw error
+          }
+          onOpenCase(caseId)
+          setQuery('')
+          notify('ok', `Hunt started on case "${title}"`)
           break
+        }
         case 'replay':
           onOpenCase(arg)
           break
@@ -242,6 +269,8 @@ export default function CommandBar({
       setPreview(null)
     } catch (error) {
       notify('err', errorText(error, 'Command failed'))
+    } finally {
+      setRunning(false)
     }
   }, [jira, notify, onOpenCase, onOpenChat, preview])
 
@@ -331,7 +360,7 @@ export default function CommandBar({
                 ref={runRef}
                 type="button"
                 className="btn primary"
-                disabled={previewView.disabled}
+                disabled={previewView.disabled || running}
                 onClick={() => void run()}
               >
                 Run
