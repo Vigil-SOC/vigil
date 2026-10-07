@@ -10,7 +10,8 @@ unpatched sweep reaches Postgres for real, and this is a no-service unit test --
 it passes on a developer's machine with a dev database up and fails in CI.
 """
 
-from unittest.mock import patch
+import logging
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -67,9 +68,26 @@ async def test_cleanup_reports_zero_when_nothing_is_stale():
         result = await scheduler._run_cleanup()
 
     assert result["approvals_expired"] == 0
-    # The data-retention half is still only logged; the cutoff it reports must
-    # not quietly disappear when the approval sweep is added alongside it.
     assert "cutoff_date" in result
+
+
+@pytest.mark.asyncio
+async def test_cleanup_leaves_findings_and_events_alone(caplog):
+    # Findings and processed events are deliberately never pruned, and the log
+    # must not claim otherwise.
+    scheduler = TaskScheduler(SchedulerConfig())
+    scheduler._data_service = MagicMock()
+
+    with (
+        patch("core.response.checkpoints.expire_stale", return_value=1),
+        patch("core.memory.recall.expire_read_log", return_value=4),
+        caplog.at_level(logging.INFO, logger="services.daemon.scheduler"),
+    ):
+        await scheduler._run_cleanup()
+
+    assert scheduler._data_service.mock_calls == []
+    assert "would remove" not in caplog.text
+    assert "1 approvals expired, 4 read log rows removed" in caplog.text
 
 
 def test_the_expiry_window_is_wired_from_settings(monkeypatch):

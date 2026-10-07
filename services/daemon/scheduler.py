@@ -370,8 +370,8 @@ class TaskScheduler:
         # Calculate cutoff date
         cutoff = utcnow() - timedelta(days=self.config.cleanup_retention_days)
 
-        # Findings/processed events are still only logged, not deleted.
-        logger.info(f"Cleanup would remove data older than {cutoff.isoformat()}")
+        # Findings and processed events are intentionally not pruned: deleting
+        # them is a retention policy, which is out of scope here.
 
         # Dedup sets are pruned by RedisDedupSet itself (TTL + size cap)
 
@@ -393,6 +393,14 @@ class TaskScheduler:
         reads = await asyncio.to_thread(expire_read_log, cutoff)
         if reads:
             logger.info("Cleanup removed %d episodic read log rows", reads)
+
+        logger.info(
+            "Cleanup done: %d approvals expired, %d read log rows removed "
+            "(read log cutoff %s)",
+            expired,
+            reads,
+            cutoff.isoformat(),
+        )
 
         return {
             "cutoff_date": cutoff.isoformat(),

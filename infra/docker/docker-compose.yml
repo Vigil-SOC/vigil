@@ -352,6 +352,7 @@ services:
       DAEMON_PAGERDUTY_ENABLED: ${DAEMON_PAGERDUTY_ENABLED:-false}
       # Scheduler
       DAEMON_THREAT_HUNT_INTERVAL: ${DAEMON_THREAT_HUNT_INTERVAL:-86400}
+      # Ages out only the episodic read log; findings and events are kept
       DAEMON_CLEANUP_RETENTION_DAYS: ${DAEMON_CLEANUP_RETENTION_DAYS:-90}
       # Metrics / Health
       DAEMON_METRICS_ENABLED: ${DAEMON_METRICS_ENABLED:-true}
