@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from core.federation import registry as fed_registry
 from core.federation import store as fed_store
+from core.federation.lag import source_collection_lag
 from core.federation.runner import request_poll_now
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -110,9 +111,12 @@ async def list_sources() -> Dict[str, Any]:
 
     Includes adapters that don't yet have a row (so the UI can show "configure
     me" entries without the daemon being up). Adapters whose integration is
-    not configured are still listed but flagged ``is_configured=false``.
+    not configured are still listed but flagged ``is_configured=false``. Each
+    row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
+    from :func:`core.federation.lag.source_collection_lag`.
     """
     rows_by_id = {row["source_id"]: row for row in fed_store.list_sources()}
+    lag_by_id = {r["source_id"]: r for r in source_collection_lag()}
 
     out: List[Dict[str, Any]] = []
     for adapter in fed_registry.list_adapters():
@@ -134,7 +138,10 @@ async def list_sources() -> Dict[str, Any]:
                 "consecutive_errors": 0,
                 "dropped_total": 0,
             }
-        out.append(_enrich_with_adapter(dict(row)))
+        # Rows the lag read doesn't cover (unseeded) have never collected.
+        lag = lag_by_id.get(adapter.name, {})
+        row = dict(row, lag_seconds=lag.get("lag_seconds"), quiet=lag.get("quiet", True))
+        out.append(_enrich_with_adapter(row))
 
     return {"sources": out, "global": fed_store.get_global_settings()}
 
