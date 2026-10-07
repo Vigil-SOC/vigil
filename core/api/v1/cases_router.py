@@ -22,6 +22,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
@@ -58,6 +59,8 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 router = APIRouter()
+
+_CASES_WRITE = [permission_gate("cases.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/cases",
@@ -403,7 +406,7 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     return case
 
 
-@router.post("", response_model=CaseSchema)
+@router.post("", dependencies=_CASES_WRITE, response_model=CaseSchema)
 def create_case(case_data: CaseCreate):
     """
     Create a new case.
@@ -450,7 +453,9 @@ def create_case(case_data: CaseCreate):
     return case
 
 
-@router.patch("/{case_id}", response_model=CaseSuccessResponse)
+@router.patch(
+    "/{case_id}", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
+)
 def update_case(
     case_id: str,
     case_data: CaseUpdate,
@@ -515,7 +520,11 @@ def update_case(
     return {"success": True}
 
 
-@router.post("/{case_id}/findings/{finding_id}", response_model=CaseSchema)
+@router.post(
+    "/{case_id}/findings/{finding_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+)
 def add_finding_to_case(case_id: str, finding_id: str):
     """
     Add a finding to a case.
@@ -536,7 +545,11 @@ def add_finding_to_case(case_id: str, finding_id: str):
     return data_service.get_case(case_id)
 
 
-@router.delete("/{case_id}/findings/{finding_id}", response_model=CaseSchema)
+@router.delete(
+    "/{case_id}/findings/{finding_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+)
 def remove_finding_from_case(case_id: str, finding_id: str):
     """
     Remove a finding from a case.
@@ -571,7 +584,9 @@ def get_cases_summary():
     return data_service.get_cases_summary()
 
 
-@router.post("/{case_id}/evidence", response_model=CaseEvidenceSchema)
+@router.post(
+    "/{case_id}/evidence", dependencies=_CASES_WRITE, response_model=CaseEvidenceSchema
+)
 def add_evidence(case_id: str, data: EvidenceAdd):
     """Add evidence to case."""
     evidence_service = CaseEvidenceService()
@@ -601,7 +616,7 @@ def get_evidence(case_id: str, evidence_type: Optional[str] = None):
     return {"evidence": CaseEvidenceSchema.dump_many(evidence_list)}
 
 
-@router.post("/{case_id}/iocs", response_model=CaseIOCSchema)
+@router.post("/{case_id}/iocs", dependencies=_CASES_WRITE, response_model=CaseIOCSchema)
 def add_ioc(case_id: str, data: IOCAdd):
     """Add IOC to case."""
     ioc_service = CaseIOCService()
@@ -628,7 +643,11 @@ def get_iocs(case_id: str, ioc_type: Optional[str] = None):
     return {"iocs": CaseIOCSchema.dump_many(iocs)}
 
 
-@router.post("/{case_id}/iocs/bulk", response_model=CaseIOCBulkResponse)
+@router.post(
+    "/{case_id}/iocs/bulk",
+    dependencies=_CASES_WRITE,
+    response_model=CaseIOCBulkResponse,
+)
 def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
     """Bulk add IOCs to case."""
     ioc_service = CaseIOCService()
@@ -652,7 +671,9 @@ def export_iocs(case_id: str, format: str = "json"):
         return {"format": "json", "content": content}
 
 
-@router.post("/{case_id}/close", response_model=CaseCloseResponse)
+@router.post(
+    "/{case_id}/close", dependencies=_CASES_WRITE, response_model=CaseCloseResponse
+)
 def close_case(
     case_id: str,
     data: ClosureInfo,
@@ -688,8 +709,14 @@ def close_case(
     return {"success": True, "closure": CaseClosureInfoSchema.dump(closure)}
 
 
-@router.post("/{case_id}/merge", response_model=CaseMergeResponse)
-def merge_cases(case_id: str, data: MergeRequest):
+@router.post(
+    "/{case_id}/merge", dependencies=_CASES_WRITE, response_model=CaseMergeResponse
+)
+def merge_cases(
+    case_id: str,
+    data: MergeRequest,
+    current_user: User = Depends(get_current_user),
+):
     """Merge source case into target case.
 
     Moves all findings, timeline entries, activities, IOCs, evidence, tasks,
@@ -704,7 +731,7 @@ def merge_cases(case_id: str, data: MergeRequest):
     # A missing case surfaces as NotFoundError, which the shared handler
     # renders as a 404 naming which of the two it was.
     moved_findings = CaseWorkflowService().merge_cases(
-        case_id, data.source_case_id, data.merged_by
+        case_id, data.source_case_id, current_user.username
     )
 
     result_case = data_service.get_case(case_id)

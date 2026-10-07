@@ -396,7 +396,7 @@ services:
     ports:
       - "8081:8081"  # Webhook ingestion
       - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
-      - "9091:9091"  # Health /health + /status
+      - "127.0.0.1:9091:9091"  # Health /health + /status (unauthenticated; host-local only)
     volumes:
       # Same State Directory and workdirs as backend (see there).
       - vigil_home:/home/vigil/.vigil

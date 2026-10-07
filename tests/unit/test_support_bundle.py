@@ -39,7 +39,18 @@ ps)
     *" -a"*) printf "%s" "${FAKE_DOCKER_PS_A:-${FAKE_DOCKER_PS:-}}" ;;
     *) printf "%s" "${FAKE_DOCKER_PS:-}" ;;
     esac ;;
-compose) printf "%s\n" "${FAKE_COMPOSE_CONFIG-services: none}" ;;
+compose)
+    # real docker rejects `docker compose compose ...` and unknown options
+    case "${2:-}" in
+    -p|--env-file|-f|config) ;;
+    *) echo "unknown docker command: $*" >&2; exit 1 ;;
+    esac
+    [ -z "${FAKE_DOCKER_ARGV:-}" ] || echo "$*" >>"$FAKE_DOCKER_ARGV"
+    case " $* " in
+    *" --no-interpolate "*) ;;
+    *) [ -z "${FAKE_COMPOSE_NO_INTERPOLATE_ONLY:-}" ] || exit 1 ;;
+    esac
+    printf "%s\n" "${FAKE_COMPOSE_CONFIG-services: none}" ;;
 logs)
     for last; do :; done
     case " ${FAKE_DOCKER_LOGS_FAIL:-} " in
@@ -384,8 +395,18 @@ def test_compose_install_is_collected_and_secrets_stay_out(env, tmp_path):
     )
     env["FAKE_LOG_LINE"] = f"free text {ENV_SECRET} and {CFG_SECRET}"
     env["FAKE_DOCKER_LOGS_FAIL"] = "deeptempo-redis"
+    argv_log = tmp_path / "docker-argv.log"
+    env["FAKE_DOCKER_ARGV"] = str(argv_log)
     proc = run(env, tmp_path, "--state-dir", str(state))
     assert proc.returncode == 0, proc.stderr
+
+    compose_calls = argv_log.read_text().splitlines()
+    assert compose_calls and all(
+        c.startswith("compose -p ")
+        and c.endswith(" config")
+        and "compose compose" not in c
+        for c in compose_calls
+    ), compose_calls
 
     entries = entries_of(tmp_path)
     assert manifest_of(tmp_path)["mode"] == "compose"
@@ -446,6 +467,24 @@ def test_compose_install_is_collected_and_secrets_stay_out(env, tmp_path):
         "[REDACTED]" in (root / "logs" / "docker" / "deeptempo-backend.log").read_text()
     )
     assert not (root / "configuration" / "state" / "secrets.enc").exists()
+
+
+def test_compose_config_falls_back_to_no_interpolate(env, tmp_path):
+    checkout, state = install(tmp_path)
+    env["VIGIL_REPO_ROOT"] = str(checkout)
+    env["FAKE_DOCKER_PS"] = "deeptempo-backend|docker|/x/docker-compose.yml\n"
+    env["FAKE_COMPOSE_NO_INTERPOLATE_ONLY"] = "1"
+    env["FAKE_COMPOSE_CONFIG"] = "services: uninterpolated"
+    proc = run(env, tmp_path, "--state-dir", str(state))
+    assert proc.returncode == 0, proc.stderr
+    assert (
+        entries_of(tmp_path)["configuration/compose-config.yml"]["state"] == "collected"
+    )
+    root = next((tmp_path / "x").iterdir())
+    assert (
+        "services: uninterpolated"
+        in (root / "configuration" / "compose-config.yml").read_text()
+    )
 
 
 def test_native_install_collects_dependency_container_logs(env, tmp_path):

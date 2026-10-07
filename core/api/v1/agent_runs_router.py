@@ -7,7 +7,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -25,10 +25,15 @@ from core.agents.queue import (
     enqueue_run,
     new_run_id,
 )
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.models import User
 from core.workflows.enablement import disabled_message, is_enabled
 
 router = APIRouter()
+
+_RUN_AGENTS = [permission_gate("ai_chat.use")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/agent-runs",
@@ -122,7 +127,9 @@ def list_runs(
 
 
 # Mint a run id and enqueue it. The worker opens the ledger, not this call.
-@router.post("", response_model=StartRunResponse, status_code=202)
+@router.post(
+    "", dependencies=_RUN_AGENTS, response_model=StartRunResponse, status_code=202
+)
 async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.run_kind not in RUN_KINDS:
         raise HTTPException(
@@ -266,9 +273,17 @@ class DirectiveResponse(BaseModel):
 
 # Steer a run that is already going. It queues rather than journals: the run
 # holding the ledger is what turns a directive into a ledger event.
-@router.post("/{run_id}/directives", response_model=DirectiveResponse, status_code=202)
+@router.post(
+    "/{run_id}/directives",
+    dependencies=_RUN_AGENTS,
+    response_model=DirectiveResponse,
+    status_code=202,
+)
 def queue_directive(
-    run_id: str, body: DirectiveRequest, session: UnitOfWorkSession
+    run_id: str,
+    body: DirectiveRequest,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
 ) -> DirectiveResponse:
     try:
         directive = enqueue_directive(
@@ -276,7 +291,7 @@ def queue_directive(
             run_id=run_id,
             kind=body.kind,
             body=body.text,
-            actor=body.actor or "analyst",
+            actor=current_user.username,
             fields=body.fields,
         )
     except UnknownRun as exc:

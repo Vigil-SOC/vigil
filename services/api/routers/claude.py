@@ -14,6 +14,7 @@ from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
 from core.auth import tool_principal
+from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
@@ -282,7 +283,7 @@ def _with_page_case(
     return f"{base}\n\n{sentence}"
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=[permission_gate("ai_chat.use")])
 async def chat_stream(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.projections import read_projection, read_replay, read_verify
 from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,
@@ -27,6 +28,8 @@ from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
+
+_DECIDE = [permission_gate("ai_decisions.approve")]
 
 ROUTER_META = RouterMeta(
     prefix="/api",
@@ -391,7 +394,10 @@ async def get_workflow_preflight(
     return result
 
 
-@router.post("/workflows/{workflow_id}/execute")
+@router.post(
+    "/workflows/{workflow_id}/execute",
+    dependencies=[permission_gate("ai_chat.use")],
+)
 async def execute_workflow(
     workflow_id: str,
     request: WorkflowExecuteRequest,
@@ -467,13 +473,14 @@ async def get_workflow_run(
     return row
 
 
-@router.post("/workflows/runs/{run_id}/resume")
+@router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)
 async def resume_workflow_run(
     run_id: str,
     request: WorkflowRunResumeRequest,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approval_service: ApprovalService = Depends(provide_approvals),
     workflows: WorkflowsService = Depends(provide_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Resume a paused workflow run (#128).
 
@@ -493,7 +500,7 @@ async def resume_workflow_run(
             detail=f"Run {run_id} is not paused (status={run.get('status')})",
         )
 
-    approved_by = request.approved_by or "analyst"
+    approved_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
@@ -501,18 +508,26 @@ async def resume_workflow_run(
         raise HTTPException(
             status_code=409, detail=f"Run {run_id} has no pending approval"
         )
+    if len(pending) > 1:
+        # Resume names no action, so with several pending it would pick one unseen.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} has {len(pending)} pending approvals; "
+            "decide each through /approvals/{action_id}",
+        )
 
     approval_service.approve_action(pending[0].action_id, approved_by=approved_by)
     return await resume_run(run_id, pending[0].action_id, approved_by)
 
 
-@router.post("/workflows/runs/{run_id}/cancel")
+@router.post("/workflows/runs/{run_id}/cancel", dependencies=_DECIDE)
 async def cancel_workflow_run(
     run_id: str,
     request: WorkflowRunCancelRequest,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approval_service: ApprovalService = Depends(provide_approvals),
     workflows: WorkflowsService = Depends(provide_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Cancel a paused or running workflow run (#128).
 
@@ -527,7 +542,7 @@ async def cancel_workflow_run(
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
-    rejected_by = request.rejected_by or "analyst"
+    rejected_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )

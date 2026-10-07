@@ -748,7 +748,7 @@ collect_compose_config() {
         skip "$_dest" "no compose file found"
         return
     fi
-    set -- compose
+    set --
     [ -n "$COMPOSE_PROJECT" ] && set -- "$@" -p "$COMPOSE_PROJECT"
     [ "$MODE" = compose ] && [ -r "$CHECKOUT/.env" ] && set -- "$@" --env-file "$CHECKOUT/.env"
     while IFS= read -r _f; do set -- "$@" -f "$_f"; done <"$COMPOSE_FILES"

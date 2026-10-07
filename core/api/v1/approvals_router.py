@@ -12,11 +12,16 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.deps import provide_approvals
 from core.response.approval_service import ApprovalService, needs_you
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
 
 router = APIRouter()
+
+_DECIDE = [permission_gate("ai_decisions.approve")]
 
 ROUTER_META = RouterMeta(
     # Versioned contract surface. The whole approvals router is external — every
@@ -218,11 +223,16 @@ async def get_approval(
     return _pending_to_dict(action)
 
 
-@router.post("/approvals/{action_id}/approve", response_model=ApprovalActionResult)
+@router.post(
+    "/approvals/{action_id}/approve",
+    dependencies=_DECIDE,
+    response_model=ApprovalActionResult,
+)
 async def approve_action(
     action_id: str,
     request: ApproveRequest,
     service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
 ):
     """Approve a pending action.
 
@@ -235,7 +245,8 @@ async def approve_action(
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
 
-    approved_by = request.approved_by or "analyst"
+    # The body field is kept for the frozen contract; the record names the session user.
+    approved_by = current_user.username
     updated = service.approve_action(action_id, approved_by=approved_by)
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to approve action")
@@ -253,11 +264,16 @@ async def approve_action(
     return response
 
 
-@router.post("/approvals/{action_id}/reject", response_model=ApprovalActionResult)
+@router.post(
+    "/approvals/{action_id}/reject",
+    dependencies=_DECIDE,
+    response_model=ApprovalActionResult,
+)
 async def reject_action(
     action_id: str,
     request: RejectRequest,
     service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
 ):
     """Reject a pending action.
 
@@ -270,7 +286,7 @@ async def reject_action(
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
 
-    rejected_by = request.rejected_by or "analyst"
+    rejected_by = current_user.username
     updated = service.reject_action(
         action_id, reason=request.reason, rejected_by=rejected_by
     )

@@ -27,8 +27,9 @@ RUN = "9c1c2d3e-0000-4000-8000-000000000634"
 
 
 @pytest.fixture()
-def client():
+def client(authenticate_app):
     app = FastAPI()
+    authenticate_app(app)
     app.include_router(agent_runs_router.router, prefix="/api/agent-runs")
     app.dependency_overrides[request_unit_of_work] = lambda: None
     return TestClient(app, raise_server_exceptions=False)
@@ -70,10 +71,10 @@ class TestQueueing:
 
     # Attribution is the point of the record: a directive nobody owns leaves the
     # ledger unable to say who steered the run.
-    def test_defaults_the_actor_rather_than_leaving_it_empty(self, client, monkeypatch):
+    def test_the_actor_is_the_session_user_not_the_body(self, client, monkeypatch):
         _queues(monkeypatch)
-        _post(client)
-        assert _queues.seen["actor"] == "analyst"
+        _post(client, {"kind": "note", "text": "x", "actor": "admin"})
+        assert _queues.seen["actor"] == "test-admin"
 
     def test_carries_the_workflow_fields_through(self, client, monkeypatch):
         _queues(monkeypatch)
