@@ -252,8 +252,8 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
 const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 
 /** The line under each door's count, from the fold already loaded. */
-function doorLines(fold: RunFold | null, foldPhase: Phase, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
-  const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : 'No run yet'
+function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
+  const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : hasRun ? 'Run started' : 'No run yet'
   const tally = new Map<string, number>()
   if (fold?.kind === 'hunt') {
     for (const row of fold.hypotheses) {
@@ -303,7 +303,7 @@ function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; line
 }
 
 /** Now · step N: the latest move, who has it, with which tool, since when. */
-function NowCard({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+function NowCard({ fold, phase, hasRun }: { fold: RunFold | null; phase: Phase; hasRun: boolean }) {
   const move = fold?.moves[0]
   const meta = fold ? [fold.worker, moveTool(fold, move), `since ${clock(move?.at)}`].filter(Boolean).join(' · ') : ''
   return (
@@ -316,7 +316,7 @@ function NowCard({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
       <p>
         {phase === 'loading' && 'Loading the run…'}
         {phase === 'error' && 'The run could not be read.'}
-        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : 'No run on this case yet.')}
+        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : hasRun ? 'The run has started and has not reported yet.' : 'No run on this case yet.')}
       </p>
       {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
     </section>
@@ -644,7 +644,7 @@ export function CasePage({
   }
 
   const download = async () => {
-    if (!latest) return
+    if (!latest?.investigation_id) return
     setBusy(true)
     setNote('')
     try {
@@ -704,7 +704,7 @@ export function CasePage({
   const pillState = closed ? 'closed' : pill
   // Only what exists: the live investigation's status, else the run's outcome.
   const runState = (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
-  const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, rows, recordPhase)} onOpen={setTab} />
+  const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
   const running = !closed && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
@@ -808,7 +808,7 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
-                {running && <NowCard fold={fold} phase={foldPhase} />}
+                {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} />}
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
@@ -987,7 +987,7 @@ export function CasePage({
               <div className="case-actions">
                 {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
                 {runId && <button className="btn" onClick={verify} disabled={busy}>Verify</button>}
-                {latest && <button className="btn" onClick={download} disabled={busy}>Export</button>}
+                {latest?.investigation_id && <button className="btn" onClick={download} disabled={busy}>Export</button>}
               </div>
             </>
           )}

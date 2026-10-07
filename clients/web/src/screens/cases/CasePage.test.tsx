@@ -324,6 +324,22 @@ describe('case page', () => {
     expect(await screen.findByRole('columnheader', { name: 'Latency' })).toBeInTheDocument()
   })
 
+  it('shows a run started on the case with no investigation row, before it has reported', async () => {
+    testState.cases = [{
+      ...openCase('case-run-only'),
+      combined_state: 'executing',
+      investigations: [{ ...investigation('running', true, 'run-only'), investigation_id: null }],
+    }]
+    testState.runs['run-only'] = { hunt: null }
+    renderCase('case-run-only')
+
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(within(now).getByText('The run has started and has not reported yet.')).toBeInTheDocument()
+    expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
+    expect(workflowApi.getRun).toHaveBeenCalledWith('run-only')
+    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
+  })
+
   it('shows a dash for a lead decision time and keeps the honest explanations line', async () => {
     testState.cases = [{ ...openCase('case-lead'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-lead')] }]
     testState.runs['run-lead'] = {
