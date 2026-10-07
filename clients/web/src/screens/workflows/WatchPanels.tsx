@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'
+import { explanationWord, wordDisplay } from '../cases/caseFold'
 import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag } from './huntParts'
 import type { HuntEvidence, HuntStanding, HuntView, RootCauseBudgets, RootCauseEntry, WfRunDetail } from './runRead'
 
@@ -146,6 +147,8 @@ function HuntExplanations({ hunt, iteration, last, recorded }: { hunt: HuntView;
         const forN = last && h.row?.supports !== undefined ? h.row.supports : (seen?.supports ?? 0)
         const against = last && h.row?.weakens !== undefined ? h.row.weakens : (seen?.weakens ?? 0)
         const color = hypothesisColor(h.status)
+        // the case page's words, so a belief reads the same here and there
+        const word = wordDisplay(explanationWord(h.status, forN, against))
         const tag = provenanceTag(h.row?.provenance)
         return (
           <div key={h.hypothesis_id} className="flex flex-col gap-2 px-3.5 py-3 rounded-[12px] bg-[var(--bg2)] border border-[var(--ln0)]">
@@ -156,7 +159,7 @@ function HuntExplanations({ hunt, iteration, last, recorded }: { hunt: HuntView;
               >
                 {h.statement}
               </span>
-              <span className="text-[12px] font-bold whitespace-nowrap" style={{ color }}>{h.status}</span>
+              <span className="text-[12px] font-bold whitespace-nowrap" style={{ color }}>{word}</span>
             </span>
             <Bar pct={forN + against === 0 ? 0 : Math.max(4, share(forN, forN + against))} color={color} size={6} />
             <span className="flex justify-between gap-2 text-[11px] text-[var(--tx2)]">
