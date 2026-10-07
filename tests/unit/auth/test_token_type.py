@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from core.auth import current_user as current_user_module
+from core.auth import token_blacklist
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import JWT_ALGORITHM, JWT_SECRET_KEY, AuthService
 from core.routing import request_unit_of_work
@@ -47,8 +48,31 @@ def user():
     )
 
 
+class FakeRedis:
+    """The few commands the token blacklist issues; no expiry."""
+
+    def __init__(self):
+        self.data = {}
+
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
+
+    async def get(self, key):
+        return self.data.get(key)
+
+
 @pytest.fixture
-def client(monkeypatch, user):
+def redis(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(token_blacklist, "_get_client", lambda: fake)
+    return fake
+
+
+@pytest.fixture
+def client(monkeypatch, user, redis):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -144,3 +168,30 @@ def test_refresh_accepts_a_refresh_token_and_rejects_an_access_token(client, use
 
     rejected = client.post(REFRESH, json={"refresh_token": tokens["access"]})
     assert rejected.status_code == 401
+
+
+def test_a_refresh_token_rotates_once(client, user, monkeypatch):
+    refresh = _tokens(user)["refresh"]
+    body = {"refresh_token": refresh}
+
+    assert client.post(REFRESH, json=body).status_code == 200
+
+    # Inside the grace window the same browser may present it again.
+    assert client.post(REFRESH, json=body).status_code == 200
+
+    monkeypatch.setattr(token_blacklist, "_now_ts", lambda: 2**40)
+    replay = client.post(REFRESH, json=body)
+    assert replay.status_code == 401
+    assert replay.json()["detail"] == "Refresh token has already been used"
+
+    # The successor is unaffected.
+    successor = AuthService.generate_jwt_token(user, "refresh")
+    assert client.post(REFRESH, json={"refresh_token": successor}).status_code == 200
+
+
+def test_refresh_fails_closed_when_redis_is_unavailable(client, user, monkeypatch):
+    monkeypatch.setattr(token_blacklist, "_get_client", lambda: None)
+
+    response = client.post(REFRESH, json={"refresh_token": _tokens(user)["refresh"]})
+
+    assert response.status_code == 401

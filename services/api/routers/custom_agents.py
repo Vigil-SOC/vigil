@@ -255,9 +255,6 @@ def fork_agent(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error forking agent %s", source_agent_id)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/agents/custom", status_code=201)
@@ -278,9 +275,6 @@ def create_custom_agent(
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error creating custom agent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.patch("/agents/custom/{agent_id}")
@@ -307,9 +301,6 @@ def update_custom_agent(
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating custom agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/agents/custom/{agent_id}", status_code=204)
@@ -332,6 +323,3 @@ def delete_custom_agent(
         return None
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error deleting custom agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))

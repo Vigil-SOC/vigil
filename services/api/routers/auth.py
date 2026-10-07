@@ -36,6 +36,7 @@ from core.auth.password_validator import (
 )
 from core.auth.token_blacklist import (
     blacklist_jti,
+    consume_refresh_jti,
     is_token_revoked,
     revoke_all_for_user,
 )
@@ -481,6 +482,17 @@ async def refresh_token(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
+        )
+
+    # Refresh tokens rotate: each one mints a single successor.
+    refresh_exp = payload.get("exp")
+    if not payload.get("jti") or not await consume_refresh_jti(
+        payload["jti"],
+        datetime.utcfromtimestamp(refresh_exp) if refresh_exp is not None else None,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has already been used",
         )
 
     # Generate new tokens
