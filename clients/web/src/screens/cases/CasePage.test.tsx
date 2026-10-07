@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { format } from 'date-fns'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
 import { ToastProvider } from '../../shell/toast'
@@ -83,7 +84,11 @@ vi.mock('../../services/api', () => ({
 
 const HUNT = {
   iteration: 3,
-  moves: [{ query_intent: 'who logged in', action: 'QUERY', worker_agent_id: 'threat_hunter' }],
+  moves: [
+    { query_intent: 'who logged in', action: 'QUERY', worker_agent_id: 'threat_hunter', iteration: 3, created_at: '2026-06-15T09:14:00Z' },
+    { query_intent: 'rank the hosts', action: 'QUERY', worker_agent_id: 'threat_hunter', iteration: 2, created_at: '2026-06-15T09:10:00Z' },
+    { query_intent: 'read the proxy log', action: 'QUERY', worker_agent_id: 'network_analyst', iteration: 1, created_at: '2026-06-15T09:05:00Z' },
+  ],
   hypotheses: [
     { hypothesis_id: 'h1', statement: 'The host is owned', status: 'disproven', supports: 0, weakens: 2, resolution_reason: null },
     { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null },
@@ -92,7 +97,10 @@ const HUNT = {
     { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
   ],
   evidence_count: 1,
-  calls: [{ question: 'who logged in', tool: 'search', result_length: 12, cost_usd: 0.01 }],
+  calls: [
+    { question: 'who logged in', tool: 'search', result_length: 12, cost_usd: 0.01, iteration: 3 },
+    { question: 'read the proxy log', tool: 'proxy_query', result_length: 4, cost_usd: 0.01, duration_ms: 40, iteration: 1 },
+  ],
   recall: null,
   outcome: null,
   reason: '',
@@ -151,6 +159,19 @@ function need(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
   }
 }
 
+function openCase(id: string) {
+  return {
+    case_id: id,
+    title: 'Open case',
+    status: 'open',
+    priority: 'high',
+    finding_ids: [],
+    created_at: '2026-06-15T09:14:00Z',
+    combined_state: 'open',
+    investigations: [],
+  }
+}
+
 beforeEach(() => {
   testState.canDelete = true
   testState.getByIdError = false
@@ -188,7 +209,11 @@ describe('case page', () => {
     const header = document.querySelector('.detail-head') as HTMLElement
     expect(within(header).getByText('Executing')).toBeInTheDocument()
     expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
-    expect(await screen.findByText(/who logged in · threat_hunter/)).toBeInTheDocument()
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(within(now).getByText('Now · step 3')).toBeInTheDocument()
+    expect(within(now).getByText('who logged in')).toBeInTheDocument()
+    const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
+    expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('ruled out')).toBeInTheDocument()
@@ -228,7 +253,10 @@ describe('case page', () => {
     }
     renderCase('case-inv')
 
-    expect(await screen.findByText(/EXAMINE · lead/)).toBeInTheDocument()
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(within(now).getByText('Now · step 2')).toBeInTheDocument()
+    expect(within(now).getByText('EXAMINE')).toBeInTheDocument()
+    expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
@@ -259,6 +287,106 @@ describe('case page', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
     expect(await screen.findByText('No questions asked yet')).toBeInTheDocument()
     expect(workflowApi.getRun).not.toHaveBeenCalled()
+  })
+
+  it('lists one agent per worker with its tool, and shows the door tiles with their sub-lines', async () => {
+    testState.cases = [{ ...openCase('case-agents'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-hunt')] }]
+    testState.runs['run-hunt'] = { hunt: HUNT }
+    testState.recordRows = [
+      { id: 'r1', kind: 'run', text: 'started', at: '2026-06-15T09:00:00Z', chained: true },
+      { id: 'r2', kind: 'directive', text: 'note', at: '2026-06-15T09:01:00Z', chained: false },
+    ]
+    renderCase('case-agents')
+
+    const table = await screen.findByRole('table', { name: 'Agents' })
+    const rows = within(table).getAllByRole('row')
+    expect(rows).toHaveLength(2)
+    const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
+    for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'executing']) {
+      expect(within(rows[0]).getByText(text)).toBeInTheDocument()
+    }
+    // The older move of the same worker is not a second row; the state sits on the latest row only.
+    expect(within(table).queryByText('rank the hosts')).not.toBeInTheDocument()
+    expect(within(rows[1]).getByText('network_analyst')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('proxy_query')).toBeInTheDocument()
+    expect(within(rows[1]).queryByText('executing')).not.toBeInTheDocument()
+    expect(screen.queryByText(/incident-response · executing/)).not.toBeInTheDocument()
+
+    const doors = screen.getByRole('region', { name: 'Audit doors' })
+    expect(within(doors).getAllByRole('button')).toHaveLength(5)
+    expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
+    expect(within(doors).getByText('0 for · 1 against · shown')).toBeInTheDocument()
+    expect(within(doors).getByText('$0.2000 · 0 gaps')).toBeInTheDocument()
+    expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
+    await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
+    fireEvent.click(within(doors).getByRole('button', { name: /^Checked/ }))
+    expect(await screen.findByRole('columnheader', { name: 'Latency' })).toBeInTheDocument()
+  })
+
+  it('shows a dash for a lead decision time and keeps the honest explanations line', async () => {
+    testState.cases = [{ ...openCase('case-lead'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-lead')] }]
+    testState.runs['run-lead'] = {
+      projection: {
+        iterations: 4,
+        decisions: [
+          { action: 'DISPATCH', rationale: 'first', worker: 'worker_a' },
+          { action: 'EXAMINE', rationale: 'second', worker: 'worker_b' },
+        ],
+        findings: [],
+        calls: [{ question: 'q', tool: 'search', result_length: 1, cost_usd: 0, iteration: 1 }],
+        gaps: [],
+        recall: null,
+        outcome: null,
+        reason: '',
+        cost_usd: 0.5,
+      },
+    }
+    renderCase('case-lead')
+
+    const table = await screen.findByRole('table', { name: 'Agents' })
+    const rows = within(table).getAllByRole('row')
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining('worker_bEXAMINE——'), expect.stringContaining('worker_aDISPATCH——')])
+    expect(within(await screen.findByRole('region', { name: 'Now' })).getByText('worker_b · since —')).toBeInTheDocument()
+    const doors = screen.getByRole('region', { name: 'Audit doors' })
+    expect(within(doors).getByText('Does not test explanations yet')).toBeInTheDocument()
+    expect(within(doors).getByText('Findings, no for or against')).toBeInTheDocument()
+  })
+
+  it('keeps the Now card copy for no run, a loading run and an unreadable run', async () => {
+    testState.cases = [
+      { ...openCase('case-none'), investigations: [] },
+      { ...openCase('case-slow'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-slow')] },
+      { ...openCase('case-bad'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-bad')] },
+    ]
+    renderCase('case-none')
+    expect(await screen.findByText('No run on this case yet.')).toBeInTheDocument()
+    expect(screen.getByText('No live investigation.')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('No run yet')).toHaveLength(3)
+    cleanup()
+
+    vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
+    renderCase('case-slow')
+    expect(await screen.findAllByText('Loading the run…')).not.toHaveLength(0)
+    cleanup()
+
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
+    renderCase('case-bad')
+    expect(await screen.findAllByText('The run could not be read.')).not.toHaveLength(0)
+    expect(screen.getByRole('region', { name: 'Audit doors' })).toBeInTheDocument()
+  })
+
+  it('shows the door tiles on a closed case, without a Now card', async () => {
+    testState.cases = [{
+      ...openCase('case-done'),
+      status: 'closed',
+      combined_state: 'closed',
+      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', verdict: 'the scanner' },
+      investigations: [],
+    }]
+    renderCase('case-done')
+    const doors = await screen.findByRole('region', { name: 'Audit doors' })
+    expect(within(doors).getAllByRole('button')).toHaveLength(5)
+    expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
   })
 
   it('shows a closed verdict and reopens through the status update', async () => {
@@ -473,7 +601,7 @@ describe('case page', () => {
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
     const body = document.querySelector('.detail-body') as HTMLElement
-    expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Now · phase') ?? -1)
+    expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Findings so far') ?? -1)
     expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Isolate host') ?? -1)
     expect(screen.getByText('beacon')).toBeInTheDocument()
     expect(screen.getByText('approval · reversible')).toBeInTheDocument()
@@ -553,7 +681,7 @@ describe('case page', () => {
     const body = document.querySelector('.detail-body') as HTMLElement
     expect(body.textContent?.indexOf('Quarantine mailbox')).toBeLessThan(body.textContent?.indexOf('Verdict') ?? -1)
     expect(screen.getByText('the scanner')).toBeInTheDocument()
-    expect(screen.queryByText(/Now · phase/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
   })
 

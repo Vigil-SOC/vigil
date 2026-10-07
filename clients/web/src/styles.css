@@ -1831,7 +1831,7 @@
       padding: 6px 0;
    }
 
-   .case-doors, .case-actions, .case-chips {
+   .case-actions, .case-chips {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
