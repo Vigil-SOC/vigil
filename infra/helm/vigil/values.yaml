@@ -739,6 +739,8 @@ config:
   DAEMON_SLACK_CHANNEL: "#soc-alerts"
   DAEMON_PAGERDUTY_ENABLED: "false"
   DAEMON_THREAT_HUNT_INTERVAL: "86400"
+  # Ages out only the episodic read log; findings and processed events are
+  # kept until an admin deletes them.
   DAEMON_CLEANUP_RETENTION_DAYS: "90"
   DAEMON_METRICS_ENABLED: "true"
   DAEMON_METRICS_PORT: "9090"
