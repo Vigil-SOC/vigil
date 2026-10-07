@@ -2931,9 +2931,11 @@ export interface paths {
         put?: never;
         /**
          * Test Integration
-         * @description Probe the MCP servers behind an integration.
+         * @description Probe the MCP servers behind an integration, or its connector URL.
          *
-         *     Catalog entries have no descriptor, so they are not testable. A stored
+         *     A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
+         *     over HTTP instead. Other catalog entries have no descriptor, so they are not
+         *     testable. A stored
          *     config of ``{}`` is still configured — secret-only rows keep the secret
          *     outside this dict. The integration's enabled flag does not block the
          *     probe: enabled MCP servers are contacted, and if none are enabled every
