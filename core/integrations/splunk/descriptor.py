@@ -16,7 +16,8 @@ SPLUNK = register_descriptor(
             IntegrationField("server_url"),
             IntegrationField("username"),
             IntegrationField("password", secret=True),
-            IntegrationField("verify_ssl", value_type="bool"),
+            # Unset verifies: skipping it sends the login password to whoever answers.
+            IntegrationField("verify_ssl", value_type="bool", default=True),
             IntegrationField("ca_cert_path"),
             IntegrationField("lookback_hours", value_type="int"),
         ),

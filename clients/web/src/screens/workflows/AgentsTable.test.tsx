@@ -51,7 +51,7 @@ describe('agents table', () => {
   it('lists built-ins before customs under the eight columns, with a counted summary', async () => {
     await openAgents()
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent)
-    expect(heads.slice(0, 8)).toEqual(['Agent', 'What it does', 'Model', 'Skills', 'Changes things?', 'Runs, 7 days', 'Success', 'On'])
+    expect(heads).toEqual(['Agent', 'What it does', 'Model', 'Skills', 'Changes things?', 'Runs, 7 days', 'Success', 'On'])
     const names = screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)
     expect(names).toEqual(['TATriage agentBuilt in', 'WReporting agentBuilt in', 'HUHunterBuilt in', 'TIBlind agentBuilt in', 'MAMy agentYours'])
     expect(screen.getByText('4 built-in agents plus your own. Each can use its own model.')).toBeInTheDocument()

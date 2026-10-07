@@ -45,7 +45,7 @@ class SplunkService:
         server_url: str,
         username: str,
         password: str,
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
         ca_cert_path: Optional[str] = None,
     ):
         """
@@ -55,7 +55,7 @@ class SplunkService:
             server_url: Splunk server URL (e.g., "https://splunk.example.com:8089")
             username: Username for authentication
             password: Password for authentication
-            verify_ssl: Whether to verify SSL certificates (default: False)
+            verify_ssl: Whether to verify SSL certificates (default: True)
             ca_cert_path: PEM trusted for this client only, instead of the
                 default store (ignored when verify_ssl is False)
         """

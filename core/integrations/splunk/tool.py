@@ -72,15 +72,13 @@ def get_splunk_service():
             # call. Field names only, never what was found.
             logger.debug("Splunk not configured: missing %s", ", ".join(absent))
             return None
-        # resolve() returns every declared field, present-but-None when unset,
-        # and the descriptor's bool coercion has already turned "false" into
-        # False. Unset has always meant no verification here (the old "false"
-        # default), so None stays False: not Elastic's None -> True.
+        # resolve() has already coerced verify_ssl: "false" is False and unset is
+        # True (the descriptor's default).
         return SplunkService(
             server_url=config["server_url"],
             username=config["username"],
             password=config["password"],
-            verify_ssl=bool(config.get("verify_ssl")),
+            verify_ssl=config["verify_ssl"],
             ca_cert_path=config.get("ca_cert_path"),
         )
     except Exception as exc:  # noqa: BLE001

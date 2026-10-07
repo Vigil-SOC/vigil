@@ -47,7 +47,7 @@ class _Constructed:
     """Stand-in for SplunkService that records what it was built with."""
 
     def __init__(
-        self, server_url, username, password, verify_ssl=False, ca_cert_path=None
+        self, server_url, username, password, verify_ssl=True, ca_cert_path=None
     ):
         self.server_url = server_url
         self.username = username
@@ -221,16 +221,16 @@ def test_verify_ssl_from_the_environment(splunk_mod, monkeypatch, env_value, exp
     assert splunk_mod.get_splunk_service().verify_ssl is expected
 
 
-def test_unset_verify_ssl_means_no_verification(splunk_mod, monkeypatch):
-    """resolve() hands back None for an unset verify_ssl. Unset has always meant
-    no verification for the self-hosted server (port 8089 ships a self-signed
-    certificate), so None must stay False rather than default to True."""
+def test_unset_verify_ssl_verifies(splunk_mod, monkeypatch):
+    """resolve() hands back the descriptor's default for an unset verify_ssl, and
+    that default verifies: the REST login posts the password, so skipping the
+    certificate check must be something an operator asked for."""
     _seed(monkeypatch, stored=_STORED, secrets={"SPLUNK_PASSWORD": "secret"})
 
     service = splunk_mod.get_splunk_service()
 
     assert service is not None
-    assert service.verify_ssl is False
+    assert service.verify_ssl is True
 
 
 def test_no_server_url_anywhere_is_not_configured(splunk_mod, monkeypatch):
