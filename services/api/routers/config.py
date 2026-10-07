@@ -26,6 +26,7 @@ from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
+    credentials_to_resupply,
     redact_secrets,
     secret_fields_for,
     split_secrets,
@@ -861,7 +862,10 @@ def set_integrations_config(
     from the dict that lands in the DB / JSON file. Empty strings are
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials. A failed secret write or integration-config
+    clobber stored credentials, unless a destination field (URL, host, ...) also
+    changed: then every stored secret must be re-entered (HTTP 400 otherwise),
+    so a saved credential is never carried to a destination its owner did not
+    choose. A failed secret write or integration-config
     row is HTTP 500; the detail names the integration and field, never the value.
 
     Args:
@@ -871,6 +875,23 @@ def set_integrations_config(
         Success status
     """
     config_service = _for_user(current_user)
+
+    # A stored credential is sent to whatever destination is saved, so moving
+    # one requires the caller to supply the credential again. Checked for every
+    # integration before anything is written.
+    for integration_id, raw_config in config.integrations.items():
+        stored = config_service.get_integration_config(integration_id) or {}
+        missing = credentials_to_resupply(
+            integration_id, stored.get("config") or {}, raw_config or {}
+        )
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Integration '{integration_id}' connects somewhere new; "
+                    f"enter its credential again ({', '.join(missing)}) to save."
+                ),
+            )
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
