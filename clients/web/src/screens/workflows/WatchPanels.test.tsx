@@ -166,7 +166,8 @@ describe('what each kind of run says where it has nothing', () => {
     expect(limit('Budget')).toBe('Budget$3.00 of $10.00')
   })
 
-  it('root cause: budget from its ceiling, notices and failed searches as blind spots', () => {
+  it('root cause on an agent service with no replay: budget from its ceiling, notices and failed searches as blind spots', async () => {
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404 } })
     const d = {
       run_id: 'run-3', status: 'completed', workflow_name: 'Root cause',
       projection: {
@@ -175,6 +176,7 @@ describe('what each kind of run says where it has nothing', () => {
       },
     } as unknown as WfRunDetail
     render(<WatchRun d={d} onBack={vi.fn()} />)
+    await screen.findByText('Limits used')
     expect(limit('Budget')).toBe('Budget$0.50 of $2.00')
     expect(screen.getByText('No flow logs in tenant B.')).toBeInTheDocument()
     expect(screen.getByText('A search failed: splunk')).toBeInTheDocument()
@@ -189,5 +191,58 @@ describe('what each kind of run says where it has nothing', () => {
     expect(screen.getByText(NO_EXPLANATIONS)).toBeInTheDocument()
     expect(screen.getByText(NO_REVIEWER)).toBeInTheDocument()
     expect(screen.getByText('Not recorded for this kind of run yet.')).toBeInTheDocument()
+  })
+})
+
+describe('a root-cause run, as of the selected step', () => {
+  const trace = (over = {}) => ({ run_id: 'run-5', status: 'completed', workflow_name: 'Root cause', projection: { run_kind: 'root_cause', cost_usd: 0.5, max_cost_usd: 2 }, ...over }) as unknown as WfRunDetail
+  const T = (n: number) => `2026-10-06T13:0${n}:00Z`
+  const steps = [
+    { kind: 'search', recorded_at: T(1), tool: 'splunk', args: 'index=a', rows: 3, failed: false },
+    { kind: 'step', recorded_at: T(2), step_id: 'step-1', event: 'beacon out', who: 'host-a', at: T(0), link: '', cause_id: null, origin: true, link_status: 'none', origin_status: 'unproven' },
+    { kind: 'search', recorded_at: T(3), tool: 'splunk', args: 'index=b', rows: 0, failed: true, failure: 'unavailable' },
+    { kind: 'notice', recorded_at: T(4), text: 'No flow logs.' },
+    { kind: 'step', recorded_at: T(5), step_id: 'step-1', event: 'beacon out', who: 'host-a', at: T(0), link: '', cause_id: null, origin: true, link_status: 'none', origin_status: 'proven' },
+  ]
+  const open = async (body: object) => {
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({ data: { run_id: 'run-5', run_kind: 'root_cause', steps, ...body } } as never)
+    render(<WatchRun d={trace()} onBack={vi.fn()} />)
+    await screen.findByText('Step 1 of 5 · Search')
+  }
+
+  it('draws the chain as of the step, with its status word changing as the step is revised', async () => {
+    await open({ budgets: { max_calls: 10 } })
+    expect(screen.getByText('No step recorded yet.')).toBeInTheDocument()
+    step(2)
+    expect(screen.getByText('host-a: beacon out')).toBeInTheDocument()
+    expect(screen.getByText('origin unproven')).toBeInTheDocument()
+    step(5)
+    expect(screen.getByText('origin proven')).toBeInTheDocument()
+    expect(screen.queryByText('origin unproven')).not.toBeInTheDocument()
+    // the revised step is one card in the chain and two in the list
+    expect(screen.getAllByText('host-a: beacon out')).toHaveLength(1)
+    expect(screen.getAllByText(/Recorded step-1 · beacon out/)).toHaveLength(2)
+  })
+
+  it('counts searches against the recorded limit and lists a failed search as a blind spot only once it has happened', async () => {
+    await open({ budgets: { max_calls: 10 } })
+    expect(limit('Steps')).toBe('Steps1 search so far · limit 10')
+    expect(limit('Budget')).toBe('Budget$0.50 of $2.00')
+    expect(screen.getByText(/Spend isn’t recorded per step/)).toBeInTheDocument()
+    expect(screen.getByText('None so far.')).toBeInTheDocument()
+    step(3)
+    expect(limit('Steps')).toBe('Steps2 searches so far · limit 10')
+    expect(screen.getByText('A search failed: splunk')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Failed' })).toBeInTheDocument()
+    expect(screen.queryByText('No flow logs.')).not.toBeInTheDocument()
+    step(4)
+    expect(screen.getAllByText('No flow logs.').length).toBeGreaterThan(0)
+  })
+
+  it('says there is no step limit on a ledger with no budgets, and has no reviewer or scope', async () => {
+    await open({})
+    expect(limit('Steps')).toBe('Steps1 search so far · no step limit recorded')
+    expect(screen.getByText('Not tracked for this kind.')).toBeInTheDocument()
+    expect(screen.getByText('No reviewer runs on this kind of run yet.')).toBeInTheDocument()
   })
 })
