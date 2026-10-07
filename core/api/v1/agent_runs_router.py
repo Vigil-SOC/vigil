@@ -256,7 +256,11 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
 
 class DirectiveRequest(BaseModel):
     kind: str = Field(..., description=f"One of {', '.join(DIRECTIVE_KINDS)}.")
-    text: str = Field(default="", description="What the operator is telling the run.")
+    text: str = Field(
+        default="",
+        max_length=2000,
+        description="What the operator is telling the run.",
+    )
     actor: Optional[str] = Field(
         default=None, description="Who is steering. Defaults to the session user."
     )

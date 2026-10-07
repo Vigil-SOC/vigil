@@ -1,6 +1,7 @@
 """Autonomous response handler for the SOC daemon."""
 
 import asyncio
+import ipaddress
 import logging
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -11,6 +12,25 @@ from core.response.config import response_action_decision
 from services.daemon.config import EscalationConfig, ResponseConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _actionable_ip(value: Any) -> Optional[str]:
+    """The host address in ``value``, or None for anything not worth acting on."""
+    try:
+        ip = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if (
+        ip.is_loopback
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_link_local
+        or ip.is_reserved
+    ):
+        return None
+    return str(ip)
 
 
 class AutonomousResponder:
@@ -322,8 +342,12 @@ class AutonomousResponder:
         target_ip = None
         hostname = None
 
-        if entity_context.get("src_ips"):
-            target_ip = entity_context["src_ips"][0]
+        # The address comes from alert text. Only a routable-looking host address
+        # is acted on; a malformed or loopback/unspecified one is dropped.
+        for candidate in entity_context.get("src_ips") or []:
+            target_ip = _actionable_ip(candidate)
+            if target_ip:
+                break
         if entity_context.get("hostnames"):
             hostname = entity_context["hostnames"][0]
 

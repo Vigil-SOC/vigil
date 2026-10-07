@@ -292,6 +292,14 @@ class AutonomousResponseService:
                 # Skip if already executed
                 if action.executed_at:
                     continue
+                # Released by a confidence figure and no person: whoever
+                # supplied that figure also chose the outcome.
+                if not action.requires_approval and not action.approved_by:
+                    logger.warning(
+                        "Action %s was never decided by a person; not executing",
+                        action.action_id,
+                    )
+                    continue
 
                 params = action.parameters or {}
                 result: Optional[Dict] = None

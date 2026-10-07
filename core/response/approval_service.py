@@ -23,7 +23,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from core.response.config import ResponseConfig, approval_requirement
+from core.response.config import ResponseConfig, approval_requirement, decision_rule
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
@@ -226,6 +226,7 @@ class ApprovalService:
         workflow_phase_id: Optional[str] = None,
         reversibility: Reversibility = Reversibility.REVERSIBLE,
         idempotency_key: Optional[str] = None,
+        human_only: bool = False,
     ) -> PendingAction:
         """Create a new pending action.
 
@@ -233,7 +234,10 @@ class ApprovalService:
         ``workflow_phase_id`` so the approvals UI / resume endpoint can
         link back to the paused run.
 
-        Irreversible actions always require approval. A second call with
+        Irreversible actions always require approval. ``human_only`` holds the
+        row for a person whatever ``confidence`` says: for callers whose
+        confidence is their own claim (an agent, a model's reading of alert
+        text) and so cannot be what releases the action. A second call with
         the same ``idempotency_key`` returns the existing non-failed row.
         """
         action, _inserted = self._put_action(
@@ -250,6 +254,7 @@ class ApprovalService:
             workflow_phase_id=workflow_phase_id,
             reversibility=reversibility,
             idempotency_key=idempotency_key,
+            human_only=human_only,
         )
         return action
 
@@ -268,6 +273,7 @@ class ApprovalService:
         workflow_phase_id: Optional[str] = None,
         reversibility: Reversibility = Reversibility.REVERSIBLE,
         idempotency_key: Optional[str] = None,
+        human_only: bool = False,
     ) -> tuple[PendingAction, bool]:
         """Insert an approval row, or return the existing non-failed one.
 
@@ -278,10 +284,16 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
-        forced = self.force_manual_approval or self._stored_force_manual_approval()
+        forced = (
+            human_only
+            or self.force_manual_approval
+            or self._stored_force_manual_approval()
+        )
         requires_approval, rule = approval_requirement(
             forced, reversibility, confidence, self.config
         )
+        if human_only:
+            rule = decision_rule("approval.human_only", True)
         reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"

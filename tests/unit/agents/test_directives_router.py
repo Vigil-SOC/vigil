@@ -76,6 +76,15 @@ class TestQueueing:
         _post(client, {"kind": "note", "text": "x", "actor": "admin"})
         assert _queues.seen["actor"] == "test-admin"
 
+    def test_a_directive_too_long_to_read_is_refused_unqueued(
+        self, client, monkeypatch
+    ):
+        _queues(monkeypatch)
+        _queues.seen = None
+        response = _post(client, {"kind": "note", "text": "x" * 100_000})
+        assert response.status_code == 422
+        assert _queues.seen is None
+
     def test_carries_the_workflow_fields_through(self, client, monkeypatch):
         _queues(monkeypatch)
         _post(
