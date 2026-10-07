@@ -7,12 +7,14 @@ import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
+import { InfoTip } from '../../shared/InfoTip'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
 import { CommentsCard, EvidenceCard, IOCsCard, TasksCard } from './CaseSections'
 import {
+  addedBy,
   agentRows,
   explanationWord,
   honestLine,
@@ -33,6 +35,21 @@ const NEEDS_POLL_MS = 20_000
 
 const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
 const CHAINED = 'Only the run’s rows are hash-chained. Case audit rows are not.'
+
+/** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
+const EXPL_TONE: Record<string, string> = {
+  proven: 'good',
+  standing: 'good',
+  forming: 'ac',
+  weakened: 'poor',
+  'ruled out': 'muted',
+}
+
+/** "handed_off" → "Handed off". */
+function display(word: string): string {
+  const text = word.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
 
 function Mark({ text }: { text: string }) {
   return (
@@ -826,37 +843,54 @@ export function CasePage({
           )}
 
           {tab === 'Explanations' && (
-            foldPhase === 'error' ? (
+            foldPhase === 'loading' ? (
+              <p className="muted">Loading the run…</p>
+            ) : foldPhase === 'error' ? (
               <p>The run could not be read.</p>
             ) : fold?.kind === 'hunt' ? (
-              hypotheses.length === 0 ? (
-                <EmptyState compact icon="search" title="No explanations yet" />
-              ) : (
-                <div className="table-wrap">
-                  <table className="tbl">
-                    <thead><tr><th>Explanation</th><th>Standing</th><th>For</th><th>Against</th></tr></thead>
-                    <tbody>
-                      {hypotheses.map((row) => (
-                        <tr key={row.hypothesis_id}>
-                          <td>
-                            {row.statement || row.hypothesis_id}
-                            {row.resolution_reason && (row.status === 'inconclusive' || row.status === 'parked' || row.status === 'handed_off') && (
-                              <div className="muted">{row.resolution_reason}</div>
-                            )}
-                          </td>
-                          <td>{explanationWord(row.status, row.supports, row.weakens)}</td>
-                          <td>{row.supports}</td>
-                          <td>{row.weakens}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <section className="case-expl-card">
+                <div className="case-expl-head">
+                  <div>
+                    <span className="case-expl-title">Every explanation this case has held</span>
+                    <div className="case-expl-sub">Status, the rows for and against, who added it, and why it moved.</div>
+                  </div>
+                  <div className="case-expl-actions">
+                    <button type="button" disabled title={LATER}>+ Add an explanation</button>
+                    <button type="button" disabled title={LATER}>Rule one out</button>
+                  </div>
                 </div>
-              )
+                {hypotheses.length === 0 ? (
+                  <EmptyState compact icon="search" title="No explanations yet" />
+                ) : (
+                  <ul className="case-expl-rows">
+                    {hypotheses.map((row) => {
+                      const word = explanationWord(row.status, row.supports, row.weakens)
+                      const by = addedBy(row.provenance)
+                      return (
+                        <li key={row.hypothesis_id}>
+                          <div className="case-expl-main">
+                            <div className="case-expl-line">
+                              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{display(word)}</span>
+                              <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`}>{row.statement || row.hypothesis_id}</span>
+                            </div>
+                            {row.resolution_reason && <div className="case-expl-note">{row.resolution_reason}</div>}
+                          </div>
+                          <div className="case-expl-side">
+                            <div>
+                              <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
+                            </div>
+                            {by && <div className="case-expl-by">Added by {by}</div>}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </section>
             ) : (
               <p>
                 {honestLine()}
-                <Mark text="Hunt, root cause, and adjudicate test explanations. This run does not." />
+                <InfoTip label="About explanations" text="Hunt, root cause, and adjudicate test explanations. This run does not." align="start" />
               </p>
             )
           )}

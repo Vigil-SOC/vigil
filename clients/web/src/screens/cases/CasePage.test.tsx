@@ -91,8 +91,8 @@ const HUNT = {
     { query_intent: 'read the proxy log', action: 'QUERY', worker_agent_id: 'network_analyst', iteration: 1, created_at: '2026-06-15T09:05:00Z' },
   ],
   hypotheses: [
-    { hypothesis_id: 'h1', statement: 'The host is owned', status: 'disproven', supports: 0, weakens: 2, resolution_reason: null },
-    { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null },
+    { hypothesis_id: 'h1', statement: 'The host is owned', status: 'disproven', supports: 0, weakens: 2, resolution_reason: 'contradicted by telemetry', provenance: 'operator' },
+    { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null, provenance: '' },
   ],
   evidence: [
     { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
@@ -217,8 +217,16 @@ describe('case page', () => {
     expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
-    expect(await screen.findByText('ruled out')).toBeInTheDocument()
-    expect(screen.getByText('forming')).toBeInTheDocument()
+    expect(await screen.findByText('Ruled out')).toBeInTheDocument()
+    expect(screen.getByText('Forming')).toBeInTheDocument()
+    expect(screen.getByText('contradicted by telemetry')).toBeInTheDocument()
+    expect(screen.getByText('Added by you')).toBeInTheDocument()
+    expect(screen.getAllByText(/^Added by/)).toHaveLength(1)
+    expect(screen.getAllByText('0 for')).toHaveLength(2)
+    expect(screen.getByText('2 against')).toBeInTheDocument()
+    for (const name of ['+ Add an explanation', 'Rule one out']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
 
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('no login')).toBeInTheDocument()
@@ -226,6 +234,79 @@ describe('case page', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
     const latency = await screen.findByRole('columnheader', { name: 'Latency' })
     expect(within(latency.closest('table') as HTMLElement).getByText('—')).toBeInTheDocument()
+  })
+
+  const huntCase = (id: string) => {
+    testState.cases = [{
+      case_id: id,
+      title: 'Explanations case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, `run-${id}`)],
+    }]
+  }
+
+  it('shows every explanation word and provenance on the Explanations tab', async () => {
+    huntCase('case-words')
+    const hyp = (hypothesis_id: string, status: string, supports: number, weakens: number, provenance: string, resolution_reason: string | null = null) =>
+      ({ hypothesis_id, statement: `claim ${hypothesis_id}`, status, supports, weakens, resolution_reason, provenance })
+    testState.runs['run-case-words'] = {
+      hunt: {
+        ...HUNT,
+        hypotheses: [
+          hyp('a', 'proven', 3, 0, 'hunt_spec', 'confirmed by the hash'),
+          hyp('b', 'active', 2, 0, 'operator'),
+          hyp('c', 'active', 0, 0, 'base_rate'),
+          hyp('d', 'active', 1, 1, 'deployment_gap'),
+          hyp('e', 'disproven', 0, 2, 'mystery_token'),
+          hyp('f', 'inconclusive', 0, 0, ''),
+          hyp('g', 'parked', 0, 0, '', 'waiting on logs'),
+          hyp('h', 'handed_off', 0, 0, '', 'sent to the reviewer'),
+        ],
+      },
+    }
+    renderCase('case-words')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim a')).toBeInTheDocument()
+    for (const word of ['Proven', 'Standing', 'Forming', 'Weakened', 'Ruled out', 'Inconclusive', 'Parked', 'Handed off']) {
+      expect(screen.getByText(word)).toBeInTheDocument()
+    }
+    expect(screen.getByText('claim e')).toHaveClass('struck')
+    expect(screen.getByText('claim a')).not.toHaveClass('struck')
+    for (const by of ['the hunt definition', 'you', 'the base rate', 'the deployment-gap check', 'mystery_token']) {
+      expect(screen.getByText(`Added by ${by}`)).toBeInTheDocument()
+    }
+    expect(screen.getAllByText(/^Added by/)).toHaveLength(5)
+    expect(screen.getByText('confirmed by the hash')).toBeInTheDocument()
+    expect(screen.getByText('waiting on logs')).toBeInTheDocument()
+    expect(screen.getByText('sent to the reviewer')).toBeInTheDocument()
+  })
+
+  it('shows an empty, loading and failed Explanations tab', async () => {
+    huntCase('case-empty-expl')
+    testState.runs['run-case-empty-expl'] = { hunt: { ...HUNT, hypotheses: [] } }
+    const view = renderCase('case-empty-expl')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('No explanations yet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rule one out' })).toBeDisabled()
+    view.unmount()
+
+    huntCase('case-loading')
+    vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
+    const loading = renderCase('case-loading')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+    loading.unmount()
+
+    huntCase('case-failed')
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
+    renderCase('case-failed')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect((await screen.findAllByText('The run could not be read.')).length).toBeGreaterThan(0)
   })
 
   it('gives an investigate run the honest line and puts findings in the evidence table', async () => {
@@ -260,6 +341,7 @@ describe('case page', () => {
     expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'About explanations' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('benign traffic')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
