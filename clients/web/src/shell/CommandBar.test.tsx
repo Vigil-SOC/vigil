@@ -176,6 +176,39 @@ afterEach(() => {
 })
 
 describe('CommandBar', () => {
+  it('a fill puts the text in the bar with the Run preview and runs nothing', () => {
+    const onOpenChat = vi.fn()
+    const props = { boards: BOARDS, onOpenChat, onOpenCase: vi.fn(), onGo: vi.fn() }
+    const { rerender } = render(<CommandBar {...props} fill={null} />)
+    const input = screen.getByRole('combobox')
+    rerender(<CommandBar {...props} fill={{ text: '/ask Why was the okta alert dropped? Finding f-9', seq: 1 }} />)
+    expect(input).toHaveValue('/ask Why was the okta alert dropped? Finding f-9')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
+    expect(onOpenChat).not.toHaveBeenCalled()
+    expect(execute).not.toHaveBeenCalled()
+
+    // the same text again, with a new seq, opens the bar again after Esc
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    rerender(<CommandBar {...props} fill={{ text: '/investigate f-1', seq: 2 }} />)
+    expect(input).toHaveValue('/investigate f-1')
+    expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
+    expect(execute).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    // Run is the only thing that starts work
+    return waitFor(() => expect(execute).toHaveBeenCalledWith('incident-response', { finding_id: 'f-1' }))
+  })
+
+  it('a fill without a live command name only fills the text', () => {
+    const props = { boards: BOARDS, onOpenChat: vi.fn(), onOpenCase: vi.fn(), onGo: vi.fn() }
+    const { rerender } = render(<CommandBar {...props} fill={null} />)
+    rerender(<CommandBar {...props} fill={{ text: '/hold response', seq: 1 }} />)
+    expect(screen.getByRole('combobox')).toHaveValue('/hold response')
+    expect(screen.queryByRole('button', { name: 'Run' })).not.toBeInTheDocument()
+  })
+
   it('opens with ⌘K, and Esc and Tab write no recent search', () => {
     const { onOpenChat } = renderBar()
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
