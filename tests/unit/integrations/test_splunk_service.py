@@ -28,7 +28,7 @@ def _service(**kwargs) -> SplunkService:
         server_url=kwargs.get("server_url", BASE),
         username=kwargs.get("username", "svc_vigil"),
         password=kwargs.get("password", "secret"),
-        verify_ssl=kwargs.get("verify_ssl", False),
+        verify_ssl=kwargs.get("verify_ssl", True),
     )
 
 
