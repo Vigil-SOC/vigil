@@ -928,15 +928,21 @@ jobs:
       - name: Install Bandit
         run: pip install bandit[toml]
       
+      # Gate: medium-or-higher severity and confidence. A justified exception is
+      # a `# nosec Bxxx - <reason>` at the call site.
       - name: Run Bandit
-        run: bandit -r core/ services/ tools/ scripts/ -f json -o bandit-report.json || true
-      
+        run: bandit -r core/ services/ tools/ scripts/ -ll -ii
+
+      - name: Write Bandit report
+        if: always()
+        run: bandit -r core/ services/ tools/ scripts/ -ll -ii -f json -o bandit-report.json --exit-zero
+
       - name: Upload Bandit results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: bandit-report
           path: bandit-report.json
-        continue-on-error: true
 
   security-scan-npm:
     name: Security Scan - NPM
@@ -950,10 +956,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       
+      # --omit=dev audits what ships. clients/web's remaining highs are the
+      # braces chain under tailwindcss (build-time only; the fix is a breaking
+      # tailwind 4 upgrade).
       - name: Run npm audit
-        working-directory: clients/web
-        run: npm audit --audit-level=moderate || true
-        continue-on-error: true
+        run: |
+          status=0
+          for dir in clients/web services/agent clients/desktop; do
+            echo "::group::npm audit ($dir)"
+            (cd "$dir" && npm audit --omit=dev --audit-level=high) || status=1
+            echo "::endgroup::"
+          done
+          exit $status
 
   # ============================================================================
   # Build Docker Images
