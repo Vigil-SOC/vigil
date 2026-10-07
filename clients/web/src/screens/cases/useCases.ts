@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
@@ -189,6 +189,13 @@ function asClosure(raw: unknown): CaseClosureView | null {
   }
 }
 
+type CaseDetailBody = Parameters<typeof mapApiCase>[0] & {
+  combined_state?: unknown
+  investigations?: unknown
+  closure?: unknown
+  linked_findings?: unknown
+}
+
 export function useCaseDetail(id: string | null) {
   const [row, setRow] = useState<CaseRow | null>(null)
   const [created, setCreated] = useState<string>('—')
@@ -201,9 +208,22 @@ export function useCaseDetail(id: string | null) {
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
+  const ticket = useRef(0) // one per load; a refresh made before it is stale
+  const quiet = useRef(0)
+
+  const apply = useCallback((data: CaseDetailBody) => {
+    setRow(mapApiCase(data))
+    setCombinedState(typeof data.combined_state === 'string' ? data.combined_state : '')
+    setInvestigations(asInvestigations(data.investigations))
+    setClosure(asClosure(data.closure))
+    setLinkedFindings(asLinkedFindings(data.linked_findings))
+    const d = data.created_at ? new Date(data.created_at) : null
+    setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
+  }, [])
+
   useEffect(() => {
     if (!id) return
-    let cancelled = false
+    const mine = ++ticket.current
     setPhase('loading')
     setError(null)
     setRow(null)
@@ -214,31 +234,29 @@ export function useCaseDetail(id: string | null) {
     casesApi
       .getById(id)
       .then((res) => {
-        if (cancelled) return
-        const data = res.data as typeof res.data & {
-          combined_state?: unknown
-          investigations?: unknown
-          closure?: unknown
-          linked_findings?: unknown
-        }
-        setRow(mapApiCase(data))
-        setCombinedState(typeof data.combined_state === 'string' ? data.combined_state : '')
-        setInvestigations(asInvestigations(data.investigations))
-        setClosure(asClosure(data.closure))
-        setLinkedFindings(asLinkedFindings(data.linked_findings))
-        const d = data.created_at ? new Date(data.created_at) : null
-        setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
+        if (mine !== ticket.current) return
+        apply(res.data as CaseDetailBody)
         setPhase('ready')
       })
       .catch((e) => {
-        if (cancelled) return
+        if (mine !== ticket.current) return
         setError((e as { message?: string })?.message || 'Failed to load case')
         setPhase('error')
       })
-    return () => {
-      cancelled = true
-    }
-  }, [id, reloadKey])
+  }, [id, reloadKey, apply])
 
-  return { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload }
+  /** Re-read the case in place: the old data stays until the new arrives, and a failed read changes nothing. */
+  const refresh = useCallback(() => {
+    if (!id) return
+    const base = ticket.current
+    const mine = ++quiet.current
+    casesApi
+      .getById(id)
+      .then((res) => {
+        if (base === ticket.current && mine === quiet.current) apply(res.data as CaseDetailBody)
+      })
+      .catch(() => undefined)
+  }, [id, apply])
+
+  return { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload, refresh }
 }
