@@ -13,8 +13,10 @@ import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
 import { CommentsCard, EvidenceCard, IOCsCard, TasksCard } from './CaseSections'
 import {
+  agentRows,
   explanationWord,
   honestLine,
+  moveTool,
   readFold,
   recallEntityCalls,
   recordChip,
@@ -49,6 +51,16 @@ function when(value?: string | null): string {
 function money(value: number | null | undefined): string {
   if (value == null) return '—'
   return `$${value.toFixed(4)}`
+}
+
+function clock(value: string | null | undefined): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '—' : format(d, 'HH:mm')
+}
+
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
 }
 
 function latency(ms: number | undefined): string {
@@ -206,6 +218,106 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
     'Memory and blind spots': memory,
     Record: record,
   }
+}
+
+const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
+
+/** The line under each door's count, from the fold already loaded. */
+function doorLines(fold: RunFold | null, foldPhase: Phase, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
+  const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : 'No run yet'
+  const tally = new Map<string, number>()
+  if (fold?.kind === 'hunt') {
+    for (const row of fold.hypotheses) {
+      const word = explanationWord(row.status, row.supports, row.weakens)
+      tally.set(word, (tally.get(word) ?? 0) + 1)
+    }
+  }
+  const words = [...tally.keys()].sort((a, b) => {
+    const [i, j] = [DOOR_ORDER.indexOf(a), DOOR_ORDER.indexOf(b)]
+    return (i < 0 ? DOOR_ORDER.length : i) - (j < 0 ? DOOR_ORDER.length : j)
+  })
+  let evidence = none
+  if (fold?.kind === 'hunt') {
+    const links = fold.evidence.flatMap((row) => row.bears_on.map((link) => link.relation))
+    const stance = (relation: string) => fold.evidence.filter((row) => row.bears_on.some((link) => link.relation === relation)).length
+    evidence = links.length || fold.evidence.length ? `${stance('supports')} for · ${stance('weakens')} against · shown` : 'None shown'
+  } else if (fold) {
+    evidence = 'Findings, no for or against'
+  }
+  const recall = fold?.recall
+  const recallRows = (recall ? recall.sightings.length + recall.verdicts.length + recall.gaps.length : 0) + recallEntityCalls(fold).length
+  const blind = visibilityGaps(fold).length
+  const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap')].filter(Boolean).join(' · ')
+  const chained = rows.filter((row) => row.chained).length
+  return {
+    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
+    Evidence: evidence,
+    Checked: fold ? `${money(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
+    'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
+    Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
+  }
+}
+
+/** Five doors into the audit tabs, in every mood. */
+function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; lines: Record<Exclude<Tab, 'Summary'>, string>; onOpen: (tab: Tab) => void }) {
+  return (
+    <section className="case-doors" aria-label="Audit doors">
+      {TABS.filter((name) => name !== 'Summary').map((name) => (
+        <button key={name} type="button" className="case-door" onClick={() => onOpen(name)}>
+          <span className="door-label">{name}<span aria-hidden="true">›</span></span>
+          <span className="door-count">{n[name]}</span>
+          <span className="door-sub">{lines[name as Exclude<Tab, 'Summary'>]}</span>
+        </button>
+      ))}
+    </section>
+  )
+}
+
+/** Now · step N: the latest move, who has it, with which tool, since when. */
+function NowCard({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+  const move = fold?.moves[0]
+  const meta = fold ? [fold.worker, moveTool(fold, move), `since ${clock(move?.at)}`].filter(Boolean).join(' · ') : ''
+  return (
+    <section className="case-now" aria-label="Now">
+      <div className="now-head">
+        <span className="now-dot" aria-hidden="true" />
+        <b>{fold ? `Now · step ${fold.kind === 'hunt' ? fold.iteration : fold.iterations}` : 'Now'}</b>
+        {meta && <span className="now-meta">{meta}</span>}
+      </div>
+      <p>
+        {phase === 'loading' && 'Loading the run…'}
+        {phase === 'error' && 'The run could not be read.'}
+        {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : 'No run on this case yet.')}
+      </p>
+      {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
+    </section>
+  )
+}
+
+function AgentsTable({ fold, phase, live, state }: { fold: RunFold | null; phase: Phase; live: boolean; state: string }) {
+  const rows = agentRows(fold)
+  return (
+    <section className="case-agents" aria-label="Agents on this case">
+      <h3>Agents on this case, right now</h3>
+      {phase === 'loading' && <p className="muted">Loading the run…</p>}
+      {phase === 'error' && <p className="muted">The run could not be read.</p>}
+      {phase === 'ready' && rows.length === 0 && <p className="muted">{live ? 'No agent has acted yet.' : 'No live investigation.'}</p>}
+      {rows.length > 0 && (
+        <div className="agent-rows" role="table" aria-label="Agents">
+          {rows.map((row, i) => (
+            <div key={row.who} className="agent-row" role="row">
+              <span className="agent-who" role="cell" title={row.who}>{row.who}</span>
+              <span className="agent-doing" role="cell" title={row.doing}>{row.doing || '—'}</span>
+              <span className="agent-tool" role="cell" title={row.tool}>{row.tool || '—'}</span>
+              <span className="agent-since" role="cell">{clock(row.at)}</span>
+              {/* The run's state belongs to the agent holding the latest move. */}
+              <span className={`agent-state${live ? ' live' : ''}`} role="cell">{i === 0 && state && (<><span className="state-dot" aria-hidden="true" />{state}</>)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
 }
 
 /** ⋯ menu in the head row. Same pattern as the console's More menu: closes on outside click and Escape. */
@@ -558,7 +670,11 @@ export function CasePage({
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   const pillState = closed ? 'closed' : pill
+  // Only what exists: the live investigation's status, else the run's outcome.
+  const runState = (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
+  const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
+  const running = !closed && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
   const reason =
     tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''
@@ -651,6 +767,7 @@ export function CasePage({
                   <h3>Strongest findings</h3>
                   <FindingList fold={fold} />
                 </section>
+                {doors}
                 <div className="case-actions">
                   {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
                   <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
@@ -659,38 +776,19 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
-                <section>
-                  <h3>Now · phase {fold?.kind === 'hunt' ? fold.iteration : fold?.iterations ?? 0}</h3>
-                  <p>
-                    {foldPhase === 'loading' && 'Loading the run…'}
-                    {foldPhase === 'error' && 'The run could not be read.'}
-                    {foldPhase === 'ready' && (fold ? `${fold.doing || 'Nothing decided yet'}${fold.worker ? ` · ${fold.worker}` : ''}` : 'No run on this case yet.')}
-                  </p>
-                  {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
-                </section>
+                {running && <NowCard fold={fold} phase={foldPhase} />}
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
                 </section>
-                <section>
-                  <h3>Later</h3>
-                  <LaterRow title="What it changed" line="What this phase changed in the estate." />
-                  <LaterRow title="Planned next" line="What the run intends to do next." />
-                </section>
-                <section>
-                  <h3>Agents on this case, right now</h3>
-                  {live.length === 0 && <p className="muted">No live investigation.</p>}
-                  {live.map((item) => (
-                    <p key={item.investigation_id}>{item.workflow_id} · {item.status}</p>
-                  ))}
-                </section>
-                <div className="case-doors">
-                  {TABS.filter((name) => name !== 'Summary').map((name) => (
-                    <button key={name} className="btn ghost" onClick={() => setTab(name)}>
-                      {name} <span className="case-count">{tabCounts[name]}</span>
-                    </button>
-                  ))}
-                </div>
+                {running && (
+                  <>
+                    <LaterRow title="What it changed" line="What this phase changed in the estate." />
+                    <LaterRow title="Planned next" line="What the run intends to do next." />
+                  </>
+                )}
+                <AgentsTable fold={fold} phase={foldPhase} live={live.length > 0} state={runState} />
+                {doors}
               </>
             )
           )}
