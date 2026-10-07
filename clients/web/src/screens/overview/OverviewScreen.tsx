@@ -207,6 +207,19 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
     setWallMode?.(next)
   }
 
+  // Escape leaves full screen. The popup's own Escape handler runs first and stops propagation,
+  // so with an alert open one keypress closes only the popup.
+  useEffect(() => {
+    if (!wall) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setWall(false)
+      setWallMode?.(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wall, setWallMode])
+
   const agentColumns = useMemo<ColumnDef<OverviewAgent>[]>(() => [
     { key: 'name', label: 'Workflow', render: (row) => row.name, sortVal: (row) => row.name, searchVal: (row) => row.name },
     { key: 'running', label: 'Running', render: (row) => row.running, sortVal: (row) => row.running },
@@ -317,7 +330,8 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
         </span>
         <div className="flex-1" />
         <button type="button" className="btn ghost" aria-pressed={wall} onClick={toggleWall}>
-          {wall ? 'Exit wall' : 'Wall'}
+          <Icon name="fit" size={13} />
+          {wall ? 'Exit full screen' : 'Full screen'}
         </button>
         <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
           <Icon name="refresh" />
@@ -339,26 +353,28 @@ export default function OverviewScreen({ goSettings, openCase, setWallMode }: Co
       {phase === 'ready' && data && !data.empty && (
         <>
           <Flow data={data} />
-          <section className="section">
-            <div className="card">
-              <div className="card-h">
-                <h3>Agents</h3>
-                <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
-                  <Icon name="info" size={14} />
-                </button>
+          {!wall && (
+            <section className="section">
+              <div className="card">
+                <div className="card-h">
+                  <h3>Agents</h3>
+                  <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
+                    <Icon name="info" size={14} />
+                  </button>
+                </div>
+                <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
+                <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
+                <DataTable
+                  columns={agentColumns}
+                  rows={sortRows(data.agents, agentColumns, agentSort.sort)}
+                  rowKey={(row) => row.workflow_id}
+                  sort={agentSort.sort}
+                  onSort={agentSort.toggle}
+                  emptyMessage="No workflows."
+                />
               </div>
-              <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
-              <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
-              <DataTable
-                columns={agentColumns}
-                rows={sortRows(data.agents, agentColumns, agentSort.sort)}
-                rowKey={(row) => row.workflow_id}
-                sort={agentSort.sort}
-                onSort={agentSort.toggle}
-                emptyMessage="No workflows."
-              />
-            </div>
-          </section>
+            </section>
+          )}
           <section className="section">
             <div className="card">
               <div className="card-h"><h3>Alerts</h3></div>
