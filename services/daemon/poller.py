@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.time import utcnow
 from core.webhook_rejections import (
     BAD_TOKEN,
@@ -576,7 +577,7 @@ class DataPoller:
         if not detection_id:
             return None
 
-        finding_id = f"cs-{detection_id[:32]}"
+        finding_id = fit_id("cs-", detection_id, FINDING_ID_MAX)
 
         # Map severity
         severity_raw = detection.get("max_severity_displayname", "Medium")

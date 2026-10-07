@@ -22,7 +22,11 @@ import respx
 
 from core.federation.adapters._base import parse_cursor_since
 from core.federation.runner import FederationRunner
-from core.integrations.crowdstrike.adapter import CrowdStrikeAdapter
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
+from core.integrations.crowdstrike.adapter import (
+    CrowdStrikeAdapter,
+    _detection_to_finding,
+)
 from core.integrations.crowdstrike.client import CrowdStrikeService
 from tests.unit._acking_queue import AckingQueue
 
@@ -108,7 +112,29 @@ def test_empty_result_is_a_successful_empty_poll():
 def test_detections_become_findings():
     res = _fetch(_FakeFalcon([_detection(1), _detection(2)]))
     assert [f["external_id"] for f in res.findings] == ["ldt:1", "ldt:2"]
+    assert [f["finding_id"] for f in res.findings] == ["cs-ldt:1", "cs-ldt:2"]
     assert res.cursor["last_poll_at"] > CURSOR["last_poll_at"]
+
+
+# Published Falcon ids from one agent. The number after the second colon is
+# what makes them different; a 32-character prefix slice drops it.
+_SAME_HOST = (
+    "ldt:0d6ca15ba400411eafe2e6b38245df9e:236244939242",
+    "ldt:0d6ca15ba400411eafe2e6b38245df9e:240543365083",
+    "ldt:0d6ca15ba400411eafe2e6b38245df9e:249113529425",
+)
+
+
+def test_same_host_detections_stay_distinct_findings():
+    findings = [
+        _detection_to_finding({"detection_id": det, "max_severity_displayname": "High"})
+        for det in _SAME_HOST
+    ]
+    ids = [f["finding_id"] for f in findings]
+    assert ids == [fit_id("cs-", det, FINDING_ID_MAX) for det in _SAME_HOST]
+    assert len(set(ids)) == len(_SAME_HOST)
+    assert all(len(i) <= FINDING_ID_MAX for i in ids)
+    assert [f["external_id"] for f in findings] == list(_SAME_HOST)
 
 
 def test_not_configured_returns_empty():
