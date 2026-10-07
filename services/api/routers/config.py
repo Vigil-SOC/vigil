@@ -40,6 +40,7 @@ from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
 from core.time import utcnow
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import (
     get_current_active_user,
     require_integrations_admin,
@@ -178,7 +179,7 @@ def get_demo_mode():
         }
     except Exception as e:
         logger.error(f"Error getting demo mode: {e}")
-        return {"enabled": False, "error": str(e)}
+        return {"enabled": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/demo-mode", dependencies=_SETTINGS_WRITE)
@@ -263,7 +264,7 @@ def get_claude_config():
         }
     except Exception as e:
         logger.error(f"Error getting Claude config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/claude", dependencies=_SETTINGS_WRITE)
@@ -358,7 +359,7 @@ def get_s3_config():
         return {"configured": False}
     except Exception as e:
         logger.error(f"Error getting S3 config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/s3", dependencies=_SETTINGS_WRITE)
@@ -842,7 +843,7 @@ def get_integrations_config():
             "configured": False,
             "enabled_integrations": [],
             "integrations": {},
-            "error": str(e),
+            "error": INTERNAL_ERROR_DETAIL,
         }
 
 
@@ -1235,7 +1236,7 @@ def get_github_config():
         }
     except Exception as e:
         logger.error(f"Error getting GitHub config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/github", dependencies=_SETTINGS_WRITE)
@@ -1284,7 +1285,7 @@ def get_postgresql_config():
         return {"configured": has_config, "connection_preview": preview}
     except Exception as e:
         logger.error(f"Error getting PostgreSQL config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/postgresql", dependencies=_SETTINGS_WRITE)

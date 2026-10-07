@@ -27,6 +27,7 @@ from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 from core.storage.models import User
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
 
 router = APIRouter()
@@ -455,7 +456,7 @@ async def _relay(
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)
-        yield _frame({"error": str(exc)})
+        yield _frame({"error": INTERNAL_ERROR_DETAIL})
     finally:
         # Fail-open, and on abort too: GeneratorExit flows through finally.
         try:

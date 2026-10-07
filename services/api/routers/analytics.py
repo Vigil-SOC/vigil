@@ -32,6 +32,7 @@ from core.reporting.analytics_service import (
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.threat_intel.mitre_lookup import get_time_range
+from services.api.errors import INTERNAL_ERROR_DETAIL
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ async def refresh_analytics_insights(
         metrics, time_series = await collect_insights_inputs(db, time_range)
     except Exception as e:
         logger.error(f"Could not collect inputs for insights refresh: {e}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": INTERNAL_ERROR_DETAIL}
 
     asyncio.create_task(
         ai_insights_service.trigger_regeneration(
