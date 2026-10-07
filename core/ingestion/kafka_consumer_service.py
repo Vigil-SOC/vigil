@@ -120,18 +120,11 @@ class KafkaConsumerService:
                 try:
                     # getmany so we can check shutdown frequently
                     batches = await self._consumer.getmany(timeout_ms=1000)
-                    retry = False
-                    for tp, msgs in batches.items():
-                        if await self._handle_batch(tp.topic, msgs):
-                            # Commit only this partition, only once stored
-                            if msgs:
-                                await self._consumer.commit({tp: msgs[-1].offset + 1})
-                        else:
-                            # Rewind to re-read from the uncommitted offset;
-                            # stored ids are dedup-marked and skipped.
-                            self._consumer.seek(tp, msgs[0].offset)
-                            retry = True
-                    if retry:
+                    results = [
+                        await self._process_partition(tp, msgs)
+                        for tp, msgs in batches.items()
+                    ]
+                    if not all(results):
                         await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
                 except asyncio.CancelledError:
                     raise
@@ -153,6 +146,25 @@ class KafkaConsumerService:
                 await self._dedup.close()
             except Exception:
                 pass
+
+    async def _process_partition(self, tp, msgs) -> bool:
+        """Handle one partition and commit it once stored. On any failure rewind
+        to the uncommitted offset (stored ids are dedup-marked and skipped) and
+        return False, so the other partitions in the poll are still processed."""
+        try:
+            if await self._handle_batch(tp.topic, msgs):
+                if msgs:
+                    await self._consumer.commit({tp: msgs[-1].offset + 1})
+                return True
+            reason = "findings not stored"
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._record_error(f"poll error: {e}")
+            reason = str(e)
+        logger.error("Kafka: rewinding %s to offset %s: %s", tp, msgs[0].offset, reason)
+        self._consumer.seek(tp, msgs[0].offset)
+        return False
 
     async def _handle_message(self, topic: str, msg) -> bool:
         """Decode, dedupe, and enqueue a single Kafka message."""
