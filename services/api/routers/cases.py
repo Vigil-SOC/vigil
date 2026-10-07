@@ -17,8 +17,8 @@ from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_record import merge_record
-from core.cases.case_state import case_run_refs
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
+from core.cases.case_state import case_run_refs
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
