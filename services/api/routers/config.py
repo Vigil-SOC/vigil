@@ -823,6 +823,7 @@ def get_integrations_config():
                 "configured": False,
                 "enabled_integrations": [],
                 "integrations": {},
+                "last_test": {},
             }
 
         # Redact registered secret fields so the frontend never receives
@@ -837,6 +838,8 @@ def get_integrations_config():
             "enabled_integrations": loaded["enabled_integrations"],
             "integrations": redacted,
             "secrets_set": _secrets_set_map(redacted),
+            # {id: {at, success, error}} from POST .../test; untested ids absent
+            "last_test": loaded.get("last_test", {}),
         }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
@@ -844,6 +847,7 @@ def get_integrations_config():
             "configured": False,
             "enabled_integrations": [],
             "integrations": {},
+            "last_test": {},
             "error": INTERNAL_ERROR_DETAIL,
         }
 
