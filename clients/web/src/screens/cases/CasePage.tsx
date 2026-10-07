@@ -361,7 +361,7 @@ function NowCard({ fold, phase, hasRun }: { fold: RunFold | null; phase: Phase; 
 function StoppedCard({ stopped }: { stopped: StoppedRun }) {
   return (
     <section className="case-stopped" aria-label="Run state">
-      <b>{display(stopped.state)}</b>
+      <b>{wordDisplay(stopped.state)}</b>
       <span className="clamp2" title={stopped.raw || stopped.line}>{stopped.line}</span>
       {stopped.raw && <InfoTip label="What the run reported" text={stopped.raw} align="start" />}
     </section>
@@ -591,12 +591,8 @@ export function CasePage({
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
-    if (!runId) return
-    workflowApi
-      .getRun(runId)
-      .then((res) => setFold(readFold(res.data)))
-      .catch(() => undefined) // keep what is shown
-  }, [runId])
+    if (runId) void loadRun()
+  }, [runId, loadRun])
 
   useEffect(() => {
     let cancelled = false
