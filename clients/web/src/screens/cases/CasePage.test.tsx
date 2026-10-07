@@ -202,6 +202,46 @@ describe('case page', () => {
     expect(within(latency.closest('table') as HTMLElement).getByText('—')).toBeInTheDocument()
   })
 
+  it('shows a run-only hunt ref: the run fills the page and reads as live', async () => {
+    testState.cases = [{
+      case_id: 'case-hunt-only',
+      title: 'Hunt-only case',
+      status: 'open',
+      priority: 'high',
+      assignee: 'ada',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'running',
+      investigations: [{
+        investigation_id: null,
+        status: 'running',
+        workflow_id: 'threat-hunt',
+        run_id: 'run-hunt-only',
+        live: true,
+        cost_usd: 0.2,
+        max_cost_usd: 0,
+        budget_health: 'healthy',
+        iteration_count: 0,
+      }],
+    }]
+    testState.runs['run-hunt-only'] = { hunt: HUNT }
+    renderCase('case-hunt-only')
+
+    expect(await screen.findByRole('heading', { name: 'Hunt-only case' })).toBeInTheDocument()
+    const header = document.querySelector('.detail-head') as HTMLElement
+    expect(within(header).getByText('Running')).toBeInTheDocument()
+    expect(await screen.findByText(/who logged in · threat_hunter/)).toBeInTheDocument()
+    expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
+    expect(screen.getByText(/threat-hunt · running/)).toBeInTheDocument()
+
+    // The run doors (Replay / Verify) work off the run id; the Export door
+    // is investigation-scoped, so a run-only case does not offer it.
+    fireEvent.click(screen.getByRole('tab', { name: /Record/ }))
+    expect(await screen.findByRole('button', { name: 'Replay' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
+  })
+
   it('gives an investigate run the honest line and puts findings in the evidence table', async () => {
     testState.cases = [{
       case_id: 'case-inv',

@@ -7,7 +7,8 @@ import type { CaseRow } from '../../data/data'
 export type Phase = 'loading' | 'ready' | 'error'
 
 export interface CaseInvestigationRef {
-  investigation_id: string
+  /** Null for a run-only ref: an execute-path run has no Investigation row. */
+  investigation_id: string | null
   status: string
   workflow_id: string
   run_id: string
@@ -144,9 +145,9 @@ function asInvestigations(raw: unknown): CaseInvestigationRef[] {
   return raw.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
-    if (typeof o.investigation_id !== 'string' || typeof o.run_id !== 'string') return []
+    if (typeof o.run_id !== 'string' || !o.run_id) return []
     return [{
-      investigation_id: o.investigation_id,
+      investigation_id: typeof o.investigation_id === 'string' ? o.investigation_id : null,
       status: typeof o.status === 'string' ? o.status : '',
       workflow_id: typeof o.workflow_id === 'string' ? o.workflow_id : '',
       run_id: o.run_id,

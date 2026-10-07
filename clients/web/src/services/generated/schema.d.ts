@@ -8928,6 +8928,9 @@ export interface components {
         /**
          * CaseInvestigationRef
          * @description One investigation on the case page. Newest first on the detail read.
+         *
+         *     ``investigation_id`` is absent for a run-only ref: an execute-path run
+         *     (a ``/hunt``) has no ``Investigation`` row and is identified by ``run_id``.
          */
         CaseInvestigationRef: {
             /**
@@ -8943,7 +8946,7 @@ export interface components {
             /** Created At */
             created_at?: string | null;
             /** Investigation Id */
-            investigation_id: string;
+            investigation_id?: string | null;
             /**
              * Iteration Count
              * @default 0

@@ -30,6 +30,7 @@ from core.storage.models import (
     CaseWatcher,
     Investigation,
     SketchMapping,
+    WorkflowRun,
     case_findings,
 )
 
@@ -69,6 +70,24 @@ def list_case_investigations(session: Session, case_id: str) -> List[Investigati
         .order_by(
             Investigation.created_at.desc(), Investigation.investigation_id.desc()
         )
+        .all()
+    )
+
+
+def list_case_workflow_runs(session: Session, case_id: str) -> List[WorkflowRun]:
+    """Execute-path runs started on this case, newest first.
+
+    These runs name their case only in ``trigger_context`` (a ``/hunt``
+    passes ``case_id`` there), and never get an ``Investigation`` row.
+    Soft-deleted runs stay hidden, as in the run listings.
+    """
+    return (
+        session.query(WorkflowRun)
+        .filter(
+            WorkflowRun.trigger_context["case_id"].astext == case_id,
+            WorkflowRun.deleted_at.is_(None),
+        )
+        .order_by(WorkflowRun.started_at.desc(), WorkflowRun.run_id.desc())
         .all()
     )
 

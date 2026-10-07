@@ -4,14 +4,19 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import CommandBar from './CommandBar'
 import CaseDrawer from './CaseDrawer'
+import { huntCaseTitle } from './commandBarModel'
+import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 
-const { execute, getCase, getFinding, getIntegrations, apiGet } = vi.hoisted(() => ({
-  execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
+const { execute, getCase, getFinding, getIntegrations, apiGet, createCase, deleteCase, updateCase } = vi.hoisted(() => ({
+  execute: vi.fn(() => Promise.resolve({ data: {} })),
   getCase: vi.fn(),
   getFinding: vi.fn(),
   getIntegrations: vi.fn(),
   apiGet: vi.fn(),
+  createCase: vi.fn(),
+  deleteCase: vi.fn(),
+  updateCase: vi.fn(),
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -23,6 +28,9 @@ vi.mock('../contexts/AuthContext', () => ({
 
 vi.mock('../services/api', () => ({
   casesApi: {
+    create: (data: unknown) => createCase(data),
+    delete: (id: string) => deleteCase(id),
+    update: (id: string, data: unknown) => updateCase(id, data),
     getById: (id: string) => getCase(id),
     getAll: () => Promise.resolve({
       data: {
@@ -114,6 +122,12 @@ beforeEach(() => {
   localStorage.clear()
   execute.mockClear()
   execute.mockResolvedValue({ data: {} })
+  createCase.mockClear()
+  createCase.mockImplementation((data: { title: string }) => Promise.resolve({ data: { case_id: 'case-hunt', title: data.title } }))
+  deleteCase.mockClear()
+  deleteCase.mockResolvedValue({ data: { success: true } })
+  updateCase.mockClear()
+  updateCase.mockResolvedValue({ data: { success: true } })
   getIntegrations.mockResolvedValue({ data: { enabled_integrations: [], integrations: {}, secrets_set: {} } })
   getCase.mockImplementation((id: string) => {
     if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', finding_ids: [] } })
@@ -246,12 +260,87 @@ describe('CommandBar', () => {
     fireEvent.change(input, { target: { value: '/hunt rare beacon' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
-    await waitFor(() => expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'rare beacon' }))
+    await waitFor(() => expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'rare beacon', case_id: 'case-hunt' }))
+    expect(createCase).toHaveBeenCalledWith({
+      title: 'rare beacon',
+      description: 'rare beacon',
+      finding_ids: [],
+      priority: 'medium',
+      status: 'open',
+    })
 
     fireEvent.change(input, { target: { value: '/ask where did it go' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
     await waitFor(() => expect(onOpenChat).toHaveBeenCalledWith('where did it go'))
+  })
+
+  it('cuts a hunt case title on a whole word, and only a lone long word hard', () => {
+    expect(huntCaseTitle('rare beacon')).toBe('rare beacon')
+    expect(huntCaseTitle('  rare   beacon\nhunting ')).toBe('rare beacon hunting')
+    const words = Array(30).fill('word').join(' ')
+    expect(huntCaseTitle(words)).toBe(Array(16).fill('word').join(' '))
+    expect(huntCaseTitle('a'.repeat(100))).toBe('a'.repeat(80))
+    const hypothesis = 'credentials taken from HOST-42 were reused elsewhere to read customer records and then move laterally'
+    const title = huntCaseTitle(hypothesis)
+    expect(title.length).toBeLessThanOrEqual(80)
+    expect(hypothesis.startsWith(title)).toBe(true)
+    expect(hypothesis[title.length]).toBe(' ')
+  })
+
+  it('/hunt creates its case first, opens the drawer on it, clears the bar and names the case in a toast', async () => {
+    const onOpenCase = vi.fn()
+    render(
+      <ToastProvider>
+        <CommandBar boards={BOARDS} onOpenChat={vi.fn()} onOpenCase={onOpenCase} onGo={vi.fn()} />
+      </ToastProvider>,
+    )
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/hunt rare beacon flows' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-hunt'))
+    expect(createCase).toHaveBeenCalledWith({
+      title: 'rare beacon flows',
+      description: 'rare beacon flows',
+      finding_ids: [],
+      priority: 'medium',
+      status: 'open',
+    })
+    expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'rare beacon flows', case_id: 'case-hunt' })
+    expect(input).toHaveValue('')
+    expect(await screen.findByText('Started a threat hunt on rare beacon flows')).toBeInTheDocument()
+    expect(deleteCase).not.toHaveBeenCalled()
+  })
+
+  it('/hunt deletes the case it just created when the start is refused, and keeps the preview open', async () => {
+    const onOpenCase = vi.fn()
+    execute.mockRejectedValueOnce(new Error('A hypothesis has to be a claim'))
+    render(
+      <ToastProvider>
+        <CommandBar boards={BOARDS} onOpenChat={vi.fn()} onOpenCase={onOpenCase} onGo={vi.fn()} />
+      </ToastProvider>,
+    )
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/hunt credential access' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(deleteCase).toHaveBeenCalledWith('case-hunt'))
+    expect(onOpenCase).not.toHaveBeenCalled()
+    expect(input).toHaveValue('/hunt credential access')
+    expect(screen.getByText('Start a threat hunt: credential access')).toBeInTheDocument()
+    expect(await screen.findByText('A hypothesis has to be a claim')).toBeInTheDocument()
+  })
+
+  it('/hunt closes the case it just created when deleting it is not permitted', async () => {
+    execute.mockRejectedValueOnce(new Error('Workflow is disabled'))
+    deleteCase.mockRejectedValueOnce(new Error('Permission denied'))
+    renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/hunt rare beacon' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(updateCase).toHaveBeenCalledWith('case-hunt', { status: 'closed' }))
   })
 
   it('disables /ticket when project_key is missing and names the gap', async () => {

@@ -400,8 +400,13 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     # Copy: a demo-mode case is the stored dict, and this read must not write it.
     case = dict(loaded)
     investigations = case_records_service.list_case_investigations(session, case_id)
+    workflow_runs = case_records_service.list_case_workflow_runs(session, case_id)
     closure = session.get(CaseClosureInfo, case_id)
-    case.update(detail_fields(case.get("status"), investigations, closure))
+    case.update(
+        detail_fields(
+            case.get("status"), investigations, closure, workflow_runs=workflow_runs
+        )
+    )
     case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 

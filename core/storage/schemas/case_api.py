@@ -75,9 +75,13 @@ class CaseListResponse(BaseModel):
 
 
 class CaseInvestigationRef(BaseModel):
-    """One investigation on the case page. Newest first on the detail read."""
+    """One investigation on the case page. Newest first on the detail read.
 
-    investigation_id: str
+    ``investigation_id`` is absent for a run-only ref: an execute-path run
+    (a ``/hunt``) has no ``Investigation`` row and is identified by ``run_id``.
+    """
+
+    investigation_id: Optional[str] = None
     status: str
     workflow_id: str
     run_id: str

@@ -503,7 +503,8 @@ export function CasePage({
   }
 
   const download = async () => {
-    if (!latest) return
+    // The export door is investigation-scoped; a run-only ref has none.
+    if (!latest?.investigation_id) return
     setBusy(true)
     setNote('')
     try {
@@ -681,7 +682,7 @@ export function CasePage({
                   <h3>Agents on this case, right now</h3>
                   {live.length === 0 && <p className="muted">No live investigation.</p>}
                   {live.map((item) => (
-                    <p key={item.investigation_id}>{item.workflow_id} · {item.status}</p>
+                    <p key={item.run_id}>{item.workflow_id} · {item.status}</p>
                   ))}
                 </section>
                 <div className="case-doors">
@@ -857,7 +858,7 @@ export function CasePage({
               <div className="case-actions">
                 {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
                 {runId && <button className="btn" onClick={verify} disabled={busy}>Verify</button>}
-                {latest && <button className="btn" onClick={download} disabled={busy}>Export</button>}
+                {latest?.investigation_id && <button className="btn" onClick={download} disabled={busy}>Export</button>}
               </div>
             </>
           )}

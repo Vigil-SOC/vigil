@@ -8,6 +8,7 @@ import {
   commandPreview,
   commandRemainder,
   firstEnabled,
+  huntCaseTitle,
   isLiveCommand,
   jiraReadiness,
   moveEnabled,
@@ -200,6 +201,8 @@ export default function CommandBar({
     const arg = preview.arg.trim()
     // The workflow this command starts, from the command table.
     const workflowId = COMMANDS.find((c) => c.id === preview.id)?.workflowId ?? ''
+    // Set by a successful /hunt, which opens the case it started on.
+    let huntCase: { id: string; title: string } | null = null
     try {
       switch (preview.id) {
         case 'investigate': {
@@ -213,9 +216,37 @@ export default function CommandBar({
           await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
           break
         }
-        case 'hunt':
-          await workflowApi.execute(workflowId, { hypothesis: arg })
+        case 'hunt': {
+          // The case comes first, so the run starts on it: its id rides in
+          // the execute parameters and lands in trigger_context, which is
+          // how the case page finds this run and how its report files back.
+          const title = huntCaseTitle(arg)
+          const created = await casesApi.create({
+            title,
+            description: arg,
+            finding_ids: [],
+            priority: 'medium',
+            status: 'open',
+          })
+          const caseId = created.data.case_id
+          if (!caseId) throw new Error('The hunt case could not be created')
+          try {
+            await workflowApi.execute(workflowId, { hypothesis: arg, case_id: caseId })
+          } catch (error) {
+            // A refused start (disabled workflow, a hypothesis that is not
+            // a claim, a queue outage) must not leave an orphan case.
+            // Deleting needs its own permission, so fall back to closing.
+            await casesApi.delete(caseId).catch(async () => {
+              await casesApi.update(caseId, { status: 'closed' }).catch(() => undefined)
+            })
+            throw error
+          }
+          huntCase = {
+            id: caseId,
+            title: typeof created.data.title === 'string' && created.data.title.trim() ? created.data.title : title,
+          }
           break
+        }
         case 'replay':
           onOpenCase(arg)
           break
@@ -240,6 +271,11 @@ export default function CommandBar({
       }
       setOpen(false)
       setPreview(null)
+      if (huntCase) {
+        onOpenCase(huntCase.id)
+        setQuery('')
+        notify('ok', `Started a threat hunt on ${huntCase.title}`)
+      }
     } catch (error) {
       notify('err', errorText(error, 'Command failed'))
     }

@@ -97,6 +97,24 @@ export function writeRecent(userId: string, text: string): string[] {
   return next
 }
 
+/** Longest title a `/hunt` case gets; the full hypothesis is its description. */
+export const HUNT_CASE_TITLE_MAX = 80
+
+/**
+ * A short case title made from a hunt hypothesis, ending on a whole word.
+ * A hypothesis that fits is used as-is; a longer one is cut at the last
+ * space inside the limit, so the title never ends mid-word the way the
+ * daemon path's 200-character cut does. A single over-long word is the
+ * one case that is cut hard, as there is no word boundary to end on.
+ */
+export function huntCaseTitle(hypothesis: string): string {
+  const text = hypothesis.trim().replace(/\s+/g, ' ')
+  if (text.length <= HUNT_CASE_TITLE_MAX) return text
+  const cut = text.slice(0, HUNT_CASE_TITLE_MAX)
+  const lastSpace = cut.lastIndexOf(' ')
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()
+}
+
 export function isLiveCommand(id: CommandId): id is LiveCommandId {
   return id === 'investigate' || id === 'hunt' || id === 'replay' || id === 'ask' || id === 'ticket'
 }
