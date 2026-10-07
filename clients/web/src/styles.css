@@ -4606,7 +4606,8 @@
       flex: 1;
       min-width: 0;
       overflow-y: auto;
-      padding: 22px;
+      /* bottom room so the floating Ask Vigil button never sits on the last row's control */
+      padding: 22px 22px 84px;
       display: flex;
       flex-direction: column;
       gap: 18px;
