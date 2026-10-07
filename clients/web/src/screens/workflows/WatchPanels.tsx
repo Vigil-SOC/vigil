@@ -79,8 +79,8 @@ function Spots({ lines, empty, note }: { lines: { main: string; sub: string[] }[
     <>
       {lines.length === 0 ? <NoData>{empty}</NoData> : (
         <Note>
-          {lines.slice(0, SPOTS_SHOWN).map((l) => (
-            <span key={l.main + l.sub.join('|')} className="flex flex-col">
+          {lines.slice(0, SPOTS_SHOWN).map((l, at) => (
+            <span key={`${at}:${l.main}${l.sub.join('|')}`} className="flex flex-col">
               <span className="line-clamp-2 break-words" title={l.main}>{l.main}</span>
               {l.sub.map((s) => <span key={s} className="text-[11px] text-[var(--tx2)] line-clamp-2 break-words" title={s}>{s}</span>)}
             </span>
