@@ -8,8 +8,8 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type ReplayReport } from '../../services/api'
-import WorkflowBuilder from './WorkflowBuilder'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedDraft, type ReplayReport } from '../../services/api'
+import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
@@ -26,6 +26,15 @@ import {
   type WfRun, type WfRunDetail,
 } from './runRead'
 
+/** The body of POST /workflows/custom for a draft, so the server checks it as it would any other. */
+const draftPayload = (d: GeneratedDraft) => ({
+  name: d.name.trim(),
+  description: d.description.trim(),
+  use_case: d.use_case ?? '',
+  trigger_examples: d.trigger_examples ?? [],
+  phases: d.phases,
+})
+
 type WfTab = 'workflows' | 'agents' | 'skills' | 'commands'
 
 /** One list's hook result. The screen owns the three lists so a tab chip counts
@@ -41,14 +50,16 @@ const [PAGE_TITLE, PAGE_DESC] = TITLES.workflows
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
-  // lifted so the header's "New workflow" opens the same builder from any tab
-  const [creating, setCreating] = useState<null | 'blank' | 'ai'>(null)
+  // lifted so the header's "New workflow" opens the same dialog from any tab
+  const [describing, setDescribing] = useState(false)
+  const [draft, setDraft] = useState<GeneratedDraft | null>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
   const [searchParams, setSearchParams] = useSearchParams()
   const runId = searchParams.get('run')
+  const saveDraft = () => workflowApi.createCustom(draftPayload(draft!)).then(() => { setDraft(null); workflows.reload() })
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
   const count = (feed: { rows: unknown[]; phase: Phase }) => (feed.phase === 'ready' ? feed.rows.length : null)
@@ -69,7 +80,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
             <h1 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx" style={{ fontWeight: 700 }}>{PAGE_TITLE}</h1>
             <p className="m-0 text-[13px] leading-[1.5] text-tx-2 max-w-[760px]">{PAGE_DESC}</p>
           </div>
-          <button className="btn primary wf-new" onClick={() => setCreating('blank')}><Icon name="plus" /> New workflow</button>
+          <button className="btn primary wf-new" onClick={() => setDescribing(true)}><Icon name="plus" /> New workflow</button>
         </div>
         <div className="wf-tabs" role="tablist" aria-label="Workflow views">
           {tabs.map(([k, label, n]) => (
@@ -87,11 +98,12 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={setCreating} goSettings={goSettings} />)}
+      {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
+      {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
-      {creating && <WorkflowBuilder autoGenerate={creating === 'ai'} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); workflows.reload() }} />}
+      {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
     </>
   )
 }
@@ -252,7 +264,7 @@ function useFillHeight<T extends HTMLElement>() {
   return ref
 }
 
-function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: (kind: 'blank' | 'ai') => void; goSettings: ConsoleScreenProps['goSettings'] }) {
+function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: () => void; goSettings: ConsoleScreenProps['goSettings'] }) {
   const { rows, phase, error, reload } = feed
   const [modal, setModal] = useState<WfModal | null>(null)
   // the pane replaces the table; read from the rows so an edit or a delete shows in it
@@ -275,8 +287,8 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
             icon="flow"
             title="No workflows yet"
             body="Create a workflow manually or generate one with AI from a plain-language investigation goal."
-            primary={{ label: 'New workflow', onClick: () => onCreate('blank'), icon: 'plus' }}
-            secondary={{ label: 'Generate with AI', onClick: () => onCreate('ai'), icon: 'sparkle' }}
+            primary={{ label: 'New workflow', onClick: onCreate, icon: 'plus' }}
+            secondary={{ label: 'Generate with AI', onClick: onCreate, icon: 'sparkle' }}
           />
         </StateMsg>
       )}
@@ -290,7 +302,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
             <div className="wfk-new">
               <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
               <span className="text-[12px] leading-[1.45] text-tx-2">Describe how your team works a case and Vigil drafts the workflow for you to edit.</span>
-              <button className="btn ghost wfk-btn self-start" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
+              <button className="btn ghost wfk-btn self-start" onClick={onCreate}><Icon name="sparkle" /> Generate with AI</button>
             </div>
           </div>
           {shown && (
@@ -2756,7 +2768,7 @@ function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void
         <Field label="Description" value={description} onChange={setDescription} textarea />
         <Field label="Use case" value={useCase} onChange={setUseCase} textarea />
         <Field label="Trigger examples (one per line)" value={triggers} onChange={setTriggers} textarea mono />
-        <p className="text-[11.5px] text-tx-3">Phases and agent sequence are edited in the workflow builder.</p>
+        <p className="text-[11.5px] text-tx-3">Stages are not editable yet.</p>
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>

@@ -252,5 +252,4 @@ class WorkflowAIGenerator:
             "use_case": draft.get("use_case", ""),
             "trigger_examples": draft.get("trigger_examples") or [],
             "phases": phases,
-            "graph_layout": {},
         }

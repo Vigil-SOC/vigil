@@ -9815,10 +9815,6 @@ export interface components {
             created_by?: string | null;
             /** Description */
             description: string;
-            /** Graph Layout */
-            graph_layout?: {
-                [key: string]: unknown;
-            };
             /** Name */
             name: string;
             /** Phases */
@@ -9835,10 +9831,6 @@ export interface components {
         CustomWorkflowUpdate: {
             /** Description */
             description?: string | null;
-            /** Graph Layout */
-            graph_layout?: {
-                [key: string]: unknown;
-            } | null;
             /** Is Active */
             is_active?: boolean | null;
             /** Name */

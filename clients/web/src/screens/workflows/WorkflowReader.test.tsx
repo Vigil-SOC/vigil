@@ -232,11 +232,12 @@ describe('the enable switch and header', () => {
           { agent_id: 'reporter', name: 'Tell', approval_required: true },
         ] }}
         onBack={vi.fn()}
+        onSave={vi.fn()}
       />,
     )
     const strip = await screen.findByRole('region', { name: 'How it runs' })
     expect(within(strip).getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringContaining('Look'), expect.stringContaining('Tell')])
-    expect(screen.getByText('Draft · not saved')).toBeInTheDocument()
+    expect(screen.getByText('AI draft — not saved')).toBeInTheDocument()
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByRole('button', { name: /Run workflow/ })).toBeNull()
     expect(within(panel('What it may do on its own')).getByText('Shown once the workflow is saved.')).toBeInTheDocument()
