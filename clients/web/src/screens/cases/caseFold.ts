@@ -130,6 +130,12 @@ export function explanationWord(status: string, supports: number, weakens: numbe
   return status
 }
 
+/** "handed_off" → "Handed off". */
+export function wordDisplay(word: string): string {
+  const text = word.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 const ADDED_BY: Record<string, string> = {
   hunt_spec: 'the hunt definition',
   operator: 'you',

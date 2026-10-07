@@ -23,6 +23,7 @@ import {
   recallEntityCalls,
   recordChip,
   visibilityGaps,
+  wordDisplay,
   type CallRow,
   type RecallProvenance,
   type RecordChip,
@@ -45,12 +46,6 @@ const EXPL_TONE: Record<string, string> = {
   forming: 'ac',
   weakened: 'poor',
   'ruled out': 'muted',
-}
-
-/** "handed_off" → "Handed off". */
-function display(word: string): string {
-  const text = word.replace(/_/g, ' ')
-  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function Mark({ text }: { text: string }) {
@@ -879,7 +874,7 @@ export function CasePage({
                         <li key={row.hypothesis_id}>
                           <div className="case-expl-main">
                             <div className="case-expl-line">
-                              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{display(word)}</span>
+                              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
                               <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`}>{row.statement || row.hypothesis_id}</span>
                             </div>
                             {row.resolution_reason && <div className="case-expl-note">{row.resolution_reason}</div>}
