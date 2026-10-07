@@ -67,7 +67,7 @@ export function deadline(timeoutMs: number, signal?: AbortSignal): Deadline {
 export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   const call = options.fetch ?? globalThis.fetch;
   return {
-    invoke: async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> => {
+    invoke: async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal, agentId?: string): Promise<ToolResult> => {
       // A tool the registry answers itself never leaves the process: every call routes
       // through this dispatch, so a local implementation was otherwise unreachable.
       if (tool.local) return tool.invoke(args);
@@ -89,6 +89,9 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
               args,
               bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
               ...(options.principal === undefined ? {} : { principal: options.principal }),
+              // The agent rides the call, not the dispatch options: one
+              // dispatch serves every phase of a compose run (#1560).
+              ...(agentId === undefined ? {} : { agent_id: agentId }),
             }),
             signal: held.signal,
           });

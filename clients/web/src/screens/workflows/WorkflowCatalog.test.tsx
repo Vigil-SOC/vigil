@@ -241,7 +241,7 @@ describe('workflow catalog cards', () => {
   it('names workflows whose listed agents recommend read_skill, and marks built-in skills read-only', async () => {
     vi.mocked(skillsApi.list).mockResolvedValueOnce([
       { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true, file_count: 1 },
-      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 3 },
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 3, reads_7d: 4, agents_7d: 2 },
     ])
     render(
       <MemoryRouter>
@@ -264,9 +264,10 @@ describe('workflow catalog cards', () => {
     expect(screen.queryByText('Custom')).toBeNull()
     expect(screen.getByText('1 file')).toBeInTheDocument()
     expect(screen.getByText('3 files')).toBeInTheDocument()
-    // usage is not recorded yet: a placeholder per card, with its explanation
-    expect(screen.getAllByText('Used by · Not measured yet')).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: 'Skill reads are not recorded yet.' })).toHaveLength(2)
+    // usage is recorded now (#1560): the 7-day line per card, with its explanation
+    expect(screen.getAllByText('Not used in 7 days')).toHaveLength(1)
+    expect(screen.getByText('Used 4 times in 7 days · by 2 agents')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.' })).toHaveLength(2)
     expect(screen.getByText('Read-only')).toBeInTheDocument()
     expect(screen.queryByText('skills/executive-summary')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
@@ -284,6 +285,8 @@ describe('workflow catalog cards', () => {
       source_path: 'skills/executive-summary',
       bundled: true,
       file_count: 2,
+      reads_7d: 6,
+      agents_7d: 1,
       body: '# Brief\n',
       operator_root_set: true,
       version: 3,
@@ -312,7 +315,7 @@ describe('workflow catalog cards', () => {
     const name = await screen.findByDisplayValue('executive-summary')
     const editor = screen.getByRole('dialog', { name: 'Edit executive-summary' })
     expect(within(editor).getByText('Skill · executive-summary')).toBeInTheDocument()
-    expect(within(editor).getByText('Built in · version 3')).toBeInTheDocument()
+    expect(within(editor).getByText('Built in · version 3 · Used 6 times in 7 days · by 1 agent')).toBeInTheDocument()
     expect(within(editor).getByLabelText('Steps (SKILL.md)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save new version' })).toBeDisabled()
 

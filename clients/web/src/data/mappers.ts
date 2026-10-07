@@ -431,5 +431,7 @@ export function mapApiSkill(s: ApiSkill): Skill {
     source: s.source_path,
     bundled: s.bundled,
     fileCount: s.file_count,
+    reads7d: s.reads_7d ?? 0,
+    agents7d: s.agents_7d ?? 0,
   }
 }

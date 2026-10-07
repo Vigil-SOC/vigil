@@ -2399,6 +2399,24 @@
       "nullable": true
     }
   },
+  "skill_reads": {
+    "agent_id": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "read_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "skill_name": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
   "sla_policies": {
     "business_hours_only": {
       "data_type": "boolean",

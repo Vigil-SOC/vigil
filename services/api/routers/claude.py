@@ -340,6 +340,11 @@ async def chat_stream(
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id
+    # So a skill this conversation reads is credited to its agent (#1560).
+    # A chat with no agent behind it sends nothing, and the read is recorded
+    # unattributed rather than under an invented id.
+    if request.agent_id:
+        payload["agent_id"] = request.agent_id
 
     if not payload["turns"]:
         raise HTTPException(status_code=400, detail="No messages provided")

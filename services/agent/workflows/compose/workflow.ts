@@ -218,6 +218,9 @@ function turnFor(options: ComposeOptions, phase: PhaseSpec, context: string): Tu
     // The step, not its agent: grants are per step, and spend attributed to an
     // agent would merge two steps the playbook deliberately kept apart.
     role: phase.id,
+    // Except a skill read, which is the phase's agent's use of the library:
+    // read attribution follows the agent, spend follows the step (#1560).
+    agent_id: phase.agent,
     system: phase.prompt,
     task: [context, `## Your step: ${phase.name}`, phase.instructions].filter((part) => part).join("\n\n"),
     schema: PHASE_SCHEMA,

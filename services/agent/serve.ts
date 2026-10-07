@@ -55,6 +55,10 @@ export interface ChatRequest {
   // Signed by the API for the person in this conversation and handed back on
   // every tool call. Absent means no person, and the tools record "agent".
   principal?: ToolPrincipal;
+  // The agent this conversation belongs to, when it belongs to one (#1560).
+  // The API has it on the chat request; a conversation with no agent sends
+  // nothing and its skill reads are recorded unattributed.
+  agent_id?: string;
 }
 
 export function chatSpec(request: ChatRequest): RunSpec {
@@ -93,7 +97,12 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
   try {
     const spec = chatSpec(request);
     const harness = build("chat" as RunKind, spec, state, await memoryFor(state, request.parent_run_id), FRESH, request.principal);
-    const stream = runChat(harness, { run_id: request.run_id, spec, turns: request.turns });
+    const stream = runChat(harness, {
+      run_id: request.run_id,
+      spec,
+      turns: request.turns,
+      ...(request.agent_id === undefined ? {} : { agent_id: request.agent_id }),
+    });
 
     for (;;) {
       const next = await stream.next();
