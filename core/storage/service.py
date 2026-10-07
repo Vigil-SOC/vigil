@@ -36,6 +36,11 @@ _UNSET = object()
 _CONNECTION_ERRORS = (OperationalError, InterfaceError, PoolTimeoutError)
 
 
+def _first_line(e: Exception) -> str:
+    """The error's headline; SQLAlchemy appends the statement and parameters."""
+    return (str(e).strip().splitlines() or [type(e).__name__])[0]
+
+
 def _is_connection_error(e: Exception) -> bool:
     return isinstance(e, _CONNECTION_ERRORS) or bool(
         getattr(e, "connection_invalidated", False)
@@ -178,7 +183,7 @@ class DatabaseService:
                     "imported": 0,
                     "skipped": 0,
                     "errors": len(rows),
-                    "first_error": f"Database unavailable: {e}",
+                    "first_error": f"Database unavailable: {_first_line(e)}",
                 }
             logger.warning(
                 "Bulk insert of %d findings failed (%s); retrying row by row",
@@ -196,18 +201,20 @@ class DatabaseService:
                     skipped += 1
             except Exception as e:
                 logger.error(f"Error creating finding {finding_id!r}: {e}")
-                first_error = first_error or f"Finding {finding_id}: {e}"
+                first_error = first_error or f"Finding {finding_id}: {_first_line(e)}"
                 if _is_connection_error(e):
                     # Count this row and every row not yet tried.
                     errors += len(by_id) - imported - skipped - errors
                     break
                 errors += 1
-        return {
+        result = {
             "imported": imported,
             "skipped": skipped + in_batch_dupes,
             "errors": errors,
-            "first_error": first_error,
         }
+        if first_error:
+            result["first_error"] = first_error
+        return result
 
     def _insert_new_findings(self, rows: List[Dict[str, Any]]) -> int:
         """Insert the rows whose finding_id is not stored yet, in one
