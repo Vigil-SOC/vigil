@@ -45,11 +45,35 @@ export interface LeadGapRow {
   query_intent?: string
 }
 
+/** Where a recalled row came from: the investigation that concluded it. */
+export interface RecallProvenance {
+  kind: string
+  id: string
+  concludedAt: string
+}
+
+export interface RecalledSighting extends RecallProvenance {
+  entity: string
+  source: string
+  hits: number | null
+}
+
+export interface RecalledVerdict extends RecallProvenance {
+  outcome: string
+  statement: string
+}
+
+/** A Declared Gap from a prior investigation, not this run's Visibility Gap. */
+export interface RecalledGap extends RecallProvenance {
+  disposition: string
+  statement: string
+}
+
 export interface RecallView {
   keys: string[]
-  gaps: string[]
-  sightings: string[]
-  verdicts: string[]
+  gaps: RecalledGap[]
+  sightings: RecalledSighting[]
+  verdicts: RecalledVerdict[]
   unavailable: string | null
 }
 
@@ -169,27 +193,30 @@ function callsOf(raw: unknown): CallRow[] {
   })
 }
 
-function lineOf(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (!value || typeof value !== 'object') return ''
-  const o = value as Record<string, unknown>
-  if (typeof o.statement === 'string') {
-    return [typeof o.outcome === 'string' ? o.outcome : o.disposition, o.statement].filter(Boolean).join(' — ')
-  }
-  if (typeof o.entity_key === 'string') {
-    const hits = typeof o.hit_count === 'number' ? ` · ${o.hit_count}` : ''
-    return `${o.entity_key}${typeof o.source_system === 'string' ? ` · ${o.source_system}` : ''}${hits}`
-  }
-  return JSON.stringify(value)
+function provenanceOf(o: Record<string, unknown>): RecallProvenance {
+  return { kind: str(o.investigation_kind), id: str(o.investigation_id), concludedAt: str(o.concluded_at) }
+}
+
+/** Rows of one recalled kind; a bare string is a statement with no provenance. */
+function rowsOf<T>(raw: unknown, read: (o: Record<string, unknown>) => T | null): T[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item) => {
+    const o = typeof item === 'string' ? { statement: item } : item
+    if (!o || typeof o !== 'object') return []
+    const row = read(o as Record<string, unknown>)
+    return row ? [row] : []
+  })
 }
 
 function recallOf(raw: unknown): RecallView | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const keys = Array.isArray(o.keys) ? o.keys.flatMap((key) => (typeof key === 'string' ? [key] : [])) : []
-  const gaps = Array.isArray(o.gaps) ? o.gaps.map(lineOf).filter(Boolean) : []
-  const sightings = Array.isArray(o.sightings) ? o.sightings.map(lineOf).filter(Boolean) : []
-  const verdicts = Array.isArray(o.verdicts) ? o.verdicts.map(lineOf).filter(Boolean) : []
+  const gaps = rowsOf(o.gaps, (r) => (str(r.statement) ? { ...provenanceOf(r), disposition: str(r.disposition), statement: str(r.statement) } : null))
+  const sightings = rowsOf(o.sightings, (r) =>
+    str(r.entity_key) ? { ...provenanceOf(r), entity: str(r.entity_key), source: str(r.source_system), hits: num(r.hit_count) } : null,
+  )
+  const verdicts = rowsOf(o.verdicts, (r) => (str(r.statement) ? { ...provenanceOf(r), outcome: str(r.outcome), statement: str(r.statement) } : null))
   const unavailable = typeof o.unavailable === 'string' ? o.unavailable : null
   // A journaled empty result is known-to-be-none. An absent payload is not a recall.
   if (unavailable === null && !Array.isArray(o.keys)) return null

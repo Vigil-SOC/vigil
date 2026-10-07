@@ -229,6 +229,88 @@
   overflow-wrap: anywhere;
 }
 
+/* Memory tab: cards on the card.md / row-stack.md tokens. */
+.case-page .case-mem-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+
+.case-page .case-mem-card p { margin: 0; font-size: 12px; line-height: 1.45; }
+
+.case-page .case-mem-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.case-page .case-mem-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.case-page .case-mem-head .btn,
+.case-page .case-mem-meta .btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* Keep a row with a button as tall as one without. */
+.case-page .case-mem-meta .btn { margin: -3px 0; }
+
+.case-page .case-mem-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-page .case-mem-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 9px 12px;
+  background: var(--stack-row-bg);
+  color: var(--tx0);
+  font-size: 13px;
+}
+
+.case-page .case-mem-row.poor { color: var(--poor); }
+
+.case-page .case-mem-text {
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-mem-text .tag { margin-right: 8px; }
+
+.case-page .case-mem-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .case-needs-strip .strip-dot,
   .case-needs .needs-dot { animation: none; }
