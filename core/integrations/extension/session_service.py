@@ -20,6 +20,7 @@ from core.storage.config_service import get_config_service
 logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT_SECONDS = 10.0
+_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 class ExtensionSessionError(Exception):
@@ -31,10 +32,14 @@ class ExtensionSessionError(Exception):
         self.status_code = status_code
 
 
-def _connector_url(integration_id: str) -> str:
-    """Resolve the enabled integration's connector base URL, or raise."""
+def _connector_url(integration_id: str, *, require_enabled: bool = True) -> str:
+    """Resolve the integration's connector base URL, or raise.
+
+    A connection test passes ``require_enabled=False`` so a connector can be
+    checked before it is turned on; the trust rules apply either way.
+    """
     cfg = get_config_service().get_integration_config(integration_id)
-    if not cfg or not cfg.get("enabled"):
+    if not cfg or (require_enabled and not cfg.get("enabled")):
         raise ExtensionSessionError(
             f"Integration '{integration_id}' is not enabled", status_code=404
         )
@@ -61,14 +66,16 @@ def _mint_secret(integration_id: str) -> str | None:
     return get_secret(env_key) if env_key else None
 
 
-async def mint_session_token(integration_id: str, username: str) -> Dict[str, Any]:
+async def mint_session_token(
+    integration_id: str, username: str, *, require_enabled: bool = True
+) -> Dict[str, Any]:
     """Exchange the mint secret for a token via the connector BFF's POST /session.
 
     With no mint secret configured the connector is taken to be open, so a
     session-less context (``token=None``) is returned rather than failing — the
     element still mounts and any auth requirement surfaces on its own data call.
     """
-    connector_url = _connector_url(integration_id)
+    connector_url = _connector_url(integration_id, require_enabled=require_enabled)
     secret = _mint_secret(integration_id)
     if not secret:
         logger.info(
@@ -111,3 +118,27 @@ async def mint_session_token(integration_id: str, username: str) -> Dict[str, An
         "expires_in": data.get("expires_in"),
         "user": username,
     }
+
+
+async def probe_connector(integration_id: str, username: str) -> str:
+    """Check the connector answers and, when a mint secret is stored, accepts it.
+
+    Returns a one-line summary; raises ``ExtensionSessionError`` on failure. The
+    agent access token (``mcp_token``) is never presented, so it is not verified.
+    """
+    url = _connector_url(integration_id, require_enabled=False)
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:
+            resp = await client.get(f"{url}/manifest.json")
+    except httpx.HTTPError as e:
+        raise ExtensionSessionError(
+            f"Could not reach the connector at {url}", status_code=502
+        ) from e
+    if resp.status_code >= 400:
+        raise ExtensionSessionError(
+            f"Connector answered {resp.status_code} for its manifest", status_code=502
+        )
+    if not _mint_secret(integration_id):
+        return "Connector reachable. No session secret is saved, so sign-in was not checked."
+    await mint_session_token(integration_id, username, require_enabled=False)
+    return "Connector reachable and it accepted the session secret. The agent access token was not checked."

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import DataIngestionPanel from './DataIngestion'
-import { configApi, ingestionApi } from '../../services/api'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { DemoDataClear, StreamsCard, UploadCard } from './DataIngestion'
+import { configApi, ingestionApi, kafkaApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   configApi: {
@@ -43,7 +43,14 @@ const runningJob = {
 }
 
 function renderPanel() {
-  return render(<DataIngestionPanel notify={vi.fn()} />)
+  const notify = vi.fn()
+  return render(
+    <>
+      <UploadCard notify={notify} />
+      <StreamsCard notify={notify} />
+      <DemoDataClear notify={notify} />
+    </>,
+  )
 }
 
 function chooseFile(name = 'flows.parquet') {
@@ -67,18 +74,18 @@ describe('manual upload', () => {
     vi.mocked(configApi.getS3).mockRejectedValue(new Error('backend unreachable'))
     renderPanel()
 
-    expect(await screen.findByText('Manual Upload')).toBeInTheDocument()
-    expect(await screen.findByText(/Couldn’t load S3 config/)).toBeInTheDocument()
+    expect(await screen.findByText('Upload files')).toBeInTheDocument()
+    expect(await screen.findByText('Unavailable')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Choose File/ })).toBeEnabled()
   })
 
   it('hands the chosen file to the background ingest endpoint', async () => {
     vi.mocked(ingestionApi.uploadFile).mockResolvedValue({ data: runningJob } as never)
     renderPanel()
-    await screen.findByText('Manual Upload')
+    await screen.findByText('Upload files')
 
     chooseFile()
-    fireEvent.click(screen.getByRole('button', { name: /Upload/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }))
 
     await waitFor(() => expect(ingestionApi.uploadFile).toHaveBeenCalledOnce())
     expect(vi.mocked(ingestionApi.uploadFile).mock.calls[0][0].name).toBe('flows.parquet')
@@ -98,7 +105,16 @@ describe('manual upload', () => {
     await screen.findByText(/40 of 200 rows/)
 
     expect(screen.getByRole('button', { name: /Choose File/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /Upload/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Upload' })).not.toBeInTheDocument()
+  })
+
+  it('takes a dropped file', async () => {
+    renderPanel()
+    const zone = (await screen.findByText(/Drop a file to import/)).closest('.data-drop') as HTMLElement
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'dropped.csv')] } })
+
+    expect(screen.getByRole('button', { name: /dropped\.csv/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled()
   })
 
   it('reports a row count without a percentage for row-counting formats', async () => {
@@ -121,7 +137,7 @@ describe('manual upload', () => {
 
   it('hides the demo clear control when demo mode is off', async () => {
     renderPanel()
-    await screen.findByText('Manual Upload')
+    await screen.findByText('Upload files')
     await waitFor(() => expect(configApi.getDemoMode).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: 'Clear demo data' })).not.toBeInTheDocument()
   })
@@ -141,12 +157,93 @@ describe('manual upload', () => {
 
   it('clears the file input so the same file can be retried', async () => {
     renderPanel()
-    await screen.findByText('Manual Upload')
+    await screen.findByText('Upload files')
     const input = screen.getByTestId('manual-upload-input') as HTMLInputElement
 
     chooseFile()
     fireEvent.click(input)
 
     expect(input.value).toBe('')
+  })
+})
+
+describe('streams and buckets', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(configApi.getS3).mockResolvedValue({ data: { configured: false } } as never)
+    vi.mocked(configApi.getDarktrace).mockResolvedValue({ data: {} } as never)
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
+    vi.mocked(ingestionApi.listJobs).mockResolvedValue({ data: [] } as never)
+    vi.mocked(kafkaApi.getConfig).mockResolvedValue({ data: {} } as never)
+    vi.mocked(kafkaApi.getStatus).mockResolvedValue({ data: {} } as never)
+  })
+
+  const row = (name: string) => screen.getByText(name).closest('tr') as HTMLElement
+
+  it('lists the three sources as not set up when nothing is configured', async () => {
+    renderPanel()
+    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument())
+
+    for (const name of ['Amazon S3', 'Kafka', 'Darktrace webhook']) {
+      expect(within(row(name)).getByText('Not set up')).toBeInTheDocument()
+      expect(within(row(name)).getByText('Off')).toBeInTheDocument()
+      expect(within(row(name)).getByRole('button', { name: `Set up ${name}` })).toBeInTheDocument()
+    }
+  })
+
+  it('shows each source’s settings and status when populated', async () => {
+    vi.mocked(configApi.getS3).mockResolvedValue({
+      data: { configured: true, bucket_name: 'acme-sec', region: 'us-east-1', auth_method: 'profile' },
+    } as never)
+    vi.mocked(kafkaApi.getConfig).mockResolvedValue({
+      data: { enabled: true, bootstrap_servers: 'kafka-1:9092', topics: ['sec.findings'], security_protocol: 'SASL_SSL' },
+    } as never)
+    vi.mocked(kafkaApi.getStatus).mockResolvedValue({
+      data: { daemon_reachable: true, stats: { connected: true } },
+    } as never)
+    vi.mocked(configApi.getDarktrace).mockResolvedValue({
+      data: { enabled: true, configured: true, url: 'https://dt.example' },
+    } as never)
+    renderPanel()
+
+    await waitFor(() => expect(within(row('Amazon S3')).getByText('Good')).toBeInTheDocument())
+    expect(within(row('Amazon S3')).getByText('acme-sec · us-east-1 · AWS profile (SSO)')).toBeInTheDocument()
+    expect(within(row('Amazon S3')).getByRole('button', { name: 'Browse Amazon S3' })).toBeInTheDocument()
+    expect(within(row('Kafka')).getByText('kafka-1:9092 · topics sec.findings · SASL_SSL')).toBeInTheDocument()
+    expect(within(row('Kafka')).getByText('Good')).toBeInTheDocument()
+    expect(within(row('Kafka')).getByRole('button', { name: 'Edit Kafka' })).toBeInTheDocument()
+    expect(within(row('Darktrace webhook')).getByText('https://dt.example')).toBeInTheDocument()
+  })
+
+  it('marks Kafka as not connected when it is enabled but the consumer is down', async () => {
+    vi.mocked(kafkaApi.getConfig).mockResolvedValue({ data: { enabled: true, topics: ['a'] } } as never)
+    renderPanel()
+
+    expect(await screen.findByText('Not connected')).toBeInTheDocument()
+  })
+
+  it('opens the S3 form in place, with its save confirm, and closes it again', async () => {
+    vi.mocked(configApi.getS3).mockResolvedValue({
+      data: { configured: true, bucket_name: 'acme-sec', region: 'us-east-1' },
+    } as never)
+    vi.mocked(configApi.setS3).mockResolvedValue({ data: {} } as never)
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse Amazon S3' }))
+
+    expect(await screen.findByText('Browse & Ingest')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }))
+    expect(await screen.findByText('Save S3 Configuration')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Amazon S3' }))
+    expect(screen.queryByText('Browse & Ingest')).not.toBeInTheDocument()
+  })
+
+  it('offers a retry inside the S3 row when its config fails to load', async () => {
+    vi.mocked(configApi.getS3).mockRejectedValue(new Error('backend unreachable'))
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up Amazon S3' }))
+
+    expect(await screen.findByText(/Couldn’t load S3 config/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 })

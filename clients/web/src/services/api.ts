@@ -605,6 +605,8 @@ export const configApi = {
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
+  testIntegration: (id: string) =>
+    api.post<{ success: boolean; message: string }>(`/config/integrations/${id}/test`),
   setIntegrations: (data: {
     enabled_integrations: string[]
     integrations: Record<string, any>
