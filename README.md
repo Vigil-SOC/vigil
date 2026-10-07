@@ -25,7 +25,7 @@ Every agent has access to 19 backend tools via Agent SDK and 100+ additional too
 | **Investigator** | Root cause analysis | Deep | Evidence collection, timeline reconstruction, cross-source correlation |
 | **Threat Hunter** | Proactive hunting | Deep | Hypothesis-driven anomaly detection, pattern intelligence from 7,200+ rules |
 | **Correlator** | Multi-signal linking | Deep | Campaign identification, attack chain reconstruction, entity mapping |
-| **Responder** | Containment actions | Fast | NIST IR containment, blast radius assessment, confidence-scored approval requests |
+| **Responder** | Containment actions | Fast | NIST IR containment planning, blast radius assessment, confidence-scored approval requests |
 | **Reporter** | Documentation | Balanced | Executive summaries, technical reports, audience-tailored content |
 | **MITRE Analyst** | ATT&CK mapping | Deep | Technique identification, coverage analysis, gap prioritization, detection templates |
 | **Forensics** | Digital forensics | Deep | Artifact analysis, chain of custody, multi-domain examination |
@@ -40,7 +40,7 @@ Workflows are the operational core of Vigil. Each workflow chains multiple speci
 
 | Workflow | Agents | What It Does |
 |----------|--------|-------------|
-| **Incident Response** | Triage → Investigator → Responder → Reporter | NIST IR framework: triage an alert, investigate root cause, contain the threat, produce an audit-ready report |
+| **Incident Response** | Triage → Investigator → Responder → Reporter | NIST IR framework: triage an alert, investigate root cause, plan containment, produce an audit-ready report |
 | **Full Investigation** | Investigator → MITRE Analyst → Correlator → Responder → Reporter | Deep-dive with ATT&CK mapping, cross-signal correlation, response planning, and comprehensive documentation |
 | **Threat Hunt** | Threat Hunter → Network Analyst → Malware Analyst → Threat Intel → Reporter | Hypothesis-driven hunting across network, endpoint, and threat intel — with IOC enrichment and detection recommendations |
 | **Forensic Analysis** | Forensics → Malware Analyst → Network Analyst → Reporter | Post-incident digital forensics with evidence preservation, chain-of-custody documentation suitable for legal proceedings |
@@ -48,7 +48,7 @@ Workflows are the operational core of Vigil. Each workflow chains multiple speci
 | **Cloud Incident** | Investigator | Cloud-native incident response across AWS, Azure, and GCP: identity blast radius, IAM/role analysis, cross-account/cross-tenant pivots, and provider-aware containment |
 | **Shadow Adjudication** | Threat Hunter, Network Analyst, Threat Intel | Independent second opinion on a finding intake already admitted: tests the stated intent against the benign account and names the workflow that should have run, executing nothing |
 
-**How it works:** Say `"Run incident response on finding f-20260215-abc123"` and the system sequences four agents — triage scores the alert, investigator digs into root cause, responder submits containment actions with confidence-based approval, and reporter generates the final documentation.
+**How it works:** Say `"Run incident response on finding f-20260215-abc123"` and the system sequences four agents — triage scores the alert, investigator digs into root cause, responder proposes containment actions with confidence-based approval, and reporter generates the final documentation.
 
 Workflows are defined as `WORKFLOW.md` files under `core/workflows/definitions/` and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
 
@@ -130,7 +130,7 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 | Category | Integrations | Tools |
 |----------|-------------|-------|
 | **SIEM** | Splunk, Azure Sentinel | Natural language → SPL, search by IP/host/user, index listing, KQL queries over Sentinel logs and incidents |
-| **EDR / XDR** | CrowdStrike, Microsoft Defender, SentinelOne, Carbon Black | Alert lookup, host isolation/unisolation, host status |
+| **EDR / XDR** | CrowdStrike, Microsoft Defender, SentinelOne, Carbon Black | CrowdStrike and SentinelOne (via the vendor MCP servers) are read-only: detections/alerts and host or asset lookup. Microsoft Defender: alerts, machine lookup, machine isolation (`mde_isolate`; no release tool). Carbon Black: alerts, device search, device quarantine (`cb_quarantine`) |
 | **Cloud Security** | AWS Security Hub | GuardDuty, Security Hub, Inspector, and IAM Access Analyzer findings |
 | **Identity** | Okta | Authentication events, suspicious sign-ins, identity-based investigation |
 | **Threat Intel** | VirusTotal, Shodan, AlienVault OTX, MISP | Hash/IP/domain/URL reputation, host recon, pulse matching, IOC search |
@@ -140,6 +140,8 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 | **Communication** | Slack, PagerDuty | Alerts, channel creation, file uploads, on-call paging and escalation |
 | **Data Pipeline** | Cribl Stream | Log normalization, noise filtering, multi-destination routing |
 | **Core** | Vigil | Built-in SOC operations: findings, cases, approvals, hunts — the same tools an external caller reaches at `/mcp`. The finding, case and approval tools that mirror frozen `/api/v1` operations are frozen: their names and input schemas are pinned in [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json). The rest are served under the `0.x` terms in [`SECURITY.md`](SECURITY.md#supported-versions) |
+
+The response pipeline (the daemon auto-responder and the approval queue) records `isolate_host` actions but does not execute them: even an approved one ends `failed` with `unsupported_action_type`. Isolation and quarantine happen only when an agent calls the Defender or Carbon Black tool directly.
 
 **Coming soon:** GCP Security.
 
@@ -496,7 +498,7 @@ vigil/
 You: "Run incident response on finding f-20260215-abc123"
 Claude: [triage] Severity: Critical — confirmed C2 beaconing from HOST-42
         [investigate] Root cause: phishing email → macro execution → Cobalt Strike beacon
-        [respond] Submitted host isolation (confidence 0.96 — auto-approved)
+        [respond] Proposed host isolation for HOST-42 (confidence 0.96) — queued, nothing executed
         [report] Incident report generated with MITRE ATT&CK layer
 ```
 

@@ -57,7 +57,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   'security-detections': 'Searches across 30,000+ detection rules (Sigma, Splunk, Elastic, KQL). Powers detection gap analysis and rule recommendations.',
   github: 'Access GitHub repos, issues, PRs, and code search. Useful for looking up detection rule history, IaC configs, or creating remediation issues.',
   crowdstrike: 'Query CrowdStrike Falcon for endpoint detections, host info, and IOC management. Requires Falcon API credentials.',
-  sentinelone: 'Query SentinelOne for endpoint threats, agent status, and threat remediation via the Purple AI MCP.',
+  sentinelone: 'Query SentinelOne for alerts, asset inventory, and vulnerabilities via the read-only Purple AI MCP.',
   'carbon-black': 'Query VMware Carbon Black for endpoint events, process trees, and binary analysis.',
   'microsoft-defender': 'Query Microsoft Defender for Endpoint alerts, device info, and advanced hunting. May overlap with Sentinel.',
   splunk: 'The official Splunk MCP server, deployed separately from Splunk Enterprise. Configured by SPLUNK_MCP_URL in the environment, not from Settings.',
