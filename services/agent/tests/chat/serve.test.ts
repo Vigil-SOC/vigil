@@ -46,8 +46,8 @@ let state: InProcessState;
 let base: string;
 let stop: () => void;
 
-async function listen(script: readonly ScriptedTurn[], verify?: VerifyRun): Promise<void> {
-  state = new InProcessState();
+async function listen(script: readonly ScriptedTurn[], verify?: VerifyRun, served?: InProcessState): Promise<void> {
+  state = served ?? new InProcessState();
   // Ready by construction: the ledger here is in-process, so there is no Postgres
   // for readiness to be reporting on.
   const server = chatServer(state, async () => true, scriptedHarness(script), verify);
@@ -282,6 +282,54 @@ describe("replaying what the hunt lead was shown", () => {
     await state.append(HUNT, recordedHunt());
     expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(404);
     expect((await get(`/runs/${HUNT}/projection`)).status).toBe(200);
+  });
+});
+
+// A store whose every read fails, as a Postgres blip would present: the seam
+// the backstop exists for, since no per-route handler guards `state.read`.
+class UnreadableState extends InProcessState {
+  override async read(): Promise<AgentEvent<Record<never, never>>[]> {
+    throw new Error("ledger read failed");
+  }
+}
+
+describe("a ledger that will not fold (#1856)", () => {
+  // The ledger from the issue: one hunt event, seq 0 assigned by the store,
+  // kind terminal, no run event. run_kind "hunt" passes foldedBy's
+  // registeredKinds check, so the fold itself is what refuses it.
+  const MALFORMED = "5a2c2d3e-0000-4000-8000-000000000894";
+
+  async function malformed(): Promise<void> {
+    await listen([]);
+    await state.append(MALFORMED, [
+      { run_id: MALFORMED, run_kind: "hunt", kind: "terminal", payload: { reason: "first", outcome: "completed" } },
+    ] as never);
+  }
+
+  it("502s distil for a hunt ledger that opens with terminal, rather than crashing", async () => {
+    await malformed();
+    const res = await get(`/runs/${MALFORMED}/distil`);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ detail: "ledger does not open with a run event" });
+  });
+
+  it("502s projection for the same ledger, and the server keeps serving", async () => {
+    await malformed();
+    expect((await get(`/runs/${MALFORMED}/projection`)).status).toBe(502);
+    expect((await get(`/runs/${MALFORMED}/distil`)).status).toBe(502);
+    // The process did not exit: the raw ledger still reads (200) and an
+    // unknown run still answers as no readable run (404).
+    expect((await get(`/runs/${MALFORMED}/events`)).status).toBe(200);
+    expect((await get("/runs/5a2c2d3e-0000-4000-8000-00000000dead/projection")).status).toBe(404);
+  });
+
+  it("answers 500 through the backstop when state.read rejects, and keeps serving", async () => {
+    await listen([], undefined, new UnreadableState());
+    expect((await get(`/runs/${RUN}/events`)).status).toBe(500);
+    // No unhandled rejection killed the process: the failing read 500s again
+    // and a route that never touches the store still answers.
+    expect((await get(`/runs/${RUN}/events`)).status).toBe(500);
+    expect((await get("/no-such-route")).status).toBe(404);
   });
 });
 

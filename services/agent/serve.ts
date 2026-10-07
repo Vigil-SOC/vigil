@@ -164,7 +164,12 @@ async function foldedBy(state: State, runId: string, view: "projection" | "disti
 }
 
 async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse): Promise<void> {
-  const folded = await foldedBy(state, runId, view);
+  let folded: unknown | null;
+  try {
+    folded = await foldedBy(state, runId, view);
+  } catch (error) {
+    return fail(res, 502, view, runId, error);
+  }
   if (folded === null) return refuse(res, 404, `no readable run: ${runId}`);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify(folded));
@@ -273,45 +278,57 @@ export type VerifyRun = (runId: string) => Promise<VerifyResult>;
 export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun): Server {
   return createServer((req, res) => {
     void (async () => {
-      // Before the auth check, because the kubelet has no token. These say only
-      // whether the process can work, which is not knowledge worth withholding.
-      if (await handleHealth(req, res, ready)) return;
-
-      // Before the route, not per route: an unauthorised caller learns nothing
-      // about which routes exist.
-      if (!authorised(req)) return refuse(res, 401, "a valid internal token");
-
-      const url = req.url ?? "";
-      if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
-
-      const run = req.method === "GET" ? PROJECTION.exec(url) : null;
-      if (run !== null) return readFold(state, run[1] as string, "projection", res);
-
-      const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
-      if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
-
-      const asked = req.method === "POST" ? NARRATE.exec(url) : null;
-      if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
-
-      // Parsed rather than matched raw because this route takes a query. Node accepts
-      // request-targets URL rejects (absolute-form with a bad host), so a throw here
-      // is a 400 rather than an unhandled rejection.
-      let parsed: URL;
       try {
-        parsed = new URL(url, "http://local");
-      } catch {
-        return refuse(res, 400, `not a request path: ${url}`);
+        // Before the auth check, because the kubelet has no token. These say only
+        // whether the process can work, which is not knowledge worth withholding.
+        if (await handleHealth(req, res, ready)) return;
+
+        // Before the route, not per route: an unauthorised caller learns nothing
+        // about which routes exist.
+        if (!authorised(req)) return refuse(res, 401, "a valid internal token");
+
+        const url = req.url ?? "";
+        // Awaited, not merely returned: a returned promise's rejection would
+        // bypass the catch below and land on the voided IIFE instead.
+        if (req.method === "POST" && url === CHAT) return await openChat(state, req, res, build);
+
+        const run = req.method === "GET" ? PROJECTION.exec(url) : null;
+        if (run !== null) return await readFold(state, run[1] as string, "projection", res);
+
+        const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
+        if (distilled !== null) return await readFold(state, distilled[1] as string, "distil", res);
+
+        const asked = req.method === "POST" ? NARRATE.exec(url) : null;
+        if (asked !== null) return await writeNarrative(state, asked[1] as string, res, build);
+
+        // Parsed rather than matched raw because this route takes a query. Node accepts
+        // request-targets URL rejects (absolute-form with a bad host), so a throw here
+        // is a 400 rather than an unhandled rejection.
+        let parsed: URL;
+        try {
+          parsed = new URL(url, "http://local");
+        } catch {
+          return refuse(res, 400, `not a request path: ${url}`);
+        }
+        const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
+        if (replayed !== null) return await readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
+
+        const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
+        if (verified !== null) return await readVerify(verified[1] as string, verify, res);
+
+        const logged = req.method === "GET" ? EVENTS.exec(parsed.pathname) : null;
+        if (logged !== null) return await readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);
+
+        return refuse(res, 404, `no such route: ${req.method} ${url}`);
+      } catch (error) {
+        // Backstop: no route may become an unhandled rejection that exits the
+        // process. Per-route handlers answer their own failures (502 above);
+        // this catches the rest (state.read, replay helpers, a DB blip).
+        const url = req.url ?? "";
+        if (!res.headersSent) return fail(res, 500, "request", url, error);
+        log.error("request failed", { route: "request", run_id: url, status: 500, ...errorFields(error) });
+        res.end();
       }
-      const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
-      if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
-
-      const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
-      if (verified !== null) return readVerify(verified[1] as string, verify, res);
-
-      const logged = req.method === "GET" ? EVENTS.exec(parsed.pathname) : null;
-      if (logged !== null) return readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);
-
-      return refuse(res, 404, `no such route: ${req.method} ${url}`);
     })();
   });
 }
