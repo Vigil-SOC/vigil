@@ -9,14 +9,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     gnupg \
-    nodejs \
-    npm \
     python3 \
     python3-pip \
     python3-venv \
     python-is-python3 \
     sudo \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
+
+########################################################
+# NODE
+########################################################
+
+# Every Node job in ci-cd.yml and nightly.yml pins Node 20 (npm 10), and
+# services/agent requires >=20. Ubuntu 24.04's apt `npm` is 9.2.0, whose
+# `npm audit --audit-level=high` exits 0 even with a high advisory present, so
+# the Security Scan - NPM gate could not be checked here. Official tarball,
+# checksum from its SHASUMS256.txt. /usr/local/bin precedes /usr/bin on PATH.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+         amd64) NARCH=x64; NSUM=df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d ;; \
+         arm64) NARCH=arm64; NSUM=73093db209e4e9e09dd7d15a47aeaab1b74833830df03efa5f942a1122c5fa71 ;; \
+         *) echo "unsupported arch $ARCH" && exit 1 ;; \
+       esac \
+    && NODE_VERSION=v20.20.2 \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /tmp/node.tar.xz \
+       "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NARCH}.tar.xz" \
+    && echo "${NSUM}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+       --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md' \
+    && rm -f /tmp/node.tar.xz \
+    && node --version && npm --version
 
 ########################################################
 # DOCKER INSTALLATION
@@ -116,7 +139,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
 # The factory asks every implementer to exercise its change live, with a
 # browser where there is a UI. agent-browser is a native binary; the release
 # asset is used rather than the npm package, whose wrapper wants Node 24 while
-# this repo's CI and frontend pin Node 18. Pinned like Helm above.
+# this repo's CI pins Node 20. Pinned like Helm above.
 # `install --with-deps` is run as root for Chrome's shared libraries; the
 # browser download itself lands per-user under ~/.agent-browser, so the ubuntu
 # user fetches its own copy below and root's is discarded.
