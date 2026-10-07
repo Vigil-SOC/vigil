@@ -79,7 +79,11 @@ class ModelsListResponse(BaseModel):
 
 
 def _pair(row: Optional[AIModelConfig]) -> Optional[Dict[str, str]]:
-    return None if row is None else {"provider_id": row.provider_id, "model_id": row.model_id}
+    return (
+        None
+        if row is None
+        else {"provider_id": row.provider_id, "model_id": row.model_id}
+    )
 
 
 def _audit(
