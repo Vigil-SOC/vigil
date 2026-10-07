@@ -500,6 +500,8 @@ export function CasePage({
   const [recordError, setRecordError] = useState<string | null>(null)
   const [recordKey, setRecordKey] = useState(0)
   const quietRecord = useRef(false) // a poll's re-read keeps the rows and tab as they are
+  const recordReady = useRef(false)
+  recordReady.current = recordPhase === 'ready'
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
   const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
@@ -617,7 +619,7 @@ export function CasePage({
 
   useEffect(() => {
     let cancelled = false
-    const quiet = quietRecord.current
+    const quiet = quietRecord.current && recordReady.current // only a record on screen is re-read in place
     quietRecord.current = false
     if (!quiet) {
       setRecordPhase('loading')
