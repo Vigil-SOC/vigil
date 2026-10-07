@@ -103,7 +103,17 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     if (phase === 'ready') lastSaved.current = config
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
-  useEffect(() => () => clearTimeout(idleTimer.current), [])
+  // leaving the page inside the debounce still saves the pending duration
+  const commitRef = useRef<(cfg: OrchestratorConfig) => void>()
+  useEffect(
+    () => () => {
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current)
+        commitRef.current?.(configRef.current!)
+      }
+    },
+    [],
+  )
 
   if (phase === 'loading' || approval.phase === 'loading') {
     return <div className="text-sm text-tx-3 py-16 text-center">Loading limits and autonomy…</div>
@@ -139,7 +149,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     try {
       await save(next)
       lastSaved.current = next
-      setConfig(next)
       notify('ok', 'Limits saved.')
       setIntentRevision((n) => n + 1)
     } catch (err) {
@@ -149,6 +158,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   }
 
   const commitConfig = (raw: OrchestratorConfig) => {
+    clearTimeout(idleTimer.current) // this save already carries any pending duration
+    idleTimer.current = undefined
     const next = intoRange(raw)
     setConfig(next)
     if (lastSaved.current && raisesLimit(lastSaved.current, next)) {
@@ -157,6 +168,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     }
     persist(next)
   }
+
+  commitRef.current = commitConfig
 
   const applyAndSave = (patch: Partial<OrchestratorConfig>) => commitConfig({ ...config, ...patch })
 

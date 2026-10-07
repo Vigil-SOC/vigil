@@ -29,10 +29,12 @@ export function ScrubField({ name, label, value, min, max, step, prefix = '', un
   const [shaking, setShaking] = useState(false) // set on every clamp; the animation clears it
   const start = useRef({ x: 0, from: 0, px: 6, moved: 0 })
   const root = useRef<HTMLSpanElement>(null)
-  const closing = useRef(false) // Enter or Escape already closed the field; the blur that follows must not commit again
+  const closing = useRef(false) // the field already closed; the blur that follows must not commit again
+  const byKey = useRef(false) // closed with Enter or Escape, so focus goes back to the field (not after a Tab or click away)
 
   useEffect(() => {
-    if (typing === null && closing.current) root.current?.focus() // keep keyboard focus where the person was
+    if (typing === null && byKey.current) root.current?.focus()
+    byKey.current = false
   }, [typing])
 
   const fix = (v: number) => Number(v.toFixed(decimals(step)))
@@ -82,7 +84,9 @@ export function ScrubField({ name, label, value, min, max, step, prefix = '', un
     if (dir) {
       e.preventDefault()
       const next = fix(value + dir * step * (e.shiftKey ? 10 : 1))
-      if (next < min || next > max) setShaking(true) // a step past a bound is refused
+      const inRange = value >= min && value <= max
+      // a step past a bound is refused; a saved value already outside it is pulled to the bound
+      if (inRange && (next < min || next > max)) setShaking(true)
       else commit(next)
     } else if (e.key === 'Enter') {
       e.preventDefault()
@@ -118,8 +122,11 @@ export function ScrubField({ name, label, value, min, max, step, prefix = '', un
               onFocus={(e) => e.target.select()}
               onBlur={(e) => !closing.current && settle(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') settle(e.currentTarget.value)
-                else if (e.key === 'Escape') {
+                if (e.key === 'Enter') {
+                  byKey.current = true
+                  settle(e.currentTarget.value)
+                } else if (e.key === 'Escape') {
+                  byKey.current = true
                   closing.current = true
                   setTyping(null)
                 }
