@@ -3073,7 +3073,7 @@
       tokens.json (sentence-case 12px heads, square initial, green switch,
       22px state pills); the shared .tbl, .toggle and .row-act rules stay. */
    .ag-page {
-      padding: 20px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      padding: 14px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -3152,20 +3152,25 @@
       border: 1px solid var(--ln0);
       border-radius: 14px;
       overflow: hidden;
+      container-type: inline-size;
    }
 
    .agents-tbl {
       table-layout: fixed;
    }
 
-   .agents-tbl col.c-agent { width: 19%; }
-   .agents-tbl col.c-model { width: 14%; }
-   .agents-tbl col.c-skills { width: 64px; }
-   .agents-tbl col.c-changes { width: 112px; }
-   .agents-tbl col.c-runs { width: 92px; }
-   .agents-tbl col.c-success { width: 152px; }
-   .agents-tbl col.c-on { width: 62px; }
-   .agents-tbl col.c-act { width: 124px; }
+   /* The board's grid is 1.6fr / 2fr plus fixed tracks, 12px gaps and 16px edges. Cells here carry
+      12px padding a side, so each fixed col is the board track + 12px (On also takes the 16px edge).
+      716px = those fixed cols (688px) + the 28px the first two cols' padding adds. cqw, not %:
+      a col width with calc(% ...) is ignored by table layout. */
+   .agents-tbl col.c-agent { width: calc((100cqw - 716px) * 4 / 9 + 16px); }
+   .agents-tbl col.c-does { width: calc((100cqw - 716px) * 5 / 9 + 12px); }
+   .agents-tbl col.c-model { width: 162px; }
+   .agents-tbl col.c-skills { width: 82px; }
+   .agents-tbl col.c-changes { width: 132px; }
+   .agents-tbl col.c-runs { width: 102px; }
+   .agents-tbl col.c-success { width: 122px; }
+   .agents-tbl col.c-on { width: 88px; }
 
    .agents-tbl thead th {
       position: static;
@@ -3213,8 +3218,21 @@
       opacity: 1;
    }
 
-   .agents-tbl tbody tr.ag-off td:not(.ag-on):not(.ag-acts) {
+   /* dim the content, not the first cell: the row actions live there and stay full strength */
+   .agents-tbl tbody tr.ag-off td:not(.ag-on):not(:first-child),
+   .agents-tbl tbody tr.ag-off .ag-who {
       opacity: 0.5;
+   }
+
+   .ag-agent {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .ag-agent .ag-who {
+      flex: 1;
+      min-width: 0;
    }
 
    .ag-who {
@@ -3270,6 +3288,9 @@
       font-size: 12px;
       font-weight: 650;
       color: var(--tx0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
    }
 
    .ag-does {
@@ -3341,10 +3362,6 @@
 
    .ag-switch[aria-checked="true"] span {
       left: 19px;
-   }
-
-   .agents-tbl td.ag-acts {
-      text-align: right;
    }
 
    .tmpl-badge {

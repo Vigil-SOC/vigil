@@ -686,6 +686,7 @@ config:
   # Integrations — non-secret URLs/usernames
   SPLUNK_URL: ""
   SPLUNK_USERNAME: ""
+  SPLUNK_VERIFY_SSL: "true"
   CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
   ELASTIC_SIEM_ELASTICSEARCH_URL: ""
   ELASTIC_SIEM_KIBANA_URL: ""

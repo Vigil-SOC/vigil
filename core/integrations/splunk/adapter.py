@@ -73,7 +73,7 @@ class SplunkAdapter:
             server_url=cfg["server_url"] or "",
             username=cfg["username"] or "",
             password=cfg["password"] or "",
-            verify_ssl=bool(cfg["verify_ssl"]),
+            verify_ssl=cfg["verify_ssl"],
             ca_cert_path=cfg["ca_cert_path"],
         )
         return self._service
