@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import CommandBar from './CommandBar'
 import CaseDrawer from './CaseDrawer'
-import type { BoardLink } from './commandBar'
+import type { BoardLink } from './commandBarModel'
 
 const { execute, getCase, getFinding, getIntegrations, apiGet } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),

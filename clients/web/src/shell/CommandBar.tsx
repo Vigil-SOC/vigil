@@ -18,7 +18,7 @@ import {
   type LiveCommandId,
   type PaletteRow,
   type SearchHits,
-} from './commandBar'
+} from './commandBarModel'
 
 function hitFrom(id: unknown, title: unknown): { id: string; title: string } | null {
   if (typeof id !== 'string' || !id) return null

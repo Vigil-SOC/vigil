@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import WorkflowsScreen from './WorkflowsScreen'
-import { COMMANDS } from '../../shell/commandBar'
+import { COMMANDS } from '../../shell/commandBarModel'
 
 const h = vi.hoisted(() => ({
   listAll: vi.fn(),
