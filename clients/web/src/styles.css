@@ -4601,31 +4601,36 @@
       max-width: 1280px;
    }
 
-   /* Settings cards and tables, on the board's tokens (components/card.md, row-stack.md) */
-   .settings-content .settings-card {
+   /* Settings and Setup cards, on the board's tokens (components/card.md) */
+   .settings-content .settings-card,
+   .su-root .settings-card {
       background: var(--bg1);
       border-color: var(--ln0);
       border-radius: 14px;
       box-shadow: none;
    }
 
-   .settings-content .settings-card .card-h {
+   .settings-content .settings-card .card-h,
+   .su-root .settings-card .card-h {
       padding: 16px 18px 0;
       border-bottom: 0;
    }
 
-   .settings-content .settings-card .card-h h3 {
+   .settings-content .settings-card .card-h h3,
+   .su-root .settings-card .card-h h3 {
       font-size: 13px;
       font-weight: 650;
       color: var(--tx0);
    }
 
-   .settings-content .settings-card-head p {
+   .settings-content .settings-card-head p,
+   .su-root .settings-card-head p {
       font-size: 12px;
       color: var(--tx2);
    }
 
-   .settings-content .settings-card .card-b {
+   .settings-content .settings-card .card-b,
+   .su-root .settings-card .card-b {
       padding: 12px 18px 16px;
    }
 

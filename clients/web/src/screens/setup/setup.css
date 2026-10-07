@@ -280,3 +280,107 @@
 .su-root .toast-viewport {
   bottom: 84px;
 }
+
+/* System checks table: components/row-stack.md */
+.su-check-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--ln0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.su-check-row {
+  display: grid;
+  grid-template-columns: 18px 150px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg2);
+}
+
+.su-check-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-check-detail {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-check-detail.needs {
+  color: var(--tx0);
+}
+
+.su-check-summary {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.su-check-summary.fair {
+  color: var(--fair);
+}
+
+.su-check-summary.good {
+  color: var(--good);
+}
+
+/* What you'll need */
+.su-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.su-needs li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.su-needs-icon {
+  flex: 0 0 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.su-needs li > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.su-needs-t {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-needs-s {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+/* the card's action button, per the board: 28px, 12px type */
+.su-root .settings-card-actions .btn {
+  height: 28px;
+  padding: 0 10px;
+  border-color: var(--ln2);
+  border-radius: var(--radius-button);
+  font-size: 12px;
+  font-weight: 600;
+}
