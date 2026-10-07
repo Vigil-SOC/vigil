@@ -1541,21 +1541,6 @@
       flex-wrap: wrap;
    }
 
-   .detail-head .case-linked {
-      list-style: none;
-      margin: 8px 0 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 12.5px;
-      color: var(--tx-2);
-   }
-
-   .detail-head .case-linked a {
-      margin-left: 10px;
-   }
-
    /* Tabbed detail: header + tab bar stay pinned; only .detail-body scrolls.
      Each tab holds a short single-column stack of cards (card overlap is
      impossible; .span-2 is a no-op — every card is already full width). */
@@ -1670,22 +1655,6 @@
       color: var(--accent-2);
       background: var(--accent-dim);
       font-weight: 500;
-   }
-
-   .case-needs-strip {
-      display: block;
-      width: 100%;
-      padding: 8px 24px;
-      border: none;
-      border-bottom: 1px solid var(--line);
-      background: var(--accent-dim);
-      color: var(--accent-2);
-      font-family: inherit;
-      font-size: 13px;
-      font-weight: 500;
-      text-align: left;
-      cursor: pointer;
-      flex-shrink: 0;
    }
 
    .detail-body .case-needs {
@@ -1845,12 +1814,6 @@
       margin-left: 4px;
       color: var(--tx-faint);
       font-variant-numeric: tabular-nums;
-   }
-
-   .case-trust {
-      margin-top: 6px;
-      font-size: 12px;
-      color: var(--tx-3);
    }
 
    .case-mark {
@@ -2983,6 +2946,12 @@
    }
 
    .wfk:hover { border-color: var(--ln2); }
+   .wfk.sel { border-color: var(--ac-line, var(--ac)); background: var(--ac-bg); }
+
+   /* the card column and the reader side by side, as the board draws them */
+   .wfk-layout { display: flex; align-items: stretch; min-height: 0; }
+   .wfk-layout > .wfk-col { width: 364px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--ln0); }
+   .wfk-reader { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
    .wfk.off .wfk-name { color: var(--tx2); }
 
    .wfk-main {

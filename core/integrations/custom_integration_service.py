@@ -291,10 +291,10 @@ import mcp.server.stdio
 logger = logging.getLogger(__name__)
 
 def get_config():
-    \"\"\"Get integration configuration.\"\"\"
+    \"\"\"Get integration configuration, credentials included.\"\"\"
     try:
-        from core.config import get_integration_config
-        config = get_integration_config('integration-id')
+        from core.integrations._base.config import resolve_fields
+        config = resolve_fields('integration-id', ['api_key'])  # every field name
         return config
     except Exception as e:
         logger.error(f"Error loading config: {{e}}")

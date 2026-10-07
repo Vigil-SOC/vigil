@@ -5,6 +5,7 @@ from __future__ import annotations
 from string import Formatter
 from typing import Mapping, Optional
 
+from core.federation.registry import get_adapter, is_registered
 from core.integrations._base.config import resolve
 from core.integrations._base.descriptor import IntegrationDescriptor, get_descriptor
 
@@ -24,6 +25,17 @@ def _http_ref(evidence_links: object) -> Optional[str]:
         if text.lower().startswith(("http://", "https://")):
             return text
     return None
+
+
+def descriptor_for_source(source: str) -> Optional[IntegrationDescriptor]:
+    """The descriptor behind a stored ``data_source`` name.
+
+    Stored names (``azure_sentinel``) differ from descriptor ids
+    (``azure-sentinel``) for some sources; the federation adapter carries the
+    id. A source with no adapter is looked up by its own name.
+    """
+    adapter = get_adapter(source) if is_registered(source) else None
+    return get_descriptor(getattr(adapter, "integration_id", source))
 
 
 def _template_values(descriptor: IntegrationDescriptor) -> dict[str, str]:
@@ -70,7 +82,7 @@ def resolve_source_link(
     source = finding.get("data_source")
     if not isinstance(source, str) or not source:
         return None
-    descriptor = get_descriptor(source)
+    descriptor = descriptor_for_source(source)
     template = descriptor.console_link_template if descriptor else None
     if not isinstance(template, str) or not template:
         return None

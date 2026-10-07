@@ -125,15 +125,32 @@ describe('a hunt, as of the selected step', () => {
     expect(screen.getByText('Not asked yet.')).toBeInTheDocument()
   })
 
-  it('renders the existing checkpoint in the explanations column when one is open', () => {
+  it('shows the checkpoint card at the newest step only, in plain words, and answers through steer', () => {
     const open = { checkpoint_id: 'c1', checkpoint_class: 'scope_extension', question: 'Let the hunt search tenant B?' }
-    render(<WatchRun d={hunt({ status: 'parked', open_checkpoint: open })} onBack={vi.fn()} />)
+    vi.mocked(workflowApi.steer).mockResolvedValue({} as never)
+    render(<WatchRun d={hunt({ status: 'parked', run_id: 'run-1', open_checkpoint: open })} onBack={vi.fn()} />)
+
+    step(2)
+    expect(screen.queryByText('Stopped · needs you', { selector: 'span.font-bold' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Let the hunt search tenant B?')).not.toBeInTheDocument()
+
     step(3)
     const column = screen.getByText('Explanations being tested').parentElement as HTMLElement
-    expect(within(column).getByText('Waiting on you · scope_extension')).toBeInTheDocument()
+    expect(within(column).getByText('Stopped · needs you', { selector: 'span.font-bold' })).toBeInTheDocument()
     expect(within(column).getByText('Let the hunt search tenant B?')).toBeInTheDocument()
-    expect(within(column).getByRole('button', { name: 'approve' })).toBeInTheDocument()
+    expect(within(column).queryByText(/scope_extension/)).not.toBeInTheDocument()
+    expect(within(column).getByRole('button', { name: 'Keep scope' })).toBeInTheDocument()
+    fireEvent.click(within(column).getByRole('button', { name: 'Widen scope' }))
+    expect(workflowApi.steer).toHaveBeenCalledWith('run-1', 'approve', '', { checkpoint_id: 'c1' })
     expect(screen.getByText(/tenant A \(at limit\)/)).toBeInTheDocument()
+  })
+
+  it('names an unknown checkpoint class generically instead of printing its token', () => {
+    const open = { checkpoint_id: 'c1', checkpoint_class: 'from_a_newer_run', question: 'Go on?' }
+    render(<WatchRun d={hunt({ open_checkpoint: open })} onBack={vi.fn()} />)
+    step(3)
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.queryByText(/from_a_newer_run/)).not.toBeInTheDocument()
   })
 })
 
@@ -183,6 +200,15 @@ describe('what each kind of run says where it has nothing', () => {
     expect(screen.queryByText(/A search failed: ok/)).not.toBeInTheDocument()
     expect(screen.getByText(NO_EXPLANATIONS)).toBeInTheDocument()
     expect(screen.getByText(NO_REVIEWER)).toBeInTheDocument()
+  })
+
+  it('root cause with no telemetry: its one notice is the blind spot, not "None so far."', async () => {
+    vi.mocked(workflowApi.replayRun).mockRejectedValue({ response: { status: 404 } })
+    const text = 'This deployment has no telemetry search, so the trace could not look.'
+    const d = { run_id: 'run-5', status: 'completed', workflow_name: 'Root cause', projection: { run_kind: 'root_cause', notices: [text], recent_searches: [] } } as unknown as WfRunDetail
+    render(<WatchRun d={d} onBack={vi.fn()} />)
+    expect(await screen.findByText(text)).toBeInTheDocument()
+    expect(screen.queryByText('None so far.')).not.toBeInTheDocument()
   })
 
   it('compose: every panel says it is not recorded or not tracked', () => {

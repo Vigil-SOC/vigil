@@ -661,14 +661,15 @@ describe('answering a checkpoint the hunt is parked on', () => {
     withCheckpoint()
 
     expect(screen.getByText(/Two consecutive worker dispatches have failed/)).toBeInTheDocument()
-    expect(screen.getByText(/Waiting on you · budget_anomaly/)).toBeInTheDocument()
+    expect(screen.getByText('Stopped · needs you')).toBeInTheDocument()
+    expect(screen.queryByText(/budget_anomaly/)).toBeNull()
   })
 
   it('sends the answer against the checkpoint it was raised for', async () => {
     const { workflowApi } = await import('../../services/api')
     withCheckpoint()
 
-    fireEvent.click(screen.getByRole('button', { name: 'approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Carry on' }))
 
     expect(workflowApi.steer).toHaveBeenCalledWith('run-1', 'approve', '', {
       checkpoint_id: 'cp-5d413252',
@@ -680,7 +681,7 @@ describe('answering a checkpoint the hunt is parked on', () => {
     withCheckpoint()
 
     fireEvent.change(screen.getByPlaceholderText(/Why —/), { target: { value: 'timeout is fixed' } })
-    fireEvent.click(screen.getByRole('button', { name: 'reject' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Not convinced' }))
 
     expect(workflowApi.steer).toHaveBeenCalledWith('run-1', 'reject', 'timeout is fixed', {
       checkpoint_id: 'cp-5d413252',
@@ -696,25 +697,25 @@ describe('answering a checkpoint the hunt is parked on', () => {
   })
 
   // The projection keeps reporting the checkpoint until the run journals a
-  // resolution, so the panel stayed as a wall of text under "Waiting on you" with
+  // resolution, so the panel stayed as a wall of text under "Stopped · needs you" with
   // both buttons live — after the operator had already answered, and while it was
   // waiting on the run rather than on them.
   it('collapses to what was sent once it is answered', async () => {
     withCheckpoint()
 
-    fireEvent.click(screen.getByRole('button', { name: 'approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Carry on' }))
 
     expect(await screen.findByText(/picks it up at its next turn/)).toBeInTheDocument()
-    expect(screen.queryByText(/Waiting on you/)).toBeNull()
+    expect(screen.queryByText('Stopped · needs you')).toBeNull()
     expect(screen.queryByText(/Two consecutive worker dispatches/)).toBeNull()
-    expect(screen.queryByRole('button', { name: 'approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Carry on' })).toBeNull()
   })
 
   // Otherwise a second question arrives already wearing the first one's answer,
   // and the run waits on somebody who has been told it is handled.
   it('asks again when the run raises a different question', async () => {
     const { rerender } = withCheckpoint()
-    fireEvent.click(screen.getByRole('button', { name: 'approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Carry on' }))
     await screen.findByText(/picks it up at its next turn/)
 
     rerender(
@@ -725,13 +726,13 @@ describe('answering a checkpoint the hunt is parked on', () => {
     )
 
     expect(screen.getByText('Mark h-3431 proven?')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'approve' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Carry on' })).toBeInTheDocument()
   })
 
   it('shows nothing when the run is waiting on no one', () => {
     renderPanel({ hunt: hunt() })
 
-    expect(screen.queryByText(/Waiting on you/)).toBeNull()
+    expect(screen.queryByText('Stopped · needs you')).toBeNull()
   })
 })
 

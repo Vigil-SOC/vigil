@@ -926,13 +926,15 @@ export interface paths {
         put?: never;
         /**
          * Logout
-         * @description Logout user — blacklist the current access token's JTI so replaying it
-         *     returns 401 for the rest of its lifetime, and clear the HttpOnly auth
-         *     cookies from the browser.
+         * @description Logout user: blacklist the current access token and the refresh token so
+         *     replaying either returns 401 for the rest of its lifetime, and clear the
+         *     HttpOnly auth cookies from the browser.
          *
          *     Args:
-         *         request: FastAPI request (used to read the access_token cookie).
+         *         request: FastAPI request (used to read the auth cookies).
          *         response: FastAPI response (used to clear auth cookies).
+         *         body: Optional refresh token for Bearer-flow clients, which hold it
+         *             outside a cookie.
          *         current_user: Current authenticated user.
          *         authorization: Authorization header (used to extract the JTI for
          *             Bearer-flow clients).
@@ -5566,7 +5568,11 @@ export interface paths {
         put?: never;
         /**
          * Kill Orchestrator
-         * @description Emergency kill: cancel all running agents immediately.
+         * @description Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+         *
+         *     The daemon is a separate process that learns of a stop only through the
+         *     persisted `enabled` flag, so that is written first. A run already executing
+         *     on the agent worker is not cancelled; it stops at its own ceiling (#633).
          */
         post: operations["post_api_orchestrator_kill"];
         delete?: never;
@@ -14215,7 +14221,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RefreshTokenRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

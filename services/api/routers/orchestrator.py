@@ -5,6 +5,7 @@ view investigations, read working directory files, and trigger manual
 investigations.
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -76,99 +77,94 @@ class InvestigationCreateRequest(BaseModel):
 @router.get("/status")
 def get_orchestrator_status():
     """Get orchestrator status: enabled state, active agents, stats, cost."""
+    orch = _get_orchestrator()
+
+    investigations = []
+    cost_summary = {}
+    stats = {}
+
+    if orch:
+        investigations = orch.get_all_investigations()
+        cost_summary = orch.get_cost_summary()
+        stats = orch.stats
+
+    # Enabled is persisted inside the single `orchestrator.settings` key.
+    # See core/storage/config_service and services/api/routers/config.py.
+    enabled = False
     try:
-        orch = _get_orchestrator()
+        from core.storage.config_service import get_config_service
 
-        investigations = []
-        cost_summary = {}
-        stats = {}
+        settings = get_config_service().get_system_config("orchestrator.settings")
+        if isinstance(settings, dict):
+            enabled = bool(settings.get("enabled", False))
+    except Exception:
+        enabled = orch.enabled if orch else False
 
+    active = [i for i in investigations if i.get("status") in ("assigned", "executing")]
+    completed = [i for i in investigations if i.get("status") == "completed"]
+    failed = [i for i in investigations if i.get("status") == "failed"]
+    review = [i for i in investigations if i.get("status") == "review_submitted"]
+
+    # Waiting room is intake_triggers. Count it here like GET /intake;
+    # swallowing a miss as 0 would look like an empty queue.
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    with get_db_manager().session_scope() as session:
+        queued = session.query(IntakeTrigger).filter_by(state="queued").count()
+
+    max_agents = 3
+    try:
+        from core.storage.config_service import get_config_service
+
+        orch_cfg = get_config_service().get_system_config("orchestrator.settings")
+        if orch_cfg and isinstance(orch_cfg, dict):
+            max_agents = int(orch_cfg.get("max_concurrent_agents", 3))
+    except Exception:
         if orch:
-            investigations = orch.get_all_investigations()
-            cost_summary = orch.get_cost_summary()
-            stats = orch.stats
+            max_agents = orch.config.max_concurrent_agents
 
-        # Enabled is persisted inside the single `orchestrator.settings` key.
-        # See core/storage/config_service and services/api/routers/config.py.
-        enabled = False
-        try:
-            from core.storage.config_service import get_config_service
-
-            settings = get_config_service().get_system_config("orchestrator.settings")
-            if isinstance(settings, dict):
-                enabled = bool(settings.get("enabled", False))
-        except Exception:
-            enabled = orch.enabled if orch else False
-
-        active = [
-            i for i in investigations if i.get("status") in ("assigned", "executing")
-        ]
-        completed = [i for i in investigations if i.get("status") == "completed"]
-        failed = [i for i in investigations if i.get("status") == "failed"]
-        review = [i for i in investigations if i.get("status") == "review_submitted"]
-
-        # Waiting room is intake_triggers. Count it here like GET /intake;
-        # swallowing a miss as 0 would look like an empty queue.
-        from core.storage.connection import get_db_manager
-        from core.storage.models import IntakeTrigger
-
-        with get_db_manager().session_scope() as session:
-            queued = session.query(IntakeTrigger).filter_by(state="queued").count()
-
-        max_agents = 3
-        try:
-            from core.storage.config_service import get_config_service
-
-            orch_cfg = get_config_service().get_system_config("orchestrator.settings")
-            if orch_cfg and isinstance(orch_cfg, dict):
-                max_agents = int(orch_cfg.get("max_concurrent_agents", 3))
-        except Exception:
-            if orch:
-                max_agents = orch.config.max_concurrent_agents
-
-        return {
-            "enabled": enabled,
-            "active_agents": len(active),
-            "max_concurrent_agents": max_agents,
-            "queued": queued,
-            "completed": len(completed),
-            "failed": len(failed),
-            "pending_review": len(review),
-            "total_investigations": len(investigations),
-            "cost": cost_summary,
-            "stats": stats,
-        }
-    except Exception as e:
-        logger.error(f"Error getting orchestrator status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "enabled": enabled,
+        "active_agents": len(active),
+        "max_concurrent_agents": max_agents,
+        "queued": queued,
+        "completed": len(completed),
+        "failed": len(failed),
+        "pending_review": len(review),
+        "total_investigations": len(investigations),
+        "cost": cost_summary,
+        "stats": stats,
+    }
 
 
-def _persist_orchestrator_enabled(enabled: bool, user_id: str) -> None:
+def _persist_orchestrator_enabled(
+    enabled: bool, user_id: str, reason: Optional[str] = None
+) -> None:
     """Write the `enabled` flag into the single `orchestrator.settings` key.
 
     Read-modify-write so the rest of the settings struct is preserved. If no
     settings row exists yet (first toggle on a fresh DB), seed it from the
-    defaults defined in services/api/routers/config.py.
+    defaults defined in services/api/routers/config.py. Raises when the write
+    fails: the daemon only learns of a toggle through this row.
     """
-    try:
-        from core.storage.config_service import get_config_service
-        from services.api.routers.config import ORCHESTRATOR_DEFAULTS
+    from core.storage.config_service import get_config_service
+    from services.api.routers.config import ORCHESTRATOR_DEFAULTS
 
-        svc = get_config_service(user_id=user_id)
-        current = svc.get_system_config("orchestrator.settings")
-        base = (
-            dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
-        )
-        base["enabled"] = bool(enabled)
-        svc.set_system_config(
-            key="orchestrator.settings",
-            value=base,
-            description="Autonomous orchestrator settings",
-            config_type="orchestrator",
-            change_reason=f'Orchestrator {"enabled" if enabled else "disabled"} via API',
-        )
-    except Exception as e:
-        logger.warning("Could not persist orchestrator.settings.enabled: %s", e)
+    svc = get_config_service(user_id=user_id)
+    current = svc.get_system_config("orchestrator.settings")
+    base = dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
+    base["enabled"] = bool(enabled)
+    stored = svc.set_system_config(
+        key="orchestrator.settings",
+        value=base,
+        description="Autonomous orchestrator settings",
+        config_type="orchestrator",
+        change_reason=reason
+        or f'Orchestrator {"enabled" if enabled else "disabled"} via API',
+    )
+    if stored is False:
+        raise RuntimeError("orchestrator.settings was not stored")
 
 
 @router.post("/enable")
@@ -176,14 +172,11 @@ def enable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
     """Enable the orchestrator at runtime."""
-    try:
-        orch = _get_orchestrator()
-        if orch:
-            orch.enable()
-        _persist_orchestrator_enabled(True, str(current_user.user_id))
-        return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    orch = _get_orchestrator()
+    if orch:
+        orch.enable()
+    _persist_orchestrator_enabled(True, str(current_user.user_id))
+    return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
 
 
 @router.post("/disable")
@@ -191,30 +184,48 @@ def disable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
     """Gracefully disable the orchestrator. Running agents finish their current step."""
-    try:
-        orch = _get_orchestrator()
-        if orch:
-            orch.disable()
-        _persist_orchestrator_enabled(False, str(current_user.user_id))
-        return {
-            "success": True,
-            "enabled": False,
-            "message": "Orchestrator disabled (graceful)",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    orch = _get_orchestrator()
+    if orch:
+        orch.disable()
+    _persist_orchestrator_enabled(False, str(current_user.user_id))
+    return {
+        "success": True,
+        "enabled": False,
+        "message": "Orchestrator disabled (graceful)",
+    }
 
 
 @router.post("/kill")
-async def kill_orchestrator():
-    """Emergency kill: cancel all running agents immediately."""
+async def kill_orchestrator(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+
+    The daemon is a separate process that learns of a stop only through the
+    persisted `enabled` flag, so that is written first. A run already executing
+    on the agent worker is not cancelled; it stops at its own ceiling (#633).
+    """
     try:
+        await asyncio.to_thread(
+            _persist_orchestrator_enabled,
+            False,
+            str(current_user.user_id),
+            "Orchestrator killed via API",
+        )
         orch = _get_orchestrator()
         if orch:
             await orch.kill()
-        return {"success": True, "message": "All agents killed"}
+        return {
+            "success": True,
+            "enabled": False,
+            "message": (
+                "Orchestrator disabled and in-flight investigations marked failed; "
+                "runs already executing stop at their own ceiling"
+            ),
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error killing orchestrator: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to kill the orchestrator")
 
 
 @router.post("/investigations/purge")
@@ -237,9 +248,6 @@ async def purge_investigations():
         }
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error purging investigations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---- Investigations ----
@@ -248,18 +256,15 @@ async def purge_investigations():
 @router.get("/investigations")
 def list_investigations(status: Optional[str] = Query(None)):
     """List all investigations with optional status filter."""
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            return {"investigations": [], "count": 0}
+    orch = _get_orchestrator()
+    if not orch:
+        return {"investigations": [], "count": 0}
 
-        investigations = orch.get_all_investigations(status=status)
-        return {
-            "investigations": investigations,
-            "count": len(investigations),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    investigations = orch.get_all_investigations(status=status)
+    return {
+        "investigations": investigations,
+        "count": len(investigations),
+    }
 
 
 _INTAKE_LIST_DEFAULT = 100
@@ -274,21 +279,17 @@ def list_intake_triggers(
     """List intake trigger rows, newest first, with an optional state filter."""
     # Query the table here. _get_orchestrator() builds a second Orchestrator
     # in the API process whose in-memory state is never fed.
-    try:
-        from core.storage.connection import get_db_manager
-        from core.storage.models import IntakeTrigger
-        from core.storage.schemas import IntakeTriggerSchema
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+    from core.storage.schemas import IntakeTriggerSchema
 
-        with get_db_manager().session_scope() as session:
-            q = session.query(IntakeTrigger)
-            if state:
-                q = q.filter_by(state=state)
-            rows = q.order_by(IntakeTrigger.created_at.desc()).limit(limit).all()
-            triggers = IntakeTriggerSchema.dump_many(rows)
-        return {"triggers": triggers, "count": len(triggers)}
-    except Exception as e:
-        logger.error(f"Error listing intake triggers: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    with get_db_manager().session_scope() as session:
+        q = session.query(IntakeTrigger)
+        if state:
+            q = q.filter_by(state=state)
+        rows = q.order_by(IntakeTrigger.created_at.desc()).limit(limit).all()
+        triggers = IntakeTriggerSchema.dump_many(rows)
+    return {"triggers": triggers, "count": len(triggers)}
 
 
 @router.get("/investigations/{investigation_id}")
@@ -319,8 +320,6 @@ def get_investigation(investigation_id: str):
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/investigations/{investigation_id}/files/{filename:path}")
@@ -347,8 +346,6 @@ def get_investigation_file(investigation_id: str, filename: str):
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/investigations/{investigation_id}/wake")
@@ -384,8 +381,6 @@ def wake_investigation(investigation_id: str):
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/investigations/{investigation_id}/kill")
@@ -410,8 +405,6 @@ def kill_investigation(investigation_id: str):
         return {"success": True, "message": f"Investigation {investigation_id} killed"}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 class ReviewRequest(BaseModel):
@@ -478,40 +471,34 @@ def review_investigation(investigation_id: str, request: ReviewRequest):
         }
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error reviewing investigation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/investigations")
 def create_investigation(request: InvestigationCreateRequest):
     """Manually create a new investigation."""
-    try:
-        from services.daemon.orchestrator import insert_intake_trigger
+    from services.daemon.orchestrator import insert_intake_trigger
 
-        payload = {
-            "workflow_id": request.workflow_id,
-            "finding_ids": request.finding_ids,
-            "case_id": request.case_id,
-            "hypothesis": request.hypothesis,
-            "hypothesis_subjects": request.hypothesis_subjects,
-        }
-        if request.document:
-            payload["document"] = request.document
+    payload = {
+        "workflow_id": request.workflow_id,
+        "finding_ids": request.finding_ids,
+        "case_id": request.case_id,
+        "hypothesis": request.hypothesis,
+        "hypothesis_subjects": request.hypothesis_subjects,
+    }
+    if request.document:
+        payload["document"] = request.document
 
-        insert_intake_trigger(
-            kind="human_ask",
-            priority=request.priority or "medium",
-            payload=payload,
-        )
+    insert_intake_trigger(
+        kind="human_ask",
+        priority=request.priority or "medium",
+        payload=payload,
+    )
 
-        return {
-            "success": True,
-            "message": "Investigation queued for creation",
-            "workflow_id": request.workflow_id,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": True,
+        "message": "Investigation queued for creation",
+        "workflow_id": request.workflow_id,
+    }
 
 
 # ---- Scan Existing Findings ----
@@ -529,70 +516,64 @@ def scan_existing_findings(request: ScanFindingsRequest):
     and dedups with other detections. The intake tick ranks and launches them
     when a slot is free.
     """
-    try:
-        from core.storage.connection import get_db_manager
-        from core.storage.models import Finding, Investigation
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Finding, Investigation
 
-        skipped_existing = 0
+    skipped_existing = 0
 
-        with get_db_manager().session_scope() as session:
-            already_investigated = set()
-            for inv in session.query(Investigation).all():
-                for tid in inv.trigger_ids or []:
-                    already_investigated.add(tid)
+    with get_db_manager().session_scope() as session:
+        already_investigated = set()
+        for inv in session.query(Investigation).all():
+            for tid in inv.trigger_ids or []:
+                already_investigated.add(tid)
 
-            findings = (
-                session.query(Finding)
-                .filter(Finding.severity.in_(request.severities))
-                .order_by(Finding.timestamp.desc())
-                .all()
-            )
-
-            to_investigate = []
-            for f in findings:
-                fid = f.finding_id
-                if fid in already_investigated:
-                    skipped_existing += 1
-                    continue
-                to_investigate.append({"finding_id": fid, "severity": f.severity})
-
-        from services.daemon.orchestrator import (
-            insert_intake_trigger,
-            intake_severity_band,
+        findings = (
+            session.query(Finding)
+            .filter(Finding.severity.in_(request.severities))
+            .order_by(Finding.timestamp.desc())
+            .all()
         )
 
-        queued = 0
-        for finding_data in to_investigate:
-            try:
-                trigger_id = insert_intake_trigger(
-                    kind="detection",
-                    priority=intake_severity_band(
-                        "detection",
-                        finding_severity=finding_data.get("severity"),
-                    ),
-                    finding_id=finding_data.get("finding_id"),
-                    payload={"trigger_type": "scan"},
-                )
-                if trigger_id is not None:
-                    queued += 1
-            except Exception as e:
-                logger.warning(
-                    f"Failed to queue investigation for {finding_data.get('finding_id')}: {e}"
-                )
+        to_investigate = []
+        for f in findings:
+            fid = f.finding_id
+            if fid in already_investigated:
+                skipped_existing += 1
+                continue
+            to_investigate.append({"finding_id": fid, "severity": f.severity})
 
-        return {
-            "success": True,
-            "queued": queued,
-            "skipped_already_investigated": skipped_existing,
-            "total_matching": queued + skipped_existing,
-            "message": f"Queued {queued} findings for investigation"
-            + (
-                f", {skipped_existing} already investigated" if skipped_existing else ""
-            ),
-        }
-    except Exception as e:
-        logger.error(f"Error scanning findings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    from services.daemon.orchestrator import (
+        insert_intake_trigger,
+        intake_severity_band,
+    )
+
+    queued = 0
+    for finding_data in to_investigate:
+        try:
+            trigger_id = insert_intake_trigger(
+                kind="detection",
+                priority=intake_severity_band(
+                    "detection",
+                    finding_severity=finding_data.get("severity"),
+                ),
+                finding_id=finding_data.get("finding_id"),
+                payload={"trigger_type": "scan"},
+            )
+            if trigger_id is not None:
+                queued += 1
+        except Exception as e:
+            logger.warning(
+                f"Failed to queue investigation for {finding_data.get('finding_id')}: {e}"
+            )
+
+    return {
+        "success": True,
+        "queued": queued,
+        "skipped_already_investigated": skipped_existing,
+        "total_matching": queued + skipped_existing,
+        "message": f"Queued {queued} findings for investigation"
+        + (f", {skipped_existing} already investigated" if skipped_existing else ""),
+    }
 
 
 # ---- Cost ----
@@ -601,13 +582,10 @@ def scan_existing_findings(request: ScanFindingsRequest):
 @router.get("/cost")
 def get_cost_summary():
     """Get cost breakdown across all investigations."""
-    try:
-        orch = _get_orchestrator()
-        if not orch:
-            return {"total_cost_usd": 0, "active_cost_usd": 0}
-        return orch.get_cost_summary()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    orch = _get_orchestrator()
+    if not orch:
+        return {"total_cost_usd": 0, "active_cost_usd": 0}
+    return orch.get_cost_summary()
 
 
 # ---- Chain of Custody ----
@@ -725,9 +703,6 @@ def get_chain_of_custody(investigation_id: str):
         return _assemble_chain_of_custody(investigation_id)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error building chain of custody for {investigation_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/investigations/{investigation_id}/export")
@@ -744,6 +719,3 @@ def export_investigation(investigation_id: str):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error exporting investigation {investigation_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))

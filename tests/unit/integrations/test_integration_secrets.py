@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -231,3 +232,43 @@ def test_no_env_var_collisions_across_integrations():
             else:
                 seen[env_var] = (integration_id, field)
     assert not collisions, "Env-var name collisions: " + ", ".join(collisions)
+
+
+def test_custom_integration_password_fields_are_secret(tmp_path, monkeypatch):
+    """A Custom Integration's password-typed fields get the registry's treatment."""
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    meta_dir = tmp_path / "custom_integrations"
+    meta_dir.mkdir()
+    (meta_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "custom-acme-intel": {
+                    "fields": [
+                        {"name": "base_url", "type": "text"},
+                        {"name": "api_key", "type": "password"},
+                    ]
+                }
+            }
+        )
+    )
+    assert secret_fields_for("custom-acme-intel") == {
+        "api_key": "CUSTOM_ACME_INTEL_API_KEY"
+    }
+    secrets, non_secrets = split_secrets(
+        "custom-acme-intel", {"base_url": "https://acme", "api_key": "FAKE-123"}
+    )
+    assert secrets == {"CUSTOM_ACME_INTEL_API_KEY": "FAKE-123"}
+    assert non_secrets == {"base_url": "https://acme"}
+    assert redact_secrets(
+        "custom-acme-intel", {"base_url": "https://acme", "api_key": "FAKE-123"}
+    ) == {"base_url": "https://acme"}
+    assert secret_fields_for("custom-other") == {}
+
+
+def test_custom_integration_metadata_unreadable_reads_as_no_secrets(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    (tmp_path / "custom_integrations").mkdir()
+    (tmp_path / "custom_integrations" / "metadata.json").write_text("{not json")
+    assert secret_fields_for("custom-acme-intel") == {}

@@ -33,6 +33,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from core.auth.token_blacklist import warn_if_redis_evicts
 from core.platform.monitoring import get_metrics_response, init_sentry
 from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
@@ -505,6 +506,9 @@ async def _startup(app: FastAPI):
         init_sentry()
     except Exception as e:
         logger.warning("Sentry initialization failed (non-fatal): %s", e)
+
+    if not _testing:
+        await warn_if_redis_evicts()
 
     # Probe the secrets manager singleton at a known time, after all
     # third-party imports have settled. The singleton picks its write
