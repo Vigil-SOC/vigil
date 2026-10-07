@@ -255,7 +255,7 @@ replacement is never scanned again. Long flags are caught too: `--auth-token
 <value>`, `--api-key=<value>` and `--password <value>` in a process list lose
 the value when the flag name would be a secret name (the value ends at the next
 blank; a value that is itself a `--flag` is left alone; `-p value` is not
-touched). The values never reach the bundle, the manifest or the output. A not-collected
+touched). A value that is only a variable reference (`$NAME`, `${NAME}`, `${NAME:-}`, `${NAME:?...}`) is kept readable, and `${NAME:-default}` keeps the reference with the default redacted (`${NAME:-[REDACTED]}`; learned like any credential value). A key name right after a `/` is a path component, not a key, so `/backup/passphrase:ro` is kept. The values never reach the bundle, the manifest or the output. A not-collected
 reason that quotes a command's error message goes through the filter too. If the filter cannot run, the item is `not collected`; the
 unredacted input is never copied. `SUMMARY.txt` and `manifest.json` are written
 by the script itself and hold only paths, versions and reasons.
