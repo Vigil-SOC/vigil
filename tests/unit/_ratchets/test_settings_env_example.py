@@ -4,81 +4,54 @@ from pathlib import Path
 import pytest
 
 from core.config import Settings
+from core.integrations.integration_secrets import ENV_CREDENTIAL_NAMES
 
 ENV_EXAMPLE = Path(__file__).resolve().parents[3] / "env.example"
 
 # Keys env.example documents that are deliberately NOT Settings fields, grouped
 # by the channel that owns them. Anything not listed here must become a field.
-NOT_SETTINGS = {
-    # Credentials — the encrypted store owns these, read via get_secret so a
-    # value saved in the UI wins over the environment.
-    "AGENT_INTERNAL_TOKEN",
-    "ALIENVAULT_OTX_API_KEY",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "CAPE_SANDBOX_API_KEY",
-    "CLOUDFORCE_ONE_API_TOKEN",
-    "CLOUDY_WEBHOOK_SECRET",
-    "CRIBL_PASSWORD",
-    "CRIBL_USERNAME",
-    "CROWDSTRIKE_CLIENT_ID",
-    "CROWDSTRIKE_CLIENT_SECRET",
-    "DAEMON_WEBHOOK_TOKEN",
-    "DARKTRACE_WEBHOOK_SECRET",
-    "ELASTIC_API_KEY",
-    "ELASTIC_PASSWORD",
-    "ELASTIC_USERNAME",
-    "GITHUB_TOKEN",
-    "JOE_SANDBOX_API_KEY",
-    "JWT_SECRET_KEY",
-    "KAFKA_SASL_PASSWORD",
-    "KAFKA_SASL_USERNAME",
-    "OPENAI_API_KEY",
-    "PAGERDUTY_ROUTING_KEY",
-    "POSTGRES_PASSWORD",
-    "SHODAN_API_KEY",
-    "SLACK_BOT_TOKEN",
-    "SMTP_PASSWORD",
-    "SPLUNK_PASSWORD",
-    "SPLUNK_USERNAME",
-    "TEAMS_WEBHOOK_URL",
-    "TIMESKETCH_PASSWORD",
-    "TIMESKETCH_USERNAME",
-    "VIRUSTOTAL_API_KEY",
-    "VSTRIKE_API_KEY",
-    "VSTRIKE_INBOUND_API_KEY",
-    "VSTRIKE_PASSWORD",
-    "VSTRIKE_USERNAME",
+NOT_SETTINGS = ENV_CREDENTIAL_NAMES | {
     # Integration endpoints and options consumed inside MCP server child
     # processes, whose config protocol is the environment they are spawned with.
+    "ATOMIC_RED_TEAM_ATOMICS_PATH",
+    "ATOMIC_RED_TEAM_RUNNER_PATH",
     "CLOUDFORCE_ONE_COLLECTION_IDS",
     "CLOUDFORCE_ONE_TAXII_SERVER_URL",
     "CRIBL_URL",
     "CRIBL_WORKER_GROUP",
     "CROWDSTRIKE_BASE_URL",
-    "ELASTIC_HOST",
-    "ELASTIC_INDEX_PATTERN",
-    "ELASTIC_KIBANA_URL",
     "ELASTIC_PATHS",
-    "ELASTIC_VERIFY_SSL",
+    "ELASTIC_SIEM_ELASTICSEARCH_URL",
+    "ELASTIC_SIEM_INDEX_PATTERN",
+    "ELASTIC_SIEM_KIBANA_URL",
+    "ELASTIC_SIEM_MIN_RULE_LEVEL",
+    "ELASTIC_SIEM_VERIFY_SSL",
+    "OPENSEARCH_DASHBOARDS_URL",
+    "OPENSEARCH_INDEX_PATTERN",
+    "OPENSEARCH_OPENSEARCH_URL",
+    "OPENSEARCH_VERIFY_SSL",
     "KQL_PATHS",
     "SIGMA_PATHS",
     "SLACK_DEFAULT_CHANNEL",
+    "SPLUNK_MCP_URL",
     "SPLUNK_PATHS",
     "SPLUNK_URL",
+    "SPLUNK_VERIFY_SSL",
     "STORY_PATHS",
-    "TIMESKETCH_URL",
     "VSTRIKE_BASE_URL",
     "VSTRIKE_VERIFY_SSL",
+    # Per-integration CA paths, resolved like the fields above.
+    "ELASTIC_SIEM_CA_CERT_PATH",
+    "OPENSEARCH_CA_CERT_PATH",
+    "MISP_CA_CERT_PATH",
+    "PALO_ALTO_CA_CERT_PATH",
+    "SPLUNK_CA_CERT_PATH",
+    "VSTRIKE_CA_CERT_PATH",
     # core.platform.runtime_config ENV_FALLBACKS: DB-first settings whose env var is
     # only the fallback when the system_config row is absent.
-    "ANTHROPIC_PROMPT_CACHE_ENABLED",
-    "CLAUDE_HISTORY_WINDOW",
-    "CLAUDE_THINKING_BUDGET",
     "LOCAL_OLLAMA_RECOVERY_ENABLED",
     "LOCAL_OLLAMA_RECOVERY_RESTART_GATEWAY",
     "LOCAL_OLLAMA_RECOVERY_RETRY_LIMIT",
-    "TOOL_RESPONSE_BUDGET_DEFAULT",
     # Per-provider names built at runtime, so they cannot be static fields.
     "ANTHROPIC_EXTRA_MODELS",
     "OPENAI_EXTRA_MODELS",
@@ -86,13 +59,22 @@ NOT_SETTINGS = {
     "AWS_REGION",
     "OTEL_TRACES_SAMPLER",
     "OTEL_TRACES_SAMPLER_ARG",
+    # TLS trust for inspecting proxies. Python and Node read these directly;
+    # ca_bundle_env() forwards them to MCP children. Not Settings fields.
+    "NODE_EXTRA_CA_CERTS",
+    "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_FILE",
     # Consumed outside the Python backend (shell scripts, compose, Vite).
+    "BIFROST_IMAGE_TAG",
     "BIND_HOST",
     "GRAFANA_PASSWORD",
     "VITE_EXTENSION_ORIGIN_ALLOWLIST",
     # Read by the TypeScript agent processes themselves, not by Settings.
     "AGENT_HEALTH_PORT",
     "AGENT_HTTP_PORT",
+    # Agent (services/agent/core/db.ts) and scripts/migrate_schema.py.
+    # Python DatabaseConfig reads the encrypted DSN / POSTGRES_* instead (#752).
+    "DATABASE_URL",
     # The agent worker's Redis parts. Python has no equivalent -- it reads
     # REDIS_URL, which is a Setting.
     "REDIS_HOST",
@@ -109,11 +91,6 @@ NOT_SETTINGS = {
     # Settings can be built, so it is read from the environment and must be
     # exported rather than set in .env.
     "VIGIL_DIR",
-    # Provider selection still handled by the DB provider registry.
-    "DEFAULT_LLM_PROVIDER",
-    "OPENAI_BASE_URL",
-    "OPENAI_ENABLED",
-    "OPENAI_ORGANIZATION",
 }
 
 

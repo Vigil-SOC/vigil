@@ -18,6 +18,11 @@ import { fromPayload, fromText } from "../../workflows/hunt/entities.js";
 
 const RUNS = join(import.meta.dirname, "..", "fixtures", "runs");
 
+// Recorded by current code rather than rewritten from a real hunt, so its
+// identifiers are invented -- and swept anyway: a fixture is committed once and
+// read forever, and the sweep is what makes that safe whatever wrote it.
+const REPLAY = join(import.meta.dirname, "..", "fixtures", "replay");
+
 // RFC 5737 documentation blocks, the internal pool, and addresses that name no
 // host -- loopback, unspecified, broadcast, multicast.
 // `::` and `::1` are here for the same reason: the extractor types them as
@@ -57,7 +62,13 @@ const UNCHECKED = new Set(["url", "process"]);
 
 const SHAPES: readonly [string, RegExp, RegExp][] = [
   ["MAC address", /\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b/gi, /^02:00:00:00:00:[0-9a-f]{2}$/i],
-  ["AWS account id", /\b\d{12}\b/g, /^000000000001$/],
+  // A ledger id is twelve hex characters and lands on all-digits often enough to
+  // matter -- dec-131531207758 is a decision id, not an account. Exempted only
+  // behind the id prefixes the ledger itself writes, so a bare twelve-digit run
+  // still fails. This does trade something away: a real account id written as
+  // `run-<id>` would now pass, which no ledger writes and no sanitiser produces --
+  // an account reaches a ledger bare or inside an ARN, and both still fail.
+  ["AWS account id", /(?<!\b(?:dec|dsp|hyp|ev|chk|dir|hunt|run|q)-)\b\d{12}\b/g, /^000000000001$/],
   ["bare BOTS hostname", /\b[A-Za-z][A-Za-z0-9]{2,}-L\b/g, /^host\d{4}-l$/i],
   // A trailing separator is required: the analysts write "~" for "approximately"
   // all through the prose, and "~6s-interval" is not a home directory.
@@ -71,17 +82,20 @@ const SHAPES: readonly [string, RegExp, RegExp][] = [
 const ENCODED = /[A-Za-z0-9+/~]{40,}={0,2}/g;
 
 const files = readdirSync(RUNS).filter((name) => name.endsWith(".gz")).sort();
+const replayed = readdirSync(REPLAY).filter((name) => name.endsWith(".gz")).sort();
 
 // pseudonyms.json is swept with the ledgers. It is committed beside them and its
 // values are drawn from the same runs, so it is exactly as able to carry something
 // real -- and it is the one file the rewrite does not itself pass through.
 const PSEUDONYMS = "pseudonyms.json";
-const swept = [...files, PSEUDONYMS];
+const swept = [...files, PSEUDONYMS, ...replayed];
+
+const dirOf = (name: string): string => (replayed.includes(name) ? REPLAY : RUNS);
 
 const textOf = (name: string): string =>
   name === PSEUDONYMS
     ? readFileSync(join(RUNS, name), "utf8")
-    : gunzipSync(readFileSync(join(RUNS, name))).toString("utf8");
+    : gunzipSync(readFileSync(join(dirOf(name), name))).toString("utf8");
 
 // Parsed, so the payload-typed entities can be read the way the fold reads them.
 // A torn line is skipped rather than repaired: it is the subject of its own test.
@@ -114,6 +128,12 @@ describe("the committed fixtures carry nothing real", () => {
     expect(files.filter((name) => name.endsWith(".projection.json.gz"))).toHaveLength(10);
     expect(files.filter((name) => name.endsWith(".folds.json.gz"))).toHaveLength(10);
     expect(files.filter((name) => name.endsWith(".corrupt.gz"))).toHaveLength(1);
+  });
+
+  // Counted so the sweep below cannot pass by reading nothing: a fixture that
+  // stopped being found is a fixture that stopped being checked.
+  it("has the recorded run the replay gate reads", () => {
+    expect(replayed.filter((name) => name.endsWith(".jsonl.gz"))).toHaveLength(1);
   });
 
   it.each(swept)("%s holds no identifier outside the allowlist", (name) => {

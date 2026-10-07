@@ -6,11 +6,17 @@ Fetches security incidents from Microsoft Sentinel (Azure Sentinel) and converts
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from core.config import get_integration_config
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.integrations._base.config import resolve
+from core.integrations._base.config_gap import (
+    report_config_complete,
+    report_config_gap,
+)
+from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
+from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -23,13 +29,14 @@ class AzureSentinelIngestion(SIEMIngestionService):
         """Initialize Azure Sentinel ingestion."""
         super().__init__()
         self.siem_name = "Azure Sentinel"
-        self.config = get_integration_config("azure-sentinel")
+        self.config = resolve(AZURE_SENTINEL)
 
     async def fetch_alerts(
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
+        oldest_first: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Fetch incidents from Azure Sentinel.
@@ -38,6 +45,11 @@ class AzureSentinelIngestion(SIEMIngestionService):
             start_time: Start time for incident query
             end_time: End time for incident query
             limit: Maximum number of incidents to fetch
+            oldest_first: Return the ``limit`` oldest incidents in the window,
+                sorted by creation time. The SDK iterator is unordered, so this
+                scans the whole window before applying ``limit``. Federation
+                asks for this; the default stops at ``limit`` in API order, as
+                the daemon poller has always read.
 
         Returns:
             List of raw incident dictionaries
@@ -54,18 +66,19 @@ class AzureSentinelIngestion(SIEMIngestionService):
             resource_group = self.config.get("resource_group")
             workspace_name = self.config.get("workspace_name")
 
-            if not all(
-                [
-                    tenant_id,
-                    client_id,
-                    client_secret,
-                    subscription_id,
-                    resource_group,
-                    workspace_name,
-                ]
-            ):
-                logger.error("Azure Sentinel configuration incomplete")
+            required = {
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "subscription_id": subscription_id,
+                "resource_group": resource_group,
+                "workspace_name": workspace_name,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                report_config_gap(logger, "Azure Sentinel", missing)
                 return []
+            report_config_complete(logger, "Azure Sentinel")
 
             # Authenticate
             credential = ClientSecretCredential(
@@ -83,19 +96,22 @@ class AzureSentinelIngestion(SIEMIngestionService):
 
             # Fetch incidents
             incidents = []
+            created_times = []  # parallel to incidents; the oldest_first sort key
             incident_list = client.incidents.list(
                 resource_group_name=resource_group, workspace_name=workspace_name
             )
 
             for incident in incident_list:
-                # Filter by time
-                if incident.created_time_utc:
-                    if (
-                        incident.created_time_utc < start_time
-                        or incident.created_time_utc > end_time
-                    ):
+                # Filter by time. The SDK returns aware datetimes and the window
+                # is naive UTC; comparing the two raises TypeError.
+                created = incident.created_time_utc
+                if created:
+                    if created.tzinfo is not None:
+                        created = created.astimezone(timezone.utc).replace(tzinfo=None)
+                    if created < start_time or created > end_time:
                         continue
 
+                created_times.append(created)  # naive UTC, or None when unset
                 incidents.append(
                     {
                         "id": incident.name,
@@ -109,8 +125,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             else None
                         ),
                         "last_updated_time": (
-                            incident.last_updated_time_utc.isoformat()
-                            if incident.last_updated_time_utc
+                            incident.last_modified_time_utc.isoformat()
+                            if incident.last_modified_time_utc
                             else None
                         ),
                         "owner": incident.owner.email if incident.owner else None,
@@ -125,28 +141,42 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             else []
                         ),
                         "alert_count": (
-                            incident.additional_data.alert_count
+                            incident.additional_data.alerts_count
                             if incident.additional_data
                             else 0
                         ),
-                        "properties": incident.additional_properties or {},
                     }
                 )
 
-                if len(incidents) >= limit:
+                if not oldest_first and len(incidents) >= limit:
                     break
+
+            if oldest_first:
+                # Finish the scan first: the iterator is unordered, so stopping
+                # at limit before sorting would hand back an arbitrary subset.
+                # An incident with no created time sorts last, so it cannot
+                # take a slot ahead of a dated one or anchor the cursor.
+                order = sorted(
+                    range(len(incidents)),
+                    key=lambda i: (
+                        created_times[i] is None,
+                        created_times[i] or datetime.min,
+                    ),
+                )
+                incidents = [incidents[i] for i in order[:limit]]
 
             logger.info(f"Fetched {len(incidents)} incidents from Azure Sentinel")
             return incidents
 
-        except ImportError:
-            logger.error(
-                "Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity"
-            )
-            return []
+        except ImportError as e:
+            # Raise, not []: an empty poll would be recorded as a success.
+            msg = "Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity"
+            logger.error(msg)
+            raise RuntimeError(msg) from e
         except Exception as e:
             logger.error(f"Error fetching Azure Sentinel incidents: {e}")
-            return []
+            # Raise, not []: federation must record the failure and keep its cursor.
+            raise
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]
@@ -162,7 +192,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
         """
         try:
             # Generate finding ID
-            finding_id = f"sentinel-{alert.get('id', uuid.uuid4().hex[:12])}"
+            source_id = str(alert.get("id") or uuid.uuid4().hex[:12])
+            finding_id = fit_id("sentinel-", source_id, FINDING_ID_MAX)
 
             # Extract entities
             entities = self.extract_entities(alert.get("properties", {}))
@@ -170,6 +201,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
             # Build finding
             finding = {
                 "finding_id": finding_id,
+                # Same value the federation backfill derives for ids that fit.
+                "external_id": fit_id("", f"sentinel-{source_id}", EXTERNAL_ID_MAX),
                 "title": alert.get("title", "Azure Sentinel Incident"),
                 "description": alert.get("description", ""),
                 "severity": self.normalize_severity(alert.get("severity")),

@@ -104,7 +104,7 @@ def _make_poller():
 
 
 def _stub_database_data_service():
-    """Avoid importing the real DB stack (pgvector, etc.) during unit tests."""
+    """Avoid importing the real DB stack (SQLAlchemy, psycopg2) during unit tests."""
     module = types.ModuleType("core.storage.database_data_service")
     module.DatabaseDataService = MagicMock(name="DatabaseDataService")
     return patch.dict(sys.modules, {"core.storage.database_data_service": module})
@@ -216,8 +216,12 @@ def test_poller_skips_cloud_siems_when_only_underscore_ids_enabled():
             side_effect=lambda integration_id: integration_id in enabled,
         ),
         patch("core.config.get_integration_config", return_value={}),
-        patch("core.integrations.azure_sentinel.ingestion.AzureSentinelIngestion") as azure,
-        patch("core.integrations.aws_security_hub.ingestion.AWSSecurityHubIngestion") as aws,
+        patch(
+            "core.integrations.azure_sentinel.ingestion.AzureSentinelIngestion"
+        ) as azure,
+        patch(
+            "core.integrations.aws_security_hub.ingestion.AWSSecurityHubIngestion"
+        ) as aws,
         patch(
             "core.integrations.microsoft_defender.ingestion.MicrosoftDefenderIngestion"
         ) as defender,

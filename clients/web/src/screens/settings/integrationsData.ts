@@ -1,14 +1,16 @@
 import { getAllIntegrations } from '../../config/integrations'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 
-export const HIDDEN_MCP_SERVERS = new Set(['mempalace', 'splunk-selfhosted'])
-
 export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'aws-security': 'aws-security-hub',
-  'gcp-scc': 'gcp-security',
+  'elastic': 'elastic-siem',
+  'splunk-selfhosted': 'splunk',
 }))
 
 export function getIntegrationForServer(serverName: string): IntegrationMetadata | undefined {
+  // Both servers share descriptor id `splunk`. The official card is configured
+  // by SPLUNK_MCP_URL; the name fallback would hand it the REST form.
+  if (serverName === 'splunk') return undefined
   const id = SERVER_TO_INTEGRATION.get(serverName) ?? serverName
   return getAllIntegrations().find((i) => i.id === id)
 }
@@ -25,8 +27,7 @@ export const WIP_SERVERS = new Set([
  *  registration, persisted enabled-state store). */
 export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   loglm: 'LogLM',
-  'deeptempo-findings': 'Findings & Cases',
-  'tempo-flow': 'Agent Workflows',
+  'splunk-selfhosted': 'Splunk (Self-Hosted)',
 }))
 
 export interface McpCategory {
@@ -37,31 +38,32 @@ export interface McpCategory {
 /** Display categories, in order. A server matches the first category whose
     `servers` list contains it; anything unmatched lands in "Other". */
 export const MCP_CATEGORIES: McpCategory[] = [
-  { label: 'Internal / Platform', servers: ['deeptempo-findings', 'tempo-flow', 'approval', 'attack-layer', 'security-detections'] },
+  { label: 'Internal / Platform', servers: ['security-detections'] },
   { label: 'DeepTempo', servers: ['loglm'] },
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
-  { label: 'SIEM / Data Lake', servers: ['splunk', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
-  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp'] },
+  { label: 'SIEM / Data Lake', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'opensearch', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
+  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl'] },
   { label: 'Cloud Security', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
   { label: 'Identity & Access', servers: ['okta', 'azure-ad'] },
   { label: 'Network Security', servers: ['vstrike'] },
   { label: 'Incident Management', servers: ['jira', 'pagerduty', 'slack', 'microsoft-teams'] },
   { label: 'Sandbox / Analysis', servers: ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation'] },
+  { label: 'Adversary Emulation', servers: ['atomic-red-team'] },
 ]
 
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
-  'deeptempo-findings': 'Core findings and case management. Required for the investigation workflow, case creation, and findings display.',
-  'tempo-flow': 'Orchestrates multi-step agent workflows and playbook execution. Required for automated investigation chains.',
-  approval: 'Human-in-the-loop approval queue for response actions (isolate host, block IP, etc.). Prevents the AI from taking destructive actions without analyst review.',
-  'attack-layer': 'Maps findings to MITRE ATT&CK techniques and generates Navigator layers for coverage visualization.',
+  firecrawl: 'Web search and page retrieval for an investigation. Retrieved pages are scrubbed and delimited before a model sees them — a page is data, not direction.',
   'security-detections': 'Searches across 30,000+ detection rules (Sigma, Splunk, Elastic, KQL). Powers detection gap analysis and rule recommendations.',
   github: 'Access GitHub repos, issues, PRs, and code search. Useful for looking up detection rule history, IaC configs, or creating remediation issues.',
   crowdstrike: 'Query CrowdStrike Falcon for endpoint detections, host info, and IOC management. Requires Falcon API credentials.',
-  sentinelone: 'Query SentinelOne for endpoint threats, agent status, and threat remediation via the Purple AI MCP.',
+  sentinelone: 'Query SentinelOne for alerts, asset inventory, and vulnerabilities via the read-only Purple AI MCP.',
   'carbon-black': 'Query VMware Carbon Black for endpoint events, process trees, and binary analysis.',
   'microsoft-defender': 'Query Microsoft Defender for Endpoint alerts, device info, and advanced hunting. May overlap with Sentinel.',
-  splunk: 'Run SPL searches against Splunk for log analysis, correlation searches, and alert triage.',
+  splunk: 'The official Splunk MCP server, deployed separately from Splunk Enterprise. Configured by SPLUNK_MCP_URL in the environment, not from Settings.',
+  'splunk-selfhosted': 'Run SPL searches against a self-hosted Splunk over its REST API (port 8089) for log analysis, correlation searches, and alert triage. Server URL and credentials are configured in Settings.',
+  elastic: 'Query Elasticsearch and Elastic Security for logs, IOC hits, and detection alerts. Requires an Elasticsearch URL and API key or username/password.',
+  opensearch: 'Query OpenSearch for logs and IOC hits, and ingest Security Analytics findings. Requires an OpenSearch URL and username/password.',
   'azure-sentinel': 'Query Microsoft Sentinel via KQL for security logs, incidents, and custom detection rules.',
   'gcp-secops': 'Query Google SecOps (Chronicle) for UDM security events, detection rules, and threat investigation.',
   'cribl-stream': 'Manage Cribl Stream data pipelines — inspect routes, check data flow, and troubleshoot ingestion.',
@@ -84,6 +86,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   anyrun: 'Interactive malware sandbox for real-time analysis with process monitoring and network capture.',
   'url-analysis': 'Analyze suspicious URLs for phishing indicators, redirects, and malicious content.',
   'ip-geolocation': 'Look up geographic location, ISP, and organization info for IP addresses during investigations.',
+  'atomic-red-team': 'Invoke one Atomic Red Team technique against a named range. Disabled until toggled; saving config does not run the runner.',
 }))
 
 export function prettyServerName(name: string): string {

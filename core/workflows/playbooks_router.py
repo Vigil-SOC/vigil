@@ -12,9 +12,15 @@ from pydantic import BaseModel
 from core.agents.internal_auth import authorise
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry
+from core.llm import target
 from core.routing import Auth, RouterMeta
-from core.workflows.playbook_resolver import UnknownPlaybook, resolve, resolve_hunt
-from core.workflows.workflows_service import WorkflowsService
+from core.workflows.playbook_resolver import (
+    UnknownPlaybook,
+    resolve,
+    resolve_hunt,
+    resolve_root_cause,
+)
+from core.workflows.workflows_service import ROOT_CAUSE_RUN_KIND, WorkflowsService
 
 router = APIRouter()
 
@@ -36,12 +42,16 @@ class ResolvedPlaybook(BaseModel):
 
 
 def _resolver_for(workflows: WorkflowsService, workflow_id: str):
-    from core.workflows.workflows_service import HUNT_RUN_KIND
+    from core.workflows.workflows_service import is_hunt_like
 
     definition = workflows.get_workflow(workflow_id)
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
-    return resolve_hunt if definition.run_kind == HUNT_RUN_KIND else resolve
+    # root_cause binds telemetry_search on its own. The hunt resolver would also
+    # grant findings_search and indicator_lookup, which this trace does not hold.
+    if definition.run_kind == ROOT_CAUSE_RUN_KIND:
+        return resolve_root_cause
+    return resolve_hunt if is_hunt_like(definition.run_kind) else resolve
 
 
 @router.get("/{workflow_id}", response_model=ResolvedPlaybook)
@@ -53,11 +63,25 @@ def get_playbook(
 ) -> ResolvedPlaybook:
     authorise(authorization, "playbook resolution")
 
+    # Not the config layer's DEFAULT_MODEL floor, which is a Claude id whatever
+    # the provider. ``investigation`` is the row the console files hunts under.
+    resolved = target.resolve_component("investigation")
+    if resolved is None:
+        logger.info(
+            "%s: no model assignment resolved; the config layer's default stands",
+            workflow_id,
+        )
+    provider, model = resolved or (None, None)
+
     # The definition says which loop drives it, and the two loops read different
     # sections: a compose run wants phases, a hunt wants beliefs to test.
     try:
         playbook, config = _resolver_for(workflows, workflow_id)(
-            workflow_id, workflows=workflows, registry=registry
+            workflow_id,
+            model=model,
+            workflows=workflows,
+            registry=registry,
+            provider=provider,
         )
     except UnknownPlaybook as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None

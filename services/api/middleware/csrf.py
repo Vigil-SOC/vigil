@@ -18,9 +18,11 @@ How it works:
 
 Exempt paths:
 - Endpoints that authenticate themselves (webhooks using HMAC, ingestion
-  endpoints using bearer/API-key) opt out via `VIGIL_CSRF_EXEMPT_PATHS`.
-  Any request whose path starts with one of the configured prefixes skips
-  both the cookie check and the cookie seeding.
+  endpoints using bearer/API-key, the MCP surface using a minted credential,
+  the agent layer's /internal endpoints using the shared internal token)
+  are always exempt; `VIGIL_CSRF_EXEMPT_PATHS` adds to that set rather than
+  replacing it. Any request whose path starts with one of those prefixes
+  skips both the cookie check and the cookie seeding.
 
 Report-only mode:
 - `VIGIL_CSRF_REPORT_ONLY=true` logs violations at WARNING but lets the
@@ -36,6 +38,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from core.auth.auth_cookies import context_path_prefix, cookie_root_path
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -45,13 +48,56 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-_DEFAULT_EXEMPT = ("/api/webhooks/", "/api/ingest/")
+# CSRF defends a browser session driven by a cookie. These are reached with a
+# credential in a header instead, by something that is not a browser -- webhooks,
+# ingestion, the /mcp surface, and the agent layer's /internal endpoints -- so
+# there is no ambient authority for a forged request to borrow, and a caller
+# that cannot be handed a csrf_token cookie could not satisfy the check anyway.
+#
+# Always, rather than by default. An operator's list is added to these, not
+# substituted for them: every shipped config already names a list, so a default
+# that a list replaces is a default nothing runs. The one thing dropping one of
+# these could achieve is refusing every call to it -- there is no protection on
+# the other side of the trade, because the check these skip is one their callers
+# have no way to pass. /internal/ still runs through _apply_context_path: the
+# routers are mounted under VIGIL_CONTEXT_PATH, so the prefixed form is the one
+# a sub-path deploy actually serves.
+_ALWAYS_EXEMPT = ("/api/webhooks/", "/api/ingest/", "/mcp", "/internal/")
 
 
-def _parse_exempt_paths(raw: Optional[str]) -> tuple:
-    if not raw:
-        return _DEFAULT_EXEMPT
-    return tuple(p.strip() for p in raw.split(",") if p.strip())
+def _apply_context_path(path: str, prefix: str) -> str:
+    """Prefix an app-root path with VIGIL_CONTEXT_PATH.
+
+    Already-prefixed paths (``{prefix}/api/...``) are left alone so an
+    operator can set fully qualified VIGIL_CSRF_EXEMPT_PATHS without
+    doubling. The skip is ``{prefix}/api``, not ``{prefix}/``, so a
+    context path of ``/api`` does not treat Helm's ``/api/webhooks/``
+    as already done.
+    """
+    if not path.startswith("/"):
+        path = "/" + path
+    if not prefix:
+        return path
+    if path == prefix or path == prefix + "/api" or path.startswith(prefix + "/api/"):
+        return path
+    return f"{prefix}{path}"
+
+
+def _parse_exempt_paths(
+    raw: Optional[str], context_path: Optional[str] = None
+) -> tuple:
+    prefix = context_path_prefix() if context_path is None else context_path.rstrip("/")
+    configured = tuple(p.strip() for p in raw.split(",") if p.strip()) if raw else ()
+    # Deduplicated after the context path is applied, not before: an operator
+    # who wrote a path fully qualified names the same prefix as the always-exempt
+    # one that gets qualified here, and the two are only equal once both are.
+    # dict.fromkeys rather than a set so the order stays the one a reader of the
+    # config sees.
+    return tuple(
+        dict.fromkeys(
+            _apply_context_path(p, prefix) for p in _ALWAYS_EXEMPT + configured
+        )
+    )
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -129,7 +175,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 httponly=False,  # JS must be able to read it
                 secure=self.cookie_secure,
                 samesite="strict",
-                path="/",
+                path=cookie_root_path(),
             )
 
         return response

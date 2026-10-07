@@ -60,13 +60,12 @@ jobs:
     permissions:
       contents: read
       packages: write          # push to ghcr.io
-      id-token: write          # keyless cosign signing (future)
+      id-token: write          # keyless cosign signing
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v7
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Docker Buildx
@@ -105,6 +104,7 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push backend
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -121,6 +121,17 @@ jobs:
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      # Sign the multi-arch index digest, not the tags: tags are mutable and
+      # this job pushes linux/amd64,linux/arm64 as one manifest list.
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-backend
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
   # ---------------------------------------------------------------------------
   # Build + push: daemon
   # ---------------------------------------------------------------------------
@@ -131,13 +142,12 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
+      id-token: write          # keyless cosign signing
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v7
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Docker Buildx
@@ -172,6 +182,7 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push daemon
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -186,6 +197,15 @@ jobs:
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-daemon
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
   # ---------------------------------------------------------------------------
   # Build + push: agent (worker and serve run the same image)
   # ---------------------------------------------------------------------------
@@ -196,11 +216,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
+      id-token: write          # keyless cosign signing
 
     steps:
-      # No submodules: the agent layer is TypeScript under services/agent and
-      # the build context copies nothing else.
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -234,6 +252,7 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push agent
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -247,8 +266,23 @@ jobs:
             VIGIL_VERSION=${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-agent
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
   # ---------------------------------------------------------------------------
   # Smoke-test: pull the images and verify they start
+  # ---------------------------------------------------------------------------
+  # Backend and daemon run their default command and must answer the image
+  # HEALTHCHECK URL. An import of the package __init__ never loaded the
+  # entry point, which is why v0.5.0's smoke was green while the published
+  # images crash-looped. Agent has no HEALTHCHECK (the port depends on the
+  # command), so it still loads worker.js / serve.js via node --eval.
   # ---------------------------------------------------------------------------
   smoke-test:
     name: Smoke test images
@@ -266,14 +300,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Backend — version check
+      # Default CMD: uvicorn services.api.main:app on 6987. Fail if the
+      # process exits or GET /api/health never answers — the same URL as
+      # Dockerfile.backend's HEALTHCHECK. HTTP 200 means the server accepted
+      # a connection, not that storage is up; DEV_MODE=true is enough.
+      - name: Backend — starts and answers /api/health
         run: |
-          docker run --rm \
+          set -eu
+          IMAGE=ghcr.io/vigil-soc/vigil-backend:${{ needs.version.outputs.version }}
+          cid=$(docker run -d \
             -e DEV_MODE=true \
             -e DATABASE_URL=postgresql://x:x@localhost/x \
             -e REDIS_URL=redis://localhost:6379 \
-            ghcr.io/vigil-soc/vigil-backend:${{ needs.version.outputs.version }} \
-            python -c "import core, services.api; print('backend ok')"
+            "$IMAGE")
+          ok=0
+          cleanup() {
+            if [ "$ok" != 1 ]; then
+              echo "::error::backend exited or did not answer GET /api/health on 6987"
+              docker logs "$cid" || true
+            fi
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          i=0
+          while [ "$i" -lt 90 ]; do
+            i=$((i + 1))
+            if [ -z "$(docker ps -q --filter "id=$cid")" ]; then
+              exit 1
+            fi
+            if docker exec "$cid" curl -fsS --max-time 2 http://localhost:6987/api/health >/dev/null 2>&1; then
+              ok=1
+              echo "backend ok"
+              exit 0
+            fi
+            if [ $((i % 15)) -eq 0 ]; then
+              echo "waiting for GET /api/health (${i}s)"
+            fi
+            sleep 1
+          done
+          exit 1
 
       - name: Backend — SPA present
         run: |
@@ -282,12 +347,43 @@ jobs:
             test -f /app/clients/web/build/index.html \
             || { echo "::error::SPA missing from image — web client not copied to /app/clients/web/build"; exit 1; }
 
-      - name: Daemon — import check
+      # Default CMD: python services/daemon/main.py. MCP client construction
+      # happens in SOCDaemon._init_components() at runtime, so only a live
+      # process reaches the failure v0.5.0 hid. Probe GET /health on 9091 —
+      # the same URL as Dockerfile.daemon's HEALTHCHECK.
+      - name: Daemon — starts and answers /health
         run: |
-          docker run --rm \
+          set -eu
+          IMAGE=ghcr.io/vigil-soc/vigil-daemon:${{ needs.version.outputs.version }}
+          cid=$(docker run -d \
             -e DEV_MODE=true \
-            ghcr.io/vigil-soc/vigil-daemon:${{ needs.version.outputs.version }} \
-            python -c "import services.daemon; print('daemon ok')"
+            "$IMAGE")
+          ok=0
+          cleanup() {
+            if [ "$ok" != 1 ]; then
+              echo "::error::daemon exited or did not answer GET /health on 9091"
+              docker logs "$cid" || true
+            fi
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          i=0
+          while [ "$i" -lt 90 ]; do
+            i=$((i + 1))
+            if [ -z "$(docker ps -q --filter "id=$cid")" ]; then
+              exit 1
+            fi
+            if docker exec "$cid" curl -fsS --max-time 2 http://localhost:9091/health >/dev/null 2>&1; then
+              ok=1
+              echo "daemon ok"
+              exit 0
+            fi
+            if [ $((i % 15)) -eq 0 ]; then
+              echo "waiting for GET /health (${i}s)"
+            fi
+            sleep 1
+          done
+          exit 1
 
       # Both commands the chart runs, loaded but not started: the main blocks
       # guard on process.argv[1], which --eval leaves undefined. Proves the
@@ -316,6 +412,12 @@ jobs:
       packages: read
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build support tarball
+        run: scripts/build-support-tarball.sh "${{ needs.version.outputs.version }}" support-dist
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -340,6 +442,9 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           append_body: true
+          files: |
+            support-dist/vigil-support-${{ needs.version.outputs.version }}.tar.gz
+            support-dist/vigil-support-${{ needs.version.outputs.version }}.tar.gz.sha256
           body: |
 
             ---

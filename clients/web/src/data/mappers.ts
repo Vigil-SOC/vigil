@@ -1,5 +1,13 @@
 import { format } from 'date-fns'
-import type { CaseRow, Finding } from './data'
+import {
+  MISSING_FINDING_SCORE,
+  MISSING_FINDING_SEVERITY,
+  MISSING_FINDING_TIME,
+  type CaseRow,
+  type Finding,
+} from './data'
+import type { Schema } from '../services/apiTypes'
+import type { ApiSkill } from '../services/skillsApi'
 import {
   prettyHandle,
   type Workflow,
@@ -13,34 +21,14 @@ import { techniqueTactic } from './mitre'
 
 const DASH = '—'
 
-export interface ApiCase {
-  case_id: string
-  title?: string
-  description?: string
-  status?: string
-  priority?: string
-  assignee?: string
-  finding_ids?: string[]
-  /** GET /cases/{id} returns full finding objects (include_findings=True) */
-  findings?: ApiFinding[]
-  finding_count?: number
-  created_at?: string
-  updated_at?: string
-  mitre_techniques?: string[]
-  primary_tactic?: string
-  tactic?: string
-  sla?: string
-  sla_remaining?: string
-  sla_state?: string
-  timeline?: Array<{ event?: string; timestamp?: string }>
-}
+export type ApiCase = Schema<'CaseSchema'>
 
 export interface ApiFinding {
   finding_id: string
-  severity?: string
+  severity?: string | null
   data_source?: string
-  timestamp?: string
-  anomaly_score?: number
+  timestamp?: string | null
+  anomaly_score?: number | null
   title?: string
   description?: string
   mitre_predictions?: Record<string, number>
@@ -55,6 +43,8 @@ export interface ApiFinding {
     source_evidence?: unknown
     [key: string]: unknown
   }
+  /** set by the findings API: the finding's addresses that are excluded */
+  excluded_ips?: string[]
 }
 
 export function initials(name?: string): string {
@@ -80,42 +70,93 @@ function fmt(iso: string | undefined, pattern: string): string {
   return Number.isNaN(d.getTime()) ? DASH : format(d, pattern)
 }
 
-function caseStatus(s?: string): CaseRow['status'] {
-  if (s === 'investigating') return 'investigating'
-  if (s === 'open') return 'open'
-  return 'closed' // resolved / closed / anything else
-}
-
 function casePrio(p?: string): CaseRow['prio'] {
   const v = (p || '').toLowerCase()
-  if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low') return v
+  if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low' || v === 'unknown') return v
   return 'medium'
 }
 
-function slaState(s?: string): CaseRow['slaState'] {
-  const v = (s || '').toLowerCase()
-  if (v === 'breached') return 'danger'
-  if (v === 'danger' || v === 'warn' || v === 'ok') return v as CaseRow['slaState']
+export function mapApiCase(c: ApiCase): CaseRow {
+  // The record's own status. Combined state belongs on the queue row; writing
+  // it back through Edit would store an investigation status on the case.
+  const row = mapQueueCase(c)
+  return { ...row, status: c.status || 'open' }
+}
+
+/** Queue row or a case record. Combined state is shown as given. */
+export interface QueueCase {
+  case_id?: string | null
+  title?: string | null
+  description?: string | null
+  status?: string | null
+  priority?: string | null
+  assignee?: string | null
+  combined_state?: string | null
+  finding_ids?: string[] | null
+  findings_count?: number | null
+  workflow_id?: string | null
+  iteration_count?: number | null
+  cost_usd?: number | null
+  max_cost_usd?: number | null
+  budget_health?: string | null
+  comment_count?: number | null
+  last_activity?: string | null
+  age_seconds?: number | null
+  created_at?: string | null
+  updated_at?: string | null
+  sla_seconds_left?: number | null
+  health_status?: string | null
+  needs_you?: boolean | null
+  mitre_techniques?: string[] | null
+}
+
+function formatSpan(seconds?: number | null): string {
+  if (seconds == null || Number.isNaN(seconds)) return DASH
+  const sign = seconds < 0 ? '-' : ''
+  const sec = Math.abs(seconds)
+  if (sec < 3600) return `${sign}${Math.round(sec / 60)}m`
+  if (sec < 86400) return `${sign}${Math.round(sec / 3600)}h`
+  return `${sign}${Math.round(sec / 86400)}d`
+}
+
+function slaTone(health?: string | null): CaseRow['slaState'] {
+  if (health === 'warning') return 'warn'
+  if (health === 'critical' || health === 'breached') return 'danger'
   return 'ok'
 }
 
-export function mapApiCase(c: ApiCase): CaseRow {
+function slaText(seconds?: number | null, health?: string | null): string {
+  if (seconds == null && !health) return DASH
+  if (seconds == null) return health || DASH
+  if (!health) return formatSpan(seconds)
+  return `${formatSpan(seconds)} · ${health}`
+}
+
+export function mapQueueCase(c: QueueCase): CaseRow {
+  const activity = c.last_activity || c.updated_at || c.created_at || undefined
   return {
-    id: c.case_id,
-    title: c.title || c.case_id,
+    id: c.case_id || '',
+    title: c.title || c.case_id || '',
     desc: c.description || '',
-    status: caseStatus(c.status),
-    prio: casePrio(c.priority),
-    owner: initials(c.assignee),
+    status: c.combined_state || c.status || 'open',
+    prio: casePrio(c.priority ?? undefined),
+    owner: initials(c.assignee ?? undefined),
     ownerName: c.assignee || 'unassigned',
-    findings: c.finding_count ?? c.finding_ids?.length ?? 0,
-    tactic: c.mitre_techniques?.[0] || c.primary_tactic || c.tactic || DASH,
-    age: compactAge(c.created_at),
-    sla: c.sla || c.sla_remaining || DASH,
-    slaState: slaState(c.sla_state),
-    updated: fmt(c.updated_at || c.created_at, 'MMM d'),
-    updatedTs: epochMs(c.updated_at || c.created_at),
-    createdTs: epochMs(c.created_at),
+    findings: c.findings_count ?? c.finding_ids?.length ?? 0,
+    tactic: c.mitre_techniques?.[0] || DASH,
+    age: c.age_seconds != null ? formatSpan(c.age_seconds) : compactAge(c.created_at ?? undefined),
+    sla: slaText(c.sla_seconds_left, c.health_status),
+    slaState: slaTone(c.health_status),
+    updated: fmt(activity ?? undefined, 'MMM d'),
+    updatedTs: epochMs(activity ?? undefined),
+    createdTs: epochMs(c.created_at ?? undefined),
+    workflowId: c.workflow_id || undefined,
+    iterations: c.iteration_count,
+    costUsd: c.cost_usd,
+    maxCostUsd: c.max_cost_usd,
+    budgetHealth: c.budget_health,
+    comments: c.comment_count ?? undefined,
+    needsYou: c.needs_you === true,
   }
 }
 
@@ -125,12 +166,17 @@ function epochMs(s?: string): number | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.getTime()
 }
 
-function findingSev(s?: string): Finding['sev'] {
+function findingSev(s?: string | null): Finding['sev'] {
   const v = (s || '').toLowerCase()
   if (v === 'critical') return 'Critical'
   if (v === 'high') return 'High'
+  if (v === 'medium') return 'Medium'
   if (v === 'low') return 'Low'
-  return 'Medium'
+  return MISSING_FINDING_SEVERITY
+}
+
+export function formatFindingScore(score: number | null | undefined): string {
+  return typeof score === 'number' ? score.toFixed(2) : MISSING_FINDING_SCORE
 }
 
 /** mitre_predictions is keyed by *technique* id (e.g. "T1567.002") */
@@ -155,6 +201,8 @@ function extraEntities(ec: ApiFinding['entity_context']): Record<string, string>
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(ec)) {
     if (MAPPED_ENTITY_KEYS.has(k) || v == null) continue
+    // Nested objects (a probe's known answer, source_evidence) are not cell text.
+    if (typeof v === 'object' && !Array.isArray(v)) continue
     const text = Array.isArray(v) ? v.filter(Boolean).join(', ') : String(v)
     if (text) out[k] = text
   }
@@ -173,11 +221,12 @@ export function mapApiFinding(f: ApiFinding): Finding {
     src: f.data_source || DASH,
     host: ec?.hostnames?.[0] || DASH,
     user: ec?.usernames?.[0] || DASH,
-    time: fmt(f.timestamp, 'MMM d, HH:mm'),
-    ts: epochMs(f.timestamp),
-    score: typeof f.anomaly_score === 'number' ? f.anomaly_score : 0,
+    time: f.timestamp ? fmt(f.timestamp, 'MMM d, HH:mm') : MISSING_FINDING_TIME,
+    ts: epochMs(f.timestamp ?? undefined),
+    score: typeof f.anomaly_score === 'number' ? f.anomaly_score : null,
     status: findingStatus(f.status),
     extra: extraEntities(ec),
+    excludedIps: f.excluded_ips ?? [],
   }
 }
 
@@ -280,6 +329,19 @@ export interface ApiWorkflow {
   use_case?: string
   trigger_examples?: string[]
   source?: string
+  run_kind?: string
+  hunt_like?: boolean
+  runs_7d?: number
+  /** fraction 0..1 */
+  success_rate?: number | null
+  success_level?: Workflow['successLevel']
+  mean_cost_usd?: number | null
+  /** what starts it: alerts, schedule, shadow; none means a person does */
+  triggers?: string[]
+  /** absent means on; only an explicit false is off */
+  enabled?: boolean
+  updated_at?: string
+  can_disable?: boolean
 }
 
 /** the backend carries no presentation icon, so derive one from the name */
@@ -306,6 +368,19 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     cmds: w.trigger_examples || [],
     source: w.source || 'file',
     useCase: w.use_case || '',
+    runKind: w.run_kind || 'compose',
+    // The backend derives this from the kind, so the console never has to hold a
+    // list of which kinds run the hypothesis loop. Falls back to the one kind that
+    // did before the flag existed, so an older backend still reads correctly.
+    huntLike: w.hunt_like ?? w.run_kind === 'hunt',
+    runs7d: typeof w.runs_7d === 'number' ? w.runs_7d : 0,
+    successRate: typeof w.success_rate === 'number' ? w.success_rate : null,
+    successLevel: w.success_level ?? null,
+    triggers: w.triggers,
+    enabled: w.enabled !== false,
+    meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
+    updatedAt: w.updated_at,
+    canDisable: w.can_disable ?? true,
   }
 }
 
@@ -317,6 +392,17 @@ export interface ApiAgent {
   color?: string
   specialization?: string
   recommended_tools?: string[]
+  model?: string | null
+  model_source?: AgentTemplate['modelSource']
+  component_category?: string | null
+  skills?: number
+  changes?: AgentTemplate['changes']
+  tool_changes?: AgentTemplate['toolChanges']
+  runs_7d?: number | null
+  /** fraction 0..1 */
+  success_rate?: number | null
+  success_level?: AgentTemplate['successLevel']
+  enabled?: boolean
 }
 
 export function mapApiAgent(a: ApiAgent): AgentTemplate {
@@ -324,31 +410,30 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
     name: a.name || a.id,
     handle: a.id,
     spec: a.specialization || a.description || '—',
-    ini: initials(a.name || a.id),
+    ini: a.icon || initials(a.name || a.id),
     color: a.color || 'var(--accent)',
-    tools: a.recommended_tools?.length,
+    does: a.description || a.specialization || '—',
+    model: a.model ?? null,
+    modelSource: a.model_source ?? null,
+    category: a.component_category ?? null,
+    skills: a.skills ?? 0,
+    changes: a.changes ?? null,
+    toolChanges: a.tool_changes ?? {},
+    runs7d: a.runs_7d ?? null,
+    successPct: a.success_rate == null ? null : a.success_rate * 100,
+    successLevel: a.success_level ?? null,
+    enabled: a.enabled !== false,
     custom: a.id.startsWith('custom-'),
   }
 }
 
-export interface ApiSkill {
-  skill_id: string
-  name: string
-  description?: string | null
-  category?: string
-  version?: number
-  is_active?: boolean
-  created_by?: string | null
-}
-
 export function mapApiSkill(s: ApiSkill): Skill {
   return {
+    id: s.name,
     name: s.name,
-    id: s.skill_id,
-    v: `v${s.version ?? 1}`,
-    // 'custom' keeps the accent tag; every built-in category folds to neutral
-    cat: s.category === 'custom' ? 'custom' : 'builtin',
-    active: s.is_active ?? false,
-    desc: s.description || '',
+    desc: s.description,
+    source: s.source_path,
+    bundled: s.bundled,
+    fileCount: s.file_count,
   }
 }

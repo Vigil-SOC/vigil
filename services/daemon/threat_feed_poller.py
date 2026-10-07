@@ -2,18 +2,43 @@
 
 Registered as a scheduled task by `daemon/scheduler.py` when the
 `cloudforce_one` integration is enabled. No-op when disabled.
+
+After the upsert loop it offers the poll's uncovered indicators to the Intake
+as one case-less `kind="schedule"` row carrying every key (#1009). It does not
+open the hunt; the drain tick launches it.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Set
 
 from core.config import get_settings
 from core.time import utcnow
+from core.workflows.enablement import is_enabled
+from core.workflows.routing import SCHEDULED_WORKFLOW
 
 logger = logging.getLogger(__name__)
+
+# How long a key an intel row already named stays spoken for. Coverage cannot
+# answer this: `check_coverage` reads `workflow_runs.trigger_context` for the
+# in-flight arm, and a hunt the orchestrator launches never gets a
+# `workflow_runs` row (it enqueues the job directly and only
+# `agent_runs_router` and `WorkflowsService.execute_workflow` call
+# `begin_run`), while the concluded arm reads `episodic_verdicts` and a hunt
+# that gathered nothing writes an `episodic_gaps` row instead. So a hunted key
+# reads `uncovered` again on the next poll, and without this window the poller
+# would re-launch the same hunt every interval forever. A constant, not a
+# settings field, for the reason #905 gives about its own cap.
+INTEL_RECHECK_AFTER = timedelta(days=7)
+
+
+class _IntelIntake(NamedTuple):
+    """What the intake already says about intel, read once per poll."""
+
+    queued: bool
+    spoken_for: Set[str]
 
 
 # Track the last successful poll per (source, collection_id) so we only ask
@@ -21,6 +46,11 @@ logger = logging.getLogger(__name__)
 # good enough for a single daemon worker; restart causes a full re-pull,
 # which is fine because indicator upserts are idempotent.
 _last_polled: Dict[str, datetime] = {}
+
+# What is missing from the config the last time a poll skipped for it, so the
+# WARNING fires once per distinct state instead of every interval. Holds field
+# names only, never the token.
+_last_skip_signature: Optional[tuple] = None
 
 
 class ThreatFeedPoller:
@@ -32,6 +62,8 @@ class ThreatFeedPoller:
             "indicators_seen": 0,
             "inserted": 0,
             "updated": 0,
+            "skipped": 0,
+            "skipped_incomplete": 0,
             "errors": 0,
         }
 
@@ -64,6 +96,7 @@ class ThreatFeedPoller:
 
     async def run_once(self) -> Dict[str, Any]:
         """Poll all configured collections; return per-source counters."""
+        global _last_skip_signature
         if not self.is_enabled():
             logger.debug("Cloudforce One integration disabled; skipping poll")
             return {"skipped": "integration_disabled"}
@@ -80,22 +113,31 @@ class ThreatFeedPoller:
         server_url = cfg.get("taxii_server_url")
         collection_ids_raw = cfg.get("collection_ids") or ""
 
-        if not api_token or not server_url or not collection_ids_raw:
-            logger.info(
-                "Cloudforce One configured but missing token/url/collections; skipping"
-            )
-            return {"skipped": "incomplete_config"}
-
         collection_ids: List[str] = [
             c.strip() for c in str(collection_ids_raw).split(",") if c.strip()
         ]
-        if not collection_ids:
-            return {"skipped": "no_collections"}
+        missing = tuple(
+            name
+            for name, present in (
+                ("api_token", api_token),
+                ("taxii_server_url", server_url),
+                ("collection_ids", collection_ids),
+            )
+            if not present
+        )
+        if missing:
+            self._note_skipped_config(missing)
+            only_blank_ids = missing == ("collection_ids",) and collection_ids_raw
+            return {
+                "skipped": "no_collections" if only_blank_ids else "incomplete_config"
+            }
+        _last_skip_signature = None
 
         per_collection: Dict[str, Dict[str, int]] = {}
         total_seen = 0
         total_inserted = 0
         total_updated = 0
+        total_skipped = 0
         errors = 0
 
         for cid in collection_ids:
@@ -114,7 +156,19 @@ class ThreatFeedPoller:
                 total_seen += len(indicators)
                 total_inserted += counts.get("inserted", 0)
                 total_updated += counts.get("updated", 0)
-                _last_polled[key] = utcnow() - timedelta(seconds=60)
+                skipped = counts.get("skipped", 0)
+                total_skipped += skipped
+                # Upserts are idempotent, so holding the watermark re-pulls the
+                # rejected indicators next poll instead of losing them.
+                if skipped == 0:
+                    _last_polled[key] = utcnow() - timedelta(seconds=60)
+                else:
+                    logger.warning(
+                        "Cloudforce One collection %s: %d indicator(s) not stored; "
+                        "keeping watermark so the next poll re-pulls them",
+                        cid,
+                        skipped,
+                    )
             except Exception as e:  # noqa: BLE001
                 logger.error("Cloudforce One poll failed for %s: %s", cid, e)
                 errors += 1
@@ -124,6 +178,7 @@ class ThreatFeedPoller:
         self.stats["indicators_seen"] += total_seen
         self.stats["inserted"] += total_inserted
         self.stats["updated"] += total_updated
+        self.stats["skipped"] += total_skipped
         self.stats["errors"] += errors
 
         summary = {
@@ -133,9 +188,162 @@ class ThreatFeedPoller:
                 "seen": total_seen,
                 "inserted": total_inserted,
                 "updated": total_updated,
+                "skipped": total_skipped,
                 "errors": errors,
             },
         }
+        # Every poll that ran, not only one whose counters moved: the producer
+        # reads `threat_indicators`, not this poll's results, so a poll that
+        # fetched nothing new can still be the one that offers a key an earlier
+        # poll wrote and a refused insert left behind.
+        summary["intake"] = self.offer_uncovered_indicators_to_intake()
         if total_seen or errors:
             logger.info("Threat feed poll: %s", summary)
         return summary
+
+    def _note_skipped_config(self, missing: tuple) -> None:
+        """Count a poll skipped for config; warn once per distinct missing set."""
+        global _last_skip_signature
+        self.stats["skipped_incomplete"] += 1
+        if missing == _last_skip_signature:
+            logger.debug(
+                "Cloudforce One still missing %s; skipping", ", ".join(missing)
+            )
+            return
+        _last_skip_signature = missing
+        logger.warning(
+            "Cloudforce One is enabled but missing %s; threat feed poll skipped",
+            ", ".join(missing),
+        )
+
+    def offer_uncovered_indicators_to_intake(self) -> Dict[str, Any]:
+        """Offer this poll's uncovered keys as one case-less schedule row.
+
+        One row per poll, not one per key: up to 200 low-priority hunts against
+        the hourly cost brake would let a feed decide when critical detections
+        stop launching. The keys that did not make this row are still uncovered
+        on the next poll and go into its row.
+
+        Does not open the hunt: the drain tick launches it. One intel row is
+        queued at a time, and keys a launched intel row named are skipped for
+        `INTEL_RECHECK_AFTER` after its launch.
+        """
+        try:
+            from core.memory.hunt_coverage import build_proposal
+            from core.threat_intel.threat_feed_service import (
+                propose_hunts_from_recent_indicators,
+            )
+            from services.daemon.orchestrator import insert_intake_trigger
+        except Exception as e:  # noqa: BLE001
+            logger.warning("intel intake producer unavailable: %s", e)
+            return {"error": str(e)}
+
+        if not is_enabled(SCHEDULED_WORKFLOW):
+            return {"inserted": 0, "skipped": "workflow_disabled"}
+
+        # Read before proposing, not after: a poll that cannot offer anything
+        # should not spend a coverage check per recent indicator finding that out.
+        intake = _intel_intake_state()
+        if intake.queued:
+            return {"inserted": 0, "skipped": "intel_row_queued"}
+
+        try:
+            result = propose_hunts_from_recent_indicators()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("feed hunt proposals failed: %s", e)
+            return {"error": str(e)}
+
+        keys: List[str] = []
+        skipped = 0
+        for proposal in result.get("proposals") or []:
+            key = proposal.get("entity_key")
+            if not key or key in keys:
+                continue
+            if key in intake.spoken_for:
+                skipped += 1
+                continue
+            keys.append(key)
+
+        if not keys:
+            return {"inserted": 0, "keys": 0, "skipped_recent": skipped}
+
+        # One statement for the whole row, minted where the coverage proposal
+        # mints its own: `kept_subjects` drops subjects whose statement text is
+        # not the one being put up, so the hypothesis and the subjects key have
+        # to be the same string.
+        body = build_proposal(keys, [])
+        try:
+            insert_intake_trigger(
+                kind="schedule",
+                priority="low",
+                payload={
+                    "workflow_id": SCHEDULED_WORKFLOW,
+                    "trigger_type": "intel",
+                    "finding_ids": [],
+                    "hypothesis": body["hypothesis"],
+                    "hypothesis_subjects": body["hypothesis_subjects"],
+                },
+            )
+        except Exception as e:  # noqa: BLE001 — a refused insert is not a failed poll
+            logger.warning("could not offer uncovered indicators to intake: %s", e)
+            return {"error": str(e)}
+
+        # No `None` to weigh: that is the queued-finding unique index answering,
+        # and a schedule row carries no finding_id to collide on.
+        offered = {"inserted": 1, "keys": len(keys), "skipped_recent": skipped}
+        logger.info("Uncovered feed indicators offered to intake: %s", offered)
+        return offered
+
+
+def _intel_intake_state() -> _IntelIntake:
+    """Whether an intel row is waiting, and which keys are not due a fresh look.
+
+    One query for both, filtered on the payload rather than read back and
+    sifted in Python. A row still `queued` counts however old it is: a poll
+    while one waits neither restates its keys nor adds a second row. Past that,
+    only a row that launched speaks for its keys, and its window runs from the
+    launch (`decided_at`): a row the TTL expired never hunted anything.
+
+    A read that fails answers "nothing is queued, nothing is spoken for". The
+    insert is the guarded step, and holding every poll because the intake would
+    not read would stop intel reaching the queue at all.
+    """
+    try:
+        from sqlalchemy import and_, or_
+
+        from core.storage.connection import get_db_manager
+        from core.storage.models import IntakeTrigger
+    except Exception as e:  # noqa: BLE001
+        logger.debug("intake read unavailable for intel dedup: %s", e)
+        return _IntelIntake(False, set())
+    try:
+        with get_db_manager().session_scope() as session:
+            rows = (
+                session.query(IntakeTrigger.state, IntakeTrigger.payload)
+                .filter(
+                    IntakeTrigger.kind == "schedule",
+                    IntakeTrigger.payload["trigger_type"].astext == "intel",
+                    or_(
+                        IntakeTrigger.state == "queued",
+                        and_(
+                            IntakeTrigger.state == "launched",
+                            IntakeTrigger.decided_at >= utcnow() - INTEL_RECHECK_AFTER,
+                        ),
+                    ),
+                )
+                .all()
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("could not read prior intel triggers: %s", e)
+        return _IntelIntake(False, set())
+    keys: Set[str] = set()
+    queued = False
+    for state, payload in rows:
+        queued = queued or state == "queued"
+        declared = (payload or {}).get("hypothesis_subjects")
+        if not isinstance(declared, dict):
+            continue
+        for subjects in declared.values():
+            if isinstance(subjects, list):
+                keys.update(key for key in subjects if isinstance(key, str) and key)
+    return _IntelIntake(queued, keys)

@@ -81,6 +81,13 @@ class RouterMeta:
         by default.
     :param extra_dependencies: Additional ``Depends(...)`` beyond the auth
         dependency — e.g. the per-router rate limit on ``claude``.
+    :param legacy_prefixes: Additional prefixes to mount the *same* router at,
+        for backward compatibility. A versioned router lives at ``prefix``
+        (``/api/v1/findings``) and lists the pre-version path
+        (``/api/findings``) here, so existing callers keep working while a new
+        caller uses the versioned path. One set of handlers, mounted twice —
+        no duplicated route bodies. The legacy mount is dropped once callers
+        have moved; until then both resolve identically.
     """
 
     prefix: str
@@ -89,12 +96,23 @@ class RouterMeta:
     reason: str = ""
     enabled: Callable[[], bool] | None = None
     extra_dependencies: Sequence = field(default_factory=tuple)
+    legacy_prefixes: Sequence[str] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.prefix.startswith("/"):
             raise ValueError(f"prefix must start with '/': {self.prefix!r}")
         if self.prefix.endswith("/"):
             raise ValueError(f"prefix must not end with '/': {self.prefix!r}")
+        for legacy in self.legacy_prefixes:
+            if not legacy.startswith("/"):
+                raise ValueError(f"legacy prefix must start with '/': {legacy!r}")
+            if legacy.endswith("/"):
+                raise ValueError(f"legacy prefix must not end with '/': {legacy!r}")
+            if legacy == self.prefix:
+                raise ValueError(
+                    f"legacy prefix {legacy!r} equals prefix; a router cannot "
+                    "be mounted at the same path twice"
+                )
         if self.auth is Auth.PUBLIC_WEBHOOK and self.enabled is None:
             # An inbound receiver that is always mounted is exactly the
             # accident this refactor must not introduce.

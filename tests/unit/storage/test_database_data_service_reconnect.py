@@ -1,32 +1,53 @@
 """Tests for DatabaseDataService recovery from transient Postgres outages.
 
-Before the fix, a Postgres outage at backend startup would set
-`_use_json_fallback = True` permanently, trapping the singleton in
-JSON-file-fallback for the rest of the process lifetime even after
-Postgres came back. These tests verify the rate-limited auto-reconnect.
+These tests verify the rate-limited auto-reconnect when the initial
+connection fails.
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from core.storage.database_data_service import DatabaseDataService
 
 
-def _make_service_in_fallback() -> DatabaseDataService:
-    """Construct a service that failed its initial DB connection."""
+def _make_disconnected_service() -> DatabaseDataService:
+    """Construct a service whose first connection attempt (on first use) failed."""
+    svc = DatabaseDataService()
     with patch(
         "core.storage.database_data_service.init_database",
         side_effect=RuntimeError("postgres down"),
     ):
-        svc = DatabaseDataService()
+        assert svc._db_available is False
     assert svc._db_connected is False
-    assert svc._use_json_fallback is True
     return svc
 
 
+def test_construction_opens_no_connection():
+    """Importing a module with a module-level service must not touch Postgres (#1456)."""
+    with patch("core.storage.database_data_service.init_database") as fake_init:
+        svc = DatabaseDataService()
+    fake_init.assert_not_called()
+    assert svc._db_connected is False
+
+
+def test_first_access_connects_even_on_a_freshly_booted_host():
+    """The cooldown must not suppress the first attempt when monotonic() is small."""
+    fake_manager = MagicMock()
+    fake_manager.health_check.return_value = True
+    svc = DatabaseDataService()
+    with patch("core.storage.database_data_service.time.monotonic", return_value=1.0):
+        with patch("core.storage.database_data_service.init_database") as fake_init:
+            with patch(
+                "core.storage.database_data_service.get_db_manager",
+                return_value=fake_manager,
+            ), patch("core.storage.database_data_service.DatabaseService"):
+                assert svc._db_available is True
+    fake_init.assert_called_once()
+
+
 def test_db_available_retries_when_disconnected_after_interval():
-    svc = _make_service_in_fallback()
+    svc = _make_disconnected_service()
     # Pretend the cooldown has elapsed so the next read triggers a retry.
     svc._last_reconnect_attempt = 0.0
 
@@ -40,11 +61,10 @@ def test_db_available_retries_when_disconnected_after_interval():
         fake_init.assert_called_once()
 
     assert svc._db_connected is True
-    assert svc._use_json_fallback is False
 
 
 def test_db_available_rate_limits_reconnect_attempts():
-    svc = _make_service_in_fallback()
+    svc = _make_disconnected_service()
     # Force a recent attempt so the cooldown should suppress the next try.
     svc._last_reconnect_attempt = float("inf")
 
@@ -57,10 +77,11 @@ def test_db_available_short_circuits_when_already_connected():
     """When already connected, reading the property must NOT touch init_database."""
     fake_manager = MagicMock()
     fake_manager.health_check.return_value = True
+    svc = DatabaseDataService()
     with patch("core.storage.database_data_service.init_database"), patch(
         "core.storage.database_data_service.get_db_manager", return_value=fake_manager
     ), patch("core.storage.database_data_service.DatabaseService"):
-        svc = DatabaseDataService()
+        assert svc._db_available is True
 
     assert svc._db_connected is True
 

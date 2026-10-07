@@ -1,5 +1,8 @@
 import type { AgentEvent, CheckpointPayload, RunKind } from "../contracts/events.js";
+import { errorFields, logger } from "./log.js";
 import type { State } from "./seams.js";
+
+const log = logger("agent.checkpoints");
 
 // A checkpoint is on the ledger the moment it is raised, and that is what parks
 // the run. This is how a human gets told one is waiting; the ledger stays the record.
@@ -28,11 +31,11 @@ export function httpAnnounce(options: AnnounceOptions): Announce {
         headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
         body: JSON.stringify({ ...payload, run_kind: runKind }),
       });
-      if (!response.ok) console.warn(`announcing ${payload.checkpoint_id} answered ${response.status}`);
+      if (!response.ok) log.warn("announcing a checkpoint was refused", { run_id: runId, checkpoint_id: payload.checkpoint_id, status: response.status });
     } catch (error) {
       // Telling someone is not the run. A backend that cannot take the notice must
       // not fail the run that parked, which is already recorded either way.
-      console.warn(`announcing ${payload.checkpoint_id} failed: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("announcing a checkpoint failed", { run_id: runId, checkpoint_id: payload.checkpoint_id, ...errorFields(error) });
     }
   };
 }

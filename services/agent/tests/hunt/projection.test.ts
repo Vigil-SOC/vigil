@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
-import { huntProjection } from "../../workflows/hunt/projection.js";
-import { evidenceOn, newLedger, type Started } from "../support/hunt.js";
+import { EVIDENCE_SHOWN, huntProjection } from "../../workflows/hunt/projection.js";
+import { ScriptedDisconfirmationCritic } from "../../workflows/hunt/scripted.js";
+import { replay } from "../../workflows/hunt/replay.js";
+import { controllerFor, evidenceOn, newLedger, provable, validateOn, type Started } from "../support/hunt.js";
 
 async function project(started: Started) {
   await started.ledger.flush();
@@ -63,4 +65,229 @@ it("is what the hunt's arch entry hands a reader", async () => {
   const erased = events as unknown as readonly AgentEvent<Record<never, never>>[];
 
   expect(archFor("hunt").projection?.(started.runId, erased)).toEqual(huntProjection(started.runId, events));
+});
+
+// A count is not a finding. The projection reported evidence_count and nothing
+// else, so a console watching a run could say "4 pieces of evidence gathered" and
+// never what any of them said -- for the whole of the run, which is exactly when
+// somebody is watching. The records were in the fold the entire time.
+describe("what the evidence actually says", () => {
+
+  it("reports each record, not only how many there are", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    evidenceOn(started.ledger, started.hypothesisIds[0] as string, { source: "splunk" });
+
+    const [record] = (await project(started)).evidence;
+    expect(record?.source_system).toBe("splunk");
+    expect(record?.summary).toMatch(/authenticate/);
+    expect(record?.why_notable).toBe("first use of this ASN by the identity");
+    expect(record?.salience).toBe("notable");
+  });
+
+  // Which belief it bears on and how is the point of a piece of evidence; a record
+  // linked to nothing is the case most worth seeing.
+  it("says which beliefs it bears on and in which direction", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const hypothesisId = started.hypothesisIds[0] as string;
+    evidenceOn(started.ledger, hypothesisId, { relation: "weakens" });
+
+    expect((await project(started)).evidence[0]?.bears_on).toEqual([
+      { hypothesis_id: hypothesisId, relation: "weakens" },
+    ]);
+  });
+
+  // The flags the verdict gate reads, so a reader can see why support did not carry.
+  it("carries the flags that stop a record counting on its own", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    evidenceOn(started.ledger, started.hypothesisIds[0] as string, { attackerInfluenceable: true });
+
+    expect((await project(started)).evidence[0]?.attacker_influenceable).toBe(true);
+    expect((await project(started)).evidence[0]?.is_gap).toBe(false);
+  });
+
+  it("shows the newest first, so a poll opens on what just happened", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const hypothesisId = started.hypothesisIds[0] as string;
+    evidenceOn(started.ledger, hypothesisId, { source: "older" });
+    evidenceOn(started.ledger, hypothesisId, { source: "newer" });
+
+    const sources = (await project(started)).evidence.map((one) => one.source_system);
+    expect(sources.indexOf("newer")).toBeLessThan(sources.indexOf("older"));
+  });
+
+  // Capped so a five-second poll does not carry a whole run's transcript, and
+  // evidence_count stays the untruncated total so a reader can say it was capped.
+  it("caps the records it ships and still counts them all", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const hypothesisId = started.hypothesisIds[0] as string;
+    for (let n = 0; n < EVIDENCE_SHOWN + 3; n += 1) evidenceOn(started.ledger, hypothesisId);
+
+    const projection = await project(started);
+    expect(projection.evidence).toHaveLength(EVIDENCE_SHOWN);
+    expect(projection.evidence_count).toBe(EVIDENCE_SHOWN + 3);
+    // The standing counts the links the cap left out.
+    expect(projection.hypotheses[0]?.supports).toBe(EVIDENCE_SHOWN + 3);
+    expect(projection.hypotheses[0]?.weakens).toBe(0);
+  });
+
+  it("counts weakens from the links, and neither as neither", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const hypothesisId = started.hypothesisIds[0] as string;
+    evidenceOn(started.ledger, hypothesisId, { relation: "weakens" });
+    evidenceOn(started.ledger, hypothesisId, { relation: "neither" });
+
+    const standing = (await project(started)).hypotheses[0];
+    expect(standing?.supports).toBe(0);
+    expect(standing?.weakens).toBe(1);
+  });
+
+  it("lists each call with the question, the tool, how much came back, and the iteration that asked", async () => {
+    const started = await newLedger();
+    started.ledger.append({
+      kind: "dispatch",
+      payload: {
+        dispatch_id: "dsp-1",
+        iteration: 1,
+        agent_id: "network_analyst",
+        status: "complete",
+        query_intent: "who did it talk to",
+        target_hypothesis_id: null,
+        question_id: null,
+        failure_reason: null,
+        cost_usd: 0.2,
+        calls: [{ tool: "telemetry_search", arguments: "{}", result: "12345", duration_ms: 80 }],
+      },
+    } as never);
+    started.ledger.append({
+      kind: "dispatch",
+      payload: {
+        dispatch_id: "dsp-2",
+        iteration: 2,
+        agent_id: "threat_intel",
+        status: "complete",
+        query_intent: "who owns it",
+        target_hypothesis_id: null,
+        question_id: null,
+        failure_reason: null,
+        cost_usd: 0.1,
+        calls: [{ tool: "whois", arguments: "{}", result: "ab" }],
+      },
+    } as never);
+
+    expect((await project(started)).calls).toEqual([
+      { question: "who did it talk to", tool: "telemetry_search", result_length: 5, cost_usd: 0.2, duration_ms: 80, iteration: 1 },
+      { question: "who owns it", tool: "whois", result_length: 2, cost_usd: 0.1, iteration: 2 },
+    ]);
+  });
+
+  it("marks a call that failed with its kind, and no other", async () => {
+    const started = await newLedger();
+    const wrapped = (body: string) => `<vigil:tool_result tool="x">\n${body}\n</vigil:tool_result>`;
+    started.ledger.append({
+      kind: "dispatch",
+      payload: {
+        dispatch_id: "dsp-1",
+        iteration: 1,
+        agent_id: "threat_intel",
+        status: "complete",
+        query_intent: "is it known",
+        target_hypothesis_id: null,
+        question_id: null,
+        failure_reason: null,
+        cost_usd: 0.1,
+        calls: [
+          { tool: "virustotal", arguments: "{}", result: wrapped("failed: timeout -- after 30000ms") },
+          { tool: "whois", arguments: "{}", result: "failed: refused -- not allowed" },
+          { tool: "telemetry_search", arguments: "{}", result: wrapped('1 row(s) from splunk\n[{"msg":"failed: timeout -- retry"}]') },
+          { tool: "case_records", arguments: "{}", result: 'rows say failed: timeout -- inside the data' },
+        ],
+      },
+    } as never);
+
+    expect((await project(started)).calls?.map((call) => call.failed)).toEqual(["timeout", "refused", undefined, undefined]);
+    expect(Object.keys((await project(started)).calls![2]!)).not.toContain("failed");
+  });
+});
+
+// The standings say what a hunt believes; nothing said how it got there. An operator
+// watching a run could see the turn counter move and not which move it made.
+describe("the moves the lead made", () => {
+  it("carries each decision, newest first, without the digest it was made over", async () => {
+    const started = await newLedger();
+    started.ledger.append({
+      kind: "decision",
+      payload: {
+        decision: { action: "INVESTIGATE", rationale: "start broad", query_intent: "who did it talk to" },
+        decision_id: "dec-1",
+        iteration: 1,
+        model_id: "m",
+        prompt_version: "v1",
+        cost_usd: 0.01,
+        digest_presented: { iteration: 1 },
+        created_at: new Date().toISOString(),
+      } as never,
+    });
+    started.ledger.append({
+      kind: "decision",
+      payload: {
+        decision: { action: "VALIDATE", rationale: "worth testing", target_hypothesis_id: started.hypothesisIds[0] },
+        decision_id: "dec-2",
+        iteration: 2,
+        model_id: "m",
+        prompt_version: "v1",
+        cost_usd: 0.02,
+        rejected_attempts: ["VALIDATE must cite the evidence it rests on"],
+        digest_presented: { iteration: 2 },
+        created_at: new Date().toISOString(),
+      } as never,
+    });
+    const view = await project(started);
+
+    expect(view.moves.map((move) => move.action)).toEqual(["VALIDATE", "INVESTIGATE"]);
+    expect(view.moves[0]!.rejected_attempts).toHaveLength(1);
+    expect(JSON.stringify(view.moves)).not.toContain("digest_presented");
+  });
+});
+
+describe("what the Watch page reads off a hunt", () => {
+  it("names the hunt and carries the scope it was given", async () => {
+    const view = await project(await newLedger({ scope: { hosts: ["dmz-1"] } }));
+
+    expect(view.name).toBe("test hunt");
+    expect(view.scope).toEqual({ hosts: ["dmz-1"] });
+  });
+
+  it("lists each critic verdict off the payload, uncapped and in ledger order", async () => {
+    const started = await newLedger({ checkpoints: { verdict_review: "auto" } });
+    const hypothesisId = started.hypothesisIds[0]!;
+    await controllerFor(started.ledger, [validateOn(hypothesisId, provable(started.ledger, hypothesisId))], {
+      critic: new ScriptedDisconfirmationCritic(true),
+    }).advanceIteration();
+    // Newer than the cap could hold: the evidence list drops them, the reviews do not.
+    for (let i = 0; i < EVIDENCE_SHOWN + 1; i += 1) evidenceOn(started.ledger, hypothesisId);
+    const view = await project(started);
+
+    expect(view.reviews).toHaveLength(1);
+    expect(view.reviews[0]).toMatchObject({ iteration: 1, hypothesis_id: hypothesisId, survives: true });
+    expect(view.reviews[0]!.strongest_benign_explanation).not.toBe("");
+    expect(view.reviews[0]!.model_id).not.toBe("");
+  });
+
+  it("carries the lead's model time on each move and the replay, and omits it on old ledgers", async () => {
+    const started = await newLedger();
+    await controllerFor(started.ledger, [{ action: "INVESTIGATE", rationale: "look", query_intent: "baseline" }]).advanceIteration();
+    const view = await project(started);
+
+    expect(view.moves[0]!.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(replay(started.ledger.log).decisions[0]!.duration_ms).toBe(view.moves[0]!.duration_ms);
+
+    // An older ledger: the record has no duration, so the key is absent, not 0 or null.
+    const stripped = started.ledger.log.map((event) => {
+      if (event.kind !== "decision") return event;
+      const { duration_ms: _gone, ...rest } = event.payload;
+      return { ...event, payload: rest };
+    }) as typeof started.ledger.log;
+    expect("duration_ms" in huntProjection(started.runId, stripped).moves[0]!).toBe(false);
+    expect("duration_ms" in replay(stripped).decisions[0]!).toBe(false);
+  });
 });

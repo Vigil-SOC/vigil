@@ -15,13 +15,14 @@ import { localDispatch } from "../../core/dispatch.js";
 import { nullMemory } from "../../core/memory.js";
 import { registryOf } from "../../core/registry.js";
 import type { HarnessFactory } from "../../harness.js";
+import { TEST_DSN } from "../support/testdb.js";
 
 // A hunt started through the queue must reach the hunt loop. Routing it to the
 // generic one produced a run that completed and looked fine, and hunted nothing.
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 
 const pool = new pg.Pool({
-  connectionString: process.env["DATABASE_URL"] ?? "postgres://vigil:vigil@localhost:55432/vigil_test",
+  connectionString: TEST_DSN,
 });
 const ledger = new LedgerRepository(pool);
 const leases = new LeaseRepository(pool);
@@ -152,15 +153,22 @@ describe("a hunt started through the queue", () => {
     expect(terminal?.handoffs).toEqual([]);
   });
 
-  // Compose, lead and tally all end on outcome.refusal; the hunt threw instead,
-  // so a run that spent its allowance stayed "running" forever and the watchdog
-  // re-enqueued it every sweep to be refused again.
-  it("ends a run that spent its allowance as budget_exhausted", async () => {
+  // Compose, lead and tally all end on outcome.refusal; the hunt threw instead, so
+  // a run that spent its allowance stayed "running" forever and the watchdog
+  // re-enqueued it every sweep to be refused again. It parks rather than
+  // terminating: the harness ceiling that stops a hunt is usually the wall clock,
+  // which stops it with turns and dollars still on the board, and parked is the
+  // state extend/conclude/abort are answered from. A re-enqueue is cheap now --
+  // advanceIteration throws on the parked status before any call is made.
+  it("parks a run that spent its allowance rather than leaving it running", async () => {
     await run(runId, spentHarness());
 
-    const terminal = await ledger.terminal(runId);
-    expect(terminal?.outcome).toBe("budget_exhausted");
-    expect((await ledger.read(runId)).at(-1)?.kind).toBe("terminal");
+    expect(await ledger.terminal(runId)).toBeNull();
+    const events = await ledger.read(runId);
+    const parked = events.filter(
+      (event) => event.kind === "patch" && (event.payload as { fields?: { status?: string } }).fields?.status === "parked",
+    );
+    expect(parked).toHaveLength(1);
   });
 
   // The signal fires for exactly one reason: renewal found another worker holding
@@ -173,6 +181,7 @@ describe("a hunt started through the queue", () => {
 
     const outcome = await runHunt(build("hunt", spec, ledger, undefined, undefined) as never, {
       run_id: runId,
+      run_kind: "hunt",
       spec,
       actions: archFor("hunt").actions,
       queue: new InProcessDirectiveQueue(),

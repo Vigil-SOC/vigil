@@ -1,11 +1,24 @@
-"""Findings API endpoints."""
+"""Findings — unversioned operator/console endpoints.
+
+The frozen read and record-update surface lives in ``core/api/v1/findings_router.py``
+and is mounted at both ``/api/v1/findings`` and (for now) ``/api/findings``.
+This module keeps the routes that are *not* part of that contract: AI
+enrichment generation and the destructive wipe. They remain under
+``/api/findings`` only.
+
+``FindingUpdate`` is the contract schema, imported from the v1 module
+(services -> core, the allowed direction).
+"""
 
 import logging
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Annotated, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from core.api.v1.findings_router import FindingUpdate
+from core.auth.permissions import permission_gate
 from core.config import vigil_path
 from core.findings.enrichment import (
     FindingNotFound,
@@ -13,12 +26,14 @@ from core.findings.enrichment import (
     ProviderUnavailable,
     enrich,
 )
-from core.findings.source_evidence import (
-    normalize_finding_source_evidence,
-    project_finding_source_evidence_for_list,
-)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
+from core.storage.models import Finding, User
+from core.time import utcnow
+from services.api.errors import INTERNAL_ERROR_DETAIL
+from services.api.middleware.auth import get_current_user
+from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
 router = APIRouter()
 
@@ -28,152 +43,9 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
-# Use DatabaseDataService which automatically uses PostgreSQL if available, falls back to JSON
 data_service = DatabaseDataService()
 
-
-@router.get("/")
-def get_findings(
-    severity: Optional[str] = Query(None),
-    data_source: Optional[str] = Query(None),
-    cluster_id: Optional[int] = Query(None),
-    min_anomaly_score: Optional[float] = Query(None),
-    status: Optional[str] = Query(None),
-    search: Optional[str] = Query(
-        None, description="Text search across finding IDs, descriptions, entity context"
-    ),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
-    sort_by: str = Query("timestamp"),
-    sort_order: str = Query("desc"),
-    force_refresh: bool = Query(False),
-):
-    """
-    Get findings with optional filters, search, and server-side pagination.
-
-    Returns:
-        Paginated list of findings with total count and has_more flag.
-    """
-    if force_refresh and data_service.is_s3_configured():
-        logger.info("Force refresh triggered - syncing from S3")
-        success, message, stats = data_service.sync_from_s3()
-        if success:
-            logger.info(f"S3 sync completed: {message}")
-        else:
-            logger.warning(f"S3 sync failed or partial: {message}")
-
-    cluster_id_str = str(cluster_id) if cluster_id is not None else None
-
-    total = data_service.count_findings(
-        severity=severity,
-        data_source=data_source,
-        cluster_id=cluster_id_str,
-        min_anomaly_score=min_anomaly_score,
-        status=status,
-        search_query=search,
-    )
-    findings = data_service.get_findings(
-        limit=limit,
-        offset=offset,
-        severity=severity,
-        data_source=data_source,
-        cluster_id=cluster_id_str,
-        min_anomaly_score=min_anomaly_score,
-        status=status,
-        search_query=search,
-        sort_by=sort_by,
-        sort_order=sort_order,
-        # The list view never uses the 768-float embedding — omit it so a
-        # 1000-row page (polled every 10s) isn't several MB of vectors.
-        include_embedding=False,
-    )
-
-    return {
-        "findings": [
-            project_finding_source_evidence_for_list(finding) for finding in findings
-        ],
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": (offset + limit) < total,
-    }
-
-
-@router.get("/{finding_id}")
-def get_finding(finding_id: str):
-    """
-    Get a specific finding by ID.
-
-    Args:
-        finding_id: The finding ID
-
-    Returns:
-        Finding details
-    """
-    finding = data_service.get_finding(finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="Finding not found")
-    return normalize_finding_source_evidence(finding)
-
-
-@router.get("/stats/summary")
-def get_findings_summary():
-    """
-    Get summary statistics for findings.
-
-    Returns:
-        Summary statistics
-    """
-    findings = data_service.get_findings(include_embedding=False)
-
-    # Calculate statistics
-    severity_counts = {}
-    data_source_counts = {}
-    total_count = len(findings)
-
-    for finding in findings:
-        severity = finding.get("severity", "unknown")
-        severity_counts[severity] = severity_counts.get(severity, 0) + 1
-
-        data_source = finding.get("data_source", "unknown")
-        data_source_counts[data_source] = data_source_counts.get(data_source, 0) + 1
-
-    return {
-        "total": total_count,
-        "by_severity": severity_counts,
-        "by_data_source": data_source_counts,
-    }
-
-
-@router.post("/export")
-def export_findings(output_format: str = "json"):
-    from datetime import datetime
-
-    output_dir = vigil_path("exports", write=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"findings_export_{timestamp}.{output_format}"
-
-    success = data_service.export_findings(output_path, format=output_format)
-
-    if success:
-        return {"success": True, "file_path": str(output_path)}
-    else:
-        raise HTTPException(status_code=500, detail="Export failed")
-
-
-class FindingUpdate(BaseModel):
-    """Schema for updating a finding."""
-
-    mitre_predictions: Optional[Dict[str, float]] = None
-    predicted_techniques: Optional[List[Dict[str, Any]]] = None
-    severity: Optional[str] = None
-    status: Optional[str] = None
-    anomaly_score: Optional[float] = None
-    entity_context: Optional[Dict[str, Any]] = None
-    cluster_id: Optional[str] = None
-    evidence_links: Optional[List[str]] = None
+EXPORT_FORMATS = DatabaseDataService.EXPORT_FORMATS
 
 
 class BulkEnrichmentRequest(BaseModel):
@@ -183,60 +55,25 @@ class BulkEnrichmentRequest(BaseModel):
     enrichment_data: Dict[str, FindingUpdate]
 
 
-@router.patch("/{finding_id}")
-def update_finding(finding_id: str, update: FindingUpdate):
-    """
-    Update/enrich an existing finding.
+class NoiseMarkResponse(BaseModel):
+    finding_id: str
+    noise_marked_at: Optional[datetime] = None
+    noise_marked_by: Optional[str] = None
+    status: str
 
-    This endpoint allows you to add or update information on a finding,
-    including MITRE ATT&CK technique mappings, severity, and other metadata.
 
-    Args:
-        finding_id: The finding ID to update
-        update: Fields to update
+class IntakeLaunchResponse(BaseModel):
+    finding_id: str
+    queued: bool
+    already_queued: bool
+    trigger_id: Optional[int] = None
 
-    Returns:
-        Updated finding
 
-    Example:
-        PATCH /api/findings/f-20260114-abc123
-        {
-            "mitre_predictions": {"T1071.001": 0.85, "T1048.003": 0.72},
-            "predicted_techniques": [
-                {"technique_id": "T1071.001", "confidence": 0.85},
-                {"technique_id": "T1048.003", "confidence": 0.72}
-            ],
-            "severity": "high"
-        }
-    """
-    # Get existing finding
-    finding = data_service.get_finding(finding_id)
-    if not finding:
+def _finding_or_404(session: UnitOfWorkSession, finding_id: str) -> Finding:
+    finding = session.get(Finding, finding_id)
+    if finding is None:
         raise HTTPException(status_code=404, detail="Finding not found")
-
-    # Prepare updates (exclude None values)
-    updates = {}
-    for key, value in update.model_dump(exclude_none=True).items():
-        updates[key] = value
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No updates provided")
-
-    # Update the finding
-    success = data_service.update_finding(finding_id, **updates)
-
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to update finding")
-
-    # Return updated finding
-    updated_finding = data_service.get_finding(finding_id)
-    logger.info(f"Updated finding {finding_id} with {len(updates)} fields")
-
-    return {
-        "success": True,
-        "finding": updated_finding,
-        "updated_fields": list(updates.keys()),
-    }
+    return finding
 
 
 @router.post("/bulk-enrich")
@@ -244,32 +81,13 @@ def bulk_enrich_findings(request: BulkEnrichmentRequest):
     """
     Bulk enrich multiple findings with MITRE ATT&CK and other data.
 
-    This endpoint allows you to enrich multiple findings at once,
-    useful for batch processing or adding threat intelligence data.
-
     Args:
         request: Bulk enrichment request with finding IDs and enrichment data
 
     Returns:
         Summary of enrichment results
-
-    Example:
-        POST /api/findings/bulk-enrich
-        {
-            "finding_ids": ["f-001", "f-002"],
-            "enrichment_data": {
-                "f-001": {
-                    "mitre_predictions": {"T1071.001": 0.85},
-                    "severity": "high"
-                },
-                "f-002": {
-                    "mitre_predictions": {"T1059.001": 0.92},
-                    "severity": "critical"
-                }
-            }
-        }
     """
-    results = {
+    results: Dict[str, object] = {
         "total": len(request.finding_ids),
         "updated": 0,
         "failed": 0,
@@ -279,24 +97,20 @@ def bulk_enrich_findings(request: BulkEnrichmentRequest):
 
     for finding_id in request.finding_ids:
         try:
-            # Check if finding exists
             finding = data_service.get_finding(finding_id)
             if not finding:
                 results["not_found"] += 1
                 results["errors"].append(f"{finding_id}: Not found")
                 continue
 
-            # Get enrichment data for this finding
             enrichment = request.enrichment_data.get(finding_id)
             if not enrichment:
                 continue
 
-            # Prepare updates
             updates = enrichment.model_dump(exclude_none=True)
             if not updates:
                 continue
 
-            # Update the finding
             success = data_service.update_finding(finding_id, **updates)
 
             if success:
@@ -308,7 +122,7 @@ def bulk_enrich_findings(request: BulkEnrichmentRequest):
 
         except Exception as e:
             results["failed"] += 1
-            results["errors"].append(f"{finding_id}: {str(e)}")
+            results["errors"].append(f"{finding_id}: {INTERNAL_ERROR_DETAIL}")
             logger.error(f"Error enriching finding {finding_id}: {e}")
 
     return {
@@ -325,10 +139,8 @@ async def get_or_generate_enrichment(
     """
     Get or generate AI enrichment for a finding.
 
-    This endpoint checks if AI enrichment already exists for the finding.
-    If it exists, returns the cached enrichment immediately.
-    If not, generates new enrichment using the configured reporting model,
-    caches it, and returns it.
+    Returns cached enrichment if present, otherwise generates, caches, and
+    returns new enrichment from the configured reporting model.
 
     Args:
         finding_id: The finding ID to enrich
@@ -336,32 +148,18 @@ async def get_or_generate_enrichment(
 
     Returns:
         AI enrichment data with threat analysis, impact, recommendations, etc.
-
-    Example Response:
-        {
-            "finding_id": "f-20260114-001",
-            "cached": false,
-            "enrichment": {
-                "threat_summary": "...",
-                "potential_impact": "...",
-                "recommended_actions": [...],
-                "related_techniques": [...],
-                "indicators": {...},
-                "confidence_score": 0.85
-            }
-        }
     """
     import asyncio
 
-    # Get the finding. The data layer is synchronous SQLAlchemy, so keep it off
-    # the event loop — this handler stays async because it awaits the LLM.
+    # The data layer is synchronous SQLAlchemy, so keep it off the event loop —
+    # this handler stays async because it awaits the LLM.
     finding = await asyncio.to_thread(data_service.get_finding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    # Check if enrichment already exists. Caching is HTTP policy — the shared
-    # enrich() seam deliberately doesn't do this check, since `force_regenerate`
-    # is a query param and the daemon has its own freshness rules.
+    # Caching is HTTP policy — the shared enrich() seam deliberately doesn't do
+    # this check, since force_regenerate is a query param and the daemon has its
+    # own freshness rules.
     existing_enrichment = finding.get("ai_enrichment")
     if existing_enrichment and not force_regenerate:
         logger.info(f"Returning cached enrichment for {finding_id}")
@@ -371,11 +169,6 @@ async def get_or_generate_enrichment(
             "enrichment": existing_enrichment,
         }
 
-    # Generate new enrichment using the configured reporting provider. The flow
-    # lives in services/findings/enrichment/ so ingestion, the daemon and agents
-    # can reuse it; this handler owns only the domain-error → status-code
-    # translation. The write that used to sit here moved into that module's
-    # _persist(), which keeps the to_thread offload.
     try:
         # Pass the path param, not the id off the row we just read — it's the
         # authoritative write target, exactly as the pre-extraction handler did.
@@ -392,22 +185,109 @@ async def get_or_generate_enrichment(
         raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
     except ProviderUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error generating enrichment for {finding_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to generate enrichment: {str(e)}"
-        )
 
     return {"finding_id": finding_id, "cached": False, "enrichment": enrichment}
 
 
-@router.delete("/all")
-def clear_all_findings(session: UnitOfWorkSession):
+@router.delete("/all", dependencies=[permission_gate("findings.delete")])
+def clear_all_findings(
+    session: UnitOfWorkSession,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
     """Delete all findings from the database."""
-    from core.storage.models import Finding
-
     count = session.query(Finding).count()
+    # The wipe cascades to the AI decision log, so name who did it first.
+    get_config_service(user_id=str(current_user.user_id)).record_audit(
+        config_type="findings",
+        config_key="findings",
+        action="delete_all",
+        old_value={"count": count},
+        new_value=None,
+        change_reason="All findings deleted via API",
+    )
     session.query(Finding).delete()
 
     logger.info(f"Cleared {count} findings")
     return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}
+
+
+@router.post("/{finding_id}/noise", response_model=NoiseMarkResponse)
+def mark_finding_noise(
+    finding_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Store a noise mark. Does not change ``finding.status`` or scoring."""
+    finding = _finding_or_404(session, finding_id)
+    finding.noise_marked_at = utcnow()
+    finding.noise_marked_by = current_user.user_id
+    return NoiseMarkResponse(
+        finding_id=finding.finding_id,
+        noise_marked_at=finding.noise_marked_at,
+        noise_marked_by=finding.noise_marked_by,
+        status=finding.status,
+    )
+
+
+@router.delete("/{finding_id}/noise", response_model=NoiseMarkResponse)
+def clear_finding_noise(
+    finding_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Clear the noise mark. The actor is the signed-in user; the columns go back to null."""
+    finding = _finding_or_404(session, finding_id)
+    logger.info("cleared noise mark on %s by %s", finding_id, current_user.user_id)
+    finding.noise_marked_at = None
+    finding.noise_marked_by = None
+    return NoiseMarkResponse(
+        finding_id=finding.finding_id,
+        status=finding.status,
+    )
+
+
+@router.post("/{finding_id}/intake", response_model=IntakeLaunchResponse)
+def launch_finding_into_intake(
+    finding_id: str,
+    session: UnitOfWorkSession,
+):
+    """Queue this finding for intake. ``already_queued`` when a queued row exists."""
+    finding = _finding_or_404(session, finding_id)
+    trigger_id = insert_intake_trigger(
+        kind="detection",
+        finding_id=finding.finding_id,
+        priority=intake_severity_band("detection", finding_severity=finding.severity),
+    )
+    return IntakeLaunchResponse(
+        finding_id=finding.finding_id,
+        queued=trigger_id is not None,
+        already_queued=trigger_id is None,
+        trigger_id=trigger_id,
+    )
+
+
+# Not in the frozen surface: this writes a file on the server and answers with
+# its path, which is nothing an external caller can open. It stays unversioned
+# until it answers with the export itself.
+@router.post("/export")
+def export_findings(output_format: str = "json"):
+    if output_format not in EXPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported export format; use one of {', '.join(EXPORT_FORMATS)}",
+        )
+
+    output_dir = vigil_path("exports", write=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Extension from the allowlist, not the request, so the caller picks no part of the path.
+    ext = next(f for f in EXPORT_FORMATS if f == output_format)
+    output_path = output_dir / f"findings_export_{timestamp}.{ext}"
+
+    success = data_service.export_findings(output_path, fmt=output_format)
+
+    if success:
+        return {"success": True, "file_path": str(output_path)}
+    else:
+        raise HTTPException(status_code=500, detail="Export failed")

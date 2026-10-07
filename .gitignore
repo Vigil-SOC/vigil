@@ -130,6 +130,13 @@ celerybeat.pid
 # Environments
 .env
 .env.local
+# Timestamped .env backups written by local tooling. One was sitting untracked
+# with a live provider key in it, which `git add -A` would have published.
+# It then happened anyway: `.env.bak-<stamp>` matched neither pattern here, an
+# `add -A` swept it into a pushed branch, and every credential in it had to be
+# rotated. The glob is deliberately loose now -- anything starting `.env.bak`.
+.env.bak*
+.env.*.bak
 .venv
 env/
 venv/
@@ -174,7 +181,9 @@ cython_debug/
 # IDEs
 .vscode/
 .idea/
-.cursor/
+.cursor/*
+!.cursor/environment.json
+!.cursor/Dockerfile
 .claude/
 *.swp
 *.swo
@@ -195,6 +204,15 @@ config.json
 *_config.json
 !mcp-config.json
 !infra/docker/bifrost/config.json
+
+# Bifrost's runtime state, written when the gateway runs outside Docker.
+# config.db is its config store and holds provider API keys -- in plaintext
+# unless the deployment turned on Bifrost's key encryption; logs.db carries
+# request and response bodies. Neither is ever committed.
+# Anchored: unanchored, this also swallowed core/llm/bifrost/ and
+# infra/docker/bifrost/, so a new file in either was ignored on sight.
+/bifrost/
+/logs.db
 
 # Node.js / React
 clients/web/node_modules/
@@ -219,12 +237,6 @@ clients/web/yarn-error.log*
 TestOutputs/*.pdf
 !TestOutputs/.gitkeep
 
-# Timesketch
-timesketch/data/
-timesketch/logs/
-timesketch/upload/
-timesketch/etc/
-
 # Temporary files
 tmp/
 temp/
@@ -233,7 +245,6 @@ temp/
 # Runtime data (stored in PostgreSQL)
 data/*.json
 data/investigations/
-!data/schemas/
 
 # Test data
 splunk_test_data.json
@@ -266,8 +277,30 @@ slop.toml
 runs/
 !services/agent/tests/fixtures/runs/
 
+# Editor, build and indexer scratch. All local, none of it ever committed.
+.vite/
+.zed/
+index.scip.stamp
+
+# The gateway's own store, wherever it is launched from: it holds provider API keys,
+# in plaintext unless the deployment turned on Bifrost's key encryption.
+/config.db
+/logs.db
+/bifrost/
+
+# Working copies of dropped submodules, which survive a checkout. None has a
+# production importer here -- mcp-servers' four servers are vendored at tools/mcp/.
+# Palace *data* never lived here: it is under the state directory, and is the
+# operator's to remove.
+/deeptempo-core/
+/mcp-servers/
+/mempalace/
+
 # Local scratch space -- notes and throwaway files, never committed.
 /.scratch/
 
 # Repo-local uv install, created by scripts/lib.sh when the host has no uv.
 /.uv/
+
+# Timestamped .env copies left by setup and migration scripts.
+.env.*

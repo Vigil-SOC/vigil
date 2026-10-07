@@ -1,6 +1,7 @@
+import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
+import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";
-import type { BudgetLimits } from "../../contracts/budget.js";
-import { DEFAULT_BUDGETS, DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
+import { DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
 import { DEFAULT_CHECKPOINTS, type Checkpoints } from "../../workflows/hunt/checkpoints.js";
 import {
   DEFAULT_ENRICHMENT,
@@ -15,15 +16,16 @@ import { HuntController, startHunt } from "../../workflows/hunt/controller.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import { Journal, type HuntEvent, type HuntKinds } from "../../workflows/hunt/journal.js";
 import { newId } from "../../workflows/hunt/ids.js";
-import type { Enricher, WorkerDispatcher } from "../../workflows/hunt/ports.js";
+import type { DecisionProvider, DisconfirmationCritic, Enricher, WorkerDispatcher } from "../../workflows/hunt/ports.js";
 import type { HuntReport } from "../../workflows/hunt/report.js";
 import {
+  SCRIPTED_MODEL_ID,
   ScriptedDecisionProvider,
   ScriptedDisconfirmationCritic,
   type ScriptedDecision,
 } from "../../workflows/hunt/scripted.js";
 import { NULL_CHECK_PROVENANCE, unclassified } from "../../workflows/hunt/strength.js";
-import type { Decision, Entity, EvidenceRecord, LinkRelation } from "../../workflows/hunt/types.js";
+import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type EvidenceRecord, type LinkRelation } from "../../workflows/hunt/types.js";
 
 export const INVESTIGATE: Decision = { action: "INVESTIGATE", rationale: "look", query_intent: "baseline" };
 export const CONCLUDE: Decision = { action: "CONCLUDE", rationale: "nothing further to run" };
@@ -33,12 +35,24 @@ const LEAD = { prompt: "lead", description: "the hunt lead", output_schema: {}, 
 
 export interface SpecOverrides {
   hypotheses?: string[];
-  budgets?: BudgetLimits;
+  operatorHypotheses?: string[];
+  // Keyed by statement, as the run modal sends them.
+  operatorHypothesisSubjects?: Record<string, Entity[]>;
+  // Positional against hypotheses, the same way the resolver builds it.
+  attackTechniques?: string[];
+  budgets?: Budgets;
   termination?: Partial<Termination>;
   checkpoints?: Partial<Checkpoints>;
   scope?: Record<string, unknown>;
   dispatch?: RunSpec["dispatch"];
   hypothesisLoop?: boolean;
+  // What the roles ask for and what the deployment answers with, so a test can
+  // put a capability out of reach without standing up a registry.
+  needs?: string[];
+  tools?: RunSpec["tools"];
+  // The playbook's standing brief and the job's own, which startHunt joins.
+  narrative?: string;
+  prompt?: string;
 }
 
 // Built as an object rather than parsed from three files: the loader has its own
@@ -50,7 +64,7 @@ export function huntSpecFor(overrides: SpecOverrides = {}): HuntSpec {
     model: "scripted",
     budgets: overrides.budgets ?? DEFAULT_BUDGETS,
     runtime: DEFAULT_RUNTIME,
-    tools: [],
+    tools: overrides.tools ?? [],
     approvals: [],
     thresholds: {},
     arch: "threathunt",
@@ -60,15 +74,17 @@ export function huntSpecFor(overrides: SpecOverrides = {}): HuntSpec {
     use_case: "",
     trigger_examples: [],
     phases: [],
-    prompt: "",
+    prompt: overrides.prompt ?? "",
     objectives: [],
     scope: overrides.scope ?? {},
-    narrative: "",
-    roles: { lead: LEAD, workers: {} },
+    narrative: overrides.narrative ?? "",
+    roles: { lead: { ...LEAD, needs: overrides.needs ?? [] }, workers: {} },
     dispatch: overrides.dispatch ?? DEFAULT_DISPATCH,
     digest: {},
     hypotheses,
-    attack_techniques: [],
+    operator_hypotheses: overrides.operatorHypotheses ?? [],
+    operator_hypothesis_subjects: overrides.operatorHypothesisSubjects ?? {},
+    attack_techniques: overrides.attackTechniques ?? [],
     data_domains: [],
     enrichment: DEFAULT_ENRICHMENT,
     checkpoints: { ...DEFAULT_CHECKPOINTS, ...overrides.checkpoints },
@@ -82,6 +98,7 @@ export interface Started {
   queue: InProcessDirectiveQueue;
   runId: string;
   hypothesisIds: string[];
+  spend: Spender;
 }
 
 export async function newLedger(overrides: SpecOverrides = {}): Promise<Started> {
@@ -89,12 +106,75 @@ export async function newLedger(overrides: SpecOverrides = {}): Promise<Started>
   const queue = new InProcessDirectiveQueue();
   const runId = newId("run");
   const ledger = await startHunt(state, queue, runId, huntSpecFor(overrides));
-  return { ledger, state, queue, runId, hypothesisIds: [...ledger.projection.hypotheses.keys()] };
+  return { ledger, state, queue, runId, hypothesisIds: [...ledger.projection.hypotheses.keys()], spend: spender(state, runId) };
+}
+
+// Journals one model call's spend the way the stream does (core/stream.ts): straight
+// to State, past the controller's journal. hunt.cost_usd is folded from these, so a
+// double that only returns cost_usd would leave the budget counter at zero.
+export type Spender = (cost_usd: number, role: string) => Promise<void>;
+
+export function spender(state: State<HuntKinds>, runId: string): Spender {
+  return async (cost_usd, role) => {
+    const payload: SpendPayload = {
+      model_id: SCRIPTED_MODEL_ID,
+      provider_type: "scripted",
+      role,
+      tokens: ZERO_TOKENS,
+      cost_usd,
+      pricing_source: "scripted",
+      rates: null,
+      fetched_at: null,
+    };
+    await state.append(runId, [{ run_id: runId, run_kind: "hunt", kind: "spend", payload }]);
+  };
+}
+
+// Bills on the throw as well as the return: a call that died mid-turn still spent,
+// and the stream journals it before rethrowing.
+export function billedLead(provider: DecisionProvider, spend: Spender): DecisionProvider {
+  return {
+    decide: async (digest, signal) => {
+      try {
+        const result = await provider.decide(digest, signal);
+        await spend(result.cost_usd, "lead");
+        return result;
+      } catch (error) {
+        await spend(spentBefore(error), "lead");
+        throw error;
+      }
+    },
+  };
+}
+
+function billedWorker(dispatcher: WorkerDispatcher, spend: Spender): WorkerDispatcher {
+  return {
+    dispatch: async (request) => {
+      const result = await dispatcher.dispatch(request);
+      await spend(result.cost_usd, request.agent_id);
+      return result;
+    },
+  };
+}
+
+function billedCritic(critic: DisconfirmationCritic, spend: Spender): DisconfirmationCritic {
+  return {
+    argueNull: async (check) => {
+      const result = await critic.argueNull(check);
+      await spend(result.cost_usd, "critic");
+      return result;
+    },
+  };
+}
+
+function spentBefore(error: unknown): number {
+  const cost = (error as { cost_usd?: unknown }).cost_usd;
+  return typeof cost === "number" ? cost : 0;
 }
 
 // What answering a checkpoint hours later does: nothing of the writing process
 // carries over, and a directive queued while nobody held the ledger still waits.
-export async function reopen(started: Started, from?: Journal): Promise<Journal> {
+export async function reopen(started: Pick<Started, "ledger" | "state" | "queue" | "runId">, from?: Journal): Promise<Journal> {
   await (from ?? started.ledger).flush();
   return Journal.open(started.state, started.queue, started.runId);
 }
@@ -105,9 +185,15 @@ export interface ControllerOptions {
   enricher?: Enricher;
   costPerDecision?: number;
   verdicts?: Verdicts;
-  provider?: ScriptedDecisionProvider;
+  // Any provider, not only the scripted one: a test that needs the lead to behave
+  // like the real one -- which reads the stored ledger, not this journal -- brings
+  // its own. The controller only ever asked for the interface.
+  provider?: DecisionProvider;
   dispatch?: RunSpec["dispatch"];
   maxWorkers?: number;
+  // Given when a test bills: the doubles' costs reach the ledger as spend events,
+  // which is the only way they reach hunt.cost_usd.
+  spend?: Spender;
 }
 
 export function controllerFor(
@@ -120,14 +206,16 @@ export function controllerFor(
     (options.dispatcher === undefined
       ? undefined
       : { ...DEFAULT_DISPATCH, mode: "parallel" as const, max_workers: options.maxWorkers ?? 3 });
+  const provider = options.provider ?? new ScriptedDecisionProvider(decisions, options.costPerDecision ?? 0);
+  const { spend } = options;
   return new HuntController(
     ledger,
-    options.provider ?? new ScriptedDecisionProvider(decisions, options.costPerDecision ?? 0),
-    options.dispatcher,
+    spend === undefined ? provider : billedLead(provider, spend),
+    spend === undefined || options.dispatcher === undefined ? options.dispatcher : billedWorker(options.dispatcher, spend),
     dispatch,
     undefined,
     options.enricher,
-    options.critic,
+    spend === undefined || options.critic === undefined ? options.critic : billedCritic(options.critic, spend),
     options.verdicts ?? DEFAULT_VERDICTS,
   );
 }
@@ -136,7 +224,9 @@ export interface EvidenceOptions {
   source?: string;
   relation?: LinkRelation;
   attackerInfluenceable?: boolean;
+  restsOn?: { field: string; authored: "sensor" | "adversary" | "third_party" }[];
   entities?: Entity[];
+  attackTechnique?: string;
 }
 
 export function evidenceOn(ledger: Journal, hypothesisId: string, options: EvidenceOptions = {}): string {
@@ -155,9 +245,11 @@ export function evidenceOn(ledger: Journal, hypothesisId: string, options: Evide
       why_notable: "first use of this ASN by the identity",
       provenance: "worker",
       attacker_influenceable: options.attackerInfluenceable ?? false,
+      ...(options.restsOn === undefined ? {} : { rests_on: options.restsOn }),
       instruction_like: false,
       entities: options.entities ?? [],
       captured_at: new Date().toISOString(),
+      ...(options.attackTechnique !== undefined ? { attack_technique: options.attackTechnique } : {}),
     },
   });
   ledger.append({

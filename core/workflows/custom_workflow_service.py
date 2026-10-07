@@ -47,7 +47,7 @@ def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
     # Deferred to keep this service import-cheap for callers that only
     # want a .get() and don't touch the AgentManager.
     try:
-        from core.agents.builtins import AgentManager
+        from core.agents.manager import AgentManager
 
         known = set(AgentManager().agents.keys())
     except Exception as e:

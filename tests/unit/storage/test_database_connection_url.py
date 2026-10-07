@@ -12,7 +12,6 @@ from sqlalchemy.engine import make_url
 
 from core.storage.connection import DatabaseConfig
 
-
 # Characters called out in issue #306 plus the other userinfo delimiters.
 SPECIAL_PASSWORD = "p@ss/w0rd#?%&:=+ x"
 SPECIAL_USER = "deep@tempo:user"

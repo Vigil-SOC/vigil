@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+# Spawned as ``python3 core/integrations/<vendor>/tool.py`` with a narrowed env,
+# so the repo root is not on sys.path and PYTHONPATH is not forwarded. Add it
+# here so the ``core.*`` imports below resolve; otherwise they fail at spawn.
+_REPO_ROOT = str(Path(__file__).resolve().parents[3])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import asyncio
 import json
 import logging
@@ -9,17 +19,17 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.tls import tls_verify
+from core.integrations._base.tool_result import run_tool
 from core.integrations.palo_alto.descriptor import PALO_ALTO
 
 logger = logging.getLogger(__name__)
-server = Server("palo-alto")
 
 
 def result(data):
     return [types.TextContent(type="text", text=json.dumps(data, indent=2))]
 
 
-@server.list_tools()
 async def handle_list_tools():
     return [
         types.Tool(
@@ -43,7 +53,6 @@ async def handle_list_tools():
     ]
 
 
-@server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None):
     config = resolve(PALO_ALTO)
     api_key = config.get("api_key")
@@ -56,6 +65,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
     # resolve() always returns every declared field, so a .get(k, True) default
     # would never fire — verify_ssl is present-but-None when unset.
     verify = True if config.get("verify_ssl") is None else config.get("verify_ssl")
+    ca_cert_path = config.get("ca_cert_path")
 
     args = arguments or {}
 
@@ -74,7 +84,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                     "xpath": f"/config/devices/entry/vsys/entry[@name='vsys1']/address/entry[@name='blocked-{ip}']",
                     "element": f"<ip-netmask>{ip}/32</ip-netmask><description>Blocked: {args.get('reason', 'security')}</description>",
                 },
-                verify=verify,
+                verify=tls_verify(verify, ca_cert_path),
                 timeout=30,
             )
             # httpx doesn't follow redirects, so a 3xx here means the configured
@@ -99,7 +109,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                     "key": api_key,
                     "nlogs": args.get("limit") or 20,
                 },
-                verify=verify,
+                verify=tls_verify(verify, ca_cert_path),
                 timeout=30,
             )
             # Parse XML response (simplified)
@@ -110,6 +120,21 @@ async def handle_call_tool(name: str, arguments: dict | None):
         return result({"error": f"Unknown tool: {name}"})
     except Exception as e:
         return result({"error": str(e)})
+
+
+async def _on_list_tools(_ctx, _params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(_ctx, params):
+    return await run_tool(handle_call_tool, params)
+
+
+server = Server(
+    "palo-alto",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 
 async def main():

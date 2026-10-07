@@ -94,7 +94,6 @@ class CloudyIngestionService:
             or event.get("timestamp")
             or _utcnow_iso(),
             "anomaly_score": float(payload.get("anomaly_score", 0.5)),
-            "embedding": [0.0],  # ingestion service tolerates a placeholder
             "mitre_predictions": mitre,
             "severity": severity,
             "title": (

@@ -65,6 +65,7 @@ spec:
                    every Redis variable -- it never touches the queue -- but the
                    block is shared, and one it does not read costs nothing. */}}
             {{- include "vigil.env" . | nindent 12 }}
+            {{- include "vigil.caBundleEnv" . | nindent 12 }}
             {{- with .Values.agentServe.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -98,6 +99,14 @@ spec:
             {{- toYaml .Values.agentServe.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- with include "vigil.caBundleVolumeMount" . }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with include "vigil.caBundleVolume" . }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
       {{- with .Values.agentServe.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

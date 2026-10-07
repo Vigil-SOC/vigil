@@ -1,29 +1,35 @@
-"""Skills API — CRUD + AI-assisted generation for reusable SOC capabilities.
+"""Skills API — skills loaded from disk, and writes under the operator root.
 
-See Issue #82 (Skill Builder). Execution of skills is out of scope here and
-will be added by a follow-up PR on top of the llm_worker ARQ pattern.
+Skills are directories of ``SKILL.md`` under the bundled library and the
+optional ``VIGIL_SKILLS_PATH`` root; see ``core.skills.skill_library``. Writes
+go only to that operator root. The bundled library is never modified.
 """
 
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from core.routing import Auth, RouterMeta
-from core.skills.schemas import (
-    SkillCreate,
-    SkillGenerateRequest,
-    SkillGenerateResponse,
-    SkillImportResponse,
-    SkillResponse,
-    SkillUpdate,
+from core.skills.skill_library import (
+    Skill,
+    SkillConflict,
+    SkillError,
+    SkillNotFound,
+    delete_operator_skill,
+    is_bundled,
+    load_skills,
+    operator_skills_root,
+    read_skill_file,
+    skill_body,
+    skill_files,
+    skill_roots,
+    skill_version,
+    write_operator_skill,
 )
-from core.skills.skill_importer import (
-    MAX_ZIP_BYTES,
-    SkillImportError,
-    import_skill_zip,
-)
-from core.skills.skill_service import SkillService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -32,122 +38,141 @@ ROUTER_META = RouterMeta(
     tags=["skills"],
     auth=Auth.REQUIRED,
 )
-logger = logging.getLogger(__name__)
 
 
-def _service() -> SkillService:
-    return SkillService()
+class SkillResponse(BaseModel):
+    name: str
+    description: str
+    source_path: str
+    bundled: bool
+    file_count: int
 
 
-@router.post("/generate", response_model=SkillGenerateResponse)
-def generate_skill(request: SkillGenerateRequest):
-    """Generate a skill draft from a natural-language description.
+class SkillFile(BaseModel):
+    path: str
+    size: int
 
-    Supports multi-turn clarification. If Claude asks a question, the client
-    re-submits with the prior conversation_history plus user_response.
-    """
-    conversation_history = request.conversation_history or []
-    if request.user_response:
-        conversation_history.append({"role": "user", "content": request.user_response})
 
-    result = _service().generate_skill(
-        description=request.description,
-        category=request.category,
-        conversation_history=conversation_history or None,
+class SkillFileContent(BaseModel):
+    path: str
+    content: str
+
+
+class SkillDetail(SkillResponse):
+    body: str
+    operator_root_set: bool
+    version: int
+    files: list[SkillFile]
+
+
+class SkillWriteRequest(BaseModel):
+    name: str
+    description: str
+    body: str
+    # A loaded skill to copy in full when saving under a new name.
+    source: Optional[str] = None
+    # The version the drawer opened; an overwrite is refused if it has moved.
+    version: Optional[int] = None
+
+
+def _response(skill: Skill) -> SkillResponse:
+    return SkillResponse(
+        name=skill.name,
+        description=skill.description,
+        source_path=str(skill.path),
+        bundled=is_bundled(skill),
+        file_count=len(skill_files(skill)),
     )
 
-    if not result.get("success"):
-        raise HTTPException(
-            status_code=500,
-            detail=result.get("error", "Failed to generate skill"),
-        )
-    return result
+
+def _loaded(name: str) -> Skill:
+    skill = {item.name: item for item in load_skills(skill_roots())}.get(name)
+    if skill is None:
+        raise SkillNotFound(f"No skill named {name!r}")
+    return skill
 
 
-@router.post("/import", response_model=SkillImportResponse, status_code=201)
-async def import_skill(
-    file: UploadFile = File(...),
-    created_by: Optional[str] = Form(None),
-):
-    """Import a Claude Desktop-compatible skill ``.zip`` bundle (Issue #130).
-
-    The zip must contain a ``SKILL.md`` (YAML frontmatter + markdown body).
-    If a skill with the same name already exists, it is overwritten and its
-    version bumped; otherwise a new row is created.
-    """
-    try:
-        zip_bytes = await file.read()
-        if len(zip_bytes) > MAX_ZIP_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail={
-                    "message": (
-                        f"Zip exceeds {MAX_ZIP_BYTES // (1024 * 1024)} MB limit"
-                    ),
-                    "details": {
-                        "size_bytes": len(zip_bytes),
-                        "limit_bytes": MAX_ZIP_BYTES,
-                    },
-                },
-            )
-        return import_skill_zip(zip_bytes, created_by=created_by)
-    except SkillImportError as err:
-        raise HTTPException(
-            status_code=err.status_code,
-            detail={"message": err.message, "details": err.details},
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error importing skill zip: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("", response_model=SkillResponse, status_code=201)
-@router.post(
-    "/", response_model=SkillResponse, status_code=201, include_in_schema=False
-)
-async def create_skill(data: SkillCreate):
-    """Persist a new skill."""
-    created = _service().create_skill(
-        data=data.model_dump(exclude={"created_by"}),
-        created_by=data.created_by,
+def _http(exc: SkillError) -> HTTPException:
+    status = (
+        404
+        if isinstance(exc, SkillNotFound)
+        else 409 if isinstance(exc, SkillConflict) else 400
     )
-    return created
+    return HTTPException(status_code=status, detail=str(exc))
 
 
 @router.get("", response_model=list[SkillResponse])
 @router.get("/", response_model=list[SkillResponse], include_in_schema=False)
-async def list_skills(
-    category: Optional[str] = Query(None),
-    is_active: Optional[bool] = Query(None),
-):
-    """List skills, optionally filtered by category and is_active."""
-    return _service().list_skills(category=category, is_active=is_active)
+async def list_skills():
+    """Every valid skill under the configured roots, bundled library first."""
+    return [_response(skill) for skill in load_skills(skill_roots())]
 
 
-@router.get("/{skill_id}", response_model=SkillResponse)
-async def get_skill(skill_id: str):
-    skill = _service().get_skill(skill_id)
-    if not skill:
-        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
-    return skill
-
-
-@router.put("/{skill_id}", response_model=SkillResponse)
-async def update_skill(skill_id: str, patch: SkillUpdate):
-    updated = _service().update_skill(
-        skill_id=skill_id,
-        patch=patch.model_dump(exclude_unset=True),
+@router.get("/{name}", response_model=SkillDetail)
+async def get_skill(name: str):
+    """One skill, including the Markdown body the drawer edits."""
+    try:
+        skill = _loaded(name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    try:
+        body = skill_body(skill)
+    except OSError as exc:
+        logger.warning("could not read skill %s: %s", name, exc)
+        raise HTTPException(status_code=400, detail="Could not read the skill") from exc
+    listed = _response(skill)
+    return SkillDetail(
+        **listed.model_dump(),
+        body=body,
+        operator_root_set=operator_skills_root() is not None,
+        version=skill_version(skill),
+        files=skill_files(skill),
     )
-    if not updated:
-        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
-    return updated
 
 
-@router.delete("/{skill_id}")
-async def delete_skill(skill_id: str):
-    ok = _service().delete_skill(skill_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
-    return {"success": True, "skill_id": skill_id}
+@router.get("/{name}/files/{path:path}", response_model=SkillFileContent)
+async def get_skill_file(name: str, path: str):
+    """One text file in the skill folder, read-only. Nothing is executed."""
+    try:
+        content = read_skill_file(_loaded(name), path)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    except OSError as exc:
+        logger.warning("could not read skill file %s/%s: %s", name, path, exc)
+        raise HTTPException(
+            status_code=400, detail="Could not read the skill file"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SkillFileContent(path=path, content=content)
+
+
+@router.post("", response_model=SkillResponse)
+@router.post("/", response_model=SkillResponse, include_in_schema=False)
+async def save_skill(req: SkillWriteRequest):
+    """Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+
+    An existing operator skill is overwritten when ``version`` is the one on disk
+    (409 otherwise); ``source`` copies that skill's folder.
+    """
+    try:
+        skill = write_operator_skill(
+            req.name,
+            req.description,
+            req.body,
+            source=req.source,
+            expected_version=req.version,
+        )
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return _response(skill)
+
+
+@router.delete("/{name}")
+async def remove_skill(name: str):
+    """Delete an operator skill directory. A bundled skill is refused."""
+    try:
+        delete_operator_skill(name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return {"deleted": name}

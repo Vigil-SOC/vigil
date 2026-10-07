@@ -24,6 +24,7 @@ from core.llm.providers import provider_service
 # was provided at /discover-models time).
 from core.llm.providers.registry import (
     _FALLBACK_MODELS_BY_PROVIDER,
+    VALID_PROVIDER_TYPES,
     fetch_provider_models,
     invalidate_model_cache,
 )
@@ -44,7 +45,6 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 
-VALID_PROVIDER_TYPES = {"anthropic", "openai", "ollama"}
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
 ANTHROPIC_FALLBACK_MODELS = list(_FALLBACK_MODELS_BY_PROVIDER["anthropic"])
@@ -567,10 +567,6 @@ async def discover_models(
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"{req.provider_type}: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(e))
 
     return {"models": [m.id for m in meta]}
 
@@ -613,10 +609,7 @@ async def list_models(
     # ``fetch_provider_models`` delegates to the discovery module and
     # falls back to the cold-boot list on any error, so callers always
     # get a usable payload.
-    try:
-        models = await fetch_provider_models(row)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(e))
+    models = await fetch_provider_models(row)
     return {"models": models}
 
 
@@ -640,10 +633,7 @@ async def refresh_provider_models(
     # sees the new state too, not just the backend's cache.
     sync_results = await sync_all_provider_models()
 
-    try:
-        models = await fetch_provider_models(row)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(e))
+    models = await fetch_provider_models(row)
     return {
         "provider_id": provider_id,
         "provider_type": row.provider_type,

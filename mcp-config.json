@@ -1,7 +1,7 @@
 {
   "$schema": "https://github.com/anthropics/anthropic-quickstarts/blob/main/mcp/config-schema.json",
 
-  "_comment_overview": "MCP Server Modernization: Official/community servers replace legacy tools/* where available. Tier 4 tools (no replacement) remain as custom implementations. Set env vars in .env or shell before starting.",
+  "_comment_overview": "MCP Server Modernization: Official/community servers replace legacy tools/* where available. Tier 4 tools (no replacement) remain as custom implementations. Set env vars in .env or shell before starting. Runtime-fetched servers (npx/uvx/docker) pin an exact version or digest so launch does not resolve registry HEAD.",
 
   "mcpServers": {
 
@@ -9,51 +9,15 @@
 
     "github": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
       }
     },
 
-    "_comment_memory": "--- Persistent Memory Layer ---",
-
-    "mempalace": {
-      "command": "python3",
-      "args": ["-m", "mempalace.mcp_server"],
-      "env": {
-        "MEMPALACE_PALACE_PATH": "${MEMPALACE_PALACE_PATH:-${VIGIL_DIR}/mempalace/palace}"
-      }
-    },
-
-    "_comment_internal": "--- DeepTempo Internal Servers ---",
-
-    "deeptempo-findings": {
-      "command": "python3",
-      "args": ["tools/mcp/deeptempo_findings.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "tempo-flow": {
-      "command": "python3",
-      "args": ["tools/mcp/tempo_flow.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "approval": {
-      "command": "python3",
-      "args": ["tools/mcp/approval.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "attack-layer": {
-      "command": "python3",
-      "args": ["tools/mcp/attack_layer.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
     "security-detections": {
       "command": "npx",
-      "args": ["-y", "security-detections-mcp"],
+      "args": ["-y", "security-detections-mcp@3.3.0"],
       "env": {
         "SIGMA_PATHS": "${HOME}/security-detections/sigma/rules",
         "SPLUNK_PATHS": "${HOME}/security-detections/security_content/detections",
@@ -65,8 +29,9 @@
 
     "loglm": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN}"],
+      "args": ["-y", "mcp-remote@0.1.49", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN}"],
       "env": {
+        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x.",
         "LOGLM_MCP_URL": "${LOGLM_MCP_URL}"
       }
     },
@@ -75,7 +40,7 @@
 
     "crowdstrike": {
       "command": "uvx",
-      "args": ["falcon-mcp"],
+      "args": ["falcon-mcp==0.19.0"],
       "env": {
         "FALCON_CLIENT_ID": "${FALCON_CLIENT_ID}",
         "FALCON_CLIENT_SECRET": "${FALCON_CLIENT_SECRET}",
@@ -85,7 +50,7 @@
 
     "sentinelone": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/Sentinel-One/purple-mcp.git", "purple-mcp", "--mode", "stdio"],
+      "args": ["--from", "git+https://github.com/Sentinel-One/purple-mcp.git@v0.7.0", "purple-mcp", "--mode", "stdio"],
       "env": {
         "PURPLEMCP_CONSOLE_TOKEN": "${SENTINELONE_API_TOKEN}",
         "PURPLEMCP_CONSOLE_BASE_URL": "${SENTINELONE_CONSOLE_URL}"
@@ -94,19 +59,19 @@
 
     "azure-sentinel": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@^0.1.16", "https://sentinelmcp.microsoft.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@0.1.49", "https://sentinelmcp.microsoft.com/v1/mcp"],
       "env": {
         "_setup_note": "Microsoft Sentinel MCP (GA Nov 2025). Requires: (1) Onboarding to Microsoft Sentinel data lake, (2) Microsoft Entra OAuth. See: https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-get-started",
-        "_security_note": "mcp-remote pinned to >=0.1.16 to avoid CVE-2025-6514 (RCE via malicious authorization_endpoint in OAuth metadata). Do not remove the version pin."
+        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x."
       }
     },
 
     "splunk": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@^0.1.16", "${SPLUNK_MCP_URL}"],
+      "args": ["-y", "mcp-remote@0.1.49", "${SPLUNK_MCP_URL}"],
       "env": {
         "_setup_note": "Splunk Official MCP Server. Deploy via Azure Marketplace (Splunk-hosted) or self-managed. See: https://www.splunk.com/en_us/blog/artificial-intelligence/unlocking-ai-driven-operations-with-splunk-mcp-server-on-azure-marketplace.html",
-        "_security_note": "mcp-remote pinned to >=0.1.16 to avoid CVE-2025-6514 (RCE via malicious authorization_endpoint in OAuth metadata). Do not remove the version pin.",
+        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x.",
         "SPLUNK_MCP_URL": "${SPLUNK_MCP_URL}"
       }
     },
@@ -116,7 +81,7 @@
       "args": ["core/integrations/splunk/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "Self-hosted Splunk via REST API. Set SPLUNK_URL (e.g., https://splunk.example.com:8089), SPLUNK_USERNAME, and SPLUNK_PASSWORD in .env. Port 8089 uses HTTPS by default."
+        "_setup_note": "Self-hosted Splunk via REST API. Configure in Settings (server URL such as https://splunk.example.com:8089, username, password). The tool reads via resolve(), which also accepts SPLUNK_URL, SPLUNK_USERNAME and SPLUNK_PASSWORD from the environment; there is no required env placeholder, so the server is not treated as dormant until those values exist. Port 8089 uses HTTPS by default."
       }
     },
 
@@ -125,13 +90,22 @@
       "args": ["core/integrations/elastic/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "Elastic Security via Elasticsearch REST API. Set ELASTIC_HOST (e.g., https://elasticsearch.example.com:9200), ELASTIC_API_KEY or ELASTIC_USERNAME/ELASTIC_PASSWORD, and optionally ELASTIC_KIBANA_URL in .env."
+        "_setup_note": "Elastic Security via Elasticsearch REST API. Configure in Settings (elasticsearch URL, API key or username/password, optional Kibana URL). The tool reads via resolve(); there is no required env placeholder, so the server is not treated as dormant until those values exist."
+      }
+    },
+
+    "opensearch": {
+      "command": "python3",
+      "args": ["core/integrations/opensearch/tool.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "OpenSearch SIEM via the OpenSearch REST API. Configure in Settings (OpenSearch URL, username/password, optional OpenSearch Dashboards URL). The tool reads via resolve(); there is no required env placeholder, so the server is not treated as dormant until those values exist."
       }
     },
 
     "pagerduty": {
       "command": "uvx",
-      "args": ["pagerduty-mcp", "--enable-write-tools"],
+      "args": ["pagerduty-mcp==1.1.0", "--enable-write-tools"],
       "env": {
         "PAGERDUTY_USER_API_KEY": "${PAGERDUTY_API_KEY}",
         "PAGERDUTY_API_HOST": "https://api.pagerduty.com"
@@ -143,17 +117,19 @@
       "args": ["run", "-i", "--rm",
         "-e", "OKTA_DOMAIN=${OKTA_DOMAIN}",
         "-e", "OKTA_API_TOKEN=${OKTA_API_TOKEN}",
-        "mcp/okta-mcp-fctr"
+        "mcp/okta-mcp-fctr@sha256:8d6cd51e1836802e18bfc12ae772962f4ce3fdec667f472eec66bba811e4a27c"
       ],
-      "env": {}
+      "env": {
+        "_setup_note": "Docker Hub only publishes latest for this image; the digest pins the multi-arch index so launch does not float."
+      }
     },
 
     "jira": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@^0.1.16", "https://mcp.atlassian.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@0.1.49", "https://mcp.atlassian.com/v1/mcp"],
       "env": {
         "_setup_note": "Atlassian Rovo MCP Server (official). Covers Jira + Confluence + Compass. Uses OAuth 2.1 via browser flow. See: https://github.com/atlassian/atlassian-mcp-server",
-        "_security_note": "mcp-remote pinned to >=0.1.16 to avoid CVE-2025-6514 (RCE via malicious authorization_endpoint in OAuth metadata). Do not remove the version pin."
+        "_security_note": "mcp-remote pinned to 0.1.49 (CVE-2025-6514 is fixed in 0.1.16+). Stay on 0.1.x; do not jump to 0.8.x."
       }
     },
 
@@ -171,7 +147,7 @@
 
     "virustotal": {
       "command": "npx",
-      "args": ["-y", "@burtthecoder/mcp-virustotal"],
+      "args": ["-y", "@burtthecoder/mcp-virustotal@1.0.25"],
       "env": {
         "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
       }
@@ -179,15 +155,23 @@
 
     "shodan": {
       "command": "npx",
-      "args": ["-y", "@burtthecoder/mcp-shodan"],
+      "args": ["-y", "@burtthecoder/mcp-shodan@1.0.22"],
       "env": {
         "SHODAN_API_KEY": "${SHODAN_API_KEY}"
+      }
+    },
+    "firecrawl": {
+      "command": "npx",
+      "args": ["-y", "firecrawl-mcp@3.24.0"],
+      "env": {
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
     },
 
     "gcp-secops": {
       "command": "uvx",
-      "args": ["--from", "google-secops-mcp", "secops_mcp"],
+      "_comment": "Pin mcp 1.x: this server uses the v1 mcp.server.fastmcp API, which mcp 2.x removed.",
+      "args": ["--with", "mcp==1.29.1", "--from", "google-secops-mcp==0.7.1", "secops_mcp"],
       "env": {
         "CHRONICLE_PROJECT_ID": "${CHRONICLE_PROJECT_ID}",
         "CHRONICLE_CUSTOMER_ID": "${CHRONICLE_CUSTOMER_ID}",
@@ -197,7 +181,8 @@
 
     "gcp-threat-intel": {
       "command": "uvx",
-      "args": ["gti_mcp"],
+      "_comment": "Pin mcp 1.x: this server uses the v1 mcp.server.fastmcp API, which mcp 2.x removed.",
+      "args": ["--with", "mcp==1.29.1", "--from", "gti-mcp==0.1.3", "gti_mcp"],
       "env": {
         "VT_APIKEY": "${VIRUSTOTAL_API_KEY}"
       }
@@ -205,13 +190,14 @@
 
     "gcp-scc": {
       "command": "uvx",
-      "args": ["scc_mcp"],
+      "_comment": "Pin mcp 1.x: this server uses the v1 mcp.server.fastmcp API, which mcp 2.x removed.",
+      "args": ["--with", "mcp==1.29.1", "--from", "scc-mcp==0.1.1", "scc_mcp"],
       "env": {}
     },
 
     "aws-security": {
       "command": "uvx",
-      "args": ["awslabs.well-architected-security-mcp-server@latest"],
+      "args": ["awslabs.well-architected-security-mcp-server==0.2.0"],
       "env": {
         "_setup_note": "AWS Well-Architected Security Assessment MCP. Covers GuardDuty, Security Hub, Inspector, IAM Access Analyzer. Requires AWS credentials. See: https://awslabs.github.io/mcp/servers/well-architected-security-mcp-server",
         "AWS_REGION": "${AWS_REGION}",
@@ -220,11 +206,12 @@
     },
 
     "cribl-stream": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/pebbletek/cribl-mcp.git", "cribl-mcp"],
+      "command": "npx",
+      "args": ["-y", "@pebbletek/cribl-mcp@0.1.12"],
       "env": {
         "_setup_note": "Cribl Stream MCP (community, MIT). See: https://docs.cribl.io/copilot/cribl-mcp-server/",
         "CRIBL_BASE_URL": "${CRIBL_BASE_URL}",
+        "CRIBL_AUTH_TYPE": "${CRIBL_AUTH_TYPE:-cloud}",
         "CRIBL_CLIENT_ID": "${CRIBL_CLIENT_ID}",
         "CRIBL_CLIENT_SECRET": "${CRIBL_CLIENT_SECRET}"
       }
@@ -306,7 +293,11 @@
     "misp": {
       "command": "python3",
       "args": ["core/integrations/misp/tool.py"],
-      "cwd": "${workspaceFolder}"
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "MISP via REST API. Set MISP_URL and MISP_API_KEY (generate an Auth Key in the MISP UI) in .env; MISP_VERIFY_SSL=false for a local self-signed cert (defaults to verify). The tool loads all three from .env directly; only MISP_API_KEY gates dormancy, so the server stays dormant until it is set.",
+        "MISP_API_KEY": "${MISP_API_KEY}"
+      }
     },
 
     "hybrid-analysis": {
@@ -328,6 +319,15 @@
       "env": {
         "CAPE_SANDBOX_URL": "${CAPE_SANDBOX_URL}",
         "CAPE_SANDBOX_API_KEY": "${CAPE_SANDBOX_API_KEY}"
+      }
+    },
+
+    "atomic-red-team": {
+      "command": "python3",
+      "args": ["core/integrations/atomic_red_team/tool.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "Operator-installed Atomic Red Team runner. Configure runner_path (and optional atomics_path) in Settings → Integrations. The execute tool refuses without environment_id. Disabled by default; saving config does not invoke the runner."
       }
     },
 

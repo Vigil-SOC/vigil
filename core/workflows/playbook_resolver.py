@@ -4,15 +4,18 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.defaults import DEFAULT_MODEL
+from core.skills.skill_library import READ_SKILL_TOOL
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
-    from core.workflows.workflows_service import WorkflowsService
+    from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,12 @@ EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
 
+# The investigate arch names these on the lead. Compose phases never declare
+# case_records, and a workflow that omitted get_finding still needs the lead to
+# fetch the finding it was opened on.
+INVESTIGATE_TOOLS = ("case_records", "get_finding")
+CASE_RECORDS_BOUNDS = {"max_rows": 100, "timeout_ms": 15_000}
+
 
 def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, Any]]:
     from core.llm.tool_schemas import ALL_TOOLS
@@ -47,31 +56,90 @@ def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, An
 def _mcp_catalogue(registry: Optional["MCPRegistry"]) -> List[Dict[str, Any]]:
     if registry is None:
         return []
+    # Sync to the running client's live connection state first, so a server
+    # enabled+connected after boot binds here without a reload. No-op when there
+    # is no process client. Best effort in its own right: a refresh that fails
+    # must not cost us the registry we already hold, nor the cache fallback below.
     try:
-        return registry.get_all_tools()
+        from core.integrations.mcp.registry import refresh_from_client
+
+        refresh_from_client(registry)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("MCP registry unavailable while resolving tools: %s", exc)
+        logger.warning("MCP refresh failed while resolving tools: %s", exc)
+
+    try:
+        tools = registry.get_all_tools()
+        # An empty registry and a deployment with no integrations resolve differently,
+        # so fill from the cache before concluding a capability binds to nothing.
+        if not tools:
+            from core.integrations.mcp.registry import populate_from_cache
+
+            if populate_from_cache(registry):
+                tools = registry.get_all_tools()
+        return tools
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("MCP registry unavailable while resolving tools: %s", exc)
         return []
 
 
+# One way a capability can be answered. server is the MCP server as mcp-config.json
+# names it, or None for a tool this backend implements itself; tools is that
+# server's own names in preference order.
+@dataclass(frozen=True)
+class Candidate:
+    server: Optional[str]
+    tools: Tuple[str, ...]
+
+    # get_all_tools() flattens to {server}_{tool}, doubling the prefix when a server's
+    # own names already carry it. Built rather than guessed.
+    def names(self) -> Tuple[str, ...]:
+        if self.server is None:
+            return self.tools
+        return tuple(f"{self.server}_{tool}" for tool in self.tools)
+
+
 # What an arch means when it asks for a capability, in the order a deployment
-# should prefer. First one present wins; none present drops the capability.
-CAPABILITIES: Dict[str, Tuple[str, ...]] = {
+# should prefer. First present wins; none present drops the capability, which the hunt
+# journals as a visibility gap rather than running blind.
+CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "telemetry_search": (
-        "splunk_search",
-        "elastic_search",
-        "azure-sentinel_query",
-        "gcp-secops_search",
-        "crowdstrike_query",
+        # In-repo servers, verified against their own list_tools() by a ratchet.
+        # splunk_execute first: it takes earliest, which nl_search cannot express.
+        Candidate("splunk-selfhosted", ("splunk_execute", "splunk_nl_search")),
+        Candidate("elastic", ("elastic_search_logs", "elastic_search_by_ioc")),
+        # Third-party servers: unverifiable from this repo, so these are preferences
+        # matched against whatever the server reports.
+        Candidate("splunk", ("run_splunk_search", "search", "oneshot_search")),
+        Candidate("azure-sentinel", ("query", "run_query", "search")),
+        Candidate("gcp-secops", ("search_security_events", "search")),
+        Candidate("crowdstrike", ("falcon_search_detects", "query", "search")),
     ),
     "indicator_lookup": (
-        "lookup_indicators",
-        "virustotal_lookup",
-        "alienvault-otx_indicator",
-        "misp_search",
+        Candidate(None, ("lookup_indicators",)),
+        Candidate("misp", ("misp_search_ioc",)),
+        Candidate("alienvault-otx", ("otx_check_ip", "otx_check_domain")),
+        Candidate("virustotal", ("get_ip_report", "get_domain_report")),
     ),
-    "findings_search": ("search_findings",),
-    "similar_findings": ("nearest_neighbors",),
+    "findings_search": (Candidate(None, ("search_findings",)),),
+    # One candidate and no fallback: episodic memory is Vigil's own tier, so a
+    # deployment either carries it or has no history to offer.
+    "entity_recall": (Candidate(None, ("recall_entity",)),),
+}
+
+
+# What one call of a capability may take and return, decided by the capability rather
+# than the server: a telemetry search scans a corpus, an indicator lookup reads a row.
+# The agent layer's 30s default is not a SIEM timeout, and a search that crosses it
+# reaches the hunt as a gap in visibility rather than as a search that was cut off.
+CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
+    "telemetry_search": {"timeout_ms": 120_000, "max_rows": 500},
+    "indicator_lookup": {"timeout_ms": 60_000, "max_rows": 200},
+    "findings_search": {"timeout_ms": 30_000, "max_rows": 200},
+    # A read of our own Postgres, so the findings timeout is generous. The row
+    # cap is stated because the bounds model requires one, not because it bites:
+    # recall answers with one envelope, and the injected `limit` is in
+    # RECALL_IGNORED_ARGS because memory caps each list itself.
+    "entity_recall": {"timeout_ms": 30_000, "max_rows": 200},
 }
 
 
@@ -82,17 +150,18 @@ def _bound_capabilities(
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
     for capability in needs:
-        for candidate in CAPABILITIES.get(capability, ()):
-            entry = catalogue.get(candidate)
+        for name in _candidate_names(capability):
+            entry = catalogue.get(name)
             if entry is None:
                 continue
             bound.append(
                 {
-                    "id": candidate,
+                    "id": name,
                     "kind": REMOTE,
                     "provides": capability,
                     "description": entry.get("description", ""),
                     "parameters": entry.get("input_schema") or {},
+                    **CAPABILITY_BOUNDS.get(capability, {}),
                 }
             )
             break
@@ -104,15 +173,52 @@ def _bound_capabilities(
     return bound
 
 
-# An agent's prompt is rendered now rather than read from a file: the memory-palace
-# block depends on what is connected, so a stored copy would describe another run.
-def _prompt_for(agent_id: str) -> str:
-    from core.agents.manager import SOCAgentLibrary
+# Flattened once, so the caller matching the catalogue and the ratchet checking it
+# read from one definition.
+def _candidate_names(capability: str) -> Tuple[str, ...]:
+    return tuple(
+        name
+        for candidate in CAPABILITIES.get(capability, ())
+        for name in candidate.names()
+    )
 
+
+# An agent's prompt is rendered now rather than read from a file: the memory block
+# depends on the agent's own grant, so a stored copy would describe another agent.
+def _profile_for(agent_id: str) -> Any:
+    from core.agents.enablement import disabled_agent_ids, disabled_message
+    from core.agents.manager import (
+        CUSTOM_AGENT_ID_PREFIX,
+        AgentManager,
+        SOCAgentLibrary,
+    )
+
+    # Built-in hit: catalog, no I/O. custom- miss: AgentManager refreshes from
+    # the DB in __init__ — the same seam as routers.agents._resolve_agent.
+    # SOCAgentLibrary stays the builtins catalog.
     profile = SOCAgentLibrary.get_agent(agent_id)
+    if profile is None and agent_id and agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
+        profile = AgentManager().agents.get(agent_id)
     if profile is None:
         raise UnknownPlaybook(f"phase names agent {agent_id}, which does not exist")
-    return profile.system_prompt
+    if agent_id in disabled_agent_ids():
+        raise UnknownPlaybook(f"phase names {disabled_message(agent_id)}")
+    return profile
+
+
+def _prompt_for(agent_id: str) -> str:
+    return _profile_for(agent_id).system_prompt
+
+
+# Compose allows phase.tools. The prompt already tells an agent whose profile
+# recommends read_skill to call it, so that name has to be on the phase or the
+# call the prompt requires is refused. Other recommended tools stay off the
+# phase: the workflow author listed what this step may use.
+def _tools_for(phase: Dict[str, Any], recommended: List[str]) -> List[str]:
+    tools = list(phase.get("tools") or [])
+    if READ_SKILL_TOOL in recommended and READ_SKILL_TOOL not in tools:
+        tools.append(READ_SKILL_TOOL)
+    return tools
 
 
 # A file playbook writes one instructions block. A custom workflow authors the same
@@ -141,6 +247,7 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
         if not agent:
             raise UnknownPlaybook(f"phase {index + 1} names no agent")
 
+        profile = _profile_for(agent)
         resolved.append(
             {
                 "id": phase.get("id") or phase.get("phase_id") or f"phase-{index + 1}",
@@ -148,15 +255,16 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
                 "name": phase.get("name") or f"Phase {index + 1}",
                 "instructions": _instructions_of(phase),
                 "approval_required": bool(phase.get("approval_required")),
-                "tools": list(phase.get("tools") or []),
-                "prompt": _prompt_for(agent),
+                "tools": _tools_for(phase, profile.recommended_tools),
+                "prompt": profile.system_prompt,
             }
         )
     return resolved
 
 
-# Only what some step may actually call. A catalogue handed to the registry would
-# widen every grant to everything, which is the opposite of deny-by-default.
+# Phase-declared tools, plus the investigate lead's. Extra names on a compose
+# config are harmless — compose grants per phase. A catalogue handed to the
+# registry would widen every grant to everything, which is deny-by-default inverted.
 def _tools_of(
     phases: List[Dict[str, Any]], registry: Optional["MCPRegistry"]
 ) -> List[Dict[str, Any]]:
@@ -166,6 +274,9 @@ def _tools_of(
         for tool in phase["tools"]:
             if tool not in wanted:
                 wanted.append(tool)
+    for name in INVESTIGATE_TOOLS:
+        if name not in wanted:
+            wanted.append(name)
 
     tools: List[Dict[str, Any]] = []
     for name in wanted:
@@ -175,12 +286,14 @@ def _tools_of(
             # does not carry should lose that tool, not fail to run at all.
             logger.warning("playbook names unknown tool %s; dropping it", name)
             continue
+        extra = CASE_RECORDS_BOUNDS if name == "case_records" else {}
         tools.append(
             {
                 "id": name,
                 "kind": REMOTE,
                 "description": entry.get("description", ""),
                 "parameters": entry.get("input_schema") or {},
+                **extra,
             }
         )
     return tools
@@ -198,11 +311,19 @@ def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
         phase["tools"] = [tool for tool in phase["tools"] if tool in declared]
 
 
+# Only ART execute is gated. The id must be one config.tools actually carries:
+# spec.ts refuses an approvals name that is not declared. Native and MCP-flattened
+# spellings both count; whichever resolved is the one that goes on the list.
+def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
+    return [tool["id"] for tool in tools if tool["id"] in EXECUTE_IDS]
+
+
 def resolve(
     workflow_id: str,
     model: Optional[str] = None,
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Return the playbook and config layers for ``workflow_id``, as YAML text."""
     from core.workflows.workflows_service import WorkflowsService
@@ -212,9 +333,10 @@ def resolve(
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
 
     phases = _phases_of(definition)
-    # Refused rather than run: a playbook with no steps completes instantly having
-    # done nothing, which reads exactly like a run that worked.
-    if not phases:
+    # A lead has no steps; its playbook is the objectives and the body. Compose
+    # with none completes instantly having done nothing, which reads exactly
+    # like a run that worked.
+    if not phases and definition.run_kind != "investigate":
         raise UnknownPlaybook(
             f"{workflow_id} declares no phases; there is nothing to run"
         )
@@ -236,12 +358,14 @@ def resolve(
 
     config = {
         "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
         "budgets": _budgets(phases),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
-        # Empty by design: a phase stops for a human through its own checkpoint,
-        # which is a property of the step rather than of a tool it happens to call.
-        "approvals": [],
+        # ART execute parks until a human approves. Other grants, and a compose
+        # that never received execute, stay ungated. A phase checkpoint is
+        # separate (approval_required on the step) and is not a substitute.
+        "approvals": _approvals_of(tools),
         "thresholds": {},
     }
 
@@ -252,14 +376,57 @@ def resolve(
 # boundary for the same reason RUN_KINDS is, and held to it by a ratchet.
 HUNT_CAPABILITIES = (
     "findings_search",
-    "similar_findings",
     "telemetry_search",
     "indicator_lookup",
+    # Bound on the run rather than granted to every role: `needs` in the arch is
+    # what decides who holds it, and the lead and critic are not granted it.
+    "entity_recall",
 )
 
 # A hunt is bounded by iterations rather than phases, and each one costs a lead
-# turn, its workers and the critic. Wider than a compose run of the same size.
-HUNT_BUDGETS = {"max_calls": 24, "max_cost_usd": 10.0, "max_wall_ms": 1_800_000}
+# turn, its workers and the critic. Separate ceilings: max_calls only backstops a
+# runaway turn, and the agent layer raises it to match the turn count a run asks for.
+HUNT_ITERATIONS = 8
+
+# A turn dispatches up to this many workers, each running its own tool loop, plus the
+# lead and the critic; the two spare turns per agent are the emission retries.
+# Mirrored from services/agent/workflows/hunt/types.ts and held to it by a ratchet.
+HUNT_MAX_WORKERS = 4
+CALLS_PER_ITERATION = (HUNT_MAX_WORKERS + 2) * (int(DEFAULT_RUNTIME["max_turns"]) + 2)
+# 90 minutes of wall: at several minutes an iteration, a half-hour ceiling ends the
+# hunt on the clock with most of its cost budget unspent.
+HUNT_BUDGETS = {
+    "max_calls": HUNT_ITERATIONS * CALLS_PER_ITERATION,
+    "max_cost_usd": 15.0,
+    "max_wall_ms": 5_400_000,
+}
+
+# Above the harness defaults (8 turns, 12 calls) so the $15 and 90-minute ceilings
+# are what stop a trace, not the tool-turn cap.
+ROOT_CAUSE_MAX_TURNS = 1024
+ROOT_CAUSE_MAX_CALLS = 1024
+
+# Under thresholds rather than budgets: the agent layer's budget block refuses added
+# keys, and a turn is the hunt's unit rather than the harness's.
+HUNT_THRESHOLDS = {"max_iterations": HUNT_ITERATIONS}
+
+
+# What this deployment can and cannot answer, without resolving a whole playbook. The
+# console asks before a run starts, so the deployment gap is told before the spend.
+def capability_report(
+    registry: Optional["MCPRegistry"] = None,
+) -> Dict[str, List[str]]:
+    catalogue = _tool_catalogue(registry)
+    bound = {
+        tool["provides"]
+        for tool in _bound_capabilities(list(HUNT_CAPABILITIES), catalogue)
+        if tool.get("provides")
+    }
+    return {
+        "bound": [name for name in HUNT_CAPABILITIES if name in bound],
+        "unbound": [name for name in HUNT_CAPABILITIES if name not in bound],
+    }
+
 
 # The null hypothesis on the board from the start. Without it the benign
 # explanation is only ever an objection, never a competing claim -- which is the
@@ -280,6 +447,7 @@ def resolve_hunt(
     model: Optional[str] = None,
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
 ) -> Tuple[str, str]:
     from core.workflows.workflows_service import WorkflowsService
 
@@ -287,13 +455,9 @@ def resolve_hunt(
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
 
+    # Empty is the shipped case, not an error: what a hunt tests belongs to the caller.
+    # A run with none from either source is refused in execute_workflow.
     hypotheses = _strings(definition.metadata.get("hypotheses"))
-    # Refused rather than run: a hunt with nothing to test would open a ledger,
-    # spend a lead turn and conclude having tested nothing.
-    if not hypotheses:
-        raise UnknownPlaybook(
-            f"{workflow_id} declares no hypotheses; there is nothing to test"
-        )
 
     playbook = {
         "name": definition.name,
@@ -311,6 +475,7 @@ def resolve_hunt(
 
     config = {
         "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
         "budgets": dict(HUNT_BUDGETS),
         "runtime": DEFAULT_RUNTIME,
         "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))
@@ -318,15 +483,163 @@ def resolve_hunt(
         # The hunt gates on its own checkpoint classes, which are a property of
         # what it is about to conclude rather than of a tool it happens to call.
         "approvals": [],
-        "thresholds": {},
+        "thresholds": dict(HUNT_THRESHOLDS),
         "hypothesis_loop": HUNT_HYPOTHESIS_LOOP,
     }
+
+    # Checkpoint policies a definition declares. The agent merges these over its
+    # DEFAULT_CHECKPOINTS, so an unset policy keeps the default; omit the key
+    # entirely when the definition names none.
+    checkpoints = _checkpoints(definition)
+    if checkpoints:
+        config["checkpoints"] = checkpoints
 
     return _dump(playbook), _dump(config)
 
 
+# A root-cause trace is one investigator, not a hunt. The grant is the telemetry
+# tool this deployment already bound, plus the two local tools the trace owns.
+def resolve_root_cause(
+    workflow_id: str,
+    model: Optional[str] = None,
+    workflows: Optional["WorkflowsService"] = None,
+    registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
+) -> Tuple[str, str]:
+    from core.workflows.workflows_service import WorkflowsService
+
+    definition = (workflows or WorkflowsService()).get_workflow(workflow_id)
+    if definition is None:
+        raise UnknownPlaybook(f"no such workflow: {workflow_id}")
+
+    playbook = {
+        "name": definition.name,
+        "description": definition.description,
+        "use_case": definition.use_case,
+        "trigger_examples": list(definition.trigger_examples),
+        "objectives": _strings(definition.metadata.get("objectives")),
+        "scope": dict(definition.metadata.get("scope") or {}),
+        "directives": dict(definition.metadata.get("directives") or {}),
+        "narrative": definition.body,
+    }
+
+    config = {
+        "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
+        "budgets": {
+            "max_calls": ROOT_CAUSE_MAX_CALLS,
+            "max_cost_usd": HUNT_BUDGETS["max_cost_usd"],
+            "max_wall_ms": HUNT_BUDGETS["max_wall_ms"],
+        },
+        "runtime": {**DEFAULT_RUNTIME, "max_turns": ROOT_CAUSE_MAX_TURNS},
+        "tools": _bound_capabilities(["telemetry_search"], _tool_catalogue(registry))
+        + [_record_tool(), _finish_tool()],
+        "approvals": [],
+        "thresholds": {},
+    }
+
+    checkpoints = _checkpoints(definition)
+    if checkpoints:
+        config["checkpoints"] = checkpoints
+
+    return _dump(playbook), _dump(config)
+
+
+# The policies the agent layer understands. Stated rather than imported, like
+# RUN_KINDS: the class list is CHECKPOINT_CLASSES in the agent's checkpoints.ts,
+# and only the two words are needed to tell a policy from a typo.
+CHECKPOINT_POLICIES = ("ask", "auto")
+
+# The four moments a hunt may stop and ask, and what each does unless a definition
+# says otherwise. Mirrored from services/agent/workflows/hunt/checkpoints.ts and
+# held to it by a ratchet, so the reader can show a class the engine really has.
+CHECKPOINT_CLASSES = (
+    "hypothesis_approval",
+    "scope_extension",
+    "verdict_review",
+    "budget_anomaly",
+)
+DEFAULT_CHECKPOINTS = {
+    "hypothesis_approval": "auto",
+    "scope_extension": "auto",
+    "verdict_review": "auto",
+    "budget_anomaly": "auto",
+}
+
+
+# Refused here rather than shrugged at. A WORKFLOW.md's front matter is text nobody
+# type-checks, and YAML reads `hypothesis_approval: yes` as the boolean True. The
+# agent layer now reads anything that is not "auto" as "ask", so a typo can no
+# longer switch an approval gate off -- but a run that parks when its author meant
+# it not to is still an author being misread, and this is where they can be told.
+# The class name is the agent's to know, so an unrecognised one passes through and
+# is dropped there.
+def _checkpoints(definition: "WorkflowDefinition") -> Dict[str, Any]:
+    declared = definition.metadata.get("checkpoints") or {}
+    if not isinstance(declared, dict):
+        raise UnknownPlaybook(
+            f"{definition.id}: checkpoints must be a mapping of "
+            f"checkpoint class to {' or '.join(CHECKPOINT_POLICIES)}"
+        )
+    wrong = {
+        name: policy
+        for name, policy in declared.items()
+        if policy not in CHECKPOINT_POLICIES
+    }
+    if wrong:
+        stated = ", ".join(f"{name}: {policy!r}" for name, policy in wrong.items())
+        raise UnknownPlaybook(
+            f"{definition.id} declares checkpoint policies that are neither "
+            f"{' nor '.join(CHECKPOINT_POLICIES)}: {stated}. Quote them if YAML is "
+            "reading one as a boolean."
+        )
+    return dict(declared)
+
+
 # Local, because the answer is the run's own ledger. Declared here so the lead's
 # granted expand resolves to something rather than posting to a backend.
+def _record_tool() -> Dict[str, Any]:
+    return {
+        "id": "record",
+        "kind": "local",
+        "description": (
+            "Record one causal step of this trace. A link is proved only against "
+            "telemetry results already journaled on this run."
+        ),
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["event", "at"],
+            "properties": {
+                "step_id": {"type": "string"},
+                "event": {"type": "string"},
+                "who": {"type": "string"},
+                "at": {"type": "string"},
+                "link": {"type": "string"},
+                "cause_id": {"type": "string"},
+                "origin": {"type": "boolean"},
+                "artifact": {"type": "string"},
+            },
+        },
+    }
+
+
+def _finish_tool() -> Dict[str, Any]:
+    return {
+        "id": "finish",
+        "kind": "local",
+        "description": (
+            "Finish the trace. Refused while a step has no proven cause and the "
+            "cost and wall ceilings have not been hit."
+        ),
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+        },
+    }
+
+
 def _expand_tool() -> Dict[str, Any]:
     return {
         "id": "expand",

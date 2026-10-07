@@ -57,6 +57,7 @@ def test_agent_profile_has_new_fields_with_safe_defaults():
         recommended_tools=[],
     )
     assert p.model is None
+    assert p.fallback_model is None
     assert p.component_category == "investigation"
 
 
@@ -70,6 +71,7 @@ def test_builtin_categories_cover_all_built_ins():
             "reporting",
         }, f"{agent_id} has an invalid category: {agent.component_category}"
         assert agent.component_category == expected_categories[agent_id]
+        assert agent.fallback_model is None
 
 
 def test_triage_agent_is_categorized_as_triage():
@@ -82,6 +84,29 @@ def test_reporter_agent_is_categorized_as_reporting():
     assert agents["reporter"].component_category == "reporting"
 
 
+def test_builtin_band_text_is_rendered_from_response_config():
+    # #916: the prompt states the configured lines, never a typed literal.
+    from core.response.config import ResponseConfig
+
+    agents = SOCAgentLibrary.get_all_agents(
+        ResponseConfig(
+            confidence_threshold=0.95, review_threshold=0.88, monitor_threshold=0.60
+        )
+    )
+    assert (
+        ">=0.95 auto-approve, 0.88-<0.95 quick review, 0.60-<0.88 human review, "
+        "<0.60 escalate"
+    ) in agents["auto_responder"].system_prompt
+    assert "waits for an analyst" in agents["responder"].system_prompt
+    for agent in agents.values():
+        assert "$" not in agent.system_prompt, agent.id
+
+    defaults = SOCAgentLibrary.get_all_agents(ResponseConfig())
+    assert ">=0.90 auto-approve, 0.85-<0.90 quick review" in (
+        defaults["auto_responder"].system_prompt
+    )
+
+
 def test_custom_agent_builder_reads_model_and_category():
     row = {
         "id": "custom-test",
@@ -92,10 +117,12 @@ def test_custom_agent_builder_reads_model_and_category():
         "max_tokens": 4096,
         "enable_thinking": False,
         "model": "claude-haiku-4-5-20251001",
+        "fallback_model": "  gemini-flash-latest  ",
         "component_category": "triage",
     }
     profile = SOCAgentLibrary.build_profile(row)
     assert profile.model == "claude-haiku-4-5-20251001"
+    assert profile.fallback_model == "gemini-flash-latest"
     assert profile.component_category == "triage"
 
 
@@ -108,4 +135,5 @@ def test_custom_agent_builder_defaults_category_when_missing():
     }
     profile = SOCAgentLibrary.build_profile(row)
     assert profile.model is None
+    assert profile.fallback_model is None
     assert profile.component_category == "investigation"

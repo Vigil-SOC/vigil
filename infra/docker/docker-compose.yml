@@ -8,7 +8,7 @@ x-agent-env: &agent-env
   - POSTGRES_HOST=postgres
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
-  - POSTGRES_USER=deeptempo
+  - POSTGRES_USER=vigil_app
   - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
   - REDIS_URL=redis://redis:6379/0
   # The four /internal endpoints. Each defaults to localhost:6987 in-process,
@@ -27,12 +27,47 @@ x-agent-env: &agent-env
   # placeholder only when the variable is absent, and the := form would set it
   # to an empty string the OpenAI client then sends as a real credential.
   - BIFROST_API_KEY
+  # Inspecting-proxy CA. Pass-through (no `:-` default): an empty SSL_CERT_FILE
+  # makes Python fail every HTTPS call. Bind-mount the operator PEM — Compose
+  # has no optional-volume syntax, so do not default the source to /dev/null.
+  #   volumes:
+  #     - ${VIGIL_CA_BUNDLE}:/etc/vigil/ca-bundle.pem:ro
+  # with SSL_CERT_FILE / REQUESTS_CA_BUNDLE / NODE_EXTRA_CA_CERTS=/etc/vigil/ca-bundle.pem
+  - SSL_CERT_FILE
+  - REQUESTS_CA_BUNDLE
+  - NODE_EXTRA_CA_CERTS
+
+# Intent knobs (INTENT_FIELDS). The Settings card runs in the API process and
+# the daemon runs in soc-daemon; one list so both see the same values.
+x-intent-env: &intent-env
+  DAEMON_AUTO_TRIAGE: ${DAEMON_AUTO_TRIAGE:-true}
+  DAEMON_AUTO_ENRICH: ${DAEMON_AUTO_ENRICH:-true}
+  DAEMON_AUTO_RESPONSE: ${DAEMON_AUTO_RESPONSE:-true}
+  DAEMON_CONFIDENCE_THRESHOLD: ${DAEMON_CONFIDENCE_THRESHOLD:-0.90}
+  DAEMON_REVIEW_THRESHOLD: ${DAEMON_REVIEW_THRESHOLD:-0.85}
+  DAEMON_MONITOR_THRESHOLD: ${DAEMON_MONITOR_THRESHOLD:-0.70}
+  DAEMON_CRITICAL_ACTION_FLOOR: ${DAEMON_CRITICAL_ACTION_FLOOR:-0.70}
+  DAEMON_HIGH_ACTION_FLOOR: ${DAEMON_HIGH_ACTION_FLOOR:-0.80}
+  DAEMON_FORCE_APPROVAL: ${DAEMON_FORCE_APPROVAL:-false}
+  DAEMON_ESCALATE_SEVERITIES: "${DAEMON_ESCALATE_SEVERITIES:-critical,high}"
+  ORCHESTRATOR_ENABLED: ${ORCHESTRATOR_ENABLED:-false}
+  ORCHESTRATOR_MAX_COST: ${ORCHESTRATOR_MAX_COST:-5.0}
+  ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
+  ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
+
+# One build for the API and the backup service. A second image tag would
+# compile this Dockerfile twice on the first `up`.
+x-backend-build: &backend-build
+  context: ../..
+  dockerfile: infra/docker/Dockerfile.backend
+  args:
+    PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
 
 services:
   postgres:
-    # pgvector-capable image (findings.embedding uses vector(768) + HNSW).
-    # The stock postgres:16 image does NOT ship the `vector` extension.
-    image: pgvector/pgvector:pg16
+    # Stock Postgres, matching db-seed and the desktop stack. The schema only
+    # needs uuid-ossp and pg_trgm; the pgvector store was LogLM's and is gone.
+    image: postgres:16-alpine
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc
@@ -51,13 +86,66 @@ services:
       - postgres_data:/var/lib/postgresql/data
       # Path is relative to this compose file (infra/docker/), so ../ points
       # at infra/, where the schema SQL now lives (infra/database/init/).
-      - ../database/init:/docker-entrypoint-initdb.d
+      # Must run here, not just in db-seed: the extensions have to exist before
+      # the backend's create_all (its indexes use pg_trgm's gin_trgm_ops), and
+      # the auth tables have to be created by this SQL — with the DEFAULT
+      # clauses create_all does not emit. 00_apply.sh explains why it isn't
+      # plain *.sql (Postgres initdb uses ON_ERROR_STOP=1 and would abort at 05).
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ../database/init:/db-init:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deeptempo -d deeptempo_soc"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - deeptempo-network
+
+  # Second pass over the same files, once the backend's create_all has built the
+  # tables the data-only scripts need. On the default `up` (no profile): a seed
+  # profile would never run — this compose file has no wrapper that `compose
+  # run`s it. /api/health always returns 200, so wait for a table only create_all
+  # creates — its DDL is one transaction, so that sentinel implies the rest.
+  # Re-runs on every `up` so a volume that aborted at 05 still gets the rest of
+  # the files.
+  db-seed:
+    image: postgres:16-alpine
+    container_name: deeptempo-db-seed
+    environment:
+      PGHOST: postgres
+      PGUSER: deeptempo
+      PGDATABASE: deeptempo_soc
+      PGPASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+    volumes:
+      - ../database/init:/db-init:ro
+      - ./initdb/00_apply.sh:/apply.sh:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        for i in $$(seq 1 60); do
+          [ "$$(psql -tAc "SELECT to_regclass('public.sla_policies') IS NOT NULL")" = t ] && break;
+          sleep 1;
+        done;
+        if [ "$$(psql -tAc "SELECT to_regclass('public.sla_policies') IS NOT NULL")" != t ]; then
+          echo "sla_policies still missing after wait; applying anyway" >&2;
+        fi;
+        exec sh /apply.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # service_started, not service_healthy: /api/health always returns 200,
+      # including when the body says "degraded", so compose treating the
+      # backend as ready is not a schema signal. The wait loop above is the
+      # real gate.
+      # Started implies postgres/redis/bifrost are already up, which a
+      # postgres-only depends_on would not.
+      backend:
+        condition: service_started
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+    restart: "no"
     networks:
       - deeptempo-network
 
@@ -72,7 +160,7 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -84,32 +172,52 @@ services:
 
   # SOC Backend API
   backend:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.backend
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    image: vigil-backend:local
+    build: *backend-build
     container_name: deeptempo-backend
     environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
-      - REDIS_URL=redis://redis:6379/0
+      <<: *intent-env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: vigil_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      REDIS_URL: redis://redis:6379/0
       # Shared secret the agent worker presents on /internal. Unset means every
       # such call answers 503, so no workflow can run.
-      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
+      # JWT signing secret. Unset means the backend refuses to start (auth is on);
+      # mint one with `openssl rand -base64 48` or reuse ~/.vigil/jwt_secret from
+      # start.sh. DEV_MODE=true is the opt-in auth bypass for a developer machine.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      DEV_MODE: ${DEV_MODE:-false}
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
-      - AGENT_URL=http://agent-serve:6989
-      - PYTHONUNBUFFERED=1
+      AGENT_URL: http://agent-serve:6989
+      # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
+      # on; the OTLP push needs the collector from --profile observability.
+      VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      PYTHONUNBUFFERED: "1"
+      # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
+      SSL_CERT_FILE:
+      REQUESTS_CA_BUNDLE:
+      NODE_EXTRA_CA_CERTS:
     ports:
       - "6987:6987"
+    volumes:
+      # Must track HOME in Dockerfile.backend, or every UI-configured key dies
+      # on recreate: master.key is the only thing that decrypts secrets.enc.
+      # The image pre-creates the dir owned by 1000:1000 so a fresh named
+      # volume inherits that; a path the image does not create mounts as root.
+      # Shared with soc-daemon and llm-worker, which read it via vigil_path().
+      - vigil_home:/home/vigil/.vigil
+      # The orchestrator and cases routers read the daemon's workdirs.
+      - vigil_investigations:/app/data/investigations
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,12 +225,96 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - deeptempo-network
+
+  # Schedule loop. No profile, so it is part of the default project.
+  # A missing backups.json stays in the loop; exiting would restart under
+  # unless-stopped. `start.sh backup` runs this service once, overrides the
+  # command with a one-shot create, and overrides the state/workdir/repo
+  # mounts for the host.
+  backup: &backup
+    image: vigil-backend:local
+    build: *backend-build
+    environment:
+      HOME: /home/vigil
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: deeptempo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      VIGIL_BACKUP_OWNER_CONNECTION: "1"
+      RESTIC_CACHE_DIR: /tmp/restic-cache
+      # Read by backup-pre-upgrade, which inherits this block.
+      VIGIL_SKIP_PREUPGRADE_BACKUP: ${VIGIL_SKIP_PREUPGRADE_BACKUP:-}
+    volumes:
+      - ${VIGIL_BACKUP_STATE_DIR:-vigil_home}:/home/vigil/.vigil
+      - ${VIGIL_BACKUP_INVESTIGATIONS_DIR:-vigil_investigations}:/app/data/investigations
+      - bifrost_data:/var/lib/vigil/bifrost
+      - ${VIGIL_BACKUP_REPO:-backup_repo}:/backup/repo:${VIGIL_BACKUP_REPO_MODE:-rw}
+      - ${VIGIL_BACKUP_PASSPHRASE_FILE:-/etc/hostname}:/backup/passphrase:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        exec python -m core.backup run \
+          --bifrost-data /var/lib/vigil/bifrost
+    # The image healthcheck curls the API. This process does not listen.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - deeptempo-network
 
+  # Runs once per `up`, before anything that provisions the schema (backend,
+  # soc-daemon, llm-worker, db-seed, backup all wait on it). Takes a snapshot of
+  # the default destination only when the database's stamped major.minor differs
+  # from this image's; otherwise it exits 0 at once. Same definition as `backup`,
+  # so depends_on, entrypoint and restart are restated: the merged-in depends_on
+  # would make it wait on itself.
+  backup-pre-upgrade:
+    <<: *backup
+    entrypoint:
+      - python
+      - -m
+      - core.backup
+      - pre-upgrade
+      - --bifrost-data
+      - /var/lib/vigil/bifrost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ─── Daemon layer (--profile daemon) ──────────────────────────────────────
+  # Default `up` is the investigation set: postgres, db-seed, redis, bifrost,
+  # backend, agent-worker, agent-serve, plus the backup schedule above.
+  # Incident response never touches soc-daemon or llm-worker: workflows
+  # enqueue BullMQ `agent-runs` to agent-worker and AGENT_URL is agent-serve.
+  # Those two share one profile because the daemon's processor is the ARQ
+  # producer that matters (#902).
+  #
+  # Known default-set side effect: services/api/routers/analytics.py ->
+  # AIInsightsService also enqueues to ARQ. Without
+  # `--profile daemon` the Analytics AI-insights panel stays empty/stale — the
+  # background refresh times out and logs, the endpoint still returns.
+  # `compose up -d soc-daemon` by name still works (Compose enables a named
+  # service's profiles automatically).
+
   # SOC Daemon - Autonomous monitoring and response
   soc-daemon:
+    profiles: [daemon]
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.daemon
@@ -130,77 +322,86 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
     container_name: deeptempo-daemon
     environment:
+      <<: *intent-env
       # Database
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: vigil_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       # AI
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       # Redis (LLM queue)
-      - REDIS_URL=redis://redis:6379/0
+      REDIS_URL: redis://redis:6379/0
+      # Same seam as backend. localhost:6989 is the host-run default; without
+      # these, _read_fold cannot reach agent-serve and completed runs stay executing.
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
+      AGENT_URL: http://agent-serve:6989
       # Polling intervals (seconds)
-      - DAEMON_SPLUNK_POLL_INTERVAL=${DAEMON_SPLUNK_POLL_INTERVAL:-300}
-      - DAEMON_CROWDSTRIKE_POLL_INTERVAL=${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
-      # Processing
-      - DAEMON_AUTO_TRIAGE=${DAEMON_AUTO_TRIAGE:-true}
-      - DAEMON_AUTO_ENRICH=${DAEMON_AUTO_ENRICH:-true}
-      - DAEMON_BATCH_SIZE=${DAEMON_BATCH_SIZE:-10}
+      DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
+      DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
       # Response
-      - DAEMON_AUTO_RESPONSE=${DAEMON_AUTO_RESPONSE:-true}
-      - DAEMON_CONFIDENCE_THRESHOLD=${DAEMON_CONFIDENCE_THRESHOLD:-0.90}
-      - DAEMON_FORCE_APPROVAL=${DAEMON_FORCE_APPROVAL:-false}
-      - DAEMON_DRY_RUN=${DAEMON_DRY_RUN:-false}
+      DAEMON_DRY_RUN: ${DAEMON_DRY_RUN:-false}
       # Escalation
-      - DAEMON_ESCALATION_ENABLED=${DAEMON_ESCALATION_ENABLED:-true}
-      - DAEMON_SLACK_ENABLED=${DAEMON_SLACK_ENABLED:-true}
-      - DAEMON_SLACK_CHANNEL=${DAEMON_SLACK_CHANNEL:-#soc-alerts}
-      - DAEMON_PAGERDUTY_ENABLED=${DAEMON_PAGERDUTY_ENABLED:-false}
-      - DAEMON_ESCALATE_SEVERITIES=${DAEMON_ESCALATE_SEVERITIES:-critical,high}
+      DAEMON_ESCALATION_ENABLED: ${DAEMON_ESCALATION_ENABLED:-true}
+      DAEMON_SLACK_ENABLED: ${DAEMON_SLACK_ENABLED:-true}
+      DAEMON_SLACK_CHANNEL: "${DAEMON_SLACK_CHANNEL:-#soc-alerts}"
+      DAEMON_PAGERDUTY_ENABLED: ${DAEMON_PAGERDUTY_ENABLED:-false}
       # Scheduler
-      - DAEMON_THREAT_HUNT_ENABLED=${DAEMON_THREAT_HUNT_ENABLED:-true}
-      - DAEMON_THREAT_HUNT_INTERVAL=${DAEMON_THREAT_HUNT_INTERVAL:-86400}
-      - DAEMON_CLEANUP_RETENTION_DAYS=${DAEMON_CLEANUP_RETENTION_DAYS:-90}
+      DAEMON_THREAT_HUNT_INTERVAL: ${DAEMON_THREAT_HUNT_INTERVAL:-86400}
+      # Ages out only the episodic read log; findings/events are kept until deleted
+      DAEMON_CLEANUP_RETENTION_DAYS: ${DAEMON_CLEANUP_RETENTION_DAYS:-90}
       # Metrics / Health
-      - DAEMON_METRICS_ENABLED=${DAEMON_METRICS_ENABLED:-true}
-      - DAEMON_HEALTH_PORT=${DAEMON_HEALTH_PORT:-9091}
+      DAEMON_METRICS_ENABLED: ${DAEMON_METRICS_ENABLED:-true}
+      DAEMON_HEALTH_PORT: ${DAEMON_HEALTH_PORT:-9091}
+      DAEMON_METRICS_PORT: ${DAEMON_METRICS_PORT:-9090}
+      # Observability (see backend)
+      VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       # Webhook
-      - DAEMON_WEBHOOK_ENABLED=${DAEMON_WEBHOOK_ENABLED:-true}
-      - DAEMON_WEBHOOK_PORT=${DAEMON_WEBHOOK_PORT:-8081}
+      DAEMON_WEBHOOK_ENABLED: ${DAEMON_WEBHOOK_ENABLED:-true}
+      DAEMON_WEBHOOK_PORT: ${DAEMON_WEBHOOK_PORT:-8081}
       # Logging
-      - DAEMON_LOG_LEVEL=${DAEMON_LOG_LEVEL:-INFO}
-      - PYTHONUNBUFFERED=1
+      DAEMON_LOG_LEVEL: ${DAEMON_LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+      # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
+      SSL_CERT_FILE:
+      REQUESTS_CA_BUNDLE:
+      NODE_EXTRA_CA_CERTS:
       # Integrations (loaded from core/config)
-      - SPLUNK_URL=${SPLUNK_URL}
-      - SPLUNK_USERNAME=${SPLUNK_USERNAME}
-      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD}
-      - CROWDSTRIKE_CLIENT_ID=${CROWDSTRIKE_CLIENT_ID}
-      - CROWDSTRIKE_CLIENT_SECRET=${CROWDSTRIKE_CLIENT_SECRET}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
-      - SHODAN_API_KEY=${SHODAN_API_KEY}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - PAGERDUTY_ROUTING_KEY=${PAGERDUTY_ROUTING_KEY}
+      SPLUNK_URL: ${SPLUNK_URL}
+      SPLUNK_USERNAME: ${SPLUNK_USERNAME}
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD}
+      CROWDSTRIKE_CLIENT_ID: ${CROWDSTRIKE_CLIENT_ID}
+      CROWDSTRIKE_CLIENT_SECRET: ${CROWDSTRIKE_CLIENT_SECRET}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY}
+      SHODAN_API_KEY: ${SHODAN_API_KEY}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      PAGERDUTY_ROUTING_KEY: ${PAGERDUTY_ROUTING_KEY}
       # Kafka ingestion (opt-in; UI toggle at /settings?tab=kafka)
-      - KAFKA_ENABLED=${KAFKA_ENABLED:-false}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
-      - KAFKA_CONSUMER_GROUP=${KAFKA_CONSUMER_GROUP:-vigil-soc}
-      - KAFKA_TOPICS=${KAFKA_TOPICS:-}
-      - KAFKA_AUTO_OFFSET_RESET=${KAFKA_AUTO_OFFSET_RESET:-latest}
-      - KAFKA_SECURITY_PROTOCOL=${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
-      - KAFKA_SASL_MECHANISM=${KAFKA_SASL_MECHANISM:-}
-      - KAFKA_SASL_USERNAME=${KAFKA_SASL_USERNAME:-}
-      - KAFKA_SASL_PASSWORD=${KAFKA_SASL_PASSWORD:-}
-      - KAFKA_SSL_CA_LOCATION=${KAFKA_SSL_CA_LOCATION:-}
-      - KAFKA_MAX_POLL_RECORDS=${KAFKA_MAX_POLL_RECORDS:-500}
-      - KAFKA_SESSION_TIMEOUT_MS=${KAFKA_SESSION_TIMEOUT_MS:-30000}
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-false}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-vigil-soc}
+      KAFKA_TOPICS: ${KAFKA_TOPICS:-}
+      KAFKA_AUTO_OFFSET_RESET: ${KAFKA_AUTO_OFFSET_RESET:-latest}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
+      KAFKA_MAX_POLL_RECORDS: ${KAFKA_MAX_POLL_RECORDS:-500}
+      KAFKA_SESSION_TIMEOUT_MS: ${KAFKA_SESSION_TIMEOUT_MS:-30000}
     ports:
       - "8081:8081"  # Webhook ingestion
-      - "9090:9090"  # Prometheus /metrics (OTEL PrometheusMetricReader)
-      - "9091:9091"  # Health /health + /status
+      - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
+      - "127.0.0.1:9091:9091"  # Health /health + /status (unauthenticated; host-local only)
+    volumes:
+      # Same State Directory and workdirs as backend (see there).
+      - vigil_home:/home/vigil/.vigil
+      - vigil_investigations:/app/data/investigations
     depends_on:
       postgres:
         condition: service_healthy
@@ -208,12 +409,18 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
   # ARQ Worker - Processes LLM requests from the queue
   llm-worker:
+    profiles: [daemon]
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.backend
@@ -222,21 +429,41 @@ services:
     container_name: deeptempo-llm-worker
     command: ["python", "-m", "services.worker"]
     healthcheck:
-      # Shares the backend image, whose HEALTHCHECK curls :6987. A queue worker
-      # serves no HTTP, so inheriting it just reports unhealthy forever.
-      disable: true
+      # Replaces the backend image's HEALTHCHECK, which curls :6987; a queue
+      # worker serves no HTTP, so that would report unhealthy forever. Instead
+      # ask ARQ whether this container's health key exists: the poll loop
+      # rewrites it every 30 s and it expires 31 s later, so a wedged worker
+      # goes unhealthy. Same command and budget as the Helm probes. start_period
+      # covers on_startup (up to ~300 s) before the first key; 4 retries x 30 s
+      # tolerate ~120 s without the key.
+      test: ["CMD", "arq", "--check", "services.worker.jobs.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 300s
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
+      - POSTGRES_USER=vigil_app
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
+      # No HTTP port here: worker metrics reach Prometheus through the OTLP
+      # push to the collector, scraped at otel-collector:8889.
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - PYTHONUNBUFFERED=1
+      # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
+      - SSL_CERT_FILE
+      - REQUESTS_CA_BUNDLE
+      - NODE_EXTRA_CA_CERTS
+    volumes:
+      # Same State Directory as backend (see there).
+      - vigil_home:/home/vigil/.vigil
     depends_on:
       postgres:
         condition: service_healthy
@@ -244,7 +471,12 @@ services:
         condition: service_healthy
       bifrost:
         condition: service_healthy
+      backup-pre-upgrade:
+        condition: service_completed_successfully
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
@@ -321,10 +553,27 @@ services:
   # calls hit the /anthropic passthrough (preserves extended thinking and
   # prompt caching); OpenAI/Ollama/etc. hit the /v1 OpenAI-format surface.
   # Live config lives in /app/data/config.db (SQLite); config.json is used
-  # as a first-boot seed. Configure Bifrost's own exact-hash / semantic
-  # cache via its UI at http://localhost:8080.
+  # as a first-boot seed. Providers, keys, models and virtual keys are managed
+  # from Vigil's own Settings -> AI Config, which reaches this config store
+  # through the authenticated passthrough in
+  # services/api/routers/bifrost_config.py. Bifrost's own UI at
+  # http://localhost:8080 remains the place for what that passthrough
+  # deliberately does not expose: cache and plugin config.
+  #
+  # Pinned, not :latest: Vigil reads this image's management API, so the tag
+  # is a contract. Before bumping BIFROST_IMAGE_TAG (here and in
+  # clients/desktop/standalone/docker-compose.yml), check at the new tag that
+  # these still answer in the same shape:
+  #   /health (healthcheck below, core/llm/providers/recovery.py)
+  #   /api/providers/{name}[/keys] and /api/models/details
+  #     (core/llm/bifrost/admin.py); /api/models/details also carries the
+  #     *_cost_per_token / *_input_token_cost pricing fields
+  #   /api/logs/* and /api/governance/virtual-keys/quota
+  #     (core/llm/bifrost/costs.py)
+  #   everything in _ALLOWED_PATHS in services/api/routers/bifrost_config.py,
+  #     including models/(base|details|parameters)
   bifrost:
-    image: maximhq/bifrost:latest
+    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     container_name: deeptempo-bifrost
     ports:
       # Loopback-only, for the same reason as postgres and redis above, and
@@ -337,8 +586,12 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
     volumes:
+      # The file is the bootstrap; the volume is where Bifrost keeps what it was
+      # told at runtime. Without it every UI change lasted until the next recreate.
+      - bifrost_data:/app/data
       - ./bifrost/config.json:/app/data/config.json:ro
     depends_on:
       redis:
@@ -350,6 +603,9 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
@@ -431,7 +687,7 @@ services:
     profiles:
       - observability
 
-  # Grafana — dashboards for system overview, LLM costs, investigation lifecycle
+  # Grafana — provisions the single Vigil SOC health dashboard
   grafana:
     image: grafana/grafana:10.4.0
     container_name: deeptempo-grafana
@@ -463,10 +719,10 @@ services:
     environment:
       - SPLUNK_START_ARGS=--accept-license
       - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
-      - SPLUNK_PASSWORD=changeme123
+      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD:-changeme123}
       - SPLUNK_HEC_TOKEN=00000000-0000-0000-0000-000000000000
     ports:
-      - "6990:8000"   # Web UI
+      - "8000:8000"   # Web UI (host 6990 is taken by the agent worker health port)
       - "8088:8088"   # HEC (HTTP Event Collector)
       - "8089:8089"   # Management port
       - "9997:9997"   # Forwarder port
@@ -517,6 +773,131 @@ services:
     profiles:
       - kafka
 
+  # ─── Elastic Security (opt-in: --profile elastic) ────────────────────────
+  # Single-node Elasticsearch + Kibana for SIEM testing, mirroring the Splunk
+  # profile. Security is disabled for local use, so the integration connects
+  # over plain HTTP with no credentials. Seed data via Kibana's built-in sample
+  # datasets (:5601 → Add data) or bulk-index to a logs-* index.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: deeptempo-elasticsearch
+    hostname: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "127.0.0.1:9200:9200"   # REST API
+    volumes:
+      - elastic_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    profiles:
+      - elastic
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: deeptempo-kibana
+    hostname: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "127.0.0.1:5601:5601"   # Web UI
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    profiles:
+      - elastic
+
+  # ─── MISP threat-intel (opt-in: --profile misp) ──────────────────────────
+  # Official MISP stack (core + modules + its own db/redis). Unlike Splunk/
+  # Elastic there is no credential-less mode: after first boot, log into
+  # https://localhost:8443 (admin@admin.test / admin), generate an Auth Key
+  # (Administration → Auth Keys), put it in .env as MISP_API_KEY, then enable
+  # the `misp` MCP server. First boot takes several minutes to initialise.
+  misp-db:
+    image: mariadb:11.4
+    container_name: deeptempo-misp-db
+    environment:
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=misp
+      - MYSQL_ROOT_PASSWORD=misp_root
+      - MYSQL_DATABASE=misp
+    command: --innodb-buffer-pool-size=256M
+    volumes:
+      - misp_db:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    profiles:
+      - misp
+
+  misp-redis:
+    image: valkey/valkey:7.2
+    container_name: deeptempo-misp-redis
+    # misp-core defaults to redis password "redispassword" (incl. the PHP
+    # session save_path); require it here so sessions authenticate.
+    command: ["valkey-server", "--requirepass", "redispassword"]
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    profiles:
+      - misp
+
+  misp-modules:
+    image: ghcr.io/misp/misp-docker/misp-modules:latest
+    container_name: deeptempo-misp-modules
+    environment:
+      - REDIS_BACKEND=misp-redis
+    depends_on:
+      - misp-redis
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    profiles:
+      - misp
+
+  misp-core:
+    image: ghcr.io/misp/misp-docker/misp-core:latest
+    container_name: deeptempo-misp-core
+    environment:
+      - BASE_URL=https://localhost:8443
+      - MYSQL_HOST=misp-db
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=misp
+      - MYSQL_DATABASE=misp
+      # This image reads REDIS_HOST/PORT/PASSWORD (not REDIS_FQDN). Point at our
+      # own misp-redis — otherwise it defaults to host "redis", which collides
+      # with Vigil's redis on this network and breaks sessions. Keep the image's
+      # default password so the PHP session save_path matches misp-redis.
+      - REDIS_HOST=misp-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redispassword
+      - DISABLE_IPV6=true
+    ports:
+      - "127.0.0.1:8443:443"   # Web UI + REST (self-signed TLS)
+    volumes:
+      - misp_config:/var/www/MISP/app/Config
+      - misp_files:/var/www/MISP/app/files
+      - misp_logs:/var/www/MISP/app/tmp/logs
+    depends_on:
+      - misp-db
+      - misp-redis
+      - misp-modules
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    profiles:
+      - misp
+
 volumes:
   postgres_data:
     driver: local
@@ -530,9 +911,29 @@ volumes:
     driver: local
   prometheus_data:
     driver: local
+  bifrost_data:
+    driver: local
+  # Placeholder repository for an unconfigured backup service. A host path in
+  # VIGIL_BACKUP_REPO replaces it with a bind mount.
+  backup_repo:
+    driver: local
+  vigil_home:
+    driver: local
+  vigil_investigations:
+    driver: local
   grafana_data:
     driver: local
   kafka_data:
+    driver: local
+  elastic_data:
+    driver: local
+  misp_db:
+    driver: local
+  misp_config:
+    driver: local
+  misp_files:
+    driver: local
+  misp_logs:
     driver: local
 
 networks:

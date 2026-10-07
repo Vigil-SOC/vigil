@@ -23,8 +23,9 @@ Exempting a whole service would mean a debug database port added to ``backend``
 later rides in unnoticed — the allowlist is meant to say "this *port* is
 published on purpose", not "stop checking this service".
 
-Scope: only services that start on a plain ``docker compose up``. Anything
-behind a ``profiles:`` key (``pgadmin`` on ``dev``, the ``observability``
+Scope: services that start on a plain ``docker compose up``, plus every
+service named in ``SHARED_HOST_PORTS`` even when profiled (``soc-daemon``, #1683).
+Anything else behind a ``profiles:`` key (``pgadmin`` on ``dev``, the ``observability``
 stack, ``splunk``, ``kafka``) is opt-in developer tooling, and several of those
 still publish on all interfaces. ``pgadmin`` was the sharpest of them and is
 fixed (#707, gated by ``test_pgadmin_exposure.py``); widening this file to the
@@ -61,13 +62,10 @@ SHARED_HOST_PORTS: dict[str, frozenset[str]] = {
     # 8081 is the SIEM webhook receiver and fails closed without
     # DAEMON_WEBHOOK_TOKEN (services/daemon/poller.py).
     #
-    # 9090 and 9091 are published today and #587 deliberately left them alone,
-    # but their justification is thinner than it looks and this comment should
-    # not pretend otherwise: infra/docker/prometheus.yml scrapes soc-daemon:9090
-    # over the compose bridge by service name, not through this host mapping,
-    # and 9091 serves /health and /status unauthenticated. Narrowing these two
-    # is worth its own issue rather than a silent widening here.
-    "soc-daemon": frozenset({"8081", "9090", "9091"}),
+    # 9090 stays published (#587 left it alone; Prometheus scrapes it over the
+    # compose bridge anyway). 9091 serves /health and /status unauthenticated,
+    # so it is loopback-only (#1683) and deliberately absent from this list.
+    "soc-daemon": frozenset({"8081", "9090"}),
 }
 
 
@@ -161,3 +159,19 @@ def test_shared_host_ports_name_real_services() -> None:
     assert (
         not unknown
     ), f"SHARED_HOST_PORTS names services not in compose: {sorted(unknown)}"
+
+
+@pytest.mark.parametrize("service", sorted(SHARED_HOST_PORTS))
+def test_allowlisted_service_ports_bind_loopback(service: str) -> None:
+    # soc-daemon sits behind profiles: [daemon], so the default-profile gate
+    # above never sees it (#1683).
+    wide = [
+        raw
+        for raw, interface, port in _published(_services()[service])
+        if interface not in LOOPBACK and port not in SHARED_HOST_PORTS[service]
+    ]
+    assert not wide, (
+        f"{service} publishes {wide} on a non-loopback interface in {COMPOSE_PATH}. "
+        f"Prefix the mapping with 127.0.0.1: or allowlist the port in "
+        f"SHARED_HOST_PORTS[{service!r}] with a reason."
+    )

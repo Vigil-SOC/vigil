@@ -3,11 +3,12 @@ Unit tests verifying that all SQLAlchemy models are registered with
 Base.metadata before create_all() is called.
 
 Importing core.storage.connection is sufficient to trigger model registration
-because the module-level imports at the top of connection.py pull in every
-model class defined in core/storage/models.py.
+because it imports core.storage.models, whose package init loads every domain
+submodule so all mapped classes register on Base.metadata.
 """
 
-import pytest
+import importlib
+import pkgutil
 
 
 def test_integration_configs_table_registered():
@@ -17,7 +18,7 @@ def test_integration_configs_table_registered():
 
     assert "integration_configs" in Base.metadata.tables, (
         "integration_configs table is not registered with Base.metadata. "
-        "Ensure IntegrationConfig is imported in core/storage/connection.py before create_all()."
+        "Import IntegrationConfig from core/storage/models/__init__.py."
     )
 
 
@@ -28,18 +29,16 @@ def test_config_audit_log_table_registered():
 
     assert "config_audit_log" in Base.metadata.tables, (
         "config_audit_log table is not registered with Base.metadata. "
-        "Ensure ConfigAuditLog is imported in core/storage/connection.py before create_all()."
+        "Import ConfigAuditLog from core/storage/models/__init__.py."
     )
 
 
 def test_all_model_tables_registered():
-    """All Base subclasses defined in core/storage/models must appear in Base.metadata.tables."""
+    """All Base subclasses re-exported from core.storage.models appear in metadata."""
     import core.storage.connection  # noqa: F401 — side-effect import registers models
     import core.storage.models as models_module
     from core.storage.models import Base
-    from sqlalchemy.orm import DeclarativeBase
 
-    # Collect every concrete model class (direct subclasses of Base)
     registered_tables = set(Base.metadata.tables.keys())
 
     for name in dir(models_module):
@@ -52,5 +51,28 @@ def test_all_model_tables_registered():
         ):
             assert obj.__tablename__ in registered_tables, (
                 f"Model '{name}' with __tablename__='{obj.__tablename__}' is not registered "
-                "in Base.metadata. Add it to the import block in core/storage/connection.py."
+                "in Base.metadata. Import its submodule from core/storage/models/__init__.py."
             )
+
+
+def test_every_models_submodule_is_imported():
+    """A mapped class left in an unimported submodule never appears in dir(models)."""
+    import core.storage.connection  # noqa: F401 — side-effect import registers models
+    import core.storage.models as models_pkg
+    from core.storage.models import Base
+
+    registered = {mapper.class_ for mapper in Base.registry.mappers}
+    for module_info in pkgutil.iter_modules(models_pkg.__path__):
+        module = importlib.import_module(f"{models_pkg.__name__}.{module_info.name}")
+        for name in dir(module):
+            obj = getattr(module, name)
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, Base)
+                and obj is not Base
+                and hasattr(obj, "__tablename__")
+            ):
+                assert obj in registered, (
+                    f"{module_info.name}.{name} is not registered on Base.metadata. "
+                    "Import its submodule from core/storage/models/__init__.py."
+                )

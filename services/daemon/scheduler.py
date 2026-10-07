@@ -7,9 +7,13 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import get_settings
+from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.storage.connection import get_db_manager
 from core.time import utcnow
+from core.workflows.enablement import is_enabled
+from core.workflows.routing import SCHEDULED_WORKFLOW
 from services.daemon.config import SchedulerConfig
+from services.daemon.probes import inject_probes, score_probes
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,8 @@ class TaskScheduler:
     def __init__(self, config: SchedulerConfig):
         self.config = config
         self._tasks: List[ScheduledTask] = []
+        # The processor's input queue; probes go on it like polled findings.
+        self._processor_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -49,6 +55,8 @@ class TaskScheduler:
         self.stats = {
             "tasks_run": 0,
             "threat_hunts": 0,
+            "probes_injected": 0,
+            "probes_scored": 0,
             "reports_generated": 0,
             "cleanups_run": 0,
             "errors": 0,
@@ -59,16 +67,16 @@ class TaskScheduler:
 
     def _register_default_tasks(self):
         """Register default scheduled tasks."""
-        if self.config.threat_hunt_enabled:
-            self._tasks.append(
-                ScheduledTask(
-                    name="threat_hunt",
-                    func=self._run_threat_hunt,
-                    interval=self.config.threat_hunt_interval,
-                    enabled=True,
-                    run_on_start=False,
-                )
+        # Always registered: each tick asks whether the hunt is turned off.
+        self._tasks.append(
+            ScheduledTask(
+                name="threat_hunt",
+                func=self._run_threat_hunt,
+                interval=self.config.threat_hunt_interval,
+                enabled=True,
+                run_on_start=False,
             )
+        )
 
         if self.config.report_generation_enabled:
             self._tasks.append(
@@ -87,6 +95,18 @@ class TaskScheduler:
                     name="cleanup",
                     func=self._run_cleanup,
                     interval=self.config.cleanup_interval,
+                    enabled=True,
+                    run_on_start=False,
+                )
+            )
+
+        # Hourly tick; the day-scoped finding_id makes the injection once a day.
+        if self.config.probes_enabled:
+            self._tasks.append(
+                ScheduledTask(
+                    name="probe_sweep",
+                    func=self._run_probe_sweep,
+                    interval=self.config.probe_interval,
                     enabled=True,
                     run_on_start=False,
                 )
@@ -132,6 +152,10 @@ class TaskScheduler:
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Threat feed poller unavailable: {e}")
 
+    def set_processor_queue(self, queue: asyncio.Queue):
+        """Set the processor's input queue that probe sweeps inject onto."""
+        self._processor_queue = queue
+
     def _init_services(self):
         """Initialize required services."""
         try:
@@ -154,6 +178,10 @@ class TaskScheduler:
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
         self._init_services()
+        # The Claude service prices its calls from this process's own copy of
+        # the gateway's rates.
+        await refresh_gateway_rates()
+        rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
         # Run startup tasks
         for task in self._tasks:
@@ -195,127 +223,64 @@ class TaskScheduler:
             except asyncio.TimeoutError:
                 pass
 
+        rates_refresher.cancel()
         logger.info("Task scheduler stopped")
 
     async def _run_threat_hunt(self):
-        """Execute periodic threat hunting queries."""
+        """Open a hypothesis-driven hunt on the orchestrator's intake.
+
+        Queued rather than run here: the orchestrator owns the investigation
+        record, the budget and the reconcile, and a second path to any of those
+        would be a second set of guardrails.
+        """
+        if not is_enabled(SCHEDULED_WORKFLOW):
+            logger.info(
+                "Scheduled threat hunt skipped: %s is turned off", SCHEDULED_WORKFLOW
+            )
+            return
         logger.info("Starting scheduled threat hunt...")
         self.stats["threat_hunts"] += 1
 
+        hypothesis = self._hunt_hypothesis()
+        from services.daemon.orchestrator import insert_intake_trigger
+
+        insert_intake_trigger(
+            kind="schedule",
+            priority="low",
+            payload={
+                "workflow_id": SCHEDULED_WORKFLOW,
+                "trigger_type": "scheduled",
+                "finding_ids": [],
+                "hypothesis": hypothesis,
+            },
+        )
+        logger.info(
+            "Queued a scheduled threat hunt: %s",
+            hypothesis or "the definition's hypotheses",
+        )
+
+    # What this hunt is out to test, read off the techniques the estate is showing, so
+    # a nightly hunt follows it rather than repeating one fixed question.
+    def _hunt_hypothesis(self) -> str:
         if not self._data_service:
-            logger.warning("Data service not available for threat hunt")
-            return
+            return ""
+        try:
+            findings = self._data_service.get_findings(limit=500)
+        except Exception:  # noqa: BLE001 -- a hunt with no steer is still a hunt
+            logger.exception("could not read findings to steer the scheduled hunt")
+            return ""
 
-        # Get recent findings for analysis
-        findings = self._data_service.get_findings()
-        if not findings:
-            logger.info("No findings to analyze for threat hunt")
-            return
-
-        # Analyze patterns in recent findings
-        analysis = await self._analyze_finding_patterns(findings)
-
-        # Look for indicators of compromise across data
-        iocs = self._extract_iocs(findings)
-
-        # Query for related activity (if Splunk is available)
-        await self._hunt_for_iocs(iocs)
-
-        # Generate threat hunt summary
-        summary = {
-            "timestamp": utcnow().isoformat(),
-            "findings_analyzed": len(findings),
-            "patterns_detected": analysis.get("patterns", []),
-            "iocs_found": len(iocs),
-            "recommendations": analysis.get("recommendations", []),
-        }
-
-        logger.info(f"Threat hunt complete: {summary}")
-        return summary
-
-    async def _analyze_finding_patterns(self, findings: List[Dict]) -> Dict[str, Any]:
-        """Analyze patterns in findings."""
-        patterns = []
-        recommendations = []
-
-        # Group by MITRE technique
-        technique_counts = {}
-        for finding in findings:
-            mitre = finding.get("mitre_predictions", {})
-            for technique in mitre.keys():
-                technique_counts[technique] = technique_counts.get(technique, 0) + 1
-
-        # Identify common techniques
-        for technique, count in sorted(technique_counts.items(), key=lambda x: -x[1])[
-            :5
-        ]:
-            if count >= 3:
-                patterns.append(
-                    {"type": "common_technique", "technique": technique, "count": count}
-                )
-                recommendations.append(
-                    f"Review defenses for {technique} (seen {count} times)"
-                )
-
-        # Group by severity
-        severity_counts = {}
-        for finding in findings:
-            sev = finding.get("severity", "unknown")
-            severity_counts[sev] = severity_counts.get(sev, 0) + 1
-
-        critical_count = severity_counts.get("critical", 0)
-
-        if critical_count > 5:
-            patterns.append(
-                {
-                    "type": "severity_spike",
-                    "severity": "critical",
-                    "count": critical_count,
-                }
-            )
-            recommendations.append(
-                f"Investigate spike in critical findings ({critical_count})"
-            )
-
-        return {
-            "patterns": patterns,
-            "severity_distribution": severity_counts,
-            "technique_distribution": technique_counts,
-            "recommendations": recommendations,
-        }
-
-    def _extract_iocs(self, findings: List[Dict]) -> Dict[str, List[str]]:
-        """Extract IOCs from findings."""
-        iocs = {"ips": set(), "domains": set(), "hashes": set(), "users": set()}
-
-        for finding in findings:
-            context = finding.get("entity_context", {})
-
-            for ip in context.get("src_ips", []):
-                if ip and not ip.startswith(("10.", "192.168.", "172.")):
-                    iocs["ips"].add(ip)
-
-            for ip in context.get("dest_ips", []):
-                if ip and not ip.startswith(("10.", "192.168.", "172.")):
-                    iocs["ips"].add(ip)
-
-            for domain in context.get("domains", []):
-                iocs["domains"].add(domain)
-
-            for hash_val in context.get("file_hashes", []):
-                iocs["hashes"].add(hash_val)
-
-            for user in context.get("usernames", []):
-                iocs["users"].add(user)
-
-        return {k: list(v) for k, v in iocs.items()}
-
-    async def _hunt_for_iocs(self, iocs: Dict[str, List[str]]):
-        """Hunt for IOCs in connected systems."""
-        # This would query Splunk/SIEM for IOC matches
-        # For now, just log
-        total_iocs = sum(len(v) for v in iocs.values())
-        logger.info(f"Hunting for {total_iocs} IOCs across systems")
+        named = [
+            str(entry["technique"])
+            for entry in (self._get_top_techniques(findings, 3) if findings else [])
+            if entry.get("technique")
+        ]
+        if not named:
+            return ""
+        return (
+            f"Activity consistent with {', '.join(named)} is present in the estate "
+            "and has not been explained"
+        )
 
     async def _generate_report(self):
         """Generate periodic summary report."""
@@ -402,11 +367,10 @@ class TaskScheduler:
         logger.info("Running scheduled cleanup...")
         self.stats["cleanups_run"] += 1
 
-        # Calculate cutoff date
+        # Findings and processed events are intentionally not pruned here:
+        # retention for them is a Settings phase 2 decision, not this
+        # sweep's (#1741). The cutoff below drives only the read log sweep.
         cutoff = utcnow() - timedelta(days=self.config.cleanup_retention_days)
-
-        # Findings/processed events are still only logged, not deleted.
-        logger.info(f"Cleanup would remove data older than {cutoff.isoformat()}")
 
         # Dedup sets are pruned by RedisDedupSet itself (TTL + size cap)
 
@@ -421,7 +385,39 @@ class TaskScheduler:
         if expired:
             logger.info("Cleanup expired %d unanswered approvals", expired)
 
-        return {"cutoff_date": cutoff.isoformat(), "approvals_expired": expired}
+        # The episodic read log (#732), the one part of the memory tier with a
+        # retention policy. Off-thread for the same reason the sweep above is.
+        from core.memory.recall import expire_read_log
+
+        reads = await asyncio.to_thread(expire_read_log, cutoff)
+        if reads:
+            logger.info("Cleanup removed %d episodic read log rows", reads)
+
+        logger.info(
+            "Cleanup complete: expired %d unanswered approvals, removed %d "
+            "episodic read log rows",
+            expired,
+            reads,
+        )
+
+        return {
+            "cutoff_date": cutoff.isoformat(),
+            "approvals_expired": expired,
+            "read_log_removed": reads,
+        }
+
+    async def _run_probe_sweep(self):
+        """Score the probes past their hour (#924), then queue today's (#923)."""
+        if self._processor_queue is None or not self._data_service:
+            logger.warning(
+                "Probe sweep skipped: processor queue or database unavailable"
+            )
+            return 0
+        scored = await asyncio.to_thread(score_probes, self._data_service)
+        self.stats["probes_scored"] += scored
+        injected = await inject_probes(self._processor_queue, self._data_service)
+        self.stats["probes_injected"] += injected
+        return injected
 
     async def _run_sandbox_poll(self):
         """Advance pending sandbox submissions to completed reports."""
@@ -433,7 +429,7 @@ class TaskScheduler:
 
         poller = SandboxPoller(data_service=self._data_service)
         stats = await poller.run_once()
-        if stats.get("completed") or stats.get("expired") or stats.get("errors"):
+        if any(stats.get(k) for k in ("completed", "expired", "failed", "errors")):
             logger.info(f"Sandbox poll: {stats}")
         return stats
 
@@ -478,5 +474,12 @@ class TaskScheduler:
             "status": "healthy" if self._claude_service else "unavailable"
         }
 
-        logger.info(f"Health check: {health['status']}")
+        db_status = health["components"]["database"]["status"]
+        if db_status == "error":
+            level = logging.ERROR
+        elif health["status"] != "healthy":
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+        logger.log(level, f"Health check: {health['status']}")
         return health

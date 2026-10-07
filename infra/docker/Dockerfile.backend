@@ -25,8 +25,25 @@ COPY clients/web/package*.json ./
 RUN npm ci --prefer-offline
 
 COPY clients/web/ .
+# SocConsole imports this from the repo's docs tree, outside clients/web.
+# From /build/web/src/shell the relative path is /docs/design/...
+COPY docs/design/console/tokens/tokens.css /docs/design/console/tokens/tokens.css
 RUN npm run build
 # Output: /build/web/build
+
+# ---------------------------------------------------------------------------
+# Node runtime and the catalog's npx connectors, installed at their pins so the
+# image never fetches them at start. Only node and the prefix reach the runtime
+# stage; npm stays here. Target arch, not $BUILDPLATFORM: this code runs in the image.
+# ---------------------------------------------------------------------------
+FROM node:22-slim AS mcp-node
+# npm's bundled tar unpacks every package below:
+# 10.9.9 bundles tar 7.5.22, past CVE-2026-59873 (fixed in 7.5.19).
+RUN npm install -g npm@10.9.9 && npm cache clean --force
+WORKDIR /opt/vigil/mcp/npm
+COPY infra/docker/mcp-packages/package.json infra/docker/mcp-packages/package-lock.json \
+     infra/docker/mcp-packages/.npmrc ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---------------------------------------------------------------------------
 # Stage 2: install Python dependencies
@@ -41,33 +58,57 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# requirements.lock pins the submodules as editable installs (`-e ./<dir>`)
-# for local development. In the image we install them as regular packages
-# from the copied source, so the runtime stage needs only /usr/local and no
-# editable source tree (an `-e` install writes a .pth pointing at the build
-# path, which won't exist in the runtime stage). Keep this COPY list in sync
-# with the `-e ./` lines in requirements.lock: mempalace is the only one left,
-# since #654 dropped the deeptempo-core and mcp-servers submodules.
 COPY requirements.lock .
-COPY mempalace/      ./mempalace/
-RUN grep -vE '^[[:space:]]*-e[[:space:]]+\./' requirements.lock > requirements.runtime.txt \
-    && pip install --no-cache-dir --prefix=/install/deps \
-         -r requirements.runtime.txt \
-         ./mempalace
+RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
 
 # ---------------------------------------------------------------------------
 # Stage 3: runtime image
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
-ARG VIGIL_VERSION=dev
+ARG VIGIL_VERSION=
+ARG TARGETARCH
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
-# Runtime system deps only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libpq5 \
-      curl \
-    && rm -rf /var/lib/apt/lists/*
+# Runtime system deps only. git: detection rule sources are cloned at runtime,
+# and SentinelOne's uv tool installs from its git tag below.
+# restic 0.19.1 is the CI pin. postgresql-client-16 lands in
+# /usr/lib/postgresql/16/bin, which is not on PATH; core.backup selects a
+# client whose major is at least 16 from there.
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      libpq5 curl git bzip2 ca-certificates gnupg; \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --batch --yes --dearmor -o /usr/share/keyrings/postgresql.gpg; \
+    . /etc/os-release; \
+    echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql-client-16; \
+    arch="${TARGETARCH:-}"; \
+    if [ -z "$arch" ]; then \
+      case "$(uname -m)" in \
+        x86_64) arch=amd64 ;; \
+        aarch64) arch=arm64 ;; \
+        *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;; \
+      esac; \
+    fi; \
+    version=0.19.1; \
+    case "$arch" in \
+      amd64) sha=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;; \
+      arm64) sha=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;; \
+      *) echo "unsupported architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/restic.bz2 \
+      "https://github.com/restic/restic/releases/download/v${version}/restic_${version}_linux_${arch}.bz2"; \
+    echo "${sha}  /tmp/restic.bz2" | sha256sum -c -; \
+    bunzip2 -f /tmp/restic.bz2; \
+    install -m 0755 /tmp/restic /usr/local/bin/restic; \
+    rm -f /tmp/restic; \
+    apt-get purge -y gnupg bzip2; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
 
 # Non-root user (matching UID/GID 1000 from podSecurityContext in Helm chart)
 RUN groupadd -g 1000 vigil && useradd -u 1000 -g 1000 -d /home/vigil -m -s /sbin/nologin vigil
@@ -76,6 +117,23 @@ WORKDIR /app
 
 # Installed Python packages from the deps stage
 COPY --from=python-deps /install/deps /usr/local
+
+# Baked npx connectors run as `node <bin>` (MCPService rewrites the launch);
+# no npm or npx in this image.
+COPY --from=mcp-node /usr/local/bin/node /usr/local/bin/node
+COPY --from=mcp-node /opt/vigil/mcp/npm /opt/vigil/mcp/npm
+
+# Baked uvx connectors, one uv tool venv each, on the image's own interpreter
+# and the uv that requirements.lock pins. Root-owned, readable by uid 1000.
+# Hardlinked from a cache dropped in the same layer, so the venvs share one
+# copy of their common dependencies.
+COPY infra/docker/mcp-packages/uv-tools.txt /tmp/uv-tools.txt
+RUN grep -v '^#' /tmp/uv-tools.txt > /tmp/uv-tools.list \
+    && UV_TOOL_DIR=/opt/vigil/mcp/uv-tools \
+      UV_TOOL_BIN_DIR=/opt/vigil/mcp/uv-tools/.bin UV_PYTHON_DOWNLOADS=never \
+      UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=hardlink UV_COMPILE_BYTECODE=1 \
+      xargs -a /tmp/uv-tools.list -L1 uv tool install --python /usr/local/bin/python \
+    && rm -rf /tmp/uv-tools.txt /tmp/uv-tools.list /tmp/uv-cache
 
 # Application source — copy each top-level package separately so
 # modifying one doesn't bust the cache for all the others.
@@ -87,20 +145,23 @@ COPY --chown=vigil:vigil tools/       ./tools/
 # <cid>:/app/database/init`) and the initdb mount are unaffected.
 COPY --chown=vigil:vigil infra/database/init/ ./database/init/
 COPY --chown=vigil:vigil data/        ./data/
-COPY --chown=vigil:vigil mempalace/   ./mempalace/
 COPY --chown=vigil:vigil VERSION      ./VERSION
 COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
+# Declared intent. .dockerignore excludes *.md except this file.
+COPY --chown=vigil:vigil INTENT.md    ./INTENT.md
+COPY --chown=vigil:vigil mcp-config.json ./mcp-config.json
 
 # Built SPA — served by FastAPI StaticFiles (or nginx sidecar)
 COPY --from=web-builder --chown=vigil:vigil /build/web/build ./clients/web/build/
 
 # Writable dirs the app needs at runtime
-RUN mkdir -p /app/data/investigations /app/data/mempalace /home/vigil/.vigil \
+RUN mkdir -p /app/data/investigations /home/vigil/.vigil \
     && chown -R vigil:vigil /app/data /home/vigil
 
-# Bake version into the image so `backend.__version__` resolves at import time
-# (core/version.py reads VERSION from disk)
-RUN echo "${VIGIL_VERSION}" > /app/VERSION
+# core/version.py reads VERSION from disk. The COPY above already ships the repo
+# version; only an explicit --build-arg overrides it (an empty default keeps a
+# plain `docker compose build` from clobbering it).
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 
 USER vigil
 
@@ -109,8 +170,13 @@ ENV HOME=/home/vigil \
     PYTHONUNBUFFERED=1 \
     PORT=6987
 
+# Every catalog entry the image claims to run must find its launcher.
+RUN python -m core.integrations.mcp.verify_catalog
+
 EXPOSE 6987
 
+# Liveness by intent: /api/health is 200 whenever the process is up. Compose and
+# desktop startup wait on it, so readiness (/api/health/ready) would deadlock them.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://localhost:6987/api/health || exit 1
 

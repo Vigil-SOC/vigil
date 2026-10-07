@@ -24,20 +24,6 @@ const FIELDS: Record<string, Record<string, string>> = {
   resolution: { verdict: "answer", reason: "text" },
 };
 
-// budgets became the harness's BudgetLimits, so the ledgers' iteration cap reads
-// as a call cap and a wall ceiling the historical runs never had.
-function renamedBudgets(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(renamedBudgets);
-  if (typeof value !== "object" || value === null) return value;
-  const held = value as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [key, one] of Object.entries(held)) {
-    out[key === "max_iterations" ? "max_calls" : key === "hard_max_iterations" ? "hard_max_calls" : key] =
-      renamedBudgets(one);
-  }
-  return out;
-}
-
 // approved/rejected became approve/reject with the harness payload, so the value
 // is translated beside the key it lives under.
 const ANSWERS: Record<string, string> = { approved: "approve", rejected: "reject" };
@@ -54,10 +40,10 @@ export function renamed(kind: string, body: unknown): unknown {
 }
 
 function payloadOf(record: Historical): unknown {
-  if (record.kind === "patch") return { target: record["target"], id: record["id"], fields: renamedBudgets(record["fields"]) };
-  if (record.kind === "hunt") return { hunt: renamedBudgets(record["hunt"]) };
+  if (record.kind === "patch") return { target: record["target"], id: record["id"], fields: record["fields"] };
+  if (record.kind === "hunt") return { hunt: record["hunt"] };
   if (record.kind === "finalize") return record["report"];
-  return renamedBudgets(renamed(record.kind, record[record.kind]));
+  return renamed(record.kind, record[record.kind]);
 }
 
 export function asHarnessEvents(text: string, runId: string): HuntEvent[] {
@@ -108,7 +94,7 @@ function renamedResolutions(value: unknown): unknown {
 }
 
 export function renamedGolden(golden: Record<string, unknown>): Record<string, unknown> {
-  const walked = renamedBudgets(renamedResolutions(golden)) as Record<string, unknown>;
+  const walked = renamedResolutions(golden) as Record<string, unknown>;
   const checkpoints = walked["checkpoints"];
   if (typeof checkpoints !== "object" || checkpoints === null || Array.isArray(checkpoints)) return walked;
   return {

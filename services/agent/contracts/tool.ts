@@ -6,6 +6,10 @@ export interface ToolBounds {
   readonly timeoutMs: number;
 }
 
+// Opaque to this layer: the API signs it for a session's user, InvokeRequest.principal
+// verifies it. Absent means no person is behind the run, and tools record "agent".
+export type ToolPrincipal = string;
+
 // timeout and unavailable are genuine visibility gaps; refused and invalid_args
 // are defects and must never be recorded as one (CONTEXT.md, Visibility gap).
 export type ToolFailure =
@@ -39,6 +43,9 @@ export interface RegisteredTool {
   readonly description: string;
   readonly parameters: Record<string, unknown>;
   readonly bounds: ToolBounds;
+  // Whether this tool answers in this process. Dispatch reads it: the remote one
+  // posts an id to a backend that has never heard of the run's own ledger.
+  readonly local: boolean;
   invoke(args: Record<string, unknown>): Promise<ToolResult>;
   close(): Promise<void>;
 }
@@ -49,12 +56,13 @@ export class ToolBoundsViolation extends Error {}
 
 // The brand is type-only and is never materialised, so the cast is the whole
 // mechanism: an object literal cannot satisfy RegisteredTool on its own.
-export function defineTool(adapter: ToolAdapter, bounds: ToolBounds): RegisteredTool {
+export function defineTool(adapter: ToolAdapter, bounds: ToolBounds, local = false): RegisteredTool {
   return {
     id: adapter.id,
     description: adapter.description,
     parameters: adapter.parameters,
     bounds,
+    local,
     invoke: (args) => invokeBounded(adapter, bounds, args),
     close: async () => void (await adapter.close?.()),
   } as RegisteredTool;

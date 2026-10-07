@@ -1,4 +1,4 @@
-import { Queue, UnrecoverableError, Worker } from "bullmq";
+import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
@@ -8,8 +8,10 @@ import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
+import { GatewayExhausted } from "./core/limiter.js";
+import { errorFields, logger } from "./core/log.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
-import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunKind, RunPayload } from "./contracts/events.js";
+import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
 import {
   LEASE_TTL_MS,
@@ -29,10 +31,14 @@ import { runCompose } from "./workflows/compose/workflow.js";
 import type { ComposeKinds } from "./workflows/compose/vocabulary.js";
 import { runLead, type LeadKinds } from "./workflows/lead/workflow.js";
 import { runHunt } from "./workflows/hunt/workflow.js";
+import { runRootCause } from "./workflows/rootcause/workflow.js";
+import type { RootCauseKinds } from "./workflows/rootcause/proof.js";
 import type { HuntKinds } from "./workflows/hunt/ledger.js";
 import type { DirectiveQueue } from "./workflows/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./workflows/hunt/directives.js";
 import { DirectiveRepository } from "./ledger/directives.js";
+
+const log = logger("agent.worker");
 
 type StartJob = Extract<RunJob, { reason: "start" }>;
 
@@ -41,7 +47,34 @@ type StartJob = Extract<RunJob, { reason: "start" }>;
 export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = defaultResolver()): Promise<RunSpec> {
   const entry = archFor(job.run_kind);
   const arch = job.request.arch === "" ? entry.arch : job.request.arch;
-  const tighten = (spec: RunSpec): RunSpec => withOverrides(spec, job.request.overrides);
+  // Carried on the job, not the reference, which names a definition many runs share.
+  const asked = job.request.hypotheses ?? [];
+  const subjects = job.request.hypothesis_subjects ?? {};
+  // Onto the spec, so they are journaled with the run event: a resume reads the spec
+  // back, and one that lost its keys would open on a prefix its first turn never had.
+  const recallKeys = job.request.recall_keys ?? [];
+  const turns = job.request.iterations;
+  // Only ever tightens: a caller may ask to be asked, never to skip a declared gate.
+  const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
+  const tighten = (spec: RunSpec): RunSpec =>
+    withOverrides(
+      {
+        ...spec,
+        sections: {
+          ...spec.sections,
+          ...(asked.length === 0 ? {} : { operator_hypotheses: asked }),
+          ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
+          ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
+          ...(Object.keys(gate).length === 0
+            ? {}
+            : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),
+        },
+        // Under thresholds: the harness refuses an unknown budgets key, and turns are
+        // the workflow's unit rather than its own.
+        ...(turns === undefined ? {} : { thresholds: { ...spec.thresholds, max_iterations: turns } }),
+      },
+      job.request.overrides,
+    );
   if (!isReference(job.request.playbook)) {
     return tighten(buildSpec({ arch, playbook: job.request.playbook, config: job.request.config }, entry.actions, entry.owned, job.request.prompt));
   }
@@ -81,6 +114,15 @@ function answersFor(): Answers {
 function announceFor(): Announce {
   const url = process.env["VIGIL_RUNS_URL"];
   return url === undefined || url === "" ? noAnnounce : httpAnnounce({ url, token: internalToken() });
+}
+
+// Where a handoff goes the moment it is journaled: the mirror's own channel, so a
+// case reaches IR when the hunt escalates rather than when it eventually stops.
+// Off unless a deployment says where to mirror to, same as the terminal it precedes.
+// Answers whether it landed, so the loop can ask again for one that did not.
+function handoffFor(): (runId: string, handoff: TerminalHandoff) => Promise<boolean> {
+  const mirror = mirrorFor();
+  return (runId, handoff) => mirror.handoff(runId, handoff);
 }
 
 function defaultResolver(): PlaybookResolver {
@@ -135,7 +177,15 @@ async function drive(
   const entry = archFor(kind);
   if (entry.workflow === "hunt") {
     const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
-    await runHunt(harness, { run_id, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), signal });
+    // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
+    // so its case must not wait on a terminal that may be far off or never come.
+    const onHandoff = kind === "hunt" ? handoffFor() : undefined;
+    await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), signal });
+    return;
+  }
+  if (entry.workflow === "rootcause") {
+    const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
+    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
     return;
   }
   if (kind === "hunt" || kind === "investigate") {
@@ -178,7 +228,7 @@ export async function advance(
       // A renewal that could not be read is not a lost lease: the claim outlives
       // several attempts, and killing the run over one failed query would be worse
       // than the late renewal it is recovering from.
-      () => {},
+      (error: unknown) => log.warn("lease renewal failed", { run_id: job.run_id, ...errorFields(error) }),
     );
   }, RENEW_EVERY_MS);
 
@@ -196,12 +246,13 @@ export async function advance(
     await journalAnswers(state, job.run_id, job.run_kind, answersFor());
 
     if (await abandonIfParkedOut(state, leases, job, spec)) return;
+    if (await abandonIfStalled(state, leases, job)) return;
     if (latest !== null) await markResumed(state, job, owner, latest);
     await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner);
   } catch (error) {
     await abandon(job, error);
-    await forget(state, leases, job.run_id, owner);
+    await forget(state, leases, job, owner, error);
     throw error;
   } finally {
     clearInterval(renewing);
@@ -218,12 +269,56 @@ export async function advance(
 // retry that lands seconds later, and a refused claim returns quietly, so BullMQ
 // would retire the job as a success with the run stalled. release() is scoped to
 // this owner, so a worker already reclaimed displaces nobody.
-async function forget(state: State, leases: Leases, runId: string, owner: string): Promise<void> {
-  if ((await state.latestSeq(runId)) === null) {
-    await leases.finish(runId);
+async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown): Promise<void> {
+  if ((await state.latestSeq(job.run_id)) === null) {
+    await leases.finish(job.run_id);
     return;
   }
-  await leases.release(runId, owner, 0);
+  if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
+  await leases.release(job.run_id, owner, 0);
+}
+
+// A spec error answers the same way on every attempt, and on a resume the layers come
+// off the ledger, so no retry can change it. A gateway 402 is the same shape: the
+// budget is spent, and the next call is refused for the same reason. Say why it
+// stopped and stop, rather than refilling the queue with jobs none of which could succeed.
+async function stopBecauseItCannotSucceed(
+  state: State,
+  leases: Leases,
+  job: RunJob,
+  error: unknown,
+): Promise<boolean> {
+  // Not exempted when a checkpoint is open: the gateway will refuse the next call
+  // whether or not a person still owes this run an answer. The exemption below is
+  // for a spec error whose cause is that open checkpoint.
+  if (error instanceof GatewayExhausted) {
+    const reason = error.message;
+    await state.append(job.run_id, [
+      { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "budget_exhausted", reason } },
+    ]);
+    // abandon() does not report this error, so every kind, compose included, hears
+    // budget_exhausted once. The spec-error path leaves compose to abandon().
+    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason, summary: "" });
+    await reap(leases, job.run_id);
+    return true;
+  }
+
+  if (!(error instanceof SpecError)) return false;
+  // SpecError is not only about specs: a lead that emits no decision throws one, often
+  // because a checkpoint is open. A run waiting on a person must never be killed.
+  if (await waitingOnSomeone(state, job.run_id)) return false;
+
+  const reason = `its spec cannot be built: ${error.message}`;
+  await state.append(job.run_id, [
+    { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "failed", reason } },
+  ]);
+  // abandon() already told the mirror for compose; every other kind is told off the
+  // terminal in settle, which this path returns before reaching.
+  if (job.run_kind !== "compose") {
+    await mirrorFor().terminal(job.run_id, { outcome: "failed", reason, summary: "" });
+  }
+  await reap(leases, job.run_id);
+  return true;
 }
 
 // Where a run was picked back up, so a crash and its recovery are readable rather
@@ -284,7 +379,7 @@ export async function spentOn(state: State, runId: string): Promise<number> {
 // A run that dies before it journals a terminal leaves its record open, and a
 // resolution failure dies before there is a ledger to journal one onto.
 async function abandon(job: RunJob, error: unknown): Promise<void> {
-  if (job.run_kind !== "compose") return;
+  if (job.run_kind !== "compose" || error instanceof GatewayExhausted) return;
   await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: error instanceof Error ? error.message : String(error), summary: "" });
 }
 
@@ -306,6 +401,43 @@ async function abandonIfParkedOut(state: State, leases: Leases, job: RunJob, spe
   await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
   await reap(leases, job.run_id);
   return true;
+}
+
+// Sweeps that journal nothing but being picked up again: a run whose calls fail without
+// throwing advances nothing, and the SpecError path cannot see it because nothing threw.
+// Counted off the ledger, which is what survives a worker restart.
+export const MAX_STALLED_RESUMES = 6;
+
+// Neither is progress: a failing call writes a spend at zero, and a resume says only
+// that somebody looked again.
+const NOT_PROGRESS: ReadonlySet<string> = new Set(["resumed", "spend"]);
+
+async function abandonIfStalled(state: State, leases: Leases, job: RunJob): Promise<boolean> {
+  const events = await state.read(job.run_id);
+  // A parked hunt journals a resume on every sweep, so counting those would end every
+  // run that asked a question. abandonIfParkedOut owns the case nobody answers.
+  if (parkedFor(events) !== null) return false;
+  let resumes = 0;
+  for (let at = events.length - 1; at >= 0; at -= 1) {
+    const kind = events[at]?.kind ?? "";
+    if (!NOT_PROGRESS.has(kind)) break;
+    if (kind === "resumed") resumes += 1;
+  }
+  if (resumes < MAX_STALLED_RESUMES) return false;
+
+  const reason = `picked up ${resumes} times without advancing; something upstream is failing without saying so`;
+  await state.append(job.run_id, [
+    { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "abandoned", reason } },
+  ]);
+  await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
+  await reap(leases, job.run_id);
+  return true;
+}
+
+// Whether anything is waiting on a person. Read fresh, since the callers reach here
+// from a catch holding events that may predate the checkpoint.
+async function waitingOnSomeone(state: State, runId: string): Promise<boolean> {
+  return parkedFor(await state.read(runId)) !== null;
 }
 
 // How long the oldest unanswered checkpoint has been waiting, or null when none
@@ -395,21 +527,43 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
 }
 
 // advance(), with the one distinction the retry policy above needs to be told
-// about: a spec that does not parse parses no better on the third attempt. Retries
-// exist for the infrastructure going away mid-run, not for a malformed playbook, and
+// about: a spec that does not parse parses no better on the third attempt, and a
+// gateway that answered 402 answers 402 again. Retries exist for the infrastructure
+// going away mid-run, not for a malformed playbook or a spent budget, and
 // UnrecoverableError is how BullMQ is told which is which -- the job fails on
 // attempt 1 and the console sees the real message rather than the same one thrice,
 // fifteen seconds apart.
 //
 // Only here, not inside advance(): what a failure means to the queue is the queue's
 // business, and advance() is driven without one by the tests and by run-once.ts.
-async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
+// advance() still throws the original error; this is the only place that wraps it.
+export async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
   try {
     await advance(state, leases, job, build, directives);
   } catch (error) {
-    if (error instanceof SpecError) throw new UnrecoverableError(error.message);
+    if (error instanceof SpecError || error instanceof GatewayExhausted) {
+      throw Object.assign(new UnrecoverableError(error.message), { cause: error });
+    }
     throw error;
   }
+}
+
+// One line per failed attempt: warn while BullMQ will retry, error once it will not.
+// `job` is undefined when the failure is a stalled job BullMQ already discarded.
+// Spec and gateway errors are wrapped in UnrecoverableError by handle(); the cause
+// names the class the operator needs.
+export function logFailure(job: Job<RunJob> | undefined, error: Error): void {
+  const attempts = job?.opts.attempts ?? 1;
+  const attempt = job?.attemptsMade ?? attempts;
+  const retrying = !(error instanceof UnrecoverableError) && attempt < attempts;
+  const cause = error instanceof UnrecoverableError && error.cause instanceof Error ? error.cause : error;
+  log[retrying ? "warn" : "error"](retrying ? "run attempt failed, will retry" : "run failed", {
+    run_id: job?.data.run_id,
+    run_kind: job?.data.run_kind,
+    attempt,
+    attempts,
+    ...errorFields(cause),
+  });
 }
 
 // How many runs one worker drives at once. Tunable because the right number is a
@@ -454,6 +608,11 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
     lockDuration: LEASE_TTL_MS * 10,
   });
 
+  worker.on("failed", logFailure);
+  // Connection-level faults arrive here and nowhere else; an unhandled one would also
+  // crash the process.
+  worker.on("error", (error) => log.error("worker error", errorFields(error)));
+
   // A plain interval rather than a repeatable job: a repeat key lives in Redis and
   // can be lost on a deploy, and a watchdog that has silently stopped looks exactly
   // like one with nothing to do. This cannot stop while the process lives.
@@ -467,7 +626,7 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
       // A sweep that could not read the table tries again next tick. Throwing here
       // would take the process down with every run on it. Said out loud because a
       // watchdog failing every tick looks exactly like one with nothing to do.
-      console.warn(`sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("sweep failed", errorFields(error));
     });
   }, SWEEP_EVERY_MS);
 
@@ -498,9 +657,7 @@ export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
 function warnIfUnmirrored(): void {
   const url = process.env["VIGIL_RUNS_URL"];
   if (url !== undefined && url !== "") return;
-  console.warn(
-    "VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered",
-  );
+  log.error("VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered");
 }
 
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {

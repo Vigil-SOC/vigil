@@ -4,10 +4,9 @@
 Background: ``main`` merged #348 ("route local Ollama providers through
 Bifrost") while this branch carried an overlapping non-Anthropic routing
 change. The reconciliation kept #348's ``provider_id::model_id`` parsing and
-no-tools guardrail prompt, and added a fallback to the *configured default*
-provider so the Chat dock — which sends a **bare** model id — still routes to
-a non-Anthropic provider instead of 503-ing on Ollama-only deployments. These
-tests pin that behaviour.
+added a fallback to the *configured default* provider so the Chat dock —
+which sends a **bare** model id — still routes to a non-Anthropic provider
+instead of 503-ing on Ollama-only deployments. These tests pin that behaviour.
 
 The module is loaded via ``importlib`` so the pure helper functions can be
 exercised without importing the whole ``services.api.routers`` package (which pulls in
@@ -17,20 +16,19 @@ auth/DB through its ``__init__``).
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent.parent
-# DEV_MODE so importing the endpoint module (via core.llm.harness.claude) does
-# not trip the production JWT-secret guard.
-os.environ.setdefault("DEV_MODE", "true")
 for _p in (str(REPO),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import core.llm.providers.registry as registry_mod  # noqa: E402
+import core.llm.router.router as router_mod  # noqa: E402
+from core.llm import target  # noqa: E402
 from core.llm.router.router import ProviderSpec  # noqa: E402
 
 pytestmark = pytest.mark.unit
@@ -48,7 +46,8 @@ def _load_claude_module():
     services.api.routers package __init__ (auth/DB). Skip the suite if its imports are
     unavailable in this environment."""
     spec = importlib.util.spec_from_file_location(
-        "claude_api_under_test", str(REPO / "services" / "api" / "routers" / "claude.py")
+        "claude_api_under_test",
+        str(REPO / "services" / "api" / "routers" / "claude.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     try:
@@ -134,7 +133,142 @@ def test_unspecified_model_uses_registry_tuple(monkeypatch):
     )
 
 
-# --- _select_active_provider ------------------------------------------------
+class _ChatAgent:
+    def __init__(
+        self, model=None, fallback_model=None, component_category="investigation"
+    ):
+        self.model = model
+        self.fallback_model = fallback_model
+        self.component_category = component_category
+
+
+def _install_agent(monkeypatch, agent_id: str, agent: _ChatAgent, resolved):
+    seen = {}
+
+    class _Reg:
+        def resolve_model_for_component(self, component):
+            seen["component"] = component
+            return resolved
+
+    class _Mgr:
+        def __init__(self):
+            self.agents = {agent_id: agent}
+
+    monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
+    monkeypatch.setattr("core.agents.manager.AgentManager", _Mgr)
+    monkeypatch.setattr(
+        claude,
+        "get_provider_spec",
+        lambda pid: _spec(provider_id=pid or "unit-ollama"),
+    )
+    return seen
+
+
+def test_chat_uses_agent_model_on_the_assignment_provider(monkeypatch):
+    seen = _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="qwen2.5", fallback_model="mistral"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "qwen2.5",
+    )
+    assert seen["component"] == "investigation"
+
+
+def test_chat_uses_fallback_when_agent_model_is_not_servable(monkeypatch):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="qwen2.5"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "qwen2.5",
+    )
+
+
+def test_chat_returns_assignment_model_when_neither_agent_string_is_servable(
+    monkeypatch,
+):
+    # model_for, called later by chat_stream, is what substitutes. This step
+    # returns the assignment model unchanged.
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="claude-also"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        AN_OLLAMA_MODEL,
+    )
+
+
+def test_chat_without_agent_model_uses_the_assignment(monkeypatch):
+    seen = _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(component_category="triage"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        AN_OLLAMA_MODEL,
+    )
+    assert seen["component"] == "triage"
+
+
+def test_chat_returns_unservable_assignment_model_for_model_for_to_substitute(
+    monkeypatch,
+):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model=A_CLAUDE_MODEL, fallback_model="claude-also"),
+        ("unit-ollama", "claude-assignment"),
+    )
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "claude-assignment",
+    )
+
+
+def test_missing_assignment_provider_keeps_the_assignment_model(monkeypatch):
+    # A missing assignment provider must not be replaced by the default before
+    # can_serve, or an agent model would be accepted on the wrong provider.
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="qwen2.5", fallback_model="mistral"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    monkeypatch.setattr(claude, "get_provider_spec", lambda pid: None)
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        AN_OLLAMA_MODEL,
+    )
+
+
+def test_explicit_request_model_ignores_the_agent(monkeypatch):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="qwen2.5"),
+        ("unit-ollama", AN_OLLAMA_MODEL),
+    )
+    assert claude._resolve_provider_model_for_request(
+        "gpt-4o-mini", "custom-hunter"
+    ) == (
+        None,
+        "gpt-4o-mini",
+    )
+
+
+# --- target.provider_for ------------------------------------------------
 
 
 def test_explicit_provider_id_wins(monkeypatch):
@@ -148,7 +282,7 @@ def test_explicit_provider_id_wins(monkeypatch):
         r, "get_provider_spec", lambda pid: oll if pid == "ollama-local" else None
     )
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: anthropic_default)
-    assert claude._select_active_provider("ollama-local") is oll
+    assert target.provider_for("ollama-local") is oll
 
 
 def test_no_provider_id_falls_back_to_default(monkeypatch):
@@ -158,7 +292,7 @@ def test_no_provider_id_falls_back_to_default(monkeypatch):
     default = _spec()
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: None)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
-    assert claude._select_active_provider(None) is default
+    assert target.provider_for(None) is default
 
 
 def test_unknown_provider_id_falls_back_to_default(monkeypatch):
@@ -167,7 +301,7 @@ def test_unknown_provider_id_falls_back_to_default(monkeypatch):
     default = _spec()
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: None)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
-    assert claude._select_active_provider("ghost") is default
+    assert target.provider_for("ghost") is default
 
 
 def test_provider_lookup_error_degrades_to_default(monkeypatch):
@@ -181,7 +315,7 @@ def test_provider_lookup_error_degrades_to_default(monkeypatch):
     monkeypatch.setattr(r, "get_provider_spec", _boom)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
     # A transient lookup error must not 500 — it degrades to the default.
-    assert claude._select_active_provider("ollama-local") is default
+    assert target.provider_for("ollama-local") is default
 
 
 def test_no_provider_anywhere_returns_none(monkeypatch):
@@ -189,69 +323,51 @@ def test_no_provider_anywhere_returns_none(monkeypatch):
 
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: None)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: None)
-    assert claude._select_active_provider(None) is None
+    assert target.provider_for(None) is None
 
 
-# --- _router_model ----------------------------------------------------------
+# --- target.model_for ----------------------------------------------------------
 
 
 def test_stale_claude_model_pinned_to_ollama_default():
     # Any claude-* selection on a non-Anthropic provider would 404 at Bifrost —
     # pin it to the provider's own default model.
-    assert claude._router_model(_spec(), A_CLAUDE_MODEL) == AN_OLLAMA_MODEL
+    assert target.model_for(_spec(), A_CLAUDE_MODEL) == AN_OLLAMA_MODEL
 
 
 def test_non_claude_model_passes_through():
-    assert claude._router_model(_spec(), "qwen3-coder:latest") == "qwen3-coder:latest"
+    assert target.model_for(_spec(), "qwen3-coder:latest") == "qwen3-coder:latest"
 
 
 def test_claude_model_kept_for_anthropic_provider():
     anth = _spec(provider_type="anthropic", provider_id="a")
     # On an Anthropic provider a claude-* model is valid and must pass through.
-    assert claude._router_model(anth, A_CLAUDE_MODEL) == A_CLAUDE_MODEL
+    assert target.model_for(anth, A_CLAUDE_MODEL) == A_CLAUDE_MODEL
 
 
 def test_none_requested_uses_provider_default():
-    assert claude._router_model(_spec(), None) == AN_OLLAMA_MODEL
+    assert target.model_for(_spec(), None) == AN_OLLAMA_MODEL
 
 
-# --- guardrail prompt -------------------------------------------------------
+# --- target.resolve_component ----------------------------------------------
 
 
-def test_router_guardrail_prompt_forbids_tools():
-    p = claude.ROUTER_NO_TOOLS_SYSTEM_PROMPT
-    assert "no executable tools" in p
-    # Must not invite tool/placeholder hallucination on the no-tools path.
-    assert "Do not" in p
+def test_resolve_component_returns_registry_assignment_after_provider_lookup(
+    monkeypatch,
+):
+    # Settings → AI Config writes (provider_id, model_id). Playbook resolution
+    # needs the Bifrost pair (provider_type, model) after looking that row up.
+    class _Reg:
+        def resolve_model_for_component(self, component):
+            assert component == "investigation"
+            return ("ollama-local", AN_OLLAMA_MODEL)
 
-
-# --- end-to-end routing decision (the use_router contract) ------------------
-
-
-@pytest.mark.parametrize(
-    "provider_id, default_type, expect_router",
-    [
-        (None, "ollama", True),  # bare id + ollama default → route (Chat dock)
-        (None, "anthropic", False),  # anthropic default → ClaudeService path
-        ("ollama-local", "anthropic", True),  # explicit ollama beats default
-        (None, None, False),  # nothing configured → ClaudeService 503 gate
-    ],
-)
-def test_use_router_decision(monkeypatch, provider_id, default_type, expect_router):
-    import core.llm.router.router as r
-
-    explicit = _spec() if provider_id else None
-    default = (
-        _spec(provider_type=default_type, provider_id="default")
-        if default_type
-        else None
+    oll = _spec()
+    monkeypatch.setattr(registry_mod, "get_registry", lambda: _Reg())
+    monkeypatch.setattr(
+        router_mod,
+        "get_provider_spec",
+        lambda pid: oll if pid == "ollama-local" else None,
     )
-    monkeypatch.setattr(r, "get_provider_spec", lambda pid: explicit)
-    monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
-
-    active = claude._select_active_provider(provider_id)
-    # Mirrors the inline gate in chat()/chat_stream().
-    use_router = (
-        active is not None and getattr(active, "provider_type", None) != "anthropic"
-    )
-    assert use_router is expect_router
+    monkeypatch.setattr(router_mod, "get_default_provider_spec", lambda: None)
+    assert target.resolve_component("investigation") == ("ollama", AN_OLLAMA_MODEL)

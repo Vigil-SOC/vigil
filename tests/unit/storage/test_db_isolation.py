@@ -37,4 +37,9 @@ def test_the_throwaway_database_carries_the_orm_schema():
     from core.storage.connection import get_db_manager
 
     tables = set(inspect(get_db_manager().engine).get_table_names())
-    assert {"approval_actions", "system_config", "findings"} <= tables
+    assert {
+        "approval_actions",
+        "system_config",
+        "findings",
+        "intake_triggers",
+    } <= tables

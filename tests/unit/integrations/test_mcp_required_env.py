@@ -17,9 +17,9 @@ from core.integrations.mcp.service import MCPServer, extract_required_env_vars
 
 class TestExtractRequiredEnvVars:
     def test_scans_env_values(self):
-        assert extract_required_env_vars(
-            {"API_KEY": "${VIRUSTOTAL_API_KEY}"}, []
-        ) == ["VIRUSTOTAL_API_KEY"]
+        assert extract_required_env_vars({"API_KEY": "${VIRUSTOTAL_API_KEY}"}, []) == [
+            "VIRUSTOTAL_API_KEY"
+        ]
 
     def test_scans_args(self):
         assert extract_required_env_vars(
@@ -49,14 +49,15 @@ class TestExtractRequiredEnvVars:
 
     def test_ignores_workspaceFolder(self):
         # Not all ${...} references are credentials — path sentinels shouldn't be flagged.
-        assert extract_required_env_vars(
-            {"CWD": "${workspaceFolder}/data"}, []
-        ) == []
+        assert extract_required_env_vars({"CWD": "${workspaceFolder}/data"}, []) == []
 
     def test_returns_empty_when_no_placeholders(self):
-        assert extract_required_env_vars(
-            {"LITERAL_VALUE": "just-a-string"}, ["--flag", "value"]
-        ) == []
+        assert (
+            extract_required_env_vars(
+                {"LITERAL_VALUE": "just-a-string"}, ["--flag", "value"]
+            )
+            == []
+        )
 
     def test_returns_empty_on_none_inputs(self):
         assert extract_required_env_vars({}, []) == []
@@ -113,9 +114,7 @@ class TestCredentialGate:
         with patch("os.environ.get", return_value=None), patch(
             "core.secrets_manager.get_secret", return_value=None
         ):
-            assert client._missing_credentials_for(server) == [
-                "VIRUSTOTAL_API_KEY"
-            ]
+            assert client._missing_credentials_for(server) == ["VIRUSTOTAL_API_KEY"]
 
     def test_secrets_manager_satisfies_requirement(self):
         # A user who saved a credential via the integration wizard (which
@@ -182,38 +181,85 @@ class TestSubstituteEnvVars:
         service = MCPService()
         monkeypatch.setenv("HOME", "/Users/test")
         assert (
-            service._substitute_env_vars("${UNSET_VAR_XYZ:-${HOME}/.vigil/palace}")
-            == "/Users/test/.vigil/palace"
+            service._substitute_env_vars("${UNSET_VAR_XYZ:-${HOME}/.vigil}")
+            == "/Users/test/.vigil"
         )
 
     def test_nested_default_when_both_unset(self):
         from core.integrations.mcp.service import MCPService
 
         service = MCPService()
-        assert (
-            service._substitute_env_vars("${A:-${B:-fallback}}") == "fallback"
-        )
+        assert service._substitute_env_vars("${A:-${B:-fallback}}") == "fallback"
 
-    def test_mempalace_config_path(self, monkeypatch):
-        """Real-world shape from mcp-config.json."""
+    def test_an_explicit_setting_beats_a_nested_default(self, monkeypatch):
+        """Both branches of one line, on a variable a spawned server really gets.
+
+        VIGIL_DIR is defaulted for every child (see ``service.py``), so an entry
+        that overrides it and otherwise builds a path from ${HOME} is the shape
+        this expander exists for. Reading only the default branch would pass on a
+        line that ignores what the operator set.
+        """
         from core.integrations.mcp.service import MCPService
 
         service = MCPService()
         monkeypatch.setenv("HOME", "/Users/test")
-        # Ensure the default branch is taken — a leaked MEMPALACE_PALACE_PATH
-        # from another test would short-circuit the ${VAR:-default} expansion.
-        monkeypatch.delenv("MEMPALACE_PALACE_PATH", raising=False)
-        result = service._substitute_env_vars(
-            "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
-        )
-        assert result == "/Users/test/.vigil/mempalace/palace"
+        # A value leaked from another test would short-circuit the default branch.
+        monkeypatch.delenv("VIGIL_DIR", raising=False)
+        line = "${VIGIL_DIR:-${HOME}/.vigil}/workspace"
 
-        # When the env var is explicitly set, it wins.
-        monkeypatch.setenv("MEMPALACE_PALACE_PATH", "/custom/palace")
-        result = service._substitute_env_vars(
-            "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
-        )
-        assert result == "/custom/palace"
+        assert service._substitute_env_vars(line) == "/Users/test/.vigil/workspace"
+
+        monkeypatch.setenv("VIGIL_DIR", "/custom/vigil")
+        assert service._substitute_env_vars(line) == "/custom/vigil/workspace"
+
+    def test_a_resolved_value_is_not_expanded_again(self):
+        """A stored value holding ${...} must not read another variable or secret."""
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        env = {
+            "LOGLM_MCP_URL": "https://evil.example/${JWT_SECRET_KEY}/mcp/",
+            "JWT_SECRET_KEY": "signing-key",
+        }
+        # Every name the value could point at resolves to a secret, if it were read.
+        with patch("core.integrations.mcp.service.get_secret", return_value="s3cret"):
+            out = service._substitute_env_vars("${LOGLM_MCP_URL}", env)
+        with patch("core.integrations.mcp.service.get_secret", return_value=None):
+            default = service._substitute_env_vars("${MISSING:-${LOGLM_MCP_URL}}", env)
+        assert out == "https://evil.example/${JWT_SECRET_KEY}/mcp/"
+        assert default == out
+        assert "signing-key" not in out + default and "s3cret" not in out + default
+
+    def test_empty_export_falls_through_to_stored_secret(self):
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        with patch("core.integrations.mcp.service.get_secret", return_value="vt-saved"):
+            assert (
+                service._substitute_env_vars(
+                    "${VIRUSTOTAL_API_KEY}", {"VIRUSTOTAL_API_KEY": ""}
+                )
+                == "vt-saved"
+            )
+
+    def test_empty_export_and_no_secret_uses_default(self):
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        with patch("core.integrations.mcp.service.get_secret", return_value=None):
+            assert service._substitute_env_vars("${X:-d}", {"X": ""}) == "d"
+
+    def test_non_empty_export_beats_stored_secret(self):
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        with patch("core.integrations.mcp.service.get_secret", return_value="vt-saved"):
+            assert (
+                service._substitute_env_vars(
+                    "${VIRUSTOTAL_API_KEY}", {"VIRUSTOTAL_API_KEY": "vt-export"}
+                )
+                == "vt-export"
+            )
 
 
 class TestRetryDormantIfReady:
@@ -286,9 +332,7 @@ class TestRetryDormantIfReady:
         ):
             result = await client.retry_dormant_if_ready()
         assert result == {"virustotal": True}
-        client.connect_to_server.assert_awaited_once_with(
-            "virustotal", persistent=True
-        )
+        client.connect_to_server.assert_awaited_once_with("virustotal", persistent=True)
 
     @pytest.mark.asyncio
     async def test_rate_limits_repeated_retries(self):
@@ -316,3 +360,43 @@ class TestRetryDormantIfReady:
         assert r2 == {}
         # connect_to_server was called exactly once despite two sweeps.
         assert client.connect_to_server.await_count == 1
+
+
+class TestDeriveRemoteMcpEnv:
+    """A saved connectorUrl only reaches an MCP child's argv if it is trusted."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch):
+        from core.integrations import integration_bridge_service as mod
+
+        monkeypatch.setattr(mod, "_DERIVED_MCP_URLS", {})
+        monkeypatch.delenv("LOGLM_MCP_URL", raising=False)
+        yield
+        monkeypatch.delenv("LOGLM_MCP_URL", raising=False)
+
+    def _derive(self, url):
+        from core.integrations.integration_bridge_service import (
+            IntegrationBridgeService,
+        )
+
+        bridge = IntegrationBridgeService()
+        cfg = {"integrations": {"loglm": {"connectorUrl": url}}}
+        with patch.object(bridge, "load_integration_config", return_value=cfg):
+            return bridge.derive_remote_mcp_env()
+
+    def test_https_url_is_derived(self):
+        assert self._derive("https://loglm.example.com/") == {
+            "LOGLM_MCP_URL": "https://loglm.example.com/mcp/"
+        }
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://evil.example/${JWT_SECRET_KEY}",
+            "http://evil.example",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ],
+    )
+    def test_untrusted_url_is_not_derived(self, url):
+        assert self._derive(url) == {}

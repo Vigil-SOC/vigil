@@ -2,12 +2,12 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { LeaseRepository } from "../../ledger/leases.js";
+import { TEST_DSN } from "../support/testdb.js";
 
 // Two pools, because the claim is about two processes rather than two objects: one
 // connection proves nothing about the statement that refuses the second worker.
-const connectionString = process.env["DATABASE_URL"] ?? "postgres://vigil:vigil@localhost:55432/vigil_test";
-const first = new pg.Pool({ connectionString });
-const second = new pg.Pool({ connectionString });
+const first = new pg.Pool({ connectionString: TEST_DSN });
+const second = new pg.Pool({ connectionString: TEST_DSN });
 
 const workerA = new LeaseRepository(first);
 const workerB = new LeaseRepository(second);

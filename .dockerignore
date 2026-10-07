@@ -39,19 +39,23 @@ tests/
 
 # Documentation
 *.md
-docs/
+# The API and the daemon both read this file for the Settings intent card.
+!INTENT.md
+docs/**
+# SocConsole imports this file from outside clients/web. Re-include the
+# parents or the exception does not apply.
+!docs/design/
+!docs/design/console/
+!docs/design/console/tokens/
+!docs/design/console/tokens/tokens.css
 archive/
 *.txt
 LICENSE
 # requirements.txt is needed by Dockerfile.backend + Dockerfile.daemon;
 # the wildcard above would otherwise exclude it.
 !requirements.txt
-# mempalace is pip-installed during the image build and its build backend reads
-# README.md for metadata (its pyproject declares `readme = "README.md"`, which
-# hard-fails if the file is absent). The `*.md` wildcard above would otherwise
-# strip it from the build context. deeptempo-core and mcp-servers were here too
-# until #654 dropped those submodules.
-!mempalace/README.md
+# The backend image's baked uvx connector list.
+!infra/docker/mcp-packages/uv-tools.txt
 
 # Logs
 logs/

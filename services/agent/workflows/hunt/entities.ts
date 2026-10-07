@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import { TLDS } from "./tlds.js";
-import type { Entity, EntityType, EvidenceRecord } from "./types.js";
+import { ENTITY_TYPES, type Entity, type EntityType, type EvidenceRecord } from "./types.js";
 
 // A payload full of addresses would otherwise let one record dominate the graph.
 const PER_RECORD_CAP = 25;
@@ -52,6 +52,21 @@ function wellFormed(type: EntityType, value: string): boolean {
   if (type === "domain" || type === "email") return value.includes(".") && hasKnownTld(value);
   if (type === "hash") return /^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
   return true;
+}
+
+// The inverse of `key`: what an operator hands the run modal, and the only shape
+// a subject arrives in. Split on the first colon rather than every one, because a
+// url value carries its own. An unknown type is refused instead of coerced -- the
+// closed set is what stops a typo minting an eleventh kind of entity.
+export function parseKey(raw: string): Entity | undefined {
+  const at = raw.indexOf(":");
+  if (at < 1) return undefined;
+  const kind = raw.slice(0, at).trim().toLowerCase();
+  if (!(ENTITY_TYPES as readonly string[]).includes(kind)) return undefined;
+
+  const type = kind as EntityType;
+  const value = normalize(type, defang(raw.slice(at + 1)).trim());
+  return wellFormed(type, value) ? { type, value } : undefined;
 }
 
 export function fromText(raw: string): Entity[] {

@@ -7,13 +7,21 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from core.config import get_integration_config, is_integration_enabled
-from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.config import is_integration_enabled
+from core.federation.adapters._base import (
+    fresh_cursor,
+    full_batch_cursor,
+    parse_alert_time,
+    parse_cursor_since,
+)
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
     register_adapter,
 )
+from core.integrations._base.config import resolve
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
+from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -44,18 +52,17 @@ class CrowdStrikeAdapter:
             return self._service
         if not self.is_configured():
             return None
-        try:
-            from core.integrations.crowdstrike.client import CrowdStrikeService
+        from core.integrations.crowdstrike.client import CrowdStrikeService
 
-            cfg = get_integration_config("crowdstrike")
-            self._service = CrowdStrikeService(
-                client_id=cfg.get("client_id", ""),
-                client_secret=cfg.get("client_secret", ""),
-                base_url=cfg.get("base_url", "https://api.crowdstrike.com"),
-            )
-        except Exception as e:
-            logger.warning("CrowdStrike service init failed: %s", e)
-            self._service = None
+        # A configured source whose service cannot be built is failing, not
+        # empty: let the error reach the runner so the cursor is kept.
+        # resolve() reads client_secret from the secrets store; unset fields are None.
+        cfg = resolve(CROWDSTRIKE)
+        self._service = CrowdStrikeService(
+            client_id=cfg["client_id"] or "",
+            client_secret=cfg["client_secret"] or "",
+            base_url=cfg["base_url"] or "https://api.crowdstrike.com",
+        )
         return self._service
 
     async def fetch(
@@ -69,31 +76,56 @@ class CrowdStrikeAdapter:
         if svc is None:
             return FetchResult(findings=[], cursor=fresh_cursor())
 
+        # Taken before the fetch: the cursor never moves past this instant.
+        now = utcnow()
         cutoff = parse_cursor_since(cursor) or since
         if cutoff is None:
             # First run: small window, no backfill.
-            cutoff = utcnow() - timedelta(minutes=1)
+            cutoff = now - timedelta(minutes=1)
 
-        try:
-            detections = (
-                await asyncio.to_thread(
-                    svc.get_detections,
-                    filter_query=f"created_timestamp:>='{cutoff.isoformat()}Z'",
-                    limit=max_items,
-                )
-                or []
+        # The Detects ID query cannot sort on created_timestamp (its documented
+        # sort keys are first_behavior, last_behavior, max_severity,
+        # max_confidence, adversary_id, devices.hostname), so "oldest first" is
+        # done here: read every detection in the window (limit=None pages the
+        # IDs and summarises them in chunks), sort by created_timestamp, and
+        # keep the oldest max_items. When the window overflows, the ones left
+        # out are the newest, and the cursor stops at the newest one kept.
+        detections = await asyncio.to_thread(
+            svc.get_detections,
+            filter_query=f"created_timestamp:>='{cutoff.isoformat()}Z'",
+            limit=None,
+        )
+        if detections is None:
+            # Raised so the runner records a failure and keeps the cursor.
+            detail = getattr(svc, "last_error", None)
+            raise RuntimeError(
+                "CrowdStrike detections query failed"
+                + (f": {detail}" if detail else "")
             )
-        except Exception as e:
-            logger.debug("CrowdStrike fetch failed: %s", e)
-            detections = []
+
+        # An unreadable time sorts first: the cursor cannot track it, so it
+        # must not be the one left behind.
+        by_time = sorted(
+            ((parse_alert_time(d.get("created_timestamp")), d) for d in detections),
+            key=lambda td: td[0] or datetime.min,
+        )
+        truncated = len(by_time) >= max_items
+        by_time = by_time[:max_items]
 
         findings = []
-        for det in detections[:max_items]:
+        for _, det in by_time:
             f = _detection_to_finding(det)
             if f is not None:
                 findings.append(f)
 
-        return FetchResult(findings=findings, cursor=fresh_cursor())
+        cursor_out = truncated and full_batch_cursor(
+            [t for t, _ in by_time],
+            start=cutoff,
+            now=now,
+            source=self.name,
+            count=len(by_time),
+        )
+        return FetchResult(findings=findings, cursor=cursor_out or fresh_cursor())
 
 
 def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -102,7 +134,7 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         return None
 
     external_id = str(detection_id)[:128]
-    finding_id = f"cs-{external_id[:32]}"
+    finding_id = fit_id("cs-", str(detection_id), FINDING_ID_MAX)
 
     severity = _SEVERITY_MAP.get(
         detection.get("max_severity_displayname", "Medium"), "medium"
@@ -135,7 +167,6 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "raw_event": detection,
         "anomaly_score": float(detection.get("max_confidence", 50)) / 100.0,
         "mitre_predictions": mitre_predictions,
-        "embedding": [],
     }
 
 

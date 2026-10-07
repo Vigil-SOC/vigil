@@ -1,3 +1,5 @@
+import { recalledNotesOf } from "../../contracts/memory.js";
+import { canonical } from "../../core/context.js";
 import { digestOf } from "./config.js";
 import { buildDigest } from "./digest.js";
 import { fold, type HuntEvent as LedgerEvent } from "./ledger.js";
@@ -9,6 +11,8 @@ export interface ReplayedDecision {
   action: string;
   target: string | null;
   cost_usd: number;
+  // Wall time of the lead's model calls; omitted on ledgers that did not record it.
+  duration_ms?: number;
   // False when the ledger predates digest_seq and the prefix had to be inferred,
   // so a mismatch there may be the boundary rather than real drift.
   exact: boolean;
@@ -22,15 +26,25 @@ export interface ReplayReport {
   decisions: ReplayedDecision[];
   reproduced: number;
   inexact: number;
+  // The recalled rows the run opened on, rendered from its own recall event. A
+  // Replay is both halves of what a decision was shown -- the digest and the
+  // recalled prefix -- so this is rebuilt here rather than left to the caller.
+  // Read off the log and nowhere else: asking a Memory would answer from a
+  // neighbourhood that has moved since the run, which passes as a test and then
+  // shows a decision something it never saw. Empty when the run never read
+  // memory, and empty when the read could not be served.
+  recalled: readonly string[];
 }
+
+// Key order is not drift: the ledger's JSONB column hands the recorded digest
+// back with its keys reordered, and comparing raw bytes read every decision in
+// the store as a mismatch.
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 // The two transforms the controller applies to a built digest before presenting
 // it — a rejection note and an EXPAND — only ever append to these.
 function isPrefix(rebuilt: readonly unknown[], recorded: readonly unknown[]): boolean {
-  return (
-    rebuilt.length <= recorded.length &&
-    rebuilt.every((item, index) => JSON.stringify(item) === JSON.stringify(recorded[index]))
-  );
+  return rebuilt.length <= recorded.length && rebuilt.every((item, index) => same(item, recorded[index]));
 }
 
 // Where the digest for this iteration was built, on a ledger written before
@@ -45,12 +59,13 @@ function differs(rebuilt: Digest, recorded: Digest): string | null {
   if (!isPrefix(rebuilt.notes, recorded.notes)) return "notes are not an extension of the rebuilt digest";
   if (!isPrefix(rebuilt.expansions, recorded.expansions)) return "expansions are not an extension of the rebuilt digest";
 
-  const body = ({ notes, expansions, ...rest }: Digest): string => JSON.stringify(rest);
-  return body(rebuilt) === body(recorded) ? null : "rebuilt digest differs from the one presented";
+  const body = ({ notes, expansions, ...rest }: Digest): unknown => rest;
+  return same(body(rebuilt), body(recorded)) ? null : "rebuilt digest differs from the one presented";
 }
 
 // Folds the ledger up to each decision, rebuilds the digest that decision was
-// made against, and checks it against the one journaled at the time.
+// made against, and checks it against the one journaled at the time. The recalled
+// rows every decision in the run was shown are rebuilt alongside them.
 export function replay(log: readonly LedgerEvent[]): ReplayReport {
   const projection = fold(log);
   const decisions: ReplayedDecision[] = [];
@@ -68,6 +83,7 @@ export function replay(log: readonly LedgerEvent[]): ReplayReport {
       action: record.decision.action,
       target: record.decision.target_hypothesis_id ?? record.decision.target_entity ?? null,
       cost_usd: record.cost_usd,
+      ...(record.duration_ms === undefined ? {} : { duration_ms: record.duration_ms }),
       exact,
       rebuilt,
       recorded: record.digest_presented,
@@ -77,6 +93,7 @@ export function replay(log: readonly LedgerEvent[]): ReplayReport {
 
   return {
     hunt_id: projection.hunt.hunt_id,
+    recalled: recalledNotesOf(log),
     decisions,
     reproduced: decisions.filter((decision) => decision.mismatch === null).length,
     inexact: decisions.filter((decision) => !decision.exact).length,

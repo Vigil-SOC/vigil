@@ -1,8 +1,13 @@
 # Vigil
+Vigil 1.0 is around the corner!
+
+We believe Vigil 1.0 will be the first human on the loop, as opposed to human in the loop, AI SOC solution of which we are aware.
+Please join upcoming office hours if you would like to learn more, and see a preview of this novel approach to safe, trusted, scalable agentic defense.
+
 
 Vigil is the leading open source AI SOC: an agentic SOC with 13 specialized AI agents, 30+ MCP integrations, and 7,200+ community detection rules, released under Apache 2.0. Your playbooks are plain-text files, your agent logic is readable Python, and your integrations use an open standard ([MCP](https://modelcontextprotocol.io/)). Every proprietary AI SOC on the market is a black box you rent. Vigil is a capability you own.
 
-Vigil pairs with [LogLM](https://www.deeptempo.ai/platform), a cybersecurity foundation model for [behavioral anomaly detection](https://www.deeptempo.ai/learning-center/behavioral-anomaly-detection), to form the [Intelligent Defense Platform](https://www.deeptempo.ai) from [DeepTempo](https://www.deeptempo.ai). Measured in the open by [SOCBench](https://socbench.org). Docs and community: [vigilsoc.org](https://vigilsoc.org).
+Vigil runs on its own: a local clone, Docker, and any LLM provider (a local Ollama model works). [LogLM](https://www.deeptempo.ai/platform), DeepTempo's cybersecurity foundation model for [behavioral anomaly detection](https://www.deeptempo.ai/learning-center/behavioral-anomaly-detection), is an optional MCP integration you enable in Settings, not a prerequisite. Measured in the open by [SOCBench](https://socbench.org). Docs and community: [vigilsoc.org](https://vigilsoc.org).
 
 The inspiration for the project is in part StackStorm and the experience of some of the founders of this project had in building the Linux Foundation project [StackStorm](https://github.com/StackStorm/st2) and in supporting Netflix and others who used StackStorm to achieve, carefully, very high levels of automation.  You'll sometimes hear us talking about the journey towards full autonomy and lessons learned.  One lesson - the system can only demote itself and only humans can promote additional autonomy.  You'll find this playing out on the way Vigil is designed; for example Vigil will check thresholds for projected costs and confidence levels in completion before executing an automation.  If it looks dodgy or too expensive, it'll double check with the humans before moving ahead.  
 
@@ -20,7 +25,7 @@ Every agent has access to 19 backend tools via Agent SDK and 100+ additional too
 | **Investigator** | Root cause analysis | Deep | Evidence collection, timeline reconstruction, cross-source correlation |
 | **Threat Hunter** | Proactive hunting | Deep | Hypothesis-driven anomaly detection, pattern intelligence from 7,200+ rules |
 | **Correlator** | Multi-signal linking | Deep | Campaign identification, attack chain reconstruction, entity mapping |
-| **Responder** | Containment actions | Fast | NIST IR containment, blast radius assessment, confidence-scored approval requests |
+| **Responder** | Containment actions | Fast | NIST IR containment planning, blast radius assessment, confidence-scored approval requests |
 | **Reporter** | Documentation | Balanced | Executive summaries, technical reports, audience-tailored content |
 | **MITRE Analyst** | ATT&CK mapping | Deep | Technique identification, coverage analysis, gap prioritization, detection templates |
 | **Forensics** | Digital forensics | Deep | Artifact analysis, chain of custody, multi-domain examination |
@@ -35,21 +40,27 @@ Workflows are the operational core of Vigil. Each workflow chains multiple speci
 
 | Workflow | Agents | What It Does |
 |----------|--------|-------------|
-| **Incident Response** | Triage → Investigator → Responder → Reporter | NIST IR framework: triage an alert, investigate root cause, contain the threat, produce an audit-ready report |
+| **Incident Response** | Triage → Investigator → Responder → Reporter | NIST IR framework: triage an alert, investigate root cause, plan containment, produce an audit-ready report |
 | **Full Investigation** | Investigator → MITRE Analyst → Correlator → Responder → Reporter | Deep-dive with ATT&CK mapping, cross-signal correlation, response planning, and comprehensive documentation |
 | **Threat Hunt** | Threat Hunter → Network Analyst → Malware Analyst → Threat Intel → Reporter | Hypothesis-driven hunting across network, endpoint, and threat intel — with IOC enrichment and detection recommendations |
 | **Forensic Analysis** | Forensics → Malware Analyst → Network Analyst → Reporter | Post-incident digital forensics with evidence preservation, chain-of-custody documentation suitable for legal proceedings |
+| **Root Cause Analysis** | Investigator | Start from a confirmed compromise and trace it backward event by event to where it began, recording each step only when the value that ties it to the one before checks out |
+| **Cloud Incident** | Investigator | Cloud-native incident response across AWS, Azure, and GCP: identity blast radius, IAM/role analysis, cross-account/cross-tenant pivots, and provider-aware containment |
+| **Shadow Adjudication** | Threat Hunter, Network Analyst, Threat Intel | Independent second opinion on a finding intake already admitted: tests the stated intent against the benign account and names the workflow that should have run, executing nothing |
 
-**How it works:** Say `"Run incident response on finding f-20260215-abc123"` and the system sequences four agents — triage scores the alert, investigator digs into root cause, responder submits containment actions with confidence-based approval, and reporter generates the final documentation.
+**How it works:** Say `"Run incident response on finding f-20260215-abc123"` and the system sequences four agents — triage scores the alert, investigator digs into root cause, responder proposes containment actions with confidence-based approval, and reporter generates the final documentation.
 
-Workflows are defined as `WORKFLOW.md` files in the `workflows/` directory and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
+Workflows are defined as `WORKFLOW.md` files under `core/workflows/definitions/` and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
 
 ```
-workflows/
+core/workflows/definitions/
 ├── incident-response/WORKFLOW.md
 ├── full-investigation/WORKFLOW.md
 ├── threat-hunt/WORKFLOW.md
-└── forensic-analysis/WORKFLOW.md
+├── forensic-analysis/WORKFLOW.md
+├── root-cause-analysis/WORKFLOW.md
+├── cloud-incident/WORKFLOW.md
+└── shadow-adjudication/WORKFLOW.md
 ```
 
 ### Create Your Own Workflow in 60 Seconds
@@ -79,10 +90,10 @@ phases:
   - id: investigate
     agent: investigator
     name: "Investigate"
-    tools: [get_finding, nearest_neighbors, search_detections]
+    tools: [get_finding, search_detections]
     instructions: |
-      Use nearest_neighbors to find similar reports. Correlate with detection
-      rules. Build an evidence timeline. Hand on the timeline and related findings.
+      Correlate with detection rules. Build an evidence timeline. Hand on the
+      timeline and related findings.
 
   - id: contain
     agent: responder
@@ -107,7 +118,7 @@ Scaffold a new workflow instantly with the CLI:
 
 ```bash
 python scripts/create_workflow.py phishing-triage
-# creates workflows/phishing-triage/WORKFLOW.md with a commented template
+# creates core/workflows/definitions/phishing-triage/WORKFLOW.md with a commented template
 ```
 
 ---
@@ -118,18 +129,21 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 
 | Category | Integrations | Tools |
 |----------|-------------|-------|
-| **SIEM** | Splunk | Natural language → SPL, search by IP/host/user, index listing |
-| **EDR / XDR** | CrowdStrike | Alert lookup, host isolation/unisolation, host status |
+| **SIEM** | Splunk, Azure Sentinel | Natural language → SPL, search by IP/host/user, index listing, KQL queries over Sentinel logs and incidents |
+| **EDR / XDR** | CrowdStrike, Microsoft Defender, SentinelOne, Carbon Black | CrowdStrike and SentinelOne (via the vendor MCP servers) are read-only: detections/alerts and host or asset lookup. Microsoft Defender: alerts, machine lookup, machine isolation (`mde_isolate`; no release tool). Carbon Black: alerts, device search, device quarantine (`cb_quarantine`) |
+| **Cloud Security** | AWS Security Hub | GuardDuty, Security Hub, Inspector, and IAM Access Analyzer findings |
+| **Identity** | Okta | Authentication events, suspicious sign-ins, identity-based investigation |
 | **Threat Intel** | VirusTotal, Shodan, AlienVault OTX, MISP | Hash/IP/domain/URL reputation, host recon, pulse matching, IOC search |
 | **Sandbox** | Hybrid Analysis, Joe Sandbox, ANY.RUN | File submission, report retrieval, IOC extraction |
-| **Timeline** | Timesketch | Forensic timeline analysis, evidence export |
 | **Detection Engineering** | Security-Detections-MCP | 7,200+ rules (Sigma, Splunk, Elastic, KQL), 71 tools, coverage analysis, gap identification |
 | **Ticketing** | Jira | Issue creation, updates, search |
-| **Communication** | Slack | Alerts, channel creation, file uploads |
+| **Communication** | Slack, PagerDuty | Alerts, channel creation, file uploads, on-call paging and escalation |
 | **Data Pipeline** | Cribl Stream | Log normalization, noise filtering, multi-destination routing |
-| **Core** | DeepTempo Findings, Approval, ATT&CK Layer, Tempo Flow | Built-in SOC operations |
+| **Core** | Vigil | Built-in SOC operations: findings, cases, approvals, hunts — the same tools an external caller reaches at `/mcp`. The finding, case and approval tools that mirror frozen `/api/v1` operations are frozen: their names and input schemas are pinned in [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json). The rest are served under the `0.x` terms in [`SECURITY.md`](SECURITY.md#supported-versions) |
 
-**Coming soon:** AWS Security Hub, Azure Sentinel, GCP Security, Okta, Microsoft Defender, SentinelOne, Carbon Black, PagerDuty.
+The response pipeline (the daemon auto-responder and the approval queue) records `isolate_host` actions but does not execute them: even an approved one ends `failed` with `unsupported_action_type`. Isolation and quarantine happen only when an agent calls the Defender or Carbon Black tool directly.
+
+**Coming soon:** GCP Security.
 
 MCP servers live in each vendor's slice as `core/integrations/<vendor>/tool.py` and are configured via the Settings UI or `mcp_config.json`. Add a new integration by adding a slice with an MCP server in it — see [vendor slices](https://vigilsoc.org/docs/vendor-slices/) — or use the built-in Custom Integration Builder to generate one from API docs.  If you build an integration that you find useful, chances are someone else will as well.  Please contribute!
 
@@ -138,14 +152,16 @@ MCP servers live in each vendor's slice as `core/integrations/<vendor>/tool.py` 
 ## Quick Start
 
 ```bash
-git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
+git clone https://github.com/Vigil-SOC/vigil.git
 cd vigil
 ./start.sh
 ```
 
-> **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both backend and frontend servers.
+> **Note:** Docker must be running before you start. The startup script handles everything else: provisions the Python virtual environment, installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional — the script continues without it), initializes the database schema and reference data, installs frontend packages, and launches the backend, frontend, and agent layer. No LogLM or cloud API key is needed to reach a running UI.
 
-Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`.
+To run workflows, set `AGENT_INTERNAL_TOKEN` before the first start: `cp env.example .env`, fill in the token (generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`), then `./start.sh`. Without it the stack still comes up, but `./start.sh` warns that the agent layer did not start and workflow runs stay queued; edit `.env` and rerun.
+
+Authentication is on by default. No admin user is seeded, so the first visit to http://localhost:6988 shows a bootstrap screen where you create the admin account; `start.sh` mints the JWT signing secret it needs at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env` — the bypass is documented there, and the backend announces it on every startup.
 
 > **Stable build vs. development build:** The Quick Start above clones `main` —
 > the active development branch (latest, *unreleased* code). For a stable,
@@ -153,6 +169,18 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 > (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`) or check out a
 > release tag before running (`git checkout v<version>`). Find the newest
 > version on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
+>
+> Released images are signed keyless by
+> [`.github/workflows/release.yml`](.github/workflows/release.yml). Confirm a
+> pull came from that workflow (image tag drops the leading `v`; the certificate
+> identity uses the git tag):
+>
+> ```bash
+> cosign verify \
+>   --certificate-identity https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version> \
+>   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+>   ghcr.io/vigil-soc/vigil-backend:<version>
+> ```
 
 ### Prerequisites
 
@@ -160,18 +188,17 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
   (`.python-version`, currently 3.12) with [uv](https://docs.astral.sh/uv/),
   independent of any system, conda, or pyenv Python you already have
 - **Node.js 18+** (for frontend)
-- **Docker Desktop** (must be running — used for PostgreSQL)
-- **Git** (with submodule support)
-- An LLM provider key. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*
+- **Docker Desktop** (must be running — used for PostgreSQL, Redis, and Bifrost)
+- **Git**
+- An LLM provider. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local, no key) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*. With the compose stack up and no provider key, `scripts/local_model.sh` serves a small local model where Bifrost can reach it and prints the id to address it by.
 
-### Default Login Credentials
+### First Login
 
-| | |
-|---|---|
-| **Username** | `admin` |
-| **Password** | `admin123` |
-
-> Change these in production!
+The user table starts empty and the first visit to http://localhost:6988
+opens a bootstrap screen (backed by `/api/auth/bootstrap`) where you create
+the admin account. No default credentials ship with the repo, and nothing in
+it creates an account with a password you did not choose. With `DEV_MODE=true`
+in `.env` there is no login at all.
 
 ### Manual Install
 
@@ -179,14 +206,10 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 <summary>Click to expand manual setup steps</summary>
 
 ```bash
-# Clone with submodules
-git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
+git clone https://github.com/Vigil-SOC/vigil.git
 cd vigil
 
-# If you already cloned without --recurse-submodules:
-git submodule update --init --recursive
-
-# Environment (DEV_MODE enabled by default)
+# Environment (authentication on by default; set DEV_MODE=true here to bypass it locally)
 cp env.example .env
 # LLM provider keys (Anthropic / OpenAI / Ollama) are configured in the
 # web UI at Settings → AI / LLM Providers — not in .env.
@@ -202,7 +225,7 @@ uv pip install -r requirements.lock
 # Frontend setup
 cd clients/web
 npm install
-cd ..
+cd ../..
 ```
 
 </details>
@@ -231,27 +254,43 @@ troubleshooting.
 # Interactive mode (keeps terminal attached, Ctrl+C to stop)
 ./start.sh
 
-# OR background mode (frees terminal)
-./start.sh --daemon
+# OR background mode (frees terminal; logs/ + pidfiles, also starts the
+# SOC daemon on the host — the ARQ worker runs in both modes)
+./start.sh -d
+
+# Add a profiled service (splunk, kafka, pgadmin, jaeger, prometheus,
+# grafana, otel-collector), or all of them
+./start.sh --with splunk
+./start.sh --all
 ```
+
+Core services come from `.vigil-autostart` (or `$AUTOSTART_SERVICES`), defaulting to `postgres redis bifrost ollama`. Ollama is host-native and optional: if it is not installed the script warns and continues.
 
 **Option B: Manual (separate terminals)**
 
 ```bash
-# Terminal 1: Start database (Docker must be running)
-cd docker && docker-compose up -d postgres
+# Terminal 1: Start the Docker services (Docker must be running)
+docker compose -f infra/docker/docker-compose.yml up -d postgres redis bifrost
 
-# Terminal 2: Initialize admin user and generate demo data
+# Terminal 2: Initialize the schema and reference data (no admin is seeded;
+# the first visit to the UI is the bootstrap screen)
+[ -f .env ] || cp env.example .env   # then set AGENT_INTERNAL_TOKEN in it
 source venv/bin/activate
-python scripts/init_default_user.py
-python scripts/demo.py
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+python scripts/init_schema.py
+python scripts/seed_reference_data.py
 
 # Terminal 3: Start backend
 source venv/bin/activate
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload
 
-# Terminal 4: Start frontend
+# Terminal 4: Start the agent layer (drains the agent-runs queue that
+# workflow runs are enqueued to; needs AGENT_INTERNAL_TOKEN set in .env).
+# Optionally also `python -m services.worker` for the ARQ consumers.
+scripts/agent_up.sh
+
+# Terminal 5: Start frontend
 cd clients/web && npm run dev
 ```
 
@@ -259,9 +298,11 @@ cd clients/web && npm run dev
 
 ```bash
 ./shutdown_all.sh              # Stop native processes only (Docker keeps running)
-./shutdown_all.sh -d           # Stop native processes + Docker containers
-./shutdown_all.sh -d --full    # Stop + remove containers and volumes
+./shutdown_all.sh -d           # Normal stop; leaves data in place
+./shutdown_all.sh -d --full    # Permanently deletes all data volumes
 ```
+
+`-d` is the normal way to stop everything and leaves data in place. `-d --full` permanently deletes all Vigil data volumes. `down -v` removes every named volume declared in the compose file, including optional-profile volumes: `postgres_data` (database contents and settings), `bifrost_data` (Bifrost config and keys), `vigil_home` (the Compose State Directory at `/home/vigil/.vigil`, including `master.key`), `vigil_investigations` (investigation files), `redis_data` (Redis), and `backup_repo` (the default on-box backup repository). Postgres, Redis, and Bifrost for a native install also come from this compose file and are wiped; the host State Directory `~/.vigil` survives. `--full` without `-d` does not delete volumes. A backup has to be stored outside the compose volumes (a host path in `VIGIL_BACKUP_REPO`, or a copy taken off the box) or this command deletes it too.
 
 ### Access
 
@@ -271,20 +312,50 @@ cd clients/web && npm run dev
 
 ### Run with Docker (Full Stack)
 
+The compose file is [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml). Pass the repo-root `.env` explicitly — compose otherwise looks for one next to the compose file, and `AGENT_INTERNAL_TOKEN` would reach the containers empty. Plain `up` is the investigation set:
+
 ```bash
-cd docker && docker-compose up -d
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
-Starts PostgreSQL, Backend API, and SOC Daemon.
+Starts `postgres`, `db-seed`, `redis`, `bifrost`, `backend`, `agent-worker`, and `agent-serve` — the services a chat-driven workflow run uses. The SOC daemon is not part of this set.
+
+```bash
+# Add federation polling, auto-enrichment, and the ARQ worker
+docker compose --env-file .env -f infra/docker/docker-compose.yml --profile daemon up -d
+```
+
+`--profile daemon` adds `soc-daemon` and `llm-worker`. Other opt-in profiles (`dev`, `observability`, `splunk`, `kafka`, `elastic`, `misp`) work the same way.
+
+Recreating containers by hand discards their logs; `start.sh` and `shutdown_all.sh` save them to `logs/containers/` first (5 per container), and keep the last 5 runs of each `logs/*.log` as `.1` to `.4`.
+
+> The `backend` container runs with auth on and refuses to start without `JWT_SECRET_KEY`. Set it in the repo-root `.env` or export it — for example `export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"` if `start.sh` has run before, or `openssl rand -base64 48` for a fresh one. `DEV_MODE=true` is the opt-in auth bypass.
 
 ### Run SOC Daemon (Headless Mode)
 
-For autonomous 24/7 monitoring without the UI:
+For autonomous 24/7 monitoring, run the `daemon` compose profile above, or on the host:
+
+```bash
+# Background mode launches services/daemon/main.py and the ARQ worker
+# alongside the backend; logs land in logs/daemon.log and logs/llm_worker.log
+./start.sh -d
+
+# Or run the daemon on its own against a running stack
+source venv/bin/activate
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+python services/daemon/main.py
+```
+
+### Tests
+
+The no-service suite needs neither LogLM nor a cloud LLM key — it is the same invocation CI runs:
 
 ```bash
 source venv/bin/activate
-python daemon/main.py
+pytest tests/unit tests/security -m "not external_service"
 ```
+
+"Passes on a local model" is a manual check, not a CI badge. With Postgres, Redis, and Bifrost up, `scripts/local_model.sh` (override the tag with `VIGIL_LOCAL_MODEL` or the first argument) prints a model id; send that as `model` on an authenticated `POST /api/claude/chat/stream`. The run proves wiring, not model quality.
 
 ### Desktop App (Standalone)
 
@@ -298,7 +369,7 @@ reach Ollama on the host via `host.docker.internal`.
 Build a local DMG (Apple Silicon shown; the image tarball is arch-specific):
 
 ```bash
-# 1. Build the backend image from source and stage it as an offline tarball
+# 1. Build the backend and agent images from source and stage them as an offline tarball
 bash clients/desktop/scripts/bundle-image.sh linux/arm64
 
 # 2. Package the app (copies the Bifrost config, bundles the tarball)
@@ -318,6 +389,51 @@ cd clients/desktop && npm run dist
 >
 > Alternatively, open it once via **System Settings → Privacy & Security →
 > Open Anyway**. Proper signing/notarization is pending.
+
+---
+
+## Getting help: the support bundle
+
+When something is wrong, `vigil-support.sh` writes one redacted `tar.gz` you can attach to a support request. It is POSIX `sh` using baseline tools only, runs on Linux and macOS, and uploads nothing.
+
+From a checkout:
+
+```bash
+sh scripts/vigil-support/vigil-support.sh
+```
+
+Without a checkout, fetch the script from the release (replace `<version>` with a release such as the one on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest), without the leading `v`). It needs only `curl` or `wget`, plus `sha256sum` or `shasum -a 256`:
+
+```bash
+V=<version>; U=https://github.com/Vigil-SOC/vigil/releases/download/v$V
+curl -fLO "$U/vigil-support-$V.tar.gz" -O "$U/vigil-support-$V.tar.gz.sha256"   # or: wget "$U/vigil-support-$V.tar.gz" "$U/vigil-support-$V.tar.gz.sha256"
+sha256sum -c "vigil-support-$V.tar.gz.sha256"                                   # macOS: shasum -a 256 -c "vigil-support-$V.tar.gz.sha256"
+tar -xzf "vigil-support-$V.tar.gz" && sh vigil-support/vigil-support.sh
+```
+
+A Helm install is read from your own machine, with your current `kubectl` context and `helm` (it is never probed unless asked for):
+
+```bash
+sh scripts/vigil-support/vigil-support.sh --mode helm [--release NAME --namespace NS]
+```
+
+Vigil Desktop shows the exact command for its install under **Support Bundle Command…** in the tray menu.
+
+Re-run with `sudo` to include sources that need elevation (some system logs).
+Run with `sudo`, it examines the same install, State Directory and container
+runtime the invoking user would, and the bundle belongs to the invoking user.
+`sudo` resets `VIGIL_DIR`, so for a non-default State Directory pass
+`--state-dir` (or run `sudo --preserve-env=VIGIL_DIR`).
+
+> DATA NOTICE: this bundle holds information from this machine: its hostname,
+> the full process list with command lines, system logs and disk usage. Known
+> credential formats and secret names are redacted, but credentials in free log
+> text that match no known format cannot be guaranteed caught. Nothing is
+> uploaded. Review the bundle before you share it.
+
+**In the bundle** (host level, under `system/`): hostname and `uname`, the clock and timezone, the full process list, disk usage, the OS release, and the journal, syslog and dmesg (or the macOS log); plus `manifest.json` and `SUMMARY.txt`, which list everything collected and everything not.
+
+**Per install** (when a Vigil install is found): `configuration/` (the `.env`, the rendered Compose config, `backups.json`, `detection_sources.json`, deployment files), `health/` (endpoint output and container status), and `logs/` (the checkout's and the State Directory's logs, and `docker logs` of the install's containers, including Postgres, Redis and Bifrost on a native install). Under Compose and Desktop the State Directory files are read from the backend container. Secrets, keys and database contents are never included; `SUMMARY.txt` lists what was left out. See [`scripts/vigil-support/README.md`](scripts/vigil-support/README.md) for the table.
 
 ---
 
@@ -343,7 +459,7 @@ cd clients/desktop && npm run dist
 │     Backend Services     │  │          MCP Servers (30+)         │
 │  Detections (7,200+)     │  │  Splunk │ CrowdStrike │ VirusTotal │
 │  Case Management         │  │  Shodan │ Jira │ Slack │ Cribl    │
-│  Approvals │ MITRE ATT&CK│  │  Timesketch │ MISP │ ANY.RUN      │
+│  Approvals │ MITRE ATT&CK│  │  MISP │ ANY.RUN                   │
 │  Similarity Search       │  │  Hybrid Analysis │ Joe Sandbox    │
 └──────────────────────────┘  └────────────────────────────────────┘
                 │
@@ -358,13 +474,12 @@ cd clients/desktop && npm run dist
 
 ## Additional Features 
 
-- **Auto-Contributor** — Automated competitive research against proprietary AI security platforms. Analyzes a vendor's capabilities, maps gaps versus Vigil and the open-source ecosystem, and generates ready-to-file GitHub issues with acceptance criteria. The goal: make Vigil a superset of every proprietary AI SOC, one contribution at a time. See [`contrib/auto-contributor/SKILL.md`](contrib/auto-contributor/SKILL.md)
 - **Chat-Driven Case Management** — Build cases through natural language. Say "add this to case XYZ" and the system handles findings, activities, timelines, and MITRE tagging. [Learn more](https://vigilsoc.org/docs/chat-case-management/)
 - **Detection Engineering** — 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) with coverage analysis, gap identification, and AI-assisted template generation. [Learn more](https://vigilsoc.org/docs/detection-engineering/)
 - **Case Management** — Full lifecycle tracking with PDF reports
 - **Approval Workflow** — Human-in-the-loop with confidence-based automation (auto-approve above 0.90, require review below 0.85)
 - **AI Enrichment** — Automatic threat analysis cached per finding
-- **MITRE ATT&CK** — Technique mapping and Navigator layer visualization
+- **MITRE ATT&CK** — Technique mapping on the ATT&CK tab
 
 ## Project Structure
 
@@ -372,14 +487,12 @@ cd clients/desktop && npm run dist
 vigil/
 ├── core/              # Shared library: capability domains (findings, cases,
 │                      #   llm, integrations, …) over a storage/platform tier
-│   └── workflows/definitions/   # WORKFLOW.md definitions (5 built-in)
+│   └── workflows/definitions/   # WORKFLOW.md definitions (7 built-in)
 ├── services/          # Deployables only: api (FastAPI), daemon (headless
 │                      #   autonomous SOC), worker (ARQ llm-worker)
 ├── clients/web/       # React + Tailwind frontend
-├── contrib/           # Community tools: auto-contributor, benchmarking
 ├── tools/mcp/         # MCP servers for Vigil's own services
-├── infra/             # Docker Compose, Helm chart, DB init SQL
-└── data/schemas/      # JSON validation schemas
+└── infra/             # Docker Compose, Helm chart, DB init SQL
 ```
 
 ## Example Usage
@@ -389,7 +502,7 @@ vigil/
 You: "Run incident response on finding f-20260215-abc123"
 Claude: [triage] Severity: Critical — confirmed C2 beaconing from HOST-42
         [investigate] Root cause: phishing email → macro execution → Cobalt Strike beacon
-        [respond] Submitted host isolation (confidence 0.96 — auto-approved)
+        [respond] Proposed host isolation for HOST-42 (confidence 0.96) — queued, nothing executed
         [report] Incident report generated with MITRE ATT&CK layer
 ```
 
@@ -411,7 +524,7 @@ Claude: ✓ Added finding to case
         ✓ Tagged with T1021.001 (RDP)
 
 You: "Find similar findings and add them all to this case"
-Claude: ✓ Found 3 similar findings via embedding search
+Claude: ✓ Found 3 similar findings via list_findings
         ✓ Added f-002, f-003, f-004 to case
         ✓ Updated timeline with lateral movement progression
 ```
@@ -428,9 +541,9 @@ Guides live on the site at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**.
 | [Chat-driven case management](https://vigilsoc.org/docs/chat-case-management/) | Chat-driven case building guide |
 | [Configuration](https://vigilsoc.org/docs/configuration/) | Environment variables, secrets, deployment |
 | [Helm](https://vigilsoc.org/docs/helm/) | Chart values, secrets, and install |
-| [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, auto-contributor workflow, DCO |
-| [`contrib/auto-contributor/SKILL.md`](contrib/auto-contributor/SKILL.md) | Competitive research skill (runtime) |
+| [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure policy |
+| [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
 
 ## Testing with Splunk & Claude
 
@@ -485,8 +598,6 @@ python scripts/export_postgres_to_splunk.py \
 ## Contributing
 
 Contributions are welcome! Whether you're fixing bugs, adding new MCP integrations, improving agent prompts, or building new workflows or agents — we'd love your help and leadership.
-
-**Find meaningful work automatically:** Vigil includes an [auto-contributor](contrib/auto-contributor/SKILL.md) tool that researches proprietary AI security platforms, identifies capability gaps, and generates ready-to-file GitHub issues. Pick a vendor, run the tool, and you'll have a scoped contribution spec in minutes.
 
 **Join the community:** Connect with the Vigil community on [Discord](https://discord.gg/Kw68sPJU) to discuss ideas, get help, and collaborate with other contributors.
 

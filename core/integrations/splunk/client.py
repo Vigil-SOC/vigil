@@ -1,9 +1,12 @@
 """Splunk API service for data enrichment."""
 
 import logging
+import time
 from typing import Dict, List, Optional
 
 import httpx
+
+from core.integrations._base.tls import tls_verify
 
 # urllib3.disable_warnings() used to live here to silence
 # InsecureRequestWarning; httpx doesn't use urllib3 and emits no such
@@ -24,11 +27,26 @@ _FOLLOW_REDIRECTS = True
 _HTTP_ERRORS = (httpx.HTTPError, httpx.InvalidURL)
 
 
+# The REST API needs a leading command, but adding one to a query that has it makes
+# "search" a keyword filter that silently narrows, and breaks tstats outright.
+def _as_search(query: str) -> str:
+    stripped = query.strip()
+    leading = stripped.split(maxsplit=1)[0].lower() if stripped else ""
+    if leading == "search" or stripped.startswith("|"):
+        return stripped
+    return f"search {stripped}"
+
+
 class SplunkService:
     """Service for interacting with Splunk API."""
 
     def __init__(
-        self, server_url: str, username: str, password: str, verify_ssl: bool = False
+        self,
+        server_url: str,
+        username: str,
+        password: str,
+        verify_ssl: bool = True,
+        ca_cert_path: Optional[str] = None,
     ):
         """
         Initialize Splunk service.
@@ -37,24 +55,34 @@ class SplunkService:
             server_url: Splunk server URL (e.g., "https://splunk.example.com:8089")
             username: Username for authentication
             password: Password for authentication
-            verify_ssl: Whether to verify SSL certificates (default: False)
+            verify_ssl: Whether to verify SSL certificates (default: True)
+            ca_cert_path: PEM trusted for this client only, instead of the
+                default store (ignored when verify_ssl is False)
         """
         self.server_url = server_url.rstrip("/")
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
-        # verify/timeout are constructor-only on httpx.Client; requests
-        # allowed session.verify to be assigned afterwards.
-        self.session = httpx.Client(
-            verify=verify_ssl,
-            timeout=DEFAULT_TIMEOUT,
-            follow_redirects=_FOLLOW_REDIRECTS,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-        )
+        self.ca_cert_path = ca_cert_path or None
+        self._session: Optional[httpx.Client] = None
         self.session_key: Optional[str] = None
+
+    @property
+    def session(self) -> httpx.Client:
+        # Built on first use so an unusable CA path fails the call that needs
+        # it, naming the file, instead of the constructor ("not configured").
+        # verify/timeout are constructor-only on httpx.Client.
+        if self._session is None:
+            self._session = httpx.Client(
+                verify=tls_verify(self.verify_ssl, self.ca_cert_path),
+                timeout=DEFAULT_TIMEOUT,
+                follow_redirects=_FOLLOW_REDIRECTS,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+            )
+        return self._session
 
     def authenticate(self) -> bool:
         """
@@ -63,6 +91,7 @@ class SplunkService:
         Returns:
             True if authentication successful, False otherwise.
         """
+        session = self.session  # an unusable CA path raises here, not below
         try:
             auth_url = f"{self.server_url}/services/auth/login"
             data = {
@@ -71,13 +100,13 @@ class SplunkService:
                 "output_mode": "json",
             }
 
-            response = self.session.post(auth_url, data=data)
+            response = session.post(auth_url, data=data)
 
             if response.status_code == 200:
                 result = response.json()
                 self.session_key = result.get("sessionKey")
                 if self.session_key:
-                    self.session.headers.update(
+                    session.headers.update(
                         {"Authorization": f"Splunk {self.session_key}"}
                     )
                     logger.info(
@@ -95,6 +124,30 @@ class SplunkService:
             logger.error(f"Error during authentication: {e}")
             return False
 
+    def _drop_session_key(self) -> None:
+        # Drop the header too: the login POST shares this client, and a
+        # stale Authorization would ride along with the new credentials.
+        self.session_key = None
+        self.session.headers.pop("Authorization", None)
+
+    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """One authenticated call. A 401 logs in once and retries this call.
+
+        The retry is per request: a 401 while polling a job re-sends that
+        GET, not the job POST. A second 401, or a failed login, is returned
+        as-is. ``authenticate`` posts the login itself and is not retried.
+        """
+        response = self.session.request(method, url, **kwargs)
+        if response.status_code != 401:
+            return response
+        # Clear first so a failed login leaves the key unset and the next
+        # call tries again, instead of keeping the rejected one.
+        self._drop_session_key()
+        logger.info("Splunk session key expired; re-authenticating")
+        if not self.authenticate():
+            return response
+        return self.session.request(method, url, **kwargs)
+
     def test_connection(self) -> tuple[bool, str]:
         """
         Test connection to Splunk server.
@@ -107,7 +160,8 @@ class SplunkService:
                 return False, "Authentication failed"
 
             # Try to get server info
-            response = self.session.get(
+            response = self._request(
+                "GET",
                 f"{self.server_url}/services/server/info",
                 params={"output_mode": "json"},
             )
@@ -117,7 +171,7 @@ class SplunkService:
             else:
                 return False, f"Connection failed: HTTP {response.status_code}"
 
-        except _HTTP_ERRORS as e:
+        except (*_HTTP_ERRORS, OSError) as e:
             return False, f"Connection error: {str(e)}"
 
     def search(
@@ -143,6 +197,7 @@ class SplunkService:
         Returns:
             List of result dictionaries, or None if error
         """
+        session = self.session
         try:
             if not self.session_key:
                 if not self.authenticate():
@@ -151,13 +206,13 @@ class SplunkService:
             # Create search job
             search_url = f"{self.server_url}/services/search/jobs"
             search_data = {
-                "search": f"search {query}",
+                "search": _as_search(query),
                 "earliest_time": earliest_time,
                 "latest_time": latest_time,
                 "output_mode": "json",
             }
 
-            response = self.session.post(search_url, data=search_data)
+            response = self._request("POST", search_url, data=search_data)
 
             if response.status_code not in [200, 201]:
                 logger.error(
@@ -179,8 +234,8 @@ class SplunkService:
             max_attempts = 60  # 60 attempts with 1 second wait = 1 minute max
 
             for attempt in range(max_attempts):
-                status_response = self.session.get(
-                    job_url, params={"output_mode": "json"}
+                status_response = self._request(
+                    "GET", job_url, params={"output_mode": "json"}
                 )
 
                 if status_response.status_code == 200:
@@ -193,7 +248,8 @@ class SplunkService:
                     if is_done:
                         # Get results
                         results_url = f"{job_url}/results"
-                        results_response = self.session.get(
+                        results_response = self._request(
+                            "GET",
                             results_url,
                             params={"output_mode": "json", "count": max_count},
                         )
@@ -203,8 +259,10 @@ class SplunkService:
                             results = results_data.get("results", [])
                             logger.info(f"Search completed with {len(results)} results")
 
-                            # Clean up job
-                            self.session.delete(job_url)
+                            # Cleanup ignores status. A 401 here must not
+                            # throw away results already in hand; the next
+                            # call re-authenticates on its own 401.
+                            session.delete(job_url)
 
                             return results
                         else:
@@ -212,9 +270,6 @@ class SplunkService:
                                 f"Failed to get results: {results_response.status_code}"
                             )
                             return None
-
-                    # Wait before next poll
-                    import time
 
                     time.sleep(1)
                 else:
@@ -224,13 +279,27 @@ class SplunkService:
                     return None
 
             logger.error("Search job timed out")
-            # Try to cancel the job
-            self.session.delete(job_url)
+            # Try to cancel the job. Status is ignored, same as a
+            # successful search's cleanup.
+            session.delete(job_url)
             return None
 
         except Exception as e:
             logger.error(f"Error executing search: {e}")
             return None
+
+    @staticmethod
+    def _earliest_from_hours(hours: int) -> str:
+        """Turn a look-back window in hours into a valid Splunk earliest_time.
+
+        Callers pass a very large ``hours`` to mean "all time" (the tool's
+        all-time sentinel is 876000h). Splunk rejects such an offset as
+        ``Invalid earliest_time``, so map an absurd or non-positive window to
+        Splunk's all-time epoch ``"0"`` instead.
+        """
+        if not hours or hours <= 0 or hours >= 87600:  # ~10 years -> all time
+            return "0"
+        return f"-{hours}h"
 
     def search_by_ip(self, ip_address: str, hours: int = 24) -> Optional[List[Dict]]:
         """
@@ -243,38 +312,8 @@ class SplunkService:
         Returns:
             List of events or None
         """
-        query = f'"{ip_address}" | head 1000'
-        return self.search(query, earliest_time=f"-{hours}h")
-
-    def search_by_hash(self, file_hash: str, hours: int = 24) -> Optional[List[Dict]]:
-        """
-        Search for events related to a file hash.
-
-        Args:
-            file_hash: File hash (MD5, SHA1, or SHA256) to search for
-            hours: Number of hours to look back (default: 24)
-
-        Returns:
-            List of events or None
-        """
-        query = f'"{file_hash}" | head 1000'
-        return self.search(query, earliest_time=f"-{hours}h")
-
-    def search_by_username(
-        self, username: str, hours: int = 24
-    ) -> Optional[List[Dict]]:
-        """
-        Search for events related to a username.
-
-        Args:
-            username: Username to search for
-            hours: Number of hours to look back (default: 24)
-
-        Returns:
-            List of events or None
-        """
-        query = f'user="{username}" OR username="{username}" OR account="{username}" | head 1000'
-        return self.search(query, earliest_time=f"-{hours}h")
+        query = f'search index=* "{ip_address}" | head 1000'
+        return self.search(query, earliest_time=self._earliest_from_hours(hours))
 
     def search_by_hostname(
         self, hostname: str, hours: int = 24
@@ -289,5 +328,8 @@ class SplunkService:
         Returns:
             List of events or None
         """
-        query = f'host="{hostname}" OR hostname="{hostname}" OR dest="{hostname}" | head 1000'
-        return self.search(query, earliest_time=f"-{hours}h")
+        query = (
+            f'search index=* (host="{hostname}" OR hostname="{hostname}" '
+            f'OR dest="{hostname}") | head 1000'
+        )
+        return self.search(query, earliest_time=self._earliest_from_hours(hours))

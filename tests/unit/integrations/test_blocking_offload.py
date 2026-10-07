@@ -60,13 +60,36 @@ async def test_splunk_federation_adapter_does_not_block_the_loop():
     svc.search = _blocking([])
 
     with patch.object(adapter, "_get_service", return_value=svc):
-        _, ticks = await _tick_while(
-            adapter.fetch(since=None, cursor={}, max_items=10)
-        )
+        _, ticks = await _tick_while(adapter.fetch(since=None, cursor={}, max_items=10))
 
     assert ticks >= MIN_TICKS, (
         f"loop served only {ticks} ticks during a {BLOCK_SECONDS}s Splunk "
         "search — the call is running on the event loop"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, args, method",
+    [
+        ("splunk_execute", {"spl_query": "search *"}, "search"),
+        ("splunk_search_ip", {"ip_address": "10.0.0.1"}, "search_by_ip"),
+        ("splunk_search_host", {"hostname": "web01"}, "search_by_hostname"),
+        ("splunk_nl_search", {"query": "failed logins"}, "search"),
+    ],
+)
+async def test_splunk_mcp_tool_does_not_block_the_loop(tool, args, method):
+    from core.integrations.splunk import tool as splunk_tool
+
+    svc = MagicMock()
+    setattr(svc, method, _blocking([]))
+
+    with patch.object(splunk_tool, "get_splunk_service", return_value=svc):
+        _, ticks = await _tick_while(splunk_tool.handle_call_tool(tool, args))
+
+    assert ticks >= MIN_TICKS, (
+        f"loop served only {ticks} ticks during a {BLOCK_SECONDS}s {tool} call "
+        "— the Splunk search is running on the MCP server's event loop"
     )
 
 
@@ -79,9 +102,7 @@ async def test_crowdstrike_federation_adapter_does_not_block_the_loop():
     svc.get_detections = _blocking([])
 
     with patch.object(adapter, "_get_service", return_value=svc):
-        _, ticks = await _tick_while(
-            adapter.fetch(since=None, cursor={}, max_items=10)
-        )
+        _, ticks = await _tick_while(adapter.fetch(since=None, cursor={}, max_items=10))
 
     assert ticks >= MIN_TICKS, (
         f"loop served only {ticks} ticks during a {BLOCK_SECONDS}s "
@@ -91,10 +112,12 @@ async def test_crowdstrike_federation_adapter_does_not_block_the_loop():
 
 @pytest.mark.asyncio
 async def test_defender_fetch_alerts_does_not_block_the_loop():
-    from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
+    from core.integrations.microsoft_defender.ingestion import (
+        MicrosoftDefenderIngestion,
+    )
 
     with patch(
-        "core.integrations.microsoft_defender.ingestion.get_integration_config",
+        "core.integrations.microsoft_defender.ingestion.resolve",
         return_value={},
     ):
         svc = MicrosoftDefenderIngestion()
@@ -103,9 +126,7 @@ async def test_defender_fetch_alerts_does_not_block_the_loop():
     response.json.return_value = {"value": []}
     response.raise_for_status.return_value = None
 
-    with patch.object(
-        svc, "_get_access_token", _blocking("tok-1")
-    ), patch(
+    with patch.object(svc, "_get_access_token", _blocking("tok-1")), patch(
         "core.integrations.microsoft_defender.ingestion.httpx.get", _blocking(response)
     ):
         _, ticks = await _tick_while(svc.fetch_alerts(limit=10))
@@ -115,27 +136,4 @@ async def test_defender_fetch_alerts_does_not_block_the_loop():
     assert ticks >= MIN_TICKS, (
         f"loop served only {ticks} ticks during the Defender fetch — a "
         "blocking call is running on the event loop"
-    )
-
-
-@pytest.mark.asyncio
-async def test_slack_escalation_does_not_block_the_loop():
-    from core.response.autonomous_response_service import AutonomousResponseService
-
-    svc = AutonomousResponseService()
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {"ok": True}
-
-    with patch(
-        "core.config.get_integration_config",
-        return_value={"bot_token": "xoxb-1", "default_channel": "#soc"},
-    ), patch("httpx.post", _blocking(response)):
-        _, ticks = await _tick_while(
-            svc.escalate_to_slack("something happened", "high")
-        )
-
-    assert ticks >= MIN_TICKS, (
-        f"loop served only {ticks} ticks during Slack escalation — the POST "
-        "is running on the event loop"
     )

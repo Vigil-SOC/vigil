@@ -174,10 +174,9 @@ def write_autostart(
         return {"services": set_autostart_services(body.services)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except OSError as e:
-        raise HTTPException(
-            status_code=500, detail=f"Could not persist autostart list: {e}"
-        )
+    except OSError:
+        logger.exception("Could not persist autostart list")
+        raise HTTPException(status_code=500, detail="Could not persist autostart list")
 
 
 # --- Generic routes ---

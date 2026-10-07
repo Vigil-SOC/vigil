@@ -48,6 +48,7 @@ spec:
                   key: {{ include "vigil.postgres.passwordSecretKey" . }}
             {{- include "vigil.env" . | nindent 12 }}
             {{- include "vigil.stateEnv" . | nindent 12 }}
+            {{- include "vigil.caBundleEnv" . | nindent 12 }}
             {{- range $k, $v := .Values.backend.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
@@ -69,6 +70,8 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 30
+          # Liveness stays on /api/health (200 while the process is up): Postgres
+          # being down must not restart the pod.
           livenessProbe:
             httpGet:
               path: /api/health
@@ -77,9 +80,11 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+          # Readiness answers 503 while storage is degraded, so the pod leaves
+          # rotation without being restarted.
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/health/ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -91,8 +96,10 @@ spec:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             {{- include "vigil.stateVolumeMount" . | nindent 12 }}
+            {{- include "vigil.caBundleVolumeMount" . | nindent 12 }}
       volumes:
         {{- include "vigil.stateVolume" . | nindent 8 }}
+        {{- include "vigil.caBundleVolume" . | nindent 8 }}
       {{- with .Values.backend.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

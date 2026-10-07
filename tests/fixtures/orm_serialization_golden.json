@@ -84,10 +84,12 @@
       "evidence": [],
       "executed_at": null,
       "execution_result": null,
+      "idempotency_key": null,
       "parameters": {},
       "reason": null,
       "rejection_reason": null,
       "requires_approval": false,
+      "reversibility": null,
       "status": null,
       "target": null,
       "title": null,
@@ -112,39 +114,19 @@
       "execution_result": {
         "sample": "execution_result-value"
       },
+      "idempotency_key": "idempotency_key-value",
       "parameters": {
         "sample": "parameters-value"
       },
       "reason": "reason-value",
       "rejection_reason": "rejection_reason-value",
       "requires_approval": true,
+      "reversibility": "reversibility-value",
       "status": "status-value",
       "target": "target-value",
       "title": "title-value",
       "workflow_phase_id": "workflow_phase_id-value",
       "workflow_run_id": "workflow_run_id-value"
-    }
-  },
-  "AttackLayer": {
-    "empty.to_dict.default": {
-      "case_id": null,
-      "created_at": null,
-      "description": null,
-      "id": null,
-      "layer_data": null,
-      "name": null,
-      "updated_at": null
-    },
-    "populated.to_dict.default": {
-      "case_id": "case_id-value",
-      "created_at": "2024-03-14T15:09:26.535000+00:00",
-      "description": "description-value",
-      "id": 270,
-      "layer_data": {
-        "sample": "layer_data-value"
-      },
-      "name": "name-value",
-      "updated_at": "2024-03-14T15:09:26.535000+00:00"
     }
   },
   "Case": {
@@ -321,11 +303,6 @@
           "created_at": "2024-03-14T15:09:26.535000+00:00",
           "data_source": "data_source-value",
           "description": "description-value",
-          "embedding": [
-            0.1,
-            0.2,
-            0.3
-          ],
           "entity_context": {
             "sample": "entity_context-value"
           },
@@ -336,9 +313,7 @@
           ],
           "external_id": "external_id-value",
           "finding_id": "finding_id-value",
-          "mitre_predictions": {
-            "sample": "mitre_predictions-value"
-          },
+          "mitre_predictions": {},
           "severity": "severity-value",
           "status": "status-value",
           "timestamp": "2024-03-14T15:09:26.535000+00:00",
@@ -490,8 +465,8 @@
     },
     "populated.to_dict.default": {
       "attachment_ids": [
-        "attachment_ids-a",
-        "attachment_ids-b"
+        52,
+        504
       ],
       "author": "author-value",
       "case_id": "case_id-value",
@@ -942,12 +917,14 @@
     "empty.to_dict.default": {
       "agent_id": null,
       "archived": null,
+      "case_id": null,
       "created_at": null,
       "id": null,
       "last_message_at": null,
       "message_count": null,
       "messages": [],
       "model": null,
+      "page_context": null,
       "title": null,
       "updated_at": null,
       "user_id": null
@@ -955,11 +932,13 @@
     "empty.to_summary_dict.default": {
       "agent_id": null,
       "archived": null,
+      "case_id": null,
       "created_at": null,
       "id": null,
       "last_message_at": null,
       "message_count": null,
       "model": null,
+      "page_context": null,
       "title": null,
       "updated_at": null,
       "user_id": null
@@ -967,12 +946,14 @@
     "populated.to_dict.default": {
       "agent_id": "agent_id-value",
       "archived": true,
+      "case_id": "case_id-value",
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "id": "id-value",
       "last_message_at": "2024-03-14T15:09:26.535000+00:00",
       "message_count": 155,
       "messages": [],
       "model": "model-value",
+      "page_context": "page_context-value",
       "title": "title-value",
       "updated_at": "2024-03-14T15:09:26.535000+00:00",
       "user_id": "user_id-value"
@@ -980,11 +961,13 @@
     "populated.to_summary_dict.default": {
       "agent_id": "agent_id-value",
       "archived": true,
+      "case_id": "case_id-value",
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "id": "id-value",
       "last_message_at": "2024-03-14T15:09:26.535000+00:00",
       "message_count": 155,
       "model": "model-value",
+      "page_context": "page_context-value",
       "title": "title-value",
       "updated_at": "2024-03-14T15:09:26.535000+00:00",
       "user_id": "user_id-value"
@@ -992,6 +975,7 @@
     "related.to_dict.default": {
       "agent_id": "agent_id-value",
       "archived": true,
+      "case_id": "case_id-value",
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "id": "id-value",
       "last_message_at": "2024-03-14T15:09:26.535000+00:00",
@@ -1018,6 +1002,7 @@
         }
       ],
       "model": "model-value",
+      "page_context": "page_context-value",
       "title": "title-value",
       "updated_at": "2024-03-14T15:09:26.535000+00:00",
       "user_id": "user_id-value"
@@ -1025,11 +1010,13 @@
     "related.to_summary_dict.default": {
       "agent_id": "agent_id-value",
       "archived": true,
+      "case_id": "case_id-value",
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "id": "id-value",
       "last_message_at": "2024-03-14T15:09:26.535000+00:00",
       "message_count": 155,
       "model": "model-value",
+      "page_context": "page_context-value",
       "title": "title-value",
       "updated_at": "2024-03-14T15:09:26.535000+00:00",
       "user_id": "user_id-value"
@@ -1044,6 +1031,7 @@
       "description": null,
       "enable_thinking": null,
       "extra_principles": null,
+      "fallback_model": null,
       "forked_from": null,
       "icon": null,
       "id": null,
@@ -1065,6 +1053,7 @@
       "description": "description-value",
       "enable_thinking": true,
       "extra_principles": "extra_principles-value",
+      "fallback_model": "fallback_model-value",
       "forked_from": "forked_from-value",
       "icon": "icon-value",
       "id": "id-value",
@@ -1128,6 +1117,7 @@
       "consecutive_errors": null,
       "created_at": null,
       "cursor": null,
+      "dropped_total": null,
       "enabled": null,
       "interval_seconds": null,
       "last_error": null,
@@ -1144,6 +1134,7 @@
       "cursor": {
         "sample": "cursor-value"
       },
+      "dropped_total": 851,
       "enabled": true,
       "interval_seconds": 356,
       "last_error": "last_error-value",
@@ -1156,74 +1147,7 @@
     }
   },
   "Finding": {
-    "empty.to_dict.with_embedding": {
-      "ai_enrichment": null,
-      "anomaly_score": null,
-      "cluster_id": null,
-      "created_at": null,
-      "data_source": null,
-      "description": null,
-      "embedding": null,
-      "entity_context": null,
-      "evidence_links": null,
-      "external_id": null,
-      "finding_id": null,
-      "mitre_predictions": null,
-      "severity": null,
-      "status": null,
-      "timestamp": null,
-      "updated_at": null
-    },
-    "empty.to_dict.without_embedding": {
-      "ai_enrichment": null,
-      "anomaly_score": null,
-      "cluster_id": null,
-      "created_at": null,
-      "data_source": null,
-      "description": null,
-      "entity_context": null,
-      "evidence_links": null,
-      "external_id": null,
-      "finding_id": null,
-      "mitre_predictions": null,
-      "severity": null,
-      "status": null,
-      "timestamp": null,
-      "updated_at": null
-    },
-    "populated.to_dict.with_embedding": {
-      "ai_enrichment": {
-        "sample": "ai_enrichment-value"
-      },
-      "anomaly_score": 1.21,
-      "cluster_id": "cluster_id-value",
-      "created_at": "2024-03-14T15:09:26.535000+00:00",
-      "data_source": "data_source-value",
-      "description": "description-value",
-      "embedding": [
-        0.1,
-        0.2,
-        0.3
-      ],
-      "entity_context": {
-        "sample": "entity_context-value"
-      },
-      "evidence_links": [
-        {
-          "item": "evidence_links-0"
-        }
-      ],
-      "external_id": "external_id-value",
-      "finding_id": "finding_id-value",
-      "mitre_predictions": {
-        "sample": "mitre_predictions-value"
-      },
-      "severity": "severity-value",
-      "status": "status-value",
-      "timestamp": "2024-03-14T15:09:26.535000+00:00",
-      "updated_at": "2024-03-14T15:09:26.535000+00:00"
-    },
-    "populated.to_dict.without_embedding": {
+    "populated.to_dict.default": {
       "ai_enrichment": {
         "sample": "ai_enrichment-value"
       },
@@ -1242,13 +1166,28 @@
       ],
       "external_id": "external_id-value",
       "finding_id": "finding_id-value",
-      "mitre_predictions": {
-        "sample": "mitre_predictions-value"
-      },
+      "mitre_predictions": {},
       "severity": "severity-value",
       "status": "status-value",
       "timestamp": "2024-03-14T15:09:26.535000+00:00",
       "updated_at": "2024-03-14T15:09:26.535000+00:00"
+    },
+    "empty.to_dict.default": {
+      "ai_enrichment": null,
+      "anomaly_score": null,
+      "cluster_id": null,
+      "created_at": null,
+      "data_source": null,
+      "description": null,
+      "entity_context": null,
+      "evidence_links": null,
+      "external_id": null,
+      "finding_id": null,
+      "mitre_predictions": {},
+      "severity": null,
+      "status": null,
+      "timestamp": null,
+      "updated_at": null
     }
   },
   "IntegrationConfig": {
@@ -1373,19 +1312,24 @@
     "empty.to_dict.default": {
       "agent_id": null,
       "cache_creation_tokens": null,
+      "cache_read_cost_per_token": null,
       "cache_read_tokens": null,
-      "cost_usd": 0.0,
+      "cache_write_cost_per_token": null,
+      "cost_usd": null,
       "created_at": null,
       "duration_ms": null,
       "error": null,
       "has_thinking": false,
       "has_tools": false,
       "id": null,
+      "input_cost_per_token": null,
       "input_tokens": null,
       "interaction_id": null,
       "investigation_id": null,
       "model": null,
+      "output_cost_per_token": null,
       "output_tokens": null,
+      "rates_fetched_at": null,
       "request_messages": null,
       "response_content": null,
       "session_id": null,
@@ -1399,18 +1343,23 @@
     },
     "empty.to_summary_dict.default": {
       "agent_id": null,
-      "cost_usd": 0.0,
+      "cache_read_cost_per_token": null,
+      "cache_write_cost_per_token": null,
+      "cost_usd": null,
       "created_at": null,
       "duration_ms": null,
       "error": null,
       "has_thinking": false,
       "has_tools": false,
       "id": null,
+      "input_cost_per_token": null,
       "input_tokens": null,
       "interaction_id": null,
       "investigation_id": null,
       "model": null,
+      "output_cost_per_token": null,
       "output_tokens": null,
+      "rates_fetched_at": null,
       "session_id": null,
       "stop_reason": null,
       "thinking_enabled": null
@@ -1418,7 +1367,9 @@
     "populated.to_dict.default": {
       "agent_id": "agent_id-value",
       "cache_creation_tokens": 712,
+      "cache_read_cost_per_token": 9.43,
       "cache_read_tokens": 653,
+      "cache_write_cost_per_token": 1.71,
       "cost_usd": 6.56,
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "duration_ms": 577,
@@ -1426,11 +1377,14 @@
       "has_thinking": true,
       "has_tools": true,
       "id": 365,
+      "input_cost_per_token": 1.79,
       "input_tokens": 777,
       "interaction_id": "interaction_id-value",
       "investigation_id": "investigation_id-value",
       "model": "model-value",
+      "output_cost_per_token": 1.99,
       "output_tokens": 56,
+      "rates_fetched_at": "rates_fetched_at-value",
       "request_messages": {
         "sample": "request_messages-value"
       },
@@ -1450,6 +1404,8 @@
     },
     "populated.to_summary_dict.default": {
       "agent_id": "agent_id-value",
+      "cache_read_cost_per_token": 9.43,
+      "cache_write_cost_per_token": 1.71,
       "cost_usd": 6.56,
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "duration_ms": 577,
@@ -1457,11 +1413,14 @@
       "has_thinking": true,
       "has_tools": true,
       "id": 365,
+      "input_cost_per_token": 1.79,
       "input_tokens": 777,
       "interaction_id": "interaction_id-value",
       "investigation_id": "investigation_id-value",
       "model": "model-value",
+      "output_cost_per_token": 1.99,
       "output_tokens": 56,
+      "rates_fetched_at": "rates_fetched_at-value",
       "session_id": "session_id-value",
       "stop_reason": "stop_reason-value",
       "thinking_enabled": true
@@ -1590,8 +1549,8 @@
       "is_default": true,
       "name": "name-value",
       "notification_thresholds": [
-        "notification_thresholds-a",
-        "notification_thresholds-b"
+        283,
+        960
       ],
       "policy_id": "policy_id-value",
       "priority_level": "priority_level-value",
@@ -1634,52 +1593,6 @@
       "sketch_id": 407,
       "sketch_name": "sketch_name-value",
       "sketch_url": "sketch_url-value"
-    }
-  },
-  "Skill": {
-    "empty.to_dict.default": {
-      "category": null,
-      "created_at": null,
-      "created_by": null,
-      "description": null,
-      "execution_steps": [],
-      "input_schema": {},
-      "is_active": null,
-      "name": null,
-      "output_schema": {},
-      "prompt_template": null,
-      "required_tools": [],
-      "skill_id": null,
-      "updated_at": null,
-      "version": null
-    },
-    "populated.to_dict.default": {
-      "category": "category-value",
-      "created_at": "2024-03-14T15:09:26.535000+00:00",
-      "created_by": "created_by-value",
-      "description": "description-value",
-      "execution_steps": [
-        {
-          "item": "execution_steps-0"
-        }
-      ],
-      "input_schema": {
-        "sample": "input_schema-value"
-      },
-      "is_active": true,
-      "name": "name-value",
-      "output_schema": {
-        "sample": "output_schema-value"
-      },
-      "prompt_template": "prompt_template-value",
-      "required_tools": [
-        {
-          "item": "required_tools-0"
-        }
-      ],
-      "skill_id": "skill_id-value",
-      "updated_at": "2024-03-14T15:09:26.535000+00:00",
-      "version": 585
     }
   },
   "SystemConfig": {
@@ -1794,9 +1707,10 @@
       "duration_ms": null,
       "error": null,
       "finished_at": null,
+      "outcome": null,
+      "reason": null,
       "result_summary": null,
       "run_id": null,
-      "skill_tools_available": [],
       "started_at": null,
       "status": null,
       "total_cost_usd": 0.0,
@@ -1811,8 +1725,9 @@
       "duration_ms": null,
       "error": null,
       "finished_at": null,
+      "outcome": null,
+      "reason": null,
       "run_id": null,
-      "skill_tools_available": [],
       "started_at": null,
       "status": null,
       "total_cost_usd": 0.0,
@@ -1827,13 +1742,10 @@
       "duration_ms": 673,
       "error": "error-value",
       "finished_at": "2024-03-14T15:09:26.535000+00:00",
+      "outcome": "outcome-value",
+      "reason": "reason-value",
       "result_summary": "result_summary-value",
       "run_id": "run_id-value",
-      "skill_tools_available": [
-        {
-          "item": "skill_tools_available-0"
-        }
-      ],
       "started_at": "2024-03-14T15:09:26.535000+00:00",
       "status": "status-value",
       "total_cost_usd": 7.53,
@@ -1850,12 +1762,9 @@
       "duration_ms": 673,
       "error": "error-value",
       "finished_at": "2024-03-14T15:09:26.535000+00:00",
+      "outcome": "outcome-value",
+      "reason": "reason-value",
       "run_id": "run_id-value",
-      "skill_tools_available": [
-        {
-          "item": "skill_tools_available-0"
-        }
-      ],
       "started_at": "2024-03-14T15:09:26.535000+00:00",
       "status": "status-value",
       "total_cost_usd": 7.53,

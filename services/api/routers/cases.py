@@ -1,71 +1,66 @@
 """Cases API endpoints."""
 
+import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
+from core.agents.projections import read_events, run_id_for
 from core.auth.auth_service import AuthService
-from core.cases import case_records_service
+from core.auth.permissions import permission_gate
+from core.cases import case_journal_service, case_records_service
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
-from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
-from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_record import merge_record
+from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import User
 from core.storage.schemas import (
-    CaseClosureInfoSchema,
     CaseCommentSchema,
     CaseEscalationSchema,
-    CaseEvidenceSchema,
-    CaseIOCSchema,
     CaseRelationshipSchema,
+    CaseSchema,
     CaseSLASchema,
+    CaseSLAStatusSchema,
     CaseTaskSchema,
     CaseWatcherSchema,
 )
-from core.time import utcnow
+from core.storage.schemas.case_api import (
+    CaseCommentsResponse,
+    CaseEscalationsResponse,
+    CasePurgeResponse,
+    CaseRecordResponse,
+    CaseRelationshipsResponse,
+    CaseReportResponse,
+    CaseSuccessResponse,
+    CaseTasksResponse,
+    CaseWatchersResponse,
+)
 from services.api.middleware.auth import get_current_user
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+_CASES_WRITE = [permission_gate("cases.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/cases",
     tags=["cases"],
     auth=Auth.REQUIRED,
 )
-# Use DatabaseDataService which automatically uses PostgreSQL if available, falls back to JSON
 data_service = DatabaseDataService()
 if REPORTLAB_AVAILABLE:
     report_service = ReportService()
 else:
     report_service = None
-
-
-class CaseCreate(BaseModel):
-    """Case creation request."""
-
-    title: str
-    description: str = ""
-    finding_ids: List[str]
-    priority: str = "medium"
-    status: str = "open"
-
-
-class CaseUpdate(BaseModel):
-    """Case update request."""
-
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    notes: Optional[str] = None
-    assignee: Optional[str] = None
 
 
 class ActivityAdd(BaseModel):
@@ -84,32 +79,34 @@ class ResolutionStepAdd(BaseModel):
     result: Optional[str] = None
 
 
-@router.get("/")
-async def get_cases(status: Optional[str] = None, priority: Optional[str] = None):
+def _mark_workdirs_failed(investigation_ids: List[str], reason: str) -> None:
+    """Mirror the kill endpoint's sidecar write for runs the reset failed.
+
+    Runs after the request commits, because the sidecar cannot be rolled back
+    with the rows. One unwritable workdir must not abandon the rest.
     """
-    Get all cases with optional filters.
+    from core.config import get_settings
+    from services.daemon.workdir import WorkdirManager
 
-    Args:
-        status: Filter by status
-        priority: Filter by priority
-
-    Returns:
-        List of cases
-    """
-    cases = data_service.get_cases()
-
-    # Apply filters
-    if status:
-        cases = [c for c in cases if c.get("status") == status]
-    if priority:
-        cases = [c for c in cases if c.get("priority") == priority]
-
-    return {"cases": cases, "total": len(cases)}
+    workdir = WorkdirManager(get_settings().orchestrator_workdir)
+    for investigation_id in investigation_ids:
+        if not workdir.exists(investigation_id):
+            continue
+        try:
+            state = workdir.read_state(investigation_id)
+            state["status"] = "failed"
+            state["failure_reason"] = reason
+            workdir.write_state(investigation_id, state)
+        except OSError as e:
+            logger.warning(
+                "Could not write workdir state for %s: %s", investigation_id, e
+            )
 
 
-@router.delete("/all")
+@router.delete("/all", dependencies=_CASES_WRITE, response_model=CasePurgeResponse)
 async def clear_all_cases(
     session: UnitOfWorkSession,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
     """Delete all cases and case-derived generated data (requires cases.delete)."""
@@ -118,186 +115,28 @@ async def clear_all_cases(
             status_code=403, detail="Permission denied: cases.delete required"
         )
 
-    count = case_records_service.purge_all_cases(session)
+    result = case_records_service.purge_all_cases(session)
+    killed = len(result.killed_investigation_ids)
+    background_tasks.add_task(
+        _mark_workdirs_failed,
+        result.killed_investigation_ids,
+        case_records_service.RESET_KILL_REASON,
+    )
 
     return {
         "success": True,
-        "deleted": count,
-        "message": f"Deleted {count} cases and case-derived records",
+        "deleted": result.cases,
+        "killed_investigations": killed,
+        "message": (
+            f"Deleted {result.cases} cases and case-derived records; "
+            f"killed {killed} live investigations"
+        ),
     }
 
 
-@router.get("/{case_id}")
-async def get_case(case_id: str):
-    """
-    Get a specific case by ID.
-
-    Args:
-        case_id: The case ID
-
-    Returns:
-        Case details
-    """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return case
-
-
-@router.post("/")
-async def create_case(case_data: CaseCreate):
-    """
-    Create a new case.
-
-    Args:
-        case_data: Case creation data
-
-    Returns:
-        Created case
-    """
-    case = data_service.create_case(
-        title=case_data.title,
-        finding_ids=case_data.finding_ids,
-        priority=case_data.priority,
-        description=case_data.description,
-        status=case_data.status,
-    )
-
-    if not case:
-        raise HTTPException(status_code=500, detail="Failed to create case")
-
-    # Automatically assign SLA policy based on priority
-    try:
-        from core.cases.case_sla_service import CaseSLAService
-
-        sla_service = CaseSLAService()
-
-        case_id = case.get("case_id")
-        if case_id:
-            # This will auto-select the default policy for the case priority
-            sla_result = sla_service.assign_sla_to_case(case_id, sla_policy_id=None)
-            if sla_result:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.info(f"Auto-assigned SLA policy to case {case_id}")
-    except Exception as e:
-        # Don't fail case creation if SLA assignment fails
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to auto-assign SLA to case {case.get('case_id')}: {e}")
-
-    return case
-
-
-async def _sync_upstream_status(case_id: str, new_status: str) -> None:
-    """Best-effort sync of case status to the upstream SIEM."""
-    import logging
-
-    _logger = logging.getLogger(__name__)
-    try:
-        case = data_service.get_case(case_id)
-        if not case:
-            return
-        # Only sync findings that came from a SIEM with upstream support
-        finding_ids = case.get("finding_ids", [])
-        for fid in finding_ids:
-            finding = data_service.get_finding(fid)
-            if not finding:
-                continue
-            source = finding.get("data_source", "")
-            alert_id = (finding.get("metadata") or {}).get(f"{source}_alert_id") or (
-                finding.get("metadata") or {}
-            ).get("elastic_alert_id")
-            if not alert_id:
-                continue
-            # Lazy-load the right ingestion service
-            svc = _get_ingestion_service(source)
-            if svc is None:
-                continue
-            try:
-                await svc.update_upstream_alert_status(alert_id, new_status)
-                _logger.info(
-                    f"Synced status '{new_status}' to {source} alert {alert_id}"
-                )
-            except NotImplementedError:
-                pass
-            except Exception as exc:
-                _logger.warning(
-                    f"Failed to sync status to {source} alert {alert_id}: {exc}"
-                )
-    except Exception as exc:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            f"Upstream status sync error for case {case_id}: {exc}"
-        )
-
-
-def _get_ingestion_service(source: str):
-    """Return the ingestion service for a given data source, or None."""
-    if source == "elastic":
-        try:
-            from core.integrations.elastic.ingestion import ElasticIngestion
-
-            return ElasticIngestion()
-        except Exception:
-            return None
-    # Future: add splunk, crowdstrike, etc.
-    return None
-
-
-@router.patch("/{case_id}")
-async def update_case(case_id: str, case_data: CaseUpdate):
-    """
-    Update an existing case.
-
-    Args:
-        case_id: The case ID
-        case_data: Case update data
-
-    Returns:
-        Success status
-    """
-    # Build updates dict
-    updates = {}
-    if case_data.title is not None:
-        updates["title"] = case_data.title
-    if case_data.description is not None:
-        updates["description"] = case_data.description
-    if case_data.status is not None:
-        updates["status"] = case_data.status
-    if case_data.priority is not None:
-        updates["priority"] = case_data.priority
-    if case_data.notes is not None:
-        case = data_service.get_case(case_id)
-        if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
-        notes = case.get("notes") or []
-        notes.append(
-            {
-                "timestamp": utcnow().isoformat() + "Z",
-                "content": case_data.notes,
-            }
-        )
-        updates["notes"] = notes
-
-    success = data_service.update_case(case_id, **updates)
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Case not found or update failed")
-
-    # Fire upstream SIEM status sync when status changes
-    if case_data.status is not None:
-        import asyncio
-
-        asyncio.ensure_future(_sync_upstream_status(case_id, case_data.status))
-
-    return {"success": True}
-
-
-@router.post("/{case_id}/activities")
+@router.post(
+    "/{case_id}/activities", dependencies=_CASES_WRITE, response_model=CaseSchema
+)
 async def add_case_activity(case_id: str, activity: ActivityAdd):
     """
     Add an activity/action to a case.
@@ -309,32 +148,25 @@ async def add_case_activity(case_id: str, activity: ActivityAdd):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get or initialize activities list
-    activities = case.get("activities", [])
-
-    # Add new activity
-    new_activity = {
-        "timestamp": utcnow().isoformat() + "Z",
-        "activity_type": activity.activity_type,
-        "description": activity.description,
-        "details": activity.details or {},
-    }
-    activities.append(new_activity)
-
-    # Update case
-    success = data_service.update_case(case_id, activities=activities)
-
-    if not success:
+    added = case_journal_service.append_activity(
+        data_service,
+        case_id,
+        activity_type=activity.activity_type,
+        description=activity.description,
+        details=activity.details,
+    )
+    if added is None:
         raise HTTPException(status_code=500, detail="Failed to add activity")
 
     return data_service.get_case(case_id)
 
 
-@router.post("/{case_id}/resolution-steps")
+@router.post(
+    "/{case_id}/resolution-steps", dependencies=_CASES_WRITE, response_model=CaseSchema
+)
 async def add_resolution_step(case_id: str, step: ResolutionStepAdd):
     """
     Add a resolution step to a case.
@@ -346,84 +178,23 @@ async def add_resolution_step(case_id: str, step: ResolutionStepAdd):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get or initialize resolution steps list
-    resolution_steps = case.get("resolution_steps", [])
-
-    # Add new step
-    new_step = {
-        "timestamp": utcnow().isoformat() + "Z",
-        "description": step.description,
-        "action_taken": step.action_taken,
-        "result": step.result,
-    }
-    resolution_steps.append(new_step)
-
-    # Update case
-    success = data_service.update_case(case_id, resolution_steps=resolution_steps)
-
-    if not success:
+    added = case_journal_service.append_resolution_step(
+        data_service,
+        case_id,
+        description=step.description,
+        action_taken=step.action_taken,
+        result=step.result,
+    )
+    if added is None:
         raise HTTPException(status_code=500, detail="Failed to add resolution step")
 
     return data_service.get_case(case_id)
 
 
-@router.post("/{case_id}/findings/{finding_id}")
-async def add_finding_to_case(case_id: str, finding_id: str):
-    """
-    Add a finding to a case.
-
-    Args:
-        case_id: The case ID
-        finding_id: The finding ID to add
-
-    Returns:
-        Updated case
-    """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    finding_ids = case.get("finding_ids", [])
-    if finding_id not in finding_ids:
-        finding_ids.append(finding_id)
-        success = data_service.update_case(case_id, finding_ids=finding_ids)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to add finding")
-
-    return data_service.get_case(case_id)
-
-
-@router.delete("/{case_id}/findings/{finding_id}")
-async def remove_finding_from_case(case_id: str, finding_id: str):
-    """
-    Remove a finding from a case.
-
-    Args:
-        case_id: The case ID
-        finding_id: The finding ID to remove
-
-    Returns:
-        Updated case
-    """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    finding_ids = case.get("finding_ids", [])
-    if finding_id in finding_ids:
-        finding_ids.remove(finding_id)
-        success = data_service.update_case(case_id, finding_ids=finding_ids)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to remove finding")
-
-    return data_service.get_case(case_id)
-
-
-@router.post("/{case_id}/generate-report")
+@router.post("/{case_id}/generate-report", response_model=CaseReportResponse)
 async def generate_case_report(case_id: str):
     """
     Generate a PDF report for a case.
@@ -444,16 +215,25 @@ async def generate_case_report(case_id: str):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get associated findings
+    # Get associated findings in one fetch, kept in the case's finding order;
+    # an id with no finding is skipped.
     finding_ids = case.get("finding_ids", [])
-    findings = [data_service.get_finding(fid) for fid in finding_ids]
-    findings = [f for f in findings if f]  # Filter out None values
+    linked = data_service.get_findings_by_case(case_id) if finding_ids else []
+    by_id = {f.get("finding_id"): f for f in linked}
+    findings = [by_id[fid] for fid in finding_ids if fid in by_id]
 
     # Generate report filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{case_id}_report_{timestamp}.pdf"
-    output_path = Path("TestOutputs") / filename
-    output_path.parent.mkdir(exist_ok=True)
+    output_dir = os.path.realpath("TestOutputs")
+    resolved = os.path.realpath(
+        os.path.join(output_dir, f"{case_id}_report_{timestamp}.pdf")
+    )
+    # Kept inline so the case ID cannot steer the report outside the output dir.
+    if not resolved.startswith(output_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid case ID")
+    output_path = Path(resolved)
+    filename = output_path.name
+    os.makedirs(output_dir, exist_ok=True)
 
     # Generate the report
     success = report_service.generate_case_report(output_path, case, findings)
@@ -464,61 +244,40 @@ async def generate_case_report(case_id: str):
     return {
         "success": True,
         "filename": filename,
-        "path": str(output_path),
+        "path": os.path.join("TestOutputs", filename),
         "case_id": case_id,
     }
 
 
-@router.delete("/{case_id}")
-async def delete_case(case_id: str):
-    """
-    Delete a case.
+@router.delete(
+    "/{case_id}",
+    response_model=CaseSuccessResponse,
+    dependencies=[permission_gate("cases.delete")],
+)
+async def delete_case(case_id: str, session: UnitOfWorkSession):
+    """Delete a case that has no live Investigation (#1001)."""
+    # Demo cases live in memory, not in the session, and nothing investigates
+    # them, so there is no live run to guard against.
+    if data_service.is_demo_mode():
+        if not data_service.delete_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        return {"success": True}
 
-    Args:
-        case_id: The case ID
+    live = case_records_service.delete_case(session, case_id)
 
-    Returns:
-        Success status
-    """
-    case = data_service.get_case(case_id)
-    if not case:
+    if live is None:
         raise HTTPException(status_code=404, detail="Case not found")
-
-    success = data_service.delete_case(case_id)
-
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to delete case")
+    if live:
+        plural = "s" if len(live) != 1 else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"case has {len(live)} live investigation{plural} "
+                f"({', '.join(live)}); kill or finish them first"
+            ),
+        )
 
     return {"success": True}
-
-
-@router.get("/stats/summary")
-async def get_cases_summary():
-    """
-    Get summary statistics for cases.
-
-    Returns:
-        Summary statistics
-    """
-    cases = data_service.get_cases()
-
-    # Calculate statistics
-    status_counts = {}
-    priority_counts = {}
-    total_count = len(cases)
-
-    for case in cases:
-        status = case.get("status", "unknown")
-        status_counts[status] = status_counts.get(status, 0) + 1
-
-        priority = case.get("priority", "unknown")
-        priority_counts[priority] = priority_counts.get(priority, 0) + 1
-
-    return {
-        "total": total_count,
-        "by_status": status_counts,
-        "by_priority": priority_counts,
-    }
 
 
 # =============================================================================
@@ -533,17 +292,45 @@ class SLAAssign(BaseModel):
     sla_policy_id: Optional[str] = None
 
 
-@router.post("/{case_id}/sla")
+# Why an assignment was refused, in the caller's terms. A 500 said "something
+# went wrong here", which was never true of any of these: each one is a thing
+# the operator named and can act on.
+_SLA_REFUSALS = {
+    SlaOutcome.NO_SUCH_CASE: (404, "Case {case_id} not found"),
+    SlaOutcome.POLICY_NOT_FOUND: (404, "SLA policy {policy_id} not found"),
+    SlaOutcome.POLICY_RETIRED: (
+        409,
+        "SLA policy {policy_id} is deactivated, so no new case takes it. "
+        "Name an active policy, or reactivate this one with "
+        "PUT /api/sla-policies/{policy_id} (is_active=true).",
+    ),
+    SlaOutcome.NO_DEFAULT_POLICY: (
+        409,
+        "No active default SLA policy exists for this case's priority.",
+    ),
+}
+
+
+@router.post("/{case_id}/sla", dependencies=_CASES_WRITE, response_model=CaseSLASchema)
 async def assign_sla(case_id: str, data: SLAAssign):
     """Assign SLA policy to case."""
     sla_service = CaseSLAService()
-    result = sla_service.assign_sla_to_case(case_id, data.sla_policy_id)
-    if not result:
-        raise HTTPException(status_code=500, detail="Failed to assign SLA")
-    return CaseSLASchema.dump(result)
+    assignment = sla_service.assign_sla_to_case(case_id, data.sla_policy_id)
+
+    refusal = _SLA_REFUSALS.get(assignment.outcome)
+    if refusal is not None:
+        status_code, detail = refusal
+        raise HTTPException(
+            status_code=status_code,
+            detail=detail.format(
+                case_id=case_id, policy_id=assignment.policy_id or data.sla_policy_id
+            ),
+        )
+
+    return CaseSLASchema.dump(assignment.sla)
 
 
-@router.get("/{case_id}/sla")
+@router.get("/{case_id}/sla", response_model=CaseSLAStatusSchema)
 async def get_case_sla(case_id: str):
     """Get SLA status for case."""
     sla_service = CaseSLAService()
@@ -553,7 +340,11 @@ async def get_case_sla(case_id: str):
     return status
 
 
-@router.post("/{case_id}/sla/pause")
+@router.post(
+    "/{case_id}/sla/pause",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def pause_sla(case_id: str):
     """Pause SLA timer."""
     sla_service = CaseSLAService()
@@ -563,7 +354,11 @@ async def pause_sla(case_id: str):
     return {"success": True}
 
 
-@router.post("/{case_id}/sla/resume")
+@router.post(
+    "/{case_id}/sla/resume",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def resume_sla(case_id: str):
     """Resume SLA timer."""
     sla_service = CaseSLAService()
@@ -582,7 +377,7 @@ class CommentAdd(BaseModel):
     parent_comment_id: Optional[int] = None
 
 
-@router.get("/{case_id}/comments")
+@router.get("/{case_id}/comments", response_model=CaseCommentsResponse)
 async def get_comments(case_id: str):
     """Get all comments for case."""
     collab_service = CaseCollaborationService()
@@ -590,7 +385,9 @@ async def get_comments(case_id: str):
     return {"comments": CaseCommentSchema.dump_many(comments)}
 
 
-@router.post("/{case_id}/comments")
+@router.post(
+    "/{case_id}/comments", dependencies=_CASES_WRITE, response_model=CaseCommentSchema
+)
 async def add_comment(case_id: str, data: CommentAdd):
     """Add comment to case."""
     collab_service = CaseCollaborationService()
@@ -608,7 +405,11 @@ class CommentUpdate(BaseModel):
     content: str
 
 
-@router.put("/{case_id}/comments/{comment_id}")
+@router.put(
+    "/{case_id}/comments/{comment_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def update_comment(case_id: str, comment_id: int, data: CommentUpdate):
     """Update comment."""
     collab_service = CaseCollaborationService()
@@ -618,7 +419,11 @@ async def update_comment(case_id: str, comment_id: int, data: CommentUpdate):
     return {"success": True}
 
 
-@router.delete("/{case_id}/comments/{comment_id}")
+@router.delete(
+    "/{case_id}/comments/{comment_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def delete_comment(case_id: str, comment_id: int):
     """Delete comment."""
     collab_service = CaseCollaborationService()
@@ -653,7 +458,9 @@ class WatcherAdd(BaseModel):
         return v
 
 
-@router.post("/{case_id}/watchers")
+@router.post(
+    "/{case_id}/watchers", dependencies=_CASES_WRITE, response_model=CaseWatcherSchema
+)
 async def add_watcher(case_id: str, data: WatcherAdd):
     """Add watcher to case."""
     collab_service = CaseCollaborationService()
@@ -665,7 +472,11 @@ async def add_watcher(case_id: str, data: WatcherAdd):
     return CaseWatcherSchema.dump(watcher)
 
 
-@router.delete("/{case_id}/watchers/{user_id}")
+@router.delete(
+    "/{case_id}/watchers/{user_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def remove_watcher(case_id: str, user_id: str):
     """Remove watcher from case."""
     collab_service = CaseCollaborationService()
@@ -675,7 +486,7 @@ async def remove_watcher(case_id: str, user_id: str):
     return {"success": True}
 
 
-@router.get("/{case_id}/watchers")
+@router.get("/{case_id}/watchers", response_model=CaseWatchersResponse)
 async def get_watchers(case_id: str):
     """Get all watchers for case."""
     collab_service = CaseCollaborationService()
@@ -684,43 +495,6 @@ async def get_watchers(case_id: str):
 
 
 # Evidence Management
-class EvidenceAdd(BaseModel):
-    """Add evidence to case."""
-
-    evidence_type: str
-    name: str
-    collected_by: str
-    description: Optional[str] = None
-    file_path: Optional[str] = None
-    source: Optional[str] = None
-    tags: Optional[List[str]] = None
-
-
-@router.post("/{case_id}/evidence")
-async def add_evidence(case_id: str, data: EvidenceAdd):
-    """Add evidence to case."""
-    evidence_service = CaseEvidenceService()
-    evidence = evidence_service.add_evidence(
-        case_id=case_id,
-        evidence_type=data.evidence_type,
-        name=data.name,
-        collected_by=data.collected_by,
-        description=data.description,
-        file_path=data.file_path,
-        source=data.source,
-        tags=data.tags,
-    )
-    if not evidence:
-        raise HTTPException(status_code=500, detail="Failed to add evidence")
-    return CaseEvidenceSchema.dump(evidence)
-
-
-@router.get("/{case_id}/evidence")
-async def get_evidence(case_id: str, evidence_type: Optional[str] = None):
-    """Get all evidence for case."""
-    evidence_service = CaseEvidenceService()
-    evidence_list = evidence_service.get_case_evidence(case_id, evidence_type)
-    return {"evidence": CaseEvidenceSchema.dump_many(evidence_list)}
 
 
 class ChainOfCustodyAdd(BaseModel):
@@ -731,7 +505,11 @@ class ChainOfCustodyAdd(BaseModel):
     notes: Optional[str] = None
 
 
-@router.post("/{case_id}/evidence/{evidence_id}/chain-of-custody")
+@router.post(
+    "/{case_id}/evidence/{evidence_id}/chain-of-custody",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSuccessResponse,
+)
 async def add_custody_entry(case_id: str, evidence_id: int, data: ChainOfCustodyAdd):
     """Add chain of custody entry."""
     evidence_service = CaseEvidenceService()
@@ -744,73 +522,6 @@ async def add_custody_entry(case_id: str, evidence_id: int, data: ChainOfCustody
 
 
 # IOC Management
-class IOCAdd(BaseModel):
-    """Add IOC to case."""
-
-    ioc_type: str
-    value: str
-    threat_level: Optional[str] = None
-    confidence: Optional[float] = None
-    source: Optional[str] = None
-    tags: Optional[List[str]] = None
-    context: Optional[str] = None
-
-
-@router.post("/{case_id}/iocs")
-async def add_ioc(case_id: str, data: IOCAdd):
-    """Add IOC to case."""
-    ioc_service = CaseIOCService()
-    ioc = ioc_service.add_ioc(
-        case_id=case_id,
-        ioc_type=data.ioc_type,
-        value=data.value,
-        threat_level=data.threat_level,
-        confidence=data.confidence,
-        source=data.source,
-        tags=data.tags,
-        context=data.context,
-    )
-    if not ioc:
-        raise HTTPException(status_code=500, detail="Failed to add IOC")
-    return CaseIOCSchema.dump(ioc)
-
-
-@router.get("/{case_id}/iocs")
-async def get_iocs(case_id: str, ioc_type: Optional[str] = None):
-    """Get all IOCs for case."""
-    ioc_service = CaseIOCService()
-    iocs = ioc_service.get_case_iocs(case_id, ioc_type)
-    return {"iocs": CaseIOCSchema.dump_many(iocs)}
-
-
-class IOCBulkAdd(BaseModel):
-    """Bulk add IOCs."""
-
-    iocs: List[Dict]
-
-
-@router.post("/{case_id}/iocs/bulk")
-async def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
-    """Bulk add IOCs to case."""
-    ioc_service = CaseIOCService()
-    count = ioc_service.bulk_add_iocs(case_id, data.iocs)
-    return {"added": count}
-
-
-@router.get("/{case_id}/iocs/export")
-async def export_iocs(case_id: str, format: str = "json"):
-    """Export IOCs (json, csv, or stix)."""
-    ioc_service = CaseIOCService()
-
-    if format == "csv":
-        content = ioc_service.export_iocs_csv(case_id)
-        return {"format": "csv", "content": content}
-    elif format == "stix":
-        content = ioc_service.export_iocs_stix(case_id)
-        return {"format": "stix", "content": content}
-    else:
-        content = ioc_service.export_iocs_json(case_id)
-        return {"format": "json", "content": content}
 
 
 # Task Management
@@ -825,7 +536,9 @@ class TaskAdd(BaseModel):
     checklist_items: Optional[List[Dict]] = None
 
 
-@router.post("/{case_id}/tasks")
+@router.post(
+    "/{case_id}/tasks", dependencies=_CASES_WRITE, response_model=CaseTaskSchema
+)
 async def add_task(case_id: str, data: TaskAdd, session: UnitOfWorkSession):
     """Add task to case."""
 
@@ -842,7 +555,7 @@ async def add_task(case_id: str, data: TaskAdd, session: UnitOfWorkSession):
     return CaseTaskSchema.dump(task)
 
 
-@router.get("/{case_id}/tasks")
+@router.get("/{case_id}/tasks", response_model=CaseTasksResponse)
 async def get_tasks(case_id: str):
     """Get all tasks for case."""
     tasks = case_records_service.list_tasks(case_id)
@@ -862,7 +575,11 @@ class TaskUpdate(BaseModel):
     actual_hours: Optional[float] = None
 
 
-@router.put("/{case_id}/tasks/{task_id}")
+@router.put(
+    "/{case_id}/tasks/{task_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseTaskSchema,
+)
 async def update_task(
     case_id: str, task_id: int, data: TaskUpdate, session: UnitOfWorkSession
 ):
@@ -884,7 +601,11 @@ class RelationshipAdd(BaseModel):
     notes: Optional[str] = None
 
 
-@router.post("/{case_id}/relationships")
+@router.post(
+    "/{case_id}/relationships",
+    dependencies=_CASES_WRITE,
+    response_model=CaseRelationshipSchema,
+)
 async def add_relationship(
     case_id: str, data: RelationshipAdd, session: UnitOfWorkSession
 ):
@@ -901,7 +622,7 @@ async def add_relationship(
     return CaseRelationshipSchema.dump(rel)
 
 
-@router.get("/{case_id}/relationships")
+@router.get("/{case_id}/relationships", response_model=CaseRelationshipsResponse)
 async def get_relationships(case_id: str, session: UnitOfWorkSession):
     """Get related cases."""
 
@@ -910,36 +631,6 @@ async def get_relationships(case_id: str, session: UnitOfWorkSession):
 
 
 # Case Closure
-class ClosureInfo(BaseModel):
-    """Close case with metadata."""
-
-    closure_category: str
-    closed_by: str
-    root_cause: Optional[str] = None
-    lessons_learned: Optional[str] = None
-    recommendations: Optional[str] = None
-    executive_summary: Optional[str] = None
-
-
-@router.post("/{case_id}/close")
-async def close_case(case_id: str, data: ClosureInfo, session: UnitOfWorkSession):
-    """Close case with closure metadata."""
-
-    from core.cases.case_workflow_service import CaseWorkflowService
-
-    closure = CaseWorkflowService().close_case(
-        session,
-        case_id,
-        closure_category=data.closure_category,
-        closed_by=data.closed_by,
-        root_cause=data.root_cause,
-        lessons_learned=data.lessons_learned,
-        recommendations=data.recommendations,
-        executive_summary=data.executive_summary,
-    )
-    if not closure:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return {"success": True, "closure": CaseClosureInfoSchema.dump(closure)}
 
 
 # Case Escalation
@@ -952,7 +643,9 @@ class EscalationAdd(BaseModel):
     urgency_level: str = "high"
 
 
-@router.post("/{case_id}/escalate")
+@router.post(
+    "/{case_id}/escalate", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
+)
 async def escalate_case(case_id: str, data: EscalationAdd):
     """Escalate case."""
     from core.cases.case_workflow_service import CaseWorkflowService
@@ -966,7 +659,7 @@ async def escalate_case(case_id: str, data: EscalationAdd):
     return {"success": True}
 
 
-@router.get("/{case_id}/escalations")
+@router.get("/{case_id}/escalations", response_model=CaseEscalationsResponse)
 async def get_escalations(case_id: str, session: UnitOfWorkSession):
     """Get escalation history."""
 
@@ -974,76 +667,41 @@ async def get_escalations(case_id: str, session: UnitOfWorkSession):
     return {"escalations": CaseEscalationSchema.dump_many(escalations)}
 
 
-# Case Merge
-class MergeRequest(BaseModel):
-    """Merge another case into this one."""
+@router.get("/{case_id}/record", response_model=CaseRecordResponse)
+async def get_case_record(case_id: str, session: UnitOfWorkSession):
+    """The case record: the latest run's ledger, then this case's audit rows.
 
-    source_case_id: str
-    merged_by: str = "system"
-
-
-@router.post("/{case_id}/merge")
-async def merge_cases(case_id: str, data: MergeRequest):
-    """Merge source case into target case.
-
-    Moves all findings, timeline entries, activities, IOCs, evidence, tasks,
-    and comments from the source case into the target. The source case is
-    closed with a note and linked via a 'merged_into' relationship.
+    Newest first. The agent returns the ledger with snapshots off. Audit rows
+    are ``entity_type == case`` and ``entity_id`` this case — the table has no
+    ``case_id`` column. The run is ``run_id_for`` of the latest investigation,
+    not the shadow adjudication.
     """
-    if case_id == data.source_case_id:
-        raise HTTPException(status_code=400, detail="Cannot merge a case into itself")
+    if not data_service.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
 
-    from core.cases.case_workflow_service import CaseWorkflowService
+    investigations = case_records_service.list_case_investigations(session, case_id)
+    latest = investigations[0] if investigations else None
+    events: list = []
+    run_id = None
+    investigation_id = None
+    if latest is not None:
+        investigation_id = latest.investigation_id
+        run_id = run_id_for(investigation_id)
+        try:
+            events = await read_events(run_id) or []
+        except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+            logger.error("could not read the record for %s: %s", case_id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from None
 
-    # A missing case surfaces as NotFoundError, which the shared handler
-    # renders as a 404 naming which of the two it was.
-    moved_findings = CaseWorkflowService().merge_cases(
-        case_id, data.source_case_id, data.merged_by
-    )
-
-    result_case = data_service.get_case(case_id)
+    audits = case_records_service.list_case_audit(session, case_id)
     return {
-        "success": True,
-        "target_case": result_case,
-        "findings_moved": moved_findings,
-        "source_case_status": "closed",
-        "message": f"Case {data.source_case_id} merged into {case_id}",
+        "run_id": run_id,
+        "investigation_id": investigation_id,
+        "rows": merge_record(events, audits),
     }
 
 
+# Case Merge
+
+
 # Advanced Search
-class SearchRequest(BaseModel):
-    """Advanced search request."""
-
-    query_text: Optional[str] = None
-    status: Optional[List[str]] = None
-    priority: Optional[List[str]] = None
-    assignee: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    mitre_techniques: Optional[List[str]] = None
-    created_after: Optional[datetime] = None
-    created_before: Optional[datetime] = None
-    limit: int = 100
-    offset: int = 0
-
-
-@router.post("/search")
-async def search_cases(data: SearchRequest):
-    """Advanced case search."""
-    from core.cases.case_search_service import CaseSearchService
-
-    search_service = CaseSearchService()
-
-    results = search_service.search_cases(
-        query_text=data.query_text,
-        status=data.status,
-        priority=data.priority,
-        assignee=data.assignee,
-        tags=data.tags,
-        mitre_techniques=data.mitre_techniques,
-        created_after=data.created_after,
-        created_before=data.created_before,
-        limit=data.limit,
-        offset=data.offset,
-    )
-    return results

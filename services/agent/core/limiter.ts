@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { errorFields, logger } from "./log.js";
 
 export interface RateLimit {
   rpm: number;
@@ -9,7 +10,13 @@ export interface RateLimit {
 // this layer's pool declining a call it has not yet made.
 export class GatewayExhausted extends Error {}
 
-const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const log = logger("agent.limiter");
+
+const RETRYABLE = new Set([429, 500, 502, 503]);
+
+// Statuses that mean a ceiling was reached rather than a server that stumbled. They
+// answer the same way every attempt, so they get one extra try rather than three.
+const CEILING = new Set([408, 504]);
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,16 +93,31 @@ export class Limiter {
 
   private async withRetry<T>(call: () => Promise<T>): Promise<T> {
     let lastError: unknown;
+    let blind = 0;
     for (let attempt = 0; attempt < this.attempts; attempt += 1) {
       try {
         return await call();
       } catch (error) {
         const status = statusOf(error);
         if (status === 402) throw new GatewayExhausted((error as Error).message);
-        if (status !== undefined && !RETRYABLE.has(status)) throw error;
+        // One more attempt, not three: retrying a ceiling costs a role its whole dispatch
+        // in wall clock. A dead socket is the same ceiling with nobody left to answer.
+        if (status === undefined || CEILING.has(status)) {
+          blind += 1;
+          if (blind > 1) {
+            log.error("model call failed, giving up", { status, attempts: attempt + 1, ...errorFields(error) });
+            throw error;
+          }
+        } else if (!RETRYABLE.has(status)) {
+          throw error;
+        }
         lastError = error;
-        if (attempt === this.attempts - 1) break;
+        if (attempt === this.attempts - 1) {
+          log.error("model call failed, giving up", { status, attempts: this.attempts, ...errorFields(error) });
+          break;
+        }
         const backoff = retryAfterMs(error) ?? 2 ** attempt * 500;
+        log.warn("model call failed, retrying", { status, attempt: attempt + 1, attempts: this.attempts, backoff_ms: backoff, ...errorFields(error) });
         await sleep(backoff + Math.random() * 250);
       }
     }

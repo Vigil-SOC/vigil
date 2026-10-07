@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+# Spawned as ``python3 core/integrations/<vendor>/tool.py`` with a narrowed env,
+# so the repo root is not on sys.path and PYTHONPATH is not forwarded. Add it
+# here so the ``core.*`` imports below resolve; otherwise they fail at spawn.
+_REPO_ROOT = str(Path(__file__).resolve().parents[3])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import asyncio
 import json
 import logging
@@ -9,10 +19,10 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.slack.descriptor import SLACK
 
 logger = logging.getLogger(__name__)
-server = Server("slack")
 
 
 def result(data):
@@ -23,7 +33,6 @@ def get_config():
     return resolve(SLACK)
 
 
-@server.list_tools()
 async def handle_list_tools():
     return [
         types.Tool(
@@ -45,7 +54,6 @@ async def handle_list_tools():
     ]
 
 
-@server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None):
     config = get_config()
     token = config.get("bot_token")
@@ -97,6 +105,21 @@ async def handle_call_tool(name: str, arguments: dict | None):
             return result({"error": str(e)})
 
     return result({"error": f"Unknown tool: {name}"})
+
+
+async def _on_list_tools(_ctx, _params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(_ctx, params):
+    return await run_tool(handle_call_tool, params)
+
+
+server = Server(
+    "slack",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 
 async def main():

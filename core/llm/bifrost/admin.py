@@ -12,7 +12,7 @@ manager under ``llm_provider_<id>_api_key``. Pushing via the API keeps a
 single source of truth in the secrets manager, and is why the seeded
 ``config.json`` key is an empty placeholder rather than a real credential.
 
-Three properties of that API shape the code below, all learned the hard way:
+Four properties of that API shape the code below, all learned the hard way:
 
 * **Keys are a subresource.** They live at ``/api/providers/{name}/keys``,
   *not* on the ``/api/providers/{name}`` document — which returns no ``keys``
@@ -22,19 +22,31 @@ Three properties of that API shape the code below, all learned the hard way:
   are always re-read from the secrets store, never round-tripped.
 * **A key must carry a non-empty value.** There is no models-only update, and
   clearing a credential means deleting the key rather than blanking it.
+* **Custom OpenAI-compatible ``base_url`` lives on the provider document.**
+  Vigil stores the SDK form (often with a trailing ``/v1``). Bifrost stores
+  the API root under ``network_config.base_url`` and appends the versioned
+  path itself, so only that suffix is trimmed. This PUT must not send
+  ``keys``. Anthropic ignores the field; Ollama's stored URL is host-side
+  and would mean the Bifrost container itself.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
 from core.config import get_settings
+from core.llm.outage import report_outage, report_recovered
+from core.llm.providers.discovery import is_embedding_model_id
+from core.platform.url_safety import DEFAULT_ALLOWED_PROVIDER_HOSTS
 
 logger = logging.getLogger(__name__)
+
+_RATES_OUTAGE = "bifrost-gateway-rates"
 
 _DEFAULT_TIMEOUT = 5.0
 
@@ -53,7 +65,33 @@ def _bifrost_base_url() -> str:
 # Providers whose Bifrost key is not an API secret we own. Ollama's key holds
 # a URL under ``ollama_key_config`` with an empty ``value``, and its allow-list
 # is the static wildcard, so there is nothing for us to push.
-_UNMANAGED_PROVIDER_TYPES = frozenset({"ollama"})
+#
+# Vertex for the same reason: its credential is a service-account file, and
+# ``discovery.py`` has no fetcher for its catalog, so a managed sync would push an
+# allow-list refusing every model. The seeded wildcard in the Bifrost config is it.
+_UNMANAGED_PROVIDER_TYPES = frozenset({"ollama", "vertex"})
+
+# Public OpenAI cloud — Bifrost already points there. Custom OpenAI-compatible
+# hosts (OpenRouter, LiteLLM, vLLM, ...) are the ones we must push. Derived
+# from the SSRF allow-list so this file never names the stock host (one-egress
+# ratchet); ``.openai.com`` keeps Azure-style hosts from matching.
+_STOCK_OPENAI_HOSTS = frozenset(
+    host for host in DEFAULT_ALLOWED_PROVIDER_HOSTS if host.endswith(".openai.com")
+)
+
+# Fields Bifrost accepts on PUT /api/providers/{name}. Everything else on the
+# GET document is read-back (name, status, config_hash, keys, ...).
+_PROVIDER_WRITE_FIELDS = frozenset(
+    {
+        "network_config",
+        "concurrency_and_buffer_size",
+        "proxy_config",
+        "send_back_raw_request",
+        "send_back_raw_response",
+        "store_raw_request_response",
+        "custom_provider_config",
+    }
+)
 
 # Read-only/derived fields Bifrost returns but rejects or ignores on write.
 # ``value`` is dropped separately — see the module docstring on masking.
@@ -70,6 +108,10 @@ _KEY_STATUS_OK = frozenset({"success", "unknown"})
 def _keys_url(provider_name: str, key_id: Optional[str] = None) -> str:
     base = f"{_bifrost_base_url()}/api/providers/{provider_name}/keys"
     return f"{base}/{key_id}" if key_id else base
+
+
+def _provider_url(provider_name: str) -> str:
+    return f"{_bifrost_base_url()}/api/providers/{provider_name}"
 
 
 def _get_provider_keys(
@@ -102,7 +144,7 @@ def _log_key_health(provider_name: str, payload: Dict[str, Any]) -> None:
     """
     status = payload.get("status")
     if status and status not in _KEY_STATUS_OK:
-        logger.warning(
+        logger.error(
             "Bifrost: provider %s key stored but reports status=%s (%s)",
             provider_name,
             status,
@@ -136,7 +178,10 @@ def _upsert_provider_key(
     body.setdefault("name", f"default-{provider_name}-key")
     body.setdefault("weight", 1)
     body.setdefault("enabled", True)
-    body["value"] = {"value": key_value, "type": "plain_text"}
+    # A bare string: wrapped as {"value": ..., "type": "plain_text"} this Bifrost
+    # accepts the write and stores the serialized wrapper as the credential, after
+    # which every call 401s. Verified against the running image rather than inferred.
+    body["value"] = key_value
     if models is not None:
         body["models"] = models
     body.setdefault("models", [])
@@ -321,7 +366,7 @@ def sync_provider_models(
         normalized.append(mid)
 
     if not key_value:
-        logger.info(
+        logger.warning(
             "Bifrost sync: no resolved secret for provider %s — "
             "skipping model allow-list sync",
             provider_type,
@@ -341,6 +386,106 @@ def sync_provider_models(
         return ok
 
 
+def _normalize_openai_compat_base_url(base_url: str) -> str:
+    """Strip a trailing ``/v1``; Bifrost appends the versioned path itself.
+
+    Any other path prefix (``/api``, ``/openai``, a tenant slug) is kept.
+    """
+    url = base_url.strip().rstrip("/")
+    if url.lower().endswith("/v1"):
+        url = url[:-3].rstrip("/")
+    return url
+
+
+def _custom_openai_base_url(base_url: Optional[str]) -> Optional[str]:
+    """Normalized Bifrost form, or None when the stock host should stay."""
+    if not base_url or not str(base_url).strip():
+        return None
+    target = _normalize_openai_compat_base_url(str(base_url))
+    if not target:
+        return None
+    host = (urlparse(target).hostname or "").lower()
+    if host in _STOCK_OPENAI_HOSTS:
+        return None
+    return target
+
+
+def _get_provider_document(name: str, client: httpx.Client) -> Optional[Dict[str, Any]]:
+    """Return ``name``'s provider document, or None if it is absent."""
+    try:
+        r = client.get(_provider_url(name), timeout=_DEFAULT_TIMEOUT)
+        if r.status_code == 404:
+            logger.debug("Bifrost: provider %s not configured", name)
+            return None
+        r.raise_for_status()
+        doc = r.json()
+        return doc if isinstance(doc, dict) else None
+    except Exception as e:
+        logger.warning("Bifrost: could not fetch provider %s: %s", name, e)
+        return None
+
+
+def sync_provider_base_url(provider_type: str, base_url: Optional[str]) -> bool:
+    """Write a custom OpenAI-compatible ``base_url`` to Bifrost.
+
+    Only ``openai`` rows with a non-stock host are pushed. Anthropic ignores
+    ``network_config.base_url`` (see ``core.llm.providers.clients``); Ollama's
+    stored URL is host-side and would resolve to the Bifrost container itself.
+
+    GET/PUT ``/api/providers/{name}`` (the provider document, not ``/keys``).
+    Other ``network_config`` fields are preserved; only writable provider
+    fields are sent, never ``keys``. Reverting to empty/stock clears a
+    previously pushed custom host so inference does not keep using it.
+
+    Returns True on success or when there is nothing to write. Failures are
+    logged and return False so the catalog sync still proceeds.
+    """
+    if not provider_type or provider_type != "openai":
+        return True
+    target = _custom_openai_base_url(base_url)
+
+    with httpx.Client() as client:
+        doc = _get_provider_document(provider_type, client)
+        if doc is None:
+            # Stock/empty has nothing to write; a custom host cannot land if
+            # the provider document is missing.
+            return target is None
+        network = dict(doc.get("network_config") or {})
+        current = (network.get("base_url") or "").rstrip("/")
+        if target is None:
+            # Leave Bifrost's default host. If we previously pushed a custom
+            # URL, drop it so inference does not keep hitting the old gateway.
+            if not current or _custom_openai_base_url(current) is None:
+                return True
+            network.pop("base_url", None)
+        elif current == target:
+            return True
+        else:
+            network["base_url"] = target
+        body = {k: v for k, v in doc.items() if k in _PROVIDER_WRITE_FIELDS}
+        body["network_config"] = network
+        url = _provider_url(provider_type)
+        try:
+            r = client.put(url, json=body, timeout=_DEFAULT_TIMEOUT)
+            if r.status_code >= 400:
+                logger.warning(
+                    "Bifrost: PUT %s returned %s: %s",
+                    url,
+                    r.status_code,
+                    r.text[:200],
+                )
+                return False
+            logger.info(
+                "Bifrost: set network_config.base_url for provider %s to %s",
+                provider_type,
+                target or "default",
+            )
+            return True
+        except Exception as e:
+            logger.warning("Bifrost: PUT %s failed: %s", url, e)
+            return False
+
+
 async def sync_all_provider_models() -> Dict[str, Any]:
     """Canonical refresh for every active LLM provider.
 
@@ -349,18 +494,21 @@ async def sync_all_provider_models() -> Dict[str, Any]:
     does everything:
 
     1. Fetches each provider's live upstream catalog via
-       ``core.llm.providers.discovery``.
+       ``core.llm.providers.discovery``, and the gateway datasheet for every
+       active provider type, whose rates price each call.
     2. Applies the configured extras (IDs upstream dropped from
        /v1/models but that still route — e.g. Claude 3.x).
     3. Populates ``_MODEL_LIST_CACHE[provider_id]`` in
        ``core.llm.providers.registry`` so the UI dropdown reads the same
        list the sync just computed.
-    4. Unions per-provider-type across rows and PUTs that to Bifrost's
+    4. For OpenAI-compatible rows, writes ``network_config.base_url`` so
+       the gateway uses the custom host rather than the stock OpenAI cloud.
+    5. Unions per-provider-type across rows and PUTs that to Bifrost's
        allow-list via the admin API, so LLM traffic routes for every
        model the dropdown shows.
 
-    Because all three surfaces (dropdown cache, live-meta cache, Bifrost
-    allow-list) are written in the same pass, they cannot drift.
+    Because all four surfaces (dropdown cache, live-meta cache, Bifrost
+    host, Bifrost allow-list) are written in the same pass, they cannot drift.
 
     Concurrent calls are coalesced — if a sync is already running (e.g.
     the scheduled refresher kicked off at the same time as a dropdown
@@ -368,8 +516,9 @@ async def sync_all_provider_models() -> Dict[str, Any]:
     issuing a duplicate round of upstream fetches.
 
     Best-effort — never raises. Returns a dict with per-provider-type
-    Bifrost sync flags under ``bifrost`` and the computed per-row model
-    lists under ``models_by_provider`` for observability.
+    Bifrost sync flags under ``bifrost``, custom-host flags under
+    ``bifrost_base_url``, and the computed per-row model lists under
+    ``models_by_provider`` for observability.
     """
     global _sync_in_flight
     if _sync_in_flight is not None and not _sync_in_flight.done():
@@ -396,6 +545,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
     from core.llm.providers import discovery
     from core.llm.providers.registry import (
         _FALLBACK_MODELS_BY_PROVIDER,
+        _LIVE_CATALOGUES,
         _MODEL_LIST_CACHE,
         _register_extras,
         get_extra_model_ids,
@@ -407,6 +557,11 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
     db_manager = get_db_manager()
     if db_manager._engine is None:
         db_manager.initialize()
+
+    # A key configured in Bifrost alone has no row for the loop below to find.
+    from core.llm.bifrost.mirror import reconcile_all
+
+    await reconcile_all()
 
     # Group active providers by type and collect the rows we need to
     # fetch (we don't hold the session open across awaits).
@@ -434,7 +589,12 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             )
 
     bifrost_results: Dict[str, bool] = {}
+    base_url_results: Dict[str, bool] = {}
     per_row_models: Dict[str, List[str]] = {}
+
+    # Rates for every active type, on every run. The same read stands in for a
+    # failed discovery below; otherwise it touches only the rates.
+    datasheets = await record_gateway_rates(rows_by_type)
 
     for provider_type, provider_rows in rows_by_type.items():
         # Extras are per-provider-type; apply to every row of this type.
@@ -450,16 +610,43 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
         provider_rows.sort(key=lambda r: not r["is_default"])
         type_key: Optional[str] = None
 
+        # Host before listing and allow-list: namespaced models are meaningless
+        # if the gateway still talks to the stock OpenAI cloud, and a mirror row
+        # lists through whatever host this leaves. One document per type.
+        # Only a row Vigil owns may set it: a mirror row carries no base_url,
+        # and pushing its blank erased a host configured in Bifrost itself.
+        owned = [r for r in provider_rows if not _is_mirror_row(r)]
+        if provider_type == "openai" and owned:
+            # The first row that states a host, not simply the first row.
+            hosted = next((r for r in owned if r.get("base_url")), owned[0])
+            base_url_results[provider_type] = sync_provider_base_url(
+                provider_type, hosted.get("base_url")
+            )
+
+        gateway_host = None
+        if provider_type == "openai" and len(owned) < len(provider_rows):
+            gateway_host = await bifrost_custom_openai_host()
+
         for row_dict in provider_rows:
             row_ids: List[str] = []
             row_seen: set = set()
             upstream_ok = False
             row_key = _resolve_row_key(row_dict)
-            if type_key is None:
+            # Bifrost owns a mirror row's secret. What the env fallback resolves
+            # is some other credential, and pushing it would put that key in the
+            # rotation for whatever host the gateway points at.
+            if type_key is None and not _is_mirror_row(row_dict):
                 type_key = row_key
 
+            # A server behind a host set in Bifrost alone. OpenAI's names are not
+            # models it can run, so nothing may stand in for its catalogue.
+            via_gateway = bool(gateway_host) and _is_mirror_row(row_dict)
+
             try:
-                meta = await _fetch_meta_for_row(row_dict, discovery, row_key)
+                if via_gateway:
+                    meta = await list_gateway_models(provider_type)
+                else:
+                    meta = await _fetch_meta_for_row(row_dict, discovery, row_key)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "sync_all_provider_models: discovery failed for %s (%s): %s",
@@ -468,6 +655,17 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
                     exc,
                 )
                 meta = None
+
+            # A stand-in when the provider has a fetcher that could not answer,
+            # and the real thing when it has none.
+            stood_in = False
+            if (
+                meta is None
+                and provider_type not in _HOST_OWNED_CATALOGUE
+                and not via_gateway
+            ):
+                meta = datasheets.get(provider_type)
+                stood_in = meta is not None and provider_type in _DISCOVERABLE
 
             if meta is not None:
                 upstream_ok = True
@@ -480,7 +678,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
 
             # Upstream failed: union the bootstrap list so the dropdown
             # isn't empty while still carrying the extras below.
-            if not upstream_ok:
+            if (not upstream_ok or stood_in) and not via_gateway:
                 for mid in _FALLBACK_MODELS_BY_PROVIDER.get(provider_type, ()):
                     if mid not in row_seen:
                         row_seen.add(mid)
@@ -497,6 +695,13 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             # Single-writer: populate the dropdown cache with this row's
             # list. ``fetch_provider_models`` reads this same key.
             _MODEL_LIST_CACHE[row_dict["provider_id"]] = row_ids
+            # A stood-in datasheet is not this provider's catalogue: ruling a
+            # model out from it is the silent substitution ``can_serve`` exists
+            # to avoid, and its list is missing whatever the bootstrap carries.
+            if upstream_ok and not stood_in:
+                _LIVE_CATALOGUES.add(row_dict["provider_id"])
+            else:
+                _LIVE_CATALOGUES.discard(row_dict["provider_id"])
             per_row_models[row_dict["provider_id"]] = row_ids
 
             # Contribute to the per-type union for Bifrost.
@@ -527,8 +732,13 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
 
     return {
         "bifrost": bifrost_results,
+        "bifrost_base_url": base_url_results,
         "models_by_provider": per_row_models,
     }
+
+
+def _is_mirror_row(row_dict: Dict[str, Any]) -> bool:
+    return (row_dict.get("config") or {}).get("managed_by") == "bifrost"
 
 
 def _resolve_row_key(row_dict: Dict[str, Any]) -> Optional[str]:
@@ -608,10 +818,367 @@ async def _fetch_meta_for_row(
         # same trust anchor as the admin-gated test and discover-models
         # endpoints. Without this, sync fails for any RFC1918 host even
         # though the UI dropdown populated fine.
-        return await discovery.fetch_ollama_models(base_url, allow_loopback=True)
+        return await _list_ollama_models(base_url, discovery)
 
-    logger.debug("Bifrost sync: unsupported provider_type %s", provider_type)
+    logger.debug("Bifrost sync: no fetcher for provider_type %s", provider_type)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Gateway catalogue (providers with no upstream fetcher)
+# ---------------------------------------------------------------------------
+
+# Bifrost's ``/api/models/details`` datasheet: the only catalogue for a provider
+# ``discovery.py`` cannot query, or holds no key for (every mirrored row).
+#
+# Reading it is not a second LLM path: it is capability discovery against the
+# gateway we already route through, the same carve-out ``discovery.py``
+# documents for querying provider catalogues directly.
+
+# Bifrost's ollama catalogue is the generic library, not what a host pulled.
+_HOST_OWNED_CATALOGUE = frozenset({"ollama"})
+
+# Types ``_fetch_meta_for_row`` has a real fetcher for. For anything else the
+# datasheet is the only catalogue there will ever be, so it can be trusted as
+# one; for these it is a stand-in for a fetch that failed or had no key.
+_DISCOVERABLE = frozenset({"anthropic", "openai", "ollama"})
+
+# What the row's ``default_model`` should floor to, per provider type. That
+# field is only a floor — it is what the picker shows when discovery yields
+# nothing (#409) and what dispatch uses when a caller names no model; the
+# operator's real choice is the ``chat_default`` assignment. So it needs to be
+# *a* working chat model, not the right one, and preferring a mid-tier general
+# model keeps the floor cheap rather than pinning the priciest id in a
+# 136-model catalogue. First one present wins; absent all of them, the
+# catalogue's first entry.
+_CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
+    "vertex": ("gemini-2.5-flash", "gemini-2.0-flash", "claude-sonnet-4-5"),
+    # Mid-tier, rather than the opus the bootstrap list leads with or the haiku
+    # the marker sweep would otherwise land on.
+    "anthropic": ("claude-sonnet-4-6",),
+    # An alias Google keeps pointed at a served model; the catalogue lists pins
+    # retired for new keys (gemini-2.0/2.5-flash) that the marker sweep would pick.
+    "gemini": ("gemini-flash-latest",),
+}
+
+
+def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
+    """True when a datasheet entry is a chat model rather than another modality.
+
+    Vertex serves imagen, veo, chirp, OCR and embeddings out of the same
+    catalogue. A chat model is one that can emit tokens, so the presence of
+    ``max_output_tokens`` is the discriminator; embedding ids carry an input
+    limit only and are also caught by name, since their families are the one
+    set ``discovery.py`` already knows how to spot.
+    """
+    name = entry.get("name") or ""
+    if not name or is_embedding_model_id(name):
+        return False
+    return bool(entry.get("max_output_tokens"))
+
+
+def _rate(entry: Dict[str, Any], key: str) -> Optional[float]:
+    """A datasheet rate, or None when absent or malformed — never a guessed 0.
+
+    An operator pricing override does not replace the base rate on the wire:
+    the gateway reports it beside it, under ``overridden_pricing``, and it wins.
+    """
+    value = (entry.get("overridden_pricing") or {}).get(key)
+    if value is None:
+        value = entry.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
+
+
+async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
+    """Return Bifrost's own catalogue for ``provider_type`` as ``ModelMeta``.
+
+    Returns None when the catalogue is unreachable or holds no chat models, so
+    the caller falls back to its bootstrap list rather than caching a blank.
+    """
+    from core.llm.providers.discovery import ModelMeta
+
+    url = f"{_bifrost_base_url()}/api/models/details"
+    try:
+        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+            resp = await client.get(
+                url, params={"provider": provider_type, "limit": 1000}
+            )
+            resp.raise_for_status()
+            entries = resp.json().get("models") or []
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        logger.warning("Bifrost catalogue fetch failed for %s: %s", provider_type, exc)
+        return None
+
+    meta = [
+        ModelMeta(
+            id=e["name"],
+            display_name=e["name"],
+            context_window=int(e.get("max_input_tokens") or 0),
+            # The list endpoint carries no capability flags (they live on the
+            # per-model ``/parameters`` route, one call each). Tool use is the
+            # one Vigil depends on and every chat family Vertex serves —
+            # Claude, Gemini, Mistral, Llama — supports it, so default it True
+            # for the same reason ``_anthropic_caps`` does. Thinking and vision
+            # are left unset rather than guessed, since nothing depends on them.
+            capabilities={"supports_tools": True},
+            # The gateway's own rates, operator pricing overrides applied.
+            input_cost_per_token=_rate(e, "input_cost_per_token"),
+            output_cost_per_token=_rate(e, "output_cost_per_token"),
+            cache_read_cost_per_token=_rate(e, "cache_read_input_token_cost"),
+            cache_write_cost_per_token=_rate(e, "cache_creation_input_token_cost"),
+        )
+        for e in entries
+        if _is_chat_catalogue_entry(e)
+    ]
+    if not meta:
+        logger.warning(
+            "Bifrost catalogue for %s held no chat models (%d entries)",
+            provider_type,
+            len(entries),
+        )
+        return None
+    return meta
+
+
+async def bifrost_custom_openai_host() -> Optional[str]:
+    """The OpenAI-compatible host Bifrost itself points at, or None for the stock cloud.
+
+    Set in the gateway by an operator fronting MLX, vLLM or LM Studio. A mirror
+    row carries no ``base_url``, so this is the only place that host is recorded.
+    """
+
+    def read() -> Optional[Dict[str, Any]]:
+        with httpx.Client() as client:
+            return _get_provider_document("openai", client)
+
+    doc = await asyncio.to_thread(read)
+    network = (doc or {}).get("network_config") or {}
+    return _custom_openai_base_url(network.get("base_url"))
+
+
+async def list_gateway_models(provider_type: str) -> Optional[List[Any]]:
+    """What the gateway lists for ``provider_type`` through its own host and keys.
+
+    The catalogue of a server configured in Bifrost alone: its host may resolve
+    only inside the compose network and its key lives in the gateway, so this
+    process cannot list it directly. None when the gateway could not list it.
+    """
+    from core.llm.providers.discovery import ModelMeta
+
+    url = f"{_bifrost_base_url()}/v1/models"
+    try:
+        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+            resp = await client.get(url, params={"provider": provider_type})
+            resp.raise_for_status()
+            entries = resp.json().get("data") or []
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        logger.warning("Bifrost could not list %s models: %s", provider_type, exc)
+        return None
+
+    prefix = f"{provider_type}/"
+    ids = [
+        e["id"].removeprefix(prefix)
+        for e in entries
+        if isinstance(e, dict) and isinstance(e.get("id"), str)
+    ]
+    return [ModelMeta(id=i, display_name=i) for i in ids]
+
+
+async def record_gateway_rates(
+    provider_types: Iterable[str],
+) -> Dict[str, Optional[List[Any]]]:
+    """Read the datasheet for each type and record its rates in live meta.
+
+    Rates only: the model list, ``_LIVE_CATALOGUES`` and capabilities are left
+    to the full sync. Returns each type's datasheet (None when unreachable) so
+    the sync can reuse it as a stand-in catalogue instead of reading it twice.
+    """
+    from core.llm.providers.registry import record_live_meta
+
+    types = list(dict.fromkeys(provider_types))
+    sheets = await asyncio.gather(*(fetch_catalogue_models(t) for t in types))
+    for provider_type, meta in zip(types, sheets):
+        if meta:
+            record_live_meta(provider_type, meta, rates_only=True)
+    return dict(zip(types, sheets))
+
+
+async def refresh_gateway_rates() -> None:
+    """Fill this process's rates for every active provider type.
+
+    For processes that price calls but must not run ``sync_all_provider_models``
+    (the LLM worker, the daemon): that sync writes allow-lists and keys to
+    Bifrost, and the API is the only process that may. Never raises.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import LLMProviderConfig
+
+    try:
+        db_manager = get_db_manager()
+        if db_manager._engine is None:
+            db_manager.initialize()
+        with db_manager.session_scope() as session:
+            types = [
+                t
+                for (t,) in session.query(LLMProviderConfig.provider_type)
+                .filter(LLMProviderConfig.is_active.is_(True))
+                .distinct()
+            ]
+        await record_gateway_rates(types)
+        report_recovered(logger, _RATES_OUTAGE, "Gateway rate refresh works again")
+    except Exception as exc:  # noqa: BLE001
+        report_outage(
+            logger,
+            _RATES_OUTAGE,
+            "Gateway rate refresh failed, LLM calls are recorded unpriced: %s",
+            exc,
+        )
+
+
+async def run_gateway_rates_refresher() -> None:
+    """``refresh_gateway_rates`` every catalog refresh interval, the cadence the
+    API's full sync keeps. Callers await the first refresh themselves, so no
+    call is priced before this process holds any rates."""
+    interval_s = get_settings().model_catalog_refresh_interval_s
+    while interval_s > 0:
+        await asyncio.sleep(interval_s)
+        await refresh_gateway_rates()
+
+
+async def _list_ollama_models(
+    base_url: Optional[str], discovery: Any = None
+) -> Optional[List[Any]]:
+    """List an Ollama server's pulled models, or None if none can be reached.
+
+    A mirrored row carries no ``base_url`` of its own, and ``fetch_ollama_models``
+    then defaults to loopback — right only for a single-machine install, and
+    this process is as likely to be containerised as the gateway is. So a row
+    without one falls to ``OLLAMA_URL`` before that default. The catalogue and
+    the row's ``default_model`` both resolve through here; reading them from
+    different endpoints gave a row a servable default and an empty picker.
+
+    A server that answers with nothing pulled has answered: only a failure to
+    reach one moves on to the next candidate.
+    """
+    if discovery is None:
+        from core.llm.providers import discovery as discovery_module
+
+        discovery = discovery_module
+
+    candidates: List[Optional[str]] = [base_url] if base_url else []
+    configured = (get_settings().ollama_url or "").strip()
+    for candidate in (configured, None):
+        if candidate and candidate in candidates:
+            continue
+        candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            return await discovery.fetch_ollama_models(candidate, allow_loopback=True)
+        except Exception as exc:  # noqa: BLE001 - try the next endpoint
+            logger.warning("Could not list Ollama models at %s: %s", candidate, exc)
+    return None
+
+
+def chat_capable_ids(models: Optional[List[Any]]) -> List[str]:
+    """Ids of the pulled ``ModelMeta`` entries that can hold a chat, in order.
+
+    ``fetch_ollama_models`` always sets ``is_embedding`` (Ollama's capability
+    array, else the name heuristic), so that flag is authoritative when
+    present; ``ModelMeta`` built anywhere else may omit it, and then the same
+    name heuristic decides. Nothing is re-probed here.
+    """
+    ids: List[str] = []
+    for m in models or []:
+        is_embedding = (m.capabilities or {}).get("is_embedding")
+        if is_embedding is None:
+            is_embedding = is_embedding_model_id(m.id)
+        if not is_embedding:
+            ids.append(m.id)
+    return ids
+
+
+async def self_hosted_chat_models(provider_type: str) -> Optional[List[str]]:
+    """Chat models the self-hosted server behind ``provider_type`` serves, in order.
+
+    None when the type fronts no self-hosted server; empty when it does and the
+    server could not be listed or serves no chat model. Taking a listing's index
+    0 floored a host that led with ``nomic-embed-text`` to a model Bifrost
+    refuses to chat with (#1003), hence the chat filter.
+    """
+    if provider_type in _HOST_OWNED_CATALOGUE:
+        models = await _list_ollama_models(None)
+    elif provider_type == "openai" and await bifrost_custom_openai_host():
+        models = await list_gateway_models(provider_type)
+    else:
+        return None
+    return chat_capable_ids(models)
+
+
+_NOT_LISTED: Any = object()
+
+
+async def default_model_for_provider_type(
+    provider_type: str, served: Optional[List[str]] = _NOT_LISTED
+) -> Optional[str]:
+    """Pick the ``default_model`` a mirrored provider row should floor to.
+
+    None when no model can be named, and the caller then skips the row: a
+    default is what a bad model falls back *to*, so nothing downstream can
+    correct one. A missing row self-heals on the next sync; a wrong one does
+    not. ``served`` is ``self_hosted_chat_models``' answer, when the caller
+    already holds it.
+    """
+    from core.llm.providers.registry import _FALLBACK_MODELS_BY_PROVIDER
+
+    if served is _NOT_LISTED:
+        served = await self_hosted_chat_models(provider_type)
+    if served is not None:
+        if not served:
+            logger.warning(
+                "No pulled model to floor a mirrored %s row to — leaving it "
+                "unmirrored until the server can be listed",
+                provider_type,
+            )
+            return None
+        return _preferred_floor(provider_type, served)
+
+    bootstrap = _FALLBACK_MODELS_BY_PROVIDER.get(provider_type) or ()
+    if bootstrap:
+        return _preferred_floor(provider_type, list(bootstrap))
+
+    meta = await fetch_catalogue_models(provider_type)
+    if meta:
+        return _preferred_floor(provider_type, [m.id for m in meta])
+
+    logger.warning(
+        "No catalogue or bootstrap model for provider type %s — leaving it "
+        "unmirrored",
+        provider_type,
+    )
+    return None
+
+
+_MID_TIER_MARKERS = ("flash", "mini", "haiku", "lite", "small", "nano")
+
+
+def _preferred_floor(provider_type: str, ids: List[str]) -> str:
+    """Which of ``ids`` a mirrored row should floor its ``default_model`` to.
+
+    One path for both sources. The bootstrap list used to be taken at face
+    value, so anthropic floored to the priciest id it declares while the
+    catalogue path was busy avoiding exactly that.
+    """
+    for preferred in _CATALOG_DEFAULT_PREFERENCE.get(provider_type, ()):
+        if preferred in ids:
+            return preferred
+    for marker in _MID_TIER_MARKERS:
+        for candidate in ids:
+            if marker in candidate.lower():
+                return candidate
+    return ids[0]
 
 
 def sync_after_ollama_start() -> dict:
@@ -645,5 +1212,5 @@ def sync_after_ollama_start() -> dict:
         asyncio.get_running_loop().create_task(sync_all_provider_models())
         return {"bifrost_synced": False, "bifrost_sync_scheduled": True}
     except Exception as e:  # noqa: BLE001
-        logger.info("Bifrost model sync after Ollama start did not complete: %s", e)
+        logger.warning("Bifrost model sync after Ollama start did not complete: %s", e)
         return {"bifrost_synced": False, "bifrost_sync_error": str(e)}

@@ -18,12 +18,14 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth.current_user import get_current_user
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
 from core.storage.config_service import get_config_service
+from core.storage.models import User
 
 # Prefix and tags live in ROUTER_META, not the APIRouter() constructor — one
 # home for mount metadata across all 42 routers. This module was the sole
@@ -115,11 +117,14 @@ async def get_kafka_config() -> Dict[str, Any]:
 
 
 @router.put("/config")
-async def put_kafka_config(body: KafkaConfigBody) -> Dict[str, Any]:
+async def put_kafka_config(
+    body: KafkaConfigBody,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Upsert the persisted Kafka config. Secrets are not accepted here."""
 
     payload = body.model_dump()
-    ok = get_config_service().set_system_config(
+    ok = get_config_service(user_id=str(current_user.user_id)).set_system_config(
         key=SYSTEMCONFIG_KEY,
         value=payload,
         description="Kafka ingestion settings",

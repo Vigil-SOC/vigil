@@ -29,6 +29,10 @@
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
+          "type": "generic",
+          "path": "scripts/vigil-support/VERSION"
+        },
+        {
           "type": "json",
           "path": "clients/web/package.json",
           "jsonpath": "$.version"
@@ -41,6 +45,21 @@
         {
           "type": "json",
           "path": "clients/web/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        {
+          "type": "json",
+          "path": "clients/desktop/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "clients/desktop/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "clients/desktop/package-lock.json",
           "jsonpath": "$.packages[''].version"
         },
         {

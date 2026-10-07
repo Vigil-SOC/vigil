@@ -1,1 +1,1 @@
-"Chat sub-modules: session management, context management, tool execution."
+"""Conversation persistence for the console chat dock."""

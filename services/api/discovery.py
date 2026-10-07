@@ -31,12 +31,22 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CORE_DIR = _REPO_ROOT / "core"
+_V1_DIR = _CORE_DIR / "api" / "v1"
 _PARKED_DIR = _REPO_ROOT / "services" / "api" / "routers"
 
 
 def _short_name(path: Path) -> str:
     stem = path.stem
-    return stem[: -len("_router")] if stem.endswith("_router") else stem
+    base = stem[: -len("_router")] if stem.endswith("_router") else stem
+    # A versioned contract router in core/api/v1/ deliberately shares its
+    # resource name with the unversioned console router it split from
+    # (findings, cases, ...). Namespace it as ``v1_<resource>`` so the two
+    # resolve to distinct short names — otherwise _router_map rejects the pair
+    # as an ambiguous collision. The mount prefix comes from ROUTER_META, not
+    # this name, so namespacing here changes only discovery order and logs.
+    if _V1_DIR in path.parents:
+        return f"v1_{base}"
+    return base
 
 
 def _dotted(path: Path) -> str:
@@ -147,12 +157,13 @@ def mount_routers(
         if meta.auth is Auth.REQUIRED:
             dependencies = [*auth_dependency, *dependencies]
 
-        app.include_router(
-            router,
-            prefix=f"{context_path}{meta.prefix}",
-            tags=list(meta.tags),
-            dependencies=dependencies,
-        )
+        for mount_prefix in (meta.prefix, *meta.legacy_prefixes):
+            app.include_router(
+                router,
+                prefix=f"{context_path}{mount_prefix}",
+                tags=list(meta.tags),
+                dependencies=dependencies,
+            )
         mounted.append(name)
 
     if skipped:

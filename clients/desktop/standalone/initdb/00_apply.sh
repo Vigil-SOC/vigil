@@ -24,4 +24,13 @@ for f in /db-init/*.sql; do
     echo "applying $(basename "$f")"
     psql -v ON_ERROR_STOP=0 -q -f "$f" || true
 done
+
+# vigil_app logs in with the password the apps already hold; the SQL file
+# cannot contain a literal. :'pw' is interpolated from --set, not -c.
+pw="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"
+if [ -n "$pw" ]; then
+    echo "setting vigil_app password"
+    printf '%s\n' "ALTER ROLE vigil_app PASSWORD :'pw';" \
+        | psql -v ON_ERROR_STOP=0 --set=pw="$pw" || true
+fi
 echo "apply complete"

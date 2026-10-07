@@ -1,22 +1,16 @@
 import { ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
-import useSetupStatus from './useSetupStatus'
-import Loader from './Loader'
+import { readSetupDismissed } from '../screens/setup/setupDismissed'
 
 interface Props {
   children: ReactNode
 }
 
-// The /setup route lives OUTSIDE this gate, so it stays reachable when
-// unconfigured and there is no redirect loop.
+// /setup lives outside this gate, so opening it from the account menu does
+// not bounce. An unset vigil.setupDismissed sends the operator through the
+// pass once, whether or not a provider exists.
 const SetupGate = ({ children }: Props) => {
-  const { configured, loading } = useSetupStatus()
-
-  if (loading) {
-    return <Loader label="Checking setup…" />
-  }
-
-  if (!configured) {
+  if (!readSetupDismissed()) {
     return <Navigate to="/setup" replace />
   }
 

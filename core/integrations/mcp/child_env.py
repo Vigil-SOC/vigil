@@ -5,7 +5,9 @@ and ignores ``REQUESTS_CA_BUNDLE`` / ``CURL_CA_BUNDLE`` — the names an operato
 would have used to trust an internal CA while the servers ran on requests. An
 on-prem MISP, PAN-OS or CAPE behind a private or inspecting CA would start
 failing verification on nothing but a library swap, so the legacy names are
-honored as aliases.
+honored as aliases. A resolved *file* path is also exported as
+``NODE_EXTRA_CA_CERTS`` so npx servers pick up the same bundle; Node has no
+directory equivalent, so a capath is left as ``SSL_CERT_DIR`` only.
 
 Forwarding also has to be explicit rather than inherited: ``stdio_client``
 narrows the child environment to ``HOME``, ``LOGNAME``, ``PATH``, ``SHELL``,
@@ -50,6 +52,7 @@ def ca_bundle_env() -> Dict[str, str]:
             return {}
         # httpx checks SSL_CERT_FILE before SSL_CERT_DIR, and cafile vs capath
         # are not interchangeable, so route by what the path actually is.
-        key = "SSL_CERT_DIR" if os.path.isdir(value) else "SSL_CERT_FILE"
-        return {key: value}
+        if os.path.isdir(value):
+            return {"SSL_CERT_DIR": value}
+        return {"SSL_CERT_FILE": value, "NODE_EXTRA_CA_CERTS": value}
     return {}

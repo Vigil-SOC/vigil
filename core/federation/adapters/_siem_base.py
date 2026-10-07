@@ -15,7 +15,13 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    cursor_at,
+    fresh_cursor,
+    full_batch_cursor,
+    parse_alert_time,
+    parse_cursor_since,
+)
 from core.federation.contract import FetchResult
 from core.time import utcnow
 
@@ -39,16 +45,29 @@ class SIEMIngestionAdapter:
         default_interval: int,
         service_factory: Callable[[], Any],
         external_id_prefix: str,
+        alert_time: Optional[Callable[[Dict[str, Any]], Optional[datetime]]] = None,
+        settle_delay: Optional[timedelta] = None,
     ) -> None:
         self.name = name
-        self._integration_id = integration_id
+        self.integration_id = integration_id
         self._default_interval = default_interval
         self._service_factory = service_factory
         self._service: Optional[Any] = None
         self._external_id_prefix = external_id_prefix
+        # Reads a raw alert's creation time as naive UTC. With it, a full batch
+        # advances the cursor only to the newest alert returned; without it the
+        # cursor goes to now, as it did before, and a full batch skips the rest
+        # of its window.
+        self._alert_time = alert_time
+        # For sources that index an alert some time after its creation stamp
+        # (Filebeat into Elasticsearch/OpenSearch): each tick reads only up to
+        # now - settle_delay and persists that instant, so an alert still in
+        # flight at poll time is read on a later tick instead of skipped. The
+        # service must honour ``end_time``.
+        self._settle_delay = settle_delay
 
     def is_configured(self) -> bool:
-        return is_integration_enabled(self._integration_id)
+        return is_integration_enabled(self.integration_id)
 
     def default_interval(self) -> int:
         return self._default_interval
@@ -58,11 +77,9 @@ class SIEMIngestionAdapter:
             return self._service
         if not self.is_configured():
             return None
-        try:
-            self._service = self._service_factory()
-        except Exception as e:
-            logger.warning("%s service init failed: %s", self.name, e)
-            self._service = None
+        # A configured source whose service cannot be built is failing, not
+        # empty: let the error reach the runner so the cursor is kept.
+        self._service = self._service_factory()
         return self._service
 
     async def fetch(
@@ -76,25 +93,49 @@ class SIEMIngestionAdapter:
         if svc is None:
             return FetchResult(findings=[], cursor=fresh_cursor())
 
+        # Taken before the fetch: the cursor never moves past the "now" the
+        # pre-change code would have stored, even if a source returns an alert
+        # stamped ahead of our clock. With a settle delay, "now" is the end of
+        # the settled window.
+        now = utcnow()
+        window_end = now - self._settle_delay if self._settle_delay else None
+        horizon = window_end or now
+
         start_time = parse_cursor_since(cursor) or since
         if start_time is None:
             # First run: small window so we don't backfill on enable.
-            start_time = utcnow() - timedelta(minutes=1)
+            start_time = horizon - timedelta(minutes=1)
 
-        try:
-            alerts = await svc.fetch_alerts(start_time=start_time, limit=max_items)
-        except Exception as e:
-            logger.debug("%s fetch_alerts failed: %s", self.name, e)
-            alerts = []
+        # A raised fetch reaches the runner, which records the failure and keeps
+        # the cursor; swallowing it here would advance the cursor past alerts
+        # the source never returned.
+        #
+        # oldest_first: when the batch fills max_items, the alerts that do not
+        # fit must be the newest ones so the next tick, starting from the newest
+        # returned time, picks them up. Newest-first would drop the oldest of
+        # the window for good.
+        extra = {"end_time": window_end} if window_end else {}
+        alerts = list(
+            await svc.fetch_alerts(
+                start_time=start_time, limit=max_items, oldest_first=True, **extra
+            )
+            or []
+        )
+        truncated = len(alerts) >= max_items
+        alerts = alerts[:max_items]
 
         findings = []
-        for alert in (alerts or [])[:max_items]:
+        dropped = 0
+        first_error: Optional[Exception] = None
+        for alert in alerts:
             try:
                 finding = svc.transform_alert_to_finding(alert)
             except Exception as e:
-                logger.debug("%s transform failed: %s", self.name, e)
+                dropped += 1
+                first_error = first_error or e
                 continue
             if not finding:
+                dropped += 1
                 continue
             # Backfill external_id from the prefix-stripped finding_id when
             # the underlying service doesn't set it explicitly. We need
@@ -109,4 +150,58 @@ class SIEMIngestionAdapter:
                     finding["external_id"] = fid
             findings.append(finding)
 
-        return FetchResult(findings=findings, cursor=fresh_cursor())
+        if dropped:
+            logger.warning(
+                "%s dropped %d of %d alert(s) that failed to transform%s",
+                self.name,
+                dropped,
+                len(alerts),
+                f" (first error: {first_error})" if first_error else "",
+            )
+
+        return FetchResult(
+            findings=findings,
+            cursor=self._next_cursor(
+                alerts, truncated=truncated, start=start_time, now=horizon
+            ),
+            dropped=dropped,
+        )
+
+    def _drained_cursor(self, start: datetime, now: datetime) -> Dict[str, Any]:
+        if not self._settle_delay:
+            return fresh_cursor()
+        # The window read ended at ``now`` (now - settle_delay); never step
+        # back behind a cursor that was already later than that.
+        return cursor_at(max(start, now))
+
+    def _next_cursor(
+        self, alerts: list, *, truncated: bool, start: datetime, now: datetime
+    ) -> Dict[str, Any]:
+        """Where the next tick starts.
+
+        ``now`` is the end of the window read: the clock, or with a settle
+        delay the clock minus that delay.
+
+        A short batch drained its window, so the cursor moves to now. A full
+        batch may have left alerts behind, so the cursor stops at the newest
+        alert actually returned; the next tick re-reads that boundary alert
+        (the start filters are inclusive) and the runner's dedup and the
+        ``(data_source, external_id)`` unique index absorb it. The cursor is
+        capped at ``now`` (taken before the fetch): only Elastic's query has an
+        upper bound of its own, so an alert stamped ahead of our clock must
+        not carry the cursor into the future, where later alerts with earlier
+        times would be skipped.
+        """
+        if not truncated or self._alert_time is None:
+            return self._drained_cursor(start, now)
+
+        times = []
+        for alert in alerts:
+            try:
+                times.append(parse_alert_time(self._alert_time(alert)))
+            except Exception as e:  # a malformed record must not fail the poll
+                logger.debug("%s: alert time unreadable: %s", self.name, e)
+        cursor = full_batch_cursor(
+            times, start=start, now=now, source=self.name, count=len(alerts)
+        )
+        return cursor or self._drained_cursor(start, now)

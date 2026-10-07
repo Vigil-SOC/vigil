@@ -1,14 +1,30 @@
 """Unit tests for core/integrations/elastic/client.py."""
 
+import json
+
 import pytest
 import httpx
 import respx
 
 from core.integrations.elastic.client import ElasticService
 
-
 ES_URL = "https://es.test:9200"
 KIBANA_URL = "https://kibana.test:5601"
+
+# Shape of a Wazuh 4.14 alert after its Filebeat pipeline (no `host`, `@timestamp` set).
+WAZUH_ALERT = {
+    "@timestamp": "2026-09-28T12:00:00.000Z",
+    "timestamp": "2026-09-28T12:00:00.000+0000",
+    "rule": {"id": "5710", "level": 10, "description": "sshd: attempt to login"},
+    "agent": {"id": "001", "name": "web-01", "ip": "10.0.0.5"},
+    "data": {"srcip": "203.0.113.7", "srcuser": "root"},
+    "syscheck": {"sha256_after": "a" * 64},
+}
+
+
+def _multi_match_fields(route) -> set:
+    body = json.loads(route.calls.last.request.content)
+    return set(body["query"]["bool"]["must"][0]["multi_match"]["fields"])
 
 
 @pytest.fixture
@@ -36,6 +52,7 @@ def service_basic_auth():
 # Client construction
 # ------------------------------------------------------------------
 
+
 class TestClientConstruction:
 
     def test_api_key_auth_header(self, service):
@@ -60,14 +77,13 @@ class TestClientConstruction:
 # Connection test
 # ------------------------------------------------------------------
 
+
 class TestConnectionTest:
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_success_es_only(self):
-        svc = ElasticService(
-            elasticsearch_url=ES_URL, api_key="k", verify_ssl=False
-        )
+        svc = ElasticService(elasticsearch_url=ES_URL, api_key="k", verify_ssl=False)
         respx.get(f"{ES_URL}/").mock(
             return_value=httpx.Response(
                 200,
@@ -97,9 +113,7 @@ class TestConnectionTest:
             )
         )
         respx.get(f"{KIBANA_URL}/api/status").mock(
-            return_value=httpx.Response(
-                200, json={"version": {"number": "8.14.0"}}
-            )
+            return_value=httpx.Response(200, json={"version": {"number": "8.14.0"}})
         )
 
         ok, msg = await service.test_connection()
@@ -122,9 +136,7 @@ class TestConnectionTest:
     @respx.mock
     @pytest.mark.asyncio
     async def test_failure_connection_error(self, service):
-        respx.get(f"{ES_URL}/").mock(
-            side_effect=httpx.ConnectError("refused")
-        )
+        respx.get(f"{ES_URL}/").mock(side_effect=httpx.ConnectError("refused"))
 
         ok, msg = await service.test_connection()
         assert ok is False
@@ -134,6 +146,7 @@ class TestConnectionTest:
 # ------------------------------------------------------------------
 # Elasticsearch search
 # ------------------------------------------------------------------
+
 
 class TestSearch:
 
@@ -184,6 +197,7 @@ class TestSearch:
 # IOC search helpers
 # ------------------------------------------------------------------
 
+
 class TestIOCSearch:
 
     @respx.mock
@@ -209,27 +223,71 @@ class TestIOCSearch:
     @respx.mock
     @pytest.mark.asyncio
     async def test_search_by_username(self, service):
-        respx.post(f"{ES_URL}/.alerts-security.alerts-default/_search").mock(
+        route = respx.post(f"{ES_URL}/.alerts-security.alerts-default/_search").mock(
             return_value=httpx.Response(200, json={"hits": {"hits": []}})
         )
         result = await service.search_by_username("admin")
         assert result is not None
+        fields = _multi_match_fields(route)
+        assert {"user.name", "winlog.event_data.TargetUserName"} <= fields
+        assert {
+            "data.srcuser",
+            "data.dstuser",
+            "data.win.eventdata.targetUserName",
+        } <= fields
         await service.close()
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_search_by_hostname(self, service):
-        respx.post(f"{ES_URL}/.alerts-security.alerts-default/_search").mock(
+        route = respx.post(f"{ES_URL}/.alerts-security.alerts-default/_search").mock(
             return_value=httpx.Response(200, json={"hits": {"hits": []}})
         )
         result = await service.search_by_hostname("workstation-01")
         assert result is not None
+        fields = _multi_match_fields(route)
+        assert {"host.name", "host.hostname", "agent.hostname"} <= fields
+        assert {"agent.name", "data.win.system.computer"} <= fields
         await service.close()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_wazuh_indexer_alert(self):
+        svc = ElasticService(
+            elasticsearch_url=ES_URL, index_pattern="wazuh-alerts-4.x-*"
+        )
+        route = respx.post(f"{ES_URL}/wazuh-alerts-4.x-*/_search").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "hits": {
+                        "total": {"value": 1},
+                        "hits": [
+                            {
+                                "_index": "wazuh-alerts-4.x-2026.09.28",
+                                "_source": WAZUH_ALERT,
+                            }
+                        ],
+                    }
+                },
+            )
+        )
+        for lookup, value in [
+            (svc.search_by_username, "root"),
+            (svc.search_by_hostname, "web-01"),
+            (svc.search_by_ip, "203.0.113.7"),
+            (svc.search_by_hash, WAZUH_ALERT["syscheck"]["sha256_after"]),
+        ]:
+            data = await lookup(value)
+            assert data["hits"]["hits"][0]["_source"]["agent"]["name"] == "web-01"
+        assert route.call_count == 4
+        await svc.close()
 
 
 # ------------------------------------------------------------------
 # get_indices
 # ------------------------------------------------------------------
+
 
 class TestGetIndices:
 
@@ -257,14 +315,13 @@ class TestGetIndices:
 # Kibana Detections API
 # ------------------------------------------------------------------
 
+
 class TestDetectionAlerts:
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_fetch_alerts(self, service):
-        respx.post(
-            f"{KIBANA_URL}/api/detection_engine/signals/search"
-        ).mock(
+        respx.post(f"{KIBANA_URL}/api/detection_engine/signals/search").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -287,9 +344,9 @@ class TestDetectionAlerts:
     @respx.mock
     @pytest.mark.asyncio
     async def test_update_alert_status(self, service):
-        respx.post(
-            f"{KIBANA_URL}/api/detection_engine/signals/status"
-        ).mock(return_value=httpx.Response(200, json={}))
+        respx.post(f"{KIBANA_URL}/api/detection_engine/signals/status").mock(
+            return_value=httpx.Response(200, json={})
+        )
 
         ok = await service.update_alert_status(["a1", "a2"], "closed")
         assert ok is True
@@ -298,9 +355,9 @@ class TestDetectionAlerts:
     @respx.mock
     @pytest.mark.asyncio
     async def test_update_alert_status_failure(self, service):
-        respx.post(
-            f"{KIBANA_URL}/api/detection_engine/signals/status"
-        ).mock(return_value=httpx.Response(403, text="Forbidden"))
+        respx.post(f"{KIBANA_URL}/api/detection_engine/signals/status").mock(
+            return_value=httpx.Response(403, text="Forbidden")
+        )
 
         ok = await service.update_alert_status(["a1"], "closed")
         assert ok is False
@@ -310,6 +367,7 @@ class TestDetectionAlerts:
 # ------------------------------------------------------------------
 # Kibana Cases API
 # ------------------------------------------------------------------
+
 
 class TestCasesAPI:
 
@@ -354,6 +412,7 @@ class TestCasesAPI:
 # close()
 # ------------------------------------------------------------------
 
+
 class TestClose:
 
     @pytest.mark.asyncio
@@ -371,9 +430,7 @@ class TestClose:
             )
         )
         respx.get(f"{KIBANA_URL}/api/status").mock(
-            return_value=httpx.Response(
-                200, json={"version": {"number": "8.14.0"}}
-            )
+            return_value=httpx.Response(200, json={"version": {"number": "8.14.0"}})
         )
 
         await service.test_connection()

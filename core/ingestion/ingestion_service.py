@@ -7,19 +7,18 @@ Handles ingestion of findings and cases from various formats:
 - JSONL (JSON Lines) files
 - Parquet files (DeepTempo LogLM embeddings)
 - Direct JSON data
-
-All data is stored in PostgreSQL when available, with fallback to JSON files.
 """
 
 import csv
 import hashlib
 import json
 import logging
+import math
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from core.findings.source_evidence import (
     normalize_finding_source_evidence,
@@ -87,6 +86,25 @@ def _first_present(row: Dict[str, Any], aliases: tuple) -> Any:
     return None
 
 
+def _optional_float(value: Any) -> Optional[float]:
+    """Parse a numeric field; missing, empty, and NaN stay None."""
+    if value is None or value == "":
+        return None
+    parsed = float(value)
+    if math.isnan(parsed):
+        return None
+    return parsed
+
+
+def _content_finding_id(unique_key: str, event_ts: Optional[datetime] = None) -> str:
+    """Stable f-prefixed id. Omit the date segment when source time is absent
+    so a later reimport does not mint a new id from the ingest clock."""
+    id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
+    if event_ts is None:
+        return f"f-{id_hash}"
+    return f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
+
+
 def row_identity_key(row: Dict[str, Any], columns: tuple) -> str:
     """Content-derived id key for rows with no id column: re-ingest still dedupes."""
     parts = []
@@ -118,9 +136,9 @@ class IngestionService:
             else:
                 self.db_service = None
                 self.use_database = False
-                logger.warning("Database unavailable, using JSON fallback")
+                logger.warning("Database unavailable")
         except Exception as e:
-            logger.warning(f"Database not available: {e}, using JSON fallback")
+            logger.warning(f"Database not available: {e}")
             self.db_service = None
             self.use_database = False
 
@@ -156,31 +174,41 @@ class IngestionService:
         for key in self.stats:
             self.stats[key] = 0
 
-    def parse_timestamp(self, timestamp_value: Any) -> datetime:
+    def parse_timestamp(self, timestamp_value: Any) -> Optional[datetime]:
         """
         Parse various timestamp formats to datetime.
 
-        Args:
-            timestamp_value: Timestamp as string, int, or datetime
-
-        Returns:
-            datetime object
+        Missing or unparseable values stay None — a synthesized ingest-time
+        clock is not source time and would break reimport identity.
         """
         if isinstance(timestamp_value, datetime):
-            return timestamp_value
+            return self._to_naive_utc(timestamp_value)
 
-        if not timestamp_value:
-            return utcnow()
+        if timestamp_value is None or timestamp_value == "":
+            return None
 
         # If it's a Unix timestamp (int or float)
         if isinstance(timestamp_value, (int, float)):
+            if isinstance(timestamp_value, float) and math.isnan(timestamp_value):
+                return None
             try:
-                return datetime.fromtimestamp(timestamp_value)
-            except (ValueError, OSError):
+                # Pin to UTC so the result does not follow the host clock
+                return datetime.fromtimestamp(timestamp_value, tz=timezone.utc).replace(
+                    tzinfo=None
+                )
+            except (ValueError, OSError, OverflowError):
                 pass
 
-        # Try various string formats
-        timestamp_str = str(timestamp_value)
+        timestamp_str = str(timestamp_value).strip()
+        if not timestamp_str:
+            return None
+
+        # Handles Z and any ±HH:MM offset; offsets are converted, not dropped
+        try:
+            return self._to_naive_utc(datetime.fromisoformat(timestamp_str))
+        except ValueError:
+            pass
+
         formats = [
             "%Y-%m-%dT%H:%M:%S.%fZ",
             "%Y-%m-%dT%H:%M:%S.%f%z",
@@ -198,10 +226,15 @@ class IngestionService:
             except ValueError:
                 continue
 
-        logger.warning(
-            f"Could not parse timestamp: {timestamp_value}, using current time"
-        )
-        return utcnow()
+        logger.warning(f"Could not parse timestamp: {timestamp_value}, leaving unset")
+        return None
+
+    @staticmethod
+    def _to_naive_utc(value: datetime) -> datetime:
+        """Aware -> converted to UTC then made naive; naive is kept as-is."""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     def ingest_finding(self, finding_data: Dict[str, Any]) -> bool:
         """
@@ -230,15 +263,13 @@ class IngestionService:
                     self.stats["findings_skipped"] += 1
                     return True
 
-                # Parse timestamp
                 timestamp = self.parse_timestamp(finding_data.get("timestamp"))
 
                 # Create finding in database
                 finding = self.db_service.create_finding(
                     finding_id=finding_id,
-                    embedding=finding_data.get("embedding", [0.0] * 768),
                     mitre_predictions=finding_data.get("mitre_predictions", {}),
-                    anomaly_score=float(finding_data.get("anomaly_score", 0.0)),
+                    anomaly_score=_optional_float(finding_data.get("anomaly_score")),
                     timestamp=timestamp,
                     data_source=finding_data.get("data_source", "imported"),
                     external_id=finding_data.get("external_id"),
@@ -258,25 +289,9 @@ class IngestionService:
                     self.stats["findings_errors"] += 1
                     logger.error(f"Failed to create finding: {finding_id}")
                     return False
-            else:
-                # Fallback to JSON file storage
-                from core.storage.database_data_service import DatabaseDataService
-
-                data_service = DatabaseDataService()
-                findings = data_service.get_findings()
-
-                # Check for duplicate
-                if any(f.get("finding_id") == finding_id for f in findings):
-                    self.stats["findings_skipped"] += 1
-                    return True
-
-                findings.append(finding_data)
-                if data_service.save_findings(findings):
-                    self.stats["findings_imported"] += 1
-                    return True
-                else:
-                    self.stats["findings_errors"] += 1
-                    return False
+            self.stats["findings_errors"] += 1
+            logger.error("Database unavailable, cannot ingest finding %s", finding_id)
+            return False
 
         except Exception as e:
             self.stats["findings_errors"] += 1
@@ -289,8 +304,7 @@ class IngestionService:
             return
 
         if not self.use_database or not self.db_service:
-            for finding_data in finding_dicts:
-                self.ingest_finding(finding_data)
+            self.stats["findings_errors"] += len(finding_dicts)
             return
 
         valid = []
@@ -304,8 +318,8 @@ class IngestionService:
                 finding_data["timestamp"] = self.parse_timestamp(
                     finding_data.get("timestamp")
                 )
-                finding_data["anomaly_score"] = float(
-                    finding_data.get("anomaly_score", 0.0)
+                finding_data["anomaly_score"] = _optional_float(
+                    finding_data.get("anomaly_score")
                 )
             except Exception as e:
                 logger.error(
@@ -398,25 +412,9 @@ class IngestionService:
                     self.stats["cases_errors"] += 1
                     logger.error(f"Failed to create case: {case_id}")
                     return False
-            else:
-                # Fallback to JSON file storage
-                from core.storage.database_data_service import DatabaseDataService
-
-                data_service = DatabaseDataService()
-                cases = data_service.get_cases()
-
-                # Check for duplicate
-                if any(c.get("case_id") == case_id for c in cases):
-                    self.stats["cases_skipped"] += 1
-                    return True
-
-                cases.append(case_data)
-                if data_service.save_cases(cases):
-                    self.stats["cases_imported"] += 1
-                    return True
-                else:
-                    self.stats["cases_errors"] += 1
-                    return False
+            self.stats["cases_errors"] += 1
+            logger.error("Database unavailable, cannot ingest case %s", case_id)
+            return False
 
         except Exception as e:
             self.stats["cases_errors"] += 1
@@ -636,19 +634,6 @@ class IngestionService:
 
             finding_id = f"f-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
 
-        # Parse embedding if present (comma-separated floats)
-        embedding = []
-        if "embedding" in row and row["embedding"]:
-            try:
-                embedding = [float(x.strip()) for x in row["embedding"].split(",")]
-            except ValueError:
-                logger.warning(
-                    f"Invalid embedding format for {finding_id}, using empty"
-                )
-                embedding = [0.0] * 768
-        else:
-            embedding = [0.0] * 768
-
         # Parse MITRE predictions (JSON string or comma-separated)
         mitre_predictions = {}
         if "mitre_predictions" in row and row["mitre_predictions"]:
@@ -675,15 +660,14 @@ class IngestionService:
 
         return {
             "finding_id": finding_id,
-            "embedding": embedding,
             "mitre_predictions": mitre_predictions,
-            "anomaly_score": float(row.get("anomaly_score", 0.0)),
-            "timestamp": row.get("timestamp", utcnow().isoformat()),
+            "anomaly_score": _optional_float(row.get("anomaly_score")),
+            "timestamp": row.get("timestamp") or None,
             "data_source": row.get("data_source", "csv_import"),
             "entity_context": entity_context,
             "evidence_links": None,
             "cluster_id": row.get("cluster_id"),
-            "severity": row.get("severity"),
+            "severity": row.get("severity") or None,
             "status": row.get("status", "new"),
         }
 
@@ -697,11 +681,7 @@ class IngestionService:
         """
         sequence_id = str(row.get("sequence_id") or "").strip()
 
-        # Parse event_start as timestamp
-        event_start_str = row.get("event_start", "")
-        event_ts = (
-            self.parse_timestamp(event_start_str) if event_start_str else utcnow()
-        )
+        event_ts = self.parse_timestamp(row.get("event_start"))
 
         # sequence_id + attack_id keeps the same sequence distinct across
         # attack clusters; content identity covers rows carrying neither.
@@ -712,8 +692,7 @@ class IngestionService:
             unique_key = self._identity_fallback(
                 row, TEMPO_CSV_IDENTITY_COLUMNS, "sequence_id"
             )
-        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
-        finding_id = f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
+        finding_id = _content_finding_id(unique_key, event_ts)
 
         # MITRE tactic comes as a name (e.g. "Command and Control")
         mitre_predictions = {}
@@ -721,28 +700,22 @@ class IngestionService:
         if mitre_tactic:
             mitre_predictions[mitre_tactic] = 1.0
 
-        # incident_confidence is 0-100 scale; normalise to 0-1
-        raw_confidence = float(row.get("incident_confidence", 0))
-        anomaly_score = (
-            raw_confidence / 100.0 if raw_confidence > 1.0 else raw_confidence
-        )
-
-        # Derive severity from anomaly score
-        if anomaly_score >= 0.9:
-            severity = "critical"
-        elif anomaly_score >= 0.7:
-            severity = "high"
-        elif anomaly_score >= 0.4:
-            severity = "medium"
+        # incident_confidence is 0-100 scale; normalise to 0-1 when present
+        raw_confidence = _optional_float(row.get("incident_confidence"))
+        if raw_confidence is None:
+            anomaly_score = None
         else:
-            severity = "low"
+            anomaly_score = (
+                raw_confidence / 100.0 if raw_confidence > 1.0 else raw_confidence
+            )
 
         entity_context = {
             "src_ip": row.get("IP1", "").strip() or None,
             "dst_ip": row.get("IP2", "").strip() or None,
             "sequence_id": sequence_id,
-            "confidence_score": anomaly_score,
         }
+        if anomaly_score is not None:
+            entity_context["confidence_score"] = anomaly_score
         event_end_str = row.get("event_end", "")
         if event_end_str:
             entity_context["event_end"] = event_end_str
@@ -759,15 +732,14 @@ class IngestionService:
 
         return {
             "finding_id": finding_id,
-            "embedding": [0.0] * 768,
             "mitre_predictions": mitre_predictions,
             "anomaly_score": anomaly_score,
-            "timestamp": event_ts.isoformat(),
+            "timestamp": event_ts.isoformat() if event_ts is not None else None,
             "data_source": row.get("data_source", "csv_import"),
             "entity_context": entity_context,
             "evidence_links": None,
             "cluster_id": cluster_id,
-            "severity": severity,
+            "severity": row.get("severity") or None,
             "status": "new",
         }
 
@@ -902,32 +874,22 @@ class IngestionService:
         """
         sequence_id = str(row.get("sequence_id") or "")
 
-        # Derive event timestamp from event_start_time (epoch milliseconds)
+        # event_start_time is epoch milliseconds when the source supplies it
         event_start_ms = row.get("event_start_time")
         if event_start_ms is not None:
             event_ts = datetime.utcfromtimestamp(int(event_start_ms) / 1000.0)
         else:
-            event_ts = utcnow()
+            event_ts = None
 
         unique_key = sequence_id or self._identity_fallback(
             row, PARQUET_IDENTITY_COLUMNS, "sequence_id"
         )
-        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
-        finding_id = f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
-
-        # Embedding: stored as-is regardless of dimension
-        embedding = row.get("embedding")
-        if embedding is not None:
-            embedding = [float(v) for v in embedding]
-        else:
-            embedding = [0.0] * 768
+        finding_id = _content_finding_id(unique_key, event_ts)
 
         # MITRE predictions from logits (softmax) when available, else from argmax label
         mitre_predictions = {}
         mitre_logits = row.get("mitre_logits")
         if mitre_logits is not None and len(mitre_logits) > 0:
-            import math
-
             max_l = max(mitre_logits)
             exps = [math.exp(logit - max_l) for logit in mitre_logits]
             total = sum(exps)
@@ -943,30 +905,16 @@ class IngestionService:
             else:
                 mitre_predictions[f"mitre_class_{int(mitre_pred)}"] = 1.0
 
-        # Severity from incident_pred (1=attack, 0=benign)
-        incident_pred = int(row.get("incident_pred", 0))
-        is_attack = incident_pred == 1
-
-        # anomaly_score from confidence_score if available, else derive from incident_pred
-        confidence = row.get("confidence_score")
-        if confidence is not None:
-            anomaly_score = float(confidence)
-        else:
-            anomaly_score = 0.85 if is_attack else 0.15
-
-        if is_attack:
-            severity = "critical" if anomaly_score >= 0.9 else "high"
-        else:
-            severity = "medium" if anomaly_score >= 0.5 else "low"
+        anomaly_score = _optional_float(row.get("confidence_score"))
 
         # Build entity_context with all available metadata
         entity_context = {
             "src_ip": row.get("focal_ip"),
             "dst_ip": row.get("engaged_ip"),
-            "incident_pred": incident_pred,
-            "confidence_score": anomaly_score,
             "sequence_id": sequence_id,
         }
+        if anomaly_score is not None:
+            entity_context["confidence_score"] = anomaly_score
 
         if row.get("event_start_time") is not None:
             entity_context["event_start_time"] = int(row["event_start_time"])
@@ -987,15 +935,14 @@ class IngestionService:
 
         return {
             "finding_id": finding_id,
-            "embedding": embedding,
             "mitre_predictions": mitre_predictions,
             "anomaly_score": anomaly_score,
-            "timestamp": event_ts.isoformat(),
+            "timestamp": event_ts.isoformat() if event_ts is not None else None,
             "data_source": data_source,
             "entity_context": entity_context,
             "evidence_links": None,
             "cluster_id": cluster_id,
-            "severity": severity,
+            "severity": row.get("severity") or None,
             "status": "new",
         }
 
@@ -1010,13 +957,10 @@ class IngestionService:
     ) -> Dict[str, Any]:
         """Unscored finding shell for a schema with no known column layout."""
         timestamp = _first_present(row, ENTITY_FIELD_ALIASES["timestamp"])
-        event_ts = (
-            self.parse_timestamp(timestamp) if timestamp is not None else utcnow()
-        )
+        event_ts = self.parse_timestamp(timestamp) if timestamp is not None else None
 
         unique_key = row_identity_key(row, tuple(sorted(row.keys())))
-        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
-        finding_id = f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
+        finding_id = _content_finding_id(unique_key, event_ts)
 
         entity_context = {
             "src_ip": _first_present(row, ENTITY_FIELD_ALIASES["src_ip"]),
@@ -1029,15 +973,14 @@ class IngestionService:
 
         return {
             "finding_id": finding_id,
-            "embedding": [0.0] * 768,
             "mitre_predictions": {},
-            "anomaly_score": 0.0,
-            "timestamp": event_ts.isoformat(),
+            "anomaly_score": _optional_float(row.get("anomaly_score")),
+            "timestamp": event_ts.isoformat() if event_ts is not None else None,
             "data_source": data_source,
             "entity_context": entity_context,
             "evidence_links": None,
             "cluster_id": None,
-            "severity": None,
+            "severity": row.get("severity") or None,
             "status": "unscored",
         }
 

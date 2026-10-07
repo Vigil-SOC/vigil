@@ -14,7 +14,6 @@ import type {
   Salience,
 } from "./types.js";
 
-export const DEFAULT_EVIDENCE_WINDOW = 25;
 const DIRECTIVE_WINDOW = 5;
 
 // How much likelier an unshown record is to be resurfaced than one the lead has
@@ -334,8 +333,9 @@ export function buildDigest(projection: Projection, iteration: number, policy: D
     );
   }
 
-  // Only routine may be compressed. Promotion is therefore protection: raising a
-  // mis-tagged record to notable is what keeps it out of the rollup.
+  // Routine is compressed first. Promotion is therefore protection: raising a
+  // mis-tagged record to notable is what keeps it ahead of the rollup, and only
+  // the evidence_max bound below can then push it out, oldest notable first.
   const kept = new Set(
     ordered.filter((record) => salience.get(record.evidence_id) !== "routine").map((r) => r.evidence_id),
   );
@@ -351,9 +351,20 @@ export function buildDigest(projection: Projection, iteration: number, policy: D
     kept.add(record.evidence_id);
   }
 
-  const selected = ordered.filter((record) => kept.has(record.evidence_id));
-  const omitted = ordered.filter((record) => !kept.has(record.evidence_id));
+  // Everything above only adds, and the floor promotes most of a long ledger, so
+  // this is the bound. Salience first, then the newer record, and position in the
+  // ledger order is unique, so the cut is total and replays exactly.
+  const position = new Map(ordered.map((record, index) => [record.evidence_id, index]));
+  const rank = (id: string): number => RANK[salience.get(id) ?? "routine"];
+  const outranks = (a: string, b: string): number => rank(b) - rank(a) || position.get(b)! - position.get(a)!;
+  const bounded = new Set([...kept].sort(outranks).slice(0, policy.evidence_max));
+
+  const selected = ordered.filter((record) => bounded.has(record.evidence_id));
+  const omitted = ordered.filter((record) => !bounded.has(record.evidence_id));
+  // The ids most worth expanding, still listed in ledger order.
+  const named = new Set(omitted.map((record) => record.evidence_id).sort(outranks).slice(0, policy.omitted_ids_max));
   const recent = selected.map((record) => view(record, salience.get(record.evidence_id) ?? record.salience));
+  const frontier = rankFrontier(projection, iteration);
 
   // A query over the links, not new data: the Hunt Lead never sees a hypothesis
   // without its counter-case, strongest first.
@@ -388,6 +399,9 @@ export function buildDigest(projection: Projection, iteration: number, policy: D
       notes.push(`Nothing yet weakens ${hypothesisId}. One-sided support is itself a finding.`);
     }
   }
+  if (frontier.length > policy.questions_max) {
+    notes.push(`Showing the top ${policy.questions_max} of ${frontier.length} open questions, in the order workers will take them.`);
+  }
 
   return {
     hunt_id: hunt.hunt_id,
@@ -404,14 +418,17 @@ export function buildDigest(projection: Projection, iteration: number, policy: D
     entities: entityViews(graph, policy.entity_window, new Set(suppressed.keys())),
     focus,
     pivot_candidates: pivotCandidates(graph, focus, policy.pivot_candidates, new Set(suppressed.keys())),
-    omitted: { count: omitted.length, evidence_ids: omitted.map((record) => record.evidence_id) },
+    omitted: {
+      count: omitted.length,
+      evidence_ids: omitted.filter((record) => named.has(record.evidence_id)).map((record) => record.evidence_id),
+    },
     expansions: [],
     // Ranked, so the lead reads the frontier in the order the workers will take it.
-    open_questions: rankFrontier(projection, iteration).map((q) => q.question),
+    open_questions: frontier.slice(0, policy.questions_max).map((q) => q.question),
     // What is left after this one. Counting the iteration in flight as remaining
     // tells the lead it has a turn it does not have.
     budget_remaining: {
-      iterations: Math.max(hunt.budgets.max_calls - iteration, 0),
+      iterations: Math.max(hunt.budgets.max_iterations - iteration, 0),
       cost_usd: Math.max(hunt.budgets.max_cost_usd - hunt.cost_usd, 0),
     },
     directives: projection.directives

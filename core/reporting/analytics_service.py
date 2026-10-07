@@ -12,10 +12,22 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from core.llm.providers.registry import get_registry, infer_provider_type
-from core.storage.models import Case, CaseClosureInfo, Finding, LLMInteractionLog
+from core.storage.models import (
+    Case,
+    CaseClosureInfo,
+    Finding,
+    FindingMitrePrediction,
+    LLMInteractionLog,
+)
 from core.threat_intel.mitre_lookup import get_time_range, resolve_technique
 
 logger = logging.getLogger(__name__)
+
+# Known-answer probes (#923) are the daemon testing itself, not activity in the
+# estate: out of the headline totals, the trend buckets and the severity,
+# entity and heatmap breakdowns, so those add up to the total. Left in the
+# per-source breakdown, so they stay visible there as what they are.
+_NOT_PROBE = Finding.data_source != "probe"
 
 
 async def collect_insights_inputs(
@@ -47,7 +59,7 @@ async def calculate_metrics(
     # Current period metrics
     total_findings = (
         db.query(func.count(Finding.finding_id))
-        .filter(Finding.created_at.between(start_time, end_time))
+        .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
         .scalar()
         or 0
     )
@@ -102,7 +114,7 @@ async def calculate_metrics(
     # Previous period metrics for comparison
     prev_total_findings = (
         db.query(func.count(Finding.finding_id))
-        .filter(Finding.created_at.between(prev_start, prev_end))
+        .filter(Finding.created_at.between(prev_start, prev_end), _NOT_PROBE)
         .scalar()
         or 0
     )
@@ -231,7 +243,7 @@ async def get_time_series_data(
 
         findings_count = (
             db.query(func.count(Finding.finding_id))
-            .filter(Finding.created_at.between(current_time, bucket_end))
+            .filter(Finding.created_at.between(current_time, bucket_end), _NOT_PROBE)
             .scalar()
             or 0
         )
@@ -250,6 +262,7 @@ async def get_time_series_data(
                 and_(
                     Finding.created_at.between(current_time, bucket_end),
                     Finding.severity.in_(["high", "critical"]),
+                    _NOT_PROBE,
                 )
             )
             .scalar()
@@ -285,7 +298,7 @@ async def get_severity_distribution(
 
     severity_counts = (
         db.query(Finding.severity, func.count(Finding.finding_id).label("count"))
-        .filter(Finding.created_at.between(start_time, end_time))
+        .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
         .group_by(Finding.severity)
         .all()
     )
@@ -376,7 +389,9 @@ async def get_affected_entities(
     """Get top affected entities/devices from findings."""
 
     findings = (
-        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+        db.query(Finding)
+        .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
+        .all()
     )
 
     entity_counts = {}
@@ -459,10 +474,32 @@ async def get_affected_entities(
 async def get_attack_time_heatmap(
     db: Session, start_time: datetime, end_time: datetime
 ) -> List[Dict[str, Any]]:
-    """Get attack time heatmap data (hour of day x day of week)."""
+    """Get attack time heatmap data (hour of day x day of week).
 
-    findings = (
-        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+    Binned in SQL on ``Finding.timestamp``. That column is nullable (LogLM
+    ingest leaves it NULL when a row has no event time), and an undated
+    finding has no hour or weekday to land in, so it is left out of the grid.
+    """
+
+    # isodow is Monday=1 .. Sunday=7; minus one (below) matches Python's
+    # weekday(). Plain dow would put Sunday at 0.
+    day_col = func.extract("isodow", Finding.timestamp).label("isodow")
+    hour_col = func.extract("hour", Finding.timestamp).label("hour")
+    rows = (
+        db.query(
+            day_col,
+            hour_col,
+            func.count().label("count"),
+            func.count().filter(Finding.severity == "critical").label("critical"),
+            func.count().filter(Finding.severity == "high").label("high"),
+        )
+        .filter(
+            Finding.created_at.between(start_time, end_time),
+            Finding.timestamp.isnot(None),
+            _NOT_PROBE,
+        )
+        .group_by(day_col, hour_col)
+        .all()
     )
 
     # Initialize heatmap grid (7 days x 24 hours)
@@ -473,18 +510,9 @@ async def get_attack_time_heatmap(
             heatmap[key] = {"count": 0, "critical": 0, "high": 0}
 
     # Populate heatmap
-    for finding in findings:
-        timestamp = finding.timestamp
-        day_of_week = timestamp.weekday()  # 0 = Monday
-        hour = timestamp.hour
-
-        key = f"{day_of_week}:{hour}"
-        heatmap[key]["count"] += 1
-
-        if finding.severity == "critical":
-            heatmap[key]["critical"] += 1
-        elif finding.severity == "high":
-            heatmap[key]["high"] += 1
+    for row in rows:
+        key = f"{int(row.isodow) - 1}:{int(row.hour)}"
+        heatmap[key] = {"count": row.count, "critical": row.critical, "high": row.high}
 
     # Convert to list format
     heatmap_data = []
@@ -519,65 +547,41 @@ async def get_attack_time_heatmap(
 async def get_mitre_technique_distribution(
     db: Session, start_time: datetime, end_time: datetime, limit: int = 10
 ) -> List[Dict[str, Any]]:
-    """Get distribution of MITRE ATT&CK techniques from findings."""
+    """Get distribution of MITRE ATT&CK techniques from findings.
 
-    findings = (
-        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+    Counts child-table rows only. Nested / list-shaped JSONB maps were never a
+    findings column contract; numeric ``{key: confidence}`` values are what
+    create/update persist and what the backfill copies.
+    """
+
+    rows = (
+        db.query(
+            FindingMitrePrediction.technique_id,
+            func.count(FindingMitrePrediction.finding_id),
+        )
+        .join(Finding, Finding.finding_id == FindingMitrePrediction.finding_id)
+        .filter(Finding.created_at.between(start_time, end_time))
+        .group_by(FindingMitrePrediction.technique_id)
+        .order_by(func.count(FindingMitrePrediction.finding_id).desc())
+        .limit(limit)
+        .all()
     )
 
-    technique_counts: dict[str, int] = {}
-    technique_meta: dict[str, tuple[str, str]] = {}
-
-    def _record(tech):
-        tid, name, tactic = resolve_technique(tech)
-        if not tid:
-            return
-        technique_counts[tid] = technique_counts.get(tid, 0) + 1
-        if tid not in technique_meta:
-            technique_meta[tid] = (name, tactic)
-
-    for finding in findings:
-        if not finding.mitre_predictions:
+    techniques_list = []
+    for tech_id, count in rows:
+        resolved_id, name, tactic = resolve_technique(tech_id)
+        if not resolved_id:
             continue
+        techniques_list.append(
+            {
+                "techniqueId": resolved_id,
+                "techniqueName": name,
+                "tactic": tactic,
+                "count": count,
+            }
+        )
 
-        predictions = finding.mitre_predictions
-
-        if isinstance(predictions, dict):
-            if predictions and all(
-                isinstance(v, (int, float)) for v in predictions.values()
-            ):
-                # Standard format: {tactic_or_technique_id: confidence}
-                for tech_id in predictions.keys():
-                    _record(tech_id)
-            else:
-                if "techniques" in predictions:
-                    nested = predictions["techniques"]
-                elif "predicted_techniques" in predictions:
-                    nested = predictions["predicted_techniques"]
-                else:
-                    nested = [predictions]
-
-                for tech in nested:
-                    if isinstance(tech, dict):
-                        _record(tech)
-        elif isinstance(predictions, list):
-            for tech in predictions:
-                if isinstance(tech, dict):
-                    _record(tech)
-
-    techniques_list = [
-        {
-            "techniqueId": tech_id,
-            "techniqueName": technique_meta[tech_id][0],
-            "tactic": technique_meta[tech_id][1],
-            "count": count,
-        }
-        for tech_id, count in technique_counts.items()
-    ]
-
-    techniques_list.sort(key=lambda x: x["count"], reverse=True)
-
-    return techniques_list[:limit]
+    return techniques_list
 
 
 def _cost_time_series_from_bifrost(start_time, end_time) -> Optional[Dict[str, Any]]:
@@ -611,6 +615,13 @@ def _cache_hit_rate(input_tokens: int, cache_read_tokens: int) -> float:
     return round(cache_read_tokens / denom, 4)
 
 
+# Rows stored as unpriced (#1115). ``sum`` skips them, so ``cost_usd`` beside
+# this is the total over priced calls only.
+_UNPRICED_CALLS = func.count(LLMInteractionLog.id).filter(
+    LLMInteractionLog.cost_usd.is_(None)
+)
+
+
 def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
     row = (
         db.query(
@@ -620,14 +631,24 @@ def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
             func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0),
             func.count(LLMInteractionLog.id),
+            _UNPRICED_CALLS,
         )
         .filter(base_filter)
         .one()
     )
 
-    input_tokens, output_tokens, cache_read, cache_creation, cost_usd, calls = row
+    (
+        input_tokens,
+        output_tokens,
+        cache_read,
+        cache_creation,
+        cost_usd,
+        calls,
+        unpriced,
+    ) = row
     return {
         "calls": int(calls or 0),
+        "unpriced_calls": int(unpriced or 0),
         "input_tokens": int(input_tokens or 0),
         "output_tokens": int(output_tokens or 0),
         "cache_read_tokens": int(cache_read or 0),
@@ -655,6 +676,7 @@ def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
                 "cache_creation"
             ),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+            _UNPRICED_CALLS.label("unpriced_calls"),
         )
         .filter(base_filter)
         .group_by(LLMInteractionLog.agent_id)
@@ -666,6 +688,7 @@ def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
         {
             "agent_id": agent_id or "unknown",
             "calls": int(calls or 0),
+            "unpriced_calls": int(unpriced or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cache_read_tokens": int(cache_read or 0),
@@ -675,7 +698,7 @@ def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
                 int(input_tokens or 0), int(cache_read or 0)
             ),
         }
-        for agent_id, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd in rows
+        for agent_id, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd, unpriced in rows
     ]
 
 
@@ -697,6 +720,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
                 "cache_creation"
             ),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+            _UNPRICED_CALLS.label("unpriced_calls"),
         )
         .filter(base_filter)
         .group_by(LLMInteractionLog.model)
@@ -705,10 +729,9 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
     )
 
     # #184 Phase 3: surface pricing_source per row so the dashboard can
-    # badge "heuristic" / "unknown" models — those rows record cost from
-    # tier-regex pricing (or $0 for unknown) and need to be visually
-    # distinguishable from "exact" rows. Provider is inferred from the
-    # model id since LLMInteractionLog doesn't carry provider_type.
+    # badge "unknown" models — the gateway prices none of their calls — apart
+    # from "exact" rows. Provider is inferred from the model id since
+    # LLMInteractionLog doesn't carry provider_type.
 
     registry = get_registry()
     return [
@@ -719,6 +742,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
                 model or "", infer_provider_type(model or "")
             ),
             "calls": int(calls or 0),
+            "unpriced_calls": int(unpriced or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cache_read_tokens": int(cache_read or 0),
@@ -728,7 +752,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
                 int(input_tokens or 0), int(cache_read or 0)
             ),
         }
-        for model, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd in rows
+        for model, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd, unpriced in rows
     ]
 
 
@@ -746,6 +770,7 @@ def _cost_top_investigations(
                 "output_tokens"
             ),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+            _UNPRICED_CALLS.label("unpriced_calls"),
         )
         .filter(and_(base_filter, LLMInteractionLog.investigation_id.isnot(None)))
         .group_by(LLMInteractionLog.investigation_id)
@@ -758,11 +783,12 @@ def _cost_top_investigations(
         {
             "investigation_id": inv_id,
             "calls": int(calls or 0),
+            "unpriced_calls": int(unpriced or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cost_usd": float(cost_usd or 0),
         }
-        for inv_id, calls, input_tokens, output_tokens, cost_usd in rows
+        for inv_id, calls, input_tokens, output_tokens, cost_usd, unpriced in rows
     ]
 
 

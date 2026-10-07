@@ -6,7 +6,9 @@ import {
   type ReactNode,
 } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
+import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
@@ -112,39 +114,31 @@ function AddBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
 export const inputCls =
   'bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-none focus:border-accent-line w-full'
 
-interface EvidenceItem {
-  id: string
-  evidence_type: string
-  name: string
-  description?: string
-  collected_at?: string
-  collected_by?: string
-  hash?: string
-}
-export function EvidenceCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<EvidenceItem[]>(caseId, () =>
-    casesApi.getEvidence(caseId).then((r) => (r.data?.evidence || []) as EvidenceItem[]),
+export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; title?: string }) {
+  const { data, phase, reload } = useResource<Schema<'CaseEvidenceSchema'>[]>(caseId, () =>
+    casesApi.getEvidence(caseId).then((r) => r.data.evidence),
   )
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ name: '', evidence_type: 'file', description: '', url: '' })
+  const [form, setForm] = useState({ name: '', evidence_type: 'file', description: '', file_path: '' })
   const items = data || []
 
   const submit = async () => {
     if (!form.name.trim()) return
     await casesApi.addEvidence(caseId, {
       name: form.name,
-      description: form.description,
+      description: form.description || null,
       evidence_type: form.evidence_type,
-      ...(form.evidence_type === 'url' ? { url: form.url } : { file_path: form.url }),
+      collected_by: ME,
+      file_path: form.file_path || null,
     })
-    setForm({ name: '', evidence_type: 'file', description: '', url: '' })
+    setForm({ name: '', evidence_type: 'file', description: '', file_path: '' })
     setAdding(false)
     reload()
   }
 
   return (
     <SectionCard
-      title="Evidence"
+      title={title}
       count={`${items.length} item${items.length === 1 ? '' : 's'}`}
       wide
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
@@ -156,7 +150,7 @@ export function EvidenceCard({ caseId }: { caseId: string }) {
             {['file', 'screenshot', 'log', 'url', 'other'].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
           <input className={`${inputCls} col-span-2`} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          <input className={inputCls} placeholder={form.evidence_type === 'url' ? 'URL' : 'File path'} value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+          <input className={inputCls} placeholder={form.evidence_type === 'url' ? 'URL' : 'File path'} value={form.file_path} onChange={(e) => setForm({ ...form, file_path: e.target.value })} />
           <button className="btn primary" onClick={submit}>Add evidence</button>
         </div>
       )}
@@ -166,16 +160,19 @@ export function EvidenceCard({ caseId }: { caseId: string }) {
           <tbody>
             {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="doc" title="Loading evidence…" /></td></tr>}
             {phase === 'ready' && items.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." /></td></tr>}
-            {items.map((e) => (
-              <tr key={e.id}>
+            {items.map((e) => {
+              const hash = e.file_hash_sha256 || e.file_hash_md5
+              return (
+              <tr key={e.evidence_id ?? e.name}>
                 <td><span className="tag">{e.evidence_type}</span></td>
                 <td>{e.name}</td>
                 <td className="muted">{e.description || '—'}</td>
-                <td className="muted">{fmtDT(e.collected_at)}</td>
+                <td className="muted">{fmtDT(e.collected_at ?? undefined)}</td>
                 <td className="muted">{e.collected_by || 'Unknown'}</td>
-                <td className="mono muted">{e.hash ? `${e.hash.slice(0, 12)}…` : '—'}</td>
+                <td className="mono muted">{hash ? `${hash.slice(0, 12)}…` : '—'}</td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -209,25 +206,16 @@ export function ResolutionStepsCard({ steps }: { steps: ResolutionStep[] }) {
   )
 }
 
-interface Task {
-  id: string
-  title: string
-  description?: string
-  priority?: string
-  assignee?: string
-  due_date?: string
-  status: string
-  completed_at?: string
-}
-const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3 } as const
+const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } as const
 type TaskPriority = keyof typeof PRIO_ORDER
 const isTaskPriority = (v: string | undefined): v is TaskPriority =>
   v !== undefined && Object.prototype.hasOwnProperty.call(PRIO_ORDER, v)
-/** Sort rank for a task's priority; anything the API sends that we don't know sorts as medium. */
+/** Sort rank for a task's priority; the unknown band sorts last. Any other name sorts as medium. */
 const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
+type CaseTask = Schema<'CaseTaskSchema'>
 export function TasksCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<Task[]>(caseId, () =>
-    casesApi.getTasks(caseId).then((r) => (r.data?.tasks || []) as Task[]),
+  const { data, phase, reload } = useResource<CaseTask[]>(caseId, () =>
+    casesApi.getTasks(caseId).then((r) => r.data.tasks),
   )
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ title: '', priority: 'medium', assignee: '', due_date: '' })
@@ -235,14 +223,15 @@ export function TasksCard({ caseId }: { caseId: string }) {
     const ad = a.status === 'completed' ? 1 : 0
     const bd = b.status === 'completed' ? 1 : 0
     if (ad !== bd) return ad - bd
-    return prioOrder(a.priority) - prioOrder(b.priority)
+    return prioOrder(a.priority ?? undefined) - prioOrder(b.priority ?? undefined)
   })
   const done = tasks.filter((t) => t.status === 'completed').length
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0
 
-  const toggle = async (t: Task) => {
+  const toggle = async (t: CaseTask) => {
+    if (t.task_id == null) return
     const next = t.status === 'completed' ? 'pending' : 'completed'
-    await casesApi.updateTask(caseId, t.id, {
+    await casesApi.updateTask(caseId, t.task_id, {
       status: next,
       ...(next === 'completed' ? { completed_at: new Date().toISOString() } : {}),
     })
@@ -252,8 +241,8 @@ export function TasksCard({ caseId }: { caseId: string }) {
     if (!form.title.trim()) return
     await casesApi.addTask(caseId, {
       title: form.title,
-      assignee: form.assignee || undefined,
-      due_date: form.due_date || undefined,
+      assignee: form.assignee || null,
+      due_date: form.due_date || null,
       priority: form.priority,
     })
     setForm({ title: '', priority: 'medium', assignee: '', due_date: '' })
@@ -289,7 +278,7 @@ export function TasksCard({ caseId }: { caseId: string }) {
         {tasks.map((t) => {
           const overdue = t.due_date && t.status !== 'completed' && new Date(t.due_date).getTime() < Date.now()
           return (
-            <div key={t.id} className={`flex items-start gap-2.5${t.status === 'completed' ? ' opacity-60' : ''}`}>
+            <div key={t.task_id ?? t.title} className={`flex items-start gap-2.5${t.status === 'completed' ? ' opacity-60' : ''}`}>
               <button className="mt-[1px] text-tx-3 hover:text-accent" onClick={() => toggle(t)} title="Toggle">
                 <Icon name={t.status === 'completed' ? 'lock' : 'note'} size={15} />
               </button>
@@ -312,32 +301,36 @@ export function TasksCard({ caseId }: { caseId: string }) {
   )
 }
 
-interface SLA {
-  id: string
-  policy_name: string
-  status: 'active' | 'breached' | 'met' | 'paused'
-  due_date: string
-  created_at: string
-  breached_at?: string
-  paused_at?: string
-  paused_duration_seconds?: number
-}
-const SLA_STATUS_CLASS = {
-  active: 'status open',
+const SLA_HEALTH_CLASS: Record<string, string> = {
+  healthy: 'status open',
+  warning: 'sla warn',
+  critical: 'sla danger',
   breached: 'sla danger',
-  met: 'status closed',
-  paused: 'sla warn',
-} satisfies Record<SLA['status'], string>
+}
+function fmtCountdown(ms: number): string {
+  if (ms <= 0) return 'Overdue'
+  const s = Math.floor(ms / 1000)
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return [d && `${d}d`, h && `${h}h`, m && `${m}m`, `${sec}s`].filter(Boolean).join(' ')
+}
 export function SLACard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<SLA | null>(caseId, () =>
-    casesApi.getSLA(caseId).then((r) => (r.data?.sla ?? null) as SLA | null),
+  const { data, phase, reload } = useResource<Schema<'CaseSLAStatusSchema'> | null>(caseId, () =>
+    casesApi.getSLA(caseId).then((r) => r.data).catch((e: { response?: { status?: number } }) => {
+      if (e.response?.status === 404) return null
+      throw e
+    }),
   )
+  const met = Boolean(data?.response_completed && data?.resolution_completed)
+  const ticking = Boolean(data && !data.is_paused && !data.is_breached && !met)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    if (data?.status !== 'active') return
+    if (!ticking) return
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
-  }, [data?.status])
+  }, [ticking])
 
   const act = async (fn: () => Promise<unknown>) => {
     await fn()
@@ -348,23 +341,22 @@ export function SLACard({ caseId }: { caseId: string }) {
   let pct = 0
   let barColor = 'bg-accent'
   if (data) {
-    if (data.status === 'breached') { remainingTxt = 'SLA breached'; pct = 100; barColor = 'bg-crit' }
-    else if (data.status === 'met') { remainingTxt = 'SLA met'; pct = 100; barColor = 'bg-ok' }
-    else if (data.status === 'paused') { remainingTxt = 'SLA paused'; barColor = 'bg-high' }
+    pct = Math.max(data.response_percent_elapsed, data.resolution_percent_elapsed)
+    if (data.is_breached) { remainingTxt = 'SLA breached'; pct = 100; barColor = 'bg-crit' }
+    else if (met) { remainingTxt = 'SLA met'; pct = 100; barColor = 'bg-ok' }
+    else if (data.is_paused) { remainingTxt = 'SLA paused'; barColor = 'bg-high' }
     else {
-      const due = new Date(data.due_date).getTime()
-      const start = new Date(data.created_at).getTime()
-      const total = Math.max(1, due - start)
-      const remaining = due - now
-      pct = Math.min(100, Math.max(0, ((total - remaining) / total) * 100))
+      const dues = [
+        !data.response_completed ? data.response_due : null,
+        !data.resolution_completed ? data.resolution_due : null,
+      ]
+        .filter((d): d is string => Boolean(d))
+        .map((d) => new Date(d).getTime())
+        .filter((t) => !Number.isNaN(t))
+      const due = dues.length ? Math.min(...dues) : NaN
       if (pct > 80) barColor = 'bg-crit'
       else if (pct > 60) barColor = 'bg-high'
-      if (remaining <= 0) remainingTxt = 'Overdue'
-      else {
-        const s = Math.floor(remaining / 1000)
-        const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-        remainingTxt = [d && `${d}d`, h && `${h}h`, m && `${m}m`, `${sec}s`].filter(Boolean).join(' ')
-      }
+      remainingTxt = Number.isNaN(due) ? '—' : fmtCountdown(due - now)
     }
   }
 
@@ -376,21 +368,21 @@ export function SLACard({ caseId }: { caseId: string }) {
         {data && (
           <>
             <div className="flex items-center gap-2 mb-3">
-              <span className="tag">{data.policy_name}</span>
-              <span className={SLA_STATUS_CLASS[data.status] || 'status open'}>{data.status}</span>
+              {data.sla_policy_id && <span className="tag">{data.sla_policy_id}</span>}
+              <span className={SLA_HEALTH_CLASS[data.health_status] || 'status open'}>{data.health_status}</span>
             </div>
             <div className="text-[15px] font-mono mb-2">{remainingTxt}</div>
             <div className="h-1.5 bg-bg-3 rounded-full overflow-hidden mb-3">
               <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
             </div>
             <div className="kv">
-              <div className="row"><span className="k">Due</span><span className="val">{fmtDT(data.due_date)}</span></div>
-              <div className="row"><span className="k">Created</span><span className="val">{fmtDT(data.created_at)}</span></div>
-              {data.breached_at && <div className="row"><span className="k">Breached</span><span className="val text-crit">{fmtDT(data.breached_at)}</span></div>}
+              <div className="row"><span className="k">Response due</span><span className="val">{fmtDT(data.response_due ?? undefined)}</span></div>
+              <div className="row"><span className="k">Resolution due</span><span className="val">{fmtDT(data.resolution_due ?? undefined)}</span></div>
+              {data.breach_type && <div className="row"><span className="k">Breach</span><span className="val text-crit">{data.breach_type}</span></div>}
             </div>
             <div className="flex gap-2 mt-3">
-              {data.status === 'active' && <button className="btn ghost" onClick={() => act(() => casesApi.pauseSLA(caseId))}><Icon name="pause" size={13} /> Pause</button>}
-              {data.status === 'paused' && <button className="btn ghost" onClick={() => act(() => casesApi.resumeSLA(caseId))}><Icon name="play" size={13} /> Resume</button>}
+              {!data.is_paused && !data.is_breached && !met && <button className="btn ghost" onClick={() => act(() => casesApi.pauseSLA(caseId))}><Icon name="pause" size={13} /> Pause</button>}
+              {data.is_paused && <button className="btn ghost" onClick={() => act(() => casesApi.resumeSLA(caseId))}><Icon name="play" size={13} /> Resume</button>}
             </div>
           </>
         )}
@@ -407,22 +399,16 @@ interface Comment {
   parent_comment_id?: string
   replies?: Comment[]
 }
-/* the API shape: integer comment_id / parent_comment_id, created_at timestamp.
-   Normalize to the console Comment (string ids, `timestamp`) so threading
-   (buildTree matches id ↔ parent_comment_id) and the "most recent" sort work. */
-interface RawComment {
-  comment_id: number
-  author: string
-  content: string
-  created_at?: string
-  parent_comment_id?: number | null
-}
-function normalizeComment(c: RawComment): Comment {
+/* Threading is a view model: the wire type uses integer comment_id /
+   parent_comment_id and created_at. Normalize to string ids + `timestamp`
+   so buildTree and the "most recent" sort keep working. */
+function normalizeComment(c: Schema<'CaseCommentSchema'>): Comment | null {
+  if (c.comment_id == null) return null
   return {
     id: String(c.comment_id),
-    author: c.author,
-    content: c.content,
-    timestamp: c.created_at,
+    author: c.author || 'unknown',
+    content: c.content || '',
+    timestamp: c.created_at ?? undefined,
     parent_comment_id: c.parent_comment_id != null ? String(c.parent_comment_id) : undefined,
   }
 }
@@ -473,7 +459,9 @@ function CommentNode({ c, onReply }: { c: Comment; onReply: (id: string) => void
 }
 export function CommentsCard({ caseId }: { caseId: string }) {
   const { data, phase, reload } = useResource<Comment[]>(caseId, () =>
-    casesApi.getComments(caseId).then((r) => ((r.data?.comments || []) as RawComment[]).map(normalizeComment)),
+    casesApi.getComments(caseId).then((r) =>
+      r.data.comments.map(normalizeComment).filter((c): c is Comment => c !== null),
+    ),
   )
   const [text, setText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -532,11 +520,13 @@ export function CommentsCard({ caseId }: { caseId: string }) {
 
 interface Watcher {
   user_id: string
-  created_at?: string
+  created_at?: string | null
 }
 export function WatchersCard({ caseId }: { caseId: string }) {
   const { data, phase, reload } = useResource<Watcher[]>(caseId, () =>
-    casesApi.getWatchers(caseId).then((r) => (r.data?.watchers || []) as Watcher[]),
+    casesApi.getWatchers(caseId).then((r) =>
+      r.data.watchers.filter((w): w is Watcher => Boolean(w.user_id)),
+    ),
   )
   const [adding, setAdding] = useState(false)
   const [val, setVal] = useState('')
@@ -574,7 +564,7 @@ export function WatchersCard({ caseId }: { caseId: string }) {
             <span className="avatar">{initials(w.user_id)}</span>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] text-tx">{w.user_id}</div>
-              <div className="text-xs text-tx-faint">Watching since {fmtD(w.created_at)}</div>
+              <div className="text-xs text-tx-faint">Watching since {fmtD(w.created_at ?? undefined)}</div>
             </div>
             <span className="watcher-active" title="Receiving notifications"><span className="wa-dot" />Active</span>
             <button className="btn ghost icon" title="Remove" onClick={() => remove(w.user_id)}><Icon name="trash" size={14} /></button>
@@ -585,35 +575,32 @@ export function WatchersCard({ caseId }: { caseId: string }) {
   )
 }
 
-interface IOC {
-  id: string
-  ioc_type: string
-  value: string
-  description?: string
-  source?: string
-  first_seen?: string
-  is_whitelisted?: boolean
-  enrichment_data?: { threat_score?: number }
-}
-function threatLevel(i: IOC) {
-  if (i.is_whitelisted) return { label: 'Whitelisted', cls: 'status closed' }
-  const s = i.enrichment_data?.threat_score ?? 0
-  if (s > 7) return { label: 'High Risk', cls: 'sev critical' }
-  if (s > 4) return { label: 'Medium Risk', cls: 'sev medium' }
-  return { label: 'Low Risk', cls: 'sev low' }
+type CaseIOC = Schema<'CaseIOCSchema'>
+function threatLevel(i: CaseIOC) {
+  if (i.is_false_positive) return { label: 'False positive', cls: 'status closed' }
+  const t = (i.threat_level || '').toLowerCase()
+  if (t === 'high' || t === 'critical') return { label: 'High Risk', cls: 'sev critical' }
+  if (t === 'medium') return { label: 'Medium Risk', cls: 'sev medium' }
+  if (t === 'low') return { label: 'Low Risk', cls: 'sev low' }
+  return { label: 'Unknown', cls: 'status open' }
 }
 export function IOCsCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<IOC[]>(caseId, () =>
-    casesApi.getIOCs(caseId).then((r) => (r.data?.iocs || []) as IOC[]),
+  const { data, phase, reload } = useResource<CaseIOC[]>(caseId, () =>
+    casesApi.getIOCs(caseId).then((r) => r.data.iocs),
   )
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ ioc_type: 'ip', value: '', description: '', source: '' })
+  const [form, setForm] = useState({ ioc_type: 'ip', value: '', context: '', source: '' })
   const iocs = data || []
 
   const submit = async () => {
     if (!form.value.trim()) return
-    await casesApi.addIOC(caseId, { ioc_type: form.ioc_type, value: form.value, description: form.description, source: form.source })
-    setForm({ ioc_type: 'ip', value: '', description: '', source: '' })
+    await casesApi.addIOC(caseId, {
+      ioc_type: form.ioc_type,
+      value: form.value,
+      context: form.context || null,
+      source: form.source || null,
+    })
+    setForm({ ioc_type: 'ip', value: '', context: '', source: '' })
     setAdding(false)
     reload()
   }
@@ -631,27 +618,28 @@ export function IOCsCard({ caseId }: { caseId: string }) {
             {['ip', 'domain', 'hash', 'url', 'email', 'other'].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
           <input className={inputCls} placeholder="Value" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} />
-          <input className={inputCls} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          <input className={inputCls} placeholder="Context" value={form.context} onChange={(e) => setForm({ ...form, context: e.target.value })} />
           <input className={inputCls} placeholder="Source" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} />
           <button className="btn primary col-span-2 justify-self-start" onClick={submit}>Add IOC</button>
         </div>
       )}
       <div className="table-wrap">
         <table className="tbl">
-          <thead><tr><th>Type</th><th>Value</th><th>Description</th><th>Source</th><th>Threat</th><th>First seen</th></tr></thead>
+          <thead><tr><th>Type</th><th>Value</th><th>Context</th><th>Source</th><th>Threat</th><th>First seen</th></tr></thead>
           <tbody>
             {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="alert" title="Loading IOCs…" /></td></tr>}
             {phase === 'ready' && iocs.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." /></td></tr>}
             {iocs.map((i) => {
               const tl = threatLevel(i)
+              const value = i.value || ''
               return (
-                <tr key={i.id}>
-                  <td><span className="tag">{i.ioc_type.toUpperCase()}</span></td>
-                  <td className="mono" title={i.value}>{i.value.length > 40 ? `${i.value.slice(0, 40)}…` : i.value}</td>
-                  <td className="muted">{i.description || '—'}</td>
+                <tr key={i.ioc_id ?? value}>
+                  <td><span className="tag">{(i.ioc_type || '').toUpperCase()}</span></td>
+                  <td className="mono" title={value}>{value.length > 40 ? `${value.slice(0, 40)}…` : value}</td>
+                  <td className="muted">{i.context || '—'}</td>
                   <td className="muted">{i.source || 'Manual'}</td>
                   <td><span className={tl.cls}><span className="dot" />{tl.label}</span></td>
-                  <td className="muted">{fmtDT(i.first_seen)}</td>
+                  <td className="muted">{fmtDT(i.first_seen ?? undefined)}</td>
                 </tr>
               )
             })}
@@ -662,15 +650,7 @@ export function IOCsCard({ caseId }: { caseId: string }) {
   )
 }
 
-interface LinkedCase {
-  link_id: string
-  related_case_id: string
-  related_case_title?: string
-  related_case_status?: string
-  related_case_priority?: string
-  relationship_type?: string
-  created_at?: string
-}
+type CaseRelationship = Schema<'CaseRelationshipSchema'>
 const REL_LABEL = {
   duplicate_of: 'Duplicate Of',
   related_to: 'Related To',
@@ -682,13 +662,14 @@ type RelationshipType = keyof typeof REL_LABEL
 const isRelationshipType = (v: string | undefined): v is RelationshipType =>
   v !== undefined && Object.prototype.hasOwnProperty.call(REL_LABEL, v)
 export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; rows: CaseRow[]; onSelect: (id: string) => void }) {
-  const { data, phase, reload } = useResource<LinkedCase[]>(caseId, () =>
-    casesApi.getLinkedCases(caseId).then((r) => (r.data?.linked_cases || []) as LinkedCase[]),
+  const { data, phase, reload } = useResource<CaseRelationship[]>(caseId, () =>
+    casesApi.getLinkedCases(caseId).then((r) => r.data.relationships),
   )
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ relationship_type: 'related_to', related_case_id: '' })
   const linked = data || []
   const candidates = rows.filter((r) => r.id !== caseId)
+  const rowById = new Map(rows.map((r) => [r.id, r]))
 
   const submit = async () => {
     if (!form.related_case_id) return
@@ -719,59 +700,25 @@ export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; r
       <div className="p-[18px] flex flex-col gap-2.5">
         {phase === 'loading' && <MiniLoading icon="link" title="Loading related cases…" />}
         {phase === 'ready' && linked.length === 0 && <MiniEmpty icon="link" title="No related cases" body="Link duplicate, blocking, or related cases when investigations overlap." />}
-        {linked.map((l) => (
-          <div key={l.link_id} className="flex items-center gap-2.5 clickable" onClick={() => onSelect(l.related_case_id)}>
-            <span className="tag">{isRelationshipType(l.relationship_type) ? REL_LABEL[l.relationship_type] : l.relationship_type || '—'}</span>
+        {linked.map((l) => {
+          const relatedId = l.related_case_id || ''
+          const related = rowById.get(relatedId)
+          const rel = l.relationship_type ?? undefined
+          return (
+          <div key={l.relationship_id ?? relatedId} className="flex items-center gap-2.5 clickable" onClick={() => relatedId && onSelect(relatedId)}>
+            <span className="tag">{isRelationshipType(rel) ? REL_LABEL[rel] : rel || '—'}</span>
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] text-tx truncate">{l.related_case_title || l.related_case_id}</div>
+              <div className="text-[13px] text-tx truncate">{related?.title || relatedId}</div>
               <div className="flex items-center gap-2 mt-[2px]">
-                <span className="id-cell">{l.related_case_id}</span>
-                {l.related_case_status && <span className={`status ${l.related_case_status}`}>{l.related_case_status}</span>}
-                {l.related_case_priority && <span className={`prio ${l.related_case_priority}`}>{l.related_case_priority}</span>}
+                <span className="id-cell">{relatedId}</span>
+                {related?.status && <span className={`status ${related.status}`}>{related.status}</span>}
+                {related?.prio && <span className={`prio ${related.prio}`}>{related.prio}</span>}
               </div>
             </div>
-            <span className="text-xs text-tx-faint">{fmtD(l.created_at)}</span>
+            <span className="text-xs text-tx-faint">{fmtD(l.created_at ?? undefined)}</span>
           </div>
-        ))}
-      </div>
-    </SectionCard>
-  )
-}
-
-interface AuditEntry {
-  id: string
-  user?: string
-  action: string
-  field_name?: string
-  old_value?: string
-  new_value?: string
-  timestamp?: string
-}
-export function AuditLogCard({ caseId }: { caseId: string }) {
-  const { data, phase } = useResource<AuditEntry[]>(caseId, () =>
-    casesApi.getAuditLog(caseId).then((r) => (r.data?.audit_log || []) as AuditEntry[]),
-  )
-  const entries = data || []
-  return (
-    <SectionCard title="Audit log" count={`${entries.length}`} wide>
-      <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <MiniLoading icon="clock" title="Loading audit log…" />}
-        {phase === 'ready' && entries.length === 0 && <MiniEmpty icon="clock" title="No audit entries yet" body="Status, assignment, and field changes will be recorded here." />}
-        {entries.map((a) => (
-          <div key={a.id} className="flex gap-2.5 text-[13px]">
-            <span className="avatar">{initials(a.user)}</span>
-            <div className="min-w-0 flex-1">
-              <span className="text-tx-2">
-                <b className="text-tx">{a.user || 'system'}</b> {a.action}
-                {a.field_name && <> <span className="tag">{a.field_name}</span></>}
-                {a.field_name && (a.old_value || a.new_value) && (
-                  <> from <span className="text-crit">{a.old_value || '—'}</span> to <span className="text-ok">{a.new_value || '—'}</span></>
-                )}
-              </span>
-              <div className="text-xs text-tx-faint mt-[2px]">{fmtDT(a.timestamp)}</div>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </SectionCard>
   )
@@ -781,18 +728,26 @@ export interface Activity {
   description?: string
   activity_type?: string
   timestamp?: string
+  details?: Record<string, unknown>
 }
 export function ActivityCard({ activities }: { activities: Activity[] }) {
   return (
     <SectionCard title="Recent activity" count={`${activities.length}`}>
       <div className="p-[18px] flex flex-col gap-3">
         {activities.length === 0 && <MiniEmpty icon="clock" title="No recent activity" body="Case updates, comments, workflow events, and finding changes will appear here." />}
-        {activities.slice(0, 12).map((a, i) => (
-          <div key={i} className="text-[13px]">
-            <div className="text-tx-2">{a.description || '—'}</div>
-            <div className="text-xs text-tx-faint mt-[2px]">{a.activity_type || 'event'} · {fmtDT(a.timestamp)}</div>
-          </div>
-        ))}
+        {activities.slice(0, 12).map((a, i) => {
+          // The run bridge writes run_id onto report/handoff activities; that id is the whole link.
+          const runId = typeof a.details?.run_id === 'string' ? a.details.run_id : null
+          return (
+            <div key={i} className="text-[13px]">
+              <div className="text-tx-2">{a.description || '—'}</div>
+              <div className="text-xs text-tx-faint mt-[2px]">
+                {a.activity_type || 'event'} · {fmtDT(a.timestamp)}
+                {runId && <> · <Link className="text-accent-2 hover:underline" aria-label={`Open run ${runId}`} to={`/workflows?run=${encodeURIComponent(runId)}`}>Open run</Link></>}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </SectionCard>
   )

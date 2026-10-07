@@ -29,12 +29,18 @@ import httpx
 from core.config import get_integration_config, get_settings
 from core.secrets import get_secret
 from core.time import utcnow
+from services.daemon.vendor_errors import (
+    note_response,
+    record_vendor_error,
+    vendor_cooling_down,
+)
 
 logger = logging.getLogger(__name__)
 
 _MD5_LEN = 32
 _SHA1_LEN = 40
 _SHA256_LEN = 64
+_RATE_LIMITED = {"status": "skipped", "reason": "rate_limited"}
 
 
 @dataclass
@@ -177,6 +183,8 @@ class SandboxSubmitter:
         api_key = get_secret("CAPE_SANDBOX_API_KEY") or ""
         if not url:
             return {"status": "skipped", "reason": "no_url"}
+        if vendor_cooling_down("cape"):
+            return dict(_RATE_LIMITED)
         headers = {"Authorization": f"Token {api_key}"} if api_key else {}
         hash_type = self._hash_type(hash_val)
         if not hash_type:
@@ -189,6 +197,8 @@ class SandboxSubmitter:
                 timeout=15,
                 follow_redirects=True,
             )
+            if note_response("cape", resp):
+                return {"status": "error", "error": f"http_{resp.status_code}"}
             if resp.status_code == 200:
                 data = resp.json()
                 tasks = data.get("data") if isinstance(data, dict) else data
@@ -199,7 +209,7 @@ class SandboxSubmitter:
                         "task_id": str(task_id) if task_id else None,
                     }
         except Exception as e:
-            logger.debug("CAPE hash search failed: %s", e)
+            record_vendor_error("cape", "error", detail=str(e))
             return {"status": "error", "error": str(e)}
         return {
             "status": "unknown",
@@ -212,6 +222,8 @@ class SandboxSubmitter:
         api_key = cfg.get("api_key") or get_secret("HYBRID_ANALYSIS_API_KEY") or ""
         if not api_key:
             return {"status": "skipped", "reason": "no_api_key"}
+        if vendor_cooling_down("hybrid_analysis"):
+            return dict(_RATE_LIMITED)
         try:
             resp = await asyncio.to_thread(
                 httpx.post,
@@ -221,13 +233,15 @@ class SandboxSubmitter:
                 timeout=15,
                 follow_redirects=True,
             )
+            if note_response("hybrid_analysis", resp):
+                return {"status": "error", "error": f"http_{resp.status_code}"}
             if resp.status_code == 200:
                 data = resp.json()
                 if data:
                     jid = data[0].get("job_id") if isinstance(data[0], dict) else None
                     return {"status": "cached", "task_id": jid}
         except Exception as e:
-            logger.debug("Hybrid Analysis hash search failed: %s", e)
+            record_vendor_error("hybrid_analysis", "error", detail=str(e))
             return {"status": "error", "error": str(e)}
         return {"status": "unknown"}
 
@@ -237,6 +251,8 @@ class SandboxSubmitter:
         api_key = cfg.get("api_key") or get_secret("ANYRUN_API_KEY") or ""
         if not api_key:
             return {"status": "skipped", "reason": "no_api_key"}
+        if vendor_cooling_down("anyrun"):
+            return dict(_RATE_LIMITED)
         try:
             resp = await asyncio.to_thread(
                 httpx.get,
@@ -246,13 +262,15 @@ class SandboxSubmitter:
                 timeout=15,
                 follow_redirects=True,
             )
+            if note_response("anyrun", resp):
+                return {"status": "error", "error": f"http_{resp.status_code}"}
             if resp.status_code == 200:
                 tasks = resp.json().get("data", {}).get("tasks", [])
                 if tasks:
                     tid = tasks[0].get("uuid") or tasks[0].get("id")
                     return {"status": "cached", "task_id": tid}
         except Exception as e:
-            logger.debug("Any.Run hash search failed: %s", e)
+            record_vendor_error("anyrun", "error", detail=str(e))
             return {"status": "error", "error": str(e)}
         return {"status": "unknown"}
 
@@ -261,6 +279,8 @@ class SandboxSubmitter:
         base = get_settings().joe_sandbox_url.rstrip("/")
         if not api_key:
             return {"status": "skipped", "reason": "no_api_key"}
+        if vendor_cooling_down("joe_sandbox"):
+            return dict(_RATE_LIMITED)
         try:
             resp = await asyncio.to_thread(
                 httpx.post,
@@ -269,13 +289,15 @@ class SandboxSubmitter:
                 timeout=15,
                 follow_redirects=True,
             )
+            if note_response("joe_sandbox", resp):
+                return {"status": "error", "error": f"http_{resp.status_code}"}
             if resp.status_code == 200:
                 data = resp.json().get("data", [])
                 if data:
                     webid = data[0].get("webid")
                     return {"status": "cached", "task_id": webid}
         except Exception as e:
-            logger.debug("Joe Sandbox hash search failed: %s", e)
+            record_vendor_error("joe_sandbox", "error", detail=str(e))
             return {"status": "error", "error": str(e)}
         return {"status": "unknown"}
 

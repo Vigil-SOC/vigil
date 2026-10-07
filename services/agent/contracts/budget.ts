@@ -37,14 +37,26 @@ export interface SpendPayload {
   cost_usd: number | null;
   // How the rates resolved, or null when nothing priced it: a $0.00 from a catalog
   // entry and a $0.00 nobody could price are the same number and nothing alike.
+  // "unknown" is that second case, kept as the string with null rates.
   pricing_source: string | null;
+  // Per-token USD that produced cost_usd, and when the catalog fetched them.
+  // Null together when the call is unpriced. A row written before these fields
+  // existed still folds: seedFrom reads cost_usd only.
+  rates: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+  } | null;
+  fetched_at: string | null;
 }
 
 // A value, never a throw: the exhaustiveness argument applies here or nowhere.
 // unpriced is a ceiling that cannot be measured rather than one that was reached.
 export type Refusal =
   | { reason: "calls_exhausted"; used: number; limit: number }
-  | { reason: "cost_exhausted"; used_usd: number; limit_usd: number }
+  // Held against the sum, carried apart so a stated bill is never a figure nobody was charged.
+  | { reason: "cost_exhausted"; used_usd: number; limit_usd: number; in_flight_usd?: number }
   | { reason: "wall_exhausted"; used_ms: number; limit_ms: number }
   | { reason: "unpriced"; calls: number };
 
@@ -64,7 +76,17 @@ export interface Budget {
   readonly limits: BudgetLimits;
   readonly spent: Spend;
   beginCall(): Promise<Refusal | null>;
+  // Widens a ceiling an operator extended. Widen-only, so a resumed run cannot be
+  // handed a smaller allowance than the one it was already refused under, and the
+  // pool stays the single authority on what a run may still spend.
+  raise(limits: Partial<BudgetLimits>): void;
   record(payload: SpendPayload): void;
+  // Hands back a call that beginCall held against the ceiling and record never settled.
+  // Required, not optional: a reservation never handed back is not one call lost but
+  // one lost for the rest of the run, so every abandoned call shrinks the effective
+  // ceiling a little further. An implementation that has nothing to release can say so
+  // in a line; the next one that forgets would not fail until a ceiling came in low.
+  release(): void;
   // What a call cost, for the ledger and for max_cost_usd. Here rather than on the
   // harness because this object already owns the ceiling and the running total.
   priceOf(modelId: string, providerType: string, tokens: TokenCounts): Promise<Priced>;
@@ -75,6 +97,13 @@ export interface Budget {
 export interface Priced {
   cost_usd: number | null;
   source: string | null;
+  rates: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+  } | null;
+  fetched_at: string | null;
 }
 
 export const ZERO_TOKENS: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0 };

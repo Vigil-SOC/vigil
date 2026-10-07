@@ -1,9 +1,9 @@
 """Tests for the Board Brief report type (Issue #8).
 
 Tests cover:
-1. Reporter agent configuration includes board brief methodology
-2. Agent routing selects Reporter for board brief keywords
-3. Board brief template exists and has required sections
+1. Reporter agent delegates report writing to the executive-summary skill (#929)
+2. The skill body carries the report-type methodology and loads from the library
+3. Board brief template exists as the skill's asset and has required sections
 4. Risk posture determination logic with synthetic data
 5. Metric computation helpers with synthetic findings/cases
 """
@@ -12,8 +12,9 @@ import json
 import os
 import pytest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock
+
+from core.skills.skill_library import LIBRARY_ROOT, load_skills, read_skill
 
 # ---------------------------------------------------------------------------
 # Fixtures — synthetic findings and cases
@@ -119,15 +120,17 @@ SYNTHETIC_CASES = [
 # Helper functions that mirror board brief computation logic
 # ---------------------------------------------------------------------------
 
+
 def compute_risk_posture(findings, cases):
     """Determine RED/YELLOW/GREEN from findings and cases.
-    
+
     RED:    Active critical finding with no containment (no in-progress case)
     YELLOW: Open critical findings but cases are in progress
     GREEN:  No open critical findings
     """
     open_criticals = [
-        f for f in findings
+        f
+        for f in findings
         if f["severity"] == "critical" and f.get("status") != "resolved"
     ]
     if not open_criticals:
@@ -149,10 +152,13 @@ def compute_risk_posture(findings, cases):
 
 def compute_open_criticals(findings):
     """Count open critical findings."""
-    return len([
-        f for f in findings
-        if f["severity"] == "critical" and f.get("status") != "resolved"
-    ])
+    return len(
+        [
+            f
+            for f in findings
+            if f["severity"] == "critical" and f.get("status") != "resolved"
+        ]
+    )
 
 
 def compute_mttr_hours(cases):
@@ -198,117 +204,132 @@ def determine_trend(exposures_30d, exposures_60d, exposures_90d):
 # Tests — Agent configuration
 # ---------------------------------------------------------------------------
 
+
 class TestReporterAgentConfig:
-    """Verify the Reporter agent is configured for board briefs."""
+    """The reporter delegates report writing to the executive-summary skill (#929)."""
 
     def test_reporter_agent_exists(self):
         """Reporter agent must exist in AGENT_CONFIGS."""
         from core.agents.builtins import BUILTIN_AGENTS
+
         assert any(r["id"] == "reporter" for r in BUILTIN_AGENTS)
 
-    def test_reporter_methodology_includes_board_brief(self):
-        """Reporter methodology must reference the board brief report type."""
+    def test_reporter_methodology_points_at_the_skill_not_the_procedure(self):
+        """The procedure lives once, in the skill; the profile only refers to it."""
         from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"]
-        assert "BOARD BRIEF" in methodology
-        assert "board brief" in methodology.lower() or "board-brief" in methodology.lower()
 
-    def test_reporter_methodology_mentions_risk_posture(self):
-        """Board brief methodology must mention risk posture indicator."""
-        from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"]
-        assert "RED" in methodology
-        assert "YELLOW" in methodology
-        assert "GREEN" in methodology
+        reporter = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]
+        assert "read_skill" in reporter["recommended_tools"]
+        methodology = reporter["methodology"]
+        assert 'read_skill("executive-summary")' in methodology
+        for ported in (
+            "BOARD BRIEF",
+            "30/60/90",
+            "Key Metrics",
+            "templates/board-brief",
+        ):
+            assert ported not in methodology
 
-    def test_reporter_methodology_mentions_key_metrics(self):
-        """Board brief methodology must reference all four key metrics."""
+    def test_reporter_base_prompt_renders_with_the_skill_listed(self):
         from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"].lower()
-        assert "kill chain" in methodology
-        assert "detection coverage" in methodology
-        assert "remediation" in methodology
-        assert "open critical" in methodology
+        from core.agents.prompts import prompt_for_row
 
-    def test_reporter_methodology_mentions_trend(self):
-        """Board brief methodology must mention 30/60/90 day trend."""
-        from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"]
-        assert "30/60/90" in methodology
-
-    def test_reporter_no_cve_instruction(self):
-        """Board brief methodology must instruct no CVEs in main body."""
-        from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"].lower()
-        assert "no cve" in methodology
+        prompt = prompt_for_row({r["id"]: r for r in BUILTIN_AGENTS}["reporter"])
+        assert "<available_skills>" in prompt
+        assert "- executive-summary:" in prompt
 
     def test_reporter_description_updated(self):
-        """Reporter description should mention board briefs."""
+        """Reporter description should mention executive briefs."""
         from core.agents.builtins import BUILTIN_AGENTS
+
         desc = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["description"].lower()
-        assert "board brief" in desc
+        assert "executive briefs" in desc
 
 
 # ---------------------------------------------------------------------------
-# Tests — Agent routing
+# Tests — executive-summary skill body (the ported methodology)
 # ---------------------------------------------------------------------------
 
-class TestAgentRouting:
-    """Verify keyword routing selects Reporter for board brief requests."""
+SKILL_DIR = LIBRARY_ROOT / "executive-summary"
+TEMPLATE_PATH = SKILL_DIR / "assets" / "board-brief.md"
 
-    def test_board_brief_routes_to_reporter(self):
-        """'board brief' keyword should route to the reporter agent."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        agent = mgr.get_agent_by_task("Generate board brief")
-        assert agent is not None
-        assert agent.id == "reporter"
 
-    def test_board_report_routes_to_reporter(self):
-        """'board report' keyword should route to the reporter agent."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        agent = mgr.get_agent_by_task("Create board report")
-        assert agent is not None
-        assert agent.id == "reporter"
+def _skill_body():
+    return read_skill("executive-summary", roots=[LIBRARY_ROOT])["content"]
 
-    def test_risk_posture_routes_to_reporter(self):
-        """'risk posture' keyword should route to the reporter agent."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        agent = mgr.get_agent_by_task("Generate risk posture report")
-        assert agent is not None
-        assert agent.id == "reporter"
 
-    def test_existing_report_routing_preserved(self):
-        """Existing 'report' and 'summary' keywords must still work."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        assert mgr.get_agent_by_task("Write a report").id == "reporter"
-        assert mgr.get_agent_by_task("Generate summary").id == "reporter"
-        assert mgr.get_agent_by_task("Document the findings").id == "reporter"
+class TestExecutiveSummarySkill:
+    """The report-type methodology moved from the reporter profile into the skill."""
+
+    def test_skill_loads_from_the_library_and_serves_its_asset(self):
+        skills = {s.name: s for s in load_skills([LIBRARY_ROOT])}
+        assert skills["executive-summary"].path == SKILL_DIR
+        asset = read_skill(
+            "executive-summary", "assets/board-brief.md", roots=[LIBRARY_ROOT]
+        )
+        assert asset["file"] == "assets/board-brief.md"
+        assert asset["content"] == TEMPLATE_PATH.read_text()
+        assert "## Risk posture: {{POSTURE_INDICATOR}}" in asset["content"]
+
+    def test_skill_methodology_includes_board_brief(self):
+        body = _skill_body()
+        assert "BOARD BRIEF" in body
+        assert 'read_skill("executive-summary", "assets/board-brief.md")' in body
+        assert "core/agents/templates" not in body
+
+    def test_skill_methodology_mentions_risk_posture(self):
+        body = _skill_body()
+        assert "RED" in body
+        assert "YELLOW" in body
+        assert "GREEN" in body
+
+    def test_skill_methodology_mentions_key_metrics(self):
+        body = _skill_body().lower()
+        assert "kill chain" in body
+        assert "detection coverage" in body
+        assert "remediation" in body
+        assert "open critical" in body
+
+    def test_skill_methodology_mentions_trend_and_no_cve(self):
+        body = _skill_body()
+        assert "30/60/90" in body
+        assert "no cve" in body.lower()
+
+    def test_skill_carries_the_report_types(self):
+        body = _skill_body()
+        for section in (
+            "TECHNICAL REPORT",
+            "EXECUTIVE SUMMARY",
+            "Timeline",
+            "Recommendations",
+        ):
+            assert section in body
+
+    def test_eval_cases_follow_the_epic_schema(self):
+        cases = json.loads((SKILL_DIR / "evals" / "cases.json").read_text())
+        assert len(cases) >= 3
+        for case in cases:
+            assert set(case) == {"name", "input", "expect"}
+            assert case["name"] and case["input"]
+            assert isinstance(case["expect"], list) and case["expect"]
+            assert all(isinstance(s, str) and s for s in case["expect"])
 
 
 # ---------------------------------------------------------------------------
-# Tests — Board brief template
+# Tests — Board brief template (now the skill's asset)
 # ---------------------------------------------------------------------------
+
 
 class TestBoardBriefTemplate:
     """Verify the board brief template exists and has required sections."""
 
-    TEMPLATE_PATH = (
-        Path(__file__).parent.parent.parent.parent
-        / "core"
-        / "agents"
-        / "templates"
-        / "board-brief.md"
-    )
+    TEMPLATE_PATH = TEMPLATE_PATH
 
     def test_template_file_exists(self):
-        """Board brief template must exist at core/agents/templates/board-brief.md."""
-        assert self.TEMPLATE_PATH.exists(), (
-            f"Template not found at {self.TEMPLATE_PATH}"
-        )
+        """Template lives under the skill's assets/ directory."""
+        assert (
+            self.TEMPLATE_PATH.exists()
+        ), f"Template not found at {self.TEMPLATE_PATH}"
 
     def test_template_has_risk_posture_section(self):
         """Template must contain a risk posture section."""
@@ -348,6 +369,7 @@ class TestBoardBriefTemplate:
 # Tests — Risk posture computation with synthetic data
 # ---------------------------------------------------------------------------
 
+
 class TestRiskPostureComputation:
     """Test risk posture determination with synthetic data."""
 
@@ -373,9 +395,7 @@ class TestRiskPostureComputation:
 
     def test_green_when_no_open_criticals(self):
         """GREEN: no open critical findings."""
-        resolved_findings = [
-            {**f, "status": "resolved"} for f in SYNTHETIC_FINDINGS
-        ]
+        resolved_findings = [{**f, "status": "resolved"} for f in SYNTHETIC_FINDINGS]
         posture = compute_risk_posture(resolved_findings, SYNTHETIC_CASES)
         assert posture == "GREEN"
 
@@ -388,6 +408,7 @@ class TestRiskPostureComputation:
 # ---------------------------------------------------------------------------
 # Tests — Metric computation with synthetic data
 # ---------------------------------------------------------------------------
+
 
 class TestMetricComputation:
     """Test metric helper functions with synthetic data."""
@@ -447,6 +468,7 @@ class TestMetricComputation:
 # ---------------------------------------------------------------------------
 # Tests — Trend determination
 # ---------------------------------------------------------------------------
+
 
 class TestTrendDetermination:
     """Test 30/60/90 day trend logic."""

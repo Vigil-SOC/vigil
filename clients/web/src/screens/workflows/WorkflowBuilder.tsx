@@ -163,6 +163,8 @@ export default function WorkflowBuilder({ initial, autoGenerate, onClose, onSave
   const [genOpen, setGenOpen] = useState(!!autoGenerate)
   const [genPrompt, setGenPrompt] = useState('')
   const [generating, setGenerating] = useState(false)
+  // Set when Generate fills the canvas. A workflow started blank stays the plain draft.
+  const [aiDraft, setAiDraft] = useState(false)
 
   useEffect(() => {
     agentsApi.getAvailableTools().then((r) => setAvailableTools(r.data?.tools || [])).catch(() => {})
@@ -255,6 +257,7 @@ export default function WorkflowBuilder({ initial, autoGenerate, onClose, onSave
           trigger_examples: d.trigger_examples || [],
           phases: (d.phases || []).map((p: WorkflowPhase, i: number) => ({ ...emptyPhase(i + 1), ...p, order: i + 1 })),
         })
+        setAiDraft(true)
         setGenOpen(false); setGenPrompt('')
       })
       .catch((e) => setError(errMsg(e)))
@@ -285,7 +288,7 @@ export default function WorkflowBuilder({ initial, autoGenerate, onClose, onSave
       <div className="flex items-center gap-3 px-5 py-3 border-b border-line bg-panel shrink-0">
         <div className="min-w-0">
           <div className="text-[16px] font-semibold leading-tight">{editor.workflow_id ? 'Edit workflow' : 'New workflow'}</div>
-          <div className="text-[11.5px] text-tx-3 truncate mono">{editor.workflow_id || 'Draft — not yet saved'}</div>
+          <div className="text-[11.5px] text-tx-3 truncate mono">{editor.workflow_id || (aiDraft ? 'AI draft — not saved' : 'Draft — not yet saved')}</div>
         </div>
         <div className="flex-1" />
         <button className="btn ghost" onClick={() => setGenOpen(true)}><Icon name="sparkle" /> Generate</button>

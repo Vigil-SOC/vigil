@@ -1,17 +1,13 @@
-"""Central LLM Gateway -- routes all Claude API calls through ARQ job queues.
+"""LLM Gateway -- enqueues stateless completions onto the ARQ ``arq:llm`` queue.
 
-All components (daemon processor, agent runner, backend API, AI insights)
-enqueue LLM requests here instead of calling Claude directly. This provides:
-  - Priority queuing (triage > investigation > chat > insights)
-  - Global Anthropic rate-limit enforcement
-  - Persistent chat session isolation via Redis
-  - Job persistence and automatic retries
+The daemon's triage and the AI-insights refresh call through here; the
+llm-worker drains the queue under a shared cap on calls in flight, with ARQ's
+job persistence and retries.
 """
 
 import asyncio
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -45,63 +41,21 @@ def redis_settings() -> RedisSettings:
 
 
 # ---------------------------------------------------------------------------
-# Session store -- keeps chat histories isolated per session_id in Redis
-# ---------------------------------------------------------------------------
-
-
-class RedisSessionStore:
-    """Stores per-session message histories in Redis with TTL."""
-
-    DEFAULT_TTL = 60 * 60 * 4  # 4 hours
-
-    def __init__(self, redis: ArqRedis, ttl: int = DEFAULT_TTL):
-        self.redis = redis
-        self.ttl = ttl
-
-    def _key(self, session_id: str) -> str:
-        return f"llm:session:{session_id}"
-
-    async def load(self, session_id: str) -> List[Dict]:
-        raw = await self.redis.get(self._key(session_id))
-        if raw is None:
-            return []
-        return json.loads(raw)
-
-    async def save(self, session_id: str, messages: List[Dict]):
-        await self.redis.set(
-            self._key(session_id),
-            json.dumps(messages, default=str),
-            ex=self.ttl,
-        )
-
-    async def delete(self, session_id: str):
-        await self.redis.delete(self._key(session_id))
-
-    async def exists(self, session_id: str) -> bool:
-        return bool(await self.redis.exists(self._key(session_id)))
-
-    async def touch(self, session_id: str):
-        """Reset TTL without modifying data."""
-        await self.redis.expire(self._key(session_id), self.ttl)
-
-
-# ---------------------------------------------------------------------------
 # Gateway -- singleton entry point used by all callers
 # ---------------------------------------------------------------------------
 
 
 class LLMGateway:
-    """Enqueues LLM requests into ARQ priority queues.
+    """Enqueues LLM requests onto the ARQ queue.
 
     Usage::
 
         gateway = await LLMGateway.create()
-        result = await gateway.submit_triage("Analyze this finding ...")
+        result = await gateway.submit("Analyze this finding ...")
     """
 
     def __init__(self, redis_pool: ArqRedis):
         self._pool = redis_pool
-        self.session_store = RedisSessionStore(redis_pool)
 
     @classmethod
     async def create(cls, settings: Optional[RedisSettings] = None) -> "LLMGateway":
@@ -137,29 +91,23 @@ class LLMGateway:
         except Exception:
             return ""
 
-    # -- Convenience enqueue methods ----------------------------------------
-
-    async def submit_triage(
+    async def submit(
         self,
         prompt: str,
         *,
         model: str = DEFAULT_MODEL,
         max_tokens: int = 2048,
+        temperature: Optional[float] = None,
         timeout: int = 90,
         provider_id: Optional[str] = None,
-    ) -> Optional[str]:
-        """Enqueue a stateless triage call (highest priority)."""
+    ) -> Optional[Dict[str, Any]]:
+        """Enqueue one stateless completion and wait for its result."""
         job = await self._pool.enqueue_job(
             "llm_call",
-            messages=[{"role": "user", "content": prompt}],
+            prompt=prompt,
             model=model,
             max_tokens=max_tokens,
-            session_id=None,
-            system_prompt=None,
-            enable_thinking=False,
-            thinking_budget=0,
-            tools=None,
-            temperature=None,
+            temperature=temperature,
             provider_id=provider_id,
             traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
@@ -171,79 +119,6 @@ class LLMGateway:
                 "arq job result deserialization failed (stale or incompatible "
                 "result in Redis — APIStatusError constructor may have changed): %s",
                 exc,
-            )
-            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
-
-    async def submit_chat(
-        self,
-        messages: List[Dict],
-        *,
-        session_id: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
-        max_tokens: int = 4096,
-        system_prompt: Optional[str] = None,
-        enable_thinking: bool = False,
-        thinking_budget: int = 10000,
-        timeout: int = 120,
-        agent_id: Optional[str] = None,
-        investigation_id: Optional[str] = None,
-        provider_id: Optional[str] = None,
-    ) -> Any:
-        """Enqueue a UI chat call (normal priority)."""
-        job = await self._pool.enqueue_job(
-            "llm_call",
-            messages=messages,
-            model=model,
-            max_tokens=max_tokens,
-            session_id=session_id,
-            system_prompt=system_prompt,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
-            tools=None,
-            temperature=None,
-            provider_id=provider_id,
-            traceparent=self._get_traceparent(),
-            agent_id=agent_id,
-            investigation_id=investigation_id,
-            _queue_name=QUEUE_NAME,
-        )
-        try:
-            return await job.result(timeout=timeout)
-        except DeserializationError as exc:
-            logger.error("arq job result deserialization failed for chat job: %s", exc)
-            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
-
-    async def submit_insights(
-        self,
-        prompt: str,
-        *,
-        model: str = DEFAULT_MODEL,
-        max_tokens: int = 2000,
-        temperature: float = 0.3,
-        timeout: int = 90,
-        provider_id: Optional[str] = None,
-    ) -> Optional[str]:
-        """Enqueue a background insights/analytics call (lowest priority)."""
-        job = await self._pool.enqueue_job(
-            "llm_call",
-            messages=[{"role": "user", "content": prompt}],
-            model=model,
-            max_tokens=max_tokens,
-            session_id=None,
-            system_prompt=None,
-            enable_thinking=False,
-            thinking_budget=0,
-            tools=None,
-            temperature=temperature,
-            provider_id=provider_id,
-            traceparent=self._get_traceparent(),
-            _queue_name=QUEUE_NAME,
-        )
-        try:
-            return await job.result(timeout=timeout)
-        except DeserializationError as exc:
-            logger.error(
-                "arq job result deserialization failed for insights job: %s", exc
             )
             raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 

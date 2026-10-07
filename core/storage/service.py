@@ -9,33 +9,92 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import default_on_error
 from core.storage.case_repository import CaseRepository
 from core.storage.connection import get_db_manager
+from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
-    EMBEDDING_DIM,
     AIDecisionLog,
     Case,
     Finding,
+    FindingMitrePrediction,
 )
 from core.storage.schemas import FindingSchema
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+_UNSET = object()
 
-def _normalize_embedding(embedding: Optional[List[float]]) -> List[float]:
-    """Zero-pad/truncate an embedding to the fixed ``EMBEDDING_DIM`` width
-    (sources vary: LogLM 512, deeptempo 768); missing → all-zero vector."""
-    if not embedding:
-        return [0.0] * EMBEDDING_DIM
-    vec = [float(x) for x in embedding]
-    if len(vec) < EMBEDDING_DIM:
-        return vec + [0.0] * (EMBEDDING_DIM - len(vec))
-    if len(vec) > EMBEDDING_DIM:
-        return vec[:EMBEDDING_DIM]
-    return vec
+# Failures that mean the database itself is unreachable, not that a row is bad.
+# Retrying a batch row by row against them would only repeat the failure (and
+# any pool timeout) once per row.
+_CONNECTION_ERRORS = (OperationalError, InterfaceError, PoolTimeoutError)
+
+
+def _is_connection_error(e: Exception) -> bool:
+    return isinstance(e, _CONNECTION_ERRORS) or bool(
+        getattr(e, "connection_invalidated", False)
+    )
+
+
+def _numeric_prediction_items(mitre_predictions: Any) -> List[tuple[str, float]]:
+    """Persist numeric map values only; keys stay text (tactic names included)."""
+    if not isinstance(mitre_predictions, dict):
+        return []
+    items: List[tuple[str, float]] = []
+    for key, value in mitre_predictions.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        items.append((str(key), float(value)))
+    return items
+
+
+def _set_mitre_prediction_rows(finding: Finding, mitre_predictions: Any) -> None:
+    finding.mitre_prediction_rows.clear()
+    for technique_id, confidence in _numeric_prediction_items(mitre_predictions):
+        finding.mitre_prediction_rows.append(
+            FindingMitrePrediction(
+                technique_id=technique_id,
+                confidence=confidence,
+            )
+        )
+
+
+# ``Finding.cases`` is mapped ``lazy="selectin"``, so without an override every
+# Finding load also SELECTs each linked case row (all of its JSONB) and then
+# drops it: no read path or ``FindingSchema`` uses it (#1439). Read paths that
+# hand back detached findings or dumps opt out with ``noload``.
+_FINDING_READ_OPTIONS = (
+    selectinload(Finding.mitre_prediction_rows),
+    noload(Finding.cases),
+)
+
+
+def findings_by_technique_stmt(
+    technique_id: str, limit: Optional[int] = None, exclusions: str = "include"
+):
+    """Findings predicting ``technique_id``, highest confidence first."""
+    stmt = (
+        select(Finding)
+        .join(
+            FindingMitrePrediction,
+            FindingMitrePrediction.finding_id == Finding.finding_id,
+        )
+        .where(FindingMitrePrediction.technique_id == technique_id)
+        .order_by(FindingMitrePrediction.confidence.desc())
+        .options(*_FINDING_READ_OPTIONS)
+    )
+    exclusion_filter = exclusion_view_filter(exclusions)
+    if exclusion_filter is not None:
+        stmt = stmt.where(exclusion_filter)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return stmt
 
 
 class DatabaseService:
@@ -51,10 +110,9 @@ class DatabaseService:
     def create_finding(
         self,
         finding_id: str,
-        embedding: List[float],
         mitre_predictions: dict,
-        anomaly_score: float,
-        timestamp: datetime,
+        anomaly_score: Optional[float],
+        timestamp: Optional[datetime],
         data_source: str,
         **kwargs,
     ) -> Optional[Finding]:
@@ -63,10 +121,9 @@ class DatabaseService:
 
         Args:
             finding_id: Unique finding ID
-            embedding: embedding vector (padded/truncated to EMBEDDING_DIM)
             mitre_predictions: MITRE ATT&CK predictions
-            anomaly_score: Anomaly score (0-1)
-            timestamp: Finding timestamp
+            anomaly_score: Anomaly score (0-1), or None when the source omitted it
+            timestamp: Finding timestamp, or None when the source omitted it
             data_source: Data source type
             **kwargs: Additional fields (entity_context, evidence_links, cluster_id, severity, status)
 
@@ -76,8 +133,6 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             finding = Finding(
                 finding_id=finding_id,
-                embedding=_normalize_embedding(embedding),
-                mitre_predictions=mitre_predictions,
                 anomaly_score=anomaly_score,
                 timestamp=timestamp,
                 data_source=data_source,
@@ -89,53 +144,93 @@ class DatabaseService:
                 severity=kwargs.get("severity"),
                 status=kwargs.get("status", "new"),
             )
+            _set_mitre_prediction_rows(finding, mitre_predictions)
             session.add(finding)
             session.flush()
             session.refresh(finding)
+            _ = finding.mitre_prediction_rows
             logger.info(f"Created finding: {finding_id}")
             return finding
 
     def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, int]:
         """Dedup + insert many findings in one transaction; per-row create_finding
-        doesn't scale to hundred-thousand-row parquet files."""
+        doesn't scale to hundred-thousand-row parquet files.
+
+        If the batch transaction fails, it is rolled back and the batch is
+        retried one row per transaction, so one bad row (an over-length
+        column, a constraint violation) costs only itself and not every
+        valid row beside it.
+        """
         if not rows:
             return {"imported": 0, "skipped": 0}
 
         by_id = {r["finding_id"]: r for r in rows}
-        ids = list(by_id.keys())
+        # Rows repeating a finding_id inside the batch are skipped either way.
+        in_batch_dupes = len(rows) - len(by_id)
         try:
-            with self.db_manager.session_scope() as session:
-                existing = {
-                    row_id
-                    for (row_id,) in session.execute(
-                        select(Finding.finding_id).where(Finding.finding_id.in_(ids))
-                    )
-                }
-                new_ids = [i for i in ids if i not in existing]
-                for finding_id in new_ids:
-                    r = by_id[finding_id]
-                    session.add(
-                        Finding(
-                            finding_id=finding_id,
-                            embedding=_normalize_embedding(r.get("embedding")),
-                            mitre_predictions=r.get("mitre_predictions") or {},
-                            anomaly_score=r.get("anomaly_score", 0.0),
-                            timestamp=r["timestamp"],
-                            data_source=r.get("data_source", "imported"),
-                            external_id=r.get("external_id"),
-                            description=r.get("description"),
-                            entity_context=r.get("entity_context"),
-                            evidence_links=r.get("evidence_links"),
-                            cluster_id=r.get("cluster_id"),
-                            severity=r.get("severity"),
-                            status=r.get("status", "new"),
-                        )
-                    )
-                session.flush()
-                return {"imported": len(new_ids), "skipped": len(rows) - len(new_ids)}
+            imported = self._insert_new_findings(list(by_id.values()))
+            return {"imported": imported, "skipped": len(rows) - imported}
         except Exception as e:
-            logger.error(f"Error bulk-creating findings: {e}")
-            return {"imported": 0, "skipped": 0, "errors": len(rows)}
+            if _is_connection_error(e):
+                logger.error(f"Error bulk-creating findings: {e}")
+                return {"imported": 0, "skipped": 0, "errors": len(rows)}
+            logger.warning(
+                "Bulk insert of %d findings failed (%s); retrying row by row",
+                len(by_id),
+                e,
+            )
+
+        imported = skipped = errors = 0
+        for finding_id, r in by_id.items():
+            try:
+                if self._insert_new_findings([r]):
+                    imported += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.error(f"Error creating finding {finding_id!r}: {e}")
+                if _is_connection_error(e):
+                    # Count this row and every row not yet tried.
+                    errors += len(by_id) - imported - skipped - errors
+                    break
+                errors += 1
+        return {
+            "imported": imported,
+            "skipped": skipped + in_batch_dupes,
+            "errors": errors,
+        }
+
+    def _insert_new_findings(self, rows: List[Dict[str, Any]]) -> int:
+        """Insert the rows whose finding_id is not stored yet, in one
+        transaction. Returns how many were inserted; raises on failure, and
+        the session scope rolls the whole transaction back."""
+        ids = [r["finding_id"] for r in rows]
+        with self.db_manager.session_scope() as session:
+            existing = {
+                row_id
+                for (row_id,) in session.execute(
+                    select(Finding.finding_id).where(Finding.finding_id.in_(ids))
+                )
+            }
+            new_rows = [r for r in rows if r["finding_id"] not in existing]
+            for r in new_rows:
+                finding = Finding(
+                    finding_id=r["finding_id"],
+                    anomaly_score=r.get("anomaly_score"),
+                    timestamp=r.get("timestamp"),
+                    data_source=r.get("data_source", "imported"),
+                    external_id=r.get("external_id"),
+                    description=r.get("description"),
+                    entity_context=r.get("entity_context"),
+                    evidence_links=r.get("evidence_links"),
+                    cluster_id=r.get("cluster_id"),
+                    severity=r.get("severity"),
+                    status=r.get("status", "new"),
+                )
+                _set_mitre_prediction_rows(finding, r.get("mitre_predictions") or {})
+                session.add(finding)
+            session.flush()
+            return len(new_rows)
 
     @default_on_error(None)
     def get_finding(self, finding_id: str) -> Optional[Finding]:
@@ -149,7 +244,7 @@ class DatabaseService:
             Finding object or None if not found
         """
         with self.db_manager.session_scope() as session:
-            finding = session.get(Finding, finding_id)
+            finding = session.get(Finding, finding_id, options=_FINDING_READ_OPTIONS)
             if finding:
                 # Detach from session to avoid lazy loading issues
                 session.expunge(finding)
@@ -168,6 +263,10 @@ class DatabaseService:
         offset: int = 0,
         sort_by: str = "timestamp",
         sort_order: str = "desc",
+        timestamp_start: Optional[datetime] = None,
+        timestamp_end: Optional[datetime] = None,
+        exclusions: str = "include",
+        dated_only: bool = False,
     ) -> List[Finding]:
         """
         Get findings with optional filters, search, and pagination.
@@ -181,14 +280,17 @@ class DatabaseService:
             search_query: Text search across finding_id, description, entity_context
             limit: Maximum number of results
             offset: Offset for pagination
-            sort_by: Column to sort by (timestamp, anomaly_score, severity)
+            sort_by: Column to sort by (timestamp, anomaly_score, severity, created_at)
             sort_order: Sort direction (asc, desc)
+            exclusions: ``include`` (default), ``hide`` or ``only`` findings
+                naming an analyst-excluded IP (core.findings.exclusions)
+            dated_only: leave out findings whose source gave no timestamp
 
         Returns:
             List of Finding objects
         """
         with self.db_manager.session_scope() as session:
-            query = select(Finding)
+            query = select(Finding).options(*_FINDING_READ_OPTIONS)
 
             filters = []
             if severity:
@@ -201,6 +303,12 @@ class DatabaseService:
                 filters.append(Finding.anomaly_score >= min_anomaly_score)
             if status:
                 filters.append(Finding.status == status)
+            if timestamp_start is not None:
+                filters.append(Finding.timestamp >= timestamp_start)
+            if timestamp_end is not None:
+                filters.append(Finding.timestamp <= timestamp_end)
+            if dated_only:
+                filters.append(Finding.timestamp.isnot(None))
             if search_query:
                 from sqlalchemy import String, cast
 
@@ -213,12 +321,16 @@ class DatabaseService:
                         Finding.description.ilike(f"%{search_query}%")
                     )
                 filters.append(or_(*search_clauses))
+            exclusion_filter = exclusion_view_filter(exclusions)
+            if exclusion_filter is not None:
+                filters.append(exclusion_filter)
 
             if filters:
                 query = query.where(and_(*filters))
 
             sort_column_map = {
                 "timestamp": Finding.timestamp,
+                "created_at": Finding.created_at,
                 "anomaly_score": Finding.anomaly_score,
                 "severity": Finding.severity,
                 "data_source": Finding.data_source,
@@ -239,58 +351,29 @@ class DatabaseService:
 
             return findings
 
-    @default_on_error(None, level="warning")
-    def find_similar_findings(
-        self,
-        finding_id: str,
-        limit: int = 10,
-        same_source: bool = False,
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Findings most similar to ``finding_id`` by cosine distance, via the
-        pgvector ``<=>`` operator (HNSW-backed) instead of a Python scan. Returns
-        ``None`` when the query can't run (e.g. pgvector unavailable) so the caller
-        can fall back. ``same_source`` restricts to the seed's own data_source,
-        avoiding comparison across distinct embedding model spaces."""
-        with self.db_manager.session_scope() as session:
-            seed = session.get(Finding, finding_id)
-            if seed is None or seed.embedding is None:
-                return []
-            distance = Finding.embedding.cosine_distance(seed.embedding)
-            query = select(Finding, distance.label("distance")).where(
-                Finding.finding_id != finding_id
-            )
-            if same_source and seed.data_source:
-                query = query.where(Finding.data_source == seed.data_source)
-            query = query.order_by(distance).limit(limit)
-
-            neighbors: List[Dict[str, Any]] = []
-            for finding, dist in session.execute(query).all():
-                # pgvector cosine distance is in [0, 2]; similarity = 1 - d
-                similarity = 1.0 - float(dist) if dist is not None else None
-                neighbors.append(
-                    {
-                        "finding_id": finding.finding_id,
-                        "similarity": (
-                            round(similarity, 4) if similarity is not None else None
-                        ),
-                        "cluster_id": finding.cluster_id,
-                        "severity": finding.severity,
-                        "data_source": finding.data_source,
-                        "anomaly_score": float(finding.anomaly_score or 0),
-                    }
-                )
-            return neighbors
-
     @default_on_error(list)
     def get_findings_missing_enrichment(
         self, limit: int = 100, max_age_hours: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Findings stored but never enriched (ai_enrichment IS NULL), oldest first.
-        Returns dicts (to_dict inside the session) so callers get detached-safe data.
-        ``max_age_hours`` bounds the working set so ancient, un-enrichable findings
-        aren't retried forever."""
+        """Findings stored but never enriched (ai_enrichment IS NULL) or whose
+        triage failed without a later success (ai_triage_error recorded, no
+        ai_triage — #965), oldest first. Returns dicts (FindingSchema.dump inside
+        the session) so callers get detached-safe data. ``max_age_hours`` bounds
+        the working set so ancient, un-enrichable findings aren't retried forever."""
         with self.db_manager.session_scope() as session:
-            query = select(Finding).where(Finding.ai_enrichment.is_(None))
+            query = (
+                select(Finding)
+                .options(*_FINDING_READ_OPTIONS)
+                .where(
+                    or_(
+                        Finding.ai_enrichment.is_(None),
+                        and_(
+                            Finding.ai_enrichment.has_key("ai_triage_error"),
+                            ~Finding.ai_enrichment.has_key("ai_triage"),
+                        ),
+                    )
+                )
+            )
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
                 query = query.where(Finding.timestamp >= cutoff)
@@ -306,6 +389,7 @@ class DatabaseService:
         min_anomaly_score: Optional[float] = None,
         status: Optional[str] = None,
         search_query: Optional[str] = None,
+        exclusions: str = "include",
     ) -> int:
         """
         Count findings matching the given filters without loading rows.
@@ -338,11 +422,48 @@ class DatabaseService:
                         cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
                     )
                 )
+            exclusion_filter = exclusion_view_filter(exclusions)
+            if exclusion_filter is not None:
+                filters.append(exclusion_filter)
 
             if filters:
                 query = query.where(and_(*filters))
 
             return session.execute(query).scalar() or 0
+
+    @default_on_error(None)
+    def summarize_findings(
+        self, exclusions: str = "include"
+    ) -> Optional[Dict[str, Any]]:
+        """``{total, by_severity, by_data_source}`` over every matching finding.
+
+        Counted and grouped in SQL under the same exclusion filter as
+        ``count_findings``, so ``total`` agrees with the list endpoint's total
+        however many rows there are (#1438). A null or empty severity or data
+        source is bucketed as ``"unknown"``. ``None`` means the query failed.
+        """
+        with self.db_manager.session_scope() as session:
+            criteria = []
+            exclusion_filter = exclusion_view_filter(exclusions)
+            if exclusion_filter is not None:
+                criteria.append(exclusion_filter)
+
+            def grouped(column) -> Dict[str, int]:
+                counts: Dict[str, int] = {}
+                stmt = select(column, func.count()).where(*criteria).group_by(column)
+                for value, count in session.execute(stmt).all():
+                    key = value or "unknown"
+                    counts[key] = counts.get(key, 0) + int(count)
+                return counts
+
+            total = session.execute(
+                select(func.count()).select_from(Finding).where(*criteria)
+            ).scalar()
+            return {
+                "total": int(total or 0),
+                "by_severity": grouped(Finding.severity),
+                "by_data_source": grouped(Finding.data_source),
+            }
 
     @default_on_error(False)
     def update_finding(self, finding_id: str, **updates) -> bool:
@@ -357,10 +478,21 @@ class DatabaseService:
             True if successful, False otherwise
         """
         with self.db_manager.session_scope() as session:
-            finding = session.get(Finding, finding_id)
+            # lazyload, not noload: the session stays open, so a caller that
+            # does touch ``cases`` still gets the real collection.
+            finding = session.get(
+                Finding,
+                finding_id,
+                options=(
+                    selectinload(Finding.mitre_prediction_rows),
+                    lazyload(Finding.cases),
+                ),
+            )
             if not finding:
                 logger.warning(f"Finding not found: {finding_id}")
                 return False
+
+            mitre_predictions = updates.pop("mitre_predictions", _UNSET)
 
             # Unknown keys are skipped rather than rejected: the S3 sync path
             # passes whole external finding dicts. Say which, or a typo'd column
@@ -375,6 +507,9 @@ class DatabaseService:
             for key, value in updates.items():
                 if hasattr(finding, key):
                     setattr(finding, key, value)
+
+            if mitre_predictions is not _UNSET:
+                _set_mitre_prediction_rows(finding, mitre_predictions)
 
             finding.updated_at = utcnow()
             session.flush()
@@ -401,6 +536,63 @@ class DatabaseService:
             session.delete(finding)
             logger.info(f"Deleted finding: {finding_id}")
             return True
+
+    @default_on_error(list)
+    def get_findings_by_technique(
+        self,
+        technique_id: str,
+        limit: Optional[int] = None,
+        exclusions: str = "include",
+    ) -> List[Finding]:
+        """Findings predicting ``technique_id``, ordered by confidence descending."""
+        with self.db_manager.session_scope() as session:
+            findings = (
+                session.execute(
+                    findings_by_technique_stmt(
+                        technique_id, limit=limit, exclusions=exclusions
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for finding in findings:
+                session.expunge(finding)
+            return findings
+
+    @default_on_error(list)
+    def get_technique_severity_counts(
+        self,
+        min_confidence: float = 0.0,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        exclusions: str = "include",
+    ) -> List[tuple]:
+        """(technique_id, severity, count) from the child table."""
+        with self.db_manager.session_scope() as session:
+            stmt = (
+                select(
+                    FindingMitrePrediction.technique_id,
+                    Finding.severity,
+                    func.count(),
+                )
+                .join(
+                    Finding,
+                    Finding.finding_id == FindingMitrePrediction.finding_id,
+                )
+                .where(FindingMitrePrediction.confidence >= min_confidence)
+                .group_by(FindingMitrePrediction.technique_id, Finding.severity)
+            )
+            if start_time is not None:
+                stmt = stmt.where(Finding.timestamp >= start_time)
+            if end_time is not None:
+                stmt = stmt.where(Finding.timestamp <= end_time)
+            exclusion_filter = exclusion_view_filter(exclusions)
+            if exclusion_filter is not None:
+                stmt = stmt.where(exclusion_filter)
+            return [
+                (tid, severity, int(count))
+                for tid, severity, count in session.execute(stmt).all()
+            ]
 
     # ========== Case Operations ==========
 
@@ -476,7 +668,8 @@ class DatabaseService:
             if case:
                 # Force load findings if needed
                 if include_findings:
-                    _ = case.findings  # Trigger lazy load
+                    for linked in case.findings:
+                        _ = linked.mitre_prediction_rows
                 session.expunge(case)
             return case
 
@@ -517,6 +710,20 @@ class DatabaseService:
                 session.expunge(case)
 
             return cases
+
+    @default_on_error(None)
+    def summarize_cases(self) -> Optional[Dict[str, Any]]:
+        """``{total, by_status, by_priority}`` over every case, counted in SQL.
+
+        ``None`` means the query failed.
+        """
+        with self.db_manager.session_scope() as session:
+            total, by_status, by_priority = CaseRepository(session).summary_counts()
+            return {
+                "total": total,
+                "by_status": by_status,
+                "by_priority": by_priority,
+            }
 
     @default_on_error(False)
     def update_case(self, case_id: str, **updates) -> bool:
@@ -832,12 +1039,13 @@ class DatabaseService:
             with self.db_manager.session_scope() as session:
                 since = utcnow() - timedelta(days=days)
 
-                query = session.query(AIDecisionLog).filter(
-                    AIDecisionLog.timestamp >= since
-                )
-
+                # One filter set shared by every query below, so the totals,
+                # averages and outcome breakdown all describe the same rows.
+                base_filters = [AIDecisionLog.timestamp >= since]
                 if agent_id:
-                    query = query.filter(AIDecisionLog.agent_id == agent_id)
+                    base_filters.append(AIDecisionLog.agent_id == agent_id)
+
+                query = session.query(AIDecisionLog).filter(*base_filters)
 
                 # Total decisions
                 total_decisions = query.count()
@@ -852,19 +1060,12 @@ class DatabaseService:
                 ).count()
 
                 # Average grades
-                avg_accuracy = session.query(
-                    func.avg(AIDecisionLog.accuracy_grade)
-                ).filter(
-                    AIDecisionLog.timestamp >= since,
-                    AIDecisionLog.accuracy_grade.isnot(None),
+                avg_accuracy = (
+                    session.query(func.avg(AIDecisionLog.accuracy_grade))
+                    .filter(*base_filters, AIDecisionLog.accuracy_grade.isnot(None))
+                    .scalar()
+                    or 0
                 )
-
-                if agent_id:
-                    avg_accuracy = avg_accuracy.filter(
-                        AIDecisionLog.agent_id == agent_id
-                    )
-
-                avg_accuracy = avg_accuracy.scalar() or 0
 
                 # Outcome counts
                 outcomes = {}
@@ -872,29 +1073,19 @@ class DatabaseService:
                     session.query(
                         AIDecisionLog.actual_outcome, func.count(AIDecisionLog.id)
                     )
-                    .filter(
-                        AIDecisionLog.timestamp >= since,
-                        AIDecisionLog.actual_outcome.isnot(None),
-                    )
+                    .filter(*base_filters, AIDecisionLog.actual_outcome.isnot(None))
                     .group_by(AIDecisionLog.actual_outcome)
                     .all()
                 ):
                     outcomes[outcome] = count
 
                 # Time saved
-                total_time_saved = session.query(
-                    func.sum(AIDecisionLog.time_saved_minutes)
-                ).filter(
-                    AIDecisionLog.timestamp >= since,
-                    AIDecisionLog.time_saved_minutes.isnot(None),
+                total_time_saved = (
+                    session.query(func.sum(AIDecisionLog.time_saved_minutes))
+                    .filter(*base_filters, AIDecisionLog.time_saved_minutes.isnot(None))
+                    .scalar()
+                    or 0
                 )
-
-                if agent_id:
-                    total_time_saved = total_time_saved.filter(
-                        AIDecisionLog.agent_id == agent_id
-                    )
-
-                total_time_saved = total_time_saved.scalar() or 0
 
                 return {
                     "total_decisions": total_decisions,

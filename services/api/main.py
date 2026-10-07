@@ -4,6 +4,7 @@ FastAPI Backend for Vigil SOC Web Application
 Main application entry point for the REST API server.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -23,17 +24,19 @@ from core.config import get_settings, validate_settings_or_exit
 
 validate_settings_or_exit()
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.platform.monitoring import (
-    PROMETHEUS_AVAILABLE,
-    get_metrics_response,
-    init_sentry,
-)
+from core.auth.token_blacklist import warn_if_redis_evicts
+from core.platform.monitoring import get_metrics_response, init_sentry
+from core.storage.connection import MissingPostgresPasswordError
+from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
 from services.api.discovery import mount_routers
 from services.api.errors import register_exception_handlers
@@ -67,22 +70,18 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
         "/api/auth/bootstrap",
         # Health check — used by load balancers and Docker.
         "/api/health",
+        "/api/health/ready",
         # VStrike inbound receiver uses its own bearer API-key dependency.
         "/api/integrations/vstrike/findings",
     }
 )
 
-if PROMETHEUS_AVAILABLE:
-    from core.platform.monitoring import PrometheusMiddleware
-
 # Initialize telemetry before creating the FastAPI app so instrumentation
 # is registered before the first request handler is defined.
+configure_logging("INFO")
 try:
-    from core.telemetry import init_telemetry
-
     init_telemetry("vigil-backend")
 except Exception as _tel_err:
-    logging.basicConfig(level=logging.INFO)
     logging.getLogger(__name__).warning(
         "Telemetry init failed (non-fatal): %s", _tel_err
     )
@@ -98,17 +97,62 @@ init_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _startup(app)
-    try:
-        yield
-    finally:
-        await _shutdown(app)
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from tools.mcp.vigil import mcp as vigil_mcp
+
+    # The MCP session manager runs whether or not the surface is open: the
+    # toggle is a runtime one, so turning it on must not need a restart, and
+    # with the gate refusing every request the manager simply has nothing to do.
+    #
+    # Built here, not at import: each app carries its own session manager and a
+    # manager runs once, so a process that starts the app twice -- a test, a
+    # reloader -- needs a new one rather than the same one again.
+    #
+    # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
+    # would put the real endpoint at /mcp/mcp. It is the mount that decides
+    # where this is served, so the app itself serves at its root.
+    #
+    # Transport security is stated rather than left to the SDK. Its default
+    # host is 127.0.0.1, and on that default it turns on DNS-rebinding
+    # protection with an allow-list of localhost Host headers -- so a request
+    # arriving as vigil.example.com, or as a container or service name, is
+    # refused 421 before any of Vigil's own gates see it. That protection is
+    # for the usual local MCP server, which has no authentication and could
+    # otherwise be driven by a web page that rebound DNS to it. This surface
+    # is the opposite case: it exists to be reached by a caller that is not
+    # Vigil, and McpSurfaceGate already refuses anything without a credential.
+    # Naming hosts here instead would mean keeping a list in step with every
+    # deployment's DNS name, and getting a 421 whenever it drifted.
+    _mcp_gate.app = vigil_mcp.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        ),
+    )
+
+    async with vigil_mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            await _shutdown(app)
 
 
-# Create FastAPI app
+# `version` is the version of the API this document describes, not the version
+# of the build serving it. Those are different things: the build moves every
+# release, and a document whose version renumbers itself every release is the
+# opposite of what a version in the path is for. The frozen surface is
+# `/api/v1/**`, so this says 1 and stays at 1 until there is a v2. The build
+# version is still reported, by the health and root endpoints below.
 app = FastAPI(
     title="Vigil SOC API",
-    description="REST API for Vigil SOC Application",
-    version=__version__,
+    description=(
+        "REST API for Vigil SOC Application. The frozen contract is "
+        "`/api/v1/**` (excluding operations marked `x-vigil-beta`); paths "
+        "under a bare `/api` are console wiring and carry no stability "
+        "promise."
+    ),
+    version="1",
     lifespan=lifespan,
 )
 
@@ -128,11 +172,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # route. Registered before the routers so every mounted route inherits it.
 register_exception_handlers(app)
 
-# Instrument FastAPI with OTEL tracing (health + metrics endpoints excluded)
+# Instrument FastAPI with OTEL tracing and http.server.* metrics (health +
+# metrics endpoints excluded). This is the HTTP signal on /metrics; there is
+# no prometheus_client middleware alongside it.
 try:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-    FastAPIInstrumentation().instrument_app(
+    FastAPIInstrumentor().instrument_app(
         app,
         excluded_urls="api/health,metrics",
     )
@@ -181,9 +227,6 @@ app.add_middleware(CSRFMiddleware)
 # middleware, so anything added before CORS would be skipped on preflight).
 app.add_middleware(SecurityHeadersMiddleware)
 
-if PROMETHEUS_AVAILABLE:
-    app.add_middleware(PrometheusMiddleware)
-
 # Mount every discovered router — colocated in core/<domain>/ or parked in
 # services/api/routers/ (issues #478, #488). Each module declares its
 # own prefix, tags, auth posture and optional feature gate in ROUTER_META, so
@@ -196,12 +239,59 @@ mount_routers(
 
 
 def _mcp_auto_connect_enabled() -> bool:
-    # Off by default in DEV_MODE so optional MCP processes cannot block a local
-    # backend startup; an explicit setting wins either way.
-    settings = get_settings()
-    if settings.mcp_auto_connect_on_startup is not None:
-        return settings.mcp_auto_connect_on_startup
-    return not settings.dev_mode
+    # One definition site: the registry reads the same rule to decide whether it may
+    # trust its warm-start cache.
+    from core.integrations.mcp.registry import eager_connect_enabled
+
+    return eager_connect_enabled()
+
+
+async def _connect_enabled_mcp_servers(mcp_client) -> int:
+    """Connect enabled MCP servers concurrently. Returns how many succeeded."""
+    import asyncio
+
+    mcp_service = mcp_client.mcp_service
+    servers = mcp_service.list_servers()
+
+    async def _connect_one(server_name: str) -> bool:
+        try:
+            success = await mcp_client.connect_to_server(server_name, persistent=True)
+            if success:
+                logger.info(f"✓ Persistent connection established: {server_name}")
+                return True
+            missing = mcp_client.get_missing_credentials(server_name)
+            if missing:
+                logger.info(
+                    "MCP server %s dormant — awaiting env vars: %s",
+                    server_name,
+                    ", ".join(missing),
+                )
+            else:
+                logger.warning(f"Failed to connect to MCP server: {server_name}")
+            return False
+        except Exception as e:
+            logger.error(f"Error connecting to {server_name}: {e}")
+            return False
+
+    to_connect = []
+    for server_name in servers:
+        # A disabled server is intentionally off, not a failure — don't
+        # dial it or log it as one (the old code tried every server and
+        # reported each disabled one as "Failed to connect", which read
+        # as dozens of errors on a normal boot).
+        if not mcp_service.is_server_enabled(server_name):
+            logger.debug("MCP server %s disabled, skipping", server_name)
+            continue
+        to_connect.append(server_name)
+
+    if not to_connect:
+        return 0
+
+    results = await asyncio.gather(
+        *(_connect_one(name) for name in to_connect),
+        return_exceptions=True,
+    )
+    return sum(1 for r in results if r is True)
 
 
 async def _connect_external_services(mcp_client, registry):
@@ -244,9 +334,10 @@ async def _connect_external_services(mcp_client, registry):
         await get_llm_gateway()
         logger.info("✓ LLM Gateway connected to Redis")
     except Exception as e:
-        logger.warning(f"⚠ LLM Gateway not available: {e}")
-        logger.warning(
-            "  LLM calls will fail until Redis is running and ARQ worker is started"
+        logger.error(
+            "LLM Gateway not available, LLM calls will fail until Redis and the "
+            "ARQ worker are up: %s",
+            e,
         )
 
     # MCP tools connect lazily when an agent actually needs them. Starting
@@ -258,6 +349,11 @@ async def _connect_external_services(mcp_client, registry):
         logger.info(
             "MCP auto-connect disabled; optional MCP servers will connect on demand"
         )
+        # On demand still needs the registry: it is what makes a capability bindable,
+        # and call_tool reconnects itself.
+        from core.integrations.mcp.registry import populate_from_cache
+
+        populate_from_cache(registry)
         return
 
     logger.info("Initializing MCP client with persistent connections...")
@@ -266,31 +362,7 @@ async def _connect_external_services(mcp_client, registry):
             mcp_service = mcp_client.mcp_service
             servers = mcp_service.list_servers()
 
-            connected_count = 0
-            for server_name in servers:
-                try:
-                    success = await mcp_client.connect_to_server(
-                        server_name, persistent=True
-                    )
-                    if success:
-                        connected_count += 1
-                        logger.info(
-                            f"✓ Persistent connection established: {server_name}"
-                        )
-                    else:
-                        missing = mcp_client.get_missing_credentials(server_name)
-                        if missing:
-                            logger.info(
-                                "MCP server %s dormant — awaiting env vars: %s",
-                                server_name,
-                                ", ".join(missing),
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to connect to MCP server: {server_name}"
-                            )
-                except Exception as e:
-                    logger.error(f"Error connecting to {server_name}: {e}")
+            connected_count = await _connect_enabled_mcp_servers(mcp_client)
 
             logger.info(
                 f"MCP initialization complete: {connected_count}/{len(servers)} persistent connections"
@@ -352,13 +424,11 @@ def _build_services(app: FastAPI):
     from core.config import is_demo_mode
     from core.detections.detection_rules_service import DetectionRulesService
     from core.integrations.integration_bridge_service import IntegrationBridgeService
-    from core.integrations.integration_compatibility_service import (
-        IntegrationCompatibilityService,
-    )
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
-    from core.response.approval_service import ApprovalService
+    from core.response.approval_service import ApprovalService, register_pending_gauge
+    from core.storage.database_data_service import DatabaseDataService
     from core.workflows.custom_workflow_service import CustomWorkflowService
     from core.workflows.workflow_ai_generator import WorkflowAIGenerator
     from core.workflows.workflow_run_service import WorkflowRunService
@@ -367,11 +437,15 @@ def _build_services(app: FastAPI):
     app.state.mcp_client = build_mcp_client()
     set_process_mcp_client(app.state.mcp_client)
 
+    # Long-lived, so its reconnect throttle applies across health probes; a fresh
+    # service per probe would re-run init_database(create_tables=True) each time.
+    app.state.health_storage = DatabaseDataService()
+
     app.state.approvals = ApprovalService()
+    register_pending_gauge(app.state.approvals)
     app.state.custom_workflows = CustomWorkflowService()
     app.state.detection_rules = DetectionRulesService()
     app.state.integration_bridge = IntegrationBridgeService()
-    app.state.integration_compat = IntegrationCompatibilityService()
     app.state.mcp_registry = MCPRegistry()
     app.state.workflow_runs = WorkflowRunService()
 
@@ -391,13 +465,37 @@ def _build_services(app: FastAPI):
     app.state.demo_data = DemoDataService() if is_demo_mode() else None
 
 
+def _announce_mcp_surface() -> None:
+    """Say what this install is serving on /mcp, and whether anyone can open it."""
+    from core.integrations.mcp.surface import is_enabled
+    from services.api.mcp_surface import announce
+
+    try:
+        enabled = is_enabled()
+        count = 0
+        if enabled:
+            from core.storage.models import McpCredential
+            from core.storage.unit_of_work import unit_of_work
+
+            with unit_of_work() as session:
+                count = (
+                    session.query(McpCredential)
+                    .filter(McpCredential.revoked_at.is_(None))
+                    .count()
+                )
+        announce(enabled, count)
+    except Exception:  # noqa: BLE001 - an announcement must never fail a boot
+        logger.exception("Could not report the state of the MCP surface")
+
+
 async def _startup(app: FastAPI):
-    """Initialize database, MCP tools and check integration compatibility on startup."""
+    """Initialize database and MCP tools on startup."""
     logger.info("=" * 60)
     logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
 
     _build_services(app)
+    _announce_mcp_surface()
 
     _testing = get_settings().testing
 
@@ -408,6 +506,9 @@ async def _startup(app: FastAPI):
         init_sentry()
     except Exception as e:
         logger.warning("Sentry initialization failed (non-fatal): %s", e)
+
+    if not _testing:
+        await warn_if_redis_evicts()
 
     # Probe the secrets manager singleton at a known time, after all
     # third-party imports have settled. The singleton picks its write
@@ -448,11 +549,6 @@ async def _startup(app: FastAPI):
         if postgres_conn:
             os.environ["POSTGRESQL_CONNECTION_STRING"] = postgres_conn  # noqa: ENV001
             logger.debug("Loaded PostgreSQL connection string from secrets")
-        else:
-            # Set default connection string if not configured
-            default_conn = "postgresql://deeptempo:deeptempo_secure_password_change_me@localhost:5432/deeptempo_soc"
-            os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn  # noqa: ENV001
-            logger.debug("Using default PostgreSQL connection string")
 
         # Rehydrate integration credentials into os.environ so MCP servers gated
         # on ${<ID>_<FIELD>} survive a restart — set_secret only writes os.environ
@@ -504,12 +600,9 @@ async def _startup(app: FastAPI):
         # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
         # any endpoint tries to query it. start.sh runs scripts/init_schema.py
         # first, but this covers environments that launch uvicorn directly
-        # (e.g. Docker, systemd, CI). When DATA_BACKEND=database, a failure
-        # here is fatal — we do NOT silently fall back to JSON because that
-        # leaves the DB in an inconsistent state (some endpoints use
-        # get_db_session() directly, see core/cases/case_metrics_router.py).
-        data_backend_env = get_settings().data_backend.lower()
-        if not is_demo_mode() and data_backend_env == "database":
+        # (e.g. Docker, systemd, CI). A failure here is fatal — some endpoints
+        # use get_db_session() directly (see core/cases/case_metrics_router.py).
+        if not is_demo_mode():
             try:
                 from core.storage.connection import init_database
 
@@ -522,7 +615,6 @@ async def _startup(app: FastAPI):
                 )
                 raise
 
-        # Check for demo mode first
         if is_demo_mode():
             logger.info("=" * 40)
             logger.info("  DEMO MODE ENABLED")
@@ -533,69 +625,27 @@ async def _startup(app: FastAPI):
             backend_info = test_service.get_backend_info()
             logger.info(f"  Backend: {backend_info['backend']}")
         else:
-            # Check configuration preference
-            data_backend = get_settings().data_backend.lower()
-            use_database = data_backend == "database"
-
-            if use_database:
-                logger.info("Attempting to connect to PostgreSQL database...")
-                try:
-                    test_service = DatabaseDataService()
-
-                    if test_service.is_using_database():
-                        logger.info("✓ PostgreSQL database connected and ready")
-                        backend_info = test_service.get_backend_info()
-                        logger.info(f"  Backend: {backend_info['backend']}")
-                    else:
-                        logger.warning("⚠ PostgreSQL not available")
-                        logger.warning("  Using JSON file storage as fallback")
-                        logger.warning("  To enable PostgreSQL:")
-                        logger.warning(
-                            "    1. Start database: "
-                            "cd docker && docker compose up -d postgres"
-                        )
-                        logger.warning("    2. Restart application: ./start.sh")
-
-                except Exception as e:
-                    logger.warning(f"⚠ Could not connect to PostgreSQL: {e}")
-                    logger.warning("  Using JSON file storage as fallback")
+            logger.info("Attempting to connect to PostgreSQL database...")
+            test_service = DatabaseDataService()
+            if test_service.is_using_database():
+                logger.info("✓ PostgreSQL database connected and ready")
+                backend_info = test_service.get_backend_info()
+                logger.info(f"  Backend: {backend_info['backend']}")
             else:
-                logger.info("Using JSON file storage (DATA_BACKEND=json)")
+                logger.warning("⚠ PostgreSQL not available")
+                logger.warning("  To enable PostgreSQL:")
+                logger.warning(
+                    "    1. Start database: "
+                    "cd docker && docker compose up -d postgres"
+                )
+                logger.warning("    2. Restart application: ./start.sh")
 
+    except MissingPostgresPasswordError:
+        raise  # fail closed: no database credentials, nothing to serve
     except ImportError as e:
         logger.warning(f"Database modules not available: {e}")
-        logger.warning("Using JSON file storage")
     except Exception as e:
         logger.error(f"Error during storage initialization: {e}")
-        logger.warning("Falling back to JSON file storage")
-
-    # Check integration compatibility
-    logger.info("Checking integration compatibility...")
-    try:
-        compat_service = app.state.integration_compat
-        system_info = compat_service.get_system_info()
-        logger.info(
-            f"System: Python {system_info['python_version']} on {system_info['platform']}"
-        )
-
-        # Log compatibility issues
-        statuses = compat_service.get_all_statuses()
-        incompatible = [
-            k for k, v in statuses.items() if v.get("status") == "incompatible"
-        ]
-        not_installed = [
-            k for k, v in statuses.items() if v.get("status") == "not_installed"
-        ]
-
-        if incompatible:
-            logger.warning(f"Incompatible integrations: {', '.join(incompatible)}")
-        if not_installed:
-            logger.info(f"Not installed integrations: {', '.join(not_installed)}")
-
-        installed_count = sum(1 for v in statuses.values() if v.get("installed"))
-        logger.info(f"Integration status: {installed_count}/{len(statuses)} installed")
-    except Exception as e:
-        logger.error(f"Error checking compatibility: {e}")
 
     if _testing:
         logger.info(
@@ -660,10 +710,25 @@ async def metrics():
     return get_metrics_response()
 
 
-# Health check endpoint
-@app.get(f"{_CONTEXT_PATH}/api/health")
-async def health_check():
-    """Health check endpoint with storage backend info."""
+def _check_storage(service) -> tuple[dict, dict]:
+    """Blocking storage probe; run it off the event loop.
+
+    With Postgres down, a reconnect attempt waits out the connect timeout.
+    """
+    from core.config import state_dir_status
+
+    return service.get_backend_info(), state_dir_status()
+
+
+async def _health_payload(request: Request) -> dict:
+    """The health body, shared by /api/health and /api/health/ready so the
+    two cannot drift. ``status`` is "degraded" exactly when storage is
+    unavailable outside demo mode (or the storage check itself fails).
+
+    Redis and the LLM gateway are deliberately not part of this status: Redis
+    is shared, so failing readiness on it would eject every pod at once, and a
+    gateway outage does not stop findings or cases being served.
+    """
     # Read first, and in both branches: schema drift severe enough to raise
     # UndefinedColumn is exactly what sends this handler down the except path,
     # and that is the case the verdict exists to explain (#562). A plain dict
@@ -676,18 +741,36 @@ async def health_check():
     # schema internals and stay on GET /api/storage/status, which is not.
     schema_block = {"state": drift["state"]} if drift is not None else None
 
+    # Read before the storage check. A failure there must still report the real
+    # flags, and the liveness route has to answer 200 — a 500 restarts the pod.
+    demo_mode = False
+    auth_bypassed = False
     try:
-        from core.config import is_demo_mode, state_dir_status
-        from core.storage.database_data_service import DatabaseDataService
+        from core.config import is_demo_mode
 
-        service = DatabaseDataService()
-        backend_info = service.get_backend_info()
-        state_dir = state_dir_status()
+        demo_mode = is_demo_mode()
+        auth_bypassed = get_settings().dev_mode
+    except Exception:
+        logger.exception("Health check could not read process flags")
+
+    try:
+        backend_info, state_dir = await asyncio.to_thread(
+            _check_storage, request.app.state.health_storage
+        )
+        database_available = bool(backend_info.get("database_available", False))
+        # Demo mode runs without Postgres. Schema drift stays healthy; the
+        # schema block already reports it.
+        status = "healthy" if demo_mode or database_available else "degraded"
 
         payload = {
-            "status": "healthy",
+            "status": status,
             "version": __version__,
-            "demo_mode": is_demo_mode(),
+            "demo_mode": demo_mode,
+            # The SPA's bypass indicator reads this. It cannot use its own build
+            # flag: DEV_MODE is set at runtime, and a prebuilt bundle served by a
+            # bypassed backend would otherwise show nothing. Public on purpose --
+            # an unauthenticated caller can already tell by being served.
+            "auth_bypassed": auth_bypassed,
             # Booleans only — this route is public, and the resolved path names
             # where credentials live. Full status: GET /api/config/state-directory.
             "state_directory": {
@@ -696,24 +779,96 @@ async def health_check():
             },
             "storage": {
                 "backend": backend_info["backend"],
-                "database_available": backend_info.get("database_available", False),
+                "database_available": database_available,
                 "demo_mode": backend_info.get("demo_mode", False),
             },
         }
-        if schema_block is not None:
-            payload["schema"] = schema_block
-        return payload
-    except Exception as e:
-        logger.error(f"Health check error: {e}")
+    except Exception:
+        # The message can name missing tables. It stays in the log.
+        logger.exception("Health check error")
         payload = {
-            "status": "healthy",
+            "status": "degraded",
             "version": __version__,
-            "demo_mode": False,
-            "storage": {"backend": "unknown", "error": str(e)},
+            "demo_mode": demo_mode,
+            "auth_bypassed": auth_bypassed,
+            "storage": {"backend": "unknown", "error": "storage_check_failed"},
         }
-        if schema_block is not None:
-            payload["schema"] = schema_block
-        return payload
+    if schema_block is not None:
+        payload["schema"] = schema_block
+    return payload
+
+
+# Liveness: 200 means the process is up; ``status`` carries the health. Probes
+# that decide restarts use this, so Postgres being down must not fail it.
+@app.get(f"{_CONTEXT_PATH}/api/health")
+async def health_check(request: Request):
+    """Liveness: always HTTP 200 while the process is up; ``status`` in the
+    body reports "healthy" or "degraded" (storage backend info included)."""
+    return await _health_payload(request)
+
+
+# Readiness: same body, 503 when degraded so load balancers and kubelet take
+# the pod out of rotation without restarting it.
+@app.get(f"{_CONTEXT_PATH}/api/health/ready")
+async def health_ready(request: Request):
+    """Readiness: HTTP 503 exactly when ``/api/health`` reports "degraded"."""
+    payload = await _health_payload(request)
+    degraded = payload["status"] == "degraded"
+    return JSONResponse(payload, status_code=503 if degraded else 200)
+
+
+# Everything this process serves itself. A 404 under one of these is a miss,
+# not a client-side route: the SPA's router knows nothing about them, so
+# answering with the app shell hands a caller HTML where it asked for an API
+# result -- or, for a bundle under /static, HTML the browser then refuses to
+# execute as a module.
+_SERVED_BY_THE_BACKEND = (
+    "/api",
+    "/internal",
+    "/mcp",
+    "/static",
+    "/assets",
+    "/metrics",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+)
+
+
+def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool:
+    """Whether a 404 at ``path`` is a client-side route rather than a miss.
+
+    The SPA owns every address the API does not. Reading that as a route --
+    ``@app.get("/{full_path:path}")`` -- reads it as *every* address, including
+    the API's own, and the route then stands in front of the routing it was
+    meant to sit behind: a path that differs from a real route only by a
+    trailing slash matched this instead, so Starlette never got to redirect it,
+    and a POST matched it by path and not by method, so the answer was 405.
+    Asking the question after routing has failed leaves all of that intact.
+
+    A path this process serves itself is never the app shell. It reached a 404
+    because nothing claims it, and that is the answer it gets.
+    """
+    if method not in ("GET", "HEAD"):
+        return False
+    return not any(
+        path == f"{context_path}{prefix}" or path.startswith(f"{context_path}{prefix}/")
+        for prefix in _SERVED_BY_THE_BACKEND
+    )
+
+
+# Vigil's own MCP server, given an address. Mounted before the SPA catch-all so
+# /mcp reaches the server rather than index.html, and behind a gate that decides
+# whether the surface is open at all and, if it is, whose request this is.
+#
+# serve_at, rather than a mount here, because the address has two spellings and
+# only one of them is a mount: see mcp_surface.BareMountPath for why the bare
+# one -- the advertised one -- otherwise answers 405 wherever a frontend build
+# exists, and 307 wherever one does not.
+from services.api.mcp_surface import McpSurfaceGate, serve_at  # noqa: E402
+
+_mcp_gate = McpSurfaceGate()
+serve_at(app, _mcp_gate, _CONTEXT_PATH)
 
 
 # Serve React static files in production
@@ -752,8 +907,6 @@ if frontend_build_dir.exists() and assets_dir.exists():
         logger.warning(f"Failed to mount frontend assets: {e}")
 
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
-    from fastapi.responses import HTMLResponse
-
     # index.html is served with the active context path injected as a
     # <meta name="vigil-base-path"> tag so the SPA (see frontend
     # src/config/basePath.ts) can prefix its router basename and API calls at
@@ -796,13 +949,21 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
         async def redirect_to_trailing_slash():
             return RedirectResponse(url=f"{_CONTEXT_PATH}/", status_code=301)
 
-    @app.get(f"{_CONTEXT_PATH}/{{full_path:path}}")
-    async def serve_react_app(full_path: str):
-        """Serve React app for all non-API routes."""
-        # Don't interfere with API routes
-        if full_path.startswith("api/"):
-            return {"error": "Not found"}, 404
-        return HTMLResponse(_get_index_html())
+    # Out of the OpenAPI spec: it is the SPA fallback, not an API route, and it
+    # is only registered when a frontend build happens to be present. Leaving it
+    # in makes the generated types (scripts/generate_frontend_types.py) depend on
+    # whether the developer regenerating them had run `npm run build`.
+    # A handler, not a route. See ``serves_the_app_shell``: a catch-all route
+    # matches before the router can redirect a trailing slash or report a wrong
+    # method, so the SPA fallback silently became the answer to questions about
+    # the API. This runs only once routing has already failed.
+    @app.exception_handler(StarletteHTTPException)
+    async def app_shell_or_error(request: Request, exc: StarletteHTTPException):
+        if exc.status_code == 404 and serves_the_app_shell(
+            request.url.path, request.method, _CONTEXT_PATH
+        ):
+            return HTMLResponse(_get_index_html())
+        return await http_exception_handler(request, exc)
 
 
 if __name__ == "__main__":
@@ -811,7 +972,7 @@ if __name__ == "__main__":
     logger.info("Starting Vigil SOC API server...")
     uvicorn.run(
         "services.api.main:app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # nosec B104 - containers must bind all interfaces
         port=6987,
         reload=True,
         log_level="info",

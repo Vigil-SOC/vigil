@@ -1,7 +1,10 @@
+import { logger } from "../../core/log.js";
 import { newId } from "./ids.js";
 import type { Projection } from "./ledger.js";
 import type { CheckpointPayload, ResolutionPayload } from "../../contracts/events.js";
 import type { Directive } from "./types.js";
+
+const log = logger("agent.hunt.checkpoints");
 
 // The four moments a hunt is allowed to stop and ask. Closed, because a class
 // the controller has no policy for would raise a checkpoint nobody can answer.
@@ -28,14 +31,39 @@ export type Checkpoints = Record<CheckpointClass, CheckpointPolicy>;
 // --scripted, any programmatic startHunt — advances with no TTY and no pending
 export const DEFAULT_CHECKPOINTS: Checkpoints = {
   hypothesis_approval: "auto",
-  scope_extension: "ask",
+  scope_extension: "auto",
   verdict_review: "auto",
-  budget_anomaly: "ask",
+  budget_anomaly: "auto",
 };
 
 // The actor on a resolution nobody was asked for. Named rather than blank so a
 // reader can tell policy from a person at a glance, and so grepping the ledger
 export const AUTO_ACTOR = "policy:auto";
+
+// What a definition asked for, made safe to act on. Policies now arrive from a
+// WORKFLOW.md's front matter, which is text nobody type-checks: YAML reads
+// `hypothesis_approval: yes` as the boolean true, and the controller branches on
+// `=== "ask"` for the gate and `=== "auto"` for the auto-answer, so a value that is
+// neither takes no branch at all -- the run starts active AND leaves an unresolved
+// checkpoint behind. That is an approval gate switched off by a typo, so anything
+// that is not exactly "auto" is read as "ask": a definition nobody can parse asks a
+// human rather than spending on its own say-so. Unknown classes are dropped, since
+// the controller has no policy for one and would raise what nobody can answer.
+export function checkpointsFrom(declared: unknown): Partial<Checkpoints> {
+  const asked = (declared ?? {}) as Record<string, unknown>;
+  const safe: Partial<Checkpoints> = {};
+  for (const [name, policy] of Object.entries(asked)) {
+    if (!(CHECKPOINT_CLASSES as readonly string[]).includes(name)) {
+      log.warn("ignoring a checkpoint policy that names no checkpoint class", { name });
+      continue;
+    }
+    if (policy !== "ask" && policy !== "auto") {
+      log.warn("a checkpoint policy is neither ask nor auto, asking", { name, policy: JSON.stringify(policy) });
+    }
+    safe[name as CheckpointClass] = policy === "auto" ? "auto" : "ask";
+  }
+  return safe;
+}
 
 export type Resolution = ResolutionPayload;
 export type Checkpoint = CheckpointPayload;
@@ -87,8 +115,4 @@ export function pendingCheckpoints(projection: Projection): Checkpoint[] {
   return [...projection.checkpoints.values()].filter(
     (checkpoint) => resolutionOf(projection, checkpoint.checkpoint_id) === undefined,
   );
-}
-
-export function pendingOfClass(projection: Projection, checkpointClass: CheckpointClass): Checkpoint | undefined {
-  return pendingCheckpoints(projection).find((checkpoint) => checkpoint.checkpoint_class === checkpointClass);
 }

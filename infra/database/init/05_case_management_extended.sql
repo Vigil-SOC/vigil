@@ -10,7 +10,7 @@ INSERT INTO sla_policies (
     policy_id, name, description, priority_level,
     response_time_hours, resolution_time_hours,
     business_hours_only, notification_thresholds,
-    is_active, is_default
+    is_active, is_default, created_at, updated_at
 ) VALUES (
     'sla-critical-default',
     'Critical Priority SLA',
@@ -21,7 +21,9 @@ INSERT INTO sla_policies (
     false, -- 24/7 coverage
     ARRAY[75, 90, 100],
     true,
-    true
+    true,
+    now(),
+    now()
 ) ON CONFLICT (policy_id) DO NOTHING;
 
 -- High Priority SLA (2h response / 8h resolution)
@@ -29,7 +31,7 @@ INSERT INTO sla_policies (
     policy_id, name, description, priority_level,
     response_time_hours, resolution_time_hours,
     business_hours_only, notification_thresholds,
-    is_active, is_default
+    is_active, is_default, created_at, updated_at
 ) VALUES (
     'sla-high-default',
     'High Priority SLA',
@@ -40,7 +42,9 @@ INSERT INTO sla_policies (
     false, -- 24/7 coverage
     ARRAY[75, 90, 100],
     true,
-    true
+    true,
+    now(),
+    now()
 ) ON CONFLICT (policy_id) DO NOTHING;
 
 -- Medium Priority SLA (4h response / 24h resolution)
@@ -48,7 +52,7 @@ INSERT INTO sla_policies (
     policy_id, name, description, priority_level,
     response_time_hours, resolution_time_hours,
     business_hours_only, notification_thresholds,
-    is_active, is_default
+    is_active, is_default, created_at, updated_at
 ) VALUES (
     'sla-medium-default',
     'Medium Priority SLA',
@@ -59,7 +63,9 @@ INSERT INTO sla_policies (
     true, -- Business hours only
     ARRAY[75, 90, 100],
     true,
-    true
+    true,
+    now(),
+    now()
 ) ON CONFLICT (policy_id) DO NOTHING;
 
 -- Low Priority SLA (8h response / 72h resolution)
@@ -67,7 +73,7 @@ INSERT INTO sla_policies (
     policy_id, name, description, priority_level,
     response_time_hours, resolution_time_hours,
     business_hours_only, notification_thresholds,
-    is_active, is_default
+    is_active, is_default, created_at, updated_at
 ) VALUES (
     'sla-low-default',
     'Low Priority SLA',
@@ -78,7 +84,9 @@ INSERT INTO sla_policies (
     true, -- Business hours only
     ARRAY[75, 90, 100],
     true,
-    true
+    true,
+    now(),
+    now()
 ) ON CONFLICT (policy_id) DO NOTHING;
 
 -- =============================================================================
@@ -90,7 +98,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-malware-001',
     'Malware Investigation',
@@ -117,7 +125,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1059', 'T1055', 'T1486', 'T1566'],
     ARRAY['malware', 'incident-response'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Phishing Investigation Template
@@ -125,7 +136,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-phishing-001',
     'Phishing Investigation',
@@ -151,7 +162,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1566.001', 'T1566.002', 'T1204'],
     ARRAY['phishing', 'email-security'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Data Exfiltration Template
@@ -159,7 +173,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-data-exfiltration-001',
     'Data Exfiltration Investigation',
@@ -186,7 +200,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1048', 'T1041', 'T1567', 'T1020'],
     ARRAY['data-breach', 'exfiltration', 'critical'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Insider Threat Template
@@ -194,7 +211,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-insider-threat-001',
     'Insider Threat Investigation',
@@ -221,7 +238,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1078', 'T1530', 'T1213'],
     ARRAY['insider-threat', 'ueba'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Ransomware Template
@@ -229,7 +249,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-ransomware-001',
     'Ransomware Incident',
@@ -259,7 +279,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1486', 'T1490', 'T1489', 'T1562'],
     ARRAY['ransomware', 'critical', 'business-continuity'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Account Compromise Template
@@ -267,7 +290,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-account-compromise-001',
     'Account Compromise',
@@ -294,7 +317,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1078', 'T1110', 'T1552'],
     ARRAY['account-compromise', 'credential-theft'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- DDoS Attack Template
@@ -302,7 +328,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-ddos-001',
     'DDoS Attack Response',
@@ -329,7 +355,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1498', 'T1499'],
     ARRAY['ddos', 'availability', 'network-attack'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Web Application Attack Template
@@ -337,7 +366,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active
+    tags, is_active, usage_count, created_at, updated_at
 ) VALUES (
     'template-webapp-attack-001',
     'Web Application Attack',
@@ -364,7 +393,10 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1190', 'T1211', 'T1505'],
     ARRAY['web-attack', 'application-security'],
-    true
+    true,
+    0,
+    now(),
+    now()
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- =============================================================================

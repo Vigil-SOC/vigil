@@ -1,0 +1,124 @@
+[
+  {
+    "name": "look-alike domain asks the recipient to enter a password",
+    "input": {
+      "id": "finding-mail-014",
+      "title": "User reported an unexpected password message",
+      "description": "Alex Chen reported a message and did not follow its link. The display name is Microsoft Account Team. The envelope sender and the reply-to are both security@micr0soft-login.example, which is not Alex's domain. The subject says the password expires today and the body tells Alex to sign in. The visible link text is the Microsoft sign-in host; the destination host is micr0soft-login.example. SPF, DKIM and DMARC each failed.",
+      "severity": "high",
+      "source": "user_report",
+      "external_id": "mail-report-014",
+      "timestamp": "2026-09-23T14:05:00Z",
+      "raw_data": {
+        "display_name": "Microsoft Account Team",
+        "envelope_from": "security@micr0soft-login.example",
+        "reply_to": "security@micr0soft-login.example",
+        "sender_domain": "micr0soft-login.example",
+        "recipient": "alex.chen@contoso.com",
+        "subject": "Your password expires today",
+        "body": "Your password expires today. Sign in now to keep the account.",
+        "spf": "fail",
+        "dkim": "fail",
+        "dmarc": "fail",
+        "urls": [
+          {
+            "display": "https://login.microsoftonline.com",
+            "destination": "https://micr0soft-login.example/login"
+          }
+        ],
+        "attachments": [],
+        "user_clicked": false,
+        "user_opened_attachment": false
+      },
+      "iocs": {
+        "domains": ["micr0soft-login.example"],
+        "urls": ["https://micr0soft-login.example/login"],
+        "emails": ["security@micr0soft-login.example", "alex.chen@contoso.com"]
+      }
+    },
+    "expect": [
+      "verdict: malicious",
+      "lure: credential",
+      "technique: T1566.002"
+    ]
+  },
+  {
+    "name": "unexpected sender attached a macro-enabled document",
+    "input": {
+      "id": "finding-mail-027",
+      "title": "User reported a document they were asked to open",
+      "description": "Sam Rivera reported a message and did not open the file. The display name is Jordan Blake. The envelope sender and the reply-to are both j.blake@northwind-docs.example, which is not Sam's domain. The subject asks Sam to review the attached document. The body says to enable content so the document will display. There is no link.",
+      "severity": "high",
+      "source": "user_report",
+      "external_id": "mail-report-027",
+      "timestamp": "2026-09-23T15:40:00Z",
+      "raw_data": {
+        "display_name": "Jordan Blake",
+        "envelope_from": "j.blake@northwind-docs.example",
+        "reply_to": "j.blake@northwind-docs.example",
+        "sender_domain": "northwind-docs.example",
+        "recipient": "sam.rivera@contoso.com",
+        "subject": "Please review the attached document",
+        "body": "Enable content so the document will display.",
+        "spf": "fail",
+        "dkim": "fail",
+        "dmarc": "fail",
+        "urls": [],
+        "attachments": [
+          {
+            "name": "Q3-review.docm",
+            "type": "application/vnd.ms-word.document.macroEnabled.12",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "user_clicked": false,
+        "user_opened_attachment": false
+      },
+      "iocs": {
+        "domains": ["northwind-docs.example"],
+        "emails": ["j.blake@northwind-docs.example"],
+        "hashes": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+      }
+    },
+    "expect": [
+      "verdict: malicious",
+      "technique: T1566.001"
+    ]
+  },
+  {
+    "name": "facilities notice from the recipient's own domain",
+    "input": {
+      "id": "finding-mail-041",
+      "title": "User forwarded an office-closure reminder",
+      "description": "Priya Nair forwarded a message they were unsure about. They did not click or open anything. The display name is Contoso Facilities. The envelope sender and the reply-to are both facilities@contoso.com, the same domain as Priya. The subject is a reminder that the office is closed Monday 6 October. The body is the building schedule for that day. SPF, DKIM and DMARC each passed. There is no URL, no file, and no request for a password, a code or a payment change.",
+      "severity": "low",
+      "source": "user_report",
+      "external_id": "mail-report-041",
+      "timestamp": "2026-09-23T16:10:00Z",
+      "raw_data": {
+        "display_name": "Contoso Facilities",
+        "envelope_from": "facilities@contoso.com",
+        "reply_to": "facilities@contoso.com",
+        "sender_domain": "contoso.com",
+        "recipient": "priya.nair@contoso.com",
+        "subject": "Office closed Monday 6 October",
+        "body": "The office is closed Monday 6 October. The building reopens Tuesday at 08:00.",
+        "spf": "pass",
+        "dkim": "pass",
+        "dmarc": "pass",
+        "urls": [],
+        "attachments": [],
+        "user_clicked": false,
+        "user_opened_attachment": false
+      },
+      "iocs": {
+        "domains": ["contoso.com"],
+        "emails": ["facilities@contoso.com", "priya.nair@contoso.com"]
+      }
+    },
+    "expect": [
+      "next: dismiss",
+      "lure: none"
+    ]
+  }
+]

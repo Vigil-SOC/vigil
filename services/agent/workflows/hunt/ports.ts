@@ -1,3 +1,4 @@
+import type { Narrative } from "./narrative.js";
 import type {
   Digest,
   DecisionResult,
@@ -20,7 +21,9 @@ export interface DirectiveQueue {
 // The Hunt Lead: one digest in, exactly one typed decision out. Implementations
 // never touch the ledger — the controller applies, validates, and persists.
 export interface DecisionProvider {
-  decide(digest: Digest): Promise<DecisionResult>;
+  // The operator's abort, not the lease's. Optional because a scripted provider has
+  // nothing to cancel; a real one must pass it on.
+  decide(digest: Digest, signal?: AbortSignal): Promise<DecisionResult>;
 }
 
 // The evidence source. Returns records rather than appending them, so a worker
@@ -33,6 +36,12 @@ export interface WorkerDispatcher {
 // proven. Like a worker it returns a finding the controller appends as Hunt
 export interface DisconfirmationCritic {
   argueNull(check: NullCheckInput): Promise<NullCheckResult>;
+}
+
+// Writes the account a person reads first, from the hunt's own record. Returns it
+// rather than journaling it: the controller decides what lands on the ledger.
+export interface Narrator {
+  narrate(input: string): Promise<Narrative>;
 }
 
 // Every chain that applies to one entity, run without a model. A function rather

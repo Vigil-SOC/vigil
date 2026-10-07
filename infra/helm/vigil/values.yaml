@@ -247,8 +247,8 @@ agentServe:
 postgresql:
   enabled: true
   image:
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   auth:
     database: deeptempo_soc
@@ -280,7 +280,8 @@ postgresql:
     # Either set .existingSecret + .existingSecretKey OR provide password via secrets.postgresPassword.
     existingSecret: ""
     existingSecretKey: POSTGRES_PASSWORD
-    # If true, append ?sslmode=require to the DATABASE_URL.
+    # Unused: Helm injects discrete POSTGRES_* vars, not a DSN. Require SSL with
+    # POSTGRES_SSL_MODE=require via extraConfig / extraEnv.
     sslRequired: false
 
   # Bitnami postgresql subchart (issue #114). When enabled, the MVP in-chart
@@ -331,14 +332,14 @@ redis:
     storageClassName: ""
     accessModes:
       - ReadWriteOnce
-  # Match docker-compose defaults: AOF on, 512MB cap, LRU eviction.
+  # Match docker-compose defaults: AOF on, 512MB cap, noeviction (a full Redis rejects writes loudly; it holds queues and dedup state, so it must never silently evict).
   args:
     - --appendonly
     - "yes"
     - --maxmemory
     - 512mb
     - --maxmemory-policy
-    - allkeys-lru
+    - noeviction
   resources:
     requests:
       cpu: 100m
@@ -382,11 +383,13 @@ dbInit:
   enabled: true
   image:
     # Uses the same image as Postgres so psql is available.
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
-  # Update this list when new init SQL lands.
+  # Update this list when new init SQL lands, in filename order (the order
+  # compose applies them); tests/unit/_ratchets/test_helm_db_init_sql_files.py
+  # fails until you do.
   sqlFiles:
     - 01_init_schema.sql
     - 04_config_tables.sql
@@ -408,6 +411,26 @@ dbInit:
     - 19_agent_ledger.sql
     - 20_agent_directives.sql
     - 21_agent_run_leases.sql
+    - 22_workflow_run_deleted.sql
+    - 23_drop_finding_embedding.sql
+    - 24_finding_mitre_predictions.sql
+    - 25_nullable_finding_score_timestamp.sql
+    - 26_episodic_memory.sql
+    - 27_episodic_read_log.sql
+    - 28_case_closure_actor.sql
+    - 29_episodic_distil_failures.sql
+    - 30_approval_action_reversibility.sql
+    - 30_vigil_app_role.sql
+    - 31_agent_ledger_hash_chain.sql
+    - 32_drop_attack_layers.sql
+    - 33_episodic_verdict_techniques.sql
+    - 34_drop_skills.sql
+    - 34_mcp_credentials.sql
+    - 35_ip_exclusions.sql
+    - 36_workflow_runs_triggered_by_index.sql
+    - 37_workflow_runs_outcome.sql
+    - 38_custom_agent_fallback_model.sql
+    - 39_case_findings_finding_index.sql
   resources:
     requests:
       cpu: 50m
@@ -428,6 +451,8 @@ ingress:
   hosts:
     - host: vigil.local
       paths:
+        # Subdirectory deploys (e.g. /vigil) must set config.VIGIL_CONTEXT_PATH
+        # to the same string; the chart does not derive one from the other.
         - path: /
           pathType: Prefix
   tls: []
@@ -464,6 +489,39 @@ stateDirectory:
   mountPath: /var/lib/vigil
   volume:
     emptyDir: {}
+
+# -----------------------------------------------------------------------------
+# Custom CA bundle (TLS-inspecting proxies)
+# -----------------------------------------------------------------------------
+# Mount an operator-supplied PEM into backend, daemon, llm-worker, agent-worker,
+# and agent-serve, and set SSL_CERT_FILE, REQUESTS_CA_BUNDLE, and
+# NODE_EXTRA_CA_CERTS to that path. Python and Node then trust the inspecting
+# CA with verification still enabled. MCP children inherit the same vars.
+# SSL_CERT_FILE replaces the default store — the PEM should include public CAs
+# as well as the inspecting one. NODE_EXTRA_CA_CERTS appends.
+#
+# This trusts the CA for every host Vigil calls. For a private CA that signs one
+# self-hosted server (a Wazuh indexer, an internal Splunk, MISP, PAN-OS or
+# VStrike), set that integration's "CA Certificate Path" in Settings, or
+# <INTEGRATION>_CA_CERT_PATH (e.g. ELASTIC_SIEM_CA_CERT_PATH) via extraEnv,
+# instead: that PEM is trusted for that integration's clients only. The file
+# must be readable in the backend and daemon pods; this block does not mount it.
+#
+# Point at an existing Secret or ConfigMap — this chart does not create one.
+# Leave both names empty (the default) to skip the mount. Prefer the Secret
+# when both are set.
+#
+#   kubectl create secret generic vigil-proxy-ca \
+#     --from-file=ca.crt=/path/to/corporate-ca.pem
+#
+#   caBundle:
+#     existingSecret: vigil-proxy-ca
+#     key: ca.crt
+caBundle:
+  existingSecret: ""
+  existingConfigMap: ""
+  key: ca.crt
+  mountPath: /etc/vigil/ca-bundle.pem
 
 # -----------------------------------------------------------------------------
 # Pod security
@@ -522,7 +580,8 @@ secrets:
   # Required (at least one of these must be set for the backend to do useful work).
   anthropicApiKey: ""
 
-  # DB. Used by dbInit and DATABASE_URL assembly.
+  # DB password. Materialized as POSTGRES_PASSWORD; db-init and app pods
+  # consume the discrete POSTGRES_* parts, not an assembled DSN.
   postgresPassword: "change-me-before-production"
 
   # Required when DEV_MODE=false (see env.example). Generate with:
@@ -541,7 +600,6 @@ secrets:
   crowdstrikeClientSecret: ""
   elasticApiKey: ""
   elasticPassword: ""
-  timesketchPassword: ""
   criblPassword: ""
   darktraceWebhookSecret: ""
   vstrikeApiKey: ""
@@ -588,6 +646,7 @@ config:
   AUTH_MIN_PASSWORD_LENGTH: "12"
   AUTH_PASSWORD_HISTORY_LIMIT: "5"
   PASSWORD_RESET_TTL_SECONDS: "3600"
+  # Include the context path under a subdirectory (e.g. https://example.com/vigil).
   VIGIL_FRONTEND_URL: ""
 
   # Email backend
@@ -600,6 +659,10 @@ config:
 
   # HTTP security headers + CORS
   VIGIL_CORS_ORIGINS: ""
+  # Sub-directory the app is served under (e.g. "/vigil"). Empty = root.
+  # Must match ingress path; the chart does not derive one from the other.
+  # The reverse proxy must forward the prefix unchanged.
+  VIGIL_CONTEXT_PATH: ""
   VIGIL_HSTS_ENABLED: "true"
   VIGIL_HSTS_MAX_AGE: "31536000"
   VIGIL_FRAME_OPTIONS_ENABLED: "true"
@@ -611,30 +674,25 @@ config:
   # CSRF
   VIGIL_CSRF_ENABLED: "true"
   VIGIL_CSRF_REPORT_ONLY: "true"
+  # Added to the always-exempt set (webhooks, ingestion, the /mcp surface,
+  # the agent layer's /internal endpoints) rather than replacing it.
+  # App-root relative; the API prefixes each entry with VIGIL_CONTEXT_PATH.
   VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/,/api/ingest/"
 
   # Auth cookies
   VIGIL_COOKIE_SECURE: "true"
   VIGIL_COOKIE_SAMESITE: "strict"
 
-  # MemPalace
-  MEMPALACE_PALACE_PATH: "/app/data/mempalace/palace"
-  MEMPALACE_DAEMON_ENABLED: "false"
-
   # Integrations — non-secret URLs/usernames
   SPLUNK_URL: ""
   SPLUNK_USERNAME: ""
+  SPLUNK_VERIFY_SSL: "true"
   CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
-  ELASTIC_HOST: ""
-  ELASTIC_KIBANA_URL: ""
-  ELASTIC_USERNAME: ""
-  ELASTIC_VERIFY_SSL: "true"
-  ELASTIC_INDEX_PATTERN: ".alerts-security.alerts-default"
-  TIMESKETCH_URL: ""
-  TIMESKETCH_USERNAME: ""
-  CRIBL_URL: ""
-  CRIBL_USERNAME: ""
-  CRIBL_WORKER_GROUP: "default"
+  ELASTIC_SIEM_ELASTICSEARCH_URL: ""
+  ELASTIC_SIEM_KIBANA_URL: ""
+  ELASTIC_SIEM_USERNAME: ""
+  ELASTIC_SIEM_VERIFY_SSL: "true"
+  ELASTIC_SIEM_INDEX_PATTERN: ".alerts-security.alerts-default"
   DARKTRACE_ENABLED: "false"
   DARKTRACE_URL: ""
   DARKTRACE_MAX_BODY_KB: "1024"
@@ -667,9 +725,12 @@ config:
   DAEMON_WEBHOOK_PORT: "8081"
   DAEMON_AUTO_TRIAGE: "true"
   DAEMON_AUTO_ENRICH: "true"
-  DAEMON_BATCH_SIZE: "10"
   DAEMON_AUTO_RESPONSE: "true"
   DAEMON_CONFIDENCE_THRESHOLD: "0.90"
+  DAEMON_REVIEW_THRESHOLD: "0.85"
+  DAEMON_MONITOR_THRESHOLD: "0.70"
+  DAEMON_CRITICAL_ACTION_FLOOR: "0.70"
+  DAEMON_HIGH_ACTION_FLOOR: "0.80"
   DAEMON_FORCE_APPROVAL: "false"
   DAEMON_DRY_RUN: "false"
   DAEMON_ESCALATION_ENABLED: "true"
@@ -677,8 +738,9 @@ config:
   DAEMON_SLACK_ENABLED: "true"
   DAEMON_SLACK_CHANNEL: "#soc-alerts"
   DAEMON_PAGERDUTY_ENABLED: "false"
-  DAEMON_THREAT_HUNT_ENABLED: "true"
   DAEMON_THREAT_HUNT_INTERVAL: "86400"
+  # Ages out only the episodic read log; findings and processed events are
+  # kept until an admin deletes them.
   DAEMON_CLEANUP_RETENTION_DAYS: "90"
   DAEMON_METRICS_ENABLED: "true"
   DAEMON_METRICS_PORT: "9090"
@@ -688,28 +750,19 @@ config:
   # Autonomous orchestrator
   ORCHESTRATOR_ENABLED: "false"
   ORCHESTRATOR_LOOP_INTERVAL: "60"
-  ORCHESTRATOR_MAX_CONCURRENT_AGENTS: "3"
+  ORCHESTRATOR_MAX_AGENTS: "3"
   ORCHESTRATOR_MAX_ITERATIONS: "50"
   ORCHESTRATOR_MAX_COST: "5.0"
   ORCHESTRATOR_MAX_RUNTIME: "3600"
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
-  ORCHESTRATOR_MAX_DAILY_COST: "100.0"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
-  ORCHESTRATOR_AUTO_ASSIGN: "true"
-  ORCHESTRATOR_AUTO_SEVERITIES: "critical,high"
   ORCHESTRATOR_DRY_RUN: "false"
-  ORCHESTRATOR_DEDUP_WINDOW: "30"
-  ORCHESTRATOR_AGENT_LOOP_DELAY: "2"
-  ORCHESTRATOR_CONTEXT_MAX_CHARS: "10000"
-  ORCHESTRATOR_PLAN_MODEL: "claude-sonnet-4-5-20250929"
-  ORCHESTRATOR_REVIEW_MODEL: "claude-sonnet-4-5-20250929"
 
   # OTEL — disabled by default; turn on when an OTEL collector is reachable.
   VIGIL_OTEL_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
   OTEL_TRACES_SAMPLER: "parentbased_always_on"
-  VIGIL_OTEL_LOG_LLM_CONTENT: "false"
 
   # Kafka — disabled by default
   KAFKA_ENABLED: "false"
@@ -729,13 +782,8 @@ config:
 
   # Multi-provider LLM (non-secret defaults; per-provider config is stored
   # per-row in llm_provider_configs after first boot).
-  BIFROST_ENABLED: "false"
   BIFROST_URL: "http://bifrost:8080"
   OLLAMA_URL: "http://ollama:11434"
-  OPENAI_ENABLED: "false"
-  OPENAI_BASE_URL: "https://api.openai.com/v1"
-  OPENAI_ORGANIZATION: ""
-  DEFAULT_LLM_PROVIDER: "anthropic"
 
 # Additional ad-hoc env entries merged into every pod. Useful for site-specific
 # settings that don't warrant a top-level config key.

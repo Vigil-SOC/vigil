@@ -9,10 +9,20 @@ Config comes from the descriptor: ``url`` from the stored integration config
 under the ``cape-sandbox`` id, ``api_key`` from the encrypted secrets store.
 """
 
+import sys
+from pathlib import Path
+
+# Spawned as ``python3 core/integrations/<vendor>/tool.py`` with a narrowed env,
+# so the repo root is not on sys.path and PYTHONPATH is not forwarded. Add it
+# here so the ``core.*`` imports below resolve; otherwise they fail at spawn.
+_REPO_ROOT = str(Path(__file__).resolve().parents[3])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import asyncio
+import base64
 import json
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -22,11 +32,10 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.cape_sandbox.descriptor import CAPE_SANDBOX
 
 logger = logging.getLogger(__name__)
-server = Server("cape-sandbox")
-
 
 DEFAULT_TIMEOUT = 30
 REPORT_TIMEOUT = 60
@@ -98,22 +107,17 @@ def _extract_iocs(report: Dict[str, Any]) -> Dict[str, List[str]]:
     return {k: sorted(v) for k, v in iocs.items()}
 
 
-@server.list_tools()
 async def handle_list_tools() -> List[types.Tool]:
     return [
         types.Tool(
             name="cape_submit_file",
             description=(
                 "Submit a file to CAPE Sandbox for detonation. "
-                "Accepts a local file_path or base64 file_b64 + filename."
+                "Accepts base64 file_b64 + filename."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Absolute path to a local file",
-                    },
                     "file_b64": {
                         "type": "string",
                         "description": "Base64-encoded file contents",
@@ -210,7 +214,6 @@ async def handle_list_tools() -> List[types.Tool]:
     ]
 
 
-@server.call_tool()
 async def handle_call_tool(name: str, arguments: Optional[dict]):
     cfg = _load_config()
     base = cfg["url"]
@@ -224,7 +227,6 @@ async def handle_call_tool(name: str, arguments: Optional[dict]):
 
     try:
         if name == "cape_submit_file":
-            file_path = args.get("file_path")
             file_b64 = args.get("file_b64")
             filename = args.get("filename")
             data = {}
@@ -233,36 +235,19 @@ async def handle_call_tool(name: str, arguments: Optional[dict]):
             if args.get("timeout"):
                 data["timeout"] = str(args["timeout"])
 
-            if file_path:
-                with open(file_path, "rb") as fh:
-                    files = {"file": (os.path.basename(file_path), fh)}
-                    resp = httpx.post(
-                        f"{base}/apiv2/tasks/create/file/",
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=DEFAULT_TIMEOUT,
-                    )
-            elif file_b64:
-                if not filename:
-                    return result(
-                        {"error": "filename required when submitting via file_b64"}
-                    )
-                import base64
-
-                files = {"file": (filename, base64.b64decode(file_b64))}
-                resp = httpx.post(
-                    f"{base}/apiv2/tasks/create/file/",
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=DEFAULT_TIMEOUT,
-                )
-            else:
+            if not file_b64:
+                return result({"error": "Provide file_b64 and filename"})
+            if not filename:
                 return result(
-                    {"error": "Provide either file_path or (file_b64 + filename)"}
+                    {"error": "filename required when submitting via file_b64"}
                 )
-
+            resp = httpx.post(
+                f"{base}/apiv2/tasks/create/file/",
+                headers=headers,
+                files={"file": (filename, base64.b64decode(file_b64))},
+                data=data,
+                timeout=DEFAULT_TIMEOUT,
+            )
             resp.raise_for_status()
             return result(resp.json())
 
@@ -384,6 +369,21 @@ async def handle_call_tool(name: str, arguments: Optional[dict]):
     except Exception as e:
         logger.exception("CAPE tool call failed")
         return result({"error": str(e)})
+
+
+async def _on_list_tools(_ctx, _params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(_ctx, params):
+    return await run_tool(handle_call_tool, params)
+
+
+server = Server(
+    "cape-sandbox",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 
 async def main() -> None:

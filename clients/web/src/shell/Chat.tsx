@@ -1,30 +1,24 @@
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { format } from 'date-fns'
 import { Markdown } from '../shared/Markdown'
 import { Icon } from '../shared/icons'
-import {
+import { Cost } from '../shared/cost'
+import api, {
   agentsApi,
-  aiConfigApi,
-  analyticsApi,
-  claudeApi,
   conversationsApi,
-  mcpApi,
   reasoningApi,
   streamFetch,
-  type CostEstimate,
   type ConversationDetail,
   type ImportConversationInput,
 } from '../services/api'
 import { notificationService } from '../services/notifications'
 import { useConversations } from './useConversations'
-import { Popup, Select } from '../shared/ui'
+import { Popup } from '../shared/ui'
 
 interface ChatAgent {
   id: string
@@ -43,9 +37,20 @@ interface ChatMsg {
 
 interface SessionSummary {
   total_interactions: number
-  total_cost_usd: number
+  total_cost_usd: number | null
+  unpriced_calls: number
   total_input_tokens: number
   total_output_tokens: number
+}
+
+function sessionSummaryFrom(s: Partial<SessionSummary>): SessionSummary {
+  return {
+    total_interactions: s.total_interactions ?? 0,
+    total_cost_usd: s.total_cost_usd ?? null,
+    unpriced_calls: s.unpriced_calls ?? 0,
+    total_input_tokens: s.total_input_tokens ?? 0,
+    total_output_tokens: s.total_output_tokens ?? 0,
+  }
 }
 interface TraceItem {
   interaction_id: string
@@ -69,14 +74,7 @@ interface TraceDetail {
   tool_results?: Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>
 }
 
-const MODEL = 'claude-sonnet-4-6'
-const CONTEXT_WINDOW = 200000
-// shown only until the live model list arrives from GET /claude/models
-const MODEL_FALLBACK = [{ id: MODEL, name: 'Claude Sonnet 4.6' }]
-const newSessionId = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `sess-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+const newSessionId = () => crypto.randomUUID()
 
 interface Conversation {
   id: string
@@ -152,19 +150,39 @@ function toChatMsgs(msgs: ConversationDetail['messages']): ChatMsg[] {
     )
 }
 
-interface ChatSettings {
-  model: string
-  maxTokens: number
-  systemPrompt: string
+interface CaseHit {
+  id: string
+  title: string
 }
-const SETTINGS_KEY = 'soc.chat.settings'
-const DEFAULT_SETTINGS: ChatSettings = { model: MODEL, maxTokens: 4096, systemPrompt: '' }
-function loadSettings(): ChatSettings {
-  try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }
-  } catch {
-    return DEFAULT_SETTINGS
+
+function caseHits(data: unknown): CaseHit[] {
+  const root = data as { cases?: unknown; comments?: unknown; evidence?: unknown } | null
+  const seen = new Set<string>()
+  const hits: CaseHit[] = []
+  for (const bucket of [root?.cases, root?.comments, root?.evidence]) {
+    if (!Array.isArray(bucket)) continue
+    for (const item of bucket) {
+      const row = item as { case_id?: unknown; title?: unknown; name?: unknown; content?: unknown }
+      if (typeof row.case_id !== 'string' || !row.case_id || seen.has(row.case_id)) continue
+      seen.add(row.case_id)
+      const title = [row.title, row.name, row.content].find(
+        (value) => typeof value === 'string' && value.trim(),
+      ) as string | undefined
+      hits.push({ id: row.case_id, title: title?.trim() || row.case_id })
+    }
   }
+  return hits
+}
+
+/** The token after the @ still being typed, or null when the draft is not mentioning. */
+function mentionToken(text: string): string | null {
+  const match = text.match(/(^|\s)@(\S*)$/)
+  return match ? match[2] : null
+}
+
+function dayLabel(ts: number | null): string {
+  if (ts == null || Number.isNaN(ts)) return 'Undated'
+  return format(new Date(ts), 'MMM d, yyyy')
 }
 
 function traceTime(s?: string): string {
@@ -183,10 +201,51 @@ function safeJson(v: unknown): string {
   }
 }
 
-function VigilMessage({ text }: { text: string; ms?: number }) {
+function citedIds(text: string, ids: readonly string[]): string[] {
+  return ids.filter((id) => id.length > 0 && hasId(text, id))
+}
+
+function hasId(text: string, id: string): boolean {
+  const needle = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?:^|[^A-Za-z0-9_-])${needle}(?![A-Za-z0-9_-])`).test(text)
+}
+
+function CiteRow({
+  text,
+  ids,
+  onCite,
+}: {
+  text: string
+  ids: readonly string[]
+  onCite?: (id: string) => void
+}) {
+  const hits = citedIds(text, ids)
+  if (hits.length === 0) return null
+  return (
+    <div className="cite-row">
+      {hits.map((id) => (
+        <button key={id} type="button" className="cite-chip" onClick={() => onCite?.(id)}>
+          {id}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function VigilMessage({
+  text,
+  evidenceIds,
+  onCite,
+}: {
+  text: string
+  ms?: number
+  evidenceIds?: readonly string[]
+  onCite?: (id: string) => void
+}) {
   return (
     <div className="msg vigil">
       <div className="body"><Markdown>{text}</Markdown></div>
+      {evidenceIds && <CiteRow text={text} ids={evidenceIds} onCite={onCite} />}
       <div className="msg-actions">
         <button title="Copy" onClick={() => navigator.clipboard?.writeText(text)}><Icon name="copy" size={15} /></button>
         <button title="More"><Icon name="more" size={15} /></button>
@@ -199,24 +258,28 @@ export default function Chat({
   open,
   onClose,
   seed,
-  width = 420,
-  minWidth = 360,
-  maxWidth = 720,
-  onWidthChange,
-  onWidthCommit,
-  onResizeStateChange,
+  pageKey,
+  pageTitle,
   onSeedConsumed,
+  pinned = false,
+  lockedCaseId,
+  evidenceIds = [],
+  onCite,
 }: {
   open: boolean
   onClose: () => void
   seed?: string | null
-  width?: number
-  minWidth?: number
-  maxWidth?: number
-  onWidthChange?: (width: number) => void
-  onWidthCommit?: (width: number) => void
-  onResizeStateChange?: (resizing: boolean) => void
+  /** Route key (`current` in SocConsole). Stored on the conversation; the title is display-only. */
+  pageKey?: string
+  pageTitle?: string
   onSeedConsumed?: () => void
+  /** In-flow case composer. Omits the dock frame and header. */
+  pinned?: boolean
+  /** Sent on every turn. Hides @ and the remove-case control. */
+  lockedCaseId?: string
+  /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
+  evidenceIds?: readonly string[]
+  onCite?: (id: string) => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
@@ -225,12 +288,9 @@ export default function Chat({
   // true between a `tool_processing` event and the next `text` chunk
   const [isProcessingTools, setIsProcessingTools] = useState(false)
   const [agents, setAgents] = useState<ChatAgent[]>([])
-  const [agentId, setAgentId] = useState('')
-  const [menuOpen, setMenuOpen] = useState(false)
   const [agentsInfoOpen, setAgentsInfoOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [resizing, setResizing] = useState(false)
+  const [histQuery, setHistQuery] = useState('')
   // the server is the source of truth; this shows when it can't be reached
   const [history, setHistory] = useState<Conversation[]>(() => loadHistory())
   const [showArchived, setShowArchived] = useState(false)
@@ -238,21 +298,13 @@ export default function Chat({
     items: serverConvos,
     phase: histPhase,
     reload: reloadHistory,
-  } = useConversations(showArchived)
+  } = useConversations(showArchived, histQuery)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
-  const [savedSettings] = useState(loadSettings)
-  const [model, setModel] = useState(savedSettings.model)
-  const [maxTokens, setMaxTokens] = useState(savedSettings.maxTokens)
-  const [systemPrompt, setSystemPrompt] = useState(savedSettings.systemPrompt)
-  const [models, setModels] = useState<{ id: string; name: string }[]>([])
-  // read by the stale-model self-heal below
-  const [configuredDefault, setConfiguredDefault] = useState<string | null>(null)
-  const [configSettled, setConfigSettled] = useState(false)
-  const [mcpStatus, setMcpStatus] = useState<{ available: number; total: number } | null>(null)
-  // null until the first debounced estimate lands
-  const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null)
-  const [exactTokens, setExactTokens] = useState<number | null>(null)
+  // null: the field is omitted. "" clears a case already stored on the row.
+  const [caseId, setCaseId] = useState<string | null>(lockedCaseId ?? null)
+  const [threadOpen, setThreadOpen] = useState(false)
+  const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceItems, setTraceItems] = useState<TraceItem[]>([])
@@ -263,23 +315,28 @@ export default function Chat({
   const bodyRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
   const openerRef = useRef<HTMLElement | null>(null)
   const panelRef = useRef<HTMLElement>(null)
-  const resizeRef = useRef<{
-    pointerId: number
-    startX: number
-    startWidth: number
-    lastWidth: number
-  } | null>(null)
   const currentKeyRef = useRef<string | null>(null)
-  // a saved setting or an in-session pick beats the configured chat_default
-  const settingsExistedRef = useRef<boolean>(
-    typeof localStorage !== 'undefined' && localStorage.getItem(SETTINGS_KEY) != null,
-  )
-  const userPickedModelRef = useRef(false)
+  const caseIdRef = useRef<string | null>(lockedCaseId ?? null)
+  const loadGen = useRef(0)
+  const turnGen = useRef(0)
+  const localTurn = useRef(false)
+  const messagesRef = useRef<ChatMsg[]>([])
+  messagesRef.current = messages
+  // false until the locked case's conversation list has settled
+  const caseReady = useRef(!lockedCaseId)
+  const pendingSend = useRef<string | null>(null)
+  if (lockedCaseId) caseIdRef.current = lockedCaseId
+  const putMessages = (next: ChatMsg[]) => {
+    messagesRef.current = next
+    setMessages(next)
+  }
+  // true once this session id has a conversation row, so an @ attach can PATCH
+  const persistedRef = useRef(false)
 
   useEffect(() => {
+    if (pinned) return
     if (open) {
       openerRef.current = document.activeElement as HTMLElement | null
       taRef.current?.focus()
@@ -287,42 +344,27 @@ export default function Chat({
       openerRef.current?.focus?.()
       openerRef.current = null
     }
-  }, [open])
-
-  useEffect(() => {
-    if (open) return
-    resizeRef.current = null
-    setResizing(false)
-    onResizeStateChange?.(false)
-  }, [open, onResizeStateChange])
-
-  useEffect(
-    () => () => {
-      resizeRef.current = null
-      onResizeStateChange?.(false)
-    },
-    [onResizeStateChange],
-  )
+  }, [open, pinned])
 
   // any of the dock's own dialogs (they own their Esc + focus handling)
-  const anyPopupOpen = historyOpen || settingsOpen || agentsInfoOpen || traceOpen
+  const anyPopupOpen = historyOpen || agentsInfoOpen || traceOpen
 
   // never while a Popup is open: it handles its own Esc, and closing the dock
   // too would dismiss both at once
   useEffect(() => {
-    if (!open) return
+    if (!open || pinned) return
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' || anyPopupOpen) return
-      if (menuOpen) setMenuOpen(false)
+      if (mentionHits) setMentionHits(null)
       else onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, menuOpen, onClose, anyPopupOpen])
+  }, [open, pinned, mentionHits, onClose, anyPopupOpen])
 
   // unless a Popup is up, which traps focus itself
   const onPanelKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== 'Tab' || !open || anyPopupOpen) return
+    if (pinned || e.key !== 'Tab' || !open || anyPopupOpen) return
     const root = panelRef.current
     if (!root) return
     const f = Array.from(
@@ -348,70 +390,10 @@ export default function Chat({
       .listAgents()
       .then((res) => {
         const raw = (res.data?.agents || []) as ChatAgent[]
-        const list = raw.map((a) => ({ id: a.id, name: a.name, specialization: a.specialization, description: a.description, icon: a.icon, color: a.color }))
-        setAgents(list)
-        const corr = list.find((a) => a.id === 'correlator' || /correlat/i.test(a.name))
-        if (corr) setAgentId(corr.id)
+        setAgents(raw.map((a) => ({ id: a.id, name: a.name, specialization: a.specialization, description: a.description, icon: a.icon, color: a.color })))
       })
       .catch(() => {})
   }, [])
-
-  // refetched on every open, so a provider activated later shows up without a
-  // full page reload (#409)
-  useEffect(() => {
-    if (!open) return
-    claudeApi
-      .getModels()
-      .then((r) => setModels((r.data?.models || []) as { id: string; name: string }[]))
-      .catch(() => {})
-  }, [open])
-
-  // fetched once, the first time the dock opens
-  const metaLoadedRef = useRef(false)
-  useEffect(() => {
-    if (!open || metaLoadedRef.current) return
-    metaLoadedRef.current = true
-    aiConfigApi
-      .getConfig()
-      .then((r) => {
-        const configured = r.data?.assignments?.chat_default?.model_id
-        if (configured) setConfiguredDefault(configured)
-        if (configured && !settingsExistedRef.current && !userPickedModelRef.current) {
-          setModel(configured)
-        }
-      })
-      .catch(() => {})
-      .finally(() => setConfigSettled(true))
-    mcpApi
-      .getStatuses()
-      .then((r) => {
-        const statuses = (r.data?.statuses || []) as { status?: string }[]
-        const available = statuses.filter((s) => s.status && s.status !== 'error' && s.status !== 'not found').length
-        setMcpStatus({ available, total: statuses.length })
-      })
-      .catch(() => {})
-  }, [open])
-
-  // Self-heal a model that is no longer offered (a removed provider, a rename).
-  // Without this a stale localStorage model 500s every send until the user
-  // re-picks by hand.
-  useEffect(() => {
-    if (!models.length || !configSettled) return
-    if (model && models.some((m) => m.id === model)) return
-    const fallback =
-      configuredDefault && models.some((m) => m.id === configuredDefault)
-        ? configuredDefault
-        : models[0].id
-    if (fallback && fallback !== model) setModel(fallback)
-  }, [models, configSettled, configuredDefault, model])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ model, maxTokens, systemPrompt }))
-    } catch {
-      /* empty */
-    }
-  }, [model, maxTokens, systemPrompt])
 
   useEffect(() => {
     const el = bodyRef.current
@@ -425,83 +407,69 @@ export default function Chat({
     ta.style.height = Math.min(ta.scrollHeight, 130) + 'px'
   }, [draft])
 
+  const token = lockedCaseId ? null : mentionToken(draft)
   useEffect(() => {
-    if (!menuOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    if (token == null || !token.trim()) {
+      setMentionHits(token == null ? null : [])
+      return
     }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [menuOpen])
-
-  const agentName = agents.find((a) => a.id === agentId)?.name || 'Default agent'
-
-  // debounced + abortable; keeps the previous estimate on failure
-  useEffect(() => {
-    if (!open) return
-    const ctrl = new AbortController()
-    const t = setTimeout(() => {
-      const payloadMsgs = [
-        ...messages
-          .filter((m) => m.role !== 'error')
-          .map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
-        ...(draft.trim() ? [{ role: 'user', content: draft }] : []),
-      ]
-      if (payloadMsgs.length === 0 && !systemPrompt) {
-        setCostEstimate(null)
-        setExactTokens(null)
-        return
-      }
-      analyticsApi
-        .estimateCost({
-          provider_type: 'anthropic',
-          model_id: model,
-          messages: payloadMsgs,
-          system_prompt: systemPrompt || undefined,
-          max_tokens: maxTokens,
-        })
-        .then((r) => {
-          if (ctrl.signal.aborted) return
-          setCostEstimate(r.data)
-          setExactTokens(r.data.input_tokens)
+    let live = true
+    const timer = setTimeout(() => {
+      api
+        .get('/cases/search/full-text', { params: { query: token } })
+        .then((res) => {
+          if (live) setMentionHits(caseHits(res.data))
         })
         .catch(() => {
-          /* keep the previous estimate */
+          if (live) setMentionHits([])
         })
-    }, 400)
+    }, 150)
     return () => {
-      clearTimeout(t)
-      ctrl.abort()
+      live = false
+      clearTimeout(timer)
     }
-  }, [open, messages, draft, systemPrompt, model, maxTokens])
+  }, [token])
 
-  // used only until the first server estimate lands
-  const heuristicTokens = useMemo(() => {
-    const chars =
-      messages.reduce((n, m) => n + m.text.length, 0) +
-      streamText.length + systemPrompt.length + draft.length
-    return Math.round(chars / 4)
-  }, [messages, streamText, systemPrompt, draft])
-  const estimatedTokens = exactTokens ?? heuristicTokens
-  const ctxPct = Math.min((estimatedTokens / CONTEXT_WINDOW) * 100, 100)
-  const ctxState = estimatedTokens > 150000 ? 'danger' : estimatedTokens > 100000 ? 'warn' : 'ok'
-  const costTitle = costEstimate
-    ? `${
-        costEstimate.token_count_method === 'anthropic_count_tokens'
-          ? 'Exact token count via Anthropic count_tokens.'
-          : costEstimate.token_count_method === 'tiktoken'
-            ? 'Token count via tiktoken.'
-            : 'Approximate token count (chars ÷ 4).'
-      } Pricing: ${costEstimate.pricing_source}.`
-    : ''
+  const rememberCase = (next: string | null) => {
+    caseIdRef.current = next
+    setCaseId(next)
+  }
+
+  const applyCase = (next: string | null) => {
+    rememberCase(next)
+    // A row is created on the first turn. Until then the id rides on that turn.
+    if (persistedRef.current && next !== null) {
+      conversationsApi.update(sessionRef.current, { case_id: next }).catch(() => {})
+    }
+  }
+
+  const attachCase = (hit: CaseHit) => {
+    applyCase(hit.id)
+    setDraft((current) => current.replace(/(^|\s)@\S*$/, '$1').trim())
+    setMentionHits(null)
+  }
 
   const send = async (override?: string, opts?: { fresh?: boolean }) => {
     const text = (override ?? draft).trim()
-    if (!text || loading) return
+    if (!text) return
+    // Hold the turn until the locked thread is the one on screen.
+    if (lockedCaseId && !caseReady.current) {
+      pendingSend.current = text
+      setDraft('')
+      return
+    }
+    if (loading) return
+    const gen = turnGen.current
+    localTurn.current = true
+    if (lockedCaseId) {
+      caseIdRef.current = lockedCaseId
+      setCaseId(lockedCaseId)
+      setThreadOpen(true)
+    }
     // `fresh` keeps a new investigation's seed off an unrelated conversation
-    const base = opts?.fresh ? [] : messages.filter((m) => m.role !== 'error')
+    const base = opts?.fresh ? [] : messagesRef.current.filter((m) => m.role !== 'error')
     const next: ChatMsg[] = [...base, { role: 'user', text }]
-    setMessages(next)
+    putMessages(next)
     setDraft('')
     setLoading(true)
     setStreamText('')
@@ -510,21 +478,30 @@ export default function Chat({
 
     const ac = new AbortController()
     abortRef.current = ac
+    // The row is inserted when the stream ends. An @ change before that is held
+    // and patched afterwards; patching at HTTP 200 races a row that is not there.
+    const sentCase = caseIdRef.current
+    let accepted = false
     try {
+      const payload: {
+        messages: { role: string; content: string }[]
+        session_id: string
+        page_context?: string
+        case_id?: string
+      } = {
+        messages: next.map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
+        session_id: sessionRef.current,
+      }
+      if (pageKey) payload.page_context = pageKey
+      if (sentCase !== null) payload.case_id = sentCase
       const res = await streamFetch('/claude/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({
-          messages: next.map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
-          model,
-          max_tokens: maxTokens,
-          system_prompt: systemPrompt || undefined,
-          agent_id: agentId || undefined,
-          session_id: sessionRef.current,
-        }),
+        body: JSON.stringify(payload),
         signal: ac.signal,
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      accepted = true
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
       let curText = ''
@@ -572,7 +549,14 @@ export default function Chat({
         }
       }
       const ms = Date.now() - start
-      setMessages((m) => [...m, { role: 'vigil', text: curText || '_(no response)_', ms }])
+      if (gen === turnGen.current) {
+        setMessages((m) => {
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ms }
+          const next = [...m, vigil]
+          messagesRef.current = next
+          return next
+        })
+      }
       // gated inside notificationService by the setting + browser permission
       if (currentKeyRef.current && curText) {
         const summary = curText.replace(/[#*`_>[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 140)
@@ -585,28 +569,32 @@ export default function Chat({
       reasoningApi
         .getSessionSummary(sessionRef.current)
         .then((s: Partial<SessionSummary> | null) =>
-          setSessionSummary(
-            s
-              ? {
-                  total_interactions: s.total_interactions ?? 0,
-                  total_cost_usd: s.total_cost_usd ?? 0,
-                  total_input_tokens: s.total_input_tokens ?? 0,
-                  total_output_tokens: s.total_output_tokens ?? 0,
-                }
-              : null,
-          ),
+          setSessionSummary(s ? sessionSummaryFrom(s) : null),
         )
         .catch(() => {})
     } catch (e) {
       const err = e as { name?: string; message?: string }
-      if (err?.name !== 'AbortError') {
-        setMessages((m) => [...m, { role: 'error', text: `Could not reach Vigil: ${err?.message || e}. Is the backend running?` }])
+      if (err?.name !== 'AbortError' && gen === turnGen.current) {
+        setMessages((m) => {
+          const next: ChatMsg[] = [...m, { role: 'error', text: `Could not reach Vigil: ${err?.message || e}. Is the backend running?` }]
+          messagesRef.current = next
+          return next
+        })
       }
     } finally {
-      setLoading(false)
-      setStreamText('')
-      setIsProcessingTools(false)
-      abortRef.current = null
+      if (gen === turnGen.current) {
+        if (accepted) {
+          const latest = caseIdRef.current
+          persistedRef.current = true
+          if (latest !== sentCase && latest !== null) {
+            conversationsApi.update(sessionRef.current, { case_id: latest }).catch(() => {})
+          }
+        }
+        setLoading(false)
+        setStreamText('')
+        setIsProcessingTools(false)
+        abortRef.current = null
+      }
     }
   }
 
@@ -633,36 +621,45 @@ export default function Chat({
   const reset = () => {
     if (loading) return
     archiveCurrent()
-    setMessages([])
+    putMessages([])
     sessionRef.current = newSessionId()
     currentKeyRef.current = null
+    persistedRef.current = false
+    rememberCase(null)
     setSessionSummary(null)
-    setCostEstimate(null)
-    setExactTokens(null)
     reloadHistory()
   }
 
   // continues the same session_id, so new turns append to it
-  const openConversation = async (id: string, key?: string | null): Promise<boolean> => {
-    if (loading) return false
+  const openConversation = async (id: string, key?: string | null, force = false): Promise<boolean> => {
+    if (loading && !force) return false
+    const gen = loadGen.current
     archiveCurrent()
     setHistoryOpen(false)
     try {
       const res = await conversationsApi.get(id)
+      // A turn started on this locked session while the row was loading.
+      if (gen !== loadGen.current || (lockedCaseId && localTurn.current)) return false
       const detail = res.data as ConversationDetail
-      setMessages(toChatMsgs(detail.messages || []))
+      const msgs = toChatMsgs(detail.messages || [])
+      putMessages(msgs)
+      if (lockedCaseId) setThreadOpen(msgs.length > 0)
       sessionRef.current = id
       currentKeyRef.current = key ?? null
+      persistedRef.current = true
+      rememberCase(lockedCaseId ?? detail.case_id ?? null)
       setSessionSummary(null)
-      setCostEstimate(null)
-      setExactTokens(null)
       return true
     } catch {
+      if (gen !== loadGen.current || (lockedCaseId && localTurn.current)) return false
       const cached = loadHistory().find((c) => c.id === id)
       if (cached) {
-        setMessages(cached.messages)
+        putMessages(cached.messages)
+        if (lockedCaseId) setThreadOpen(cached.messages.length > 0)
         sessionRef.current = id
         currentKeyRef.current = cached.key || key || null
+        persistedRef.current = false
+        rememberCase(lockedCaseId ?? null)
         setSessionSummary(null)
         return true
       }
@@ -683,10 +680,10 @@ export default function Chat({
     archiveCurrent()
     sessionRef.current = newSessionId()
     currentKeyRef.current = prompt
+    persistedRef.current = false
+    rememberCase(null)
     setKeymapEntry(prompt, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
-    setCostEstimate(null)
-    setExactTokens(null)
     send(prompt, { fresh: true })
   }
 
@@ -703,16 +700,7 @@ export default function Chat({
     reasoningApi
       .getSessionSummary(sid)
       .then((s: Partial<SessionSummary> | null) =>
-        setSessionSummary(
-          s
-            ? {
-                total_interactions: s.total_interactions ?? 0,
-                total_cost_usd: s.total_cost_usd ?? 0,
-                total_input_tokens: s.total_input_tokens ?? 0,
-                total_output_tokens: s.total_output_tokens ?? 0,
-              }
-            : null,
-        ),
+        setSessionSummary(s ? sessionSummaryFrom(s) : null),
       )
       .catch(() => {})
   }
@@ -762,7 +750,7 @@ export default function Chat({
   // the marker is only set on success, so a failed import retries next mount
   const migratedRef = useRef(false)
   useEffect(() => {
-    if (migratedRef.current) return
+    if (lockedCaseId || migratedRef.current) return
     migratedRef.current = true
     try {
       if (localStorage.getItem(IMPORT_MARKER_KEY)) return
@@ -796,7 +784,64 @@ export default function Chat({
     } catch {
       /* empty */
     }
-  }, [reloadHistory])
+  }, [reloadHistory, lockedCaseId])
+
+  // Newest conversation whose case_id is exactly the locked id. `q` is a substring match.
+  useEffect(() => {
+    if (!lockedCaseId) return
+    const gen = ++loadGen.current
+    turnGen.current += 1
+    localTurn.current = false
+    caseReady.current = false
+    pendingSend.current = null
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+    setStreamText('')
+    setDraft('')
+    putMessages([])
+    setThreadOpen(false)
+    currentKeyRef.current = null
+    persistedRef.current = false
+    rememberCase(lockedCaseId)
+    let live = true
+    const settle = () => {
+      if (!live || gen !== loadGen.current) return
+      caseReady.current = true
+      const queued = pendingSend.current
+      pendingSend.current = null
+      if (queued) void send(queued)
+    }
+    conversationsApi
+      .list({ q: lockedCaseId })
+      .then(async (res) => {
+        if (!live || gen !== loadGen.current) return
+        const rows = (res.data?.conversations || []) as Array<{ id: string; case_id?: string | null }>
+        const match = rows.find((row) => row.case_id === lockedCaseId)
+        if (match) {
+          await openConversation(match.id, null, true)
+          if (!live || gen !== loadGen.current) return
+          rememberCase(lockedCaseId)
+        } else {
+          sessionRef.current = newSessionId()
+          persistedRef.current = false
+        }
+        settle()
+      })
+      .catch(() => {
+        if (!live || gen !== loadGen.current) return
+        sessionRef.current = newSessionId()
+        persistedRef.current = false
+        settle()
+      })
+    return () => {
+      live = false
+      loadGen.current += 1
+      turnGen.current += 1
+    }
+    // openConversation closes over the render that starts the load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedCaseId])
 
   const seedRef = useRef<string | null>(null)
   useEffect(() => {
@@ -806,15 +851,24 @@ export default function Chat({
       seedRef.current = null
       return
     }
-    // guard against StrictMode's double-invoke firing the same seed twice
-    if (open && seed !== seedRef.current && !loading) {
-      seedRef.current = seed
+    // guard against StrictMode's double-invoke firing the same seed twice.
+    // While a stream is in flight, leave the seed set so it sends when loading drops.
+    if (!open || seed === seedRef.current) return
+    if (loading && (!lockedCaseId || caseReady.current)) return
+    seedRef.current = seed
+    if (lockedCaseId) {
+      // append on this session; do not open a keymap investigation or clear the case
+      caseIdRef.current = lockedCaseId
+      setCaseId(lockedCaseId)
+      send(seed)
+    } else {
       openInvestigation(seed)
-      onSeedConsumed?.()
     }
-    // send/loading intentionally omitted: we fire once per new seed
+    onSeedConsumed?.()
+    // send intentionally omitted: we fire once per new seed, and again when a
+    // stream that blocked it finishes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, seed])
+  }, [open, seed, lockedCaseId, loading])
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -822,79 +876,117 @@ export default function Chat({
     }
   }
 
-  const clampWidth = (next: number) => Math.min(maxWidth, Math.max(minWidth, Math.round(next)))
-  const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || maxWidth <= minWidth) return
-    const startWidth = clampWidth(width)
-    resizeRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startWidth,
-      lastWidth: startWidth,
-    }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-    setResizing(true)
-    onResizeStateChange?.(true)
-    event.preventDefault()
-  }
-  const onResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = resizeRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    const next = clampWidth(drag.startWidth + drag.startX - event.clientX)
-    drag.lastWidth = next
-    onWidthChange?.(next)
-  }
-  const finishResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = resizeRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture?.(event.pointerId)
-    }
-    resizeRef.current = null
-    setResizing(false)
-    onResizeStateChange?.(false)
-    onWidthCommit?.(drag.lastWidth)
-  }
-  const onResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (maxWidth <= minWidth) return
-    const step = event.shiftKey ? 48 : 16
-    let next: number | null = null
-    if (event.key === 'ArrowLeft') next = width + step
-    else if (event.key === 'ArrowRight') next = width - step
-    else if (event.key === 'Home') next = minWidth
-    else if (event.key === 'End') next = maxWidth
-    if (next == null) return
-    event.preventDefault()
-    const clamped = clampWidth(next)
-    onWidthChange?.(clamped)
-    onWidthCommit?.(clamped)
-  }
+  const transcript = (
+    <div className="chat-body" ref={bodyRef}>
+      {messages.length === 0 && !loading && (
+        <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
+      )}
+      {messages.map((m, i) =>
+        m.role === 'user' ? (
+          <div className="msg user" key={i}><div className="body">{m.text}</div></div>
+        ) : m.role === 'error' ? (
+          <div className="msg vigil err" key={i}><div className="body">{m.text}</div></div>
+        ) : (
+          <VigilMessage key={i} text={m.text} ms={m.ms} evidenceIds={evidenceIds} onCite={onCite} />
+        )
+      )}
+      {loading && (
+        <div className="msg vigil">
+          {/* always-on processing indicator so the user knows Vigil is still
+              working — the phase label tracks reasoning → responding */}
+          <div className="vigil-status" aria-live="polite">
+            <span className="vs-dots" aria-hidden="true"><i /><i /><i /></span>
+            <span className="vs-label">
+              {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
+              …
+            </span>
+          </div>
+          {streamText && (
+            <>
+              <div className="body"><Markdown>{streamText}</Markdown></div>
+              <CiteRow text={streamText} ids={evidenceIds} onCite={onCite} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  const foot = (
+    <div className="chat-foot">
+      <div className="chat-input">
+        {!lockedCaseId && mentionHits && (
+          <div className="chat-mention" role="listbox" aria-label="Matching cases">
+            {mentionHits.length === 0 ? (
+              <div className="cm-empty">No matching cases</div>
+            ) : (
+              mentionHits.map((hit) => (
+                <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
+                  <span>{hit.title}</span>
+                  <span className="cm-id">{hit.id}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+        <textarea
+          ref={taRef}
+          rows={1}
+          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil, / for commands, @ for context'}
+          aria-label={lockedCaseId ? 'Ask about this case' : 'Ask Vigil'}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        <div className="ci-row">
+          {caseId ? (
+            <span className="chat-case" data-testid="attached-case">
+              <span>{caseId}</span>
+              {lockedCaseId ? null : (
+                <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
+              )}
+            </span>
+          ) : null}
+          <div className="ci-grow" />
+          {loading ? (
+            <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
+          ) : (
+            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 
   return (
     <>
+    {pinned ? (
+      <section className="case-composer" aria-label="Ask Vigil">
+        <div className="composer-modes" role="group" aria-label="Composer mode">
+          <button type="button" className="on" aria-pressed="true">Ask</button>
+          <button type="button" disabled title="Coming in a later release">Tell</button>
+          <button type="button" disabled title="Coming in a later release">Do</button>
+        </div>
+        <div className="chat-note">
+          <span>Private to you · Ask only</span>
+        </div>
+        {messages.length > 0 && (
+          <button type="button" className="composer-fold" onClick={() => setThreadOpen((openThread) => !openThread)}>
+            {messages.length} message{messages.length === 1 ? '' : 's'} · {threadOpen ? 'hide' : 'show'}
+          </button>
+        )}
+        {threadOpen && transcript}
+        {foot}
+      </section>
+    ) : (
     <aside
       ref={panelRef}
-      className={`chat${open ? ' open' : ''}${resizing ? ' resizing' : ''}`}
+      className={`chat${open ? ' open' : ''}`}
       role="dialog"
       aria-label="Vigil Assistant"
       aria-hidden={!open}
       onKeyDown={onPanelKeyDown}
     >
-      <div
-        className="chat-resize-handle"
-        role="separator"
-        aria-label="Resize Vigil Assistant"
-        aria-orientation="vertical"
-        aria-valuemin={Math.round(minWidth)}
-        aria-valuemax={Math.round(maxWidth)}
-        aria-valuenow={Math.round(width)}
-        tabIndex={open && maxWidth > minWidth ? 0 : -1}
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={finishResize}
-        onPointerCancel={finishResize}
-        onKeyDown={onResizeKeyDown}
-      />
       <div className="chat-head">
         <span className="ch-ico"><Icon name="brain" /></span>
         <h3 className="ch-title">Vigil Assistant</h3>
@@ -902,102 +994,18 @@ export default function Chat({
           <button title="History" onClick={() => { setHistoryOpen(true); reloadHistory() }}><Icon name="clock" /></button>
           <button title="Reasoning trace" onClick={openReasoningTrace}><Icon name="reason" /></button>
           <button title="SOC Agents" onClick={() => setAgentsInfoOpen(true)}><Icon name="note" /></button>
-          <button title="Chat settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /></button>
           <button title="Clear chat" onClick={reset} disabled={loading || messages.length === 0}><Icon name="trash" /></button>
           <button type="button" title="Close assistant" aria-label="Close Vigil Assistant" onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>
-
-      <div className="chat-body" ref={bodyRef}>
-        {messages.length === 0 && !loading && (
-          <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
-        )}
-        {messages.map((m, i) =>
-          m.role === 'user' ? (
-            <div className="msg user" key={i}><div className="body">{m.text}</div></div>
-          ) : m.role === 'error' ? (
-            <div className="msg vigil err" key={i}><div className="body">{m.text}</div></div>
-          ) : (
-            <VigilMessage key={i} text={m.text} ms={m.ms} />
-          )
-        )}
-        {loading && (
-          <div className="msg vigil">
-            {/* always-on processing indicator so the user knows Vigil is still
-                working — the phase label tracks reasoning → responding */}
-            <div className="vigil-status" aria-live="polite">
-              <span className="vs-dots" aria-hidden="true"><i /><i /><i /></span>
-              <span className="vs-label">
-                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
-                …
-              </span>
-            </div>
-            {streamText && <div className="body"><Markdown>{streamText}</Markdown></div>}
-          </div>
-        )}
+      <div className="chat-note">
+        <span>Private to you</span>
+        {pageTitle ? <span>Using {pageTitle}</span> : null}
       </div>
-
-      <div className="chat-foot">
-        <div className="chat-meta">
-          <div className="cm-line">
-            <span className={`cm-ctx ${ctxState}`} title="Estimated context usage for the next request">
-              {estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW / 1000}k tokens
-              {estimatedTokens > 150000 && <span className="cm-warn"> · auto-summarizes on send</span>}
-            </span>
-            {costEstimate && (
-              <span className="cm-cost" title={costTitle}>
-                ~${costEstimate.low_usd.toFixed(4)}–${costEstimate.high_usd.toFixed(4)}
-                {costEstimate.pricing_source !== 'exact' && (
-                  <span className="cm-src"> · {costEstimate.pricing_source}</span>
-                )}
-              </span>
-            )}
-          </div>
-          <div className="cm-bar"><span className={`cm-bar-fill ${ctxState}`} style={{ width: `${ctxPct}%` }} /></div>
-        </div>
-        <div className="chat-input">
-          <textarea
-            ref={taRef}
-            rows={1}
-            placeholder="Ask Vigil, / for commands, @ for context"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-          />
-          <div className="ci-row">
-            <div className="model-wrap" ref={menuRef}>
-              <button className="model-sel" onClick={() => setMenuOpen((o) => !o)}>
-                <span className="m-ico"><Icon name="infinity" /></span>
-                {agentName} <span className="dd"><Icon name="chevD" size={12} /></span>
-              </button>
-              {menuOpen && (
-                <div className="agent-menu">
-                  <button className={agentId === '' ? 'sel' : ''} onClick={() => { setAgentId(''); setMenuOpen(false) }}>
-                    Default agent<span className="am-spec">No specific agent</span>
-                  </button>
-                  {agents.map((a) => (
-                    <button key={a.id} className={a.id === agentId ? 'sel' : ''} onClick={() => { setAgentId(a.id); setMenuOpen(false) }}>
-                      <span className="am-name">
-                        {a.icon && <span className="am-ico" style={{ color: a.color }}>{a.icon}</span>}
-                        {a.name}
-                      </span>
-                      {a.specialization && <span className="am-spec">{a.specialization}</span>}
-                      {a.description && <span className="am-desc">{a.description}</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="ci-grow" />
-            {loading ? (
-              <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
-            ) : (
-              <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
-            )}
-          </div>
-        </div>
-      </div>
+      {transcript}
+      {foot}
     </aside>
+    )}
 
     {/* Conversation history — server-backed (cross-device); falls back to the
         localStorage cache when the server can't be reached. */}
@@ -1025,6 +1033,14 @@ export default function Chat({
         return (
           <>
             <div className="chist-toolbar">
+              <input
+                className="chist-search"
+                aria-label="Search history"
+                placeholder="Search history"
+                value={histQuery}
+                disabled={offline}
+                onChange={(e) => setHistQuery(e.target.value)}
+              />
               {offline && <span className="muted">Offline — showing cached conversations.</span>}
               <label className="chist-archtoggle">
                 <input
@@ -1045,9 +1061,13 @@ export default function Chat({
               </div>
             ) : (
               <div className="chat-history">
-                {rows.map((c) => (
+                {rows.map((c, i) => {
+                  const label = dayLabel(c.ts)
+                  const prev = i > 0 ? dayLabel(rows[i - 1].ts) : null
+                  return (
+                  <div key={c.id}>
+                    {label !== prev && <div className="chist-day">{label}</div>}
                   <div
-                    key={c.id}
                     className={`chist-row${c.id === sessionRef.current ? ' current' : ''}${c.archived ? ' archived' : ''}`}
                   >
                     {renamingId === c.id ? (
@@ -1104,89 +1124,14 @@ export default function Chat({
                       </button>
                     </div>
                   </div>
-                ))}
+                  </div>
+                  )
+                })}
               </div>
             )}
           </>
         )
       })()}
-    </Popup>
-
-    {/* Chat settings — Status / Model settings / Advanced (mirrors the classic drawer) */}
-    <Popup open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Chat settings" width={440}>
-      <div className="chat-settings">
-        {/* Status */}
-        <section className="cs-sec">
-          <div className="cs-head">Status</div>
-          <div className="cs-stat-row">
-            <span className="cs-name">MCP Tools</span>
-            {mcpStatus ? (
-              <span className={`cs-chip ${mcpStatus.available > 0 ? 'ok' : 'danger'}`}>
-                {mcpStatus.available}/{mcpStatus.total}
-              </span>
-            ) : (
-              <span className="muted">checking…</span>
-            )}
-          </div>
-          <div className="cs-ctx">
-            <span className={`cs-ctx-label ${ctxState}`}>
-              Context {exactTokens != null ? '' : '~'}{estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW.toLocaleString()} tokens
-              {estimatedTokens > 150000 && ' · auto-summarizes on next send'}
-            </span>
-            <div className="cs-bar"><span className={`cs-bar-fill ${ctxState}`} style={{ width: `${ctxPct}%` }} /></div>
-            <span className="cs-ctx-sub">Output max {maxTokens.toLocaleString()} tokens</span>
-          </div>
-          {costEstimate && (
-            <div className="cs-stat-row" title={costTitle}>
-              <span className="cs-name">Est. cost</span>
-              <span className="cs-cost-val">
-                ${costEstimate.low_usd.toFixed(4)}–${costEstimate.high_usd.toFixed(4)}
-                {costEstimate.pricing_source !== 'exact' && <span className="cs-ctx-sub"> · {costEstimate.pricing_source}</span>}
-              </span>
-            </div>
-          )}
-        </section>
-
-        {/* Model settings */}
-        <section className="cs-sec">
-          <div className="cs-head">Model settings</div>
-          <div className="cs-field">
-            <span className="cs-name">Model</span>
-            <Select
-              value={model}
-              onSelect={(m) => { userPickedModelRef.current = true; setModel(m) }}
-              options={(models.length ? models : MODEL_FALLBACK).map((m) => ({ value: m.id, label: m.name }))}
-            />
-          </div>
-          <div className="cs-field">
-            <span className="cs-name">Max tokens</span>
-            <input
-              className="cs-input"
-              type="number"
-              min={256}
-              max={64000}
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 4096)}
-            />
-          </div>
-        </section>
-
-        {/* Advanced */}
-        <section className="cs-sec">
-          <div className="cs-head">Advanced</div>
-          <div className="cs-field">
-            <span className="cs-name">System prompt <span className="cs-opt">(optional)</span></span>
-            <textarea
-              className="cs-input cs-area"
-              rows={3}
-              value={systemPrompt}
-              placeholder="Override default system prompt…"
-              onChange={(e) => setSystemPrompt(e.target.value)}
-            />
-            <span className="cs-help">Leave empty to use the default prompt. Settings are saved automatically.</span>
-          </div>
-        </section>
-      </div>
     </Popup>
 
     {/* SOC Agents reference — rendered outside the transformed .chat aside so
@@ -1215,7 +1160,10 @@ export default function Chat({
       {sessionSummary && (
         <div className="trace-sum">
           {sessionSummary.total_interactions} call{sessionSummary.total_interactions === 1 ? '' : 's'}
-          {' · '}${sessionSummary.total_cost_usd.toFixed(4)}
+          {' · '}<Cost usd={sessionSummary.total_cost_usd} digits={4} />
+          {sessionSummary.unpriced_calls > 0 && (
+            <>{' · '}{sessionSummary.unpriced_calls.toLocaleString()} unpriced</>
+          )}
           {' · '}{(sessionSummary.total_input_tokens + sessionSummary.total_output_tokens).toLocaleString()} tokens
         </div>
       )}
@@ -1239,7 +1187,7 @@ export default function Chat({
                   <span className="trace-row-agent">{it.agent_id || 'chat'}</span>
                 </span>
                 <span className="trace-row-meta">
-                  {(it.input_tokens ?? 0).toLocaleString()} in · {(it.output_tokens ?? 0).toLocaleString()} out · ${(it.cost_usd ?? 0).toFixed(4)}
+                  {(it.input_tokens ?? 0).toLocaleString()} in · {(it.output_tokens ?? 0).toLocaleString()} out · <Cost usd={it.cost_usd} digits={4} />
                 </span>
               </button>
             ))
@@ -1254,7 +1202,7 @@ export default function Chat({
                 <span>{traceSelected.model || '—'}</span>
                 {traceSelected.stop_reason && <span>· {traceSelected.stop_reason}</span>}
                 {typeof traceSelected.duration_ms === 'number' && <span>· {(traceSelected.duration_ms / 1000).toFixed(1)}s</span>}
-                {typeof traceSelected.cost_usd === 'number' && <span>· ${traceSelected.cost_usd.toFixed(4)}</span>}
+                <span>· <Cost usd={traceSelected.cost_usd} digits={4} /></span>
               </div>
               {traceSelected.thinking_content && (
                 <div className="trace-block thinking">

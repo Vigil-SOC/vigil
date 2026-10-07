@@ -6,7 +6,7 @@ Handles uploading and ingesting findings/cases from various file formats:
 - CSV files
 - JSONL (JSON Lines) files
 - Parquet files
-- S3 sync
+- S3 objects (by key or prefix)
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -30,7 +31,7 @@ from core.ingestion.ingestion_jobs import (
 )
 from core.ingestion.ingestion_service import IngestionService
 from core.routing import Auth, RouterMeta
-from core.storage.database_data_service import DatabaseDataService
+from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +215,6 @@ async def get_supported_formats():
                     "findings": [
                         {
                             "finding_id": "f-20260114-abc123",
-                            "embedding": [0.1, 0.2, "...768 values"],
                             "mitre_predictions": {"T1071.001": 0.85},
                             "anomaly_score": 0.75,
                             "timestamp": "2026-01-14T10:00:00Z",
@@ -252,7 +252,6 @@ async def get_supported_formats():
                     "severity",
                     "status",
                     "cluster_id",
-                    "embedding (comma-separated floats)",
                     "mitre_predictions (JSON string or technique:score pairs)",
                     "entity_context (JSON string)",
                 ],
@@ -273,7 +272,6 @@ async def get_supported_formats():
                 "description": "Supported parquet files. Columns are auto-mapped to findings when the schema is recognized.",
                 "expected_columns": [
                     "sequence_id (-> finding_id)",
-                    "embedding (variable-dimension float vector)",
                     "mitre_pred (integer class label -> mitre_predictions)",
                     "focal_ip (-> entity_context.src_ip)",
                     "engaged_ip (-> entity_context.dst_ip)",
@@ -285,14 +283,13 @@ async def get_supported_formats():
             },
         },
         "data_types": {
-            "finding": "Security findings with embeddings and MITRE predictions",
+            "finding": "Security findings with MITRE predictions",
             "case": "Investigation cases grouping related findings",
         },
         "notes": [
             "finding_id and case_id are auto-generated if not provided",
             "Duplicate IDs are automatically skipped",
-            "All data is stored in PostgreSQL when available, falls back to JSON files",
-            "Embeddings default to 768-dimensional zero vector if not provided",
+            "All data is stored in PostgreSQL",
             "Timestamps are parsed from various formats or default to current time",
         ],
     }
@@ -313,7 +310,7 @@ async def get_csv_template(data_type: str):
         return {
             "template": "finding_id,anomaly_score,timestamp,data_source,severity,status,cluster_id,mitre_predictions,entity_context\n"
             + 'f-20260114-example,0.85,2026-01-14T10:00:00Z,flow,high,new,c-beaconing-001,"{""T1071.001"": 0.85}","{""src_ip"": ""192.168.1.100""}"\n',
-            "description": "CSV template for findings. Note: embedding column omitted for brevity (768 values)",
+            "description": "CSV template for findings",
         }
     elif data_type == "case":
         return {
@@ -325,39 +322,6 @@ async def get_csv_template(data_type: str):
         raise HTTPException(
             status_code=400, detail="data_type must be 'finding' or 'case'"
         )
-
-
-@router.post("/sync-s3")
-def sync_from_s3():
-    """
-    Sync findings and cases from AWS S3.
-
-    Requires S3 to be configured in settings.
-    Fetches data from the configured S3 bucket and syncs to local storage.
-
-    Returns:
-        Sync status and statistics
-    """
-    data_service = DatabaseDataService()
-
-    # Check if S3 is configured
-    if not data_service.is_s3_configured():
-        raise HTTPException(
-            status_code=400,
-            detail="S3 is not configured. Please configure S3 in Settings first.",
-        )
-
-    # Perform sync
-    logger.info("Starting S3 sync via API endpoint")
-    success, message, stats = data_service.sync_from_s3()
-
-    return {
-        "success": success,
-        "message": message,
-        "findings_synced": stats.get("findings_synced", 0),
-        "cases_synced": stats.get("cases_synced", 0),
-        "errors": stats.get("errors", []),
-    }
 
 
 @router.post("/sync-s3-folder", response_model=IngestionStats)
@@ -382,9 +346,8 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     Returns:
         Ingestion statistics
     """
-    data_service = DatabaseDataService()
-
-    if not data_service.is_s3_configured():
+    s3 = _get_s3_service()
+    if s3 is None:
         raise HTTPException(
             status_code=400,
             detail="S3 is not configured. Please configure S3 in Settings first.",
@@ -400,9 +363,10 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     logger.info(f"Starting S3 folder sync with prefix='{prefix}'")
 
     ingestion_service = IngestionService()
-    stats = ingestion_service.ingest_s3_folder(
-        s3_service=data_service._s3_service, prefix=prefix
-    )
+    try:
+        stats = ingestion_service.ingest_s3_folder(s3_service=s3, prefix=prefix)
+    except S3_LIST_ERRORS as e:
+        raise _s3_list_http_error(e) from e
 
     success, summary = summarize_stats(stats)
 
@@ -433,12 +397,24 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     )
 
 
+def _s3_list_http_error(exc: Exception) -> HTTPException:
+    """Map an S3 listing failure to an HTTP error carrying the botocore error code."""
+    denied = (
+        isinstance(exc, ClientError)
+        and exc.response.get("Error", {}).get("Code") == "AccessDenied"
+    )
+    return HTTPException(
+        status_code=403 if denied else 502,
+        detail=f"S3 listing failed: {describe_s3_error(exc)}",
+    )
+
+
 def _get_s3_service():
     """
     Build an S3Service directly from saved config.
 
-    Unlike DatabaseDataService.is_s3_configured() this skips the head_bucket
-    test so it works with IAM policies that only grant list/get permissions.
+    Skips head_bucket so it works with IAM policies that only grant
+    list/get permissions.
     """
     from core.secrets_manager import get_secret
     from core.storage.config_service import get_config_service
@@ -505,7 +481,10 @@ def list_s3_files(prefix: Optional[str] = Query("")):
             detail="S3 is not configured. Please configure S3 in Settings first.",
         )
 
-    files = s3.list_files_detailed(prefix=prefix or "")
+    try:
+        files = s3.list_files_detailed(prefix=prefix or "")
+    except S3_LIST_ERRORS as e:
+        raise _s3_list_http_error(e) from e
     return {"files": files, "count": len(files), "prefix": prefix or ""}
 
 
@@ -527,12 +506,14 @@ def ingest_s3_file(request: S3FileIngestRequest):
         Ingestion statistics
     """
     key = request.key
-    ext = Path(key).suffix.lower()
-    fmt = EXTENSION_FORMATS.get(ext)
-    if fmt is None:
+    requested_ext = Path(key).suffix.lower()
+    # Take the temp-file suffix from the allowlist, never from the key itself.
+    ext = next((e for e in EXTENSION_FORMATS if e == requested_ext), None)
+    fmt = EXTENSION_FORMATS.get(ext) if ext else None
+    if ext is None or fmt is None:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file extension '{ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}",
+            detail=f"Unsupported file extension '{requested_ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}",
         )
 
     s3 = _get_s3_service()
@@ -574,33 +555,3 @@ def ingest_s3_file(request: S3FileIngestRequest):
         success=success,
         message=message,
     )
-
-
-@router.get("/s3-status")
-def get_s3_status():
-    """
-    Get S3 connection status.
-
-    Returns:
-        S3 configuration and connection status
-    """
-    try:
-        data_service = DatabaseDataService()
-
-        # Check if S3 is configured
-        is_configured = data_service.is_s3_configured()
-
-        if is_configured:
-            # Test connection
-            success, message = data_service._s3_service.test_connection()
-            return {"configured": True, "connected": success, "message": message}
-        else:
-            return {
-                "configured": False,
-                "connected": False,
-                "message": "S3 is not configured. Configure in Settings to enable S3 sync.",
-            }
-
-    except Exception as e:
-        logger.error(f"Error checking S3 status: {e}")
-        return {"configured": False, "connected": False, "error": str(e)}

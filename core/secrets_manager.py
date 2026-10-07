@@ -4,8 +4,9 @@ Secrets Manager for Vigil SOC
 Provides pluggable secrets storage backends with priority fallback:
 1. Encrypted local file at ``~/.vigil/secrets.enc`` (preferred; at-rest encrypted)
 2. Environment variables
-3. .env file (legacy / interoperability)
-4. Keyring (only when explicitly enabled)
+3. Repo-root .env (read-only)
+4. State-dir .env file (legacy / interoperability)
+5. Keyring (only when explicitly enabled)
 
 Usage:
     from core.secrets_manager import get_secret, set_secret
@@ -21,7 +22,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.config import vigil_path
+from core.config import REPO_ROOT, dotenv_allowed, vigil_path
 from core.exceptions import default_on_error
 
 logger = logging.getLogger(__name__)
@@ -106,13 +107,30 @@ class DotEnvBackend(SecretsBackend):
     """Store secrets in a .env file."""
 
     def __init__(self, env_file: Optional[Path] = None):
-        """Initialize with path to .env file."""
+        """Initialize with path to .env file.
+
+        A caller that names the file has said which one it means. Defaulting to
+        the state directory's is what a test run must not do: nothing asked for
+        that file, and answering `get_secret()` from it hands a test the
+        operator's real credential.
+        """
+        self._file_was_named = env_file is not None
         self.env_file = env_file or vigil_path(".env")
         self._cache: Dict[str, str] = {}
         self._load_env_file()
 
     def _load_env_file(self):
-        """Load .env file into cache."""
+        """Load .env file into cache.
+
+        The state directory's own file is skipped when the process has said it
+        is not reading a ``.env``. It never reaches ``os.environ``, so it does
+        not change what ``get_settings()`` answers -- but a test asking for a
+        credential would be handed the operator's real one, which is the same
+        leak wearing a different coat. A file the caller named is read either
+        way: naming it is the asking.
+        """
+        if not self._file_was_named and not dotenv_allowed():
+            return
         if self.env_file.exists():
             try:
                 with open(self.env_file, "r") as f:
@@ -314,7 +332,13 @@ class EncryptedFileBackend(SecretsBackend):
         self.secrets_path = self.data_dir / self.SECRETS_FILENAME
         self.master_key_path = self.data_dir / self.MASTER_KEY_FILENAME
         self._fernet = None  # lazy
+        self._fernet_key: Optional[bytes] = None
         self._cache: Optional[Dict[str, str]] = None
+        # Set when an existing ``secrets.enc`` could not be decrypted. Writes
+        # are refused while set, or the next save would replace the file with
+        # a near-empty store and lose every other credential.
+        self._load_failed = False
+        self._load_failed_sig: Optional[tuple] = None
         # mtime of the last ``secrets.enc`` load. Used by ``_load_cache``
         # to detect cross-process writes so the backend picks up secrets
         # saved by sibling processes without a restart.
@@ -350,9 +374,18 @@ class EncryptedFileBackend(SecretsBackend):
     def _get_fernet(self):
         from cryptography.fernet import Fernet
 
-        if self._fernet is None:
-            self._fernet = Fernet(self._load_or_create_master_key())
+        key = self._load_or_create_master_key()
+        # Rebuild when master.key changed on disk (e.g. the original was restored).
+        if self._fernet is None or key != self._fernet_key:
+            self._fernet = Fernet(key)
+            self._fernet_key = key
         return self._fernet
+
+    def _read_master_key(self) -> Optional[bytes]:
+        try:
+            return self.master_key_path.read_bytes().strip()
+        except OSError:
+            return None
 
     def _current_mtime(self) -> float:
         """Return the secrets file's mtime, or 0 if it doesn't exist."""
@@ -376,35 +409,49 @@ class EncryptedFileBackend(SecretsBackend):
             logger.debug("Secrets file changed on disk — reloading cache")
             self._cache = None
 
+        # After a failed load, retry only once the file or master.key changes
+        # (a restored key does not touch secrets.enc's mtime).
+        sig = (current_mtime, self._read_master_key())
+        if self._load_failed and sig != self._load_failed_sig:
+            self._cache = None
+
         if self._cache is not None:
             return self._cache
         if not self.secrets_path.exists():
             self._cache = {}
             self._cache_mtime = current_mtime
+            self._load_failed = False
             return self._cache
         try:
-            from cryptography.fernet import InvalidToken  # noqa: F401
-
             blob = self.secrets_path.read_bytes()
+            # Never mint a new master key over an existing secrets.enc.
+            if sig[1] is None:
+                raise FileNotFoundError(f"{self.master_key_path} is missing")
             plaintext = self._get_fernet().decrypt(blob)
             self._cache = json.loads(plaintext.decode("utf-8"))
             self._cache_mtime = current_mtime
+            self._load_failed = False
             logger.debug(f"Loaded {len(self._cache)} secrets from {self.secrets_path}")
         except Exception as e:
-            # Don't silently wipe: log and present an empty view, but leave
-            # the encrypted file untouched so a bad master key doesn't
-            # destroy data.
+            # Don't silently wipe: serve an empty view, leave the file
+            # untouched, and refuse writes (see ``_load_failed``).
             logger.error(
-                f"Could not decrypt {self.secrets_path} ({e}); "
-                f"treating as empty. If the master key changed, restore "
-                f"~/.vigil/master.key from a backup."
+                "Could not decrypt %s (%r); treating as empty and refusing "
+                "writes. If the master key changed, restore the original "
+                "~/.vigil/master.key.",
+                self.secrets_path,
+                e,
             )
             self._cache = {}
             self._cache_mtime = current_mtime
+            self._load_failed = True
+            self._load_failed_sig = sig
         return self._cache
 
     @default_on_error(False)
     def _write_cache(self) -> bool:
+        if self._load_failed:
+            return False
         self._ensure_dir()
         plaintext = json.dumps(self._cache or {}, sort_keys=True).encode("utf-8")
         blob = self._get_fernet().encrypt(plaintext)
@@ -429,11 +476,30 @@ class EncryptedFileBackend(SecretsBackend):
         if not self._crypto_ok:
             logger.error("EncryptedFileBackend unavailable (cryptography missing)")
             return False
+        # _load_cache returns the live dict, and _write_cache returns False
+        # instead of raising. Roll the assignment back or get() serves a
+        # value that never reached disk.
         cache = self._load_cache()
+        if self._load_failed:
+            logger.error(
+                "Refusing to save secret '%s': existing %s cannot be decrypted, "
+                "and saving would overwrite every stored credential. Restore "
+                "the original %s.",
+                key,
+                self.secrets_path,
+                self.master_key_path,
+            )
+            return False
+        had_key = key in cache
+        previous = cache.get(key)
         cache[key] = value
         if self._write_cache():
             logger.info(f"Set secret '{key}' in encrypted store")
             return True
+        if had_key:
+            cache[key] = previous
+        else:
+            cache.pop(key, None)
         return False
 
     def delete(self, key: str) -> bool:
@@ -457,8 +523,9 @@ class SecretsManager:
     Priority for reading:
     1. Encrypted local file (``~/.vigil/secrets.enc``; preferred)
     2. Environment variables
-    3. .env file (legacy / interoperability)
-    4. Keyring (only when explicitly enabled)
+    3. Repo-root .env (read-only; skipped under VIGIL_DISABLE_DOTENV)
+    4. State-dir .env file (legacy / interoperability)
+    5. Keyring (only when explicitly enabled)
 
     Priority for writing: configurable via ``SECRETS_BACKEND``. Default is
     ``encrypted`` when ``cryptography`` is available, otherwise ``dotenv``.
@@ -475,6 +542,16 @@ class SecretsManager:
         self.encrypted_backend = EncryptedFileBackend()
         self.env_backend = EnvironmentBackend()
         self.dotenv_backend = DotEnvBackend()
+        # Read-only: never a write/delete/migrate target, so the operator's
+        # checked-out .env is never rewritten. A named file skips the
+        # VIGIL_DISABLE_DOTENV guard, so it is only built when dotenv is allowed.
+        repo_env = REPO_ROOT / ".env"
+        self.repo_dotenv_backend: Optional[DotEnvBackend] = None
+        if (
+            dotenv_allowed()
+            and repo_env.resolve() != self.dotenv_backend.env_file.resolve()
+        ):
+            self.repo_dotenv_backend = DotEnvBackend(repo_env)
         # Use lazy init to avoid triggering keychain prompts on startup
         self.keyring_backend = KeyringBackend(lazy_init=True)
         self.enable_keyring = enable_keyring or (write_backend == "keyring")
@@ -487,12 +564,16 @@ class SecretsManager:
             )
             write_backend = "dotenv"
 
-        # Read priority — encrypted first (preferred), then env, then dotenv,
-        # then keyring only when explicitly enabled.
-        self.read_backends = []
+        # Read priority — encrypted first (preferred), then env, then the repo
+        # .env (as start.sh sourcing it would), then the state-dir .env, then
+        # keyring only when explicitly enabled.
+        self.read_backends: list[SecretsBackend] = []
         if self.encrypted_backend.is_available():
             self.read_backends.append(self.encrypted_backend)
-        self.read_backends.extend([self.env_backend, self.dotenv_backend])
+        self.read_backends.append(self.env_backend)
+        if self.repo_dotenv_backend is not None:
+            self.read_backends.append(self.repo_dotenv_backend)
+        self.read_backends.append(self.dotenv_backend)
         if self.enable_keyring:
             self.read_backends.append(self.keyring_backend)
         else:
@@ -529,7 +610,7 @@ class SecretsManager:
                 if value:
                     return value
 
-        logger.debug(f"Secret '{key}' not found in any backend")
+        logger.debug("Secret not found in any backend")
         return default
 
     def set(self, key: str, value: str) -> bool:

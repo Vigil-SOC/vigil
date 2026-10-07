@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { seedFrom } from "../../core/budget.js";
 import { buildDigest } from "../../workflows/hunt/digest.js";
 import { steer } from "../../workflows/hunt/inbox.js";
 import { newId } from "../../workflows/hunt/ids.js";
@@ -19,7 +20,7 @@ import type {
   DispatchRequest,
   DispatchResult,
 } from "../../workflows/hunt/types.js";
-import { CONCLUDE, controllerFor, INVESTIGATE, newLedger, question } from "../support/hunt.js";
+import { billedLead, CONCLUDE, controllerFor, finalized, INVESTIGATE, newLedger, question } from "../support/hunt.js";
 
 describe("ledger", () => {
   it("appends without rewriting, and reads back the same projection", async () => {
@@ -43,21 +44,37 @@ describe("ledger", () => {
     ledger.patch("hypothesis", hypothesisIds[0]!, { status: "parked" });
     expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("parked");
   });
+
+  // The budget counter is the sum of the spend events, the same sum seedFrom() hands
+  // the harness pool -- not a figure patched in when an iteration finished. So the
+  // stream's writes, which never pass through the journal, show after a refresh.
+  it("folds hunt.cost_usd from the spend events, as the harness pool does", async () => {
+    const { ledger, state, runId, spend } = await newLedger();
+    await spend(0.25, "lead");
+    await spend(0.5, "threat_hunter");
+    expect(ledger.projection.hunt.cost_usd).toBe(0);
+
+    await ledger.refresh();
+    expect(ledger.projection.hunt.cost_usd).toBeCloseTo(0.75, 10);
+    expect(ledger.projection.hunt.cost_usd).toBe(seedFrom(await state.read(runId)).spent.cost_usd);
+  });
 });
 
 describe("controller", () => {
   it("reaches a terminal state on CONCLUDE and snapshots every iteration", async () => {
-    const { ledger, hypothesisIds } = await newLedger();
+    const { ledger, hypothesisIds, spend } = await newLedger();
     // Nothing left active, so the termination predicate lets the recommendation
     // through; a CONCLUDE over an active hypothesis is refused (termination.test.ts).
     ledger.patch("hypothesis", hypothesisIds[0]!, { status: "parked" });
-    const result = await controllerFor(ledger, [CONCLUDE], { costPerDecision: 0.25 }).advanceIteration();
+    const result = await controllerFor(ledger, [CONCLUDE], { costPerDecision: 0.25, spend }).advanceIteration();
 
     expect(result.hunt_status).toBe("terminal");
     expect(result.hunt_outcome).toBe("completed");
     expect(ledger.projection.decisions).toHaveLength(1);
     expect(ledger.projection.decisions[0]!.digest_presented.iteration).toBe(1);
     expect(ledger.projection.hunt.cost_usd).toBe(0.25);
+    // The report is frozen on the same turn, so it must already carry that spend.
+    expect(finalized(ledger)[0]!.cost_usd).toBe(0.25);
   });
 
   it("coerces unresolved hypotheses to inconclusive, never disproven", async () => {
@@ -95,13 +112,17 @@ describe("controller", () => {
   });
 
   it("parks at the budget checkpoint rather than ending the hunt itself", async () => {
-    const { ledger } = await newLedger({ budgets: { max_calls: 1, max_cost_usd: 10, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 } });
+    const { ledger } = await newLedger({ budgets: { max_iterations: 1, max_calls: 12, max_cost_usd: 10, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 } });
     const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
 
     // Running out of money is a question for an operator, not a verdict.
     expect(result.hunt_status).toBe("parked");
     expect(result.hunt_outcome).toBeNull();
-    expect(result.note).toMatch(/budget exhausted/);
+    // Names the arm that bound, not just "budget": a run stopped at 3 of 3 turns
+    // while $0.11 of $14 was spent reads as a broken ceiling unless the sentence
+    // says which of the two ran out.
+    expect(result.note).toMatch(/ran out of turns: iteration 1 of 1/);
+    expect(result.note).toMatch(/having spent \$/);
   });
 
   it("rejects an uncited ABANDON but accepts a cited one", async () => {
@@ -160,10 +181,10 @@ describe("bounded re-prompt", () => {
   });
 
   it("gives up after the bound and journals the stall it threw on", async () => {
-    const { ledger } = await newLedger();
+    const { ledger, spend } = await newLedger();
     const provider = new StubbornProvider(UNCITED_ABANDON, 0.02);
 
-    await expect(new HuntController(ledger, provider).advanceIteration()).rejects.toThrow(InvalidDecision);
+    await expect(new HuntController(ledger, billedLead(provider, spend)).advanceIteration()).rejects.toThrow(InvalidDecision);
 
     expect(provider.seenDigests).toHaveLength(MAX_DECISION_ATTEMPTS);
 
@@ -181,6 +202,50 @@ describe("bounded re-prompt", () => {
     expect(ledger.projection.hunt.status).toBe("active");
   });
 
+  // A worker whose call dies costs one gap record and a critic whose call dies leaves
+  // its hypothesis standing. The lead's used to take the whole hunt with it, so one 504
+  // on one write-up threw away every iteration behind it.
+  it("asks the lead again when its call dies, rather than losing the iteration", async () => {
+    const { ledger } = await newLedger();
+    let calls = 0;
+    const provider: DecisionProvider = {
+      decide: async (): Promise<DecisionResult> => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("504 request timed out"), { cost_usd: 0.03 });
+        return { decision: CONCLUDE, model_id: "m", prompt_version: "v", cost_usd: 0.01 };
+      },
+    };
+
+    const iteration = await new HuntController(ledger, provider).advanceIteration();
+
+    expect(calls).toBe(2);
+    expect(iteration.action).toBe("CONCLUDE");
+    const record = ledger.projection.decisions[0]!;
+    expect(record.rejected_attempts).toEqual([expect.stringContaining("504")]);
+    // The failed call was paid for, so the iteration is charged for both.
+    expect(record.cost_usd).toBeCloseTo(0.04, 10);
+  });
+
+  it("journals a stall rather than throwing when every attempt at the lead dies", async () => {
+    const { ledger } = await newLedger();
+    let calls = 0;
+    const provider: DecisionProvider = {
+      decide: async (): Promise<DecisionResult> => {
+        calls += 1;
+        throw Object.assign(new Error("504 request timed out"), { cost_usd: 0.02 });
+      },
+    };
+
+    await expect(new HuntController(ledger, provider).advanceIteration()).rejects.toThrow(InvalidDecision);
+
+    expect(calls).toBe(MAX_DECISION_ATTEMPTS);
+    const record = ledger.projection.decisions[0]!;
+    expect(record.decision.action).toBe("STALLED");
+    expect(record.cost_usd).toBeCloseTo(0.06, 10);
+    // Still active: the iteration never advanced, so a resume retries it.
+    expect(ledger.projection.hunt.status).toBe("active");
+  });
+
   // A stall a lead could emit would be a way to end a hunt without a verdict.
   it("refuses a STALLED emitted by the lead", async () => {
     const { ledger } = await newLedger();
@@ -190,19 +255,23 @@ describe("bounded re-prompt", () => {
   });
 
   it("terminates a stalled hunt that has spent its budget", async () => {
-    const { ledger } = await newLedger();
-    // Each attempt costs more than the whole budget allows.
+    // The ceiling is stated here rather than borrowed from the shipped default:
+    // the premise is "one attempt costs more than the budget", and reading the
+    // default made that premise change whenever the default did.
+    const { ledger, spend } = await newLedger({
+      budgets: { max_iterations: 8, max_calls: 5_000, max_cost_usd: 1, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 },
+    });
     const provider = new StubbornProvider(UNCITED_ABANDON, 3);
 
-    await expect(new HuntController(ledger, provider).advanceIteration()).rejects.toThrow(InvalidDecision);
+    await expect(new HuntController(ledger, billedLead(provider, spend)).advanceIteration()).rejects.toThrow(InvalidDecision);
 
     expect(ledger.projection.hunt.status).toBe("terminal");
     expect(ledger.projection.hunt.outcome).toBe("budget_terminated");
   });
 
   it("charges the hunt for rejected emissions, not just the accepted one", async () => {
-    const { ledger } = await newLedger();
-    await controllerFor(ledger, [UNCITED_ABANDON, CONCLUDE], { costPerDecision: 0.03 }).advanceIteration();
+    const { ledger, spend } = await newLedger();
+    await controllerFor(ledger, [UNCITED_ABANDON, CONCLUDE], { costPerDecision: 0.03, spend }).advanceIteration();
 
     // Two paid calls: a rejected emission still cost money, and hunt.cost_usd
     // is the budget counter.

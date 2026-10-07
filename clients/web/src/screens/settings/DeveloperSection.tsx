@@ -63,13 +63,14 @@ export default function DeveloperSection({ notify }: SectionProps) {
   }
 
   const isPg = status?.backend === 'postgresql'
+  const isDemo = status?.backend === 'demo'
   const sp = splunk.status
 
   return (
     <>
       <SettingsCard
         title="PostgreSQL"
-        desc="Platform storage backend. Findings and cases persist here when connected; otherwise they fall back to JSON files."
+        desc="Platform storage backend. Findings and cases persist here when connected."
         actions={
           <>
             <button className="btn ghost" onClick={reload}>
@@ -82,8 +83,8 @@ export default function DeveloperSection({ notify }: SectionProps) {
         }
       >
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <span className={`status ${isPg ? 'closed' : 'open'}`}>
-            {isPg ? 'PostgreSQL Active' : 'JSON Files'}
+          <span className={`status ${isPg || isDemo ? 'closed' : 'open'}`}>
+            {isPg ? 'PostgreSQL Active' : isDemo ? 'Demo' : 'Disconnected'}
           </span>
           {health && (
             <span className="chip">
@@ -92,7 +93,7 @@ export default function DeveloperSection({ notify }: SectionProps) {
           )}
         </div>
 
-        {status && !isPg && (
+        {status && !isPg && !isDemo && (
           <div className="settings-banner info mb-3">
             <Icon name="info" size={14} />
             <span>

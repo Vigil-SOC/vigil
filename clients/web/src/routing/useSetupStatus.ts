@@ -1,37 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
-import { llmProviderApi, LLMProvider } from '../services/api'
+import { llmProviderApi, type LLMProvider } from '../services/api'
+import { anyRoutableBifrostProvider } from '../services/bifrostApi'
 
-// is_default, not just is_active: active-but-no-default is exactly where
-// default-resolution fails and chat breaks. No API key is required — local
-// providers can be keyless, and the wizard's Test step is what proves one works.
-const isProviderReady = (p: LLMProvider): boolean => p.is_active && p.is_default
+// A legacy active+default provider, or a routable Bifrost provider. A failed
+// read is a failure only when the other side did not already prove a provider
+// is ready. The old catch that treated a provider-list error as configured
+// existed so the hard gate would not trap a working install.
+export const isProviderReady = (provider: LLMProvider): boolean =>
+  provider.is_active && provider.is_default
 
-export interface SetupStatus {
-  configured: boolean
-  loading: boolean
-  refetch: () => void
+export async function readProviderConfigured(): Promise<boolean> {
+  const [legacy, bifrost] = await Promise.allSettled([
+    llmProviderApi.list().then((res) => (res.data || []).some(isProviderReady)),
+    anyRoutableBifrostProvider(),
+  ])
+  const legacyReady = legacy.status === 'fulfilled' && legacy.value
+  const bifrostReady = bifrost.status === 'fulfilled' && bifrost.value
+  if (legacyReady || bifrostReady) return true
+  if (legacy.status === 'rejected') throw legacy.reason
+  if (bifrost.status === 'rejected') throw bifrost.reason
+  return false
 }
-
-const useSetupStatus = (): SetupStatus => {
-  const [configured, setConfigured] = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  const refetch = useCallback(() => {
-    setLoading(true)
-    llmProviderApi
-      .list()
-      .then((res) => setConfigured((res.data || []).some(isProviderReady)))
-      // Fail open: UX routing, not a security control. A fresh install returns
-      // an empty list (a success), so the gate still fires for new users.
-      .catch(() => setConfigured(true))
-      .finally(() => setLoading(false))
-  }, [])
-
-  useEffect(() => {
-    refetch()
-  }, [refetch])
-
-  return { configured, loading, refetch }
-}
-
-export default useSetupStatus

@@ -1,14 +1,25 @@
-"""S3 service for reading findings and cases from AWS S3 buckets."""
+"""S3 client for listing and downloading objects for ingestion."""
 
-import json
 import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 logger = logging.getLogger(__name__)
+
+# Errors list_files / list_files_detailed can raise; callers catch these.
+S3_LIST_ERRORS = (BotoCoreError, ClientError, RuntimeError)
+
+
+def describe_s3_error(exc: Exception) -> str:
+    """Short message for an S3 listing failure, including the botocore error code."""
+    if isinstance(exc, ClientError):
+        err = exc.response.get("Error", {})
+        return f"{err.get('Code', 'Unknown')}: {err.get('Message', str(exc))}"
+    if isinstance(exc, NoCredentialsError):
+        return "AWS credentials not found. Please configure credentials."
+    return str(exc)
 
 
 class S3Service:
@@ -36,6 +47,7 @@ class S3Service:
         """
         self.bucket_name = bucket_name
         self.region_name = region_name
+        self._init_error: Optional[str] = None
 
         try:
             if aws_profile:
@@ -57,7 +69,13 @@ class S3Service:
                 self.s3_client = boto3.client("s3", region_name=region_name)
         except Exception as e:
             logger.error(f"Failed to initialize S3 client: {e}")
+            self._init_error = str(e)
             self.s3_client = None
+
+    def _require_client(self):
+        if not self.s3_client:
+            raise RuntimeError(f"S3 client not initialized: {self._init_error}")
+        return self.s3_client
 
     def test_connection(self) -> tuple[bool, str]:
         """
@@ -97,24 +115,17 @@ class S3Service:
             prefix: Prefix to filter files (e.g., "findings/" or "data/")
 
         Returns:
-            List of file keys
+            List of file keys (empty only if the listing succeeded and found nothing)
+
+        Raises:
+            S3_LIST_ERRORS: if the listing fails (e.g. AccessDenied, NoSuchBucket)
         """
-        if not self.s3_client:
-            return []
-
-        try:
-            files = []
-            paginator = self.s3_client.get_paginator("list_objects_v2")
-
-            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-                if "Contents" in page:
-                    for obj in page["Contents"]:
-                        files.append(obj["Key"])
-
-            return files
-        except Exception as e:
-            logger.error(f"Error listing S3 files: {e}")
-            return []
+        paginator = self._require_client().get_paginator("list_objects_v2")
+        files = []
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                files.append(obj["Key"])
+        return files
 
     def list_files_detailed(self, prefix: str = "") -> List[Dict[str, Any]]:
         """
@@ -125,107 +136,24 @@ class S3Service:
 
         Returns:
             List of dicts with keys: key, size, last_modified
+
+        Raises:
+            S3_LIST_ERRORS: if the listing fails (e.g. AccessDenied, NoSuchBucket)
         """
-        if not self.s3_client:
-            return []
-
-        try:
-            files = []
-            paginator = self.s3_client.get_paginator("list_objects_v2")
-
-            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-                if "Contents" in page:
-                    for obj in page["Contents"]:
-                        if obj["Key"].endswith("/"):
-                            continue
-                        files.append(
-                            {
-                                "key": obj["Key"],
-                                "size": obj["Size"],
-                                "last_modified": obj["LastModified"].isoformat(),
-                            }
-                        )
-
-            return files
-        except Exception as e:
-            logger.error(f"Error listing S3 files (detailed): {e}")
-            return []
-
-    def get_findings(self, key: str = "findings.json") -> List[Dict]:
-        """
-        Get findings from S3.
-
-        Args:
-            key: S3 object key (default: "findings.json")
-
-        Returns:
-            List of finding dictionaries
-        """
-        if not self.s3_client:
-            return []
-
-        try:
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            content = response["Body"].read().decode("utf-8")
-            data = json.loads(content)
-
-            # Handle both formats: {"findings": [...]} or [...]
-            if isinstance(data, dict) and "findings" in data:
-                return data["findings"]
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.error(f"Unexpected findings format in S3: {type(data)}")
-                return []
-
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "Unknown")
-            if error_code == "NoSuchKey":
-                logger.warning(f"Findings file not found in S3: {key}")
-            else:
-                logger.error(f"Error reading findings from S3: {e}")
-            return []
-        except Exception as e:
-            logger.error(f"Error reading findings from S3: {e}")
-            return []
-
-    def get_cases(self, key: str = "cases.json") -> List[Dict]:
-        """
-        Get cases from S3.
-
-        Args:
-            key: S3 object key (default: "cases.json")
-
-        Returns:
-            List of case dictionaries
-        """
-        if not self.s3_client:
-            return []
-
-        try:
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            content = response["Body"].read().decode("utf-8")
-            data = json.loads(content)
-
-            # Handle both formats: {"cases": [...]} or [...]
-            if isinstance(data, dict) and "cases" in data:
-                return data["cases"]
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.error(f"Unexpected cases format in S3: {type(data)}")
-                return []
-
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "Unknown")
-            if error_code == "NoSuchKey":
-                logger.warning(f"Cases file not found in S3: {key}")
-            else:
-                logger.error(f"Error reading cases from S3: {e}")
-            return []
-        except Exception as e:
-            logger.error(f"Error reading cases from S3: {e}")
-            return []
+        paginator = self._require_client().get_paginator("list_objects_v2")
+        files = []
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                if obj["Key"].endswith("/"):
+                    continue
+                files.append(
+                    {
+                        "key": obj["Key"],
+                        "size": obj["Size"],
+                        "last_modified": obj["LastModified"].isoformat(),
+                    }
+                )
+        return files
 
     def get_file(self, key: str) -> Optional[bytes]:
         """
@@ -246,25 +174,3 @@ class S3Service:
         except Exception as e:
             logger.error(f"Error reading file from S3: {e}")
             return None
-
-    def upload_file(self, local_path: Path, s3_key: str) -> bool:
-        """
-        Upload a file to S3.
-
-        Args:
-            local_path: Local file path
-            s3_key: S3 object key
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.s3_client:
-            return False
-
-        try:
-            self.s3_client.upload_file(str(local_path), self.bucket_name, s3_key)
-            logger.info(f"Uploaded {local_path} to s3://{self.bucket_name}/{s3_key}")
-            return True
-        except Exception as e:
-            logger.error(f"Error uploading file to S3: {e}")
-            return False

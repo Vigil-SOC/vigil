@@ -2,7 +2,7 @@
 
 Single source of truth used by:
 - services/api/routers/analytics.py — get_mitre_technique_distribution
-- the ATT&CK agent tools (get_technique_rollup, create_attack_layer)
+- the ATT&CK agent tool (get_technique_rollup)
 
 Findings in this codebase carry MITRE data in two shapes:
 - Demo path: `predicted_techniques: list[{technique_id, confidence, technique_name}]`

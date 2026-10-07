@@ -57,6 +57,12 @@ export default defineConfig(({ mode }) => {
       react(),
     ],
     server: {
+      // tokens.css lives under docs/, outside this package. Setting allow
+      // replaces Vite's default (the web root), so the repo root has to
+      // include it or the dev server refuses the file.
+      fs: {
+        allow: [resolve(__dirname, '..', '..')],
+      },
       port: 6988,
       host: '127.0.0.1', // Use IPv4 explicitly
       proxy: {

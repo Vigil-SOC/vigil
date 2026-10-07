@@ -1,104 +1,53 @@
-import axios from 'axios'
+import api from './api'
 
 /**
- * Client for the Skills API (GitHub issue #82).
- *
- * Skills are reusable, parameterized SOC capabilities that agents/workflows
- * will eventually invoke. The MVP surface is CRUD + AI-assisted generation.
+ * Skills API. The list is loaded from disk. Saves and deletes go to the
+ * operator root (`VIGIL_SKILLS_PATH`); the bundled library is never written.
  */
 
-export const SKILL_CATEGORIES = [
-  'detection',
-  'enrichment',
-  'response',
-  'reporting',
-  'custom',
-] as const
-
-export type SkillCategory = typeof SKILL_CATEGORIES[number]
-
-export interface SkillDraft {
+/** Wire row from GET /api/skills: a skill loaded from disk (#928, #1387). */
+export interface ApiSkill {
   name: string
-  description?: string
-  category: SkillCategory
-  input_schema: Record<string, any>
-  output_schema: Record<string, any>
-  required_tools: string[]
-  prompt_template: string
-  execution_steps: Record<string, any>[]
-  is_active?: boolean
-}
-
-export interface Skill extends SkillDraft {
-  skill_id: string
-  created_by?: string | null
-  version: number
-  created_at?: string | null
-  updated_at?: string | null
-}
-
-export interface SkillGenerateRequest {
   description: string
-  category?: SkillCategory
-  conversation_history?: { role: string; content: string }[] | null
-  user_response?: string | null
+  source_path: string
+  bundled: boolean
+  /** Regular files in the skill folder, SKILL.md included; same list the drawer shows. */
+  file_count: number
 }
 
-export interface SkillGenerateResponse {
-  success: boolean
-  needs_clarification: boolean
-  message?: string
-  conversation_history?: { role: string; content: string }[]
-  skill?: SkillDraft
-  error?: string
+/** A file in the skill folder: posix path relative to it, and size in bytes. */
+export interface ApiSkillFile {
+  path: string
+  size: number
 }
 
-export interface SkillImportResult {
-  skill_id: string
-  name: string
+/** GET /api/skills/{name}: the Markdown body, without frontmatter, the folder's files and the version. */
+export interface ApiSkillDetail extends ApiSkill {
+  body: string
+  operator_root_set: boolean
   version: number
-  replaced: boolean
+  files: ApiSkillFile[]
 }
 
-const client = axios.create({
-  baseURL: '/api/skills',
-  headers: { 'Content-Type': 'application/json' },
-})
-
-client.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+export interface SkillWrite {
+  name: string
+  description: string
+  body: string
+  /** A loaded skill whose whole folder is copied under the new name. */
+  source?: string
+  /** The version the editor opened; an overwrite is refused (409) if it has moved. */
+  version?: number
+}
 
 export const skillsApi = {
-  generate: (body: SkillGenerateRequest) =>
-    client.post<SkillGenerateResponse>('/generate', body).then((r) => r.data),
-
-  list: (params?: { category?: SkillCategory; is_active?: boolean }) =>
-    client.get<Skill[]>('', { params }).then((r) => r.data),
-
-  get: (skillId: string) =>
-    client.get<Skill>(`/${skillId}`).then((r) => r.data),
-
-  create: (body: SkillDraft & { created_by?: string }) =>
-    client.post<Skill>('', body).then((r) => r.data),
-
-  update: (skillId: string, patch: Partial<SkillDraft>) =>
-    client.put<Skill>(`/${skillId}`, patch).then((r) => r.data),
-
-  remove: (skillId: string) =>
-    client.delete<{ success: boolean; skill_id: string }>(`/${skillId}`).then((r) => r.data),
-
-  importZip: (file: File) => {
-    const form = new FormData()
-    form.append('file', file)
-    return client
-      .post<SkillImportResult>('/import', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      .then((r) => r.data)
-  },
+  list: () => api.get<ApiSkill[]>('/skills').then((r) => r.data),
+  get: (name: string) => api.get<ApiSkillDetail>(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
+  file: (name: string, path: string) =>
+    api
+      .get<{ path: string; content: string }>(
+        `/skills/${encodeURIComponent(name)}/files/${path.split('/').map(encodeURIComponent).join('/')}`,
+      )
+      .then((r) => r.data),
+  save: (skill: SkillWrite) => api.post<ApiSkill>('/skills', skill).then((r) => r.data),
+  delete: (name: string) => api.delete(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
 }

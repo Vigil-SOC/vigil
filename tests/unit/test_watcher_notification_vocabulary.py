@@ -315,7 +315,7 @@ def test_watcher_add_rejects_non_boolean_value():
         )
 
 
-def test_add_watcher_route_returns_422_for_unknown_type():
+def test_add_watcher_route_returns_422_for_unknown_type(authenticate_app):
     """End-to-end through FastAPI: the refusal must surface as a 422, not a 200."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -323,6 +323,7 @@ def test_add_watcher_route_returns_422_for_unknown_type():
     from services.api.routers.cases import router
 
     app = FastAPI()
+    authenticate_app(app)
     app.include_router(router, prefix="/api/cases")
     client = TestClient(app)
 

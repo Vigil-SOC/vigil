@@ -9,8 +9,6 @@ fields on read so plaintext credentials never leak to the frontend.
 
 from __future__ import annotations
 
-import asyncio
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,8 +17,6 @@ ROOT = Path(__file__).resolve().parents[2]
 for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-
-os.environ.setdefault("DEV_MODE", "true")
 
 
 def _post_payload():
@@ -38,6 +34,10 @@ def _post_payload():
             }
         },
     )
+
+
+class _User:
+    user_id = "user-1"
 
 
 def _invoke_post(payload, *, set_secret=None, config_service=None, tmp_home=None):
@@ -58,7 +58,7 @@ def _invoke_post(payload, *, set_secret=None, config_service=None, tmp_home=None
     for p in patches:
         p.start()
     try:
-        result = asyncio.run(config_module.set_integrations_config(payload))
+        result = config_module.set_integrations_config(payload, current_user=_User())
     finally:
         for p in reversed(patches):
             p.stop()
@@ -160,7 +160,7 @@ def test_get_redacts_registered_secret_fields(tmp_path):
     ]
 
     with patch.object(config_module, "get_config_service", return_value=fake_service):
-        result = asyncio.run(config_module.get_integrations_config())
+        result = config_module.get_integrations_config()
 
     cfg = result["integrations"]["vstrike"]
     assert cfg == {"url": "https://vstrike.net", "verify_ssl": True}

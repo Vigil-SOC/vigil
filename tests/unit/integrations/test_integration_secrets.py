@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -145,82 +146,23 @@ def test_every_audited_integration_is_registered():
         "sentinelone",
         "carbon-black",
         "microsoft-defender",
-        "cortex-xdr",
-        "trend-micro-vision-one",
-        "sophos-intercept-x",
-        "cybereason",
-        "trellix",
-        "tanium",
-        "cynet",
-        "eset",
-        "bitdefender-gravityzone",
-        "fortinet-fortiedr",
-        "kaspersky",
-        "cisco-secure-endpoint",
-        "symantec-edr",
         "splunk",
         "cribl-stream",
         "elastic-siem",
         "azure-sentinel",
-        "qradar",
-        "arcsight",
-        "logrhythm",
-        "exabeam",
-        "securonix",
-        "sumo-logic",
-        "graylog",
         "aws-security-hub",
-        "aws-guardduty",
-        "gcp-security",
-        "azure-defender",
-        "prisma-cloud",
-        "orca-security",
-        "wiz",
-        "lacework",
-        "aqua-security",
-        "snyk",
         "okta",
         "azure-ad",
-        "ping-identity",
-        "auth0",
-        "onelogin",
-        "duo-security",
-        "jumpcloud",
-        "sailpoint",
-        "cyberark",
-        "beyond-trust",
         "palo-alto",
-        "cisco-firepower",
-        "fortinet",
-        "checkpoint",
-        "zscaler",
-        "sophos",
         "cloudflare",
         "cloudforce_one",
-        "juniper-srx",
         "jira",
-        "servicenow",
-        "thehive",
-        "cortex-xsoar",
-        "swimlane",
-        "ibm-resilient",
-        "opsgenie",
         "slack",
         "pagerduty",
         "microsoft-teams",
-        "email",
-        "webhook",
-        "discord",
-        "mattermost",
         "hybrid-analysis",
         "joe-sandbox",
         "anyrun",
-        "timesketch",
-        "velociraptor",
-        "grr",
-        "autopsy",
-        "osquery",
-        "cuckoo",
         "vstrike",
     }
     missing = expected - set(INTEGRATION_SECRET_FIELDS.keys())
@@ -264,18 +206,6 @@ def test_overrides_take_precedence_over_default_naming():
 
 def test_multi_secret_integrations_register_each_field():
     """Integrations with multiple password fields must register every one."""
-    assert set(INTEGRATION_SECRET_FIELDS["trellix"].keys()) == {
-        "client_secret",
-        "api_key",
-    }
-    assert set(INTEGRATION_SECRET_FIELDS["zscaler"].keys()) == {
-        "api_key",
-        "password",
-    }
-    assert set(INTEGRATION_SECRET_FIELDS["timesketch"].keys()) == {
-        "password",
-        "api_token",
-    }
     assert set(INTEGRATION_SECRET_FIELDS["pagerduty"].keys()) == {
         "api_token",
         "integration_key",
@@ -302,3 +232,68 @@ def test_no_env_var_collisions_across_integrations():
             else:
                 seen[env_var] = (integration_id, field)
     assert not collisions, "Env-var name collisions: " + ", ".join(collisions)
+
+
+def test_custom_integration_password_fields_are_secret(tmp_path, monkeypatch):
+    """A Custom Integration's password-typed fields get the registry's treatment."""
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    meta_dir = tmp_path / "custom_integrations"
+    meta_dir.mkdir()
+    (meta_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "custom-acme-intel": {
+                    "fields": [
+                        {"name": "base_url", "type": "text"},
+                        {"name": "api_key", "type": "password"},
+                    ]
+                }
+            }
+        )
+    )
+    assert secret_fields_for("custom-acme-intel") == {
+        "api_key": "CUSTOM_ACME_INTEL_API_KEY"
+    }
+    secrets, non_secrets = split_secrets(
+        "custom-acme-intel", {"base_url": "https://acme", "api_key": "FAKE-123"}
+    )
+    assert secrets == {"CUSTOM_ACME_INTEL_API_KEY": "FAKE-123"}
+    assert non_secrets == {"base_url": "https://acme"}
+    assert redact_secrets(
+        "custom-acme-intel", {"base_url": "https://acme", "api_key": "FAKE-123"}
+    ) == {"base_url": "https://acme"}
+    assert secret_fields_for("custom-other") == {}
+
+
+def test_custom_integration_metadata_unreadable_reads_as_no_secrets(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    (tmp_path / "custom_integrations").mkdir()
+    (tmp_path / "custom_integrations" / "metadata.json").write_text("{not json")
+    assert secret_fields_for("custom-acme-intel") == {}
+
+
+def test_credentials_to_resupply_names_secrets_left_blank_when_a_url_moves(monkeypatch):
+    from core.integrations import integration_secrets
+
+    monkeypatch.setattr(
+        integration_secrets,
+        "get_secret",
+        lambda env: "stored" if env == "SPLUNK_PASSWORD" else "",
+    )
+    stored = {"server_url": "https://a.example"}
+
+    moved = integration_secrets.credentials_to_resupply(
+        "splunk", stored, {"server_url": "https://b.example", "password": ""}
+    )
+    kept = integration_secrets.credentials_to_resupply(
+        "splunk", stored, {"server_url": "https://a.example/", "password": ""}
+    )
+    resupplied = integration_secrets.credentials_to_resupply(
+        "splunk", stored, {"server_url": "https://b.example", "password": "new"}
+    )
+
+    assert moved == ["password"]
+    assert kept == []
+    assert resupplied == []

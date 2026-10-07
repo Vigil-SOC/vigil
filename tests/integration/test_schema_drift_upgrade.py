@@ -68,7 +68,7 @@ def _url(database: str) -> str:
     user = os.getenv("POSTGRES_USER", "deeptempo")
     password = os.getenv("POSTGRES_PASSWORD", "deeptempo_secure_password_change_me")
     port = os.getenv("POSTGRES_PORT", "5432")
-    return f"postgresql://{user}:{password}@{_host()}:{port}/{database}"
+    return f"postgresql+psycopg2://{user}:{password}@{_host()}:{port}/{database}"
 
 
 # 'postgres' always exists and is never the target, so it is safe to CREATE and
@@ -122,7 +122,6 @@ def drifted_db(postgres_available):
         # create_all cannot provision from a bare database on its own: the
         # findings GIN index needs pg_trgm or it fails with
         # 'operator class gin_trgm_ops does not exist'.
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         c.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         c.commit()
@@ -140,22 +139,31 @@ def drifted_db(postgres_available):
     admin.dispose()
 
 
-def _manager_for(engine):
-    """A DatabaseManager pointed at a specific engine.
+def _manager_for(engine, mp):
+    """The DatabaseManager singleton, pointed at `engine` until `mp` is undone.
 
     `_engine` is assigned directly on purpose: DatabaseManager resolves its URL
     through the config layer (core/storage/connection.py:405) and ignores the
     DATABASE_URL environment variable, so setting that env var would silently
     inspect the developer's real database and report a healthy schema.
+
+    The instance is process-wide, so the patch must be undone before the scratch
+    database is dropped — otherwise every later test in the process connects to
+    a database that no longer exists (#1051).
     """
     dm = DatabaseManager()
-    dm._engine = engine
+    mp.setattr(dm, "_engine", engine)
+    mp.setattr(dm, "_session_factory", sessionmaker(bind=engine))
     return dm
 
 
 @pytest.fixture
 def drifted_manager(drifted_db):
-    return _manager_for(drifted_db)
+    # Its own MonkeyPatch rather than the `monkeypatch` fixture: that one is
+    # set up first (by the autouse fixture) and so undone after drifted_db
+    # has already dropped the database.
+    with pytest.MonkeyPatch.context() as mp:
+        yield _manager_for(drifted_db, mp)
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +194,12 @@ def _set_strict(monkeypatch, value):
     """
     monkeypatch.setenv("DB_STRICT_SCHEMA", value)
     get_settings.cache_clear()
+
+
+def _patch_report(monkeypatch, fn):
+    """Replace schema_report on the class: an instance-level patch leaves the
+    bound original behind on the singleton when undone."""
+    monkeypatch.setattr(DatabaseManager, "schema_report", lambda self: fn())
 
 
 def _columns(engine, table):
@@ -220,6 +234,22 @@ def test_schema_report_detects_the_missing_column(drifted_manager):
     assert report["state"] == "drifted"
     assert report["missing_tables"] == []
     assert report["missing_columns"].get(DRIFT_TABLE) == [DRIFT_COLUMN]
+
+
+def test_schema_report_detects_a_not_null_the_models_dropped(
+    drifted_db, drifted_manager
+):
+    """A database from before #1115 still forbids NULL cost, so every unpriced
+    call's audit row would fail to insert; that must read as drift."""
+    with drifted_db.begin() as c:
+        c.execute(
+            text("ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd SET NOT NULL")
+        )
+
+    report = drifted_manager.schema_report()
+
+    assert report["state"] == "drifted"
+    assert report["not_null_columns"] == {"llm_interaction_logs": ["cost_usd"]}
 
 
 def test_orm_read_raises_even_when_the_table_is_empty(drifted_db):
@@ -307,16 +337,18 @@ def test_strict_mode_refuses_an_unprovisioned_database(monkeypatch, postgres_ava
         c.execute(text(f"CREATE DATABASE {SCRATCH_DB}"))
     bare = create_engine(_url(SCRATCH_DB), connect_args=_CONNECT_ARGS)
     try:
-        manager = _manager_for(bare)
-        assert manager.schema_report()["state"] == "empty"
+        with pytest.MonkeyPatch.context() as mp:
+            manager = _manager_for(bare, mp)
+            assert manager.schema_report()["state"] == "empty"
 
-        # A caller that has not provisioned yet is entitled to an empty database.
-        check_schema_drift(db_manager=manager, provisioned=False)
+            # A caller that has not provisioned yet is entitled to an empty
+            # database.
+            check_schema_drift(db_manager=manager, provisioned=False)
 
-        _set_strict(monkeypatch, "true")
-        reset_schema_drift_check()
-        with pytest.raises(SchemaDriftError):
-            check_schema_drift(db_manager=manager, provisioned=True)
+            _set_strict(monkeypatch, "true")
+            reset_schema_drift_check()
+            with pytest.raises(SchemaDriftError):
+                check_schema_drift(db_manager=manager, provisioned=True)
     finally:
         bare.dispose()
         with admin.connect() as c:
@@ -340,14 +372,14 @@ def test_strict_mode_off_for_falsey_spellings(drifted_manager, monkeypatch, valu
     check_schema_drift(db_manager=drifted_manager)  # must not raise
 
 
-def test_healthy_schema_logs_no_error(drifted_db, caplog):
+def test_healthy_schema_logs_no_error(drifted_db, drifted_manager, caplog):
     """No false alarms: a correct schema must stay quiet."""
     with drifted_db.connect() as c:
         c.execute(text(f"ALTER TABLE {DRIFT_TABLE} ADD COLUMN {DRIFT_COLUMN} JSONB"))
         c.commit()
 
     with caplog.at_level(logging.ERROR):
-        report = check_schema_drift(db_manager=_manager_for(drifted_db))
+        report = check_schema_drift(db_manager=drifted_manager)
 
     assert report["state"] == "ok"
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -369,7 +401,7 @@ def test_report_is_readable_after_the_check_for_health_output(drifted_manager):
     assert cached["missing_columns"].get(DRIFT_TABLE) == [DRIFT_COLUMN]
 
 
-def test_inspection_runs_once_and_is_memoised(drifted_manager):
+def test_inspection_runs_once_and_is_memoised(drifted_manager, monkeypatch):
     """init_database() is called on every DatabaseDataService construction —
     including from the health endpoint — so an unmemoised check would add a
     full inspector pass per request."""
@@ -380,7 +412,7 @@ def test_inspection_runs_once_and_is_memoised(drifted_manager):
         calls.append(1)
         return original()
 
-    drifted_manager.schema_report = counting_report
+    _patch_report(monkeypatch, counting_report)
 
     check_schema_drift(db_manager=drifted_manager)
     check_schema_drift(db_manager=drifted_manager)
@@ -399,7 +431,9 @@ def test_drift_is_logged_once_not_per_call(drifted_manager, caplog):
     assert len(errors) == 1, f"expected a single ERROR, got {len(errors)}"
 
 
-def test_a_failed_inspection_is_not_cached_as_checked(drifted_manager, caplog):
+def test_a_failed_inspection_is_not_cached_as_checked(
+    drifted_manager, caplog, monkeypatch
+):
     """A transient failure must not disable the check for the process lifetime.
 
     DatabaseDataService retries _init_database() on reconnect, so caching a
@@ -415,7 +449,7 @@ def test_a_failed_inspection_is_not_cached_as_checked(drifted_manager, caplog):
             raise RuntimeError("database not initialized")
         return original()
 
-    drifted_manager.schema_report = failing_once
+    _patch_report(monkeypatch, failing_once)
 
     with caplog.at_level(logging.WARNING):
         assert check_schema_drift(db_manager=drifted_manager) is None
@@ -425,7 +459,9 @@ def test_a_failed_inspection_is_not_cached_as_checked(drifted_manager, caplog):
     assert report is not None and report["state"] == "drifted"
 
 
-def test_an_uninspectable_schema_is_not_recorded_as_a_verdict(drifted_manager):
+def test_an_uninspectable_schema_is_not_recorded_as_a_verdict(
+    drifted_manager, monkeypatch
+):
     """`unknown` is schema_report failing to inspect, not a healthy schema.
 
     schema_report() catches its own inspection errors and returns
@@ -442,7 +478,7 @@ def test_an_uninspectable_schema_is_not_recorded_as_a_verdict(drifted_manager):
             return {"state": "unknown", "missing_tables": [], "missing_columns": {}}
         return original()
 
-    drifted_manager.schema_report = unknown_once
+    _patch_report(monkeypatch, unknown_once)
 
     assert check_schema_drift(db_manager=drifted_manager) is None
     assert get_schema_drift_report() is None, "unknown must not become the verdict"
@@ -451,7 +487,9 @@ def test_an_uninspectable_schema_is_not_recorded_as_a_verdict(drifted_manager):
     assert report is not None and report["state"] == "drifted"
 
 
-def test_a_repaired_schema_is_noticed_without_a_restart(drifted_db, monkeypatch):
+def test_a_repaired_schema_is_noticed_without_a_restart(
+    drifted_db, drifted_manager, monkeypatch
+):
     """An unhealthy verdict is provisional; the operator can fix it in place.
 
     Caching drift for the life of the process would mean _db_available's
@@ -459,7 +497,7 @@ def test_a_repaired_schema_is_noticed_without_a_restart(drifted_db, monkeypatch)
     /api/health would keep reporting drift after the migration that fixed it.
     """
     monkeypatch.setattr(conn, "_SCHEMA_RECHECK_SECONDS", 0.0)
-    manager = _manager_for(drifted_db)
+    manager = drifted_manager
 
     assert check_schema_drift(db_manager=manager)["state"] == "drifted"
 
@@ -471,7 +509,9 @@ def test_a_repaired_schema_is_noticed_without_a_restart(drifted_db, monkeypatch)
     assert get_schema_drift_report()["state"] == "ok"
 
 
-def test_a_healthy_verdict_is_never_re_inspected(drifted_db, monkeypatch):
+def test_a_healthy_verdict_is_never_re_inspected(
+    drifted_db, drifted_manager, monkeypatch
+):
     """`ok` is final: nothing but create_all changes the schema under us, and it
     cannot remove a column. Re-inspecting would be a full pass per health scrape
     on every healthy deployment, which is the cost the cache exists to avoid."""
@@ -480,10 +520,10 @@ def test_a_healthy_verdict_is_never_re_inspected(drifted_db, monkeypatch):
         c.execute(text(f"ALTER TABLE {DRIFT_TABLE} ADD COLUMN {DRIFT_COLUMN} JSONB"))
         c.commit()
 
-    manager = _manager_for(drifted_db)
+    manager = drifted_manager
     calls = []
     original = manager.schema_report
-    manager.schema_report = lambda: (calls.append(1), original())[1]
+    _patch_report(monkeypatch, lambda: (calls.append(1), original())[1])
 
     for _ in range(3):
         assert check_schema_drift(db_manager=manager)["state"] == "ok"
@@ -491,7 +531,7 @@ def test_a_healthy_verdict_is_never_re_inspected(drifted_db, monkeypatch):
     assert len(calls) == 1, f"expected one inspection, got {len(calls)}"
 
 
-def test_an_empty_verdict_does_not_survive_a_create_all(drifted_db, monkeypatch):
+def test_an_empty_verdict_does_not_survive_a_create_all(drifted_manager, monkeypatch):
     """create_all runs on every DatabaseDataService construction, so a cached
     "empty" can be void by the next call — the tables may exist now.
 
@@ -501,21 +541,21 @@ def test_an_empty_verdict_does_not_survive_a_create_all(drifted_db, monkeypatch)
     """
     # Long enough that only the create_all rule can trigger a re-inspection.
     monkeypatch.setattr(conn, "_SCHEMA_RECHECK_SECONDS", 3600.0)
-    manager = _manager_for(drifted_db)
+    manager = drifted_manager
     empty = {"state": "empty", "missing_tables": [], "missing_columns": {}}
 
     original = manager.schema_report
-    manager.schema_report = lambda: empty
+    _patch_report(monkeypatch, lambda: empty)
     # A caller that has not provisioned is entitled to an empty database.
     assert check_schema_drift(db_manager=manager, provisioned=False)["state"] == "empty"
 
-    manager.schema_report = original
+    _patch_report(monkeypatch, original)
     assert (
         check_schema_drift(db_manager=manager, provisioned=True)["state"] == "drifted"
     )
 
 
-def test_concurrent_callers_inspect_and_log_once(drifted_manager, caplog):
+def test_concurrent_callers_inspect_and_log_once(drifted_manager, caplog, monkeypatch):
     """init_database() is reached from request threads, not just startup.
 
     Two arriving together must not each walk every mapped table, nor each emit
@@ -532,7 +572,7 @@ def test_concurrent_callers_inspect_and_log_once(drifted_manager, caplog):
         time.sleep(0.05)
         return original()
 
-    drifted_manager.schema_report = slow_report
+    _patch_report(monkeypatch, slow_report)
 
     def worker():
         barrier.wait()
@@ -550,28 +590,27 @@ def test_concurrent_callers_inspect_and_log_once(drifted_manager, caplog):
     assert len(errors) == 1, f"expected a single ERROR, got {len(errors)}"
 
 
-def test_strict_mode_is_not_swallowed_into_json_fallback(
-    drifted_db, monkeypatch, postgres_available
+def test_strict_mode_is_not_swallowed_on_schema_drift(
+    drifted_manager, monkeypatch, postgres_available
 ):
-    """DatabaseDataService must not downgrade an explicit refusal to a warning.
+    """DatabaseDataService must not swallow an explicit schema-drift refusal.
 
-    Its _init_database() catches Exception and falls back to JSON files. That
-    would turn DB_STRICT_SCHEMA=true into a silent switch to a different storage
-    backend, which is the exact shape of the bug #562 describes.
+    _init_database() catches Exception for a down database so reconnect can
+    retry. SchemaDriftError is re-raised so DB_STRICT_SCHEMA=true stays fatal
+    (#562).
     """
     from core.storage import database_data_service as dds
 
     _set_strict(monkeypatch, "true")
     monkeypatch.setattr(dds, "is_demo_mode", lambda: False, raising=True)
-    monkeypatch.setattr(
-        dds, "get_db_manager", lambda: _manager_for(drifted_db), raising=True
-    )
+    monkeypatch.setattr(dds, "get_db_manager", lambda: drifted_manager, raising=True)
     monkeypatch.setattr(
         dds,
         "init_database",
-        lambda **kw: check_schema_drift(db_manager=_manager_for(drifted_db)),
+        lambda **kw: check_schema_drift(db_manager=drifted_manager),
         raising=True,
     )
 
+    service = dds.DatabaseDataService()  # connects lazily, on first use
     with pytest.raises(SchemaDriftError):
-        dds.DatabaseDataService()
+        service._db_available

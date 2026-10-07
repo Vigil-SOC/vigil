@@ -111,17 +111,21 @@ def test_no_cross_router_path_shadowing():
     """
     routes = []  # (full_path, methods, owner)
     for name, router, meta in _specs():
-        for route in router.routes:
-            full = meta.prefix + getattr(route, "path", "")
-            methods = frozenset(getattr(route, "methods", None) or ())
-            routes.append((full, methods, name))
+        # A router is mounted at its prefix and again at each legacy prefix, so
+        # shadowing has to be checked at every mount point — a v1 router's
+        # legacy mount can collide with the unversioned router it split from.
+        for mount_prefix in (meta.prefix, *meta.legacy_prefixes):
+            for route in router.routes:
+                full = mount_prefix + getattr(route, "path", "")
+                methods = frozenset(getattr(route, "methods", None) or ())
+                routes.append((full, methods, name))
 
     # Identical path in two routers, sharing a method: never looks like
     # "param vs literal", so the comparison below would miss it entirely.
     exact = [
         (a_p, a_o, b_o)
         for i, (a_p, a_m, a_o) in enumerate(routes)
-        for b_p, b_m, b_o in routes[i + 1:]
+        for b_p, b_m, b_o in routes[i + 1 :]
         if a_p == b_p and a_o != b_o and (a_m & b_m)
     ]
 
@@ -138,10 +142,9 @@ def test_no_cross_router_path_shadowing():
     problems = [f"  identical path {p} in {a} and {b}" for p, a, b in exact] + [
         f"  {pp} ({po}) shadows {lp} ({lo})" for pp, po, lp, lo in swallow
     ]
-    assert not problems, (
-        "Cross-router path shadowing — mount order now matters:\n"
-        + "\n".join(problems)
-    )
+    assert (
+        not problems
+    ), "Cross-router path shadowing — mount order now matters:\n" + "\n".join(problems)
 
 
 GATE_ENV_VARS = ("DARKTRACE_ENABLED", "CLOUDY_INGESTION_ENABLED")

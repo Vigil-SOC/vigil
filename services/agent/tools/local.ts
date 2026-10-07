@@ -14,5 +14,5 @@ export function localTool(spec: ToolSpec, execute: LocalExecutor, bounds: ToolBo
   const parameters = spec["parameters"];
   if (typeof parameters !== "object" || parameters === null) throw new SpecError(`tool ${spec.id} needs a parameters schema`);
 
-  return defineTool({ id: spec.id, description, parameters: parameters as Record<string, unknown>, execute }, bounds);
+  return defineTool({ id: spec.id, description, parameters: parameters as Record<string, unknown>, execute }, bounds, true);
 }

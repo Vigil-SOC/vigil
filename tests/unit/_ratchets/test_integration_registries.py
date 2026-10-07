@@ -23,10 +23,30 @@ import pytest
 
 from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.integration_secrets import INTEGRATION_SECRET_FIELDS
+from core.integrations.mcp.service import extract_required_env_vars
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MCP_CONFIG = _REPO_ROOT / "mcp-config.json"
 _CATALOG = _REPO_ROOT / "clients" / "web" / "src" / "config" / "integrations.ts"
+_SETTINGS_DATA = (
+    _REPO_ROOT
+    / "clients"
+    / "web"
+    / "src"
+    / "screens"
+    / "settings"
+    / "integrationsData.ts"
+)
+_DATA_SOURCE_DIALOG = (
+    _REPO_ROOT
+    / "clients"
+    / "web"
+    / "src"
+    / "screens"
+    / "setup"
+    / "DataSourceDialog.tsx"
+)
+_TS_PAIR_RE = re.compile(r"'([A-Za-z0-9_-]+)'\s*:\s*'([A-Za-z0-9_-]+)'")
 
 
 def _mcp_server_keys() -> set[str]:
@@ -52,6 +72,24 @@ def _catalog() -> dict[str, dict[str, str]]:
 
 def _descriptors():
     return sorted(iter_descriptors(), key=lambda d: d.id)
+
+
+def _object_literal(source: str, marker: str) -> str:
+    start = source.index(marker)
+    brace = source.index("{", start)
+    depth = 0
+    for i, ch in enumerate(source[brace:], brace):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace : i + 1]
+    raise AssertionError(f"unclosed object literal after {marker!r}")
+
+
+def _ts_string_map(path: Path, marker: str) -> dict[str, str]:
+    return dict(_TS_PAIR_RE.findall(_object_literal(path.read_text(), marker)))
 
 
 @pytest.mark.unit
@@ -127,3 +165,93 @@ def test_no_vendor_server_lives_in_the_tools_package():
         "vendor MCP servers must live in core/integrations/<vendor>/tool.py, "
         f"not tools/: {strays}"
     )
+
+
+@pytest.mark.unit
+def test_frontend_server_catalog_maps_are_inverses():
+    """Settings and setup keep hand-written inverses of the same aliases.
+
+    ``SERVER_TO_INTEGRATION`` (server key → catalog id) and
+    ``CATALOG_TO_SERVER`` (catalog id → server key) live in different files.
+    Elastic dropped out of one and the Settings card lost its gear.
+    """
+    server_to = _ts_string_map(_SETTINGS_DATA, "SERVER_TO_INTEGRATION")
+    catalog_to = _ts_string_map(_DATA_SOURCE_DIALOG, "CATALOG_TO_SERVER")
+    assert {v: k for k, v in server_to.items()} == catalog_to, (
+        "SERVER_TO_INTEGRATION and CATALOG_TO_SERVER are not inverses: "
+        f"{server_to!r} vs {catalog_to!r}"
+    )
+
+
+@pytest.mark.unit
+def test_aliased_mcp_server_names_are_in_the_frontend_maps():
+    """A descriptor whose MCP key differs from its catalog id must be mapped.
+
+    ``splunk-selfhosted`` used to be hidden, and Setup enabled the official
+    ``splunk`` server instead. With nothing hidden, every differing name is mapped.
+    """
+    server_to = _ts_string_map(_SETTINGS_DATA, "SERVER_TO_INTEGRATION")
+    catalog_to = _ts_string_map(_DATA_SOURCE_DIALOG, "CATALOG_TO_SERVER")
+    missing = {}
+    for descriptor in _descriptors():
+        for name in descriptor.mcp_server_names:
+            if name == descriptor.id:
+                continue
+            problems = []
+            if server_to.get(name) != descriptor.id:
+                problems.append(
+                    f"SERVER_TO_INTEGRATION[{name!r}] is {server_to.get(name)!r}, "
+                    f"expected {descriptor.id!r}"
+                )
+            if catalog_to.get(descriptor.id) != name:
+                problems.append(
+                    f"CATALOG_TO_SERVER[{descriptor.id!r}] is "
+                    f"{catalog_to.get(descriptor.id)!r}, expected {name!r}"
+                )
+            if problems:
+                missing[f"{descriptor.id}/{name}"] = problems
+    assert not missing, (
+        "descriptor mcp_server_names that differ from id must appear in both "
+        f"frontend maps:\n{missing}"
+    )
+
+
+@pytest.mark.unit
+def test_elastic_mcp_config_declares_no_required_env_placeholders():
+    """Settings never writes ELASTIC_HOST; a ${ELASTIC_HOST} placeholder
+    marks the server dormant even after a UI save."""
+    servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
+    elastic = servers["elastic"]
+    env = {
+        k: str(v)
+        for k, v in (elastic.get("env") or {}).items()
+        if not k.startswith("_")
+    }
+    assert extract_required_env_vars(env, list(elastic.get("args") or [])) == []
+
+
+@pytest.mark.unit
+def test_splunk_selfhosted_mcp_config_declares_no_required_env_placeholders():
+    """Settings writes server_url and username onto the integration row, never
+    into the secrets store. ${SPLUNK_URL} / ${SPLUNK_USERNAME} placeholders were
+    resolved through get_secret only, so the server stayed dormant after a UI
+    save and Setup's connect failed (#1113)."""
+    servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
+    splunk = servers["splunk-selfhosted"]
+    env = {
+        k: str(v) for k, v in (splunk.get("env") or {}).items() if not k.startswith("_")
+    }
+    assert extract_required_env_vars(env, list(splunk.get("args") or [])) == []
+
+
+@pytest.mark.unit
+def test_atomic_red_team_mcp_config_declares_no_required_env_placeholders():
+    """runner_path is a non-secret Settings field. A ${ATOMIC_RED_TEAM_RUNNER_PATH}
+    placeholder would keep the server dormant after a UI save, because
+    split_secrets never writes that name."""
+    servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
+    art = servers["atomic-red-team"]
+    env = {
+        k: str(v) for k, v in (art.get("env") or {}).items() if not k.startswith("_")
+    }
+    assert extract_required_env_vars(env, list(art.get("args") or [])) == []

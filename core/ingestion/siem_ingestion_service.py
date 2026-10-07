@@ -28,6 +28,7 @@ class SIEMIngestionService(ABC):
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
+        oldest_first: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Fetch alerts from the SIEM.
@@ -36,6 +37,10 @@ class SIEMIngestionService(ABC):
             start_time: Start time for alert query
             end_time: End time for alert query
             limit: Maximum number of alerts to fetch
+            oldest_first: Return the oldest ``limit`` alerts in the window,
+                oldest first, so a batch that fills ``limit`` is a contiguous
+                prefix the federation cursor can stop at. The default keeps
+                the source's usual order for the daemon poller.
 
         Returns:
             List of raw alert dictionaries

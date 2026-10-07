@@ -31,8 +31,9 @@ Vigil SOC has been installed in namespace {{ .Release.Namespace }} as release "{
    config.DEV_MODE to "false" and set secrets.jwtSecretKey to enable real auth.
 {{- else }}
 
-Default admin login (if not already changed): admin / admin123
-Change it immediately via the settings UI.
+No default admin account ships. On first visit the web UI opens a bootstrap
+screen (POST /api/auth/bootstrap) where you create the admin with a password
+of your choosing; it closes as soon as one account exists.
 {{- end }}
 
 {{- if not .Values.secrets.anthropicApiKey }}
@@ -51,5 +52,42 @@ Change it immediately via the settings UI.
 ⚠️  WARNING: Splunk or pgAdmin are enabled alongside DEV_MODE=false. These are
    development utilities without production-grade auth; don't run them in a
    shared / production cluster.
+{{- end }}
+{{- end }}
+
+{{- /* Names this chart used to render that nothing reads. Keep in step with RETIRED in tests/unit/_ratchets/test_helm_env_names_are_read.py. */ -}}
+{{- $retiredConfig := dict
+  "VIGIL_OTEL_LOG_LLM_CONTENT" ""
+  "VIGIL_OTEL_RECORD_LLM_CONTENT" ""
+  "ORCHESTRATOR_MAX_CONCURRENT_AGENTS" "ORCHESTRATOR_MAX_AGENTS"
+  "ELASTIC_HOST" "ELASTIC_SIEM_ELASTICSEARCH_URL"
+  "ELASTIC_KIBANA_URL" "ELASTIC_SIEM_KIBANA_URL"
+  "ELASTIC_USERNAME" "ELASTIC_SIEM_USERNAME"
+  "ELASTIC_VERIFY_SSL" "ELASTIC_SIEM_VERIFY_SSL"
+  "ELASTIC_INDEX_PATTERN" "ELASTIC_SIEM_INDEX_PATTERN" }}
+{{- $retiredSecret := dict
+  "ELASTIC_API_KEY" "ELASTIC_SIEM_API_KEY"
+  "ELASTIC_PASSWORD" "ELASTIC_SIEM_PASSWORD"
+  "CROWDSTRIKE_CLIENT_SECRET" "FALCON_CLIENT_SECRET"
+  "CRIBL_PASSWORD" "CRIBL_STREAM_PASSWORD"
+  "PAGERDUTY_ROUTING_KEY" "PAGERDUTY_INTEGRATION_KEY"
+  "TEAMS_WEBHOOK_URL" "MICROSOFT_TEAMS_WEBHOOK_URL" }}
+{{- range $old, $new := $retiredConfig }}
+{{- if or (hasKey $.Values.config $old) (hasKey $.Values.extraConfig $old) }}
+
+⚠️  WARNING: {{ $old }} is set but Vigil never reads it, so it has no effect.
+   {{- if $new }}
+   Set {{ $new }} instead.
+   {{- else }}
+   The setting was removed; span content is always redacted.
+   {{- end }}
+{{- end }}
+{{- end }}
+{{- if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled }}
+
+⚠️  NOTE: this chart now renders these Secret keys under the names Vigil reads.
+   If your own Secret still uses the old name, rename the key:
+{{- range $old, $new := $retiredSecret }}
+     {{ $old }} -> {{ $new }}
 {{- end }}
 {{- end }}

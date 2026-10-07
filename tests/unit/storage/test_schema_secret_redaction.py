@@ -7,10 +7,9 @@ a message about credentials rather than a diff against a fixture.
 
 import pytest
 
-from core.storage.models import Finding, LLMProviderConfig, User
+from core.storage.models import LLMProviderConfig, User
 from core.storage.schemas.ai import LLMProviderConfigSchema
 from core.storage.schemas.auth import UserSchema
-from core.storage.schemas.finding import FindingSchema
 from tests.unit.storage.orm_sample_instances import build_populated
 
 pytestmark = pytest.mark.unit
@@ -74,19 +73,3 @@ def test_provider_without_a_key_reports_absence():
     dumped = LLMProviderConfigSchema.dump(provider)
 
     assert dumped["has_api_key"] is False
-
-
-def test_finding_summary_omits_the_embedding_vector():
-    """List responses must not carry the vector — it is large, not secret."""
-    finding = build_populated("Finding", Finding)
-
-    assert "embedding" not in FindingSchema.dump_summary(finding)
-    assert "embedding" in FindingSchema.dump(finding)
-
-
-def test_finding_summary_omission_survives_bulk_serialization():
-    finding = build_populated("Finding", Finding)
-
-    (dumped,) = FindingSchema.dump_many_summary([finding])
-
-    assert "embedding" not in dumped

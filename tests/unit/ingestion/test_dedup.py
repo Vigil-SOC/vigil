@@ -10,7 +10,10 @@ marker.
 from __future__ import annotations
 
 import asyncio
+import logging
+
 import pytest
+import redis.asyncio as aioredis
 
 from core.ingestion.dedup import RedisDedupSet
 
@@ -127,6 +130,11 @@ class TestRedisDedupWithFakeRedis:
             async def zcard(self, key):
                 return len(self._store.get(key) or {})
 
+            async def zrem(self, key, member):
+                bucket = self._store.get(key) or {}
+                bucket.pop(member, None)
+                return 1
+
             async def delete(self, key):
                 self._store.pop(key, None)
 
@@ -158,3 +166,183 @@ class TestRedisDedupWithFakeRedis:
         seen_keep_1, seen_missing = _run(go())
         assert seen_keep_1 is True
         assert seen_missing is False
+
+    def test_forget_zrem_is_visible_to_a_new_instance(self, monkeypatch):
+        store: dict[str, dict[str, float]] = {}
+
+        class StubRedis:
+            def __init__(self, store):
+                self._store = store
+
+            async def ping(self):
+                return True
+
+            async def zscore(self, key, member):
+                return (self._store.get(key) or {}).get(member)
+
+            async def zrem(self, key, member):
+                (self._store.get(key) or {}).pop(member, None)
+
+            def pipeline(self):
+                outer = self
+
+                class _Pipe:
+                    def zadd(self, key, mapping):
+                        outer._store.setdefault(key, {}).update(mapping)
+                        return self
+
+                    def zremrangebyscore(self, *args):
+                        return self
+
+                    def zremrangebyrank(self, *args):
+                        return self
+
+                    async def execute(self):
+                        return []
+
+                return _Pipe()
+
+            async def close(self):
+                pass
+
+        import redis.asyncio as _aioredis
+
+        monkeypatch.setattr(
+            _aioredis, "from_url", lambda url, decode_responses=True: StubRedis(store)
+        )
+
+        async def go():
+            d1 = RedisDedupSet("unit-forget")
+            await d1.mark_processed("gone")
+            await d1.forget("gone")
+            await d1.close()
+            d2 = RedisDedupSet("unit-forget")
+            seen = await d2.is_processed("gone")
+            await d2.close()
+            return seen
+
+        assert _run(go()) is False
+
+    def test_failed_zrem_stays_unprocessed_until_retry(self, monkeypatch):
+        members: dict[str, float] = {}
+        fail = {"zrem": True}
+
+        class FlakyRedis:
+            async def ping(self):
+                return True
+
+            async def zscore(self, key, member):
+                return members.get(member)
+
+            async def zrem(self, key, member):
+                if fail["zrem"]:
+                    fail["zrem"] = False
+                    raise ConnectionError("redis down")
+                members.pop(member, None)
+
+            def pipeline(self):
+                class _Pipe:
+                    def zadd(self, key, mapping):
+                        members.update(mapping)
+                        return self
+
+                    def zremrangebyscore(self, *args):
+                        return self
+
+                    def zremrangebyrank(self, *args):
+                        return self
+
+                    async def execute(self):
+                        return []
+
+                return _Pipe()
+
+            async def close(self):
+                pass
+
+        import redis.asyncio as _aioredis
+
+        monkeypatch.setattr(
+            _aioredis, "from_url", lambda url, decode_responses=True: FlakyRedis()
+        )
+
+        async def go():
+            dedup = RedisDedupSet("unit-zrem-fail")
+            await dedup.mark_processed("stuck")
+            await dedup.forget("stuck")
+            # The member is still in Redis, but this instance must not treat
+            # it as handled. The next check retries the delete.
+            still_there = "stuck" in members
+            hidden = await dedup.is_processed("stuck")
+            gone = "stuck" not in members
+            await dedup.mark_processed("stuck")
+            remarked = await dedup.is_processed("stuck")
+            await dedup.close()
+            return still_there, hidden, gone, remarked
+
+        still_there, hidden, gone, remarked = _run(go())
+        assert still_there is True
+        assert hidden is False
+        assert gone is True
+        assert remarked is True
+
+
+def test_forget_clears_only_this_instance_fallback(no_redis):
+    """A new RedisDedupSet does not share the in-memory fallback."""
+
+    async def go():
+        d1 = _make()
+        d2 = _make()
+        await d1.mark_processed("keep")
+        await d2.forget("keep")
+        still_marked = await d1.is_processed("keep")
+        await d1.forget("keep")
+        cleared = await d1.is_processed("keep")
+        return still_marked, cleared
+
+    still_marked, cleared = _run(go())
+    assert still_marked is True
+    assert cleared is False
+
+
+class _FakeRedis:
+    """Just enough of redis.asyncio for the dedup transition tests."""
+
+    up = True
+
+    async def ping(self):
+        if not _FakeRedis.up:
+            raise ConnectionError("down")
+
+    async def zscore(self, key, member):
+        if not _FakeRedis.up:
+            raise ConnectionError("down")
+        return None
+
+
+class TestRedisDedupOutageLogging:
+    def test_logs_only_on_transitions(self, monkeypatch, caplog):
+        monkeypatch.setattr(aioredis, "from_url", lambda *a, **k: _FakeRedis())
+        caplog.set_level(logging.INFO, logger="core.ingestion.dedup")
+        dedup = _make()
+
+        def lines(level):
+            return [r for r in caplog.records if r.levelno == level]
+
+        async def go():
+            _FakeRedis.up = False
+            for _ in range(3):  # repeated failed probes: one ERROR total
+                await dedup.mark_processed("a")
+            assert len(lines(logging.ERROR)) == 1
+
+            _FakeRedis.up = True  # recovery
+            await dedup.is_processed("a")
+            assert len(lines(logging.WARNING)) == 1
+            assert "only in memory" in lines(logging.WARNING)[0].getMessage()
+
+            _FakeRedis.up = False  # second outage logs again
+            await dedup.is_processed("a")
+            await dedup.is_processed("a")
+            assert len(lines(logging.ERROR)) == 2
+
+        _run(go())

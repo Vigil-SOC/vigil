@@ -3,10 +3,10 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 # ------------------------------------------------------------------
 # Base class contract
 # ------------------------------------------------------------------
+
 
 class TestBaseClassContract:
 
@@ -26,20 +26,20 @@ class TestBaseClassContract:
 
         with pytest.raises(NotImplementedError, match="Stub"):
             import asyncio
-            asyncio.run(
-                svc.update_upstream_alert_status("a1", "closed")
-            )
+
+            asyncio.run(svc.update_upstream_alert_status("a1", "closed"))
 
 
 # ------------------------------------------------------------------
 # Elastic implementation
 # ------------------------------------------------------------------
 
+
 class TestElasticUpstreamSync:
 
     @pytest.mark.asyncio
     async def test_sync_closed(self):
-        with patch("core.integrations.elastic.ingestion.get_integration_config") as cfg:
+        with patch("core.integrations.elastic.ingestion.resolve") as cfg:
             cfg.return_value = {
                 "elasticsearch_url": "https://es.test:9200",
                 "kibana_url": "https://kibana.test:5601",
@@ -55,13 +55,11 @@ class TestElasticUpstreamSync:
 
             result = await svc.update_upstream_alert_status("alert-1", "closed")
             assert result is True
-            mock_es.update_alert_status.assert_called_once_with(
-                ["alert-1"], "closed"
-            )
+            mock_es.update_alert_status.assert_called_once_with(["alert-1"], "closed")
 
     @pytest.mark.asyncio
     async def test_sync_maps_resolved_to_closed(self):
-        with patch("core.integrations.elastic.ingestion.get_integration_config") as cfg:
+        with patch("core.integrations.elastic.ingestion.resolve") as cfg:
             cfg.return_value = {
                 "elasticsearch_url": "https://es.test:9200",
                 "kibana_url": "https://kibana.test:5601",
@@ -76,13 +74,11 @@ class TestElasticUpstreamSync:
             svc._elastic_service = mock_es
 
             await svc.update_upstream_alert_status("alert-1", "resolved")
-            mock_es.update_alert_status.assert_called_once_with(
-                ["alert-1"], "closed"
-            )
+            mock_es.update_alert_status.assert_called_once_with(["alert-1"], "closed")
 
     @pytest.mark.asyncio
     async def test_sync_maps_new_to_open(self):
-        with patch("core.integrations.elastic.ingestion.get_integration_config") as cfg:
+        with patch("core.integrations.elastic.ingestion.resolve") as cfg:
             cfg.return_value = {
                 "elasticsearch_url": "https://es.test:9200",
                 "kibana_url": "https://kibana.test:5601",
@@ -97,13 +93,11 @@ class TestElasticUpstreamSync:
             svc._elastic_service = mock_es
 
             await svc.update_upstream_alert_status("alert-1", "new")
-            mock_es.update_alert_status.assert_called_once_with(
-                ["alert-1"], "open"
-            )
+            mock_es.update_alert_status.assert_called_once_with(["alert-1"], "open")
 
     @pytest.mark.asyncio
     async def test_returns_false_when_service_unavailable(self):
-        with patch("core.integrations.elastic.ingestion.get_integration_config") as cfg:
+        with patch("core.integrations.elastic.ingestion.resolve") as cfg:
             cfg.return_value = {}
             from core.integrations.elastic.ingestion import ElasticIngestion
 

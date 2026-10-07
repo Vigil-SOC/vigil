@@ -57,6 +57,8 @@ class IntegrationField:
     name: str
     secret: bool = False
     value_type: str = "str"
+    # What an unset field resolves to; ``None`` leaves the caller to decide.
+    default: Any = None
 
     def __post_init__(self) -> None:
         if self.value_type not in _COERCERS:
@@ -66,9 +68,9 @@ class IntegrationField:
             )
 
     def coerce(self, value: Any) -> Any:
-        """Apply the declared type. ``None`` stays ``None`` — unset is not false."""
+        """Apply the declared type. Unset is the field's default, ``None`` unless declared."""
         if value is None:
-            return value
+            return self.default
         return _COERCERS[self.value_type](value)
 
 
@@ -89,6 +91,11 @@ class IntegrationDescriptor:
     category: str
     mcp_server_names: Tuple[str, ...] = ()
     fields: Tuple[IntegrationField, ...] = ()
+    # Optional console URL. ``{external_id}`` and the descriptor's non-secret
+    # field names. Set only where the stored ``external_id`` is the vendor's
+    # own alert id and the vendor documents the URL; cite the doc beside it.
+    # Evidence refs win when they are links.
+    console_link_template: Optional[str] = None
 
     @property
     def secret_fields(self) -> Tuple[str, ...]:

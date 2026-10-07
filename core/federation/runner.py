@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.federation import registry, store
 from core.federation.seed import seed_federation_sources
+from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
 
@@ -57,6 +58,9 @@ class FederationRunner:
         # Sources that are currently "polling" — used so a source toggled OFF
         # then ON quickly doesn't double-fire while the old task winds down.
         self._adapters: Dict[str, registry.FederationAdapter] = {}
+        # Sources already warned about as unconfigured, so the warning is
+        # logged on the transition rather than every tick.
+        self._unconfigured_warned: set = set()
         # Stats for the metrics endpoint.
         self.stats: Dict[str, Any] = {"polls": 0, "findings": 0, "errors": 0}
 
@@ -98,8 +102,12 @@ class FederationRunner:
 
         Used by the legacy per-source loops in :mod:`daemon.poller` to decide
         whether to skip — when federation is on for a source, the legacy loop
-        must back off so we don't double-pull.
+        must back off so we don't double-pull. A source with no registered
+        adapter (e.g. its import failed) is never ours, so the legacy loop
+        keeps polling it. A store read error also reads as False.
         """
+        if not registry.is_registered(source_id):
+            return False
         if not store.is_globally_enabled():
             return False
         row = store.get_source(source_id)
@@ -118,11 +126,28 @@ class FederationRunner:
         logger.info("Federation adapter %s loop started", source_id)
         # Smallest sane sleep when waiting for global+per-source enable.
         idle_seconds = 5.0
+        store_ok = True
 
         while not shutdown_event.is_set():
             # Re-read DB state on every tick. Cheap enough at MVP cadence.
-            row = store.get_source(source_id) or {}
-            global_on = store.is_globally_enabled()
+            try:
+                row = store.read_source(source_id) or {}
+                global_on = bool(store.read_global_settings().get("enabled", False))
+            except Exception as e:
+                # Idle like "disabled", but say why — once per outage, not per tick.
+                if store_ok:
+                    logger.warning(
+                        "Federation %s: store read failed, idling until it "
+                        "recovers: %s",
+                        source_id,
+                        e,
+                    )
+                store_ok = False
+                row, global_on = {}, False
+            else:
+                if not store_ok:
+                    logger.info("Federation %s: store reads recovered", source_id)
+                store_ok = True
 
             if not (global_on and row.get("enabled")):
                 # Disabled (globally or per-source) — light sleep then re-check.
@@ -158,6 +183,20 @@ class FederationRunner:
         row: Dict[str, Any],
     ) -> None:
         source_id = adapter.name
+        # Integration disabled under an enabled row: polling would record an
+        # empty success. Skip so last_success_at stalls and the lag signal
+        # marks the source quiet.
+        if not adapter.is_configured():
+            if source_id not in self._unconfigured_warned:
+                self._unconfigured_warned.add(source_id)
+                logger.warning(
+                    "Federation %s is enabled but its integration is not "
+                    "configured; skipping polls",
+                    source_id,
+                )
+            return
+        self._unconfigured_warned.discard(source_id)
+
         max_items = int(row.get("max_items") or 100)
         cursor = row.get("cursor") or {}
         min_severity = row.get("min_severity")
@@ -170,42 +209,109 @@ class FederationRunner:
                 max_items=max_items,
             )
         except Exception as e:
-            logger.warning("Federation %s fetch raised: %s", source_id, e)
+            # ``row`` predates this tick, so its count is the failures so far.
+            failures = int(row.get("consecutive_errors") or 0) + 1
+            if failures == 1:
+                logger.error("Federation %s fetch raised: %s", source_id, e)
+            elif failures & (failures - 1) == 0:  # powers of two
+                logger.warning(
+                    "Federation %s fetch still failing (%d consecutive): %s",
+                    source_id,
+                    failures,
+                    e,
+                )
             self.stats["errors"] = self.stats.get("errors", 0) + 1
             store.record_failure(source_id, str(e))
             return
 
-        new_count = 0
+        candidates = []
+        dropped = result.dropped
         for finding in result.findings:
             if not _severity_passes(finding.get("severity"), min_severity):
                 continue
             ext = finding.get("external_id") or finding.get("finding_id")
-            if not ext:
-                continue
+            if ext:
+                candidates.append((finding, ext))
+            else:
+                dropped += 1
+
+        # One dedup round-trip to check the batch and one to mark it. Ids are
+        # marked, and the cursor advances, only once the processor reports the
+        # rows stored: the queue is in memory, so a stop before that would
+        # otherwise lose the page. The source replays it from the old cursor.
+        pending: Pending = []
+        all_enqueued = True
+        new_count = 0
+        if candidates:
             dedup = self._dedup[source_id]
-            if await dedup.is_processed(ext):
-                continue
-            await self._enqueue(finding, source_id)
-            await dedup.mark_processed(ext)
-            new_count += 1
+            seen = await dedup.are_processed(ext for _, ext in candidates)
+            try:
+                for finding, ext in candidates:
+                    if ext in seen:
+                        continue
+                    ack = await self._enqueue(finding, source_id, dedup, ext)
+                    if ack is None:  # no queue: nothing was handed off
+                        all_enqueued = False
+                        continue
+                    # A repeat of this id later in the batch is a duplicate.
+                    seen.add(ext)
+                    pending.append((ext, ack))
+                await wait_all(pending)
+            finally:
+                # Also on cancellation: mark what was stored before the stop.
+                stored = stored_keys(pending)
+                await dedup.mark_many(stored)
+                new_count = len(stored)
 
         if new_count:
             self.stats["findings"] = self.stats.get("findings", 0) + new_count
             logger.info("Federation %s ingested %d finding(s)", source_id, new_count)
 
-        store.record_success(source_id, cursor=result.cursor or {})
-
-    async def _enqueue(self, finding: Dict[str, Any], source_id: str) -> None:
-        if self._output_queue is None:
+        if not all_enqueued or new_count < len(pending):
+            # Cursor stays put; stored ids are marked, so the re-read retries the rest.
+            msg = (
+                f"{len(pending) - new_count} finding(s) not stored; cursor not advanced"
+            )
+            logger.warning("Federation %s: %s", source_id, msg)
+            self.stats["errors"] = self.stats.get("errors", 0) + 1
+            store.record_failure(source_id, msg)
             return
+
+        if dropped:
+            self.stats["dropped"] = self.stats.get("dropped", 0) + dropped
+        prior_failures = int(row.get("consecutive_errors") or 0)
+        if prior_failures:
+            logger.info(
+                "Federation %s fetch recovered after %d failure(s)",
+                source_id,
+                prior_failures,
+            )
+        store.record_success(source_id, cursor=result.cursor or {}, dropped=dropped)
+
+    async def _enqueue(
+        self,
+        finding: Dict[str, Any],
+        source_id: str,
+        dedup: RedisDedupSet,
+        dedup_key: str,
+    ) -> Optional["asyncio.Future[bool]"]:
+        """Put the finding (waits while the queue is full) and return its
+        stored-ack; None when there is no queue."""
+        if self._output_queue is None:
+            return None
+        ack = new_ack()
         await self._output_queue.put(
             {
                 "type": "finding",
                 "source": source_id,
                 "data": finding,
                 "timestamp": utcnow().isoformat(),
+                "dedup": dedup,
+                "dedup_key": dedup_key,
+                "ack": ack,
             }
         )
+        return ack
 
     # ------------------------------------------------------------------
     # Poll-now bypass (Redis flag set by the API)
@@ -219,9 +325,11 @@ class FederationRunner:
             url = get_settings().redis_url or DEFAULT_REDIS_URL
             r = aioredis.from_url(url, decode_responses=True)
             key = f"vigil:federation:trigger:{source_id}"
-            # GETDEL is atomic — flag is consumed on read.
-            val = await r.getdel(key)
-            await r.close()
+            try:
+                # GETDEL is atomic — flag is consumed on read.
+                val = await r.getdel(key)
+            finally:
+                await r.aclose()
             return val is not None
         except Exception:
             return False
@@ -238,10 +346,13 @@ def request_poll_now(source_id: str) -> bool:
         import redis  # type: ignore
 
         url = get_settings().redis_url or DEFAULT_REDIS_URL
-        client = redis.from_url(url, decode_responses=True)
-        client.set(
-            f"vigil:federation:trigger:{source_id}", str(int(time.time())), ex=300
-        )
+        # The context manager closes the client's pool on every path.
+        with redis.from_url(url, decode_responses=True) as client:
+            client.set(
+                f"vigil:federation:trigger:{source_id}",
+                str(int(time.time())),
+                ex=300,
+            )
         return True
     except Exception as e:
         logger.warning("request_poll_now(%s) failed: %s", source_id, e)

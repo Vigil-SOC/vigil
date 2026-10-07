@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS federation_sources (
     last_success_at     TIMESTAMPTZ,
     last_error          TEXT,
     consecutive_errors  INTEGER      NOT NULL DEFAULT 0,
+    dropped_total       INTEGER      NOT NULL DEFAULT 0,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

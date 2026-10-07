@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from core.config import get_settings
+from core.llm.cost.calls import compute_call_cost
 from core.llm.router.format import (
     anthropic_messages_to_openai,
     anthropic_tools_to_openai,
@@ -16,6 +18,7 @@ from core.llm.security import (
     wrap_tool_result,
 )
 from core.secrets import get_secret
+from core.telemetry import record_budget_unenforced, record_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,44 @@ def _bifrost_url() -> str:
 
 def _block_on_injection() -> bool:
     return get_settings().prompt_injection_block
+
+
+def _record_dispatch_metrics(
+    result: Dict[str, Any], model: str, duration_s: float
+) -> None:
+    """Price the returned usage and record it on the GenAI instruments (#894).
+
+    Uses the requested bare ``model`` rather than ``resp.model``: the pricing
+    catalog is keyed by it, and Bifrost may echo a ``provider/model`` string.
+    Never raises — this sits on the worker/daemon request path.
+    """
+    try:
+        provider = result["provider"]
+        # Usage fields may be None from some Bifrost-fronted providers.
+        input_tokens = int(result["input_tokens"] or 0)
+        output_tokens = int(result["output_tokens"] or 0)
+        cache_read = int(result["cache_read_tokens"] or 0)
+        cache_creation = int(result["cache_creation_tokens"] or 0)
+        cost_usd = compute_call_cost(
+            model,
+            provider,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+        )
+        record_llm_call(
+            model=model,
+            provider=provider,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            duration_s=duration_s,
+            cost_usd=cost_usd,
+        )
+    except Exception:
+        pass
 
 
 def _normalize_openai_tool_calls(tool_calls: Any) -> Optional[List[Dict[str, Any]]]:
@@ -151,20 +192,31 @@ def _scan_messages_for_injection(messages: List[Dict[str, Any]]) -> List[str]:
     return patterns
 
 
-def _bifrost_headers(interaction_id: Optional[str] = None) -> Dict[str, str]:
-    """Log-correlation and budget-VK headers every Bifrost call carries."""
+def bifrost_headers(interaction_id: Optional[str] = None) -> Dict[str, str]:
+    """Log-correlation and budget-VK headers every Bifrost call carries.
+
+    Shared by ``LLMRouter`` and ``ClaudeService.chat``. The VK is attached
+    only when enforcement is on; callers that are not talking to Bifrost
+    drop ``x-bf-vk`` themselves.
+    """
     headers: Dict[str, str] = {}
     if interaction_id:
         headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+    reason = "budget_unavailable"
     try:
-        from core.llm.cost.budget import get_active_vk, should_enforce
+        from core.llm.cost.budget import enforcement_status
 
-        if should_enforce():
-            vk = get_active_vk()
-            if vk:
-                headers["x-bf-vk"] = vk
+        reason, vk = enforcement_status()
+        if vk:
+            headers["x-bf-vk"] = vk
     except Exception as exc:
-        logger.debug("budget_service unavailable (%s); proceeding without x-bf-vk", exc)
+        logger.warning(
+            "budget_service unavailable (%s); proceeding without x-bf-vk "
+            "(LLM spend is unenforced)",
+            exc,
+        )
+    if "x-bf-vk" not in headers:
+        record_budget_unenforced(reason)
     return headers
 
 
@@ -245,7 +297,7 @@ class LLMRouter:
         messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
         model = model or provider.default_model
 
-        extra_headers = _bifrost_headers(interaction_id)
+        extra_headers = bifrost_headers(interaction_id)
         # Convert empty dict back to None so the dispatch helpers can use a
         # truthy check for "should I send any extra headers" without leaking
         # an empty dict into the SDK call.
@@ -320,7 +372,9 @@ class LLMRouter:
             kwargs["extra_headers"] = extra_headers
 
         try:
+            started = time.monotonic()
             resp = await client.chat.completions.create(**kwargs)
+            duration_s = time.monotonic() - started
             choice = resp.choices[0].message
             usage = getattr(resp, "usage", None)
             # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
@@ -335,7 +389,7 @@ class LLMRouter:
                 details = getattr(usage, "prompt_tokens_details", None)
                 if details is not None:
                     cache_read = getattr(details, "cached_tokens", 0) or 0
-            return {
+            result = {
                 "content": choice.content or "",
                 # Normalize OpenAI tool-call objects to {id, name, input} dicts
                 # so _adapt_router_result_to_raw can build Anthropic tool_use
@@ -352,6 +406,8 @@ class LLMRouter:
                 "provider": provider.provider_type,
                 "path": "bifrost",
             }
+            _record_dispatch_metrics(result, model, duration_s)
+            return result
         finally:
             # AsyncOpenAI holds an httpx connection pool; close it so file
             # descriptors / connections don't leak per call (chat()'s
@@ -402,7 +458,7 @@ class LLMRouter:
             kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = anthropic_tools_to_openai(tools)
-        extra_headers = _bifrost_headers(interaction_id)
+        extra_headers = bifrost_headers(interaction_id)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
@@ -473,6 +529,15 @@ def provider_spec_from_row(row) -> ProviderSpec:
 
 
 def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
+    """One provider's dispatch spec, or None when it cannot be dispatched to.
+
+    Inactive rows are refused, matching ``get_default_provider_spec``. A saved
+    ``ai_model_configs`` assignment outlives the row it names — the FK is ON
+    DELETE RESTRICT, so retiring a provider deactivates it rather than deleting
+    it — and without this an assignment kept dispatching to a provider whose
+    credential the gateway no longer has. The caller then falls back to the
+    configured default, as it does for an assignment naming no row at all.
+    """
     try:
         from core.storage.connection import get_db_session
         from core.storage.models import LLMProviderConfig
@@ -484,12 +549,16 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
     try:
         if provider_id:
             row = session.get(LLMProviderConfig, provider_id)
+            if row is not None and not row.is_active:
+                logger.info("Provider %s is inactive — not dispatchable", provider_id)
+                row = None
         else:
             row = (
                 session.query(LLMProviderConfig)
                 .filter(
                     LLMProviderConfig.provider_type == "anthropic",
                     LLMProviderConfig.is_default.is_(True),
+                    LLMProviderConfig.is_active.is_(True),
                 )
                 .first()
             )
@@ -566,7 +635,7 @@ def discover_anthropic_api_key() -> Optional[str]:
         from core.storage.connection import get_db_session
         from core.storage.models import LLMProviderConfig
     except Exception as exc:  # noqa: BLE001
-        logger.debug("anthropic key discovery: DB unavailable (%s)", exc)
+        logger.warning("anthropic key discovery: DB unavailable (%s)", exc)
         return None
 
     session = get_db_session()
@@ -592,7 +661,7 @@ def discover_anthropic_api_key() -> Optional[str]:
                 return value
         return None
     except Exception as exc:  # noqa: BLE001
-        logger.debug("anthropic key discovery failed: %s", exc)
+        logger.warning("anthropic key discovery failed: %s", exc)
         return None
     finally:
         session.close()

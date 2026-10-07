@@ -2,17 +2,16 @@
 Pluggable email delivery.
 
 Two backends ship out of the box:
-- **ConsoleBackend** — logs the message to the application log. The dev
-  default; useful for seeing the password-reset link without configuring
-  SMTP. Also useful in CI where tests need the outbound message without
-  a live SMTP server.
+- **ConsoleBackend** — the default. Logs that a message was not sent; the
+  body (which for a password reset carries a live token) is logged only when
+  DEV_MODE is on, so reading the application log never yields a credential.
 - **SMTPBackend** — standard smtplib. Point it at SES / SendGrid /
   Mailgun / corporate SMTP relay via env vars — we deliberately don't
   depend on any single provider's SDK.
 
 Select via `VIGIL_EMAIL_BACKEND=console|smtp`. Default: `console`, so a
 misconfigured production deploy won't crash auth; it'll just not send the
-email and log the content instead. Flip to `smtp` when SMTP creds are set.
+email. Flip to `smtp` when SMTP creds are set.
 """
 
 import logging
@@ -22,6 +21,7 @@ from email.message import EmailMessage
 from typing import Optional
 
 from core.config import get_settings
+from core.platform.log_redaction import mask_email
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -43,12 +43,21 @@ class ConsoleBackend(EmailBackend):
         body: str,
         from_addr: Optional[str] = None,
     ) -> None:
-        logger.info(
-            "[email/console] to=%s from=%s subject=%r\n%s",
-            to,
-            from_addr or get_settings().smtp_from,
+        settings = get_settings()
+        if settings.dev_mode:
+            logger.info(
+                "[email/console] to=%s from=%s subject=%r\n%s",
+                to,
+                from_addr or settings.smtp_from,
+                subject,
+                body,
+            )
+            return
+        logger.warning(
+            "[email/console] not sent: to=%s subject=%r (body withheld; set "
+            "VIGIL_EMAIL_BACKEND=smtp to deliver mail)",
+            mask_email(to),
             subject,
-            body,
         )
 
 
@@ -134,4 +143,6 @@ def send_email(
     try:
         get_email_backend().send(to=to, subject=subject, body=body, from_addr=from_addr)
     except Exception as exc:
-        logger.error("Email send failed: to=%s subject=%r error=%s", to, subject, exc)
+        logger.error(
+            "Email send failed: to=%s subject=%r error=%s", mask_email(to), subject, exc
+        )

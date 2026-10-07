@@ -29,9 +29,11 @@ BIFROST_URL = os.getenv("BIFROST_URL", "http://localhost:8080").rstrip("/")
 
 
 def _get(path: str) -> tuple[int, dict | str]:
+    if not BIFROST_URL.startswith(("http://", "https://")):
+        return 0, f"BIFROST_URL must be http(s): {BIFROST_URL}"
     req = urllib.request.Request(f"{BIFROST_URL}{path}")
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - scheme checked above
             body = resp.read().decode("utf-8", errors="replace")
             ctype = resp.headers.get("content-type", "")
             if "application/json" in ctype:

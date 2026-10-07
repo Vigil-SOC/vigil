@@ -50,12 +50,6 @@ SEVERITIES = ["critical", "high", "medium", "low"]
 SEVERITY_WEIGHTS = [0.1, 0.25, 0.4, 0.25]
 
 
-def generate_embedding(dim: int = 768) -> List[float]:
-    vec = [random.gauss(0, 1) for _ in range(dim)]
-    norm = sum(x**2 for x in vec) ** 0.5
-    return [x / norm for x in vec]
-
-
 def generate_ip() -> str:
     if random.random() < 0.6:
         return f"192.168.{random.randint(1, 254)}.{random.randint(1, 254)}"
@@ -151,8 +145,8 @@ class DemoDataService:
             ],
             "entity_context": generate_entity_context(),
             "cluster_id": random.choice(CLUSTERS) if random.random() < 0.7 else None,
-            "embedding": generate_embedding(),
             "description": desc,
+            "demo": True,
         }
 
     def _generate_case(self, findings: List[Dict]) -> Dict[str, Any]:
@@ -196,6 +190,7 @@ class DemoDataService:
             "resolution_steps": [],
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
+            "demo": True,
         }
 
     def _generate_demo_data(self, num_findings: int = 25, num_cases: int = 5):
@@ -219,45 +214,6 @@ class DemoDataService:
                 return f
         return None
 
-    def get_nearest_neighbors(self, finding_id: str, limit: int = 10) -> Dict:
-        """Find similar findings using embedding-based cosine similarity.
-
-        Args:
-            finding_id: Reference finding ID to find neighbors for
-            limit: Maximum number of neighbors to return
-
-        Returns:
-            Dict with seed_finding and neighbors list
-        """
-        seed = self.get_finding(finding_id)
-        if not seed or "embedding" not in seed:
-            return {"error": f"Finding {finding_id} not found or has no embedding"}
-
-        seed_emb = seed["embedding"]
-        sims = []
-        for f in DemoDataService._findings:
-            if f.get("finding_id") != finding_id and "embedding" in f:
-                # Cosine similarity
-                a = f["embedding"]
-                dot = sum(x * y for x, y in zip(seed_emb, a))
-                norm_a = sum(x**2 for x in seed_emb) ** 0.5
-                norm_b = sum(x**2 for x in a) ** 0.5
-                denom = norm_a * norm_b
-                sim = dot / denom if denom > 0 else 0.0
-                sims.append(
-                    {
-                        "finding_id": f["finding_id"],
-                        "similarity": round(sim, 4),
-                        "cluster_id": f.get("cluster_id"),
-                        "severity": f.get("severity"),
-                        "data_source": f.get("data_source"),
-                        "anomaly_score": float(f.get("anomaly_score", 0)),
-                    }
-                )
-
-        sims.sort(key=lambda x: x["similarity"], reverse=True)
-        return {"seed_finding": finding_id, "neighbors": sims[:limit]}
-
     def get_cases(self, limit: int = 10000) -> List[Dict]:
         return DemoDataService._cases[:limit]
 
@@ -268,6 +224,7 @@ class DemoDataService:
         return None
 
     def create_finding(self, finding_data: Dict) -> Optional[Dict]:
+        finding_data["demo"] = True
         DemoDataService._findings.append(finding_data)
         return finding_data
 
@@ -278,10 +235,12 @@ class DemoDataService:
         priority: str = "medium",
         description: str = "",
         status: str = "open",
+        case_id: Optional[str] = None,
     ) -> Optional[Dict]:
         now = datetime.now(timezone.utc)
         case = {
-            "case_id": f"case-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
+            "case_id": case_id
+            or f"case-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             "title": title,
             "description": description,
             "finding_ids": finding_ids,
@@ -290,6 +249,7 @@ class DemoDataService:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "tags": ["demo"],
+            "demo": True,
             "notes": [],
             "timeline": [{"timestamp": now.isoformat(), "event": "Case created"}],
             "activities": [],

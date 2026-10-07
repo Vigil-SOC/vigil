@@ -596,7 +596,7 @@ function DecisionsDetail({
 
 export default function DecisionsScreen({ setViewFull }: ConsoleScreenProps) {
   const [selected, setSelected] = useState<string | null>(null)
-  // The open tab lives in ?tab= so the rail can send the approvals badge
+  // The open tab lives in ?tab= so the nav row can send the approvals badge
   // straight to the queue it counted instead of the feedback tab (#746), and so
   // a tab is deep-linkable at all. Missing / unknown falls back to feedback.
   const [searchParams, setSearchParams] = useSearchParams()
@@ -641,7 +641,7 @@ export default function DecisionsScreen({ setViewFull }: ConsoleScreenProps) {
 
   // A change of tab closes any open decision. The detail below returns before
   // the tab list renders, so leaving it open would show neither the approvals
-  // queue the rail asked for nor the decision that was being read -- the detail
+  // queue the nav row asked for nor the decision that was being read -- the detail
   // would silently re-source its rows from the other list.
   useEffect(() => {
     setSelected(null)
