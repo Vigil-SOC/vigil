@@ -400,9 +400,7 @@ def get_policy_usage(
 
     # Breached cases
     breached_cases = (
-        session.query(CaseSLA)
-        .filter(*window, CaseSLA.breached.is_(True))
-        .count()
+        session.query(CaseSLA).filter(*window, CaseSLA.breached.is_(True)).count()
     )
 
     # Compliance rate
