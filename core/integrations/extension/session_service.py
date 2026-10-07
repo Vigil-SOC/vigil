@@ -109,7 +109,14 @@ async def mint_session_token(
             status_code=502,
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise ExtensionSessionError(
+            "Connector returned an unreadable session response", status_code=502
+        )
     token = data.get("token")
     if not token:
         raise ExtensionSessionError("Connector returned no token", status_code=502)
@@ -134,7 +141,7 @@ async def probe_connector(integration_id: str, username: str) -> str:
         raise ExtensionSessionError(
             f"Could not reach the connector at {url}", status_code=502
         ) from e
-    if resp.status_code >= 400:
+    if not resp.is_success:
         raise ExtensionSessionError(
             f"Connector answered {resp.status_code} for its manifest", status_code=502
         )

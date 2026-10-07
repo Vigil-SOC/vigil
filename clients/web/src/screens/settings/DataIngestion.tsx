@@ -677,11 +677,10 @@ export function StreamsCard({ notify }: SectionProps) {
                   </button>
                 </td>
               </tr>,
-              open === r.key && (
-                <tr key={`${r.key}-form`} className="data-expand">
-                  <td colSpan={4}>{r.form}</td>
-                </tr>
-              ),
+              // stays mounted while closed, so a browse or ingest in flight survives a collapse
+              <tr key={`${r.key}-form`} className="data-expand" hidden={open !== r.key}>
+                <td colSpan={4}>{r.form}</td>
+              </tr>,
             ])}
           </tbody>
         </table>

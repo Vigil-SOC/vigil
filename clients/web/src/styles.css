@@ -4889,6 +4889,10 @@
       cursor: default;
    }
 
+   .data-table tbody tr.data-expand[hidden] {
+      display: none;
+   }
+
    .data-table tbody tr.data-expand,
    .data-table tbody tr.data-expand:hover {
       background: transparent;

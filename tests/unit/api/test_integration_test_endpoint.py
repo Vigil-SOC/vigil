@@ -291,6 +291,8 @@ def _connector_probe(
         seen.append((request.method, request.url.path))
         if request.url.path == "/manifest.json":
             return manifest(request) if callable(manifest) else httpx.Response(manifest)
+        if callable(session):
+            return session(request)
         return httpx.Response(session, json={"token": "t"})
 
     transport = httpx.MockTransport(handler)
@@ -381,6 +383,21 @@ def test_connector_probe_manifest_error_fails(client, saved, monkeypatch):
     assert body["success"] is False
     assert "404" in body["message"]
     assert seen == [("GET", "/manifest.json")]
+
+
+def test_connector_probe_unreadable_session_reply_fails(client, saved, monkeypatch):
+    import httpx
+
+    _connector_probe(
+        monkeypatch,
+        manifest=200,
+        session=lambda _request: httpx.Response(200, text="<html>login</html>"),
+    )
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is False
+    assert "unreadable session response" in body["message"]
+    assert saved.tests[0]["success"] is False
 
 
 def test_connector_probe_refuses_untrusted_url(client, saved, monkeypatch):

@@ -228,14 +228,15 @@ describe('streams and buckets', () => {
     } as never)
     vi.mocked(configApi.setS3).mockResolvedValue({ data: {} } as never)
     renderPanel()
+    expect(await screen.findByText('Browse & Ingest')).not.toBeVisible()
     fireEvent.click(await screen.findByRole('button', { name: 'Browse Amazon S3' }))
 
-    expect(await screen.findByText('Browse & Ingest')).toBeInTheDocument()
+    expect(screen.getByText('Browse & Ingest')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: /Save/ }))
     expect(await screen.findByText('Save S3 Configuration')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Amazon S3' }))
-    expect(screen.queryByText('Browse & Ingest')).not.toBeInTheDocument()
+    expect(screen.getByText('Browse & Ingest')).not.toBeVisible()
   })
 
   it('offers a retry inside the S3 row when its config fails to load', async () => {
@@ -243,7 +244,28 @@ describe('streams and buckets', () => {
     renderPanel()
     fireEvent.click(await screen.findByRole('button', { name: 'Set up Amazon S3' }))
 
-    expect(await screen.findByText(/Couldn’t load S3 config/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(await screen.findByText(/Couldn’t load S3 config/)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible()
+  })
+})
+
+describe('streams row state', () => {
+  it('keeps a browsed file list when the row is collapsed and reopened', async () => {
+    vi.mocked(configApi.getS3).mockResolvedValue({ data: { configured: true, bucket_name: 'b' } } as never)
+    vi.mocked(configApi.getDarktrace).mockResolvedValue({ data: {} } as never)
+    vi.mocked(kafkaApi.getConfig).mockResolvedValue({ data: {} } as never)
+    vi.mocked(kafkaApi.getStatus).mockResolvedValue({ data: {} } as never)
+    vi.mocked(ingestionApi.listS3Files).mockResolvedValue({
+      data: { files: [{ key: 'lake/a.parquet', size: 10, last_modified: '' }] },
+    } as never)
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse Amazon S3' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Browse$/ }))
+    expect(await screen.findByText('lake/a.parquet')).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Amazon S3' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Browse Amazon S3' }))
+    expect(screen.getByText('lake/a.parquet')).toBeVisible()
   })
 })
