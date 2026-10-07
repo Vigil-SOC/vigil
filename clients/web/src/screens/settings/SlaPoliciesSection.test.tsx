@@ -109,6 +109,13 @@ describe('SlaPoliciesSection editor', () => {
     expect(body).not.toHaveProperty('notification_thresholds')
   })
 
+  it('Refresh keeps the editor open', async () => {
+    await openEdit()
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }))
+    await waitFor(() => expect(api.getAll).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('heading', { name: 'Editing: High severity' })).toBeInTheDocument()
+  })
+
   it('refuses resolve equal to respond, without calling the server', async () => {
     await openEdit()
     const panel = screen.getByRole('region', { name: 'Edit policy' })

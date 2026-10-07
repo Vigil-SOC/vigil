@@ -69,19 +69,18 @@ describe('DurationPicker', () => {
     expect(onChange).toHaveBeenLastCalledWith(4)
   })
 
-  it('arrows step hours by 1 and minutes by 5, and stop at one minute', () => {
+  it('arrows step hours by 1 and minutes by 5, and refuse a step past a bound', () => {
     const { onChange, open } = setup(1)
     open()
     fireEvent.keyDown(screen.getByLabelText('Hours'), { key: 'ArrowUp' })
     expect(onChange).toHaveBeenLastCalledWith(2)
     fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowUp' })
     expect(onChange).toHaveBeenLastCalledWith(2 + 5 / 60)
-    for (const p of ['15 min']) fireEvent.click(screen.getByRole('button', { name: p }))
-    fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowDown' })
-    fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowDown' })
-    fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowDown' })
-    fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowDown' })
-    expect(onChange).toHaveBeenLastCalledWith(1 / 60)
+    fireEvent.click(screen.getByRole('button', { name: '15 min' }))
+    for (let i = 0; i < 4; i++) fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowDown' })
+    expect(onChange).toHaveBeenLastCalledWith(5 / 60) // 0 min is refused
+    fireEvent.keyDown(screen.getByLabelText('Hours'), { key: 'ArrowDown' })
+    expect(onChange).toHaveBeenLastCalledWith(5 / 60) // an hour step does not eat the minutes
   })
 
   it('Enter and Escape close the popover and return focus to the pill', () => {
@@ -91,7 +90,8 @@ describe('DurationPicker', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(pill()).toHaveFocus()
     open()
-    fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '1 h' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: '1 h' }), { key: 'Escape' }) // focus on a preset
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
