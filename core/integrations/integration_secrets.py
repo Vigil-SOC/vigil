@@ -34,8 +34,10 @@ only when the consumer reads the value under a non-canonical name
 
 from __future__ import annotations
 
+import json
 from typing import Dict, Iterable, Mapping
 
+from core.config import vigil_path
 from core.integrations._base.descriptor import iter_descriptors
 
 
@@ -210,9 +212,34 @@ ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _custom_secret_fields(integration_id: str) -> Dict[str, str]:
+    """Password-typed fields of a Custom Integration, from its saved metadata.
+
+    Custom Integrations are defined at runtime, so they are read here rather than
+    built into the registry at import. An unreadable file reads as no secrets.
+    """
+    try:
+        metadata = json.loads(
+            vigil_path("custom_integrations", "metadata.json").read_text()
+        )
+    except (OSError, ValueError):
+        return {}
+    entry = metadata.get(integration_id) if isinstance(metadata, dict) else None
+    fields = entry.get("fields") if isinstance(entry, dict) else None
+    return {
+        field["name"]: env_var_for(integration_id, field["name"])
+        for field in fields or []
+        if isinstance(field, dict)
+        and field.get("type") == "password"
+        and isinstance(field.get("name"), str)
+    }
+
+
 def secret_fields_for(integration_id: str) -> Mapping[str, str]:
     """Return the secret-field map for an integration, empty if unregistered."""
-    return INTEGRATION_SECRET_FIELDS.get(integration_id, {})
+    return INTEGRATION_SECRET_FIELDS.get(integration_id) or _custom_secret_fields(
+        integration_id
+    )
 
 
 def split_secrets(

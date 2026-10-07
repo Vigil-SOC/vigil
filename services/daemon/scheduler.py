@@ -367,11 +367,10 @@ class TaskScheduler:
         logger.info("Running scheduled cleanup...")
         self.stats["cleanups_run"] += 1
 
-        # Calculate cutoff date
+        # Findings and processed events are intentionally not pruned here:
+        # retention for them is a Settings phase 2 decision, not this
+        # sweep's (#1741). The cutoff below drives only the read log sweep.
         cutoff = utcnow() - timedelta(days=self.config.cleanup_retention_days)
-
-        # Findings and processed events are intentionally not pruned: deleting
-        # them is a retention policy, which is out of scope here.
 
         # Dedup sets are pruned by RedisDedupSet itself (TTL + size cap)
 
@@ -395,11 +394,10 @@ class TaskScheduler:
             logger.info("Cleanup removed %d episodic read log rows", reads)
 
         logger.info(
-            "Cleanup done: %d approvals expired, %d read log rows removed "
-            "(read log cutoff %s)",
+            "Cleanup complete: expired %d unanswered approvals, removed %d "
+            "episodic read log rows",
             expired,
             reads,
-            cutoff.isoformat(),
         )
 
         return {

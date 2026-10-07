@@ -405,6 +405,36 @@ INSTALLS=$WORK/installs.txt
 : >"$LOOKED"
 : >"$INSTALLS"
 
+# Run with sudo, HOME is the elevated account's, so every default derived
+# from it would probe the wrong install (on a Native install, root's
+# ~/.vigil instead of the operator's) and the bundle would belong to root.
+# Resolve the invoking user's home once and derive defaults from EFF_HOME
+# instead; HOME itself is left alone for the tools the script runs.
+# --state-dir and $VIGIL_DIR keep their precedence over the derived default.
+EFF_HOME=${HOME:-}
+SUDO_FIRED=0
+if has id && [ "$(id -u 2>/dev/null)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    SUDO_FIRED=1
+    case $SUDO_USER in
+    '' | -* | *[!A-Za-z0-9._-]*)
+        # SUDO_USER reaches an eval below; only a plain account name may.
+        printf 'sudo: SUDO_USER %s is not a usable name; home paths unchanged (the elevated account)\n' "$SUDO_USER" >>"$LOOKED"
+        ;;
+    *)
+        eval "_h=~$SUDO_USER"
+        case $_h in
+        '' | '~'*)
+            printf 'sudo: no home resolved for %s; home paths unchanged (the elevated account)\n' "$SUDO_USER" >>"$LOOKED"
+            ;;
+        *)
+            EFF_HOME=$_h
+            printf 'sudo: elevated for %s; home paths are theirs\n' "$SUDO_USER" >>"$LOOKED"
+            ;;
+        esac
+        ;;
+    esac
+fi
+
 CHECKOUT=
 find_checkout() {
     for _c in "${VIGIL_REPO_ROOT:-}" "$HERE/../.." "$(pwd -P)"; do
@@ -549,11 +579,11 @@ elif [ -n "$STATE_ARG" ]; then
     STATE_DIR=$STATE_ARG
 elif [ "$MODE" = desktop ]; then
     case $OS_KIND in
-    Darwin) STATE_DIR=${HOME:-}/Library/Application\ Support/Vigil ;;
-    *) STATE_DIR=${HOME:-}/.config/Vigil ;;
+    Darwin) STATE_DIR=$EFF_HOME/Library/Application\ Support/Vigil ;;
+    *) STATE_DIR=$EFF_HOME/.config/Vigil ;;
     esac
 else
-    STATE_DIR=${VIGIL_DIR:-${HOME:-}/.vigil}
+    STATE_DIR=${VIGIL_DIR:-$EFF_HOME/.vigil}
 fi
 if [ "$HELM_REQ" = 0 ]; then
     if [ -d "$STATE_DIR" ]; then _found=found; else _found=none; fi
@@ -797,7 +827,7 @@ collect_configuration() {
     never master.key "$STATE_DIR/master.key"
     never jwt_secret "$STATE_DIR/jwt_secret"
     never state-dir-env "$STATE_DIR/.env"
-    never home-deeptempo-env "${HOME:-}/.deeptempo/.env"
+    never home-deeptempo-env "$EFF_HOME/.deeptempo/.env"
     never bifrost-data "$STATE_DIR/bifrost"
     [ "$MODE" = desktop ] && never desktop-config "$STATE_DIR/config.json"
     # Repositories of a container's State Directory are paths in the container
@@ -845,7 +875,7 @@ collect_health() {
     else
         # --format only: raw inspect output and container environments stay out.
         collect_cmd health/containers.txt "$SRC_SECS" "docker inspect --format" 0 sh -c \
-            'for n; do docker inspect --format "{{.Name}} state={{.State.Status}} restarts={{.RestartCount}} started={{.State.StartedAt}} image={{.Config.Image}}" "$n" 2>&1; done' _ $(cat "$KEPT")
+            'for n; do docker inspect --format "{{.Name}} state={{.State.Status}} restarts={{.RestartCount}} created={{.Created}} started={{.State.StartedAt}} image={{.Config.Image}}" "$n" 2>&1; done' _ $(cat "$KEPT")
     fi
 }
 
@@ -870,7 +900,7 @@ collect_logs() {
         collect_tree logs/checkout "$CHECKOUT/logs"
         ;;
     desktop)
-        if [ "$OS_KIND" = Darwin ] && [ -z "$STATE_ARG" ]; then _dl=${HOME:-}/Library/Logs/Vigil; else _dl=$STATE_DIR/logs; fi
+        if [ "$OS_KIND" = Darwin ] && [ -z "$STATE_ARG" ]; then _dl=$EFF_HOME/Library/Logs/Vigil; else _dl=$STATE_DIR/logs; fi
         collect_tree logs/desktop "$_dl" \( -name 'vigil-desktop.log*' -o \( -path '*/containers/*' -name 'vigil-*.log' \) \)
         ;;
     esac
@@ -1112,7 +1142,10 @@ fi
 
 section 4/6 "disk space and OS release"
 collect_disk() {
-    set -- df -Pk
+    # One df per location, each headed by the path it describes: a single
+    # df over all of them prints no path column, so on a one-filesystem
+    # host the rows are identical and cannot be told apart.
+    set --
     for _d in "$STATE_DIR" "$OUTDIR" "$TMP_PARENT"; do
         [ -d "$_d" ] && set -- "$@" "$_d"
     done
@@ -1121,7 +1154,8 @@ collect_disk() {
             [ -d "$_d" ] && set -- "$@" "$_d"
         done
     fi
-    collect_cmd system/disk.txt "$SRC_SECS" "df -Pk, Vigil write locations" 0 "$@"
+    collect_cmd system/disk.txt "$SRC_SECS" "df -Pk, Vigil write locations" 0 sh -c \
+        'for d; do echo "$d"; df -Pk "$d"; done' _ "$@"
 }
 [ "$HELM_REQ" = 0 ] && collect_disk
 if [ -r "$FS_ROOT/etc/os-release" ] || [ -L "$FS_ROOT/etc/os-release" ]; then
@@ -1201,6 +1235,10 @@ M_VERSION=$VERSION M_CREATED=$CREATED M_MODE=$MODE M_OS=$HOST_OS M_NOTE=$INSTALL
         END { printf "Not collected (%d)\n%s", n, l
             if (v) printf "\nNever included (existence only)\n%s", vl }' "$ITEMS"
     echo
+    if [ "$MODE" != helm ] && [ "$N_INSTALLS" = 1 ]; then
+        echo "Container logs: logs/docker/ reaches back to each container's creation (see created= in health/containers.txt). A container recreated by hand (docker compose up -d after an image change, say) starts its log afresh. The snapshots Vigil saves before its own teardowns are under logs/checkout/containers/ (Native, Compose) or logs/desktop/containers/ (Desktop). Vigil's own services also log to logs/state/vigil.log, which lives in the State Directory volume and survives a recreate."
+        echo
+    fi
     awk -F '\t' '$2 == "collected" { t += $7; if ($7 > 0) { l = l "  " $1 ": " $7 "\n"; k++ } }
         END { printf "Redactions: %d in %d files (other files: none)\n%s", t, k, l }' "$ITEMS"
     echo
@@ -1226,6 +1264,15 @@ RESERVED=$FINAL
 COPYFILE_DISABLE=1 tar -czf "$FINAL" -C "$WORK/bundle" "$NAME" || die "tar failed; nothing written"
 chmod 600 "$FINAL"
 KEEP=1
+# Run with sudo, the bundle belongs to the invoking user, not root: hand it
+# over, so they can read, review and attach the file they were told to make.
+if [ "$SUDO_FIRED" = 1 ]; then
+    _owned=0
+    if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
+        chown "$SUDO_UID:$SUDO_GID" "$FINAL" 2>/dev/null && _owned=1
+    fi
+    [ "$_owned" = 1 ] || printf 'Note: the bundle is owned by root, not the invoking user: %s\n' "$FINAL"
+fi
 
 SIZE=$(wc -c <"$FINAL" | tr -d ' ')
 if has sha256sum; then

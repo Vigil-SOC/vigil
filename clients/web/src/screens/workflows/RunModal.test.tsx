@@ -220,13 +220,13 @@ describe('the checkpoint the hunt raises before it can start', () => {
     await start()
 
     expect(await screen.findByText(/Approve and start this hunt/)).toBeInTheDocument()
-    expect(await screen.findByRole('button', { name: 'approve' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Approve explanations' })).toBeInTheDocument()
   })
 
   it('sends the answer against the checkpoint it was asked about', async () => {
     await start()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'approve' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve explanations' }))
 
     await waitFor(() => expect(steer).toHaveBeenCalled())
     expect(steer.mock.calls[0]).toEqual([

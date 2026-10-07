@@ -68,26 +68,9 @@ async def test_cleanup_reports_zero_when_nothing_is_stale():
         result = await scheduler._run_cleanup()
 
     assert result["approvals_expired"] == 0
+    # The cutoff drives only the read log sweep, but it is still reported:
+    # it must not quietly disappear now that the approval sweep runs with it.
     assert "cutoff_date" in result
-
-
-@pytest.mark.asyncio
-async def test_cleanup_leaves_findings_and_events_alone(caplog):
-    # Findings and processed events are deliberately never pruned, and the log
-    # must not claim otherwise.
-    scheduler = TaskScheduler(SchedulerConfig())
-    scheduler._data_service = MagicMock()
-
-    with (
-        patch("core.response.checkpoints.expire_stale", return_value=1),
-        patch("core.memory.recall.expire_read_log", return_value=4),
-        caplog.at_level(logging.INFO, logger="services.daemon.scheduler"),
-    ):
-        await scheduler._run_cleanup()
-
-    assert scheduler._data_service.mock_calls == []
-    assert "would remove" not in caplog.text
-    assert "1 approvals expired, 4 read log rows removed" in caplog.text
 
 
 def test_the_expiry_window_is_wired_from_settings(monkeypatch):
@@ -105,3 +88,32 @@ def test_the_expiry_window_is_wired_from_settings(monkeypatch):
 
     config = DaemonConfig.from_env()
     assert config.scheduler.approval_expiry_days == 11
+
+
+@pytest.mark.asyncio
+async def test_cleanup_never_deletes_findings_or_processed_events(caplog):
+    # Findings and processed events are intentionally NOT pruned by the daily
+    # cleanup (#1741): the setting's name once promised "keep data for 90
+    # days" while the sweep deleted none of it, and turning on real deletion
+    # at a 90-day default would wipe findings on existing installs. Retention
+    # for them is a Settings phase 2 decision. Pin the behaviour so a future
+    # delete added to this sweep fails loudly here instead.
+    scheduler = TaskScheduler(SchedulerConfig())
+    scheduler._data_service = MagicMock()
+
+    with (
+        patch("core.response.checkpoints.expire_stale", return_value=2),
+        patch("core.memory.recall.expire_read_log", return_value=5),
+        caplog.at_level(logging.INFO, logger="services.daemon.scheduler"),
+    ):
+        result = await scheduler._run_cleanup()
+
+    # The data service is the only path to the findings and processed-event
+    # stores; the cleanup must not reach it at all.
+    assert scheduler._data_service.mock_calls == []
+    # The log reports what was actually removed, never what "would" be.
+    assert "would remove" not in caplog.text
+    assert "expired 2 unanswered approvals" in caplog.text
+    assert "removed 5 episodic read log rows" in caplog.text
+    assert result["approvals_expired"] == 2
+    assert result["read_log_removed"] == 5

@@ -509,8 +509,7 @@ def expire_read_log(cutoff: datetime, *, session: Optional[Session] = None) -> i
     """Delete read log rows older than ``cutoff``, returning how many went.
 
     Called by the daemon's cleanup sweep with ``scheduler.cleanup_retention_days``
-    rather than a setting of its own: this log ages out on the same schedule as
-    the rest of the daemon's bulk data, and a second knob would be a second thing
+    rather than a setting of its own: a second knob would be a second thing
     to get wrong.
     """
     with unit_of_work(session) as db:

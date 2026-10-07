@@ -162,7 +162,7 @@ in `secrets.enc`.
 | `timezone-sync.txt` | `timedatectl` (Linux) or `systemsetup` (macOS) |
 | `processes.txt` | `ps -ef`, the full list |
 | `processes-vigil.txt` | the same list filtered to `vigil` and `deeptempo` |
-| `disk.txt` | `df -Pk` for Vigil's write locations that exist |
+| `disk.txt` | one `df -Pk` per Vigil write location that exists, each headed by its path |
 | `os-release.txt` | `/etc/os-release` or `sw_vers` |
 | `journal.txt` | Linux: `journalctl --since "<DAYS> days ago"` |
 | `syslog.txt` | Linux: `/var/log/syslog`, else `/var/log/messages` |
@@ -172,6 +172,15 @@ in `secrets.enc`.
 Logs a normal user cannot read are `not collected` with the reason
 `needs elevation`; the final output says that running with `sudo` includes them.
 (Helm: see above.)
+
+Run with `sudo`, the script still examines the invoking user's install:
+home-derived paths (the State Directory, the Desktop paths,
+`~/.deeptempo/.env`) resolve against the invoking user's home, not root's,
+the manifest's `looked` list says so, and the finished bundle is handed to
+the invoking user (`SUDO_UID`:`SUDO_GID`) so they can read, review and
+attach it. If the handover fails, the final output says the bundle is
+root-owned and where it is. `sudo` resets `VIGIL_DIR`, so a non-default
+State Directory needs `--state-dir` (or `sudo --preserve-env=VIGIL_DIR`).
 
 ## `manifest.json`
 
@@ -215,7 +224,12 @@ A short plain list: version, mode, host OS, UTC time; a line when the tool's
 `VERSION` differs from the version `/api/health` reports; the not-collected
 items with reasons; the never-included entries under their own heading
 "Never included (existence only)" (they are by design, not failures; the
-manifest records them as `not collected`, reason `never included; ...`); per-file redaction counts; the sentence that credentials in
+manifest records them as `not collected`, reason `never included; ...`); a
+short paragraph on container logs (`logs/docker/` reaches back to each
+container's creation, a hand-recreated container starts its log afresh, and
+the snapshots Vigil saves before its own teardowns live under
+`logs/checkout/containers/` or `logs/desktop/containers/`, while Vigil's own
+services also log to `logs/state/vigil.log`); per-file redaction counts; the sentence that credentials in
 free log text matching no known format cannot be guaranteed caught; and the data
 notice.
 

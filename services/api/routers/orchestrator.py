@@ -5,6 +5,7 @@ view investigations, read working directory files, and trigger manual
 investigations.
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -143,32 +144,33 @@ def get_orchestrator_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _persist_orchestrator_enabled(enabled: bool, user_id: str) -> None:
+def _persist_orchestrator_enabled(
+    enabled: bool, user_id: str, reason: Optional[str] = None
+) -> None:
     """Write the `enabled` flag into the single `orchestrator.settings` key.
 
     Read-modify-write so the rest of the settings struct is preserved. If no
     settings row exists yet (first toggle on a fresh DB), seed it from the
-    defaults defined in services/api/routers/config.py.
+    defaults defined in services/api/routers/config.py. Raises when the write
+    fails: the daemon only learns of a toggle through this row.
     """
-    try:
-        from core.storage.config_service import get_config_service
-        from services.api.routers.config import ORCHESTRATOR_DEFAULTS
+    from core.storage.config_service import get_config_service
+    from services.api.routers.config import ORCHESTRATOR_DEFAULTS
 
-        svc = get_config_service(user_id=user_id)
-        current = svc.get_system_config("orchestrator.settings")
-        base = (
-            dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
-        )
-        base["enabled"] = bool(enabled)
-        svc.set_system_config(
-            key="orchestrator.settings",
-            value=base,
-            description="Autonomous orchestrator settings",
-            config_type="orchestrator",
-            change_reason=f'Orchestrator {"enabled" if enabled else "disabled"} via API',
-        )
-    except Exception as e:
-        logger.warning("Could not persist orchestrator.settings.enabled: %s", e)
+    svc = get_config_service(user_id=user_id)
+    current = svc.get_system_config("orchestrator.settings")
+    base = dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
+    base["enabled"] = bool(enabled)
+    stored = svc.set_system_config(
+        key="orchestrator.settings",
+        value=base,
+        description="Autonomous orchestrator settings",
+        config_type="orchestrator",
+        change_reason=reason
+        or f'Orchestrator {"enabled" if enabled else "disabled"} via API',
+    )
+    if stored is False:
+        raise RuntimeError("orchestrator.settings was not stored")
 
 
 @router.post("/enable")
@@ -206,15 +208,36 @@ def disable_orchestrator(
 
 
 @router.post("/kill")
-async def kill_orchestrator():
-    """Emergency kill: cancel all running agents immediately."""
+async def kill_orchestrator(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+
+    The daemon is a separate process that learns of a stop only through the
+    persisted `enabled` flag, so that is written first. A run already executing
+    on the agent worker is not cancelled; it stops at its own ceiling (#633).
+    """
     try:
+        await asyncio.to_thread(
+            _persist_orchestrator_enabled,
+            False,
+            str(current_user.user_id),
+            "Orchestrator killed via API",
+        )
         orch = _get_orchestrator()
         if orch:
             await orch.kill()
-        return {"success": True, "message": "All agents killed"}
+        return {
+            "success": True,
+            "enabled": False,
+            "message": (
+                "Orchestrator disabled and in-flight investigations marked failed; "
+                "runs already executing stop at their own ceiling"
+            ),
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error killing orchestrator: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to kill the orchestrator")
 
 
 @router.post("/investigations/purge")
