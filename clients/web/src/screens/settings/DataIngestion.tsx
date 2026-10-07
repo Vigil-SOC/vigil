@@ -92,7 +92,7 @@ export default function DataIngestionPanel({ notify }: SectionProps) {
   )
 }
 
-const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
+export const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
 
 function ManualUploadPanel({ notify }: SectionProps) {
   const { job, attaching, upload } = useIngestionJob()

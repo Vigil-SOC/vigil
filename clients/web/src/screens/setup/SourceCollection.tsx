@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { federationApi } from '../../services/api'
 import { Select, TextInput, Toggle } from '../../shared/ui'
 import { useFederation } from '../settings/useSettings'
+import CheckTable, { type CheckRow } from './CheckTable'
 
 const SEVERITY_OPTIONS = [
   { value: '', label: 'Any' },
@@ -18,8 +19,19 @@ export const TEST_POLL_TRIES = 10
 
 const QUEUED = 'Queued · the collector runs it on its next cycle'
 
-/** Collection settings and a Test button for one federation source. */
-export default function SourceCollection({ sourceId }: { sourceId: string }) {
+/**
+ * Collection settings and a Test button for one federation source. `rows` and `banner` are the
+ * connect card's own results; Test adds the first-poll row after them, and the settings follow.
+ */
+export default function SourceCollection({
+  sourceId,
+  rows = [],
+  banner,
+}: {
+  sourceId: string
+  rows?: CheckRow[]
+  banner?: ReactNode
+}) {
   const { sources, globalEnabled, phase, error, reload, setGlobal, patchSource, pollNow } =
     useFederation()
   // typed text, so the hook's 10s refresh can't overwrite it and a blank field isn't saved as 0
@@ -95,25 +107,55 @@ export default function SourceCollection({ sourceId }: { sourceId: string }) {
     timer.current = setTimeout(() => check(TEST_POLL_TRIES), TEST_POLL_MS)
   }
 
+  const pollRow: CheckRow | null = testing
+    ? { id: 'poll', label: 'First poll', phase: 'checking', detail: 'Waiting for the collector…' }
+    : result
+      ? {
+          id: 'poll',
+          label: 'First poll',
+          phase: result.ok === false ? 'needs' : result.ok ? 'passed' : 'waiting',
+          detail: result.text,
+        }
+      : null
+  const head = (
+    <>
+      {(rows.length > 0 || pollRow) && (
+        <CheckTable label="Connection checks" rows={pollRow ? [...rows, pollRow] : rows} />
+      )}
+      {banner}
+    </>
+  )
+
   if (phase === 'loading') {
-    return <p className="text-xs text-tx-3">Loading collection settings…</p>
+    return (
+      <>
+        {head}
+        <p className="su-note">Loading collection settings…</p>
+      </>
+    )
   }
   if (phase === 'error') {
     return (
-      <p className="text-xs text-tx-3">
-        Couldn&apos;t load collection settings: {error}{' '}
-        <button className="text-accent-2 hover:underline" onClick={reload}>
-          Retry
-        </button>
-      </p>
+      <>
+        {head}
+        <p className="su-note">
+          Couldn&apos;t load collection settings: {error}{' '}
+          <button className="text-accent-2 hover:underline" onClick={reload}>
+            Retry
+          </button>
+        </p>
+      </>
     )
   }
   if (!source) {
     return (
-      <p className="text-xs text-tx-3">
-        Alert collection isn&apos;t available for this source yet. The collector adds it when it
-        next starts.
-      </p>
+      <>
+        {head}
+        <p className="su-note">
+          Alert collection isn&apos;t available for this source yet. The collector adds it when it
+          next starts.
+        </p>
+      </>
     )
   }
 
@@ -125,82 +167,77 @@ export default function SourceCollection({ sourceId }: { sourceId: string }) {
       : null
 
   return (
-    <div className="flex flex-col gap-3 border-t border-line-soft pt-3">
-      {!globalEnabled && (
-        <div className="flex items-center justify-between gap-3 text-xs text-tx-2">
-          <span>Alert collection is off for this install, so no source polls.</span>
-          <span className="flex items-center gap-2 shrink-0">
-            <span className="text-tx-3">Turn on</span>
-            <Toggle
-              checked={false}
-              label="Alert collection"
-              onChange={(v) => guard(() => setGlobal(v), 'Could not change alert collection')}
-            />
-          </span>
-        </div>
-      )}
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex flex-col">
-          <span className="text-[13px] font-semibold text-tx">Collect alerts</span>
-          <span className="text-xs text-tx-3">
-            {source.is_configured ? 'Pull alerts from this source on a schedule.' : 'Not configured yet.'}
-          </span>
-        </span>
-        <Toggle
-          checked={source.enabled}
-          label="Collect alerts"
-          disabled={!source.is_configured}
-          onChange={(v) => guard(() => patchSource(sourceId, { enabled: v }), 'Could not save')}
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1 text-xs font-semibold text-tx-2">
-          Interval (s)
-          <TextInput
-            type="number"
-            min={10}
-            max={86400}
-            value={interval ?? source.interval_seconds}
-            onChange={(e) => setIntervalDraft(e.target.value)}
-            onBlur={() => {
-              const next = Number(interval)
-              setIntervalDraft(null)
-              if (interval === null || !interval || next < 10 || next > 86400) return
-              if (next !== source.interval_seconds)
-                guard(() => patchSource(sourceId, { interval_seconds: next }), 'Could not save')
-            }}
-          />
-        </label>
-        <div className="flex flex-col gap-1 text-xs font-semibold text-tx-2">
-          Minimum severity
-          <Select
-            value={source.min_severity || ''}
-            options={SEVERITY_OPTIONS}
-            onSelect={(v) =>
-              guard(() => patchSource(sourceId, { min_severity: v || null }), 'Could not save')
-            }
-          />
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <button className="btn ghost" disabled={!canTest || testing} onClick={runTest}>
-          {testing ? 'Testing…' : 'Test'}
-        </button>
-        <span className="text-xs min-w-0" role="status">
-          {hint && !testing && !result && <span className="text-tx-3">{hint}</span>}
-          {testing && <span className="text-tx-3">Waiting for the collector…</span>}
-          {result && (
-            <span className={result.ok === false ? 'text-high' : result.ok ? 'text-tx-2' : 'text-tx-3'}>
-              {result.text}
+    <>
+      {head}
+      <div className="flex flex-col gap-3 su-collect">
+        {!globalEnabled && (
+          <div className="flex items-center justify-between gap-3 text-xs text-tx-2">
+            <span>Alert collection is off for this install, so no source polls.</span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span className="text-tx-3">Turn on</span>
+              <Toggle
+                checked={false}
+                label="Alert collection"
+                onChange={(v) => guard(() => setGlobal(v), 'Could not change alert collection')}
+              />
             </span>
-          )}
-        </span>
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex flex-col">
+            <span className="text-[13px] font-semibold text-tx">Collect alerts</span>
+            <span className="text-xs text-tx-3">
+              {source.is_configured ? 'Pull alerts from this source on a schedule.' : 'Not configured yet.'}
+            </span>
+          </span>
+          <Toggle
+            checked={source.enabled}
+            label="Collect alerts"
+            disabled={!source.is_configured}
+            onChange={(v) => guard(() => patchSource(sourceId, { enabled: v }), 'Could not save')}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-tx-2">
+            Interval (s)
+            <TextInput
+              type="number"
+              min={10}
+              max={86400}
+              value={interval ?? source.interval_seconds}
+              onChange={(e) => setIntervalDraft(e.target.value)}
+              onBlur={() => {
+                const next = Number(interval)
+                setIntervalDraft(null)
+                if (interval === null || !interval || next < 10 || next > 86400) return
+                if (next !== source.interval_seconds)
+                  guard(() => patchSource(sourceId, { interval_seconds: next }), 'Could not save')
+              }}
+            />
+          </label>
+          <div className="flex flex-col gap-1 text-xs font-semibold text-tx-2">
+            Minimum severity
+            <Select
+              value={source.min_severity || ''}
+              options={SEVERITY_OPTIONS}
+              onSelect={(v) =>
+                guard(() => patchSource(sourceId, { min_severity: v || null }), 'Could not save')
+              }
+            />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn ghost" disabled={!canTest || testing} onClick={runTest}>
+            {testing ? 'Testing…' : 'Test'}
+          </button>
+          {hint && !testing && !result && <span className="su-note">{hint}</span>}
+        </div>
+        {failure && (
+          <p className="su-note err" role="alert">
+            {failure}
+          </p>
+        )}
       </div>
-      {failure && (
-        <p className="text-xs text-high" role="alert">
-          {failure}
-        </p>
-      )}
-    </div>
+    </>
   )
 }

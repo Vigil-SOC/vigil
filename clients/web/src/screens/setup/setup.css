@@ -384,3 +384,210 @@
   font-size: 12px;
   font-weight: 600;
 }
+
+/* Choice cards and the Connect data step. Board: boards/OnboardingConnect.dc.html */
+.su-choices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.su-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1.5px solid var(--ln1);
+  border-radius: var(--radius-card);
+  background: var(--bg1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.su-choice:hover {
+  background: var(--bg3);
+}
+
+.su-choice.on {
+  background: var(--ac-bg);
+  border-color: var(--ac-ln);
+}
+
+.su-choice-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.su-choice-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.su-choice-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.su-chip {
+  height: 20px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-round);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.su-chip.ac {
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.su-chip.vio {
+  background: var(--vio-bg);
+  color: var(--vio);
+}
+
+.su-choice-t {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.su-choice-s {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ac);
+  cursor: pointer;
+}
+
+.su-more:hover {
+  text-decoration: underline;
+}
+
+.su-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.su-fields .field-hint {
+  overflow-wrap: anywhere;
+}
+
+.su-more-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.su-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx1);
+  cursor: pointer;
+}
+
+.su-toggle:hover {
+  color: var(--tx0);
+}
+
+.su-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.su-actions .btn.test {
+  border-color: var(--ac);
+  color: var(--ac);
+  font-weight: 650;
+}
+
+.su-note {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-note.err {
+  color: var(--poor);
+}
+
+.su-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--good-ln);
+  border-radius: 10px;
+  background: var(--good-bg);
+  font-size: 13px;
+  color: var(--tx0);
+}
+
+.su-banner > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.su-banner .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.su-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  border: 1.5px dashed var(--ln2);
+  border-radius: var(--radius-card);
+  background: var(--bg2);
+  text-align: center;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.su-collect {
+  border-top: 1px solid var(--ln0);
+  padding-top: 14px;
+}
+
+.su-root .settings-card-actions a.btn {
+  text-decoration: none;
+}
