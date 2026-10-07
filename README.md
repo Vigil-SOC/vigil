@@ -168,7 +168,7 @@ Core services come from `.vigil-autostart` (or `$AUTOSTART_SERVICES`), defaultin
 ./shutdown_all.sh -d --full  # stop everything and PERMANENTLY DELETE all data volumes
 ```
 
-`-d --full` runs `docker compose down -v`, which deletes the database, Bifrost keys, `master.key`, investigation files, and the default on-box backup repository. Keep backups outside the compose volumes (`VIGIL_BACKUP_REPO`) first. See `./shutdown_all.sh --help`.
+`-d --full` runs `docker compose down -v`, which deletes every named volume in the compose file: `postgres_data` (database), `bifrost_data` (Bifrost config and keys), `vigil_home` (the Compose State Directory, including `master.key`), `vigil_investigations`, `redis_data`, `backup_repo` (the default on-box backup repository), and any optional-profile volumes. Keep backups outside the compose volumes (`VIGIL_BACKUP_REPO`) first. See `./shutdown_all.sh --help`.
 
 <details>
 <summary>Manual install (separate terminals)</summary>
