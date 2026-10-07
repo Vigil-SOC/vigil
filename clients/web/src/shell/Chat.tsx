@@ -265,6 +265,7 @@ export default function Chat({
   lockedCaseId,
   evidenceIds = [],
   onCite,
+  onTurnDone,
 }: {
   open: boolean
   onClose: () => void
@@ -280,6 +281,8 @@ export default function Chat({
   /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
   evidenceIds?: readonly string[]
   onCite?: (id: string) => void
+  /** Called when a turn ends, so a page can re-read what the answer may cite. */
+  onTurnDone?: () => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
@@ -594,6 +597,7 @@ export default function Chat({
         setStreamText('')
         setIsProcessingTools(false)
         abortRef.current = null
+        if (accepted) onTurnDone?.()
       }
     }
   }
