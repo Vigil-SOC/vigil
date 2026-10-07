@@ -16,6 +16,7 @@ runtime:
 tools:
   - id: case_records
     kind: remote
+    provides: case_records
     description: Read the case records held for an investigation.
     parameters:
       type: object
@@ -28,6 +29,7 @@ tools:
     timeout_ms: 15000
   - id: get_finding
     kind: remote
+    provides: get_finding
     description: Get detailed information about a specific finding by ID.
     parameters:
       type: object

@@ -1,5 +1,5 @@
 import type { BudgetLimits, SpendPayload } from "../../contracts/budget.js";
-import { openCheckpoint, type AgentEvent, type CheckpointPayload, type DispatchPayload, type OpenCheckpoint, type ResolutionPayload, type RunPayload, type TerminalPayload } from "../../contracts/events.js";
+import { openCheckpoint, type AgentEvent, type CheckpointPayload, type DispatchPayload, type OpenCheckpoint, type ResolutionPayload, type RunPayload, type TerminalPayload, type UnboundPayload } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
 import { callViews, type CallView } from "../call-view.js";
 import type { DecisionPayload, FindingPayload, LeadKinds } from "./workflow.js";
@@ -26,6 +26,8 @@ export interface LeadProjection {
   calls: CallView[];
   // Dispatches that failed, from the same walk as calls. A visibility gap, not a finding.
   gaps: LeadGap[];
+  // What the roles asked for that this deployment answers with nothing, off the opening.
+  unbound: UnboundPayload[];
   // The opening recall, off the ledger. Null when the run never asked.
   recall: RecallPayload | null;
 }
@@ -42,6 +44,7 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
   const findings: FindingPayload[] = [];
   const dispatches: DispatchPayload[] = [];
   const gaps: LeadGap[] = [];
+  const unbound: UnboundPayload[] = [];
   const raised: CheckpointPayload[] = [];
   const answered = new Set<string>();
   let dispatched = 0;
@@ -58,6 +61,9 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
         break;
       case "decision":
         decisions.push(event.payload as DecisionPayload);
+        break;
+      case "unbound":
+        unbound.push(event.payload as UnboundPayload);
         break;
       case "finding":
         findings.push(event.payload as FindingPayload);
@@ -109,6 +115,7 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
     open_checkpoint: open === null ? null : openCheckpoint(open),
     calls: callViews(dispatches),
     gaps,
+    unbound,
     recall: recalledPayloadOf(events),
   };
 }

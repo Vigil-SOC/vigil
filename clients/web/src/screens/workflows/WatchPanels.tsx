@@ -265,6 +265,12 @@ export function HuntPanels({ runId, hunt, iteration, decisionId, last }: { runId
 
 const NO_EXPLANATIONS = <NoData>This kind of run tests no explanations.</NoData>
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+/** What the run's roles or phases asked for that this deployment cannot answer, journalled when the run opened. */
+const unboundLines = (view: unknown) =>
+  ((Array.isArray(view) ? view : []) as { capability?: string; reason?: string }[])
+    .filter((u) => !!u.capability)
+    .map((u) => ({ main: u.capability as string, sub: [u.reason].filter((s): s is string => !!s) }))
+
 const budgetRow = (spent: number | null, max: number | null): LimitRow =>
   spent === null && max === null ? untracked('Budget')
     : max === null ? { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
@@ -272,34 +278,38 @@ const budgetRow = (spent: number | null, max: number | null): LimitRow =>
 
 /** An investigate run at one step. `costs` are the replay's per-decision spend, so the budget follows the step. */
 export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: number[]; at: number }) {
-  const view = (d.projection ?? {}) as { budgets?: { max_cost_usd?: unknown } | null; cost_usd?: unknown; gaps?: unknown }
+  const view = (d.projection ?? {}) as { budgets?: { max_cost_usd?: unknown } | null; cost_usd?: unknown; gaps?: unknown; unbound?: unknown }
   const last = at >= costs.length - 1
   // the newest step reads what the run has priced; an earlier one, what its decisions cost so far
   const spent = last && num(view.cost_usd) !== null ? num(view.cost_usd) : costs.slice(0, at + 1).reduce((sum, c) => sum + c, 0)
   const n = at + 1
   // a failed dispatch carries no iteration, so these are the run's whole list at every step
   const gaps = (Array.isArray(view.gaps) ? view.gaps : []) as { agent_id?: string; failure_reason?: string | null; query_intent?: string }[]
-  const lines = gaps.map((g) => ({ main: g.query_intent || g.agent_id || 'A dispatch failed', sub: [g.failure_reason].filter((s): s is string => !!s) }))
+  const lines = [
+    ...unboundLines(view.unbound),
+    ...gaps.map((g) => ({ main: g.query_intent || g.agent_id || 'A dispatch failed', sub: [g.failure_reason].filter((s): s is string => !!s) })),
+  ]
   return (
     <Columns
       explanations={NO_EXPLANATIONS}
       rows={[budgetRow(spent, num(view.budgets?.max_cost_usd)), { label: 'Steps', value: `${n} decision${n === 1 ? '' : 's'} · no step limit on this kind` }, untracked('Scope')]}
       reviewer={<NoData>{NO_REVIEWER}</NoData>}
-      blind={<Spots lines={lines} empty="None so far." note="Sources this deployment lacks are not recorded for investigations yet." />}
+      blind={<Spots lines={lines} empty="None so far." />}
     />
   )
 }
 
 /** Root cause and compose have no steps to follow, so these read the run as it stands. */
 export function OtherPanels({ d }: { d: WfRunDetail }) {
-  const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; notices?: unknown; recent_searches?: unknown }
+  const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; notices?: unknown; recent_searches?: unknown; unbound?: unknown }
   if (view.run_kind !== 'root_cause') {
+    const compose = view.run_kind === 'compose'
     return (
       <Columns
         explanations={NO_EXPLANATIONS}
         rows={[untracked('Budget'), untracked('Steps'), untracked('Scope')]}
         reviewer={<NoData>{NO_REVIEWER}</NoData>}
-        blind={<NoData>Not recorded for this kind of run yet.</NoData>}
+        blind={compose ? <Spots lines={unboundLines(view.unbound)} empty="None so far." /> : <NoData>Not recorded for this kind of run yet.</NoData>}
       />
     )
   }

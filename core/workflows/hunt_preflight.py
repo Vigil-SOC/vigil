@@ -96,7 +96,10 @@ def _helper(phase: Dict[str, Any], tools: Optional[List[str]] = None) -> Dict[st
 
 def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str]]:
     """``{lead, helpers, reviewer}`` for this kind, and a note when it is empty."""
-    from core.workflows.playbook_resolver import INVESTIGATE_TOOLS, UnknownPlaybook
+    from core.workflows.playbook_resolver import (
+        INVESTIGATE_CAPABILITIES,
+        UnknownPlaybook,
+    )
 
     kind = definition.run_kind
     if is_hunt_like(kind):
@@ -109,7 +112,7 @@ def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str
         lead = {"name": SINGLE_LEAD, "tools": list(LEAD_TOOLS[kind])}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
     if kind != COMPOSE_RUN_KIND:
-        lead = {"name": SINGLE_LEAD, "tools": list(INVESTIGATE_TOOLS)}
+        lead = {"name": SINGLE_LEAD, "tools": list(INVESTIGATE_CAPABILITIES)}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
 
     from core.workflows.playbook_resolver import _phases_of
