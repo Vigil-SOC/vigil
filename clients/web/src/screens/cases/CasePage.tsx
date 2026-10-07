@@ -22,6 +22,7 @@ import {
   readFold,
   recallEntityCalls,
   recordChip,
+  strongestRows,
   visibilityGaps,
   type CallRow,
   type RecallProvenance,
@@ -29,7 +30,7 @@ import {
   type RunFold,
 } from './caseFold'
 import './cases.css'
-import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } from './useCases'
+import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -65,6 +66,15 @@ function when(value?: string | null): string {
   if (!value) return '—'
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? value : format(d, 'MMM d, yyyy · HH:mm')
+}
+
+/** "Closed <time> by <who>"; a missing or unparseable time is dropped. */
+function closedBy(closure: CaseClosureView | null): string {
+  if (!closure) return ''
+  const at = closure.closed_at ? new Date(closure.closed_at) : null
+  const time = at && !Number.isNaN(at.getTime()) ? ` ${format(at, 'MMM d, yyyy · HH:mm')}` : ''
+  const who = closure.closed_by ? ` by ${closure.closed_by}` : ''
+  return time || who ? `Closed${time}${who}` : ''
 }
 
 function money(value: number | null | undefined): string {
@@ -735,7 +745,7 @@ export function CasePage({
   const running = !closed && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
   const reason =
-    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''
+    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed ? closedBy(closure) : ''
   const needsBlock = (
     <CaseNeeds
       items={needsItems}
@@ -812,24 +822,25 @@ export function CasePage({
             closed ? (
               <>
                 {needsBlock}
-                <section>
-                  <h3>Verdict</h3>
-                  <p>{closure?.verdict || '—'}</p>
-                  <p className="muted">
-                    {closure?.closure_category || '—'}
-                    {closure?.closed_by ? ` · closed by ${closure.closed_by}` : ''}
-                    {closure?.closed_by_kind ? ` (${closure.closed_by_kind})` : ''}
-                  </p>
-                </section>
-                <section>
-                  <h3>Strongest findings</h3>
-                  <FindingList fold={fold} />
+                <section className="case-closed" aria-label="Closed summary">
+                  <span className="case-closed-line">
+                    {[closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                  <h3>{closure?.verdict || '—'}</h3>
+                  <ClosedRows fold={fold} phase={foldPhase} />
+                  <div className="case-assess">
+                    <span>Your assessment</span>
+                    <button type="button" className="btn" disabled title={LATER}>Agree</button>
+                    <button type="button" className="btn" disabled title={LATER}>Disagree</button>
+                    <span className="case-assess-later">Coming in a later release</span>
+                    <div className="case-actions">
+                      <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
+                    </div>
+                  </div>
                 </section>
                 {doors}
-                <div className="case-actions">
-                  {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
-                  <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
-                </div>
               </>
             ) : (
               <>
@@ -1171,6 +1182,24 @@ function LaterRow({ title, line }: { title: string; line: string }) {
       <span>{line}</span>
       <Mark text={LATER} />
     </div>
+  )
+}
+
+function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+  if (phase === 'loading') return <p className="muted">Loading the run…</p>
+  if (phase === 'error') return <p className="muted">The run could not be read.</p>
+  const rows = strongestRows(fold)
+  if (rows.length === 0) return <p className="muted">No findings yet.</p>
+  return (
+    <ul className="case-closed-rows">
+      {rows.map((row, i) => (
+        <li key={i}>
+          <span className="mono">{row.step === '—' ? '—' : `Step ${row.step}`}</span>
+          <span title={row.text}>{row.text}</span>
+          <b className={row.stance === 'For' ? 'good' : row.stance === 'Against' ? 'poor' : undefined}>{row.stance ?? '—'}</b>
+        </li>
+      ))}
+    </ul>
   )
 }
 

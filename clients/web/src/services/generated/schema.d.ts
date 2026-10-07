@@ -8657,6 +8657,8 @@ export interface components {
          * @description What the closed summary shows. ``verdict`` is the stated reason.
          */
         CaseClosureView: {
+            /** Closed At */
+            closed_at?: string | null;
             /** Closed By */
             closed_by: string;
             /** Closed By Kind */
