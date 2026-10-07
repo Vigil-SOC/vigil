@@ -103,6 +103,7 @@ class CaseLinkedFinding(BaseModel):
     """One finding the case already links, and the source door when one exists."""
 
     finding_id: str
+    title: Optional[str] = None
     description: Optional[str] = None
     source_link: Optional[str] = None
 
