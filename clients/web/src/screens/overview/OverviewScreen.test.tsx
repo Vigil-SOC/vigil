@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
-import api, { configApi, findingsApi, overviewApi, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
+import api, { configApi, findingsApi, overviewApi, type OverviewAgent, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   default: { post: vi.fn() },
@@ -55,6 +55,17 @@ const OUTCOMES = [
   unmeasured('incidents', 'Incidents'),
 ]
 
+const agent = (over: Partial<OverviewAgent> = {}): OverviewAgent => ({
+  workflow_id: 'incident-response',
+  name: 'Incident Response',
+  running: 1,
+  sample_size: 0,
+  rate: null,
+  level: null,
+  current_step: 'running',
+  ...over,
+})
+
 function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
   return {
     day: '2026-10-01',
@@ -67,15 +78,7 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
     rate_info: 'A run that stopped at its budget counts as completed, because that is how the row is stored.',
     good_at: 0.95,
     fair_at: 0.85,
-    agents: [{
-      workflow_id: 'incident-response',
-      name: 'Incident Response',
-      running: 1,
-      sample_size: 0,
-      rate: null,
-      level: null,
-      current_step: 'running',
-    }],
+    agents: [agent()],
     feed: [{
       finding_id: 'f-1',
       severity: 'high',
@@ -108,22 +111,23 @@ function Where() {
 
 function renderScreen(url = '/overview') {
   const goSettings = vi.fn()
+  const go = vi.fn()
   const setWallMode = vi.fn()
   const openCase = vi.fn()
   const { unmount } = render(
     <MemoryRouter initialEntries={[url]}>
-      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} setWallMode={setWallMode} />
+      <OverviewScreen openChat={vi.fn()} go={go} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} setWallMode={setWallMode} />
       <Where />
     </MemoryRouter>,
   )
-  return { setWallMode, openCase, unmount }
+  return { setWallMode, openCase, go, unmount }
 }
 
 const where = () => screen.getByTestId('where').textContent
 
 describe('OverviewScreen', () => {
   it('empty: four connect slots, five outcome slots, no counts, and every card kept', async () => {
-    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [], agents: [agent({ running: 0, current_step: null })] }) } as never)
     renderScreen()
     const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
     expect(within(flow).getByText(/Nothing is connected yet\. Connect a source on the left/)).toBeInTheDocument()
@@ -136,10 +140,11 @@ describe('OverviewScreen', () => {
     }
     expect(flow.textContent).not.toMatch(/\d/)
     expect(within(flow).queryByText(/Not measured yet/)).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
-    expect(screen.getByText('Incident Response')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Agents running now' })).toBeInTheDocument()
+    expect(screen.getByText('No agents running yet')).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: 'Connect data' })).toHaveLength(2)
     expect(screen.getByText(/No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Connect data' })).toHaveAttribute('href', '/settings?section=data')
+    for (const link of screen.getAllByRole('link', { name: 'Connect data' })) expect(link).toHaveAttribute('href', '/settings?section=data')
     expect(screen.getByText(/Nothing is connected yet, so each part below shows where to connect/)).toBeInTheDocument()
   })
 
@@ -157,6 +162,48 @@ describe('OverviewScreen', () => {
     expect(screen.getByText('No alerts.')).toBeInTheDocument()
     expect(screen.queryByText(/Nothing is connected yet/)).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
+  })
+
+  it('agent cards: ordered by running then name, with step, pill, rate and border by level', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({
+      data: payload({
+        agents: [
+          agent({ workflow_id: 'b', name: 'Beta', running: 0, current_step: null, sample_size: 0 }),
+          agent({ workflow_id: 'a', name: 'Alpha', running: 0, current_step: null, sample_size: 412, rate: 0.979, level: 'good' }),
+          agent({ workflow_id: 'c', name: 'Gamma', running: 3, current_step: 'Enrich', sample_size: 20, rate: 0.9, level: 'fair' }),
+          agent({ workflow_id: 'd', name: 'Delta', running: 3, current_step: null, sample_size: 20, rate: 0.5, level: 'poor' }),
+        ],
+        good_at: 0.9,
+        fair_at: 0.7,
+      }),
+    } as never)
+    renderScreen()
+    const cards = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(cards.map((c) => c.querySelector('b')?.textContent)).toEqual(['Delta', 'Gamma', 'Alpha', 'Beta'])
+    const [delta, gamma, alpha, beta] = cards
+    expect(within(delta).getByText('3 running')).toBeInTheDocument()
+    expect(within(gamma).getByText('3 running · Enrich')).toBeInTheDocument()
+    expect(delta).toHaveClass('poor')
+    expect(gamma).toHaveClass('fair')
+    expect(alpha).not.toHaveClass('fair', 'poor')
+    expect(within(delta).getByText('Poor')).toBeInTheDocument()
+    expect(within(gamma).getByText('Fair')).toBeInTheDocument()
+    expect(within(alpha).getByText('Good')).toBeInTheDocument()
+    expect(within(alpha).getByTitle('97.9% of 412 runs completed, last 30 days')).toHaveTextContent('97.9%')
+    expect(within(alpha).getByText('0 running')).toBeInTheDocument()
+    expect(within(beta).getByTitle('No finished runs in the last 30 days')).toHaveTextContent('—')
+    expect(within(beta).queryByText(/Good|Fair|Poor/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Good means it finishes 90% or more of its runs; Fair 70 to 90%; Poor under 70%\./)).toBeInTheDocument()
+  })
+
+  it('agent cards: goes to workflows, and a connected install with no runs gets the panel without Connect data', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ agents: [agent({ running: 0, current_step: null })] }) } as never)
+    const { go } = renderScreen()
+    expect(await screen.findByText('No agents running yet')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Agents & workflows →' }))
+    expect(go).toHaveBeenCalledWith('workflows')
   })
 
   it('shows five outcome nodes with counts, names the unmeasured ones, and opens the feed', async () => {
@@ -235,23 +282,23 @@ describe('OverviewScreen', () => {
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
   })
 
-  it('full screen hides the page heading and Agents, puts Exit in the diagram heading, and Escape leaves it', async () => {
+  it('full screen hides the page heading and Agents running now, puts Exit in the diagram heading, and Escape leaves it', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
     const { setWallMode } = renderScreen()
     const flow = await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
-    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Agents running now' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(setWallMode).toHaveBeenLastCalledWith(true)
     expect(screen.getAllByRole('button', { name: 'Exit full screen' })).toHaveLength(1)
     expect(within(flow).getByRole('button', { name: 'Exit full screen' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByRole('heading', { name: 'Overview', level: 1 })).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Agents running now' })).not.toBeInTheDocument()
     expect(screen.getByText('f-1')).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(setWallMode).toHaveBeenLastCalledWith(false)
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Agents running now' })).toBeInTheDocument()
   })
 
   it('Escape with an alert open closes only the popup, not full screen', async () => {
@@ -271,13 +318,13 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.get).mockReturnValueOnce(new Promise(() => {}) as never)
     const first = renderScreen()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Agents running now' })).not.toBeInTheDocument()
     first.unmount()
     vi.mocked(overviewApi.get).mockRejectedValueOnce(new Error('boom'))
     const second = renderScreen()
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Agents running now' })).not.toBeInTheDocument()
     second.unmount()
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
     renderScreen()
