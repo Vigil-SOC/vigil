@@ -4266,7 +4266,8 @@
       white-space: nowrap;
    }
 
-   .drop-menu button:hover {
+   .drop-menu button:hover,
+   .drop-menu button.active {
       background: var(--hover);
       color: var(--tx);
    }
@@ -4316,6 +4317,41 @@
       left: 0;
       right: 0;
       min-width: 100%;
+   }
+
+   /* filter box pinned above the scrolling options (ui.tsx Select searchable) */
+   .field-menu.searchable {
+      scroll-padding-top: 42px;
+   }
+
+   .drop-search {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      width: 100%;
+      margin-bottom: 4px;
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 6px 10px;
+      font-size: 12.5px;
+      font-family: inherit;
+      color: var(--tx);
+      outline: none;
+   }
+
+   .drop-search::placeholder {
+      color: var(--tx-faint);
+   }
+
+   .drop-search:focus {
+      border-color: var(--accent-line);
+   }
+
+   .drop-empty {
+      padding: 7px 10px;
+      font-size: 12.5px;
+      color: var(--tx-faint);
    }
 
    .dd.clear {

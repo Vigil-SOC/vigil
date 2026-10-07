@@ -1027,6 +1027,17 @@
               }
             ],
             "title": "Source Link"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
         "required": [
@@ -2082,6 +2093,17 @@
               }
             ],
             "title": "Timestamp"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           },
           "updated_at": {
             "anyOf": [

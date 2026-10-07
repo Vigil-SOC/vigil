@@ -105,19 +105,34 @@ function renderScreen(url = '/overview') {
       <Where />
     </MemoryRouter>,
   )
-  return { goSettings, setWallMode, openCase, unmount }
+  return { setWallMode, openCase, unmount }
 }
 
 const where = () => screen.getByTestId('where').textContent
 
 describe('OverviewScreen', () => {
-  it('prompts for Settings when nothing is enabled and nothing arrived', async () => {
-    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], outcomes: [] }) } as never)
-    const { goSettings } = renderScreen()
-    expect(await screen.findByText('No sources enabled')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(goSettings).toHaveBeenCalledWith('federation')
-    expect(screen.queryByLabelText("Today's flow")).not.toBeInTheDocument()
+  it('keeps every card when nothing is connected, with the empty copy in place', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
+    renderScreen()
+    const flow = await screen.findByLabelText("Today's flow")
+    expect(within(flow).getByText(/Nothing is connected yet/)).toBeInTheDocument()
+    expect(within(flow).getByLabelText('Engine')).toBeInTheDocument()
+    expect(within(flow).getByLabelText('Needs you')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+    expect(screen.getByText('Incident Response')).toBeInTheDocument()
+    expect(screen.getByText(/No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline/)).toBeInTheDocument()
+    const links = screen.getAllByRole('link', { name: 'Connect data' })
+    expect(links).toHaveLength(2)
+    links.forEach((link) => expect(link).toHaveAttribute('href', '/settings?section=data'))
+  })
+
+  it('shows arrival nodes and no connect copy when something is connected', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [] }) } as never)
+    renderScreen()
+    expect(within(await screen.findByLabelText("Today's flow")).getByLabelText('splunk')).toBeInTheDocument()
+    expect(screen.getByText('No alerts.')).toBeInTheDocument()
+    expect(screen.queryByText(/Nothing is connected yet/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
   })
 
   it('shows arrival counts, an engineless number, and the feed', async () => {
@@ -173,9 +188,10 @@ describe('OverviewScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear noise' }))
     expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
     expect(findingsApi.clearNoise).toHaveBeenCalledWith('f-1')
-    fireEvent.click(screen.getByRole('button', { name: 'Launch' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Launch' }))
-    expect(await screen.findByText('This finding is already queued.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByRole('link', { name: 'Waiting in the Triage queue' })).toHaveAttribute('href', '/triage')
+    fireEvent.click(screen.getByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByRole('link', { name: 'Already waiting in the Triage queue.' })).toHaveAttribute('href', '/triage')
     await waitFor(() => expect(configApi.getIntegrations).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: 'Create ticket' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('JIRA not configured')
@@ -213,7 +229,7 @@ describe('OverviewScreen', () => {
     expect(setWallMode).not.toHaveBeenCalledWith(false)
   })
 
-  it('renders the toolbar and full screen button, never Agents, while loading, on error and when empty', async () => {
+  it('renders the toolbar and full screen button while loading, on error and when empty, with no Agents while loading or on error', async () => {
     vi.mocked(overviewApi.get).mockReturnValueOnce(new Promise(() => {}) as never)
     const first = renderScreen()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
@@ -225,11 +241,10 @@ describe('OverviewScreen', () => {
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
     second.unmount()
-    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], outcomes: [] }) } as never)
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
     renderScreen()
-    expect(await screen.findByText('No sources enabled')).toBeInTheDocument()
+    expect(await screen.findByText(/Nothing is connected yet/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
   })
 
   it('opens an alert from ?alert= with the feed row, and closing removes only that param', async () => {

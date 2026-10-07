@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # agent layer's vocabulary, so they are stated here once rather than inline.
 COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
+INVESTIGATE_RUN_KIND = "investigate"
 ROOT_CAUSE_RUN_KIND = "root_cause"
 ADJUDICATE_RUN_KIND = "adjudicate"
 # hunt and adjudicate drive the hypothesis loop. root_cause does not: it traces

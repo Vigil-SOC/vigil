@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { format } from 'date-fns'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -43,7 +43,7 @@ vi.mock('../../services/api', () => ({
   },
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
-    getRun: vi.fn((id: string) => Promise.resolve({ data: testState.runs[id] ?? {} })),
+    getRun: vi.fn((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })),
     replayRun: vi.fn(),
     verifyRun: vi.fn(),
   },
@@ -525,7 +525,7 @@ describe('case page', () => {
       combined_state: 'executing',
       investigations: [investigation('executing', true, 'run-links')],
       linked_findings: [
-        { finding_id: 'f1', description: 'console alert', source_link: 'https://example.test/alert/1' },
+        { finding_id: 'f1', title: 'Beacon to rare host', description: 'console alert', source_link: 'https://example.test/alert/1' },
         { finding_id: 'f2', description: 'no door', source_link: null },
       ],
     }]
@@ -537,7 +537,9 @@ describe('case page', () => {
     expect(within(header).queryByText('console alert')).not.toBeInTheDocument()
     const side = screen.getByRole('complementary', { name: 'Case details' })
     expect(within(side).getByText('Alerts (2)')).toBeInTheDocument()
-    expect(within(side).getByText('console alert')).toBeInTheDocument()
+    // The title names the alert; a row without one keeps its description.
+    expect(within(side).getByText('Beacon to rare host')).toBeInTheDocument()
+    expect(within(side).queryByText('console alert')).not.toBeInTheDocument()
     expect(within(side).getByText('no door')).toBeInTheDocument()
     expect(within(side).queryByText('gone')).not.toBeInTheDocument()
     const link = within(side).getByRole('link', { name: 'Open in source' })
@@ -1296,5 +1298,67 @@ describe('Memory and blind spots tab', () => {
     open('m-err', { hunt: HUNT })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('The run could not be read')).toBeInTheDocument()
+  })
+})
+
+describe('following a live run', () => {
+  const live = (over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'running' }, ...over })
+  const open = (id: string, run: unknown, state = 'executing') => {
+    testState.cases = [{ ...openCase(id), combined_state: state, investigations: [investigation(state, true, `run-${id}`)] }]
+    testState.runs[`run-${id}`] = run
+    renderCase(id)
+  }
+  const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }))
+  afterEach(() => vi.useRealTimers())
+
+  it('re-reads the run, case and record while live, and stops once it parks', async () => {
+    open('case-live', live())
+    expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
+    const reads = () => vi.mocked(workflowApi.getRun).mock.calls.length
+    const first = reads()
+
+    testState.runs['run-case-live'] = live({ hunt: { ...HUNT, status: 'running', iteration: 4 } })
+    await tick() // the run re-read
+    expect(await screen.findByText('Now · step 4')).toBeInTheDocument()
+    await tick() // the case and record follow the run's change
+    expect(vi.mocked(casesApi.getById).mock.calls.length).toBeGreaterThan(1)
+    expect(vi.mocked(casesApi.getRecord).mock.calls.length).toBeGreaterThan(1)
+
+    // The budget refuses the next iteration: the pill and the line replace the live card.
+    testState.runs['run-case-live'] = live({ hunt: { ...HUNT, status: 'parked', reason: 'the budget refused another iteration: unpriced | extra' } })
+    await tick()
+    expect(await screen.findByRole('region', { name: 'Run state' })).toHaveTextContent('Paused')
+    expect(document.querySelector('.state-pill')).toHaveTextContent('Paused')
+    expect(screen.getByText('The budget refused another iteration: unpriced.')).toBeInTheDocument()
+    expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'What the run reported' })).toBeInTheDocument()
+    expect(within(screen.getByRole('table', { name: 'Agents' })).queryByText('executing')).not.toBeInTheDocument()
+
+    // A paused run can wake, so it keeps being read; a failed one does not.
+    const before = reads()
+    expect(before).toBeGreaterThan(first)
+    testState.runs['run-case-live'] = live({ status: 'failed', error: 'the lead emitted no decision: Connection error. | x | y', hunt: { ...HUNT, status: 'running' } })
+    await tick()
+    await waitFor(() => expect(document.querySelector('.state-pill')).toHaveTextContent('Stopped'))
+    expect(screen.getByText('The lead emitted no decision: Connection error.')).toBeInTheDocument()
+    const ended = reads()
+    await tick()
+    await tick()
+    expect(reads()).toBe(ended)
+  })
+
+  it('lets Needs you win over a stopped run', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ case_id: 'case-need' })] } } as never)
+    open('case-need', live({ status: 'failed', error: 'boom' }), 'waiting_approval')
+    expect((await screen.findAllByText('Needs you'))[0]).toBeInTheDocument()
+    expect(document.querySelector('.state-pill')).toHaveTextContent('Needs you')
+    expect(screen.queryByRole('region', { name: 'Run state' })).not.toBeInTheDocument()
+  })
+
+  it('says handed off in Findings so far', async () => {
+    open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
+    expect(await screen.findByText('handed off — Still forming')).toBeInTheDocument()
   })
 })

@@ -364,6 +364,7 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
         entries.append(
             CaseLinkedFinding(
                 finding_id=row.finding_id,
+                title=row.title,
                 description=row.description,
                 source_link=resolve_source_link(
                     {
