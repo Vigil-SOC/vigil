@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 DATA_SOURCE = "darktrace"
 
 
+# Incident identifiers, in order of preference.
+_INCIDENT_KEYS = ("uuid", "id")
+
+
 def _finding_id(prefix: str, stable_key: str, ts: datetime) -> str:
     """Generate a schema-compliant finding_id: f-YYYYMMDD-<8hex>.
 
@@ -179,8 +183,8 @@ class DarktraceIngestionService(SIEMIngestionService):
 
     def transform_ai_analyst(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform a Darktrace AI Analyst Incident/Event."""
-        uuid = alert.get("uuid") or alert.get("id")
-        if not uuid:
+        incident_ref = next((alert[k] for k in _INCIDENT_KEYS if alert.get(k)), None)
+        if not incident_ref:
             logger.warning("Darktrace AI Analyst payload missing uuid; skipping")
             return None
 
@@ -211,12 +215,12 @@ class DarktraceIngestionService(SIEMIngestionService):
             evidence_links.append(
                 {
                     "type": "flow",
-                    "ref": f"{self.console_url}/#aianalyst/incident/{uuid}",
+                    "ref": f"{self.console_url}/#aianalyst/incident/{incident_ref}",
                 }
             )
 
         return {
-            "finding_id": _finding_id("dt-ai", str(uuid), ts),
+            "finding_id": _finding_id("dt-ai", str(incident_ref), ts),
             "mitre_predictions": _extract_mitre(
                 alert.get("mitreTactics") or alert.get("tags")
             ),
