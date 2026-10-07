@@ -1394,14 +1394,18 @@ class OrchestratorSettingsConfig(BaseModel):
     enabled: bool = False
     dry_run: bool = False
     max_concurrent_agents: int = Field(3, ge=1, le=10, json_schema_extra={"step": 1})
-    max_iterations_per_agent: int = Field(50, ge=1, le=500, json_schema_extra={"step": 1})
+    max_iterations_per_agent: int = Field(
+        50, ge=1, le=500, json_schema_extra={"step": 1}
+    )
     max_runtime_per_investigation: int = Field(
         3600, ge=60, le=86400, json_schema_extra={"step": 60}
     )
     max_cost_per_investigation: float = Field(
         5.0, ge=0.5, le=100, json_schema_extra={"step": 0.5}
     )
-    max_total_hourly_cost: float = Field(20.0, ge=1, le=500, json_schema_extra={"step": 1})
+    max_total_hourly_cost: float = Field(
+        20.0, ge=1, le=500, json_schema_extra={"step": 1}
+    )
     loop_interval: int = Field(60, ge=10, le=600, json_schema_extra={"step": 10})
     stale_threshold: int = Field(300, ge=60, le=86400, json_schema_extra={"step": 60})
     workdir_base: str = Field("data/investigations", min_length=1)
