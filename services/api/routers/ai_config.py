@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.llm.providers.registry import (
@@ -23,7 +23,8 @@ from core.llm.providers.registry import (
     is_valid_component,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import AIModelConfig, LLMProviderConfig
+from core.storage.models import AIModelConfig, ConfigAuditLog, LLMProviderConfig, User
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,6 +78,32 @@ class ModelsListResponse(BaseModel):
     models: List[ModelInfoResponse]
 
 
+def _pair(row: Optional[AIModelConfig]) -> Optional[Dict[str, str]]:
+    return None if row is None else {"provider_id": row.provider_id, "model_id": row.model_id}
+
+
+def _audit(
+    db: Any,
+    component: str,
+    action: str,
+    before: Optional[Dict[str, str]],
+    after: Optional[Dict[str, str]],
+    actor: str,
+) -> None:
+    """One config_audit_log row on the request's session, so it commits or rolls
+    back with the change (ConfigService.record_audit opens its own session)."""
+    db.add(
+        ConfigAuditLog(
+            config_type="ai_model",
+            config_key=component,
+            action=action,
+            old_value=before,
+            new_value=after,
+            changed_by=actor,
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints — config CRUD
 # ---------------------------------------------------------------------------
@@ -104,6 +131,7 @@ def set_component_assignment(
     component: str,
     payload: ComponentAssignmentUpdate,
     db: UnitOfWorkSession,
+    current_user: User = Depends(get_current_active_user),
 ):
     if not is_valid_component(component):
         raise HTTPException(status_code=400, detail=f"unknown component: {component}")
@@ -120,19 +148,26 @@ def set_component_assignment(
             detail=f"provider {payload.provider_id} is not active",
         )
 
+    actor = str(current_user.user_id)
     row = db.get(AIModelConfig, component)
+    before = _pair(row)
     if row is None:
         row = AIModelConfig(
             component=component,
             provider_id=payload.provider_id,
             model_id=payload.model_id,
             settings=payload.settings,
+            updated_by=actor,
         )
         db.add(row)
     else:
         row.provider_id = payload.provider_id
         row.model_id = payload.model_id
         row.settings = payload.settings
+        row.updated_by = actor
+    after = _pair(row)
+    if before != after:
+        _audit(db, component, "update" if before else "create", before, after, actor)
     # Flush so server-side defaults (updated_at) land before we read them back;
     # the request's unit of work owns the commit.
     db.flush()
@@ -149,12 +184,17 @@ def set_component_assignment(
 
 
 @router.delete("/config/{component}")
-def clear_component_assignment(component: str, db: UnitOfWorkSession):
+def clear_component_assignment(
+    component: str,
+    db: UnitOfWorkSession,
+    current_user: User = Depends(get_current_active_user),
+):
     if not is_valid_component(component):
         raise HTTPException(status_code=400, detail=f"unknown component: {component}")
     row = db.get(AIModelConfig, component)
     if row is None:
         return {"component": component, "cleared": False}
+    _audit(db, component, "delete", _pair(row), None, str(current_user.user_id))
     db.delete(row)
     return {"component": component, "cleared": True}
 
