@@ -1029,8 +1029,10 @@ export interface ReplayReport {
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
-  /** Hunt cost ceiling, bound/unbound capabilities and pricing confidence; `{}` for a non-hunt. */
+  /** Who runs it, its model, what it may do, where it stops and pauses; a hunt kind adds capabilities and pricing. */
   preflight: (id: string) => api.get(`/workflows/${id}/preflight`),
+  /** Turns a workflow on or off. A 409 carries the reason it cannot be turned off. */
+  setEnabled: (id: string, enabled: boolean) => api.put(`/workflows/${id}/enabled`, { enabled }),
   execute: (id: string, params: {
     finding_id?: string
     case_id?: string
