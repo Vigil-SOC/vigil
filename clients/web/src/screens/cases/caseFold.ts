@@ -25,6 +25,7 @@ export interface HypothesisRow {
   supports: number
   weakens: number
   resolution_reason: string | null
+  provenance: string
 }
 
 export interface EvidenceRow {
@@ -103,6 +104,18 @@ export function explanationWord(status: string, supports: number, weakens: numbe
   }
   if (status === 'inconclusive' || status === 'parked' || status === 'handed_off') return status
   return status
+}
+
+const ADDED_BY: Record<string, string> = {
+  hunt_spec: 'the hunt definition',
+  operator: 'you',
+  base_rate: 'the base rate',
+  deployment_gap: 'the deployment-gap check',
+}
+
+/** "Added by" words for a hypothesis provenance; the raw token when unknown, '' when absent. */
+export function addedBy(provenance: string): string {
+  return ADDED_BY[provenance] ?? provenance
 }
 
 export function recordChip(kind: string): RecordChip {
@@ -207,6 +220,7 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
           supports: num(o.supports) ?? 0,
           weakens: num(o.weakens) ?? 0,
           resolution_reason: typeof o.resolution_reason === 'string' ? o.resolution_reason : null,
+          provenance: str(o.provenance),
         }]
       })
     : []
