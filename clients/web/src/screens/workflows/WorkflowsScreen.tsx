@@ -16,6 +16,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
+import { triggerLabels } from './triggers'
 import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
@@ -173,7 +174,6 @@ const KIND_LABEL: Record<string, string> = {
   adjudicate: 'Adjudication',
   compose: 'Playbook',
 }
-const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: 'Nightly', shadow: 'Runs alongside' }
 
 type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
 
@@ -182,8 +182,7 @@ type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
 function WorkflowCard({ wf: w, selected, onSelect, onOpen }: { wf: Workflow; selected: boolean; onSelect: () => void; onOpen: (kind: WfModal['kind']) => void }) {
   const commands = LIVE_COMMANDS.filter((c) => c.workflowId === w.id)
   // an absent triggers list (older backend) draws no chip at all, not "started by hand"
-  const triggers = w.triggers?.map((t) => TRIGGER_LABEL[t] ?? t) ?? []
-  if (w.triggers?.length === 0) triggers.push('Started by hand')
+  const triggers = triggerLabels(w.triggers)
   return (
     <div className={`wfk${w.enabled ? '' : ' off'}${selected ? ' sel' : ''}`}>
       <div

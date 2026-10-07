@@ -64,11 +64,7 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     rail: 'Agents and workflows',
     sub: 'What runs, and what may act alone',
     title: 'Choose what Vigil does on its own',
-    desc: 'Each workflow tests possible explanations for an alert, gathers evidence for and against each one, and asks before any change.',
-    card: {
-      title: 'Workflows',
-      desc: 'Turn off any playbook you do not want. The first switch lets Vigil start them on new alerts.',
-    },
+    desc: 'Each workflow tests possible explanations for an alert, gathers evidence for and against each one, and asks before any change. Turn off anything you do not want.',
   },
   limits: {
     rail: 'Limits and alerts',
@@ -76,8 +72,8 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     title: 'Set limits and where Vigil reaches you',
     desc: 'Limits stop runaway cost. You can change them later in Settings.',
     card: {
-      title: 'Limits and autonomy',
-      desc: 'A profile sets the default case limits. Assist or Act sets what may happen without asking.',
+      title: 'Limits',
+      desc: 'A profile sets the default case limits.',
     },
   },
   done: {

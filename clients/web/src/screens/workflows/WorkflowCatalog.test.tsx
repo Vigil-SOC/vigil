@@ -215,7 +215,7 @@ describe('workflow catalog cards', () => {
 
     const hunt = card('Threat hunt')
     expect(hunt).toHaveTextContent('Hunt')
-    expect(hunt).toHaveTextContent('Nightly')
+    expect(hunt).toHaveTextContent('On a schedule')
     expect(hunt).toHaveTextContent('/hunt')
     expect(hunt).toHaveTextContent('Ran 61 times this week · 91.3% succeeded · $1.50 per run')
     expect(hunt.querySelector('.level-pill.fair')).toHaveTextContent('Fair')

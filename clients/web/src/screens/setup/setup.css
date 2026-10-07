@@ -674,3 +674,151 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* Agents and workflows. Board: boards/OnboardingAgents.dc.html */
+.su-chip.good {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.su-choices.su-tiers {
+  max-width: 640px;
+}
+
+.su-lock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.su-lock svg {
+  flex: none;
+  color: var(--tx2);
+}
+
+.su-wf-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.5fr) 120px;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 2px;
+  border-top: 1px solid var(--ln0);
+}
+
+.su-wf-head {
+  padding: 4px 2px 8px;
+  border-top: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tx2);
+}
+
+.su-wf-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.su-wf-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.su-wf-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+}
+
+.su-wf-when {
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.su-wf-switch {
+  justify-self: end;
+}
+
+.su-wf-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--tx1);
+}
+
+.su-wf-err {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+
+.su-auto {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+
+.su-auto-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.su-auto-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-auto-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+/* The card head wraps so the link drops under the title instead of squeezing it */
+.su-root .settings-card .card-h {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.su-root .settings-card-head {
+  flex: 1 1 220px;
+}
+
+/* Narrow: the trigger drops under the name and the switch stays at the right */
+@media (max-width: 640px) {
+  .su-wf-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .su-wf-head span:nth-child(2) {
+    display: none;
+  }
+
+  .su-wf-when {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .su-choices.su-tiers {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

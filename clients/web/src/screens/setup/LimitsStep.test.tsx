@@ -42,8 +42,6 @@ vi.mock('../../services/api', () => ({
   configApi: {
     getOrchestrator: vi.fn(),
     setOrchestrator: vi.fn(),
-    getForceManualApproval: vi.fn(),
-    setForceManualApproval: vi.fn(),
   },
 }))
 
@@ -52,12 +50,6 @@ describe('LimitsStep', () => {
     vi.clearAllMocks()
     vi.mocked(configApi.getOrchestrator).mockResolvedValue({ data: { ...stored, profiles } } as never)
     vi.mocked(configApi.setOrchestrator).mockResolvedValue({ data: {} } as never)
-    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
-      data: { enabled: false, environment_wins: false },
-    } as never)
-    vi.mocked(configApi.setForceManualApproval).mockImplementation(async (enabled: boolean) => ({
-      data: { enabled, environment_wins: false },
-    }) as never)
   })
 
   it('selects the profile the saved config matches and lists its limits with units', async () => {
@@ -68,10 +60,9 @@ describe('LimitsStep', () => {
     expect(screen.getByText('$5.00')).toBeInTheDocument()
     expect(screen.getByText('1 h')).toBeInTheDocument()
     expect(screen.getByText('$20.00 / h')).toBeInTheDocument()
-    expect(screen.getAllByText('Recommended')).toHaveLength(2) // Balanced and Act
-    expect(screen.getByRole('button', { name: /Act/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('Recommended')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /Assist|Act/ })).not.toBeInTheDocument()
     expect(configApi.setOrchestrator).not.toHaveBeenCalled()
-    expect(configApi.setForceManualApproval).not.toHaveBeenCalled()
   })
 
   it('saves a lower profile at once, merged into the current config', async () => {
@@ -134,53 +125,10 @@ describe('LimitsStep', () => {
     vi.mocked(configApi.getOrchestrator).mockRejectedValue(new Error('down'))
     render(<LimitsStep />)
     expect(await screen.findByText('Could not read investigation profiles.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Assist/ })).toBeInTheDocument()
   })
 
   it('shows a loading line first', () => {
     render(<LimitsStep />)
     expect(screen.getByText('Loading limits…')).toBeInTheDocument()
-  })
-
-  it('saves Assist immediately and Act only after confirm', async () => {
-    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
-      data: { enabled: true, environment_wins: false },
-    } as never)
-    render(<LimitsStep />)
-    const assist = await screen.findByRole('button', { name: /Assist/ })
-    expect(assist).toHaveAttribute('aria-pressed', 'true')
-
-    fireEvent.click(screen.getByRole('button', { name: /Act/ }))
-    expect(configApi.setForceManualApproval).not.toHaveBeenCalled()
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    })
-    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(false)
-    expect(configApi.setOrchestrator).not.toHaveBeenCalled()
-
-    vi.mocked(configApi.setForceManualApproval).mockClear()
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Assist/ }))
-    })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(true)
-  })
-
-  it('says the environment wins and leaves Act unsaved on 409', async () => {
-    vi.mocked(configApi.getForceManualApproval).mockResolvedValue({
-      data: { enabled: true, environment_wins: true },
-    } as never)
-    vi.mocked(configApi.setForceManualApproval).mockRejectedValue({
-      response: { data: { detail: 'The environment wins; Act was not saved.' } },
-    })
-    render(<LimitsStep />)
-    expect(await screen.findByText(/The environment wins/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(screen.getByRole('button', { name: /Act/ }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(configApi.setForceManualApproval).toHaveBeenCalledWith(false)
-    expect(await screen.findByText('The environment wins; Act was not saved.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Assist/ })).toHaveAttribute('aria-pressed', 'true')
-    expect(configApi.setOrchestrator).not.toHaveBeenCalled()
   })
 })

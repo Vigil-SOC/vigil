@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { configApi, workflowApi } from '../../services/api'
 import { InfoTip } from '../../shared/InfoTip'
-import { Toggle } from '../../shared/ui'
+import { Icon } from '../../shared/icons'
+import { ConfirmDialog, SettingsCard, Toggle } from '../../shared/ui'
 import {
   ORCHESTRATOR_DEFAULTS,
   stripOrchestratorProfiles,
   type OrchestratorConfig,
 } from '../settings/useSettings'
+import { triggerLabels } from '../workflows/triggers'
+import ChoiceCard from './ChoiceCard'
 import { errorText } from './errorText'
 
 interface WorkflowRow {
@@ -15,9 +19,16 @@ interface WorkflowRow {
   description: string
   enabled: boolean
   canDisable: boolean
+  /** what starts it; empty when the API sends none */
+  triggers: string[]
 }
 
 type Phase = 'loading' | 'ready' | 'error'
+
+interface Approval {
+  enabled: boolean
+  environment_wins: boolean
+}
 
 export default function WorkflowsStep() {
   const [rows, setRows] = useState<WorkflowRow[]>([])
@@ -26,6 +37,10 @@ export default function WorkflowsStep() {
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<Set<string>>(new Set())
   const [autoError, setAutoError] = useState<string | null>(null)
+  const [approval, setApproval] = useState<Approval>({ enabled: false, environment_wins: false })
+  const [approvalPhase, setApprovalPhase] = useState<Phase>('loading')
+  const [confirmAct, setConfirmAct] = useState(false)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -39,6 +54,7 @@ export default function WorkflowsStep() {
           description?: string
           enabled?: boolean
           can_disable?: boolean
+          triggers?: string[]
         }[]
         setRows(
           list.map((workflow) => ({
@@ -47,6 +63,7 @@ export default function WorkflowsStep() {
             description: workflow.description || '',
             enabled: workflow.enabled !== false,
             canDisable: workflow.can_disable !== false,
+            triggers: triggerLabels(workflow.triggers),
           })),
         )
         setPhase('ready')
@@ -62,10 +79,52 @@ export default function WorkflowsStep() {
       .catch(() => {
         if (live) setAutoError('Could not read the automatic investigation setting.')
       })
+    configApi
+      .getForceManualApproval()
+      .then(({ data }) => {
+        if (!live) return
+        const row = data as Partial<Approval>
+        setApproval({
+          enabled: Boolean(row.enabled),
+          environment_wins: Boolean(row.environment_wins),
+        })
+        setApprovalPhase('ready')
+      })
+      .catch(() => {
+        if (live) setApprovalPhase('error')
+      })
     return () => {
       live = false
     }
   }, [])
+
+  const saveApproval = async (enabled: boolean) => {
+    setApprovalError(null)
+    try {
+      const { data } = await configApi.setForceManualApproval(enabled)
+      const row = data as Partial<Approval>
+      setApproval({
+        enabled: Boolean(row.enabled),
+        environment_wins: Boolean(row.environment_wins),
+      })
+    } catch (err) {
+      setApprovalError(errorText(err, 'Could not save the response mode.'))
+    }
+  }
+
+  const selectAssist = () => {
+    if (approval.enabled) return
+    saveApproval(true)
+  }
+
+  const selectAct = () => {
+    if (approval.environment_wins) {
+      saveApproval(false)
+      return
+    }
+    if (!approval.enabled) return
+    setConfirmAct(true)
+  }
 
   const setSavingId = (id: string, on: boolean) =>
     setSaving((prev) => {
@@ -109,57 +168,135 @@ export default function WorkflowsStep() {
     }
   }
 
-  if (phase === 'loading') {
-    return <p className="text-tx-3 text-sm">Loading workflows…</p>
-  }
-  if (phase === 'error') {
-    return <p className="text-sm text-high">Could not read workflows.</p>
-  }
+  const actOn = approvalPhase === 'ready' && !approval.enabled
 
   return (
-    <div>
-      <div className="toggle-row">
-        <div className="toggle-row-text">
-          <span className="toggle-row-label font-medium">Investigate new alerts automatically</span>
-          <span className="toggle-row-hint">Off, workflows start only when someone asks.</span>
-          {autoError && <span className="text-xs text-high">{autoError}</span>}
-        </div>
-        {investigates !== null && (
-          <Toggle
-            label="Investigate new alerts automatically"
-            checked={investigates}
-            disabled={saving.has('')}
-            onChange={toggleInvestigate}
-          />
-        )}
-      </div>
-      {rows.length === 0 && <p className="text-tx-3 text-sm pt-2">No workflows yet.</p>}
-      {rows.map((workflow) => (
-        <div key={workflow.id} className="toggle-row">
-          <div className="toggle-row-text">
-            <span className="toggle-row-label flex items-center gap-1.5 font-medium">
-              {workflow.name}
-              {!workflow.canDisable && (
-                <InfoTip
-                  label={`Why ${workflow.name} is always on`}
-                  text="Where alerts land when nothing else fits"
-                  align="start"
-                />
-              )}
-            </span>
-            {workflow.description && <span className="toggle-row-hint">{workflow.description}</span>}
-            {rowErrors[workflow.id] && (
-              <span className="text-xs text-high">{rowErrors[workflow.id]}</span>
+    <>
+      <SettingsCard title="How much may agents do without asking?" desc="Applies to every workflow.">
+        {approvalPhase === 'loading' && <p className="text-tx-3 text-sm">Loading response mode…</p>}
+        {approvalPhase === 'error' && <p className="text-sm text-high">Could not read the response mode.</p>}
+        {approvalPhase === 'ready' && (
+          <div className="flex flex-col gap-3">
+            {approval.environment_wins && (
+              <div className="settings-banner info">
+                <Icon name="info" size={14} />
+                <span>The environment wins. Act cannot be saved.</span>
+              </div>
             )}
+            {approvalError && <p className="text-sm text-high">{approvalError}</p>}
+            <div className="su-choices two su-tiers">
+              <ChoiceCard
+                title="Assist · asks before changes"
+                body="Agents use read-only tools on their own, and ask you before anything that changes a system."
+                selected={!actOn}
+                onSelect={selectAssist}
+              />
+              <ChoiceCard
+                title="Act · reversible changes on its own"
+                body="Agents may make changes that can be undone, such as ending a session, then tell you. Anything that cannot be undone still asks."
+                badge={<span className="su-chip good">Recommended</span>}
+                selected={actOn}
+                onSelect={selectAct}
+              />
+            </div>
+            <p className="su-lock">
+              <Icon name="lock" size={13} />
+              Actions that cannot be undone, such as isolating a host, always need a person. This cannot be changed.
+            </p>
           </div>
-          <Toggle
-            label={workflow.name}
-            checked={workflow.canDisable ? workflow.enabled : true}
-            disabled={!workflow.canDisable || saving.has(workflow.id)}
-            onChange={(on) => toggleWorkflow(workflow.id, on)}
-          />
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        title="Workflows"
+        desc="Built in. Edit them, or build your own, in Agents & workflows."
+        actions={
+          <Link className="btn" to="/workflows">
+            <Icon name="play" size={13} />
+            See how an investigation runs
+          </Link>
+        }
+      >
+        {phase === 'loading' && <p className="text-tx-3 text-sm">Loading workflows…</p>}
+        {phase === 'error' && <p className="text-sm text-high">Could not read workflows.</p>}
+        {phase === 'ready' && rows.length === 0 && <p className="text-tx-3 text-sm">No workflows yet.</p>}
+        {phase === 'ready' && rows.length > 0 && (
+          <div className="su-wf">
+            <div className="su-wf-row su-wf-head">
+              <span>Workflow</span>
+              <span>When it runs</span>
+              <span />
+            </div>
+            {rows.map((workflow) => (
+              <div key={workflow.id} className="su-wf-row">
+                <span className="su-wf-name">
+                  <span className="su-wf-title">
+                    {workflow.name}
+                    {!workflow.canDisable && (
+                      <InfoTip
+                        label={`Why ${workflow.name} is always on`}
+                        text="Where alerts land when nothing else fits"
+                        align="start"
+                      />
+                    )}
+                  </span>
+                  <span className="su-wf-id">{workflow.id}</span>
+                </span>
+                <span className="su-wf-when">{workflow.triggers.join(' · ')}</span>
+                <span className="su-wf-switch">
+                  {workflow.canDisable ? (
+                    <Toggle
+                      label={workflow.name}
+                      checked={workflow.enabled}
+                      disabled={saving.has(workflow.id)}
+                      onChange={(on) => toggleWorkflow(workflow.id, on)}
+                    />
+                  ) : (
+                    <span className="su-wf-locked">
+                      <Icon name="lock" size={12} />
+                      Always on
+                    </span>
+                  )}
+                </span>
+                {rowErrors[workflow.id] && <span className="su-wf-err text-high">{rowErrors[workflow.id]}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </SettingsCard>
+
+      {phase === 'ready' && (
+        <div className="su-auto">
+          <div className="su-auto-text">
+            <span className="su-auto-title">Investigate new alerts automatically</span>
+            <span className="su-auto-hint">
+              When off, alerts are still triaged and grouped into cases, but no agent starts until someone asks.
+            </span>
+            {autoError && <span className="text-xs text-high">{autoError}</span>}
+          </div>
+          {investigates !== null && (
+            <Toggle
+              label="Investigate new alerts automatically"
+              checked={investigates}
+              disabled={saving.has('')}
+              onChange={toggleInvestigate}
+            />
+          )}
         </div>
-      ))}
-    </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmAct}
+        title="Switch to Act?"
+        body="Act stops forcing manual approval, so autonomous response can proceed on its own."
+        confirmLabel="Save"
+        danger={false}
+        onConfirm={() => {
+          setConfirmAct(false)
+          saveApproval(false)
+        }}
+        onClose={() => setConfirmAct(false)}
+      />
+    </>
   )
 }
