@@ -295,7 +295,7 @@ def secret_field_names(integration_id: str) -> Iterable[str]:
 # Config keys that say where the integration connects (server_url, connectorUrl,
 # base_url, host, tenant, region, ...).
 _DESTINATION_KEY = re.compile(
-    r"url|uri|host|endpoint|server|domain|address|instance|tenant|region|port",
+    r"url|uri|host|endpoint|server|domain|address|instance|tenant|region|(?:^|_)port$",
     re.IGNORECASE,
 )
 
