@@ -13,7 +13,8 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('../../services/api', () => ({
-  workflowApi: { listAll: h.listAll },
+  // the reader pane opens on the first workflow; these tests never let it load
+  workflowApi: { listAll: h.listAll, get: () => new Promise(() => {}), preflight: () => new Promise(() => {}) },
   agentsApi: { listAgents: h.listAgents },
   findingsApi: {},
   casesApi: {},

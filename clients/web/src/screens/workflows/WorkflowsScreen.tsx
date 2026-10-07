@@ -1,16 +1,16 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { NotMeasured } from '../../shared/NotMeasured'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
-import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, type Phase } from './useWorkflowsData'
+import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
+import WorkflowReaderPane from './WorkflowReaderPane'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
@@ -175,23 +175,24 @@ const KIND_LABEL: Record<string, string> = {
 }
 const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: 'Nightly', shadow: 'Runs alongside' }
 
-type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
+type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
 
-/** One workflow on the board's card column. Opening the card reads it; the
- *  actions sit under it until the reader carries them. */
-function WorkflowCard({ wf: w, onOpen }: { wf: Workflow; onOpen: (kind: WfModal['kind']) => void }) {
+/** One workflow on the board's card column. Clicking the card shows it in the
+ *  reader beside the column; the actions sit under it as well. */
+function WorkflowCard({ wf: w, selected, onSelect, onOpen }: { wf: Workflow; selected: boolean; onSelect: () => void; onOpen: (kind: WfModal['kind']) => void }) {
   const commands = LIVE_COMMANDS.filter((c) => c.workflowId === w.id)
   // an absent triggers list (older backend) draws no chip at all, not "started by hand"
   const triggers = w.triggers?.map((t) => TRIGGER_LABEL[t] ?? t) ?? []
   if (w.triggers?.length === 0) triggers.push('Started by hand')
   return (
-    <div className={`wfk${w.enabled ? '' : ' off'}`}>
+    <div className={`wfk${w.enabled ? '' : ' off'}${selected ? ' sel' : ''}`}>
       <div
         role="button"
         tabIndex={0}
         className="wfk-main"
-        onClick={() => onOpen('details')}
-        onKeyDown={activateOnKey(() => onOpen('details'))}
+        aria-pressed={selected}
+        onClick={onSelect}
+        onKeyDown={activateOnKey(onSelect)}
       >
         <span className="wfk-head">
           <span className="wfk-name" title={w.name}>{w.name}</span>
@@ -229,55 +230,86 @@ function WorkflowCard({ wf: w, onOpen }: { wf: Workflow; onOpen: (kind: WfModal[
   )
 }
 
+/** Sizes an element to reach the bottom of the console's scrolling view, so the
+ *  card column and the reader each scroll on their own instead of the page. */
+function useFillHeight<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    const view = el?.closest('.view') as HTMLElement | null
+    if (!el || !view) return
+    const fit = () => {
+      const top = el.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop
+      el.style.height = `${Math.max(320, view.clientHeight - top)}px`
+    }
+    fit()
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit)
+    ro?.observe(view)
+    window.addEventListener('resize', fit)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', fit) }
+  })
+  return ref
+}
+
 function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: (kind: 'blank' | 'ai') => void; goSettings: ConsoleScreenProps['goSettings'] }) {
   const { rows, phase, error, reload } = feed
-  const [q, setQ] = useState('')
   const [modal, setModal] = useState<WfModal | null>(null)
+  // the pane replaces the table; read from the rows so an edit or a delete shows in it
+  const [openId, setOpenId] = useState<string | null>(null)
+  const open = rows.find((w) => w.id === openId)
+  // bumped by a save, so the pane reads the edited definition again
+  const [saves, setSaves] = useState(0)
   const close = () => setModal(null)
-  const list: Workflow[] = q
-    ? rows.filter((w) => w.name.toLowerCase().includes(q.toLowerCase()))
-    : rows
+  const list = rows
+  // the board always shows one workflow in the reader; the first row until one is chosen
+  const shown = open ?? (phase === 'ready' ? list[0] : undefined)
+  const layoutRef = useFillHeight<HTMLDivElement>()
   return (
     <>
-      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <div className="search" style={{ maxWidth: 320 }}>
-          <span><Icon name="search" /></span>
-          <input aria-label="Search workflows" placeholder="Search workflows…" value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <div className="flex-1" />
-        <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="btn ghost" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
-      </div>
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="flow" title="Loading workflows…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load workflows" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && list.length === 0 && (
         <StateMsg>
           <EmptyState
-            icon={q ? 'filter' : 'flow'}
-            title={q ? 'No workflows match this search' : 'No workflows yet'}
-            body={q ? 'Clear the search to return to the workflow catalog.' : 'Create a workflow manually or generate one with AI from a plain-language investigation goal.'}
-            primary={q ? { label: 'Clear search', onClick: () => setQ(''), icon: 'close' } : { label: 'New workflow', onClick: () => onCreate('blank'), icon: 'plus' }}
-            secondary={q ? undefined : { label: 'Generate with AI', onClick: () => onCreate('ai'), icon: 'sparkle' }}
+            icon="flow"
+            title="No workflows yet"
+            body="Create a workflow manually or generate one with AI from a plain-language investigation goal."
+            primary={{ label: 'New workflow', onClick: () => onCreate('blank'), icon: 'plus' }}
+            secondary={{ label: 'Generate with AI', onClick: () => onCreate('ai'), icon: 'sparkle' }}
           />
         </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
-        // bottom padding keeps the last card's actions clear of the fixed Ask Vigil button
-        <div className="px-[22px] pt-5 pb-[110px]">
-          <div className="wfk-col">
-            {list.map((w) => <WorkflowCard key={w.id} wf={w} onOpen={(kind) => setModal({ kind, wf: w })} />)}
+        <div className="wfk-layout" ref={layoutRef}>
+          {/* bottom padding keeps the last card's actions clear of the fixed Ask Vigil button */}
+          <div className="wfk-col px-[22px] pt-5 pb-[110px]">
+            {list.map((w) => (
+              <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} onOpen={(kind) => setModal({ kind, wf: w })} />
+            ))}
             <div className="wfk-new">
               <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
               <span className="text-[12px] leading-[1.45] text-tx-2">Describe how your team works a case and Vigil drafts the workflow for you to edit.</span>
               <button className="btn ghost wfk-btn self-start" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
             </div>
           </div>
+          {shown && (
+            <div className="wfk-reader">
+              <WorkflowReaderPane
+                key={`${shown.id}:${saves}`}
+                wf={shown}
+                onWatch={() => setModal({ kind: 'history', wf: shown })}
+                onRun={() => setModal({ kind: 'run', wf: shown })}
+                onEdit={() => setModal({ kind: 'edit', wf: shown })}
+                onDelete={() => setModal({ kind: 'delete', wf: shown })}
+                onToggled={reload}
+              />
+            </div>
+          )}
         </div>
       )}
-      {modal?.kind === 'details' && <WorkflowReader wf={modal.wf} onClose={close} />}
       {modal?.kind === 'run' && <RunModal wf={modal.wf} onClose={close} onStarted={() => setModal({ kind: 'history', wf: modal.wf })} />}
       {modal?.kind === 'history' && <HistoryModal wf={modal.wf} onClose={close} />}
-      {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); reload() }} />}
+      {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); setSaves((n) => n + 1); reload() }} />}
       {modal?.kind === 'delete' && <DeleteModal wf={modal.wf} onClose={close} onDeleted={() => { close(); reload() }} />}
       {phase === 'ready' && rows.length === 0 && (
         <div className="px-[22px] pb-5">
@@ -394,246 +426,6 @@ function ComboField({ label, value, onChange, placeholder, options, hint }: {
       </div>
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
     </label>
-  )
-}
-
-interface ReaderPhase {
-  id?: string
-  phase_id?: string
-  agent?: string
-  agent_id?: string
-  name?: string
-  tools?: string[]
-  approval_required?: boolean
-}
-
-interface WfDetail {
-  body?: string
-  /** Single-agent file workflows only: the lead, and the model a run uses. */
-  agent?: { role: string; model: string | null; model_source: 'assignment' | 'default' | null }
-  run_kind?: string
-  hunt_like?: boolean
-  objectives?: unknown
-  checkpoints?: unknown
-  phases?: ReaderPhase[] | null
-}
-
-type ReaderKind = 'roster' | 'single' | 'ordered'
-
-function readerKind(huntLike: boolean, runKind: string): ReaderKind {
-  if (huntLike) return 'roster'
-  if (runKind === 'investigate' || runKind === 'root_cause') return 'single'
-  return 'ordered'
-}
-
-function phasesOf(detail: WfDetail): ReaderPhase[] {
-  return Array.isArray(detail.phases) ? detail.phases : []
-}
-
-function phaseAgent(phase: ReaderPhase): string {
-  return phase.agent || phase.agent_id || ''
-}
-
-function stringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
-}
-
-function checkpointEntries(value: unknown): [string, string][] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return []
-  return Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">{children}</span>
-}
-
-function PhaseTools({ tools }: { tools: string[] }) {
-  if (tools.length === 0) return null
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
-      {tools.map((tool) => (
-        <span key={tool} className="font-mono text-[11.5px] text-tx-2 bg-bg border border-line-soft rounded-[6px] px-2 py-1">{tool}</span>
-      ))}
-    </div>
-  )
-}
-
-function Roster({ detail }: { detail: WfDetail }) {
-  const agentMeta = useAgentMeta()
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-[13px] text-tx-2">The lead dispatches among these.</p>
-      {phasesOf(detail).map((phase, i) => {
-        const agent = phaseAgent(phase)
-        const meta = agentMeta(agent)
-        return (
-          <div key={phase.id || phase.phase_id || `${agent}-${i}`}>
-            <span className="agent-chip">
-              <span className="ad" style={{ background: meta.color }} />
-              {meta.label}
-            </span>
-            <PhaseTools tools={phase.tools || []} />
-            {phase.approval_required && <div className="text-[12px] text-tx-2 mt-1">Approval required</div>}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-/** Read-only instructions, clamped to a few lines until "Show all". */
-function Instructions({ body }: { body: string }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
-  const [clipped, setClipped] = useState(false)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el || open) return
-    const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1)
-    measure()
-    // The same text clips differently at another width.
-    if (typeof ResizeObserver === 'undefined') return
-    const watch = new ResizeObserver(measure)
-    watch.observe(el)
-    return () => watch.disconnect()
-  }, [body, open])
-  return (
-    <div className="flex flex-col gap-1.5">
-      <SectionLabel>Instructions</SectionLabel>
-      <div
-        ref={ref}
-        className={`bg-bg-2 border border-line rounded-[10px] px-3 py-2.5 overflow-hidden${open ? '' : ' max-h-[7.5rem]'}`}
-      >
-        <ReportBody md={body} />
-      </div>
-      {(clipped || open) && (
-        <button type="button" className="self-start text-[12px] text-accent" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? 'Show less' : 'Show all'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function SingleAgent({ detail }: { detail: WfDetail }) {
-  const objectives = stringList(detail.objectives)
-  const { agent, body } = detail
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2">
-        <p className="text-[13px] text-tx-2">This workflow runs as one agent.</p>
-        {agent && (
-          <div className="flex flex-col min-w-0">
-            <span className="text-[13px] font-bold text-tx">{agent.role}</span>
-            {agent.model && (
-              <span className="text-[12px] text-tx-2">
-                <span className="font-semibold text-tx">{agent.model}</span>
-                {' · '}
-                {agent.model_source === 'assignment' ? 'Investigation default' : 'Default'}
-              </span>
-            )}
-          </div>
-        )}
-        {objectives.length > 0 && (
-          <ul className="list-disc pl-5 text-[13px] text-tx-2 flex flex-col gap-1">
-            {objectives.map((line) => <li key={line}>{line}</li>)}
-          </ul>
-        )}
-      </div>
-      {body?.trim() && <Instructions body={body} />}
-    </div>
-  )
-}
-
-function OrderedPhases({ detail }: { detail: WfDetail }) {
-  const agentMeta = useAgentMeta()
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[13px] text-tx-2">Phases run in this order.</p>
-      <ol className="flex flex-col gap-3 list-decimal pl-5">
-        {phasesOf(detail).map((phase, i) => {
-          const agent = phaseAgent(phase)
-          const meta = agentMeta(agent)
-          return (
-            <li key={phase.id || phase.phase_id || `${agent}-${i}`} className="text-[13px] text-tx-2">
-              <span className="font-semibold">{meta.label}</span>
-              {phase.name ? <span className="text-tx-3"> · {phase.name}</span> : null}
-              {phase.approval_required ? <span> · Approval required</span> : null}
-              <PhaseTools tools={phase.tools || []} />
-            </li>
-          )
-        })}
-      </ol>
-    </div>
-  )
-}
-
-function ReaderShape({ detail }: { detail: WfDetail }) {
-  const kind = readerKind(detail.hunt_like === true, detail.run_kind || 'compose')
-  switch (kind) {
-    case 'roster':
-      return <Roster detail={detail} />
-    case 'single':
-      return <SingleAgent detail={detail} />
-    case 'ordered':
-      return <OrderedPhases detail={detail} />
-    default: {
-      const _exhaustive: never = kind
-      return _exhaustive
-    }
-  }
-}
-
-function Pauses({ detail }: { detail: WfDetail }) {
-  const policies = checkpointEntries(detail.checkpoints)
-  const approval = phasesOf(detail).some((phase) => phase.approval_required)
-  if (policies.length === 0 && !approval) {
-    return <p className="text-[13px] text-tx-2">This definition declares no pause.</p>
-  }
-  if (policies.length === 0) return null
-  return (
-    <div className="flex flex-col gap-1.5">
-      <SectionLabel>Checkpoints</SectionLabel>
-      {policies.map(([name, policy]) => (
-        <div key={name} className="text-[13px] text-tx-2">
-          <span className="font-mono">{name}</span> {policy}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function WorkflowReader({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
-  const [detail, setDetail] = useState<WfDetail | null>(null)
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
-
-  useEffect(() => {
-    let cancelled = false
-    workflowApi
-      .get(wf.id)
-      .then((res) => { if (!cancelled) { setDetail(res.data as WfDetail); setPhase('ready') } })
-      .catch(() => { if (!cancelled) setPhase('error') })
-    return () => { cancelled = true }
-  }, [wf.id])
-
-  return (
-    <Popup open onClose={onClose} title={wf.name} width={820}>
-      <div className="flex flex-col gap-4">
-        {phase === 'loading' && <div className="muted text-[12.5px]">Loading…</div>}
-        {phase === 'error' && <p className="text-[13px] text-tx-2">Couldn’t load this workflow.</p>}
-        {phase === 'ready' && detail && (
-          <>
-            <ReaderShape detail={detail} />
-            <Pauses detail={detail} />
-            <div className="flex flex-col gap-1.5">
-              <SectionLabel>Per-stage stops</SectionLabel>
-              <p className="text-[13px] text-tx-2"><NotMeasured /></p>
-            </div>
-          </>
-        )}
-      </div>
-    </Popup>
   )
 }
 
@@ -3011,14 +2803,6 @@ const SUCCESS_TIP = {
   limit: 'Running to the end does not mean the conclusion was right.',
 }
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
-
-/** The line under the model name: where the model came from. */
-function modelSource(a: AgentTemplate): string | null {
-  if (!a.model) return null
-  if (a.modelSource === 'agent') return 'Set for this agent'
-  if (a.modelSource === 'assignment' && a.category) return `${a.category.charAt(0).toUpperCase()}${a.category.slice(1).replace(/_/g, ' ')} default`
-  return 'Default'
-}
 
 function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
   const { rows, phase, error, reload } = feed

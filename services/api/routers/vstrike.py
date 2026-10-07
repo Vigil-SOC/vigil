@@ -378,11 +378,7 @@ def ui_iframe_token() -> dict:
     MCP tool and is meant to be one-shot.
     """
     service = _ui_service_or_503()
-    try:
-        token = service.get_ui_login_token()
-    except Exception as e:
-        logger.error("VStrike ui-login-token failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    token = service.get_ui_login_token()
     return {
         "token": token,
         "iframe_url": f"{service.base_url}/login?token={token}",
@@ -393,11 +389,7 @@ def ui_iframe_token() -> dict:
 def ui_list_networks() -> dict:
     """List networks visible to the configured VStrike account."""
     service = _ui_service_or_503()
-    try:
-        networks = service.list_networks()
-    except Exception as e:
-        logger.error("VStrike network-list failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    networks = service.list_networks()
     return {"networks": networks}
 
 
@@ -409,11 +401,7 @@ def ui_load_network(request: VStrikeLoadNetworkRequest) -> dict:
     only triggers that push.
     """
     service = _ui_service_or_503()
-    try:
-        result = service.load_network_in_ui(request.network_id)
-    except Exception as e:
-        logger.error("VStrike ui-network-load failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    result = service.load_network_in_ui(request.network_id)
     return {"ok": True, "result": result}
 
 
@@ -437,9 +425,6 @@ def ui_killchain_replay(request: VStrikeKillchainReplayRequest) -> dict:
     except VStrikeToolNotImplemented as e:
         logger.info("VStrike killchain-replay unavailable: %s", e)
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-killchain-replay failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -458,13 +443,9 @@ class VStrikeNodeSearchRequest(BaseModel):
 def node_search(request: VStrikeNodeSearchRequest) -> dict:
     """Omni-search across nodes in the VStrike network."""
     service = _ui_service_or_503()
-    try:
-        results = service.node_search(
-            request.query, network_id=request.network_id, limit=request.limit
-        )
-    except Exception as e:
-        logger.error("VStrike node-search failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    results = service.node_search(
+        request.query, network_id=request.network_id, limit=request.limit
+    )
     return {"query": request.query, "results": results or []}
 
 
@@ -477,11 +458,7 @@ class VStrikeNodeDriftRequest(BaseModel):
 def node_drift(request: VStrikeNodeDriftRequest) -> dict:
     """Return end-node state changes for the supplied node."""
     service = _ui_service_or_503()
-    try:
-        drift = service.node_drift_get(request.node_id, network_id=request.network_id)
-    except Exception as e:
-        logger.error("VStrike node-drift-get failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    drift = service.node_drift_get(request.node_id, network_id=request.network_id)
     return {"node_id": request.node_id, "drift": drift or []}
 
 
@@ -489,11 +466,7 @@ def node_drift(request: VStrikeNodeDriftRequest) -> dict:
 def list_storylines(network_id: Optional[str] = None) -> dict:
     """List storylines available for the network."""
     service = _ui_service_or_503()
-    try:
-        storylines = service.storyline_list(network_id=network_id)
-    except Exception as e:
-        logger.error("VStrike storyline-list failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    storylines = service.storyline_list(network_id=network_id)
     return {"network_id": network_id, "storylines": storylines or []}
 
 
@@ -506,13 +479,9 @@ class VStrikeStorylineEventsRequest(BaseModel):
 def storyline_events(request: VStrikeStorylineEventsRequest) -> dict:
     """List events in a storyline along with their properties."""
     service = _ui_service_or_503()
-    try:
-        events = service.storyline_events_get(
-            request.storyline_id, network_id=request.network_id
-        )
-    except Exception as e:
-        logger.error("VStrike storyline-events-get failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    events = service.storyline_events_get(
+        request.storyline_id, network_id=request.network_id
+    )
     return {"storyline_id": request.storyline_id, "events": events or []}
 
 
@@ -520,11 +489,7 @@ def storyline_events(request: VStrikeStorylineEventsRequest) -> dict:
 def list_legend_runs(network_id: Optional[str] = None) -> dict:
     """List legend runs available for the network."""
     service = _ui_service_or_503()
-    try:
-        runs = service.legend_run_list(network_id=network_id)
-    except Exception as e:
-        logger.error("VStrike legend-run-list failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    runs = service.legend_run_list(network_id=network_id)
     return {"network_id": network_id, "legend_runs": runs or []}
 
 
@@ -537,13 +502,9 @@ class VStrikeLegendRunResultsRequest(BaseModel):
 def legend_run_results(request: VStrikeLegendRunResultsRequest) -> dict:
     """Return results for the specified legend run."""
     service = _ui_service_or_503()
-    try:
-        results = service.legend_run_results_get(
-            request.legend_run_id, network_id=request.network_id
-        )
-    except Exception as e:
-        logger.error("VStrike legend-run-results-get failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+    results = service.legend_run_results_get(
+        request.legend_run_id, network_id=request.network_id
+    )
     return {"legend_run_id": request.legend_run_id, "results": results}
 
 
@@ -565,9 +526,6 @@ def ui_camera_node(request: VStrikeCameraNodeRequest) -> dict:
         result = service.ui_camera_node(request.node_ids, network_id=request.network_id)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-camera-node failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -589,9 +547,6 @@ def ui_camera_position(request: VStrikeCameraPositionRequest) -> dict:
         )
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-camera-position failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -610,9 +565,6 @@ def ui_storyline_apply(request: VStrikeStorylineApplyRequest) -> dict:
         )
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-storyline-apply failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -629,9 +581,6 @@ def ui_storyline_mode(request: VStrikeStorylineModeRequest) -> dict:
         result = service.ui_storyline_mode(request.mode, network_id=request.network_id)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-storyline-mode failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -643,9 +592,6 @@ def ui_storyline_forward(network_id: Optional[str] = None) -> dict:
         result = service.ui_storyline_forward(network_id=network_id)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-storyline-forward failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -657,9 +603,6 @@ def ui_storyline_backward(network_id: Optional[str] = None) -> dict:
         result = service.ui_storyline_backward(network_id=network_id)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-storyline-backward failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -694,9 +637,6 @@ def network_graph(request: VStrikeNetworkGraphRequest) -> dict:
         graph = service.network_graph_get(network_id=request.network_id, **extras)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike network-graph-get failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     if graph is None:
         raise HTTPException(status_code=502, detail="VStrike returned no graph data")
     return {"network_id": request.network_id, "graph": graph}
@@ -720,9 +660,6 @@ def ui_legend_apply(request: VStrikeLegendApplyRequest) -> dict:
         )
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-legend-apply failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 
@@ -750,9 +687,6 @@ def ui_rightpanel_focus(
         result = service.ui_rightpanel_focus(**extras)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
-    except Exception as e:
-        logger.error("VStrike ui-rightpanel-focus failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 
 

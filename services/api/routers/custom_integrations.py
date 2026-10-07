@@ -166,9 +166,6 @@ async def save_custom_integration(
         raise
     except InvalidIntegrationIdError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error saving custom integration: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/list")
@@ -210,9 +207,6 @@ async def delete_custom_integration(
         raise
     except InvalidIntegrationIdError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error deleting custom integration: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{integration_id}/validate")
@@ -230,6 +224,3 @@ async def validate_custom_integration(
 
     except InvalidIntegrationIdError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error validating custom integration: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))

@@ -223,9 +223,6 @@ async def create_custom_workflow(
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error creating custom workflow")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/workflows/custom/{workflow_id}")
@@ -263,9 +260,6 @@ async def update_custom_workflow(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error updating custom workflow")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/workflows/custom/{workflow_id}")

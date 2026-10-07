@@ -16,6 +16,7 @@ from core.agents.custom_agent_service import (
     CustomAgentNotFound,
     CustomAgentService,
 )
+from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.deps import provide_agent_ai, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
@@ -255,9 +256,6 @@ def fork_agent(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error forking agent %s", source_agent_id)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/agents/custom", status_code=201)
@@ -278,9 +276,6 @@ def create_custom_agent(
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error creating custom agent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.patch("/agents/custom/{agent_id}")
@@ -307,9 +302,6 @@ def update_custom_agent(
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating custom agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/agents/custom/{agent_id}", status_code=204)
@@ -328,10 +320,12 @@ def delete_custom_agent(
             raise HTTPException(
                 status_code=404, detail=f"Custom agent not found: {agent_id}"
             )
+        # Ids derive from the name; a stale off entry would switch a re-created agent off.
+        if not set_agent_enabled(agent_id, True, str(current_user.user_id)):
+            logger.warning(
+                "Could not clear disabled state for deleted agent %s", agent_id
+            )
         _refresh_manager()
         return None
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error deleting custom agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
