@@ -3224,12 +3224,12 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
     <div className="ag-card">
       <table className="tbl agents-tbl">
         <colgroup>
-          <col className="c-agent" /><col /><col className="c-model" /><col className="c-skills" /><col className="c-changes" />
-          <col className="c-runs" /><col className="c-success" /><col className="c-on" /><col className="c-act" />
+          <col className="c-agent" /><col className="c-does" /><col className="c-model" /><col className="c-skills" /><col className="c-changes" />
+          <col className="c-runs" /><col className="c-success" /><col className="c-on" />
         </colgroup>
         <thead><tr>
           <th>Agent</th><th>What it does</th><th>Model</th><th>Skills</th><th>Changes things?</th><th>Runs, 7 days</th>
-          <th><span className="ag-th-info">Success<InfoTip label="How success is calculated" {...SUCCESS_TIP} /></span></th><th>On</th><th><span className="sr-only">Actions</span></th>
+          <th><span className="ag-th-info">Success<InfoTip label="How success is calculated" {...SUCCESS_TIP} /></span></th><th>On</th>
         </tr></thead>
         <tbody>
           {agents.map((a) => {
@@ -3237,15 +3237,18 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
             return (
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
-                  <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
-                    <span className="ag-ini">{a.ini}</span>
-                    <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
-                  </button>
+                  <div className="ag-agent">
+                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
+                      <span className="ag-ini">{a.ini}</span>
+                      <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
+                    </button>
+                    <span onClick={stop}>{renderActions(a)}</span>
+                  </div>
                 </td>
                 <td><span className="ag-does" title={a.does}>{a.does}</span></td>
                 <td>
                   {a.model
-                    ? <span className="ag-model"><span className="ag-model-name">{a.model}</span>{source && <span className="ag-sub">{source}</span>}</span>
+                    ? <span className="ag-model"><span className="ag-model-name" title={a.model}>{a.model}</span>{source && <span className="ag-sub">{source}</span>}</span>
                     : <span className="ag-dash">—</span>}
                 </td>
                 <td className="ag-num">{a.skills}</td>
@@ -3264,7 +3267,6 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
                 <td className="ag-on" onClick={stop}>
                   <button type="button" role="switch" aria-checked={a.enabled} aria-label={`${a.name} on`} className="ag-switch" onClick={() => onToggle(a, !a.enabled)}><span /></button>
                 </td>
-                <td className="ag-acts" onClick={stop}>{renderActions(a)}</td>
               </tr>
             )
           })}
