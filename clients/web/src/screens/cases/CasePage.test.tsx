@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
+import { CASES_CHANGED } from './useCases'
 import { ToastProvider } from '../../shell/toast'
 import { approvalsApi, casesApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
 
@@ -476,14 +477,23 @@ describe('case page', () => {
     expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Now · phase') ?? -1)
     expect(body.textContent?.indexOf('Block 1.2.3.4')).toBeLessThan(body.textContent?.indexOf('Isolate host') ?? -1)
     expect(screen.getByText('beacon')).toBeInTheDocument()
-    expect(screen.getByText('approval · reversible')).toBeInTheDocument()
-    expect(screen.getByText('checkpoint · irreversible')).toBeInTheDocument()
+    expect(screen.getByText('Reversible')).toBeInTheDocument()
+    expect(screen.getByText('Cannot be undone')).toBeInTheDocument()
+    // Reversible asks never hold; irreversible ones have no plain Approve.
+    expect(screen.getAllByRole('button', { name: 'Approve' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /Press and hold to confirm/ })).toHaveLength(1)
+    expect(screen.getByText('Hold to approve')).toBeInTheDocument()
     expect(approvalsApi.needsYou).toHaveBeenCalledWith('case-dec')
 
     const before = vi.mocked(approvalsApi.needsYou).mock.calls.length
+    const changed = vi.fn()
+    window.addEventListener(CASES_CHANGED, changed)
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(approvalsApi.approve).toHaveBeenCalledWith('act-1')
     await waitFor(() => expect(vi.mocked(approvalsApi.needsYou).mock.calls.length).toBeGreaterThan(before))
+    // The list behind the drawer refreshes too.
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+    window.removeEventListener(CASES_CHANGED, changed)
 
     const hold = screen.getByRole('button', { name: /Press and hold to confirm/ })
     vi.useFakeTimers()
@@ -525,11 +535,50 @@ describe('case page', () => {
     renderCase('case-dec')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
+    const submit = screen.getByRole('button', { name: 'Confirm reject' })
+    expect(submit).toBeDisabled()
+    fireEvent.submit(submit.closest('form') as HTMLFormElement)
+    expect(approvalsApi.reject).not.toHaveBeenCalled()
     fireEvent.change(screen.getByRole('textbox', { name: 'Rejection reason' }), {
       target: { value: 'not our host' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    fireEvent.click(submit)
     expect(approvalsApi.reject).toHaveBeenCalledWith('act-no', 'not our host')
+  })
+
+  it('titles the block with how long it has waited and drops empty rows', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-06-15T09:12:00Z'))
+    try {
+      testState.cases = [{ case_id: 'case-dec', title: 'Decision case', status: 'open', priority: 'high', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [] }]
+      vi.mocked(approvalsApi.needsYou).mockResolvedValue({
+        data: { count: 3, items: [need({ reason: '' }), need({ source_id: 'a2', title: 'Two', created_at: '2026-06-15T05:00:00Z' }), need({ source_id: 'a3', title: 'Three', created_at: 'garbage' })] },
+      } as never)
+      renderCase('case-dec')
+      expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+      expect(screen.getByText('Needs your decision · waiting 12 min')).toBeInTheDocument()
+      expect(screen.getByText('Needs your decision · waiting 4 h')).toBeInTheDocument()
+      expect(screen.getByText('Needs your decision')).toBeInTheDocument()
+      expect(screen.getAllByText('Why it stopped')).toHaveLength(2)
+      expect(document.querySelector('.case-needs')?.textContent).not.toMatch(/left/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the error and renders nothing without items', async () => {
+    testState.cases = [{ case_id: 'case-dec', title: 'Decision case', status: 'open', priority: 'high', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [] }]
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    const { unmount } = renderCase('case-dec')
+    expect(await screen.findByRole('heading', { name: 'Decision case' })).toBeInTheDocument()
+    expect(document.querySelector('.case-needs')).toBeNull()
+    unmount()
+
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need()] } } as never)
+    vi.mocked(approvalsApi.approve).mockRejectedValueOnce({ response: { data: { detail: 'Already decided' } } })
+    renderCase('case-dec')
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Already decided')
   })
 
   it('puts the decision block ahead of the verdict on a closed case', async () => {
