@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import FlowDiagram from './FlowDiagram'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -39,6 +40,11 @@ function errorText(error: unknown, fallback: string): string {
   return message && message.trim() ? message : fallback
 }
 
+function legendTitle(data: OverviewPayload): string {
+  const pct = (n: number) => Math.round(n * 100)
+  return `Health: Good ${pct(data.good_at)}% and up, Fair ${pct(data.fair_at)} to ${pct(data.good_at)}%, Poor under ${pct(data.fair_at)}%.`
+}
+
 function EvidenceBody({ item }: { item: OverviewFeedItem }) {
   const evidence = item.source_evidence
   if (!evidence) return <p>No source evidence on this finding.</p>
@@ -63,51 +69,6 @@ function ConnectData() {
     <Link className="btn primary no-underline" to={CONNECT_DATA}>
       Connect data
     </Link>
-  )
-}
-
-function Flow({ data }: { data: OverviewPayload }) {
-  return (
-    <div className="kpi-strip" aria-label="Today's flow">
-      {data.empty && (
-        <div className="kpi col-span-2 items-start" aria-label="Sources">
-          <div className="k-note">
-            Nothing is connected yet. Connect a source on the left and its alerts flow through the Vigil engine to the
-            outcomes on the right.
-          </div>
-          <ConnectData />
-        </div>
-      )}
-      {data.arrivals.map((arrival) => (
-        <div className="kpi" key={arrival.data_source} aria-label={arrival.data_source}>
-          <div className="k-label as-stored">{arrival.data_source}</div>
-          <Link className="k-val" to={`/triage?source=${encodeURIComponent(arrival.data_source)}`}>
-            {arrival.count}
-          </Link>
-          <div className="k-note">{arrival.source_text}</div>
-        </div>
-      ))}
-      <div className="kpi" aria-label="Engine">
-        <div className="k-label">Engine</div>
-        <div className="k-note">{data.engine.source_text}</div>
-      </div>
-      {data.outcomes.map((node) => (
-        <div className="kpi" key={node.state} aria-label={node.label}>
-          <div className="k-label">{node.label}</div>
-          {node.count === null ? (
-            <div className="k-val unmeasured">{node.unmeasured_text}</div>
-          ) : (
-            <div className="k-val">{node.count}</div>
-          )}
-          <div className="k-note">{node.source_text}</div>
-          {node.info && (
-            <button type="button" className="btn ghost icon" aria-label={node.info} title={node.info}>
-              <Icon name="info" size={14} />
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
   )
 }
 
@@ -340,20 +301,35 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
   }
 
   return (
-    <>
-      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">
-          {data ? `UTC ${data.day}` : 'Today'}
-        </span>
-        <div className="flex-1" />
-        <button type="button" className="btn ghost" aria-pressed={wall} onClick={toggleWall}>
-          <Icon name="fit" size={13} />
-          {wall ? 'Exit full screen' : 'Full screen'}
-        </button>
-        <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
-          <Icon name="refresh" />
-        </button>
-      </div>
+    <div className={`ov-screen${wall ? ' wall' : ''}`}>
+      {(!wall || phase !== 'ready') && (
+        <div className="ov-head">
+          <div>
+            <h1>Overview</h1>
+            <p>
+              {data?.empty
+                ? 'Where your data comes from, what Vigil does with it, and what comes out. Nothing is connected yet, so each part below shows where to connect.'
+                : `Where your data comes from, what Vigil does with it, and what came out. ${data ? `Today, UTC ${data.day}.` : ''}`.trim()}
+            </p>
+          </div>
+          <div className="ov-head-r">
+            {data && !data.empty && (
+              <div className="ov-legend" title={legendTitle(data)}>
+                <LevelBadge level="good" variant="pill" />
+                <LevelBadge level="fair" variant="pill" />
+                <LevelBadge level="poor" variant="pill" />
+              </div>
+            )}
+            <button type="button" className="ov-btn" aria-pressed={wall} onClick={toggleWall}>
+              <Icon name="fit" size={13} />
+              {wall ? 'Exit full screen' : 'Full screen'}
+            </button>
+            <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
+              <Icon name="refresh" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {phase === 'loading' && <EmptyState loading icon="graph" title="Loading overview…" />}
       {phase === 'error' && (
@@ -361,7 +337,7 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
       )}
       {phase === 'ready' && data && (
         <>
-          <Flow data={data} />
+          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
           {!wall && (
             <section className="section">
               <div className="card">
@@ -464,6 +440,6 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
           </>
         )}
       </Popup>
-    </>
+    </div>
   )
 }
