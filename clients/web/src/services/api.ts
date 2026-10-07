@@ -672,8 +672,9 @@ export const configApi = {
     stale_threshold: number
     workdir_base: string
   }) => {
-    const rest = { ...data }
-    delete (rest as { profiles?: unknown }).profiles
+    // GET also carries profiles, defaults and bounds; none are stored
+    const rest: Record<string, unknown> = { ...data }
+    for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
 

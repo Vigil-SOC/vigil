@@ -179,3 +179,58 @@
 @media (prefers-reduced-motion: reduce) {
   .dp-fields.shake { animation: none; }
 }
+
+/* Scrub field: drag sideways or click to type; the fill shows where the value sits in its range (DesignSystem board). */
+.sf {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+  min-width: 190px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--bg1);
+  border: 1px solid var(--ac-ln);
+  color: var(--tx1);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+}
+.sf::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--sf-fill, 0%);
+  box-sizing: border-box;
+  background: var(--ac-bg);
+  border-right: 2px solid var(--ac);
+}
+.sf > * { position: relative; }
+.sf:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.sf.dragging { border-color: var(--ac); }
+.sf.typing { cursor: text; border-color: var(--ac); }
+.sf.typing::before { display: none; }
+.sf-label { flex: 1 1 auto; text-align: left; }
+.sf-num { min-width: 34px; text-align: right; font-size: 13px; font-weight: 700; color: var(--tx0); }
+.sf-unit { color: var(--tx2); }
+.sf-input {
+  width: 56px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--tx0);
+  font: inherit;
+  font-weight: 700;
+  text-align: right;
+}
+.sf.shake { animation: dp-shake 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .sf.shake { animation: none; }
+}

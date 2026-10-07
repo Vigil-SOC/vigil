@@ -94,4 +94,16 @@ describe('DurationPicker', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: '1 h' }), { key: 'Escape' }) // focus on a preset
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
+
+  it('refuses a step or typed value past minMinutes and maxMinutes', () => {
+    const onChange = vi.fn()
+    render(<DurationPicker label="Idle" value={0.5} minMinutes={30} maxMinutes={90} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Idle:/ }))
+    fireEvent.keyDown(screen.getByLabelText('Minutes'), { key: 'ArrowDown' })
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Hours'), { target: { value: '2' } })
+    expect(onChange).toHaveBeenLastCalledWith(1.5) // held at the 90 min ceiling
+    fireEvent.change(screen.getByLabelText('Minutes'), { target: { value: '45' } })
+    expect(onChange).toHaveBeenLastCalledWith(0.75)
+  })
 })
