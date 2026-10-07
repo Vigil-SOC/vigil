@@ -97,6 +97,19 @@ export function writeRecent(userId: string, text: string): string[] {
   return next
 }
 
+const HUNT_TITLE_MAX = 60
+
+/** A case title from a hypothesis: whole words only, never past ``max`` characters. */
+export function huntTitle(hypothesis: string, max = HUNT_TITLE_MAX): string {
+  const text = hypothesis.trim().replace(/\s+/g, ' ')
+  if (text.length <= max) return text
+  const cut = text.slice(0, max + 1)
+  // The character past the limit is a space when the limit lands on a word end.
+  const boundary = cut.lastIndexOf(' ')
+  const words = boundary > 0 ? cut.slice(0, boundary) : text.slice(0, max)
+  return words.replace(/[\s,;:.\-–—]+$/, '')
+}
+
 export function isLiveCommand(id: CommandId): id is LiveCommandId {
   return id === 'investigate' || id === 'hunt' || id === 'replay' || id === 'ask' || id === 'ticket'
 }

@@ -2308,8 +2308,8 @@ export interface paths {
          *
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
-         *     ``case_id`` column. The run is ``run_id_for`` of the latest investigation,
-         *     not the shadow adjudication.
+         *     ``case_id`` column. The run is the case's latest, an investigation's
+         *     ``run_id_for`` or a run started on the case, never the shadow adjudication.
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -8927,7 +8927,8 @@ export interface components {
         };
         /**
          * CaseInvestigationRef
-         * @description One investigation on the case page. Newest first on the detail read.
+         * @description One run on the case page: an investigation, or a run started on the case
+         *     with no investigation row (``investigation_id`` null). Newest first.
          */
         CaseInvestigationRef: {
             /**
@@ -8943,7 +8944,7 @@ export interface components {
             /** Created At */
             created_at?: string | null;
             /** Investigation Id */
-            investigation_id: string;
+            investigation_id?: string | null;
             /**
              * Iteration Count
              * @default 0
@@ -9107,7 +9108,7 @@ export interface components {
         };
         /**
          * CaseRecordResponse
-         * @description The merged record. ``run_id`` is absent when the case has no investigation.
+         * @description The merged record. ``run_id`` is absent when the case has no run.
          */
         CaseRecordResponse: {
             /** Investigation Id */

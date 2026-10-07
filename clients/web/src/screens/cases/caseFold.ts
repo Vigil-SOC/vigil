@@ -7,6 +7,15 @@ export interface CallRow {
   result_length: number
   cost_usd: number
   duration_ms?: number
+  iteration?: number
+}
+
+/** One lead move, newest first in `moves`. Lead decisions carry no time or iteration. */
+export interface MoveRow {
+  doing: string
+  worker: string
+  at: string | null
+  iteration: number | null
 }
 
 export interface HypothesisRow {
@@ -72,6 +81,7 @@ export interface HuntFold {
   iteration: number
   doing: string
   worker: string
+  moves: MoveRow[]
   hypotheses: HypothesisRow[]
   evidence: EvidenceRow[]
   evidenceCount: number
@@ -87,6 +97,7 @@ export interface LeadFold {
   iterations: number
   doing: string
   worker: string
+  moves: MoveRow[]
   findings: { agent_id: string; answer: string }[]
   calls: CallRow[]
   gaps: LeadGapRow[]
@@ -164,6 +175,7 @@ function callsOf(raw: unknown): CallRow[] {
       result_length: num(o.result_length) ?? 0,
       cost_usd: num(o.cost_usd) ?? 0,
       ...(typeof o.duration_ms === 'number' ? { duration_ms: o.duration_ms } : {}),
+      ...(typeof o.iteration === 'number' ? { iteration: o.iteration } : {}),
     }]
   })
 }
@@ -200,9 +212,17 @@ function recallOf(raw: unknown): RecallView | null {
 
 function asHunt(raw: Record<string, unknown>): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
-  const latest = moves[0] && typeof moves[0] === 'object' ? (moves[0] as Record<string, unknown>) : null
-  const intent = latest ? str(latest.query_intent) : ''
-  const action = latest ? str(latest.action) : ''
+  // The server sends moves newest first.
+  const rows = moves.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{
+      doing: str(o.query_intent) || str(o.action),
+      worker: str(o.worker_agent_id),
+      at: typeof o.created_at === 'string' ? o.created_at : null,
+      iteration: num(o.iteration),
+    }]
+  })
   const hypotheses = Array.isArray(raw.hypotheses)
     ? raw.hypotheses.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
@@ -242,8 +262,9 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
   return {
     kind: 'hunt',
     iteration: num(raw.iteration) ?? 0,
-    doing: intent || action,
-    worker: latest ? str(latest.worker_agent_id) : '',
+    doing: rows[0]?.doing ?? '',
+    worker: rows[0]?.worker ?? '',
+    moves: rows,
     hypotheses,
     evidence,
     evidenceCount: num(raw.evidence_count) ?? evidence.length,
@@ -257,9 +278,12 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
 
 function asLead(raw: Record<string, unknown>): LeadFold {
   const decisions = Array.isArray(raw.decisions) ? raw.decisions : []
-  const latest = decisions.length > 0 && decisions[decisions.length - 1] && typeof decisions[decisions.length - 1] === 'object'
-    ? (decisions[decisions.length - 1] as Record<string, unknown>)
-    : null
+  // Decisions arrive oldest first; keep moves newest first like a hunt's.
+  const rows = decisions.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{ doing: str(o.action), worker: str(o.worker), at: null, iteration: null }]
+  }).reverse()
   const findings = Array.isArray(raw.findings)
     ? raw.findings.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
@@ -282,8 +306,9 @@ function asLead(raw: Record<string, unknown>): LeadFold {
   return {
     kind: 'lead',
     iterations: num(raw.iterations) ?? 0,
-    doing: latest ? str(latest.action) : '',
-    worker: latest ? str(latest.worker) : '',
+    doing: rows[0]?.doing ?? '',
+    worker: rows[0]?.worker ?? '',
+    moves: rows,
     findings,
     calls: callsOf(raw.calls),
     gaps,
@@ -318,4 +343,28 @@ export function visibilityGaps(fold: RunFold | null): { id: string; text: string
     id: gap.dispatch_id,
     text: [gap.query_intent || gap.agent_id, gap.failure_reason].filter(Boolean).join(' — ') || 'Dispatch failed',
   }))
+}
+
+export interface AgentRow {
+  who: string
+  doing: string
+  tool: string
+  at: string | null
+}
+
+/** The tool of the call that ran for this move; none when no call carries its iteration. */
+export function moveTool(fold: RunFold, move: MoveRow | undefined): string {
+  if (!move || move.iteration === null) return ''
+  return fold.calls.find((call) => call.iteration === move.iteration)?.tool ?? ''
+}
+
+/** One row per distinct worker, latest action first. Moves with no worker are not attributed. */
+export function agentRows(fold: RunFold | null): AgentRow[] {
+  if (!fold) return []
+  const seen = new Set<string>()
+  return fold.moves.flatMap((move) => {
+    if (!move.worker || seen.has(move.worker)) return []
+    seen.add(move.worker)
+    return [{ who: move.worker, doing: move.doing, tool: moveTool(fold, move), at: move.at }]
+  })
 }
