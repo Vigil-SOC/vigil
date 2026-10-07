@@ -279,6 +279,7 @@ describe('case page', () => {
     expect(await screen.findByText('the scanner')).toBeInTheDocument()
     expect(screen.getByText(/false_positive/)).toBeInTheDocument()
     expect(screen.getByText('Closed by ada')).toBeInTheDocument()
+    expect(document.querySelector('.case-sla')).toBeNull()
     expect(screen.getByText(/closed by ada \(analyst\)/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))

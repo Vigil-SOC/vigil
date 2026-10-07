@@ -556,7 +556,7 @@ export function CasePage({
 
   const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
-  const left = sla ? timeLeft(sla.due) : ''
+  const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   const pillState = closed ? 'closed' : pill
   const tone = statePill(pillState, needsCount > 0).tone
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
