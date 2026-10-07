@@ -40,7 +40,8 @@ const assignmentsReady = (over = {}) => ({
   ...over,
 })
 
-const mount = () => render(<AiModelsOverview notify={vi.fn()} />)
+const notify = vi.fn()
+const mount = () => render(<AiModelsOverview notify={notify} />)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -161,5 +162,65 @@ describe('model for each agent', () => {
     pickModel('Chat (Default)', 'Haiku')
     fireEvent.click(await screen.findByRole('button', { name: 'Change default' }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'haiku'))
+  })
+})
+
+describe('fallback for the built-in components', () => {
+  const withFallback = (fb?: string) =>
+    assignmentsReady({
+      assignments: {
+        chat_default: {
+          component: 'chat_default',
+          provider_id: 'anthropic-default',
+          model_id: 'sonnet',
+          settings: fb ? { fallback_model_id: fb } : {},
+        },
+      },
+    })
+  // the third select in a row
+  const fallbackTrigger = (row: string) =>
+    (screen.getByText(row).closest('tr') as HTMLElement).querySelectorAll('button.field-select')[2] as HTMLButtonElement
+
+  it('shows Stops when unset, disabled for a row on Use default or with no model', () => {
+    assignment.mockReturnValue(withFallback())
+    mount()
+    expect(fallbackTrigger('Chat (Default)').textContent).toBe('Stops')
+    expect(fallbackTrigger('Chat (Default)').disabled).toBe(false)
+    expect(fallbackTrigger('Triage Agent').textContent).toBe('Stops')
+    expect(fallbackTrigger('Triage Agent').disabled).toBe(true)
+  })
+
+  it('lists the same provider’s other models, shows the stored one, and a row on Use default shows the default’s', () => {
+    assignment.mockReturnValue(withFallback('haiku'))
+    mount()
+    expect(fallbackTrigger('Chat (Default)').textContent).toBe('Haiku')
+    expect(fallbackTrigger('Triage Agent').textContent).toBe('Haiku')
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Stops', 'Haiku'])
+  })
+
+  it('saves on select without the default-model confirm, and Stops clears it', async () => {
+    assignment.mockReturnValue(withFallback())
+    const { unmount } = mount()
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', 'haiku'))
+    expect(screen.queryByText('Change the default model?')).toBeNull()
+    unmount()
+
+    assignment.mockReturnValue(withFallback('haiku'))
+    mount()
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    fireEvent.click(screen.getByRole('option', { name: 'Stops' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', null))
+  })
+
+  it('reports a failed save', async () => {
+    assignment.mockReturnValue(withFallback())
+    assign.mockRejectedValueOnce(new Error('nope'))
+    mount()
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('err', 'nope'))
   })
 })

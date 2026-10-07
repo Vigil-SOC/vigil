@@ -16,9 +16,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.agents.builtins import blank_model
 from core.llm.providers.registry import (
     COMPONENTS,
+    FALLBACK_KEY,
     ModelInfo,
+    catalogue_of,
     get_registry,
     is_valid_component,
 )
@@ -79,11 +82,46 @@ class ModelsListResponse(BaseModel):
 
 
 def _pair(row: Optional[AIModelConfig]) -> Optional[Dict[str, str]]:
-    return (
-        None
-        if row is None
-        else {"provider_id": row.provider_id, "model_id": row.model_id}
-    )
+    """What the audit diffs: provider and model, plus the fallback when set."""
+    if row is None:
+        return None
+    pair = {"provider_id": row.provider_id, "model_id": row.model_id}
+    fallback = blank_model((row.settings or {}).get(FALLBACK_KEY))
+    if fallback:
+        pair[FALLBACK_KEY] = fallback
+    return pair
+
+
+def _settings_with_fallback(
+    payload: ComponentAssignmentUpdate, row: Optional[AIModelConfig]
+) -> Dict[str, Any]:
+    """The settings to store. A payload that omits the fallback keeps the stored
+    one (so a model-only PUT can't wipe it) unless the provider changed, which
+    would make it cross-provider. An explicit null or blank clears it."""
+    settings = dict(payload.settings)
+    if FALLBACK_KEY in settings:
+        fallback = blank_model(settings[FALLBACK_KEY])
+    elif row is not None and row.provider_id == payload.provider_id:
+        fallback = blank_model((row.settings or {}).get(FALLBACK_KEY))
+    else:
+        fallback = None
+    # A model change can land on the stored fallback; that's no fallback at all.
+    if fallback == payload.model_id and FALLBACK_KEY not in payload.settings:
+        fallback = None
+    settings.pop(FALLBACK_KEY, None)
+    if fallback:
+        if fallback == payload.model_id:
+            raise HTTPException(
+                status_code=400, detail="fallback must differ from the model"
+            )
+        known = catalogue_of(payload.provider_id)
+        if known and fallback not in known:
+            raise HTTPException(
+                status_code=400,
+                detail=f"provider {payload.provider_id} cannot serve {fallback}",
+            )
+        settings[FALLBACK_KEY] = fallback
+    return settings
 
 
 def _audit(
@@ -155,19 +193,20 @@ def set_component_assignment(
     actor = str(current_user.user_id)
     row = db.get(AIModelConfig, component)
     before = _pair(row)
+    settings = _settings_with_fallback(payload, row)
     if row is None:
         row = AIModelConfig(
             component=component,
             provider_id=payload.provider_id,
             model_id=payload.model_id,
-            settings=payload.settings,
+            settings=settings,
             updated_by=actor,
         )
         db.add(row)
     else:
         row.provider_id = payload.provider_id
         row.model_id = payload.model_id
-        row.settings = payload.settings
+        row.settings = settings
         row.updated_by = actor
     after = _pair(row)
     if before != after:

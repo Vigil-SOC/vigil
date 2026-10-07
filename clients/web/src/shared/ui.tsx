@@ -257,11 +257,13 @@ export function Select({
   options,
   onSelect,
   placeholder = 'Select…',
+  disabled,
 }: {
   value: string
   options: DropOption[]
   onSelect: (value: string) => void
   placeholder?: string
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -343,6 +345,7 @@ export function Select({
         className="field-select"
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
       >
         <span className={current ? '' : 'text-tx-3'}>{current?.label ?? placeholder}</span>

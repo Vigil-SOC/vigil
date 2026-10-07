@@ -44,6 +44,10 @@
 .aim-model > * { min-width: 0; }
 .aim-model > :first-child { flex: 0 0 165px; }
 .aim-model > :last-child { flex: 1 1 200px; }
+/* fixed width, so a long model id wraps instead of widening the table */
+.aim-fallback { width: 150px; }
+.aim-fallback .field-select { padding: 7px 7px 7px 9px; gap: 4px; font-size: 12px; }
+.aim-fallback .field-select > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .aim-muted { color: var(--tx2); }
 .aim-who { font-weight: 650; color: var(--tx0); }
 .aim-note { font-size: 11px; color: var(--tx2); }

@@ -9,9 +9,12 @@ from __future__ import annotations
 import logging
 from typing import Optional, Set, Tuple
 
+from core.agents.builtins import blank_model
+
 logger = logging.getLogger(__name__)
 
 _substitutions_logged: Set[Tuple[str, str]] = set()
+_fallbacks_logged: Set[Tuple[str, str, str]] = set()
 
 # Vertex and Bedrock resell Claude, so this is an allowlist, not a test for
 # Anthropic.
@@ -43,11 +46,22 @@ def provider_for(provider_id: Optional[str]):
     return provider
 
 
-def model_for(provider, requested_model: Optional[str]) -> str:
-    """Model id to send, pinned to the provider's default if it can't serve it."""
+def model_for(
+    provider,
+    requested_model: Optional[str],
+    fallback: Optional[str] = None,
+    component: str = "",
+) -> str:
+    """Model id to send: the requested one, else ``fallback``, else the provider's
+    default, taking the first of them that the provider can serve."""
     model = requested_model or provider.default_model
     if can_serve(provider, model):
         return model
+
+    fallback = blank_model(fallback)
+    if fallback and fallback != model and can_serve(provider, fallback):
+        note_fallback(component, model, fallback)
+        return fallback
 
     if model == provider.default_model:
         logger.warning(
@@ -68,6 +82,31 @@ def model_for(provider, requested_model: Optional[str]) -> str:
             provider.default_model,
         )
     return provider.default_model
+
+
+def note_fallback(component: str, model: str, fallback: str) -> None:
+    """Record a call landing on a component's fallback. B12 journals changes
+    only, so this is one WARNING per (component, model, fallback)."""
+    key = (component, model, fallback)
+    if key not in _fallbacks_logged:
+        _fallbacks_logged.add(key)
+        logger.warning(
+            "%s: model %s is unavailable — using its fallback %s",
+            component or "component",
+            model,
+            fallback,
+        )
+
+
+def component_fallback(component: str) -> Optional[str]:
+    """The fallback model of the assignment row ``component`` resolves to."""
+    from core.llm.providers.registry import get_registry
+
+    try:
+        return get_registry().fallback_for_component(component)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("fallback lookup failed for %s: %s", component, exc)
+        return None
 
 
 def can_serve(provider, model: str) -> bool:
@@ -117,4 +156,6 @@ def resolve_component(component: str) -> Optional[Tuple[str, str]]:
             "%s resolves to provider %s, which has no row", component, provider_id
         )
         return None
-    return provider.provider_type, model_for(provider, model_id)
+    return provider.provider_type, model_for(
+        provider, model_id, component_fallback(component), component
+    )

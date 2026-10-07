@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { FALLBACK_KEY } from '../../config/aiComponents'
 import api, {
   aiConfigApi,
   budgetsApi,
@@ -649,22 +650,19 @@ export function useModelAssignment() {
     }
   }, [reloadKey])
 
+  // `fallback` undefined leaves the stored one to the server (it keeps it on the
+  // same provider and drops it on another); null clears it. The response is what
+  // was stored, so the row mirrors the server's call.
   const assign = useCallback(
-    (component: string, providerId: string, modelId: string) =>
+    (component: string, providerId: string, modelId: string, fallback?: string | null) =>
       aiConfigApi
-        .setComponent(component, { provider_id: providerId, model_id: modelId })
-        .then(() =>
-          setAssignments((prev) => ({
-            ...prev,
-            [component]: {
-              component,
-              provider_id: providerId,
-              model_id: modelId,
-              settings: {},
-              updated_by: null,
-              updated_at: null,
-            },
-          })),
+        .setComponent(component, {
+          provider_id: providerId,
+          model_id: modelId,
+          settings: fallback === undefined ? {} : { [FALLBACK_KEY]: fallback },
+        })
+        .then((res) =>
+          setAssignments((prev) => ({ ...prev, [component]: res.data })),
         ),
     [],
   )

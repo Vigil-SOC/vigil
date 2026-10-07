@@ -417,3 +417,20 @@ async def test_fallback_models_empty_when_no_providers():
     last-resort default (the fresh-install Claude bootstrap in the API)."""
     reg = _StubRegistry(active_providers=[])
     assert await reg.fallback_models() == []
+
+
+def test_fallback_for_component_follows_the_row_that_resolves(monkeypatch):
+    from core.llm.providers.registry import ComponentAssignment
+
+    reg = ModelRegistry()
+    rows = {
+        "chat_default": ComponentAssignment(
+            "chat_default", "p", "m", {"fallback_model_id": " f "}
+        ),
+        "triage": ComponentAssignment("triage", "p", "m2", {}),
+    }
+    monkeypatch.setattr(reg, "get_all_assignments", lambda: rows)
+    assert reg.fallback_for_component("triage") is None  # own row, none set
+    assert reg.fallback_for_component("investigation") == "f"  # inherits chat_default
+    monkeypatch.setattr(reg, "get_all_assignments", lambda: {})
+    assert reg.fallback_for_component("triage") is None

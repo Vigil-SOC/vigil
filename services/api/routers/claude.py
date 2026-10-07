@@ -22,7 +22,13 @@ from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
 from core.llm.system_prompt import validate_system_prompt
-from core.llm.target import can_serve, model_for, provider_for
+from core.llm.target import (
+    can_serve,
+    component_fallback,
+    model_for,
+    note_fallback,
+    provider_for,
+)
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
@@ -169,13 +175,21 @@ def _resolve_provider_model_for_request(
     provider_id, assignment_model = resolved
     return (
         provider_id,
-        _servable_agent_model(provider_id, assignment_model, agent),
+        _servable_agent_model(
+            provider_id, assignment_model, agent, category, component_fallback(category)
+        ),
     )
 
 
-def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -> str:
-    """First of the agent's model, its fallback, and the assignment model
-    that the resolved provider can serve.
+def _servable_agent_model(
+    provider_id: str,
+    assignment_model: str,
+    agent: Any,
+    component: str = "",
+    component_fb: Optional[str] = None,
+) -> str:
+    """First of the agent's model, its fallback, the assignment model and the
+    assignment's own fallback that the resolved provider can serve.
 
     When none of them can, the assignment model is returned unchanged.
     ``chat_stream`` still runs ``model_for``, which substitutes.
@@ -186,7 +200,7 @@ def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -
         if agent is not None
         else None
     )
-    if not primary and not fallback:
+    if not primary and not fallback and not component_fb:
         return assignment_model
 
     # The named assignment provider only. provider_for substitutes the default
@@ -200,8 +214,14 @@ def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -
     if provider is None:
         return assignment_model
 
-    for candidate in (primary, fallback, assignment_model):
+    for candidate in (primary, fallback, assignment_model, component_fb):
         if candidate and can_serve(provider, candidate):
+            if candidate == component_fb and candidate not in (
+                primary,
+                fallback,
+                assignment_model,
+            ):
+                note_fallback(component, assignment_model, candidate)
             return candidate
     return assignment_model
 

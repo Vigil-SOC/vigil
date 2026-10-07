@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
-import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { agentsApi, type AIModelInfo, type ComponentAssignment } from '../../services/api'
@@ -17,7 +16,7 @@ import type { BifrostKey } from '../../services/bifrostApi'
 import { bifrostStaysOnSite, residencyCopy } from '../setup/providerResidency'
 import { useBifrostProviders } from './useBifrost'
 import { useModelAssignment } from './useSettings'
-import { COMPONENT_LABELS, CHAT_DEFAULT_KEY } from '../../config/aiComponents'
+import { COMPONENT_LABELS, CHAT_DEFAULT_KEY, FALLBACK_KEY } from '../../config/aiComponents'
 import type { SectionProps } from './types'
 import './aiModels.css'
 
@@ -168,6 +167,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
+  const [savingFallback, setSavingFallback] = useState<string | null>(null)
   const persist = async (component: string, next: RowState) => {
     try {
       if (next.inherit) {
@@ -180,10 +180,28 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       if (!next.providerId || !next.modelId) return
       const a = assignments[component]
       if (a && a.provider_id === next.providerId && a.model_id === next.modelId) return
+      setSavingFallback(component) // the fallback PUT would carry this row's old model
       await assign(component, next.providerId, next.modelId)
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
+    } finally {
+      setSavingFallback(null)
+    }
+  }
+
+  // Saves on select, no confirm: a fallback only acts once the model is unavailable.
+  const setFallback = async (component: string, fallback: string) => {
+    const a = assignments[component]
+    if (!a) return
+    setSavingFallback(component)
+    try {
+      await assign(component, a.provider_id, a.model_id, fallback || null)
+      notify('ok', `${component} fallback ${fallback ? 'saved' : 'cleared'}.`)
+    } catch (e) {
+      notify('err', (e as { message?: string })?.message || `Failed to save ${component} fallback.`)
+    } finally {
+      setSavingFallback(null)
     }
   }
 
@@ -210,6 +228,19 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const confirm = () => {
     if (pending) persist(pending.component, pending.next)
     setPending(null)
+  }
+
+  // An inheriting row runs on chat_default's row, so it shows that fallback
+  const fallbackOf = (c: string) =>
+    (assignments[rows[c]?.inherit ? CHAT_DEFAULT_KEY : c]?.settings?.[FALLBACK_KEY] as string | undefined) || ''
+  // The row's provider models but the selected one; a stored fallback the provider
+  // no longer lists stays in the list so it still shows
+  const fallbackModels = (c: string) => {
+    const a = assignments[rows[c]?.inherit ? CHAT_DEFAULT_KEY : c]
+    const list = (modelsByProvider[a?.provider_id ?? ''] || []).filter((m) => m.model_id !== a?.model_id)
+    const stored = fallbackOf(c)
+    if (stored && !list.some((m) => m.model_id === stored)) list.push({ model_id: stored } as AIModelInfo)
+    return list
   }
 
   const custom = useCustomAgents(notify)
@@ -266,9 +297,19 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                           />
                         </div>
                       </td>
-                      <td className="aim-muted">
-                        —{' '}
-                        <InfoTip label="About the fallback" text="A fallback is set on custom agents, not on these components." />
+                      <td>
+                        <div className="aim-fallback">
+                        <Select
+                          value={fallbackOf(c)}
+                          placeholder="Stops"
+                          disabled={!assignments[c] || row.inherit || savingFallback === c}
+                          options={[
+                            { value: '', label: 'Stops' },
+                            ...fallbackModels(c).map((m) => ({ value: m.model_id, label: m.display_name || m.model_id })),
+                          ]}
+                          onSelect={(v) => setFallback(c, v)}
+                        />
+                        </div>
                       </td>
                       <td className="aim-muted">—</td>
                       <td className="aim-nowrap"><NotMeasured /></td>

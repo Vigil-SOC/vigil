@@ -4337,6 +4337,12 @@
       border-color: var(--accent-line);
    }
 
+   .field-select:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      border-color: var(--line);
+   }
+
    .field-select .dd {
       color: var(--tx-faint);
       display: inline-flex;
