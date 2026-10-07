@@ -21,6 +21,7 @@ from core.federation.adapters._base import parse_cursor_since
 from core.federation.runner import FederationRunner
 from core.integrations.splunk.adapter import _QUERIES, SplunkAdapter
 from core.time import utcnow
+from tests.unit._acking_queue import AckingQueue
 
 pytestmark = pytest.mark.unit
 
@@ -117,7 +118,7 @@ async def test_failed_notable_query_keeps_the_cursor_and_records_the_error(
     adapter = SplunkAdapter()
     adapter.is_configured = lambda: True  # type: ignore[method-assign]
     adapter._service = _FakeSplunk([None, [_event(1)], None])
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
 
     for expected in (1, 2):
         await runner._do_one_tick(adapter, {"max_items": 10, "cursor": row["cursor"]})

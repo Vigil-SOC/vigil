@@ -24,6 +24,7 @@ from core.federation.adapters._base import parse_cursor_since
 from core.federation.runner import FederationRunner
 from core.integrations.crowdstrike.adapter import CrowdStrikeAdapter
 from core.integrations.crowdstrike.client import CrowdStrikeService
+from tests.unit._acking_queue import AckingQueue
 
 pytestmark = pytest.mark.unit
 
@@ -120,7 +121,7 @@ def test_not_configured_returns_empty():
 
 @pytest.mark.asyncio
 async def test_runner_records_failure_and_keeps_cursor(monkeypatch):
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
     adapter = _adapter(_FakeFalcon(None))
 
     failures: List[Any] = []
@@ -151,7 +152,7 @@ async def test_runner_stores_http_status_in_last_error(monkeypatch):
     respx.get(f"{BASE}/detects/queries/detects/v1").mock(
         return_value=httpx.Response(429)
     )
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
     adapter = _adapter(CrowdStrikeService(client_id="cid", client_secret="csec"))
 
     failures: List[Any] = []
@@ -169,7 +170,7 @@ async def test_runner_stores_http_status_in_last_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_service_build_failure_is_a_failed_tick(monkeypatch):
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
     adapter = CrowdStrikeAdapter()
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
     monkeypatch.setattr(
@@ -317,7 +318,7 @@ class _FakeDedup:
 async def test_runner_delivers_every_detection_across_ticks(monkeypatch):
     dets = [_timed(i, T0 + timedelta(minutes=i)) for i in range(1, 8)]
     _mock_falcon(dets, [])
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     adapter = _adapter(CrowdStrikeService(client_id="cid", client_secret="csec"))
     runner._adapters[adapter.name] = adapter

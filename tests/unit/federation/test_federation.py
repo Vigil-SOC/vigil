@@ -20,6 +20,7 @@ from core.federation import registry as fed_registry
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
 from core.federation.adapters._siem_base import SIEMIngestionAdapter
 from core.federation.runner import FederationRunner, _severity_passes
+from tests.unit._acking_queue import AckingQueue
 
 # ---------------------------------------------------------------------------
 # Adapter contract / registry
@@ -146,7 +147,7 @@ class _FakeDedup:
 
 @pytest.mark.asyncio
 async def test_runner_do_one_tick_filters_by_severity(monkeypatch):
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
     fake.next_findings = [
@@ -193,7 +194,7 @@ async def test_runner_do_one_tick_filters_by_severity(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_do_one_tick_dedups(monkeypatch):
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
     fake.next_findings = [
@@ -231,7 +232,7 @@ async def test_runner_do_one_tick_dedups(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_do_one_tick_records_failure(monkeypatch):
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
 
     class _RaisingAdapter(_FakeAdapter):
         async def fetch(self, **kwargs):
@@ -318,7 +319,7 @@ async def test_client_construction_error_keeps_the_cursor(
     )
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
 
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
     failures = []
     monkeypatch.setattr(
         "core.federation.runner.store.record_failure",
@@ -356,7 +357,7 @@ async def test_missing_sdk_records_failure_and_keeps_cursor(monkeypatch):
         external_id_prefix="aws-sh",
     )
     monkeypatch.setattr(adapter, "is_configured", lambda: True)
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
     runner._adapters[adapter.name] = adapter
     runner._dedup[adapter.name] = _FakeDedup()  # type: ignore[assignment]
 
@@ -516,7 +517,7 @@ async def test_siem_adapter_counts_dropped_and_warns_once(monkeypatch, caplog):
 async def test_runner_adds_idless_findings_to_dropped(monkeypatch):
     from core.federation.registry import FetchResult
 
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
 
@@ -547,7 +548,7 @@ async def test_runner_adds_idless_findings_to_dropped(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_clean_tick_adds_zero_dropped(monkeypatch):
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
     fake.next_findings = [{"finding_id": "f-1", "severity": "high"}]
@@ -659,7 +660,7 @@ async def test_adapter_loop_reports_a_store_outage_once_and_does_not_poll(
 async def test_unconfigured_integration_is_skipped_not_recorded_as_success(
     monkeypatch, caplog
 ):
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
     adapter = _FakeAdapter(configured=False)
     monkeypatch.setattr(
         "core.federation.runner.store.record_success",
@@ -680,7 +681,7 @@ async def test_unconfigured_integration_is_skipped_not_recorded_as_success(
 
 @pytest.mark.asyncio
 async def test_fetch_outage_logs_error_once_then_a_recovery_line(monkeypatch, caplog):
-    runner = FederationRunner(output_queue=asyncio.Queue())
+    runner = FederationRunner(output_queue=AckingQueue())
 
     class _FlakyAdapter(_FakeAdapter):
         down = True

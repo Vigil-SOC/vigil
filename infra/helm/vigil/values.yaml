@@ -332,14 +332,14 @@ redis:
     storageClassName: ""
     accessModes:
       - ReadWriteOnce
-  # Match docker-compose defaults: AOF on, 512MB cap, LRU eviction.
+  # Match docker-compose defaults: AOF on, 512MB cap, noeviction (a full Redis rejects writes loudly; it holds queues and dedup state, so it must never silently evict).
   args:
     - --appendonly
     - "yes"
     - --maxmemory
     - 512mb
     - --maxmemory-policy
-    - allkeys-lru
+    - noeviction
   resources:
     requests:
       cpu: 100m

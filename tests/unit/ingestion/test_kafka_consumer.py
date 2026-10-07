@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+
 import pytest
 
-from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.dedup import RedisDedupSet
+from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.kafka_consumer_service import KafkaConsumerService
+from tests.unit._acking_queue import AckingQueue
 
 
 def _run(coro):
@@ -30,7 +32,7 @@ def _make_service(monkeypatch, topics=None):
         consumer_group="test",
         topics=topics or ["security.findings"],
     )
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = AckingQueue()
     dedup = RedisDedupSet("test-kafka", max_size=32)
     svc = KafkaConsumerService(cfg, queue, dedup)
     return svc, queue
@@ -132,7 +134,7 @@ class TestKafkaMessageHandling:
 class TestKafkaBuildConsumer:
     def test_build_consumer_raises_without_topics(self, monkeypatch):
         cfg = KafkaConfig(enabled=True, topics=[])
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = AckingQueue()
         svc = KafkaConsumerService(cfg, queue, RedisDedupSet("x"))
 
         # Stub aiokafka so the test doesn't require it installed.

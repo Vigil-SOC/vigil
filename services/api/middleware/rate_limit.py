@@ -22,8 +22,13 @@ def _build_limiter() -> Limiter:
     if not url:
         return _in_memory()
     try:
+        # A Redis that rejects writes (noeviction + full) or drops mid-run must
+        # not turn every rate-limited route, login included, into a 500.
         candidate = Limiter(
-            key_func=get_remote_address, storage_uri=url, strategy="fixed-window"
+            key_func=get_remote_address,
+            storage_uri=url,
+            strategy="fixed-window",
+            in_memory_fallback_enabled=True,
         )
         if not candidate.limiter.storage.check():
             raise RuntimeError("storage health check failed")
