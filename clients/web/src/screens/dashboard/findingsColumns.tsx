@@ -1,21 +1,19 @@
 import { Icon } from '../../shared/icons'
 import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
-import type { Finding } from '../../data/data'
+import { MISSING_FINDING_SCORE, type Finding } from '../../data/data'
+import { formatFindingScore } from '../../data/mappers'
 
 const NDASH = '—'
 
-const SEV_RANK: Record<Finding['sev'], number> = { Critical: 4, High: 3, Medium: 2, Low: 1 }
+const SEV_RANK: Record<Finding['sev'], number> = {
+  Critical: 4, High: 3, Medium: 2, Low: 1, Unrated: 0,
+}
 const STATUS_RANK: Record<Finding['status'], number> = { open: 0, investigating: 1, closed: 2 }
 
-/** comparable time key: findings normally carry epoch-ms `ts`; when it's
- *  missing, fall back to the YYYYMMDD in the id plus HH:MM from the display string */
+/** comparable time key: epoch-ms `ts` when the source supplied a time */
 function timeKey(f: Finding): number {
-  if (typeof f.ts === 'number') return f.ts
-  const d = /(\d{8})/.exec(f.id)?.[1]
-  if (!d) return 0
-  const t = /(\d{1,2}):(\d{2})/.exec(f.time)
-  return Number(d) * 10000 + (t ? Number(t[1]) * 100 + Number(t[2]) : 0)
+  return typeof f.ts === 'number' ? f.ts : 0
 }
 
 function labelFor(key: string): string {
@@ -29,7 +27,14 @@ export function baseFindingColumns(
   return [
     {
       key: 'id', label: 'Finding ID',
-      render: (f) => <span className="id-cell">{f.id}</span>,
+      render: (f) => (
+        <span className="id-cell">
+          {f.id}
+          {!!f.excludedIps?.length && (
+            <span className="tag excluded-tag" title={`Names excluded IP ${f.excludedIps.join(', ')}`}>excluded</span>
+          )}
+        </span>
+      ),
       searchVal: (f) => f.id,
     },
     {
@@ -66,12 +71,16 @@ export function baseFindingColumns(
     {
       key: 'score', label: 'Score',
       render: (f) => (
-        <span className="scorebar">
-          <span className="track"><i className={f.score >= 0.8 ? 'hot' : ''} style={{ width: `${f.score * 100}%` }} /></span>
-          <span className="num">{f.score.toFixed(2)}</span>
-        </span>
+        typeof f.score === 'number' ? (
+          <span className="scorebar">
+            <span className="track"><i className={f.score >= 0.8 ? 'hot' : ''} style={{ width: `${f.score * 100}%` }} /></span>
+            <span className="num">{formatFindingScore(f.score)}</span>
+          </span>
+        ) : (
+          <span className="muted">{MISSING_FINDING_SCORE}</span>
+        )
       ),
-      sortVal: (f) => f.score, defaultDir: 'desc',
+      sortVal: (f) => f.score ?? Number.NEGATIVE_INFINITY, defaultDir: 'desc',
     },
     {
       key: 'status', label: 'Status',

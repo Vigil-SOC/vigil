@@ -9,6 +9,8 @@ export interface OrchestratorCost {
   active_cost_usd: number
   hourly_cost_usd: number
   hourly_budget_remaining: number
+  /** Intake is held because the rolling hour reached the cap; running work continues. */
+  hourly_paused?: boolean
   per_investigation_limit: number
 }
 

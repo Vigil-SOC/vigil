@@ -18,8 +18,8 @@ spec:
         - -ec
         - |
           set -eu
-          echo "Checking backend /api/health..."
-          curl -fsS --max-time 10 "http://{{ include "vigil.backend.fullname" . }}:{{ .Values.backend.service.port }}/api/health"
+          echo "Checking backend /api/health/ready..."
+          curl -fsS --max-time 10 "http://{{ include "vigil.backend.fullname" . }}:{{ .Values.backend.service.port }}/api/health/ready"
           echo
           {{- if .Values.daemon.enabled }}
           echo "Checking daemon /health..."

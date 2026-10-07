@@ -27,7 +27,6 @@ class WorkflowAIGenerator:
     ):
         self._workflows = workflows
         self._mcp_registry = mcp_registry
-        self._mcp_tool_names_cache: Optional[List[str]] = None
 
     async def generate(self, description: str) -> Dict[str, Any]:
         """
@@ -72,7 +71,6 @@ class WorkflowAIGenerator:
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,
-                enable_thinking=False,
             )
         except Exception as e:
             logger.exception("Workflow generation call failed")
@@ -154,9 +152,15 @@ class WorkflowAIGenerator:
 
     def _agents_context(self) -> str:
         try:
+            from core.agents.enablement import disabled_agent_ids
             from core.agents.manager import SOCAgentLibrary
 
-            agents = SOCAgentLibrary.get_all_agents()
+            disabled = disabled_agent_ids()
+            agents = {
+                k: v
+                for k, v in SOCAgentLibrary.get_all_agents().items()
+                if k not in disabled
+            }
         except Exception as e:
             logger.warning(f"Could not load agent library: {e}")
             return "(agent library unavailable)"
@@ -180,9 +184,16 @@ class WorkflowAIGenerator:
         return ", ".join(sorted(tool_names)[:80])
 
     def _get_mcp_tool_names(self) -> List[str]:
-        if self._mcp_tool_names_cache is None:
-            self._mcp_tool_names_cache = safe_tool_names(self._mcp_registry)
-        return self._mcp_tool_names_cache
+        # Refresh from the running client each turn so a server connected since
+        # startup is usable without a restart. See registry.refresh_from_client.
+        from core.integrations.mcp.registry import refresh_from_client
+
+        registry = self._mcp_registry or MCPRegistry()
+        try:
+            refresh_from_client(registry)
+        except Exception as e:
+            logger.debug(f"MCP refresh failed: {e}")
+        return safe_tool_names(registry)
 
     def _exemplars_context(self) -> str:
         try:

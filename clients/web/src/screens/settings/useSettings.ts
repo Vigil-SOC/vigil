@@ -7,7 +7,6 @@ import api, {
   federationApi,
   ingestionApi,
   kafkaApi,
-  llmProviderApi,
   localServicesApi,
   mcpApi,
   orchestratorApi,
@@ -19,8 +18,6 @@ import api, {
   type ComponentAssignment,
   type FederationSourceView,
   type IngestionJob,
-  type LLMProvider,
-  type MempalaceHealth,
   type PlatformDatabaseProxyConfig,
 } from '../../services/api'
 import { loadCustomIntegrations } from '../../config/integrations'
@@ -82,34 +79,6 @@ export function useGeneralSettings() {
   )
 
   return { config, setConfig, phase, error, reload, save }
-}
-
-export function useMempalaceHealth() {
-  const [health, setHealth] = useState<MempalaceHealth | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [reloadKey, setReloadKey] = useState(0)
-  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    configApi
-      .getMempalaceHealth()
-      .then((res) => {
-        if (!cancelled) setHealth(res.data)
-      })
-      .catch(() => {
-        if (!cancelled) setHealth(null)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [reloadKey])
-
-  return { health, loading, reload }
 }
 
 export type ProxyType = 'none' | 'pgbouncer' | 'ssh_tunnel'
@@ -362,42 +331,70 @@ export function useUsers() {
 export interface OrchestratorConfig {
   enabled: boolean
   dry_run: boolean
-  auto_assign_findings: boolean
-  auto_assign_severities: string[]
   max_concurrent_agents: number
   max_iterations_per_agent: number
   max_runtime_per_investigation: number
   max_cost_per_investigation: number
   max_total_hourly_cost: number
-  max_total_daily_cost: number
   loop_interval: number
-  agent_loop_delay: number
   stale_threshold: number
-  dedup_window_minutes: number
-  context_max_chars: number
-  plan_model: string
-  review_model: string
   workdir_base: string
 }
+
+export interface InvestigationProfileValues {
+  max_concurrent_agents: number
+  max_iterations_per_agent: number
+  max_runtime_per_investigation: number
+  max_cost_per_investigation: number
+  max_total_hourly_cost: number
+}
+
+export interface InvestigationProfile {
+  label: string
+  recommended: boolean
+  values: InvestigationProfileValues
+}
+
+export type InvestigationProfiles = Record<string, InvestigationProfile>
+
+export interface ForceManualApproval {
+  enabled: boolean
+  environment_wins: boolean
+}
+
+/** GET /config/orchestrator carries profiles for the cards. They are not stored. */
+export function stripOrchestratorProfiles<T>(data: T & { profiles?: unknown }): T {
+  const rest = { ...data }
+  delete rest.profiles
+  return rest
+}
+
+const LIMIT_FIELDS = [
+  'max_cost_per_investigation',
+  'max_iterations_per_agent',
+  'max_runtime_per_investigation',
+  'max_concurrent_agents',
+  'max_total_hourly_cost',
+] as const satisfies readonly (keyof InvestigationProfileValues)[]
+
+export const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
+  LIMIT_FIELDS.some((field) => next[field] > prev[field])
+
+export const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
+  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
+    ([k, v]) => cfg[k] === v,
+  )
 
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,
-  auto_assign_findings: true,
-  auto_assign_severities: ['critical', 'high'],
   max_concurrent_agents: 3,
   max_iterations_per_agent: 50,
   max_runtime_per_investigation: 3600,
   max_cost_per_investigation: 5.0,
   max_total_hourly_cost: 20.0,
-  max_total_daily_cost: 100.0,
   loop_interval: 60,
-  agent_loop_delay: 2,
   stale_threshold: 300,
-  dedup_window_minutes: 30,
-  context_max_chars: 10000,
-  plan_model: 'claude-sonnet-4-5-20250929',
-  review_model: 'claude-sonnet-4-5-20250929',
   workdir_base: 'data/investigations',
 }
 
@@ -410,8 +407,8 @@ export interface OrchestratorStatus {
 
 export function useOrchestrator() {
   const [config, setConfig] = useState<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
+  const [profiles, setProfiles] = useState<InvestigationProfiles>({})
   const [status, setStatus] = useState<OrchestratorStatus | null>(null)
-  const [models, setModels] = useState<AIModelInfo[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -422,13 +419,16 @@ export function useOrchestrator() {
     Promise.all([
       configApi.getOrchestrator().catch(() => ({ data: ORCHESTRATOR_DEFAULTS })),
       orchestratorApi.getStatus().catch(() => ({ data: null })),
-      aiConfigApi.listModels().catch(() => ({ data: { models: [] } })),
     ])
-      .then(([cfgRes, statusRes, modelsRes]) => {
+      .then(([cfgRes, statusRes]) => {
         if (cancelled) return
-        setConfig({ ...ORCHESTRATOR_DEFAULTS, ...(cfgRes.data as Partial<OrchestratorConfig>) })
+        const data = (cfgRes.data ?? {}) as Partial<OrchestratorConfig> & {
+          profiles?: InvestigationProfiles
+        }
+        const { profiles: nextProfiles, ...rest } = data
+        setProfiles(nextProfiles ?? {})
+        setConfig({ ...ORCHESTRATOR_DEFAULTS, ...rest })
         setStatus((statusRes.data as OrchestratorStatus | null) ?? null)
-        setModels((modelsRes.data as { models?: AIModelInfo[] })?.models || [])
         setPhase('ready')
       })
       .catch(() => {
@@ -445,7 +445,51 @@ export function useOrchestrator() {
     [],
   )
 
-  return { config, setConfig, status, models, phase, reload, save, purgeAll }
+  return { config, setConfig, profiles, status, phase, reload, save, purgeAll }
+}
+
+export function useForceManualApproval() {
+  const [state, setState] = useState<ForceManualApproval>({
+    enabled: false,
+    environment_wins: false,
+  })
+  const [phase, setPhase] = useState<Phase>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    configApi
+      .getForceManualApproval()
+      .then(({ data }) => {
+        if (cancelled) return
+        const row = data as Partial<ForceManualApproval>
+        setState({
+          enabled: Boolean(row.enabled),
+          environment_wins: Boolean(row.environment_wins),
+        })
+        setPhase('ready')
+      })
+      .catch(() => {
+        // The default state is Act; showing it would claim approvals are off
+        // when the stored flag was never read.
+        if (!cancelled) setPhase('error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const save = useCallback(async (enabled: boolean) => {
+    const { data } = await configApi.setForceManualApproval(enabled)
+    const row = data as Partial<ForceManualApproval>
+    const next = {
+      enabled: Boolean(row.enabled),
+      environment_wins: Boolean(row.environment_wins),
+    }
+    setState(next)
+    return next
+  }, [])
+
+  return { ...state, phase, save }
 }
 
 export interface StorageInfo {
@@ -548,59 +592,13 @@ export function useSplunk() {
   return { status, busy, reload, start, stop, restart }
 }
 
-export function useLlmProviders() {
-  const [providers, setProviders] = useState<LLMProvider[]>([])
-  const [phase, setPhase] = useState<Phase>('loading')
-  const [error, setError] = useState<string | null>(null)
-  const [reloadKey, setReloadKey] = useState(0)
-  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
-
-  useEffect(() => {
-    let cancelled = false
-    setPhase('loading')
-    setError(null)
-    llmProviderApi
-      .list()
-      .then((res) => {
-        if (cancelled) return
-        setProviders(res.data)
-        setPhase('ready')
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setError(e?.response?.data?.detail || e?.message || 'Failed to load providers')
-        setPhase('error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [reloadKey])
-
-  const test = useCallback((id: string) => llmProviderApi.test(id).then((r) => r.data), [])
-  const remove = useCallback((id: string) => llmProviderApi.remove(id).then(() => reload()), [reload])
-  const setDefault = useCallback(
-    (id: string) => llmProviderApi.setDefault(id).then(() => reload()),
-    [reload],
-  )
-
-  return { providers, phase, error, reload, test, remove, setDefault }
-}
-
 export interface AIOperationsSettings {
-  prompt_cache_enabled: boolean
-  history_window: number
-  tool_response_budget_default: number
-  thinking_budget: number
   local_ollama_recovery_enabled: boolean
   local_ollama_recovery_retry_limit: number
   local_ollama_recovery_restart_gateway: boolean
 }
 
 export const AI_OPS_DEFAULTS: AIOperationsSettings = {
-  prompt_cache_enabled: true,
-  history_window: 20,
-  tool_response_budget_default: 8000,
-  thinking_budget: 10000,
   local_ollama_recovery_enabled: true,
   local_ollama_recovery_retry_limit: 1,
   local_ollama_recovery_restart_gateway: true,
@@ -751,6 +749,8 @@ export function useMcpServers() {
   const [servers, setServers] = useState<string[]>([])
   const [statuses, setStatuses] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [missingCredentials, setMissingCredentials] = useState<Record<string, string[]>>({})
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -765,14 +765,28 @@ export function useMcpServers() {
         const statusList = st.data.statuses || []
         const statusDict: Record<string, string> = {}
         const enabledDict: Record<string, boolean> = {}
+        const errorDict: Record<string, string> = {}
+        const missingDict: Record<string, string[]> = {}
         if (Array.isArray(statusList)) {
-          statusList.forEach((item: { name?: string; status?: string; enabled?: boolean }) => {
+          statusList.forEach((item: {
+            name?: string
+            status?: string
+            enabled?: boolean
+            error?: string
+            missing_credentials?: string[]
+          }) => {
             if (item.name && item.status) statusDict[item.name] = item.status
             if (item.name) enabledDict[item.name] = !!item.enabled
+            if (item.name && item.error) errorDict[item.name] = item.error
+            if (item.name && item.missing_credentials?.length) {
+              missingDict[item.name] = item.missing_credentials
+            }
           })
         }
         setStatuses(statusDict)
         setEnabled(enabledDict)
+        setErrors(errorDict)
+        setMissingCredentials(missingDict)
         setPhase('ready')
       })
       .catch((e) => {
@@ -819,13 +833,15 @@ export function useMcpServers() {
     [fetchAll],
   )
 
-  return { servers, statuses, enabled, phase, error, reload, setServerEnabled }
+  return { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled }
 }
 
 export type CostTimeRange = '24h' | '7d' | '30d' | 'all'
 
 export interface CostTotals {
   calls: number
+  /** Calls stored with no cost (unpriced); `cost_usd` sums the rest (#1115). */
+  unpriced_calls: number
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -837,8 +853,9 @@ export interface CostTotals {
 export interface CostModelRow {
   model: string
   provider_type: string
-  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
+  pricing_source: 'exact' | 'zero' | 'unknown'
   calls: number
+  unpriced_calls: number
   input_tokens: number
   output_tokens: number
   cost_usd: number
@@ -976,8 +993,6 @@ export interface S3Config {
   access_key_id: string
   secret_access_key: string
   session_token: string
-  findings_path: string
-  cases_path: string
   parquet_prefix: string
   configured: boolean
 }
@@ -990,8 +1005,6 @@ const S3_DEFAULTS: S3Config = {
   access_key_id: '',
   secret_access_key: '',
   session_token: '',
-  findings_path: 'findings.json',
-  cases_path: 'cases.json',
   parquet_prefix: '',
   configured: false,
 }

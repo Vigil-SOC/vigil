@@ -2,9 +2,11 @@
 // resolution a default import lands on module.exports.default. The named export
 // exists in both, so this one line satisfies `bundler` and NodeNext alike.
 import { Ajv, type ValidateFunction } from "ajv";
+import { GatewayExhausted } from "./limiter.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
-import type { RegisteredTool, ToolResult } from "../contracts/tool.js";
+import { hasRecall, isRecalled, recalledNotesOf, recalledNotes, type RecallPayload } from "../contracts/memory.js";
+import { ToolBoundsViolation, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
 import {
   approvalId,
   TOOL_APPROVAL,
@@ -16,9 +18,13 @@ import {
   type TurnConfig,
 } from "./loop.js";
 import { ProviderError, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
-import { assemble, prefixOf, type Prefix } from "./context.js";
+import { assemble, prefixOf, type FoldPolicy, type Prefix } from "./context.js";
 import { scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
+
+// Journaled from record without a checkpoint. An approvals entry would park
+// the run before the check runs; the dispatch id is the call's, not an approval id.
+const CANDIDATE_CHECK = "check_detection_candidate";
 
 // What a run reports as it happens. The first three are the provider's, relayed;
 // the rest are the harness's, and a run ends on exactly one of the last three.
@@ -59,8 +65,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private readonly transcript: Message[] = [];
   private prefix: Prefix = { system: "", tools: [], recall: "" };
   private lastFold = 0;
+  // Null until a write-up dies: retrying the largest request a role can send, unchanged,
+  // is three times the cost for the same answer, so the retry sends less.
+  private tightened: FoldPolicy | null = null;
+  private folds = 0;
   private turns = 0;
   private capped = false;
+  private spent = 0;
   private prose = "";
   private readonly folder: Folder<Kinds>;
 
@@ -73,13 +84,25 @@ class Run<T, Kinds extends Record<string, unknown>> {
     this.folder = new Folder(harness.state, cfg.run_id);
   }
 
+  // A provider that dies is a run that failed, which is what Outcome is for: it carries
+  // the status, the reason and the calls already made, where a thrown error loses all
+  // three. An abort still throws, because a cancelled run is not a run that answered.
   async *execute(): TurnStream<T> {
+    try {
+      return yield* this.attempt();
+    } catch (error) {
+      if (this.cfg.signal?.aborted === true || hardStop(error)) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      return yield* announce(this.done("failed", null, reason));
+    }
+  }
+
+  private async *attempt(): TurnStream<T> {
     this.transcript.push(...(this.cfg.history ?? []));
 
     // Recalled once and rendered into the opening turn, never re-recalled per
     // tool turn: a prefix that changes mid-loop is a prefix that cannot cache.
-    const recalled = await this.harness.memory.recall(this.cfg.task, this.cfg.recall_limit);
-    this.prefix = prefixOf(this.cfg.system, this.tools.map(schemaOf), recalled);
+    this.prefix = prefixOf(this.cfg.system, this.tools.map(schemaOf), await this.recalled());
 
     const schema = this.cfg.schema;
     const ended = yield* this.toolLoop();
@@ -88,6 +111,61 @@ class Run<T, Kinds extends Record<string, unknown>> {
     // a second call to be told the same thing.
     if (schema === null) return yield* announce(this.done("completed", this.prose as T, "the role answered"));
     return yield* announce(yield* this.emit(schema));
+  }
+
+  // Two reads, one prefix. Episodic recall is keyed on entities and its result is
+  // journaled, because the prefix carries the rows and nothing else records them:
+  // a rebuild that read memory again would read a neighbourhood that has moved
+  // since, which looks like a passing replay until it looks like a wrong answer.
+  // The prose the model reads is rendered from that event, so the rebuild renders
+  // the same bytes from the same rows.
+  //
+  // The cue-shaped read stays for the caller that carries a parent run's own notes
+  // forward: it names where to recall from rather than what to recall about.
+  private async recalled(): Promise<readonly string[]> {
+    const keys = this.cfg.recall_keys ?? [];
+    if (keys.length === 0) return await this.harness.memory.recall(this.cfg.task, this.cfg.recall_limit);
+
+    // Once per run and not once per turn. A workflow whose run is many turns --
+    // a lead taking a fresh turn each iteration -- would otherwise read again
+    // against a neighbourhood that has moved, moving the prefix inside the run and
+    // presenting a later decision with something the earlier ones never saw. The
+    // journaled event is that read, so a later turn and a resume re-render it.
+    const log = await this.harness.state.read(this.cfg.run_id);
+    if (hasRecall(log)) return recalledNotesOf(log);
+
+    // The run's own start rather than the moment this ran, so a resumed run and a
+    // replay sit inside the freshness boundary the first turn did. A turn driven
+    // with nothing behind it -- no workflow opened the run, so the ledger is empty
+    // -- is its own start, and there is no earlier stamp to read.
+    const asOf = log[0]?.ts ?? new Date().toISOString();
+    const payload = await this.read(keys, asOf);
+    // Journaled whether or not it found anything, and whether or not it happened:
+    // an empty read is known-to-be-none, and a replay cannot tell either of those
+    // from a read that never ran.
+    await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "recall", payload });
+    return isRecalled(payload) ? recalledNotes(payload) : [];
+  }
+
+  // A read that cannot be served is journaled as itself and the run goes on.
+  // Memory reorders what to look at first and settles nothing, so a run that could
+  // not read it has lost an aid rather than an input: failing here would make one
+  // outage the end of every run in flight.
+  //
+  // The shape it is journaled as, and why it is not an empty result, are the
+  // contract's: see RecallUnavailable.
+  private async read(keys: readonly string[], asOf: string): Promise<RecallPayload> {
+    try {
+      return await this.harness.memory.entities({
+        keys,
+        asOf,
+        runId: this.cfg.run_id,
+        ...(this.cfg.signal === undefined ? {} : { signal: this.cfg.signal }),
+      });
+    } catch (error) {
+      if (this.cfg.signal?.aborted === true || hardStop(error)) throw error;
+      return { keys, as_of: asOf, unavailable: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   // Returns an outcome only when the run ends here; otherwise the loop stops
@@ -128,7 +206,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield* this.record(call, gate.result, gate.checkpoint_id);
           continue;
         }
-        yield* this.record(call, await this.invoke(tool, call.args), gate.checkpoint_id);
+        const measured = await this.invoke(tool, call.args);
+        yield* this.record(call, measured.result, gate.checkpoint_id, measured.duration_ms);
       }
     }
 
@@ -141,7 +220,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // The store is the authority on whether the run is still going, so one
   // cancelled or answered out of band is seen on the next pass rather than never.
   private settled(fold: Fold): Outcome<T> | null {
-    if (fold.terminal !== null) {
+    if (fold.terminal !== null && this.cfg.after_terminal !== true) {
       const status: Status = fold.terminal.outcome === "completed" ? "completed" : "failed";
       return this.done(status, null, `the ledger already ended this run: ${fold.terminal.reason}`);
     }
@@ -162,21 +241,40 @@ class Run<T, Kinds extends Record<string, unknown>> {
     return answer === "approve" ? { kind: "allowed", checkpoint_id } : { kind: "rejected" };
   }
 
-  private async invoke(tool: RegisteredTool, rawArgs: string): Promise<ToolResult> {
+  private async invoke(tool: RegisteredTool, rawArgs: string): Promise<{ result: ToolResult; duration_ms: number }> {
+    const started = performance.now();
+    const finish = (result: ToolResult): { result: ToolResult; duration_ms: number } => ({
+      result,
+      duration_ms: Math.max(0, Math.round(performance.now() - started)),
+    });
     const args = parseArgs(rawArgs);
-    if (args === null) return { ok: false, failure: { kind: "invalid_args", detail: "arguments were not valid JSON" } };
-    return this.harness.dispatch.invoke(tool, args, this.cfg.signal);
+    if (args === null) {
+      return finish({ ok: false, failure: { kind: "invalid_args", detail: "arguments were not valid JSON" } });
+    }
+    return finish(await this.harness.dispatch.invoke(tool, args, this.cfg.signal));
   }
 
   // The one path a result takes, and where wrap scans it. A gated call is journaled
   // with its outcome, so a later attempt is served from the ledger instead of run.
-  private async *record(call: ToolCall, result: ToolResult, gated?: string): AsyncGenerator<StreamEvent<T>, void> {
+  private async *record(
+    call: ToolCall,
+    result: ToolResult,
+    gated?: string,
+    duration_ms?: number,
+  ): AsyncGenerator<StreamEvent<T>, void> {
     yield { type: "tool_call", call };
     const wrapped = wrap(call.tool, result, this.scan, this.cfg.result_cap);
-    const attempt: Attempt = { tool: call.tool, args: call.args, result, wrapped };
+    const attempt: Attempt = {
+      tool: call.tool,
+      args: call.args,
+      result,
+      wrapped,
+      ...(duration_ms === undefined ? {} : { duration_ms }),
+    };
     this.calls.push(attempt);
     this.transcript.push({ role: "tool", call_id: call.id, content: wrapped.text });
     if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
+    else if (call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result);
     yield { type: "tool_result", call, attempt };
   }
 
@@ -204,11 +302,46 @@ class Run<T, Kinds extends Record<string, unknown>> {
       const refusal = await this.harness.budget.beginCall();
       if (refusal !== null) return this.exhausted(refusal);
 
-      const turn = yield* this.burn({ messages: this.assembled(tail), tools: [], emit: schema });
+      // A write-up that died has still gathered everything behind it, so the only thing
+      // worth changing before asking again is how much it is asked over.
+      let turn;
+      try {
+        turn = yield* this.burn({ messages: this.assembled(tail), tools: [], emit: schema });
+      } catch (error) {
+        const tighter = FOLD_LADDER[this.folds];
+        if (tighter === undefined || this.cfg.signal?.aborted === true) throw error;
+        this.tightened = tighter;
+        this.folds += 1;
+        this.rejected.push(`the emission call failed (${(error as Error).message}); asked again over a folded transcript`);
+        attempt -= 1;
+        continue;
+      }
 
       const parsed = tryParse(turn.content);
       if (parsed !== undefined && validate(parsed)) {
         return this.done("completed", parsed as T, "the role answered");
+      }
+
+      // Pasting the body back is the right correction for a model that got the
+      // shape wrong, and the wrong one for a model that ran past the output
+      // ceiling: it makes the retry's input larger than the attempt that failed
+      // and asks for an answer just as long, so the ceiling is hit again. That is
+      // what the ladder already exists for, so a cut-off emission folds and is
+      // told what to do differently rather than shown itself.
+      if (parsed === undefined && cutOff(turn.content)) {
+        const tighter = FOLD_LADDER[this.folds];
+        this.rejected.push("the emission ran past the output ceiling and was cut off mid-JSON; asked again for a shorter answer");
+        tail = [
+          "Emit your answer now as JSON matching the schema.",
+          "Your previous emission was cut off mid-JSON because it ran past the output ceiling.",
+          "Keep every string field short. State a conclusion and cite ids rather than restating what they hold.",
+        ].join("\n\n");
+        if (tighter !== undefined) {
+          this.tightened = tighter;
+          this.folds += 1;
+          attempt -= 1;
+        }
+        continue;
       }
 
       const reason = parsed === undefined ? "the response was not valid JSON" : errorsOf(validate);
@@ -222,13 +355,22 @@ class Run<T, Kinds extends Record<string, unknown>> {
       ].join("\n\n");
     }
 
-    return this.done("failed", null, `the role never emitted a valid answer: ${this.rejected.join(" | ")}`);
+    const outcome = this.done("failed", null, `the role never emitted a valid answer: ${this.rejected.join(" | ")}`);
+    return { ...outcome, emission_rejected: true };
   }
 
   // Prefix, then the folded history, then a tail that is never persisted. What
   // summarising drops is the fold's to decide, and the edges are never dropped.
   private assembled(working = ""): Message[] {
-    const { messages, folded } = assemble(this.prefix, this.cfg.task, this.transcript, working, summariseFolded);
+    const policy = this.tightened ?? undefined;
+    const { messages, folded } = assemble(
+      this.prefix,
+      this.cfg.task,
+      this.transcript,
+      working,
+      summariseFolded,
+      ...(policy === undefined ? [] : ([policy] as const)),
+    );
     this.lastFold = folded;
     return messages;
   }
@@ -240,6 +382,19 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const tool_calls: ToolCall[] = [];
     let content = "";
     let billed = false;
+    let settled = false;
+    // Flagged between the record and the write, because those are two failures with
+    // one reservation between them. record() is what hands the call back; if the
+    // ledger write then throws, a flag set after both would still be false and the
+    // finally below would hand the same call back twice. Math.max keeps the pool
+    // non-negative, so the symptom is not a crash but a ceiling that quietly shrinks
+    // -- the overrun this release exists to prevent, arriving by the other door.
+    const settle = async (tokens: TokenCounts): Promise<SpendPayload> => {
+      const payload = await this.priced(tokens);
+      settled = true;
+      await this.journal(payload);
+      return payload;
+    };
 
     try {
       for await (const event of this.harness.provider.stream({ ...request, ...signal })) {
@@ -249,14 +404,18 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield event;
         } else {
           billed = true;
-          yield { type: "usage", payload: await this.settle(event.tokens) };
+          yield { type: "usage", payload: await settle(event.tokens) };
         }
       }
     } catch (error) {
       // Only when the provider died without reporting: it carries what it burned
       // precisely so a failure before the usage event is not spend the pool loses.
-      if (!billed) await this.settle(error instanceof ProviderError ? error.tokens : ZERO_TOKENS);
+      if (!billed) await settle(error instanceof ProviderError ? error.tokens : ZERO_TOKENS);
       throw error;
+    } finally {
+      // beginCall held this call against the ceiling and nothing else hands it back:
+      // pricing can fail, and an abandoned generator never reaches either arm above.
+      if (!settled) this.harness.budget.release();
     }
 
     return { content, tool_calls };
@@ -264,7 +423,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
   // Priced before recorded, so the spend fold is in dollars and the pool has something
   // to hold. Null when nothing priced it: an unpriced call is not a free one.
-  private async settle(tokens: TokenCounts): Promise<SpendPayload> {
+  private async priced(tokens: TokenCounts): Promise<SpendPayload> {
     const model_id = this.harness.provider.model;
     const provider_type = this.harness.provider.provider_type;
     const priced = await this.harness.budget.priceOf(model_id, provider_type, tokens);
@@ -275,10 +434,18 @@ class Run<T, Kinds extends Record<string, unknown>> {
       tokens,
       cost_usd: priced.cost_usd,
       pricing_source: priced.source,
+      rates: priced.rates,
+      fetched_at: priced.fetched_at,
     };
     this.harness.budget.record(payload);
-    await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "spend", payload });
+    this.spent += payload.cost_usd ?? 0;
     return payload;
+  }
+
+  // Split from the pricing above so the reservation is handed back in one place and
+  // journalled in another: the caller marks the call settled between them.
+  private async journal(payload: SpendPayload): Promise<void> {
+    await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "spend", payload });
   }
 
   private async park(checkpoint_id: string, tool: string, args: string): Promise<Outcome<T>> {
@@ -300,7 +467,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
   }
 
   private exhausted(refusal: Refusal): Outcome<T> {
-    const reason = `the budget refused another iteration: ${refusal.reason}`;
+    // Without this a run refused at $14.20 of $15.00 reads as a premature stop.
+    const committed =
+      refusal.reason === "cost_exhausted" && (refusal.in_flight_usd ?? 0) > 0
+        ? ` ($${refusal.used_usd.toFixed(4)} spent of $${refusal.limit_usd.toFixed(2)}, ` +
+          `with $${refusal.in_flight_usd!.toFixed(4)} committed to calls still open)`
+        : "";
+    const reason = `the budget refused another iteration: ${refusal.reason}${committed}`;
     return { ...this.done("failed", null, reason), refusal };
   }
 
@@ -316,8 +489,16 @@ class Run<T, Kinds extends Record<string, unknown>> {
       turns: this.turns,
       rejected: this.rejected,
       reason,
+      cost_usd: Number(this.spent.toFixed(6)),
     };
   }
+}
+
+// Not every throw is a turn that failed: an exhausted gateway cannot serve the next
+// call either, and a defect in this process is not a role that could not answer.
+function hardStop(error: unknown): boolean {
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError) return true;
+  return error instanceof GatewayExhausted || error instanceof ToolBoundsViolation;
 }
 
 // The last event a run yields and the outcome it returns are the same thing, so
@@ -379,6 +560,17 @@ class Folder<Kinds extends Record<string, unknown>> {
   }
 }
 
+// Tried in order, one step per failed write-up. DEFAULT_FOLD already bounds a request
+// by weight, so this is the backstop rather than the mechanism: a ceiling lower than
+// the one DEFAULT_FOLD was set for, reached only after a write-up has already died.
+// Both ceilings are reachable, which matters: neither edge folds below one message, so
+// the floor is roughly two result_caps and a budget under that is a budget the fold can
+// never meet. It would spend the whole ladder failing to.
+const FOLD_LADDER: readonly FoldPolicy[] = [
+  { head: 2, tail: 4, max_messages: 10, max_chars: 60_000 },
+  { head: 1, tail: 1, max_messages: 4, max_chars: 40_000 },
+];
+
 // Names what was dropped rather than reproducing it: a summary that quotes the
 // middle back is the middle, and folds nothing.
 function summariseFolded(folded: readonly Message[]): string {
@@ -405,10 +597,36 @@ function parseArgs(raw: string): Record<string, unknown> | null {
 
 function tryParse(content: string): unknown {
   try {
-    return JSON.parse(content);
+    return JSON.parse(fenceless(content));
   } catch {
     return undefined;
   }
+}
+
+// Truncation, read off the content rather than a token count: the ceiling lives in
+// the wire layer and no finish_reason is carried this far. Both halves are load-
+// bearing. An emission the model finished closes its own JSON, so unclosed is the
+// ceiling and malformed-but-closed is a shape error that takes the correction which
+// shows it back. And it has to have *started* an object, or a model answering in
+// prose -- which closes nothing either -- reads as a length problem and spends the
+// ladder being told to be brief about the wrong thing.
+function cutOff(content: string): boolean {
+  const body = opening(content);
+  const started = body.startsWith("{") || body.startsWith("[");
+  return started && !body.endsWith("}") && !body.endsWith("]");
+}
+
+// What fenceless cannot do: an emission cut off inside a fenced block has no closing
+// fence to match on, so its opening one is still there to strip.
+function opening(content: string): string {
+  return fenceless(content).trim().replace(/^```(?:json)?\s*/, "").trim();
+}
+
+// Some models return the object inside a markdown code fence, which is a correct
+// answer this layer would otherwise reject as unparseable and pay to ask again.
+function fenceless(content: string): string {
+  const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/.exec(content);
+  return fenced === null ? content : fenced[1]!;
 }
 
 const ajv = new Ajv({ allErrors: true, strict: false });

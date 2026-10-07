@@ -67,7 +67,8 @@ def container_base_url() -> str:
     there is one variable and one rewrite rule, not two configs to keep in sync.
     """
     url = base_url()
-    for host in ("localhost", "127.0.0.1", "0.0.0.0"):
+    hosts = ("localhost", "127.0.0.1", "0.0.0.0")  # nosec B104 - URL rewrite
+    for host in hosts:
         url = url.replace(f"//{host}:", "//host.docker.internal:")
     return url
 

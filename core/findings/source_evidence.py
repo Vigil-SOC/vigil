@@ -12,20 +12,61 @@ import json
 import math
 from collections.abc import Mapping
 from datetime import date, datetime
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, get_args
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    WrapValidator,
+)
 
 SOURCE_EVIDENCE_VERSION = 1
 SOURCE_EVIDENCE_PREVIEW_LIMIT = 100
 SOURCE_EVIDENCE_RAW_TEXT_LIMIT = 65_536
 
-TELEMETRY_KINDS = {"netflow", "dns", "http_session", "generic_log"}
-SOURCE_EVIDENCE_STATUSES = {
-    "available",
-    "not_in_artifact",
-    "redacted",
-    "invalid",
-}
-SOURCE_EVIDENCE_PROVENANCE = {"embedded", "joined"}
+TelemetryKind = Literal["netflow", "dns", "http_session", "generic_log"]
+SourceEvidenceStatus = Literal["available", "not_in_artifact", "redacted", "invalid"]
+SourceEvidenceProvenance = Literal["embedded", "joined"]
+
+TELEMETRY_KINDS = set(get_args(TelemetryKind))
+SOURCE_EVIDENCE_STATUSES = set(get_args(SourceEvidenceStatus))
+SOURCE_EVIDENCE_PROVENANCE = set(get_args(SourceEvidenceProvenance))
+
+
+class SourceEvidence(BaseModel):
+    """The envelope ``normalize_source_evidence`` returns.
+
+    Payload fields are present only when ``status`` is ``available``; list
+    responses drop ``records``/``raw_text`` and set ``payload_included: false``.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    version: Literal[1]
+    telemetry_kind: TelemetryKind
+    schema_id: str
+    status: SourceEvidenceStatus
+    provenance: SourceEvidenceProvenance
+    total_records: Optional[int] = None
+    truncated: Optional[bool] = None
+    records: Optional[List[Dict[str, Any]]] = None
+    raw_text: Optional[str] = None
+    raw_text_truncated: Optional[bool] = None
+    payload_included: Optional[bool] = None
+
+
+def _valid_or_normalized(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    # A valid envelope (full or list-projected) passes unchanged; anything
+    # else stored before the contract becomes the normalizer's truthful output.
+    try:
+        return handler(value)
+    except ValidationError:
+        return handler(normalize_source_evidence(value))
+
+
+StoredSourceEvidence = Annotated[SourceEvidence, WrapValidator(_valid_or_normalized)]
 
 _KIND_ALIASES = {
     "net": "netflow",

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from core.agents import agent_runs_router  # noqa: E402
+from core.api.v1 import agent_runs_router  # noqa: E402
 from core.agents.directives import (  # noqa: E402
     InvalidDirective,
     RunAlreadyEnded,
@@ -27,8 +27,9 @@ RUN = "9c1c2d3e-0000-4000-8000-000000000634"
 
 
 @pytest.fixture()
-def client():
+def client(authenticate_app):
     app = FastAPI()
+    authenticate_app(app)
     app.include_router(agent_runs_router.router, prefix="/api/agent-runs")
     app.dependency_overrides[request_unit_of_work] = lambda: None
     return TestClient(app, raise_server_exceptions=False)
@@ -54,7 +55,10 @@ def _raises(monkeypatch, error):
 
 
 def _post(client, body=None):
-    return client.post(f"/api/agent-runs/{RUN}/directives", json=body or {"kind": "note", "text": "look at 10.0.0.5"})
+    return client.post(
+        f"/api/agent-runs/{RUN}/directives",
+        json=body or {"kind": "note", "text": "look at 10.0.0.5"},
+    )
 
 
 class TestQueueing:
@@ -67,14 +71,26 @@ class TestQueueing:
 
     # Attribution is the point of the record: a directive nobody owns leaves the
     # ledger unable to say who steered the run.
-    def test_defaults_the_actor_rather_than_leaving_it_empty(self, client, monkeypatch):
+    def test_the_actor_is_the_session_user_not_the_body(self, client, monkeypatch):
         _queues(monkeypatch)
-        _post(client)
-        assert _queues.seen["actor"] == "analyst"
+        _post(client, {"kind": "note", "text": "x", "actor": "admin"})
+        assert _queues.seen["actor"] == "test-admin"
+
+    def test_a_directive_too_long_to_read_is_refused_unqueued(
+        self, client, monkeypatch
+    ):
+        _queues(monkeypatch)
+        _queues.seen = None
+        response = _post(client, {"kind": "note", "text": "x" * 100_000})
+        assert response.status_code == 422
+        assert _queues.seen is None
 
     def test_carries_the_workflow_fields_through(self, client, monkeypatch):
         _queues(monkeypatch)
-        _post(client, {"kind": "approve", "text": "go on", "fields": {"checkpoint_id": "apr-1"}})
+        _post(
+            client,
+            {"kind": "approve", "text": "go on", "fields": {"checkpoint_id": "apr-1"}},
+        )
         assert _queues.seen["fields"] == {"checkpoint_id": "apr-1"}
 
 
@@ -89,6 +105,8 @@ class TestRefusals:
             (InvalidDirective("unknown directive kind"), 400),
         ],
     )
-    def test_maps_each_refusal_to_its_own_status(self, client, monkeypatch, error, expected):
+    def test_maps_each_refusal_to_its_own_status(
+        self, client, monkeypatch, error, expected
+    ):
         _raises(monkeypatch, error)
         assert _post(client).status_code == expected

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
-import type { SpendPayload } from "../../contracts/budget.js";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
+import { emptyRecall } from "../../contracts/memory.js";
 import { TOOL_APPROVAL } from "../../core/loop.js";
 import { InProcessState } from "../../core/state.js";
+import { composeProjection } from "../../workflows/compose/projection.js";
 import { leadProjection } from "../../workflows/lead/projection.js";
+import { investigateReplay } from "../../workflows/lead/replay.js";
 import type { LeadKinds } from "../../workflows/lead/workflow.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-000000000629";
@@ -19,7 +21,7 @@ const opened = (): New =>
 const decided = (action: string, rationale = "because"): New => event("decision", { action, rationale, worker: null });
 const found = (answer: unknown): New => event("finding", { agent_id: "lead", answer });
 const spent = (cost_usd: number | null): New =>
-  event("spend", { model_id: "m", provider_type: "bifrost", role: "lead", tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd, pricing_source: null });
+  event("spend", { model_id: "m", provider_type: "bifrost", role: "lead", tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd, pricing_source: null, rates: null, fetched_at: null });
 const parked = (checkpoint_id = CHECKPOINT): New =>
   event("checkpoint", { checkpoint_id, checkpoint_class: TOOL_APPROVAL, question: "isolate the host?", raised_at: "2026-08-12T00:00:00Z" });
 const answered = (answer: "approve" | "reject", checkpoint_id = CHECKPOINT): New =>
@@ -33,6 +35,17 @@ async function project(...events: readonly New[]) {
 }
 
 describe("what a supervisor is told about a run", () => {
+  it("names the kind and the budgets the run opened with", async () => {
+    const projection = await project(opened(), decided("EXAMINE"));
+
+    expect(projection.run_kind).toBe("investigate");
+    expect(projection.budgets).toEqual({ max_calls: 8, max_cost_usd: 5, max_wall_ms: 600_000, max_park_ms: 604_800_000 });
+  });
+
+  it("reports no budgets, rather than throwing, when the ledger has no run event", async () => {
+    expect((await project(decided("EXAMINE"))).budgets).toBeNull();
+  });
+
   it("reports a run still going as running, with nothing parked", async () => {
     const projection = await project(opened(), decided("EXAMINE"));
 
@@ -60,6 +73,36 @@ describe("what a supervisor is told about a run", () => {
   it("carries the findings the run produced", async () => {
     const projection = await project(opened(), found({ verdict: "benign" }));
     expect(projection.findings).toEqual([{ agent_id: "lead", answer: { verdict: "benign" } }]);
+  });
+
+  it("keeps a failed dispatch as a visibility gap, and a completed one off that list", async () => {
+    const failed = event("dispatch", {
+      dispatch_id: "dsp-1",
+      agent_id: "worker",
+      status: "failed",
+      question_id: null,
+      failure_reason: "the tool timed out",
+      query_intent: "who owns the host",
+    });
+    const completed = event("dispatch", {
+      dispatch_id: "dsp-2",
+      agent_id: "lead",
+      status: "complete",
+      question_id: null,
+      failure_reason: null,
+      query_intent: "the lead's own question",
+    });
+    const projection = await project(opened(), failed, completed);
+
+    expect(projection.gaps).toEqual([
+      {
+        dispatch_id: "dsp-1",
+        agent_id: "worker",
+        failure_reason: "the tool timed out",
+        query_intent: "who owns the host",
+      },
+    ]);
+    expect(projection.dispatched).toBe(2);
   });
 });
 
@@ -110,9 +153,83 @@ describe("the checkpoint a resolution must answer", () => {
   });
 });
 
+describe("the calls and the opening recall", () => {
+  it("lists each call and keeps the recall the run opened on", async () => {
+    const recall = emptyRecall(["host:a"], "2026-03-07T00:00:00.000Z");
+    const projection = await project(
+      opened(),
+      event("recall", recall),
+      event("dispatch", {
+        dispatch_id: "dsp-1",
+        agent_id: "worker",
+        status: "complete",
+        question_id: null,
+        failure_reason: null,
+        query_intent: "what locked the accounts",
+        cost_usd: 0.05,
+        calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
+      }),
+    );
+
+    expect(projection.calls).toEqual([
+      { question: "what locked the accounts", tool: "case_records", result_length: 4, cost_usd: 0.05, duration_ms: 12 },
+    ]);
+    expect(projection.recall).toEqual(recall);
+  });
+
+  it("says the run never asked when there is no recall event", async () => {
+    const projection = await project(opened());
+    expect(projection.recall).toBeNull();
+    expect(projection.calls).toEqual([]);
+  });
+});
+
+describe("investigate replay", () => {
+  it("returns the decisions and the calls that followed them, without a digest", async () => {
+    const state = new InProcessState<LeadKinds>();
+    await state.append(RUN, [
+      opened(),
+      event("decision", { action: "EXAMINE", rationale: "look", worker: "worker", duration_ms: 1234 }),
+      event("dispatch", {
+        dispatch_id: "dsp-1",
+        agent_id: "worker",
+        status: "complete",
+        question_id: null,
+        failure_reason: null,
+        query_intent: "what locked the accounts",
+        cost_usd: 0.05,
+        calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
+      }),
+      decided("CONCLUDE", "done"),
+    ]);
+
+    expect(investigateReplay(RUN, await state.read(RUN))).toEqual({
+      run_id: RUN,
+      run_kind: "investigate",
+      decisions: [
+        {
+          iteration: 1,
+          at: expect.any(String),
+          duration_ms: 1234,
+          action: "EXAMINE",
+          rationale: "look",
+          worker: "worker",
+          cost_usd: 0.05,
+          calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
+        },
+        { iteration: 2, at: expect.any(String), action: "CONCLUDE", rationale: "done", worker: null, cost_usd: 0, calls: [] },
+      ],
+    });
+  });
+});
+
 describe("the registry says which kinds can be read", () => {
   it("gives investigate a projection", () => {
     expect(archFor("investigate").projection).toBeTypeOf("function");
+  });
+
+  it("gives compose a thin fold of gated execute results", () => {
+    expect(archFor("compose").projection).toBeTypeOf("function");
   });
 
   it("gives chat none, because a conversation is the transcript the client holds", () => {
@@ -125,5 +242,55 @@ describe("the registry says which kinds can be read", () => {
     const events = (await state.read(RUN)) as readonly AgentEvent<Record<never, never>>[];
 
     expect(archFor("investigate").projection!(RUN, events)).toEqual(leadProjection(RUN, await state.read(RUN)));
+  });
+});
+
+describe("compose projection", () => {
+  const executeResult = {
+    ok: true as const,
+    rows: [{ id: "step-1", technique_id: "T1059.001" }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "vigil",
+  };
+
+  it("returns journaled execute results and skips phase-level dispatches", () => {
+    const events = [
+      {
+        run_id: RUN,
+        run_kind: "compose" as const,
+        seq: 0,
+        ts: "2026-09-10T00:00:00Z",
+        kind: "dispatch" as const,
+        payload: {
+          dispatch_id: "phase-1",
+          agent_id: "analyst",
+          status: "complete" as const,
+          question_id: null,
+          failure_reason: null,
+        },
+        schema_version: 1,
+      },
+      {
+        run_id: RUN,
+        run_kind: "compose" as const,
+        seq: 1,
+        ts: "2026-09-10T00:00:00Z",
+        kind: "dispatch" as const,
+        payload: {
+          dispatch_id: "apr-execute",
+          agent_id: "analyst",
+          status: "complete" as const,
+          question_id: null,
+          failure_reason: null,
+          result: executeResult,
+        },
+        schema_version: 1,
+      },
+    ] as const;
+
+    const folded = composeProjection(RUN, events);
+    expect(folded).toEqual({ run_id: RUN, results: [executeResult] });
+    expect(archFor("compose").projection!(RUN, events)).toEqual(folded);
   });
 });

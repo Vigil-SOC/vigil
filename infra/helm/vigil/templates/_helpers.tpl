@@ -285,15 +285,6 @@ needs to pick that up.
 {{- end -}}
 
 {{/*
-DATABASE_URL — assembled from postgres host/port/db/user plus password secret.
-Templates should pull this via env valueFrom; only dbInit needs the plaintext
-password, which it pulls from the secret directly.
-*/}}
-{{- define "vigil.databaseUrlNoPassword" -}}
-{{- printf "postgresql://%s@%s:%s/%s" (include "vigil.postgres.username" .) (include "vigil.postgres.host" .) (include "vigil.postgres.port" . | toString) (include "vigil.postgres.database" .) -}}
-{{- end -}}
-
-{{/*
 REDIS_URL resolution. Same three modes as Postgres.
 
 Bitnami redis defaults to password auth on — we pull the password from the

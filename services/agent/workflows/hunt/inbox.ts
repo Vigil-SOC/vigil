@@ -28,15 +28,17 @@ export function directiveActor(): string {
 export class InvalidDirective extends Error {}
 
 // What an extension buys, read out of the operator's own words: "+5 iterations",
-// "$10 more", "5 iterations and $2.50". Parsed once at queue time so the ledger
+// "$10 more", "5 iterations and $2.50", "30 more minutes". Parsed once at queue time so the ledger
 export function parseGrant(text: string): BudgetGrant {
   const iterations = /(\d+(?:\.\d+)?)\s*(?:more\s+)?iterations?/i.exec(text);
   const dollars = /\$\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:usd|dollars?)/i.exec(text);
   const cost = dollars?.[1] ?? dollars?.[2];
+  const minutes = /(\d+(?:\.\d+)?)\s*(?:more\s+)?(?:minutes?|mins?)/i.exec(text);
 
   return {
     iterations: Math.max(0, Math.floor(Number(iterations?.[1] ?? 0))),
     cost_usd: Math.max(0, Number(cost ?? 0)),
+    wall_ms: Math.max(0, Math.floor(Number(minutes?.[1] ?? 0) * 60_000)),
   };
 }
 
@@ -47,7 +49,7 @@ export function grantOf(directive: Directive): BudgetGrant {
 // What a directive may carry beyond its text: which checkpoint it answers, which
 // entity it suppresses, which lead it pins. Typed at queue time so the drain
 export type DirectiveFields = Partial<
-  Pick<Directive, "actor" | "checkpoint_id" | "entity_key" | "question_id" | "hypothesis_id" | "tenant" | "revoke">
+  Pick<Directive, "actor" | "checkpoint_id" | "entity_key" | "question_id" | "hypothesis_id" | "tenant" | "revoke" | "grant">
 >;
 
 // The envelope, checked where another process writes across. A workflow's own fields
@@ -64,6 +66,19 @@ export function validateDirective(directive: Directive): void {
   }
   if (typeof directive.text !== "string") {
     throw new InvalidDirective("a directive's text is what reaches the digest, so it must be a string");
+  }
+  if (directive.grant !== undefined) validateGrant(directive.grant);
+}
+
+// A grant is arithmetic on a ceiling, so a value that is not a finite number is
+// refused here rather than added: `max_iterations + NaN` is NaN, and `used >= NaN`
+// is always false, which is a hunt with no ceiling at all.
+function validateGrant(grant: BudgetGrant): void {
+  for (const arm of ["iterations", "cost_usd", "wall_ms"] as const) {
+    const asked = grant[arm];
+    if (typeof asked !== "number" || !Number.isFinite(asked) || asked < 0) {
+      throw new InvalidDirective(`a grant's ${arm} must be a finite number of at least 0, not ${String(asked)}`);
+    }
   }
 }
 

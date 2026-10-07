@@ -7,13 +7,12 @@ import { drain, steer } from "../../workflows/hunt/inbox.js";
 import { Journal } from "../../workflows/hunt/journal.js";
 import type { HuntKinds } from "../../workflows/hunt/ledger.js";
 import type { HuntState } from "../../workflows/hunt/types.js";
-
-const connectionString = process.env["DATABASE_URL"] ?? "postgres://vigil:vigil@localhost:55432/vigil_test";
+import { TEST_DSN } from "../support/testdb.js";
 
 // Two pools rather than one: the point of moving the inbox off a file is that the
 // process holding the run is not the process the operator talks to.
-const runPool = new pg.Pool({ connectionString });
-const consolePool = new pg.Pool({ connectionString });
+const runPool = new pg.Pool({ connectionString: TEST_DSN });
+const consolePool = new pg.Pool({ connectionString: TEST_DSN });
 
 const state = new LedgerRepository<HuntKinds>(runPool);
 const held = new DirectiveRepository(runPool);

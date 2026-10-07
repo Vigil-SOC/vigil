@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest";
 import { approvalId, commitTurn, TOOL_APPROVAL, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
 import { drain, streamTurn, type StreamEvent } from "../../core/stream.js";
 import type { Message } from "../../core/provider.js";
-import { budgetOf, unmeteredQuota } from "../../core/budget.js";
+import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
+import { noPrices, type Prices } from "../../core/prices.js";
 import { registryOf } from "../../core/registry.js";
 import { InProcessState } from "../../core/state.js";
+import { GatewayExhausted } from "../../core/limiter.js";
+import { ZERO_TOKENS } from "../../contracts/budget.js";
 import { nullMemory } from "../../core/memory.js";
+import { emptyRecall } from "../../contracts/memory.js";
 import { localDispatch } from "../../core/dispatch.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import type { Memory, State, ToolDispatch } from "../../core/seams.js";
-import type { CheckpointPayload, NewEvent, TerminalPayload } from "../../contracts/events.js";
+import type { CheckpointPayload, DispatchPayload, NewEvent, TerminalPayload } from "../../contracts/events.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -30,6 +34,7 @@ interface Options {
   dispatch?: ToolDispatch;
   memory?: Memory;
   state?: InProcessState;
+  prices?: Prices;
 }
 
 function harnessOf(script: readonly ScriptedTurn[], options: Options = {}): Harness {
@@ -40,6 +45,9 @@ function harnessOf(script: readonly ScriptedTurn[], options: Options = {}): Harn
     budget: budgetOf(
       { max_calls: options.max_calls ?? 10, max_cost_usd: options.max_cost_usd ?? 100, max_wall_ms: 600_000, max_park_ms: 604_800_000 },
       unmeteredQuota,
+      Date.now,
+      FRESH,
+      options.prices ?? noPrices,
     ),
     memory: options.memory ?? nullMemory,
     state: options.state ?? new InProcessState(),
@@ -100,6 +108,7 @@ describe("the tool loop", () => {
     expect(outcome.status).toBe("completed");
     expect(outcome.value).toEqual({ verb: "HALT" });
     expect(outcome.calls.map((call) => call.tool)).toEqual(["bump"]);
+    expect(outcome.calls[0]?.duration_ms).toEqual(expect.any(Number));
     expect(outcome.capped).toBe(false);
   });
 
@@ -133,12 +142,14 @@ describe("the tool loop", () => {
       kind: "refused",
       detail: "erase is not granted to counter",
     });
+    expect(outcome.calls[0]?.duration_ms).toBeUndefined();
   });
 
   it("reports arguments that were not JSON as a defect in the call", async () => {
     const harness = harnessOf([{ calls: [{ tool: "bump", args: "not json" }] }, { calls: [] }, HALT]);
     const outcome = await outcomeOf(config(), harness);
     expect(outcome.calls[0]?.wrapped.failure?.kind).toBe("invalid_args");
+    expect(outcome.calls[0]?.duration_ms).toEqual(expect.any(Number));
   });
 
   it("renders recalled memory into the opening turn and recalls once", async () => {
@@ -148,6 +159,7 @@ describe("the tool loop", () => {
         recalls += 1;
         return ["the count was two yesterday"];
       },
+      entities: async ({ keys, asOf }) => emptyRecall(keys, asOf),
       remember: async () => {},
     };
     const harness = harnessOf([{ calls: [{ tool: "bump", args: "{}" }] }, { calls: [] }, HALT], { memory });
@@ -194,7 +206,11 @@ describe("the budget gate", () => {
   // the one that can stop mid-iteration. The loop surfaces that as a failure.
   it("fails the turn when the gateway refuses a call", async () => {
     const harness = harnessOf([{ fail: "budget exceeded (virtual_key)" }]);
-    await expect(outcomeOf(config(), harness)).rejects.toThrow(/budget exceeded/);
+    const outcome = await outcomeOf(config(), harness);
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.value).toBeNull();
+    expect(outcome.reason).toMatch(/budget exceeded/);
   });
 
   it("journals a spend event for every billed call", async () => {
@@ -204,7 +220,7 @@ describe("the budget gate", () => {
       { calls: [], tokens: burn },
       { ...HALT, tokens: burn },
     ]);
-    const outcome = await outcomeOf(config(), harness);
+    await outcomeOf(config(), harness);
 
     // Read back off the ledger rather than off the outcome: the loop writes its
     // own spend now, so what it burned is durable before a workflow sees it.
@@ -215,11 +231,30 @@ describe("the budget gate", () => {
     expect(harness.budget.spent.tokens.input).toBe(3_000);
   });
 
+  it("journals the rates the dollars were multiplied from", async () => {
+    const fetched_at = "2026-09-01T00:00:00+00:00";
+    const card = { input: 3e-6, output: 15e-6, cache_read: 3e-7, cache_write: 3.75e-6, source: "exact", fetched_at };
+    const harness = harnessOf(
+      [{ calls: [], tokens: { input: 1_000, output: 100, cache_read: 10_000, cache_write: 200 } }, HALT],
+      { prices: async () => card },
+    );
+    await outcomeOf(config(), harness);
+
+    const spends = (await harness.state.read(RUN)).filter((event) => event.kind === "spend");
+    const payload = spends[0]!.payload as SpendPayload;
+    expect(payload.fetched_at).toBe(fetched_at);
+    expect(payload.rates).toEqual({ input: card.input, output: card.output, cache_read: card.cache_read, cache_write: card.cache_write });
+    expect(payload.cost_usd).toBeCloseTo(0.003 + 0.0015 + 0.003 + 0.00075, 10);
+    expect(payload.pricing_source).toBe("exact");
+  });
+
   // Tokens burned before a call failed were still spent, so releasing the
   // reservation would hand the pool back money that is gone.
   it("charges a failed call for what it burned before failing", async () => {
     const harness = harnessOf([{ fail: "the gateway hung up", tokens: { input: 500 } }]);
-    await expect(outcomeOf(config(), harness)).rejects.toThrow(/the gateway hung up/);
+    const outcome = await outcomeOf(config(), harness);
+
+    expect(outcome.status).toBe("failed");
     expect(harness.budget.spent.tokens.input).toBe(500);
   });
 
@@ -304,6 +339,7 @@ describe("the approval gate", () => {
     const replayed = await outcomeOf(gated, harnessOf(script, { state, dispatch: refusing }));
 
     expect(replayed.calls[0]?.result).toEqual({ ok: true, rows: [{ n: 1 }], rowCount: 1, capped: false, sourceSystem: "test" });
+    expect(replayed.calls[0]?.duration_ms).toBeUndefined();
     expect(replayed.status).toBe("completed");
   });
 
@@ -315,6 +351,7 @@ describe("the approval gate", () => {
 
     expect(outcome.status).toBe("completed");
     expect(outcome.calls[0]?.wrapped.failure).toEqual({ kind: "refused", detail: "a reviewer rejected this call" });
+    expect(outcome.calls[0]?.duration_ms).toBeUndefined();
   });
 
   // Derived from the call, so an approval for one set of arguments is not an
@@ -325,6 +362,89 @@ describe("the approval gate", () => {
     const harness = harnessOf([{ calls: [{ tool: "bump", args: '{"by":99}' }] }], { state });
 
     expect((await outcomeOf(gated, harness)).status).toBe("waiting_approval");
+  });
+});
+
+describe("the ART execute approval gate", () => {
+  const ART_ID = "atomic_red_team_execute";
+  const ARGS = '{"technique":"T1059.001","environment_id":"range-1","hostname":"ws01.corp.local"}';
+  const ART = toolReturning(ART_ID, {
+    ok: true,
+    rows: [{ exit: 0 }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "test",
+  });
+  const gated = config({ role: "mitre", approvals: new Set([ART_ID]) });
+
+  function artHarness(script: readonly ScriptedTurn[], options: Options = {}): Harness {
+    return harnessOf(script, { tools: [ART], grants: { mitre: [ART_ID] }, ...options });
+  }
+
+  it("parks an unapproved execute call and does not invoke the runner", async () => {
+    let dispatched = 0;
+    const counting: ToolDispatch = {
+      invoke: async (tool, args) => {
+        dispatched += 1;
+        return localDispatch.invoke(tool, args);
+      },
+    };
+    const harness = artHarness([{ calls: [{ tool: ART_ID, args: ARGS }] }], { dispatch: counting });
+    const { seen, outcome } = await watch(gated, harness);
+
+    expect(outcome.status).toBe("waiting_approval");
+    expect(dispatched).toBe(0);
+    expect(outcome.pending).toEqual({ checkpoint_id: approvalId(RUN, ART_ID, ARGS), tool: ART_ID, args: ARGS });
+    expect(seen.at(-1)).toEqual({ type: "approval_required", pending: outcome.pending });
+  });
+
+  it("invokes the runner once after an approval", async () => {
+    const state = new InProcessState();
+    await seed(state, resolution("approve", approvalId(RUN, ART_ID, ARGS)));
+    let dispatched = 0;
+    const counting: ToolDispatch = {
+      invoke: async (tool, args) => {
+        dispatched += 1;
+        return localDispatch.invoke(tool, args);
+      },
+    };
+    const outcome = await outcomeOf(
+      gated,
+      artHarness([{ calls: [{ tool: ART_ID, args: ARGS }] }, { calls: [] }, HALT], { state, dispatch: counting }),
+    );
+
+    expect(outcome.status).toBe("completed");
+    expect(dispatched).toBe(1);
+    expect(outcome.calls[0]?.wrapped.failure).toBeNull();
+  });
+});
+
+describe("the candidate check", () => {
+  const CHECK = "check_detection_candidate";
+  const ARGS = "{}";
+  const RESULT: ToolResult = {
+    ok: true,
+    rows: [{ lint: { passed: true }, replay: { evaluated: true, matched: true }, candidate: { technique_id: "T1059.003" } }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "test",
+  };
+
+  it("journals the result on an empty approval set and does not park", async () => {
+    const harness = harnessOf([{ calls: [{ tool: CHECK, args: ARGS }] }, { calls: [] }, HALT], {
+      tools: [toolReturning(CHECK, RESULT)],
+      grants: { counter: [CHECK] },
+    });
+    const outcome = await outcomeOf(config({ approvals: new Set() }), harness);
+
+    expect(outcome.status).not.toBe("waiting_approval");
+    expect(outcome.status).toBe("completed");
+    const ledger = await harness.state.read(RUN);
+    const dispatch = ledger.find((event) => event.kind === "dispatch");
+    const payload = dispatch?.payload as DispatchPayload;
+    expect(payload.result).toEqual(RESULT);
+    expect(payload.dispatch_id).not.toBe(approvalId(RUN, CHECK, ARGS));
+    expect(ledger.some((event) => event.kind === "checkpoint")).toBe(false);
   });
 });
 
@@ -372,17 +492,96 @@ describe("what the stream reports", () => {
     const harness = harnessOf([
       { calls: [], tokens: { input: 40 } },
       { fail: "the gateway hung up", tokens: { input: 7 } },
+      // The write-up is asked again over each step of the fold ladder; all of them die,
+      // so the run still fails -- and every one of the four calls is billed.
+      { fail: "the gateway hung up", tokens: { input: 3 } },
+      { fail: "the gateway hung up", tokens: { input: 2 } },
     ]);
-    const stream = streamTurn(config(), harness);
-    const seen: StreamEvent[] = [];
-    await expect(
-      (async () => {
-        for await (const event of stream) seen.push(event);
-      })(),
-    ).rejects.toThrow(/hung up/);
+    const { seen, outcome } = await watch(config(), harness);
 
-    expect(seen.flatMap((event) => (event.type === "usage" ? [event.payload.tokens.input] : []))).toEqual([40, 7]);
-    expect(harness.budget.spent.tokens.input).toBe(47);
+    expect(seen.flatMap((event) => (event.type === "usage" ? [event.payload.tokens.input] : []))).toEqual([40, 7, 3, 2]);
+    expect(harness.budget.spent.tokens.input).toBe(52);
+    // Ends on the stream rather than off the side of it: a caller reading only
+    // events must see the run end, not have the loop throw past it.
+    expect(seen.at(-1)?.type).toBe("failed");
+    expect(outcome.reason).toMatch(/hung up/);
+  });
+
+  // The whole reason a dying call returns an outcome instead of throwing: what the
+  // run already gathered is on it. A role that ran a query and then lost the call
+  // that writes up the answer used to report having run nothing.
+  it("keeps the calls a run made before the provider died", async () => {
+    const harness = harnessOf([
+      { calls: [{ tool: "bump", args: "{}" }] },
+      { fail: "the gateway hung up" },
+      { fail: "the gateway hung up" },
+    ]);
+    const { outcome } = await watch(config(), harness);
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.calls.map((call) => call.tool)).toEqual(["bump"]);
+    expect(outcome.calls[0]!.result.ok).toBe(true);
+  });
+
+  // A gateway with no budget left cannot serve the next call either. Reported as one
+  // failed turn, a caller retries straight into it.
+  it("still throws when the gateway itself is out of budget", async () => {
+    const harness = harnessOf([{ fail: "gateway exhausted" }]);
+    harness.provider = {
+      ...harness.provider,
+      stream: () => {
+        throw new GatewayExhausted("virtual key is out of budget");
+      },
+    };
+
+    await expect(outcomeOf(config(), harness)).rejects.toThrow(GatewayExhausted);
+  });
+
+  // DEFAULT_FOLD keeps 40 messages and a role that made twenty-nine tool calls lands
+  // just under it, so the write-up goes out unfolded -- the most expensive request the
+  // run will make, and the one that dies. Asking again over less is a different
+  // request; asking again over the same is three times the cost for one answer.
+  it("asks again over a folded transcript when the write-up call dies", async () => {
+    const sent: number[] = [];
+    let calls = 0;
+    const provider = {
+      model: "scripted/model",
+      provider_type: "scripted",
+      stream: async function* (request: { messages: unknown[]; emit?: unknown }) {
+        calls += 1;
+        // The tool loop ends first, asking for no tools; only then is the answer asked
+        // for, and that is the call that dies.
+        if (calls === 1) {
+          yield { type: "usage" as const, tokens: ZERO_TOKENS };
+          return;
+        }
+        sent.push(request.messages.length);
+        if (calls === 2) throw new Error("read tcp: connection timed out");
+        yield { type: "text_delta" as const, text: '{"verb":"HALT"}' };
+        yield { type: "usage" as const, tokens: ZERO_TOKENS };
+      },
+    };
+    const harness = { ...harnessOf([]), provider } as unknown as Harness;
+
+    // A transcript long enough that the tight policy folds it and the default does not.
+    const history = Array.from({ length: 30 }, (_, index) => ({ role: "user" as const, content: `turn ${index}` }));
+    const { outcome } = await watch(config({ history }), harness);
+
+    expect(outcome.status).toBe("completed");
+    expect(sent).toHaveLength(2);
+    // The retry is smaller, which is the whole point of retrying at all.
+    expect(sent[1]!).toBeLessThan(sent[0]!);
+    expect(outcome.rejected.join(" ")).toMatch(/folded transcript/);
+  });
+
+  // An abort is not an answer, and a run handed back on a lost lease must not read
+  // as one that failed on its own account.
+  it("still throws when the run was aborted", async () => {
+    const halt = new AbortController();
+    const harness = harnessOf([{ fail: "aborted" }]);
+    halt.abort(new Error("the lease moved on"));
+
+    await expect(outcomeOf(config({ signal: halt.signal }), harness)).rejects.toThrow();
   });
 
   // Dispatch, wrap and scan are one path, so the pair is the only shape a
@@ -449,6 +648,30 @@ describe("the status the store holds", () => {
     expect(seen.at(-1)?.type).toBe("done");
   });
 
+  // A terminal stops the run acting. A turn that describes a run rather than
+  // continuing it -- no tools, an answer folded into nothing -- has no act for the
+  // terminal to protect against, and the run whose write-up a person most wants
+  // redone is exactly one that has already ended.
+  it("lets a turn marked after_terminal run against a ledger that already ended", async () => {
+    const state = new InProcessState();
+    await seed(state, terminal("completed", "answered on an earlier pass"));
+    const harness = harnessOf([{ calls: [] }, HALT], { state });
+    const { outcome } = await watch(config({ after_terminal: true }), harness);
+
+    expect(requestsOf(harness)).toBeGreaterThan(0);
+    expect(outcome.value).toEqual({ verb: "HALT" });
+  });
+
+  it("still refuses one that is not, so the flag is what permits it and not the shape", async () => {
+    const state = new InProcessState();
+    await seed(state, terminal("completed", "answered on an earlier pass"));
+    const harness = harnessOf([{ calls: [] }, HALT], { state });
+    const { outcome } = await watch(config(), harness);
+
+    expect(requestsOf(harness)).toBe(0);
+    expect(outcome.value).toBeNull();
+  });
+
   // A checkpoint this harness never raised still parks it: the open one on the
   // ledger is what the run is waiting for, whoever asked the question.
   it("parks on a checkpoint raised out of band and names no call for it", async () => {
@@ -504,7 +727,7 @@ describe("commitTurn", () => {
   it("appends the workflow's events after the harness's", async () => {
     const state = new InProcessState();
     const harness = harnessOf([{ calls: [] }, HALT], { state });
-    const outcome = await outcomeOf(config(), harness);
+    await outcomeOf(config(), harness);
 
     const own: NewEvent<Record<never, never>>[] = [
       { run_id: RUN, run_kind: "tally", kind: "terminal", payload: { outcome: "completed", reason: "done" } },
@@ -664,6 +887,5 @@ function terminal(outcome: TerminalPayload["outcome"], reason: string): Seeded {
 }
 
 async function seed(state: State, ...events: readonly Seeded[]): Promise<void> {
-  const from = ((await state.latestSeq(RUN)) ?? -1) + 1;
   await state.append(RUN, events);
 }

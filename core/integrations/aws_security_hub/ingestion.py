@@ -9,8 +9,10 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from core.config import get_integration_config
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.integrations._base.config import resolve
+from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
+from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -23,13 +25,14 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
         """Initialize AWS Security Hub ingestion."""
         super().__init__()
         self.siem_name = "AWS Security Hub"
-        self.config = get_integration_config("aws-security-hub")
+        self.config = resolve(AWS_SECURITY_HUB)
 
     async def fetch_alerts(
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
+        oldest_first: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Fetch findings from AWS Security Hub.
@@ -38,6 +41,10 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             start_time: Start time for finding query
             end_time: End time for finding query
             limit: Maximum number of findings to fetch
+            oldest_first: Sort by ``CreatedAt`` ascending, so a batch that
+                fills ``limit`` is a contiguous oldest-first prefix of the
+                window. Federation asks for this; the default keeps the API's
+                own order for the daemon poller.
 
         Returns:
             List of raw finding dictionaries
@@ -47,7 +54,7 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             from botocore.exceptions import ClientError
 
             # Get config
-            region = self.config.get("region", "us-east-1")
+            region = self.config.get("region") or "us-east-1"
             access_key = self.config.get("access_key_id")
             secret_key = self.config.get("secret_access_key")
 
@@ -85,7 +92,14 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             findings = []
             paginator = client.get_paginator("get_findings")
 
-            for page in paginator.paginate(Filters=filters, MaxResults=min(limit, 100)):
+            page_args: Dict[str, Any] = {
+                "Filters": filters,
+                "MaxResults": min(limit, 100),
+            }
+            if oldest_first:
+                page_args["SortCriteria"] = [{"Field": "CreatedAt", "SortOrder": "asc"}]
+
+            for page in paginator.paginate(**page_args):
                 findings.extend(page["Findings"])
                 if len(findings) >= limit:
                     break
@@ -95,15 +109,19 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             logger.info(f"Fetched {len(findings)} findings from AWS Security Hub")
             return findings
 
-        except ImportError:
-            logger.error("boto3 not installed. Install: pip install boto3")
-            return []
+        except ImportError as e:
+            # Raise, not []: an empty poll would be recorded as a success. This
+            # clause must stay first: ClientError is unbound if the import failed.
+            msg = "boto3 not installed. Install: pip install boto3"
+            logger.error(msg)
+            raise RuntimeError(msg) from e
         except ClientError as e:
             logger.error(f"AWS Security Hub API error: {e}")
-            return []
+            # Raise, not []: federation must record the failure and keep its cursor.
+            raise
         except Exception as e:
             logger.error(f"Error fetching AWS Security Hub findings: {e}")
-            return []
+            raise
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]
@@ -119,7 +137,8 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
         """
         try:
             # Extract finding ID
-            finding_id = f"aws-sh-{alert.get('Id', uuid.uuid4().hex[:12])}"
+            source_id = str(alert.get("Id") or uuid.uuid4().hex[:12])
+            finding_id = fit_id("aws-sh-", source_id, FINDING_ID_MAX)
 
             # Extract severity
             severity_label = alert.get("Severity", {}).get("Label", "MEDIUM")
@@ -160,6 +179,8 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             # Build finding
             finding = {
                 "finding_id": finding_id,
+                # Same value the federation backfill derives for ids that fit.
+                "external_id": fit_id("", f"aws-sh-{source_id}", EXTERNAL_ID_MAX),
                 "title": alert.get("Title", "AWS Security Hub Finding"),
                 "description": alert.get("Description", ""),
                 "severity": severity,

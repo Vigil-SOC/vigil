@@ -2,32 +2,59 @@
 
 import json
 import logging
-import os
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.config import get_settings, state_dir_status, vigil_path
+from core.api.v1.findings_router import data_service as findings_data_service
+from core.auth.permissions import permission_gate
+from core.config import (
+    get_settings,
+    is_demo_mode,
+    load_integrations_config,
+    state_dir_status,
+    vigil_path,
+)
 from core.deps import (
     provide_demo_data,
+    provide_detection_rules,
     provide_integration_bridge,
     provide_mcp_client,
 )
+from core.detections.detection_rules_service import DetectionRulesService
+from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
+    credentials_to_resupply,
     redact_secrets,
     secret_fields_for,
     split_secrets,
 )
+from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.routing import Auth, RouterMeta
+from core.response.approval_service import APPROVAL_CONFIG_KEY
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
+from core.storage.models import AIModelConfig, CustomAgent, User
+from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
+from core.time import utcnow
+from services.api.errors import INTERNAL_ERROR_DETAIL
+from services.api.middleware.auth import (
+    get_current_active_user,
+    require_integrations_admin,
+)
+from services.daemon.config import DaemonConfig
+from services.daemon.intent import effective_daemon_config, intent_report
 
 router = APIRouter()
+
+# Writes change what the platform connects to and trusts, so Auth.REQUIRED alone
+# (any active account) is not enough. Reads stay open to every role.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
+_INTEGRATIONS_WRITE = [permission_gate("integrations.write")]
 
 ROUTER_META = RouterMeta(
     prefix="/api/config",
@@ -35,6 +62,11 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
+
+
+def _for_user(user: User):
+    """Config service stamped with the signed-in user for the audit row."""
+    return get_config_service(user_id=str(user.user_id))
 
 
 def _mirror_to_file(filename: str, config_data: Dict[str, Any]) -> None:
@@ -66,8 +98,6 @@ class S3Config(BaseModel):
     access_key_id: str = ""
     secret_access_key: str = ""
     session_token: str = ""
-    findings_path: str = "findings.json"
-    cases_path: str = "cases.json"
     parquet_prefix: str = ""
 
 
@@ -132,7 +162,7 @@ class PlatformDatabaseProxyConfig(BaseModel):
 
 
 @router.get("/demo-mode")
-async def get_demo_mode():
+def get_demo_mode():
     """
     Get demo mode configuration.
 
@@ -140,8 +170,6 @@ async def get_demo_mode():
         Demo mode status
     """
     try:
-        from core.config import is_demo_mode
-
         demo_enabled = is_demo_mode()
         env_set = get_settings().demo_mode is not None  # supplied at all, true or false
 
@@ -152,11 +180,11 @@ async def get_demo_mode():
         }
     except Exception as e:
         logger.error(f"Error getting demo mode: {e}")
-        return {"enabled": False, "error": str(e)}
+        return {"enabled": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/demo-mode")
-async def set_demo_mode(config: DemoModeConfig):
+@router.post("/demo-mode", dependencies=_SETTINGS_WRITE)
+def set_demo_mode(config: DemoModeConfig):
     """
     Set demo mode configuration.
 
@@ -191,8 +219,8 @@ async def set_demo_mode(config: DemoModeConfig):
     }
 
 
-@router.post("/demo-mode/reset")
-async def reset_demo_data(demo_service=Depends(provide_demo_data)):
+@router.post("/demo-mode/reset", dependencies=_SETTINGS_WRITE)
+def reset_demo_data(demo_service=Depends(provide_demo_data)):
     """
     Reset demo data to regenerate sample findings and cases.
 
@@ -213,7 +241,7 @@ async def reset_demo_data(demo_service=Depends(provide_demo_data)):
 
 
 @router.get("/claude")
-async def get_claude_config():
+def get_claude_config():
     """
     Get Claude API configuration status.
 
@@ -237,11 +265,11 @@ async def get_claude_config():
         }
     except Exception as e:
         logger.error(f"Error getting Claude config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/claude")
-async def set_claude_config(config: ClaudeConfig):
+@router.post("/claude", dependencies=_SETTINGS_WRITE)
+def set_claude_config(config: ClaudeConfig):
     """
     Set Claude API configuration.
 
@@ -292,7 +320,7 @@ async def set_claude_config(config: ClaudeConfig):
 
 
 @router.get("/s3")
-async def get_s3_config():
+def get_s3_config():
     """
     Get S3 configuration status.
 
@@ -310,8 +338,6 @@ async def get_s3_config():
                 "configured": True,
                 "bucket_name": config.get("bucket_name"),
                 "region": config.get("region"),
-                "findings_path": config.get("findings_path"),
-                "cases_path": config.get("cases_path"),
                 "parquet_prefix": config.get("parquet_prefix", ""),
                 "auth_method": config.get("auth_method", "credentials"),
                 "aws_profile": config.get("aws_profile", ""),
@@ -326,8 +352,6 @@ async def get_s3_config():
                     "configured": True,
                     "bucket_name": config.get("bucket_name"),
                     "region": config.get("region"),
-                    "findings_path": config.get("findings_path"),
-                    "cases_path": config.get("cases_path"),
                     "parquet_prefix": config.get("parquet_prefix", ""),
                     "auth_method": config.get("auth_method", "credentials"),
                     "aws_profile": config.get("aws_profile", ""),
@@ -336,11 +360,14 @@ async def get_s3_config():
         return {"configured": False}
     except Exception as e:
         logger.error(f"Error getting S3 config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/s3")
-async def set_s3_config(config: S3Config):
+@router.post("/s3", dependencies=_SETTINGS_WRITE)
+def set_s3_config(
+    config: S3Config,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set S3 configuration.
 
@@ -369,15 +396,13 @@ async def set_s3_config(config: S3Config):
     config_data = {
         "bucket_name": bucket_name,
         "region": config.region,
-        "findings_path": config.findings_path,
-        "cases_path": config.cases_path,
         "parquet_prefix": parquet_prefix,
         "auth_method": config.auth_method,
         "aws_profile": config.aws_profile,
     }
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_integration_config(
         integration_id="s3",
         config=config_data,
@@ -427,7 +452,7 @@ _PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
 
 
 @router.get("/platform-database")
-async def get_platform_database_config():
+def get_platform_database_config():
     """Return the current proxy config in front of the platform DB.
 
     Secret fields (proxy password, SSH key passphrase) are redacted.
@@ -463,8 +488,8 @@ async def get_platform_database_config():
     return result
 
 
-@router.post("/platform-database")
-async def set_platform_database_config(config: PlatformDatabaseProxyConfig):
+@router.post("/platform-database", dependencies=_SETTINGS_WRITE)
+def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     """Persist the platform-DB proxy config to the encrypted secrets
     store. Takes effect on the next backend restart — the live engine
     can't be hot-swapped safely.
@@ -519,7 +544,7 @@ async def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     }
 
 
-@router.post("/s3/test")
+@router.post("/s3/test", dependencies=_INTEGRATIONS_WRITE)
 def test_s3_connection():
     """
     Test S3 connection with current configuration.
@@ -527,8 +552,6 @@ def test_s3_connection():
     Returns:
         Connection test result
     """
-    from core.storage.s3_service import S3Service
-
     # Load S3 config
     config_service = get_config_service()
     s3_integration = config_service.get_integration_config("s3")
@@ -576,37 +599,27 @@ def test_s3_connection():
     # Test connection
     success, message = s3_service.test_connection()
 
-    if success:
-        # Try to list files as an additional test
-        findings_path = cfg.get("findings_path", "findings.json")
-        cases_path = cfg.get("cases_path", "cases.json")
+    result = {
+        "bucket": cfg.get("bucket_name"),
+        "region": cfg.get("region", "us-east-1"),
+    }
+    if not success:
+        return {"success": False, "message": message, **result}
 
-        files = s3_service.list_files()
-        has_findings = findings_path in files
-        has_cases = cases_path in files
-
-        return {
-            "success": True,
-            "message": message,
-            "bucket": cfg.get("bucket_name"),
-            "region": cfg.get("region", "us-east-1"),
-            "files_found": len(files),
-            "findings_file_exists": has_findings,
-            "cases_file_exists": has_cases,
-            "expected_findings_path": findings_path,
-            "expected_cases_path": cases_path,
-        }
-    else:
+    # List under the configured prefix: that is what sync uses, and scoped roles can't list the root.
+    try:
+        files = s3_service.list_files(prefix=cfg.get("parquet_prefix") or "")
+    except S3_LIST_ERRORS as e:
         return {
             "success": False,
-            "message": message,
-            "bucket": cfg.get("bucket_name"),
-            "region": cfg.get("region", "us-east-1"),
+            "message": f"{message}, but listing objects failed: {describe_s3_error(e)}",
+            **result,
         }
+    return {"success": True, "message": message, "files_found": len(files), **result}
 
 
 @router.get("/theme")
-async def get_theme_config():
+def get_theme_config():
     """
     Get theme configuration.
 
@@ -634,8 +647,11 @@ async def get_theme_config():
         return {"theme": "dark"}
 
 
-@router.post("/theme")
-async def set_theme_config(config: ThemeConfig):
+@router.post("/theme", dependencies=_SETTINGS_WRITE)
+def set_theme_config(
+    config: ThemeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set theme configuration.
 
@@ -648,7 +664,7 @@ async def set_theme_config(config: ThemeConfig):
     config_data = {"theme": config.theme}
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="theme.current",
         value=config_data,
@@ -665,6 +681,118 @@ async def set_theme_config(config: ThemeConfig):
     return {"success": True, "message": "Theme saved"}
 
 
+def assigned_model_ids(session) -> set[str]:
+    """Distinct models actually assigned. ``fallback_model`` is not one of them."""
+    found: set[str] = set()
+    columns = (AIModelConfig.model_id, CustomAgent.model)
+    for column in columns:
+        for (value,) in session.query(column).all():
+            text = value.strip() if isinstance(value, str) else ""
+            if text:
+                found.add(text)
+    return found
+
+
+def _step(step_id: str, title: str, state_line: str, done: bool, href: str) -> dict:
+    return {
+        "id": step_id,
+        "title": title,
+        "state_line": state_line,
+        "done": done,
+        "href": href,
+    }
+
+
+def build_setup_steps(
+    *,
+    loaded: dict,
+    secrets_set: dict,
+    sources: list,
+    model_ids: set[str],
+    descriptor_count: int,
+    alerts_exist: int,
+    demo_enabled: bool,
+) -> dict:
+    """Four setup steps from config that already exists. No ranking, no dismissal."""
+    integrations = loaded.get("integrations") or {}
+    connected = len(integrations)
+    slack = (secrets_set.get("slack") or {}).get("bot_token") is True
+    pagerduty = (secrets_set.get("pagerduty") or {}).get("api_token") is True
+    notify_done = slack or pagerduty
+    rules_done = any(
+        source.get("status") == "ready" and (source.get("rule_count") or 0) > 0
+        for source in sources
+    )
+    distinct = len(model_ids)
+    if distinct == 0:
+        model_line = "No model assigned"
+    elif distinct == 1:
+        model_line = "All agents use one model"
+    else:
+        model_line = "Agents use more than one model"
+    integrations_href = "/settings?section=integrations"
+    return {
+        "steps": [
+            _step(
+                "connect_tools",
+                "Connect more tools",
+                f"{connected} of {descriptor_count} integrations connected",
+                connected >= 1,
+                integrations_href,
+            ),
+            _step(
+                "notify",
+                "Where Vigil pings you",
+                (
+                    "Slack or PagerDuty route is set"
+                    if notify_done
+                    else "No Slack or PagerDuty route yet"
+                ),
+                notify_done,
+                integrations_href,
+            ),
+            _step(
+                "rules",
+                "Link detection rules",
+                (
+                    "Detection rules are on disk"
+                    if rules_done
+                    else "No detection rules on disk"
+                ),
+                rules_done,
+                "/settings?section=data&tab=detection",
+            ),
+            _step(
+                "per_agent",
+                "Pick a model per agent",
+                model_line,
+                distinct >= 2,
+                "/settings?section=ai-config",
+            ),
+        ],
+        "alerts_exist": alerts_exist,
+        "demo_enabled": demo_enabled,
+    }
+
+
+@router.get("/setup-steps")
+def get_setup_steps(
+    session: UnitOfWorkSession,
+    detection_rules: DetectionRulesService = Depends(provide_detection_rules),
+):
+    """Home's setup list: tools, a notify route, rules on disk, and model variety."""
+    loaded = load_integrations_config(get_config_service())
+    return build_setup_steps(
+        loaded=loaded,
+        secrets_set=_secrets_set_map(loaded.get("integrations") or {}),
+        sources=detection_rules.list_sources(),
+        model_ids=assigned_model_ids(session),
+        descriptor_count=len(iter_descriptors()),
+        alerts_exist=findings_data_service.count_findings(),
+        demo_enabled=is_demo_mode(),
+    )
+
+
 def _secrets_set_map(integrations: dict) -> dict:
     """Per-integration ``{secret_field: bool}`` — booleans only, never the
     values, so the wizard can show "saved" without the browser seeing a secret."""
@@ -679,7 +807,7 @@ def _secrets_set_map(integrations: dict) -> dict:
 
 
 @router.get("/integrations")
-async def get_integrations_config():
+def get_integrations_config():
     """
     Get integrations configuration.
 
@@ -687,60 +815,43 @@ async def get_integrations_config():
         Configuration status and enabled integrations
     """
     try:
-        # Try database first
-        config_service = get_config_service()
-        integrations_list = config_service.list_integrations()
-
-        if integrations_list:
-            enabled_integrations = [
-                i["integration_id"] for i in integrations_list if i["enabled"]
-            ]
-            # Redact registered secret fields so the frontend never receives
-            # plaintext credentials. Pre-secret-store rows may still contain
-            # them — strip on read so any legacy plaintext is sanitized.
-            integrations = {
-                i["integration_id"]: redact_secrets(
-                    i["integration_id"], i["config"] or {}
-                )
-                for i in integrations_list
-            }
+        # Same reader the daemon uses: database rows when the table has any,
+        # JSON file only when it is empty or unreachable.
+        loaded = load_integrations_config(get_config_service())
+        if not loaded["configured"]:
             return {
-                "configured": True,
-                "enabled_integrations": enabled_integrations,
-                "integrations": integrations,
-                "secrets_set": _secrets_set_map(integrations),
+                "configured": False,
+                "enabled_integrations": [],
+                "integrations": {},
             }
 
-        # Fallback to file-based config
-        config_file = vigil_path("integrations_config.json")
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                redacted = {
-                    iid: redact_secrets(iid, cfg or {})
-                    for iid, cfg in (config.get("integrations") or {}).items()
-                }
-                return {
-                    "configured": True,
-                    "enabled_integrations": config.get("enabled_integrations", []),
-                    "integrations": redacted,
-                    "secrets_set": _secrets_set_map(redacted),
-                }
-
-        return {"configured": False, "enabled_integrations": [], "integrations": {}}
+        # Redact registered secret fields so the frontend never receives
+        # plaintext credentials. Pre-secret-store rows may still contain
+        # them — strip on read so any legacy plaintext is sanitized.
+        redacted = {
+            iid: redact_secrets(iid, cfg or {})
+            for iid, cfg in loaded["integrations"].items()
+        }
+        return {
+            "configured": True,
+            "enabled_integrations": loaded["enabled_integrations"],
+            "integrations": redacted,
+            "secrets_set": _secrets_set_map(redacted),
+        }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
         return {
             "configured": False,
             "enabled_integrations": [],
             "integrations": {},
-            "error": str(e),
+            "error": INTERNAL_ERROR_DETAIL,
         }
 
 
-@router.post("/integrations")
-async def set_integrations_config(
+@router.post("/integrations", dependencies=_INTEGRATIONS_WRITE)
+def set_integrations_config(
     config: IntegrationsConfig,
+    current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
 ):
     """
@@ -751,7 +862,11 @@ async def set_integrations_config(
     from the dict that lands in the DB / JSON file. Empty strings are
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials.
+    clobber stored credentials, unless a destination field (URL, host, ...) also
+    changed: then every stored secret must be re-entered (HTTP 400 otherwise),
+    so a saved credential is never carried to a destination its owner did not
+    choose. A failed secret write or integration-config
+    row is HTTP 500; the detail names the integration and field, never the value.
 
     Args:
         config: Integrations configuration
@@ -759,13 +874,34 @@ async def set_integrations_config(
     Returns:
         Success status
     """
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
+
+    # A stored credential is sent to whatever destination is saved, so moving
+    # one requires the caller to supply the credential again. Checked for every
+    # integration before anything is written.
+    for integration_id, raw_config in config.integrations.items():
+        stored = config_service.get_integration_config(integration_id) or {}
+        missing = credentials_to_resupply(
+            integration_id, stored.get("config") or {}, raw_config or {}
+        )
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Integration '{integration_id}' connects somewhere new; "
+                    f"enter its credential again ({', '.join(missing)}) to save."
+                ),
+            )
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
     sanitized_integrations: dict = {}
+    not_stored: list[str] = []
     for integration_id, raw_config in config.integrations.items():
         secrets, non_secrets = split_secrets(integration_id, raw_config)
+        field_by_env = {
+            env: field for field, env in secret_fields_for(integration_id).items()
+        }
 
         # Empty string ⇒ user didn't re-type the secret on edit; leave
         # the existing encrypted value untouched. Non-empty ⇒ overwrite.
@@ -773,9 +909,13 @@ async def set_integrations_config(
             if value == "":
                 continue
             if not set_secret(env_key, value):
+                field = field_by_env.get(env_key, env_key)
                 logger.error(
                     f"Failed to write secret '{env_key}' for "
                     f"integration '{integration_id}'"
+                )
+                not_stored.append(
+                    f"integration '{integration_id}' field '{field}' ({env_key})"
                 )
 
         sanitized_integrations[integration_id] = non_secrets
@@ -789,6 +929,16 @@ async def set_integrations_config(
         )
         if not success:
             logger.error(f"Failed to save integration '{integration_id}'")
+            not_stored.append(f"integration '{integration_id}' config")
+
+    if not_stored:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to save integrations configuration: "
+                + "; ".join(f"{item} was not stored" for item in not_stored)
+            ),
+        )
 
     _mirror_to_file(
         "integrations_config.json",
@@ -810,7 +960,7 @@ async def set_integrations_config(
 
 
 @router.get("/state-directory")
-async def get_state_directory():
+def get_state_directory():
     """Resolved State Directory path and writability.
 
     Authenticated: /api/health carries only the booleans, since it is public and
@@ -820,7 +970,7 @@ async def get_state_directory():
 
 
 @router.get("/integrations/status")
-async def get_integrations_status(
+def get_integrations_status(
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
 ):
     """
@@ -834,64 +984,165 @@ async def get_integrations_status(
     return {"success": True, "statuses": statuses}
 
 
+def _connected_session(mcp_client: Any, server_name: str) -> Any:
+    """Live session for a server that is already connected, if any.
+
+    ``connect_to_server`` returns early in that case and does not call
+    ``list_tools``. Anything else (including a MagicMock client) is not a session.
+    """
+    sessions = getattr(mcp_client, "persistent_sessions", None)
+    if not isinstance(sessions, dict):
+        return None
+    holder = sessions.get(server_name)
+    if holder is None or not getattr(holder, "is_connected", False):
+        return None
+    return getattr(holder, "session", None)
+
+
+async def _probe_mcp_server(
+    mcp_client: Any,
+    server_name: str,
+    *,
+    persistent: bool,
+    skip_enabled_check: bool,
+) -> Dict[str, Any]:
+    """Connect and, when a session was already up, list its tools."""
+    already = _connected_session(mcp_client, server_name)
+    error: Optional[str] = None
+    missing: Optional[List[str]] = None
+    try:
+        ok = await mcp_client.connect_to_server(
+            server_name,
+            persistent=persistent,
+            skip_enabled_check=skip_enabled_check,
+        )
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        error = f"{type(exc).__name__}: {exc}"
+    else:
+        if ok and already is not None:
+            try:
+                await already.list_tools()
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                error = f"{type(exc).__name__}: {exc}"
+        if not ok and error is None:
+            error = mcp_client.get_last_error(server_name)
+            missing = mcp_client.get_missing_credentials(server_name)
+
+    result: Dict[str, Any] = {"name": server_name, "success": bool(ok)}
+    if not ok:
+        result["error"] = error or "connection failed"
+    if missing:
+        result["missing_credentials"] = missing
+    return result
+
+
+def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
+    parts = []
+    for server in servers:
+        if server["success"]:
+            continue
+        error = server.get("error")
+        parts.append(f"{server['name']}: {error}" if error else server["name"])
+    return "; ".join(parts) or None
+
+
 @router.post("/integrations/{integration_id}/test")
 async def test_integration(
     integration_id: str,
+    current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
+    mcp_client=Depends(provide_mcp_client),
 ):
-    """
-    Test an integration connection.
+    """Probe the MCP servers behind an integration.
 
-    Args:
-        integration_id: Integration identifier
-
-    Returns:
-        Test result with success/failure and message
+    Catalog entries have no descriptor, so they are not testable. A stored
+    config of ``{}`` is still configured — secret-only rows keep the secret
+    outside this dict. The integration's enabled flag does not block the
+    probe: enabled MCP servers are contacted, and if none are enabled every
+    declared server is probed with a temporary session.
     """
+    require_integrations_admin(current_user)
+
+    server_names = list(bridge.server_names_for(integration_id))
     status = bridge.get_integration_status(integration_id)
+    if not server_names:
+        return {
+            "success": False,
+            "reason": "not_testable",
+            "message": f"Integration '{integration_id}' is not testable.",
+            "status": status,
+        }
 
+    # Membership, not a non-empty dict. A secret-only row (VirusTotal) is stored
+    # as {} after split_secrets and is still configured.
     if not status["configured"]:
         raise HTTPException(status_code=400, detail="Integration not configured")
 
-    if not status["server_available"]:
+    if mcp_client is None:
         return {
             "success": False,
-            "message": f"Integration server not yet implemented. The '{integration_id}' integration is planned but the backend MCP server needs to be created.",
+            "message": "MCP client is not available.",
             "status": status,
-            "implementation_status": "pending",
+            "server_names": server_names,
+            "servers": [],
         }
 
-    if not status["enabled"]:
-        return {
-            "success": False,
-            "message": "Integration is configured but not enabled. Please enable it in the integrations list.",
-            "status": status,
-        }
+    mcp_service = getattr(mcp_client, "mcp_service", None)
+    if mcp_service is not None:
+        try:
+            mcp_service.reload_server_configs()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("reload_server_configs before test failed: %s", exc)
 
-    # TODO: Implement actual connection test using MCP client
-    # For now, we just verify the configuration is complete
-    integration_config = bridge.get_integration_config(integration_id)
+    enabled = [
+        name
+        for name in server_names
+        if mcp_service is not None and mcp_service.is_server_enabled(name)
+    ]
+    # None enabled: probe every declared server without turning it on.
+    temporary = not enabled
+    targets = server_names if temporary else enabled
 
-    # Check if required fields are present (basic validation)
-    if not integration_config:
-        raise HTTPException(
-            status_code=400, detail="Integration configuration is empty"
+    servers = []
+    for name in targets:
+        servers.append(
+            await _probe_mcp_server(
+                mcp_client,
+                name,
+                persistent=not temporary,
+                skip_enabled_check=temporary,
+            )
         )
+    success = all(server["success"] for server in servers)
+    error_summary = None if success else _probe_error_summary(servers)
 
-    # Prepare environment variables to verify they're being set correctly
-    env_vars = bridge._config_to_env_vars(integration_id, integration_config)
+    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
+        integration_id,
+        success=success,
+        error=error_summary,
+        tested_at=utcnow(),
+    )
+    if not recorded:
+        logger.warning("Integration '%s' test result was not saved", integration_id)
+
+    if success:
+        message = f"Integration '{integration_id}' connected."
+    else:
+        message = error_summary or f"Integration '{integration_id}' failed to connect."
 
     return {
-        "success": True,
-        "message": f"Integration '{integration_id}' is configured and ready. Configuration will be passed to the MCP server as environment variables.",
+        "success": success,
+        "message": message,
         "status": status,
-        "env_var_count": len(env_vars),
-        "server_name": status.get("server_name", "unknown"),
+        "server_names": server_names,
+        "servers": servers,
     }
 
 
 @router.get("/general")
-async def get_general_config():
+def get_general_config():
     """
     Get general application settings.
 
@@ -936,8 +1187,11 @@ async def get_general_config():
         }
 
 
-@router.post("/general")
-async def set_general_config(config: GeneralConfig):
+@router.post("/general", dependencies=_SETTINGS_WRITE)
+def set_general_config(
+    config: GeneralConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set general application settings.
 
@@ -955,7 +1209,7 @@ async def set_general_config(config: GeneralConfig):
     }
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="general.settings",
         value=config_data,
@@ -986,7 +1240,7 @@ async def set_general_config(config: GeneralConfig):
 
 
 @router.get("/github")
-async def get_github_config():
+def get_github_config():
     """
     Get GitHub integration configuration status.
 
@@ -1003,11 +1257,11 @@ async def get_github_config():
         }
     except Exception as e:
         logger.error(f"Error getting GitHub config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/github")
-async def set_github_config(config: GitHubConfig):
+@router.post("/github", dependencies=_SETTINGS_WRITE)
+def set_github_config(config: GitHubConfig):
     """
     Set GitHub integration configuration.
 
@@ -1025,7 +1279,7 @@ async def set_github_config(config: GitHubConfig):
 
 
 @router.get("/postgresql")
-async def get_postgresql_config():
+def get_postgresql_config():
     """
     Get PostgreSQL database backend configuration status.
 
@@ -1052,11 +1306,11 @@ async def get_postgresql_config():
         return {"configured": has_config, "connection_preview": preview}
     except Exception as e:
         logger.error(f"Error getting PostgreSQL config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
-@router.post("/postgresql")
-async def set_postgresql_config(config: PostgreSQLConfig):
+@router.post("/postgresql", dependencies=_SETTINGS_WRITE)
+def set_postgresql_config(config: PostgreSQLConfig):
     """
     Set PostgreSQL database backend configuration.
 
@@ -1079,19 +1333,14 @@ async def set_postgresql_config(config: PostgreSQLConfig):
 
 
 class AIOperationsSettingsConfig(BaseModel):
-    """Runtime cost/perf toggles introduced across GH #84 PR-C/PR-D/PR-F.
+    """Local Ollama enrichment recovery toggles.
 
     Persisted in ``system_config`` at key ``ai_operations.settings``.
     Consumed via ``core.platform.runtime_config.get_ai_operations_setting``
-    which layers DB → env var → default. Exposed in the Settings UI
-    (AI Config → AI Operations) so operators can flip values live
-    without restarting the backend / daemon / llm-worker.
+    which layers DB → env var → default. Exposed in Settings → AI Config
+    so operators can flip values live without restarting the backend.
     """
 
-    prompt_cache_enabled: bool = True
-    history_window: int = 20
-    tool_response_budget_default: int = 8000
-    thinking_budget: int = 10000
     local_ollama_recovery_enabled: bool = True
     local_ollama_recovery_retry_limit: int = Field(default=1, ge=0, le=3)
     local_ollama_recovery_restart_gateway: bool = True
@@ -1101,28 +1350,39 @@ AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 
 @router.get("/ai-operations")
-async def get_ai_operations_config():
-    """Return the current AI-operations toggles (defaults merged with DB overrides)."""
+def get_ai_operations_config():
+    """Return the local-Ollama recovery toggles (defaults merged with DB overrides).
+
+    Keys the schema no longer declares — leftover cost/perf knobs in an
+    existing row — are dropped. They are not migrated and not fatal.
+    """
     try:
         config_service = get_config_service()
         value = config_service.get_system_config("ai_operations.settings")
-        if value:
-            return {**AI_OPERATIONS_DEFAULTS, **value}
-        return AI_OPERATIONS_DEFAULTS
+        allowed = AIOperationsSettingsConfig.model_fields
+        stored = {
+            key: value[key]
+            for key in allowed
+            if isinstance(value, dict) and key in value
+        }
+        return {**AI_OPERATIONS_DEFAULTS, **stored}
     except Exception as e:
         logger.error(f"Error getting AI operations config: {e}")
         return AI_OPERATIONS_DEFAULTS
 
 
-@router.post("/ai-operations")
-async def set_ai_operations_config(config: AIOperationsSettingsConfig):
+@router.post("/ai-operations", dependencies=_SETTINGS_WRITE)
+def set_ai_operations_config(
+    config: AIOperationsSettingsConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist the AI-operations toggles and invalidate the in-process cache."""
     config_data = config.model_dump()
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="ai_operations.settings",
         value=config_data,
-        description="Runtime AI cost/perf toggles (GH #84 PR-F)",
+        description="Local Ollama enrichment recovery toggles",
         config_type="ai_operations",
         change_reason="Updated via Settings UI",
     )
@@ -1150,53 +1410,199 @@ class OrchestratorSettingsConfig(BaseModel):
     # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
-    auto_assign_findings: bool = True
-    auto_assign_severities: List[str] = ["critical", "high"]
     max_concurrent_agents: int = 3
     max_iterations_per_agent: int = 50
     max_runtime_per_investigation: int = 3600
     max_cost_per_investigation: float = 5.0
     max_total_hourly_cost: float = 20.0
-    max_total_daily_cost: float = 100.0
     loop_interval: int = 60
-    agent_loop_delay: int = 2
     stale_threshold: int = 300
-    dedup_window_minutes: int = 30
-    context_max_chars: int = 10000
-    plan_model: str = DEFAULT_MODEL
-    review_model: str = DEFAULT_MODEL
     workdir_base: str = "data/investigations"
 
 
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
 
 
-@router.get("/orchestrator")
-async def get_orchestrator_config():
-    """Get orchestrator configuration."""
+class InvestigationProfileValues(BaseModel):
+    """The five limits a profile sets in one click."""
+
+    max_concurrent_agents: int
+    max_iterations_per_agent: int
+    max_runtime_per_investigation: int
+    max_cost_per_investigation: float
+    max_total_hourly_cost: float
+
+
+class InvestigationProfile(BaseModel):
+    """One Settings card. The name is not stored on the saved config."""
+
+    label: str
+    recommended: bool = False
+    values: InvestigationProfileValues
+
+
+class InvestigationProfiles(BaseModel):
+    """Keys the Auto Investigate section renders. ``aggressive`` is labelled Broad."""
+
+    conservative: InvestigationProfile
+    balanced: InvestigationProfile
+    aggressive: InvestigationProfile
+
+
+# Same numbers the Settings cards used to hard-code. Balanced matches
+# OrchestratorSettingsConfig's defaults.
+INVESTIGATION_PROFILES = InvestigationProfiles.model_validate(
+    {
+        "conservative": {
+            "label": "Conservative",
+            "values": {
+                "max_concurrent_agents": 2,
+                "max_iterations_per_agent": 25,
+                "max_runtime_per_investigation": 1800,
+                "max_cost_per_investigation": 1.0,
+                "max_total_hourly_cost": 5.0,
+            },
+        },
+        "balanced": {
+            "label": "Balanced",
+            "recommended": True,
+            "values": {
+                "max_concurrent_agents": 3,
+                "max_iterations_per_agent": 50,
+                "max_runtime_per_investigation": 3600,
+                "max_cost_per_investigation": 5.0,
+                "max_total_hourly_cost": 20.0,
+            },
+        },
+        "aggressive": {
+            "label": "Broad",
+            "values": {
+                "max_concurrent_agents": 5,
+                "max_iterations_per_agent": 100,
+                "max_runtime_per_investigation": 7200,
+                "max_cost_per_investigation": 15.0,
+                "max_total_hourly_cost": 60.0,
+            },
+        },
+    }
+)
+
+
+class OrchestratorConfigResponse(OrchestratorSettingsConfig):
+    """Flat saved settings plus the profiles the Settings cards render.
+
+    ``profiles`` is not part of the stored object. POST takes
+    ``OrchestratorSettingsConfig`` and ignores the field.
+    """
+
+    profiles: InvestigationProfiles
+
+
+def _orchestrator_payload(stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged = {**ORCHESTRATOR_DEFAULTS, **(stored or {})}
+    flat = {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
+    flat["profiles"] = INVESTIGATION_PROFILES.model_dump()
+    return flat
+
+
+class IntentDiffRow(BaseModel):
+    """One manifest key beside the value the daemon is running with."""
+
+    key: str
+    declared: Any
+    effective: Any
+    source: str
+    label: str
+
+
+class IntentReportResponse(BaseModel):
+    """Declared INTENT.md beside effective daemon config. Read-only."""
+
+    path: str
+    readable: bool
+    rows: list[IntentDiffRow] = Field(default_factory=list)
+
+
+@router.get("/intent", response_model=IntentReportResponse)
+def get_intent_report() -> IntentReportResponse:
+    """Declared intent beside effective config.
+
+    A missing or unreadable manifest is 200 with ``readable`` false and no
+    rows, so the Settings card can say so in one line.
+    """
+    rows = intent_report(include_same=True)
+    path = str(intent_file())
+    if rows is None:
+        return IntentReportResponse(path=path, readable=False, rows=[])
+    return IntentReportResponse(
+        path=path,
+        readable=True,
+        rows=[
+            IntentDiffRow(
+                key=row.key,
+                declared=row.declared,
+                effective=row.effective,
+                source=row.source,
+                label=row.label,
+            )
+            for row in rows
+        ],
+    )
+
+
+class AutonomyConfig(BaseModel):
+    """The two flags the console chip folds into Assist or Act.
+
+    Not stored. ``force_manual_approval`` is the env flag OR the
+    ``approval.force_manual_approval`` row. ``auto_response_enabled`` is
+    ``Settings.daemon_auto_response``.
+    """
+
+    auto_response_enabled: bool
+    force_manual_approval: bool
+
+
+@router.get("/autonomy", response_model=AutonomyConfig)
+def get_autonomy_config() -> AutonomyConfig:
+    """Effective response autonomy for the console chip."""
+    effective = effective_daemon_config(DaemonConfig.from_env())
+    return AutonomyConfig(
+        auto_response_enabled=effective.response.auto_response_enabled,
+        force_manual_approval=effective.response.force_manual_approval,
+    )
+
+
+@router.get("/orchestrator", response_model=OrchestratorConfigResponse)
+def get_orchestrator_config():
+    """Get orchestrator configuration.
+
+    ``profiles`` is extra on this body so the Settings cards can render it.
+    It is not read back from storage.
+    """
     try:
         config_service = get_config_service()
         config_value = config_service.get_system_config("orchestrator.settings")
-
-        if config_value:
-            merged = {**ORCHESTRATOR_DEFAULTS, **config_value}
-            return merged
-
-        return ORCHESTRATOR_DEFAULTS
+        return _orchestrator_payload(config_value if config_value else None)
     except Exception as e:
         logger.error(f"Error getting orchestrator config: {e}")
-        return ORCHESTRATOR_DEFAULTS
+        return _orchestrator_payload(None)
 
 
-@router.post("/orchestrator")
-async def set_orchestrator_config(config: OrchestratorSettingsConfig):
+@router.post("/orchestrator", dependencies=_SETTINGS_WRITE)
+def set_orchestrator_config(
+    config: OrchestratorSettingsConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Set orchestrator configuration. Persists settings AND syncs the
     runtime enabled flag used by GET /api/orchestrator/status (which
     NavigationRail uses to show/hide the Auto Ops tab).
+
+    A ``profiles`` field on the body is ignored. The stored object stays the
+    flat keys; no profile name is written.
     """
     config_data = config.model_dump()
 
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="orchestrator.settings",
         value=config_data,
@@ -1229,6 +1635,82 @@ async def set_orchestrator_config(config: OrchestratorSettingsConfig):
     return {"success": True, "message": "Orchestrator settings saved"}
 
 
+class ForceManualApprovalConfig(BaseModel):
+    """``approval.force_manual_approval``. Assist is true, Act is false."""
+
+    enabled: bool
+
+
+class ForceManualApprovalResponse(ForceManualApprovalConfig):
+    """The stored flag, plus whether daemon env overrides Act."""
+
+    environment_wins: bool
+
+
+def _environment_wins() -> bool:
+    """Force-approval, or auto-response turned off, beats a stored Act."""
+    settings = get_settings()
+    return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
+
+
+def _stored_force_manual(config_service) -> bool:
+    value = config_service.read_system_config(APPROVAL_CONFIG_KEY)
+    if isinstance(value, dict):
+        return bool(value.get("enabled", False))
+    return False
+
+
+@router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
+def get_force_manual_approval():
+    """Read ``approval.force_manual_approval`` without inserting a default row.
+
+    A failed read is an error, not Act: reporting the default would show
+    approvals as off while the stored flag may be forcing them on.
+    """
+    try:
+        enabled = _stored_force_manual(get_config_service())
+    except Exception as e:
+        logger.error(f"Error getting force-manual approval: {e}")
+        raise HTTPException(
+            status_code=503, detail="Could not read the approval setting"
+        ) from e
+    return ForceManualApprovalResponse(
+        enabled=enabled, environment_wins=_environment_wins()
+    )
+
+
+@router.post(
+    "/force-manual-approval",
+    dependencies=_SETTINGS_WRITE,
+    response_model=ForceManualApprovalResponse,
+)
+def set_force_manual_approval(
+    config: ForceManualApprovalConfig,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Persist Assist or Act. Act is refused while the environment wins, so it
+    is not stored for later. Assist may still be stored.
+    """
+    if not config.enabled and _environment_wins():
+        raise HTTPException(
+            status_code=409,
+            detail="The environment wins; Act was not saved.",
+        )
+    config_service = _for_user(current_user)
+    success = config_service.set_system_config(
+        key=APPROVAL_CONFIG_KEY,
+        value={"enabled": config.enabled},
+        description="Force manual approval for all actions",
+        config_type="approval",
+        change_reason="Updated via Settings UI",
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save approval config")
+    return ForceManualApprovalResponse(
+        enabled=config.enabled, environment_wins=_environment_wins()
+    )
+
+
 # ---- Darktrace webhook receiver config ----
 class DarktraceConfig(BaseModel):
     """Darktrace webhook receiver configuration.
@@ -1254,7 +1736,7 @@ DARKTRACE_DEFAULTS: Dict[str, Any] = {
 
 
 @router.get("/darktrace")
-async def get_darktrace_config():
+def get_darktrace_config():
     """Return the current Darktrace webhook receiver config (without the secret)."""
     try:
         config_service = get_config_service()
@@ -1267,11 +1749,14 @@ async def get_darktrace_config():
         return {**DARKTRACE_DEFAULTS, "configured": False}
 
 
-@router.post("/darktrace")
-async def set_darktrace_config(config: DarktraceConfig):
+@router.post("/darktrace", dependencies=_INTEGRATIONS_WRITE)
+def set_darktrace_config(
+    config: DarktraceConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist Darktrace config. The webhook_secret is stored separately via the
     secrets manager; if omitted, the existing secret is preserved."""
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     settings = {
         "enabled": config.enabled,
         "url": config.url,
@@ -1292,163 +1777,6 @@ async def set_darktrace_config(config: DarktraceConfig):
                 status_code=500, detail="Failed to save Darktrace webhook secret"
             )
     return {"success": True, "message": "Darktrace config saved"}
-
-
-# ---------------------------------------------------------------------------
-# Mempalace health (#136)
-#
-# Mempalace is hidden from the MCP servers list because it's a core,
-# always-on dependency. This endpoint surfaces enough signal — connection
-# state, palace size, last write, entry counts — for operators to confirm
-# the memory store is actually healthy from the General tab in Settings.
-# ---------------------------------------------------------------------------
-
-
-def _format_size(num_bytes: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    size = float(num_bytes)
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
-
-
-def _scan_palace(palace_path: Path) -> Dict[str, Any]:
-    """Walk the palace tree once and return size + last-modified.
-
-    Best-effort: any unreadable entry is skipped, not raised. Returns
-    ``palace_exists=False`` if the root doesn't exist.
-    """
-    if not palace_path.exists():
-        return {
-            "palace_exists": False,
-            "size_bytes": None,
-            "size_human": None,
-            "last_modified_iso": None,
-        }
-
-    total = 0
-    latest_mtime = 0.0
-    stack = [palace_path]
-    while stack:
-        current = stack.pop()
-        try:
-            for entry in os.scandir(current):
-                try:
-                    if entry.is_dir(follow_symlinks=False):
-                        stack.append(Path(entry.path))
-                    else:
-                        st = entry.stat(follow_symlinks=False)
-                        total += st.st_size
-                        if st.st_mtime > latest_mtime:
-                            latest_mtime = st.st_mtime
-                except OSError:
-                    continue
-        except OSError:
-            continue
-
-    from datetime import datetime, timezone
-
-    last_iso = (
-        datetime.fromtimestamp(latest_mtime, tz=timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z")
-        if latest_mtime > 0
-        else None
-    )
-    return {
-        "palace_exists": True,
-        "size_bytes": total,
-        "size_human": _format_size(total),
-        "last_modified_iso": last_iso,
-    }
-
-
-def _count_memories(palace_path: Path) -> Dict[str, Any]:
-    """Best-effort ChromaDB collection count.
-
-    Returns a dict with ``count`` (int|None) and ``source`` (one of
-    ``chromadb``, ``unavailable``). Never raises — a missing or
-    incompatible chromadb install just degrades to ``unavailable``.
-    """
-    try:
-        import chromadb  # type: ignore
-    except Exception:
-        return {"count": None, "source": "unavailable"}
-
-    try:
-        client = chromadb.PersistentClient(path=str(palace_path))
-        collections = client.list_collections()
-        total = 0
-        for coll in collections:
-            try:
-                total += coll.count()
-            except Exception:
-                continue
-        return {"count": total, "source": "chromadb"}
-    except Exception as e:
-        logger.debug("ChromaDB count failed for %s: %s", palace_path, e)
-        return {"count": None, "source": "unavailable"}
-
-
-@router.get("/mempalace/health")
-async def get_mempalace_health(mcp_client=Depends(provide_mcp_client)):
-    """Health snapshot for the mempalace memory store.
-
-    Aggregates MCP connection state with filesystem facts about the
-    palace directory so operators can sanity-check at a glance whether
-    memories are actually being persisted. Always returns 200 — failures
-    are surfaced via ``connected: false`` and ``error`` fields rather
-    than HTTP errors, so the panel can render even when mempalace is
-    completely down.
-    """
-    import asyncio
-
-    from core.platform.mempalace_paths import (
-        get_closed_cases_dir,
-        get_palace_path,
-    )
-
-    # Connection state — reuse the same signal /api/mcp/connections/status uses.
-    connected = False
-    error: Optional[str] = None
-    try:
-        if mcp_client is not None:
-            statuses = mcp_client.get_connection_status() or {}
-            connected = bool(statuses.get("mempalace", False))
-            error = mcp_client.get_last_error("mempalace")
-    except Exception as e:  # noqa: BLE001
-        logger.debug("Could not read mempalace MCP status: %s", e)
-        error = str(e)
-
-    palace_path = get_palace_path(ensure_exists=False)
-
-    fs_stats = await asyncio.to_thread(_scan_palace, palace_path)
-
-    closed_cases_count: Optional[int] = None
-    try:
-        closed_dir = get_closed_cases_dir(ensure_exists=False)
-        if closed_dir.exists():
-            closed_cases_count = await asyncio.to_thread(
-                lambda: len(list(closed_dir.glob("*.json")))
-            )
-        else:
-            closed_cases_count = 0
-    except Exception as e:  # noqa: BLE001
-        logger.debug("Closed-cases count failed: %s", e)
-
-    memories = await asyncio.to_thread(_count_memories, palace_path)
-
-    return {
-        "connected": connected,
-        "error": error,
-        "palace_path": str(palace_path),
-        **fs_stats,
-        "closed_cases_count": closed_cases_count,
-        "memories_count": memories["count"],
-        "memories_count_source": memories["source"],
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1474,7 +1802,7 @@ class _SecretsMigrateRequest(BaseModel):
 
 
 @router.get("/secrets/status")
-async def secrets_status() -> Dict[str, Any]:
+def secrets_status() -> Dict[str, Any]:
     """Report which backend the secrets manager is using and why.
 
     Used by the Settings UI (and `curl` debugging) to answer "why are my
@@ -1486,8 +1814,8 @@ async def secrets_status() -> Dict[str, Any]:
     return mgr.get_backend_status()
 
 
-@router.post("/secrets/reinit")
-async def secrets_reinit(
+@router.post("/secrets/reinit", dependencies=_SETTINGS_WRITE)
+def secrets_reinit(
     request: Optional[_SecretsReinitRequest] = None,
 ) -> Dict[str, Any]:
     """Drop the cached secrets-manager singleton and rebuild it.
@@ -1510,8 +1838,8 @@ async def secrets_reinit(
     }
 
 
-@router.post("/secrets/migrate-to-encrypted")
-async def secrets_migrate_to_encrypted(
+@router.post("/secrets/migrate-to-encrypted", dependencies=_SETTINGS_WRITE)
+def secrets_migrate_to_encrypted(
     request: Optional[_SecretsMigrateRequest] = None,
 ) -> Dict[str, Any]:
     """Move secrets from the dotenv backend to ``~/.vigil/secrets.enc``.

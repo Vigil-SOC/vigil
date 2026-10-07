@@ -11,6 +11,10 @@ const RUNS = historicalRuns();
 
 // Maps do not survive JSON, and the goldens were written from the file ledger's
 // fold. Ordering is preserved: a Map keeps insertion order and so does this.
+//
+// hunt.cost_usd is compared exactly, not set aside: the harness fold now sums spend
+// events, but these file-ledger runs carry no spend events and recorded cost as hunt
+// patches, which the patch arm still applies. So the goldens' figures fold unchanged.
 function comparable(projection: ReturnType<typeof fold>): unknown {
   return JSON.parse(
     JSON.stringify({
@@ -24,10 +28,23 @@ function comparable(projection: ReturnType<typeof fold>): unknown {
   );
 }
 
+// The one deliberate divergence from the file ledger's fold. It appended every
+// link, so a record the lead re-ruled on each iteration ended up carrying the same
+// hypothesis many times over -- and among those, "supports" beside "weakens". The
+// harness fold upserts on the pair, so the golden's links are collapsed the same
+// way here rather than the goldens being rewritten: everything else still compares
+// against what the old implementation actually produced.
+function lastPerPair(links: { evidence_id: string; hypothesis_id: string }[]): unknown[] {
+  const held = new Map<string, unknown>();
+  for (const link of links) held.set(`${link.evidence_id} ${link.hypothesis_id}`, link);
+  return [...held.values()];
+}
+
 // Written by running the file ledger's own fold over the same fixture, with the
 // same Map conversion applied, so this compares implementations and not shapes.
 function golden(name: string): unknown {
-  return renamedGolden(JSON.parse(gunzipped(`${name}.projection.json.gz`)));
+  const held = renamedGolden(JSON.parse(gunzipped(`${name}.projection.json.gz`))) as Record<string, unknown>;
+  return { ...held, links: lastPerPair(held["links"] as { evidence_id: string; hypothesis_id: string }[]) };
 }
 
 describe("the fold survives the move to the harness ledger", () => {
@@ -86,8 +103,52 @@ function folds(name: string): unknown {
   );
 }
 
+// The second deliberate divergence, and the same kind as lastPerPair: the goldens are
+// what the old implementation produced, and its backlog listed only parked leads. A run
+// stopped by its own ceiling hands its leads back open, so hunt-462b6e9d6d56 -- a real
+// budget_terminated run -- reported an empty frontier while 82 leads sat on it.
+//
+// Set aside from the structural comparison and then checked against the golden's own
+// backlog plus exactly the leads left open, rather than simply dropped: more than one
+// run moved, and dropping the field would have left the other nine backlogs compared
+// against nothing at all.
+function withoutBacklog(folded: Record<string, unknown>): Record<string, unknown> {
+  const report = folded["report"] as Record<string, unknown>;
+  const { backlog: _dropped, ...rest } = report;
+  return { ...folded, report: rest };
+}
+
+function backlogIds(folded: Record<string, unknown>): string[] {
+  const report = folded["report"] as Record<string, unknown>;
+  const backlog = (report["backlog"] ?? []) as { question_id: string }[];
+  return backlog.map((one) => one.question_id).sort();
+}
+
 describe("the derived folds survive the move too", () => {
   it.each(RUNS)("%s derives the digest, strength and report the file ledger did", (name) => {
-    expect(folds(name)).toEqual(renamedGolden(JSON.parse(gunzipped(`${name}.folds.json.gz`))));
+    const mine = folds(name) as Record<string, unknown>;
+    const golden = renamedGolden(JSON.parse(gunzipped(`${name}.folds.json.gz`))) as Record<string, unknown>;
+    expect(withoutBacklog(mine)).toEqual(withoutBacklog(golden));
+
+    // Every lead the golden listed, and every lead still open, and nothing else: the
+    // backlog stays exactly compared on all ten runs instead of excused on all ten.
+    const view = fold(asHarnessEvents(gunzipped(`${name}.jsonl.gz`), name));
+    const open = [...view.questions.values()].filter((one) => one.status === "open");
+    expect(backlogIds(mine)).toEqual([...backlogIds(golden), ...open.map((one) => one.question_id)].sort());
+  });
+
+  // Named because it is the headline case: a real budget-stopped run whose report told
+  // an operator the frontier was clear while 82 leads sat on it.
+  it("lists the leads a budget-stopped run left on the frontier", () => {
+    const view = fold(asHarnessEvents(gunzipped("hunt-462b6e9d6d56.jsonl.gz"), "hunt-462b6e9d6d56"));
+    const open = [...view.questions.values()].filter((one) => one.status === "open");
+    const report = buildReport(view);
+
+    const parked = [...view.questions.values()].filter((one) => one.status === "parked");
+    expect(view.hunt.outcome).toBe("budget_terminated");
+    expect(open).toHaveLength(82);
+    expect(report.backlog.map((one) => one.question_id)).toEqual(
+      expect.arrayContaining([...open, ...parked].map((one) => one.question_id)),
+    );
   });
 });

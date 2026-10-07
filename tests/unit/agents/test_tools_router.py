@@ -1,12 +1,23 @@
 import asyncio
+from contextlib import contextmanager
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.agents import internal_auth, tools_router
+from core.agents import internal_auth, tool_registry, tools_router
 from core.agents.mcp_tools import MCPFailure
+from core.auth import tool_principal
+from core.auth.auth_service import AuthService
+from core.cases.case_workflow_service import CaseWorkflowService
+from core.cases.closure import ClosedByKind
+from core.integrations.mcp import in_process
 from core.integrations.mcp.registry import MCPRegistry
+from core.integrations.mcp.surface import current_caller
+from tools.mcp import vigil
 
 BOUNDS = {"max_rows": 2, "timeout_ms": 500}
 AUTH = {"Authorization": "Bearer shhh"}
@@ -86,6 +97,28 @@ class TestBoundsAtTheSource:
         assert body["rows"] == [{"total": 7}]
         assert body["rowCount"] == 1
 
+    # An MCP server answers an envelope. Reading the whole object as one row made
+    # rowCount 1 for every call however much came back, so max_rows never bit, capped
+    # was never true, and the console's row counts meant nothing.
+    def test_reads_the_rows_out_of_an_envelope_rather_than_counting_it_as_one(
+        self, client, monkeypatch
+    ):
+        _answers(
+            monkeypatch,
+            {"success": True, "query": "q", "count": 3, "results": [1, 2, 3]},
+        )
+        body = _invoke(client).json()
+        assert body["rowCount"] == 2
+        assert body["capped"] is True
+
+    # And an envelope holding nothing is nothing, not one row of "success": true. A
+    # dispatch salvages on rowCount, so this decided whether an empty answer read as
+    # gathered data.
+    def test_an_empty_envelope_is_no_rows(self, client, monkeypatch):
+        _answers(monkeypatch, {"success": True, "count": 0, "results": []})
+        body = _invoke(client).json()
+        assert body["rowCount"] == 0
+
     def test_a_tool_over_its_timeout_reports_timeout(self, client, monkeypatch):
         async def slow(name, args, **kwargs):
             await asyncio.sleep(1)
@@ -114,8 +147,12 @@ class TestFailureKinds:
 
     # A TypeError from inside a tool is not a bad call. Reported as invalid_args it
     # tells the model to retry with different arguments, which it does until the cap.
-    def test_a_typeerror_from_inside_the_tool_is_a_backend_error(self, client, monkeypatch):
-        _raises(monkeypatch, TypeError("unsupported operand type(s) for +: 'int' and 'str'"))
+    def test_a_typeerror_from_inside_the_tool_is_a_backend_error(
+        self, client, monkeypatch
+    ):
+        _raises(
+            monkeypatch, TypeError("unsupported operand type(s) for +: 'int' and 'str'")
+        )
         assert _invoke(client).json()["failure"]["kind"] == "backend_error"
 
     def test_anything_else_is_a_backend_error(self, client, monkeypatch):
@@ -143,7 +180,9 @@ class TestBoundsReachTheTool:
         _invoke(client, args={"query": "x"})
         assert seen["limit"] == BOUNDS["max_rows"]
 
-    def test_a_tighter_limit_the_caller_asked_for_is_left_alone(self, client, monkeypatch):
+    def test_a_tighter_limit_the_caller_asked_for_is_left_alone(
+        self, client, monkeypatch
+    ):
         seen: dict = {}
 
         async def _capture(tool, args):
@@ -153,6 +192,92 @@ class TestBoundsReachTheTool:
         monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
         _invoke(client, args={"limit": 1})
         assert seen["limit"] == 1
+
+    # splunk_execute pages on max_results. Only `limit` was ever set, so the cap
+    # reached the backend tools and never the MCP servers -- which are the ones that
+    # answer in bulk.
+    def test_the_cap_finds_the_name_the_tool_pages_on(self, client, monkeypatch):
+        seen: dict = {}
+
+        async def _capture(tool, args):
+            seen.update(args)
+            return [], True
+
+        monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
+        _invoke(client, args={"spl_query": "index=botsv3", "max_results": 5000})
+        assert seen["max_results"] == BOUNDS["max_rows"]
+
+    # A name the tool's signature does not take comes back as invalid_args, so the cap
+    # lowers what the call already carries rather than teaching it a new keyword.
+    def test_does_not_hand_a_tool_a_page_size_it_never_asked_for(
+        self, client, monkeypatch
+    ):
+        seen: dict = {}
+
+        async def _capture(tool, args):
+            seen.update(args)
+            return [], True
+
+        monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
+        _invoke(client, args={"spl_query": "index=botsv3", "max_results": 1})
+        assert seen["max_results"] == 1
+        assert "max_count" not in seen
+
+    # get_finding / get_case declare no row cap. Injecting limit made every
+    # point-read invalid_args, and the model retried into the same injection.
+    def test_get_finding_does_not_receive_limit(self, client, monkeypatch):
+        seen: dict = {}
+
+        async def _capture(tool, args):
+            seen["tool"] = tool
+            seen.update(args)
+            return {"finding_id": "f-1"}, True
+
+        monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
+        _invoke(client, tool="get_finding", args={"finding_id": "f-1"})
+        assert seen["tool"] == "get_finding"
+        assert seen["finding_id"] == "f-1"
+        assert "limit" not in seen
+
+    def test_get_case_does_not_receive_limit(self, client, monkeypatch):
+        seen: dict = {}
+
+        async def _capture(tool, args):
+            seen["tool"] = tool
+            seen.update(args)
+            return {"case_id": "c-1"}, True
+
+        monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
+        _invoke(client, tool="get_case", args={"case_id": "c-1"})
+        assert seen["tool"] == "get_case"
+        assert seen["case_id"] == "c-1"
+        assert "limit" not in seen
+
+
+class TestWhichSystemAnswered:
+    """sourceSystem is what a hunt counts corroboration over. Answering "vigil" for
+    everything left the only real domain label a string the worker typed into its own
+    emission, and one worker querying one system twice can type two."""
+
+    def test_a_tool_this_backend_implements_is_vigil(self, client, monkeypatch):
+        _answers(monkeypatch, [])
+        assert _invoke(client).json()["sourceSystem"] == "vigil"
+
+    def test_an_mcp_server_answers_under_its_own_name(self, client, monkeypatch):
+        async def _no_backend_tool(name, args, **kwargs):
+            return None, False
+
+        async def _served(name, args, seconds, registry):
+            return [{"host": "we8105desk"}], True
+
+        monkeypatch.setattr(tools_router, "execute_backend_tool", _no_backend_tool)
+        monkeypatch.setattr(tools_router, "execute_mcp_tool", _served)
+        monkeypatch.setattr(
+            MCPRegistry, "get_active_servers", lambda self: ["splunk-selfhosted"]
+        )
+
+        body = _invoke(client, tool="splunk-selfhosted_splunk_execute").json()
+        assert body["sourceSystem"] == "splunk-selfhosted"
 
 
 def _no_backend(monkeypatch):
@@ -201,7 +326,9 @@ class TestMCPFallthrough:
         body = _invoke(client, tool="no_such_tool").json()
         assert body["failure"]["kind"] == "refused"
 
-    def test_a_server_that_cannot_be_reached_is_a_visibility_gap(self, client, monkeypatch):
+    def test_a_server_that_cannot_be_reached_is_a_visibility_gap(
+        self, client, monkeypatch
+    ):
         _no_backend(monkeypatch)
         _mcp(monkeypatch, error=MCPFailure("unavailable", "Unknown server: splunk"))
 
@@ -210,16 +337,27 @@ class TestMCPFallthrough:
 
     def test_a_slow_server_reports_the_bound_it_broke(self, client, monkeypatch):
         _no_backend(monkeypatch)
-        _mcp(monkeypatch, error=MCPFailure("timeout", "Tool call timed out after 0.5 seconds"))
+        _mcp(
+            monkeypatch,
+            error=MCPFailure("timeout", "Tool call timed out after 0.5 seconds"),
+        )
 
         body = _invoke(client, tool="splunk_search").json()
         assert body["failure"] == {"kind": "timeout", "timeoutMs": BOUNDS["timeout_ms"]}
 
-    def test_a_server_that_answered_badly_is_a_defect_not_a_gap(self, client, monkeypatch):
+    def test_a_server_that_answered_badly_is_a_defect_not_a_gap(
+        self, client, monkeypatch
+    ):
         _no_backend(monkeypatch)
-        _mcp(monkeypatch, error=MCPFailure("backend_error", "Error: index does not exist"))
+        _mcp(
+            monkeypatch,
+            error=MCPFailure("backend_error", "Error: index does not exist"),
+        )
 
-        assert _invoke(client, tool="splunk_search").json()["failure"]["kind"] == "backend_error"
+        assert (
+            _invoke(client, tool="splunk_search").json()["failure"]["kind"]
+            == "backend_error"
+        )
 
     # The bound is the bridge's, not the near side's: an MCP tool is capped the
     # same way a backend one is.
@@ -230,3 +368,129 @@ class TestMCPFallthrough:
         body = _invoke(client, tool="splunk_search").json()
         assert body["rowCount"] == BOUNDS["max_rows"]
         assert body["capped"] is True
+
+
+# --- Whom the call is for (#1087) --------------------------------------------
+#
+# Chat reaches Vigil's tools through this door, so a person closing a case in
+# chat is recorded as that person only if the principal the API signed arrives
+# here and is bound around the tool. Driven through the real close_case in
+# Vigil's in-process MCP server, which reads the binding in its own body.
+
+
+@pytest.fixture
+def closes(monkeypatch):
+    """The closed_by each close_case call recorded, and every close's kind."""
+    recorded = []
+    kinds = []
+
+    def _close(self, session, case_id, **kwargs):
+        recorded.append(kwargs["closed_by"])
+        kinds.append(kwargs["closed_by_kind"])
+        closure = MagicMock()
+        closure.to_dict.return_value = {"case_id": case_id}
+        return closure
+
+    @contextmanager
+    def _session():
+        yield object()
+
+    monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
+    monkeypatch.setattr(vigil, "_service_session", _session)
+    monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
+    monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
+
+    registry = MCPRegistry()
+    in_process.register(registry)
+    app = FastAPI()
+    app.state.mcp_registry = registry
+    app.include_router(tools_router.router, prefix=tools_router.ROUTER_META.prefix)
+    client = TestClient(app)
+    client.kinds = kinds
+    return client, recorded
+
+
+def _close_case(client, **extra):
+    body = {
+        "tool": "close_case",
+        "args": {"case_id": "case-1", "closure_category": "resolved"},
+        "bounds": {"max_rows": 5, "timeout_ms": 5000},
+        **extra,
+    }
+    return client.post("/internal/tools/invoke", json=body, headers=AUTH)
+
+
+class TestPrincipal:
+    def test_a_chat_turn_records_the_person_driving_it(self, closes):
+        client, recorded = closes
+        response = _close_case(client, principal=tool_principal.mint("nestor"))
+
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+        assert recorded == ["nestor"]
+        # The person's name, but still a program acting with their standing.
+        assert client.kinds == [ClosedByKind.AGENT]
+
+    def test_a_hunt_sends_no_principal_and_records_an_agent(self, closes):
+        client, recorded = closes
+        assert _close_case(client).json()["ok"] is True
+        assert recorded == ["agent"]
+
+    @pytest.mark.parametrize(
+        "principal",
+        ["nestor", "", "not.a.jwt"],
+        ids=["bare-name", "empty", "garbage"],
+    )
+    def test_a_principal_the_api_did_not_sign_is_refused(self, closes, principal):
+        client, recorded = closes
+        assert _close_case(client, principal=principal).status_code == 401
+        assert recorded == []
+
+    def test_an_expired_principal_is_refused_not_downgraded(self, closes):
+        client, recorded = closes
+        stale = tool_principal.mint("nestor", ttl=timedelta(minutes=-2))
+        assert _close_case(client, principal=stale).status_code == 401
+        assert recorded == []
+
+    def test_a_session_jwt_is_not_a_principal(self, closes):
+        client, recorded = closes
+        user = SimpleNamespace(
+            user_id="u-1", username="nestor", email="n@example.com", role_id="r"
+        )
+        session = AuthService.generate_jwt_token(user)
+        assert _close_case(client, principal=session).status_code == 401
+        assert recorded == []
+
+    # Awaited here rather than through TestClient, which serves each request in a
+    # fresh context: only in this one would a binding that outlived the call show.
+    @pytest.mark.asyncio
+    async def test_a_backend_tool_sees_the_principal_and_the_binding_ends(
+        self, closes, monkeypatch
+    ):
+        _, recorded = closes
+
+        class _Cases:
+            def get_case(self, case_id):
+                return {"case_id": case_id, "status": "investigating", "notes": []}
+
+            def update_case(self, case_id, **updates):
+                return True
+
+        @contextmanager
+        def _session():
+            yield object()
+
+        monkeypatch.setattr(tool_registry, "_data", lambda: _Cases())
+        monkeypatch.setattr("core.cases.agent_closure.service_session", _session)
+        body = tools_router.InvokeRequest(
+            tool="update_case",
+            args={"case_id": "case-1", "status": "closed"},
+            bounds={"max_rows": 5, "timeout_ms": 5000},
+            principal=tool_principal.mint("nestor"),
+        )
+
+        answer = await tools_router.invoke(body, "Bearer shhh", MCPRegistry())
+
+        assert answer["ok"] is True
+        assert recorded == ["nestor"]
+        assert current_caller() is None

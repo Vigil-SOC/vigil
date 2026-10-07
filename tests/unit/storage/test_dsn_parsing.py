@@ -136,3 +136,18 @@ def test_env_connection_string_does_not_outrank_postgres_vars(monkeypatch):
     assert cfg.source == "env"
     assert cfg.host == "db.prod.internal"
     assert cfg.database == "prod_db"
+
+
+def test_database_url_does_not_select_the_python_target(monkeypatch):
+    """DATABASE_URL is the agent's knob. DatabaseConfig must not grow a third
+    source ranked between the encrypted DSN and POSTGRES_* (#752)."""
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://other:pw@agent-only.example:5432/agent_db",
+    )
+    monkeypatch.setenv("POSTGRES_HOST", "db.prod.internal")
+    monkeypatch.setenv("POSTGRES_DB", "prod_db")
+    cfg = DatabaseConfig()
+    assert cfg.source == "env"
+    assert cfg.host == "db.prod.internal"
+    assert cfg.database == "prod_db"

@@ -14,10 +14,11 @@ const FIXED_HEADERS = [
   'status',
 ]
 
-function csvCell(value: string | number): string {
+function csvCell(value: string | number | null): string {
   // CSV escaping does not stop spreadsheet formula execution. Finding fields
   // can originate in attacker-controlled telemetry, so make formula-looking
   // strings literal before they reach Excel or similar tools.
+  if (value == null) return ''
   const text = typeof value === 'string' && /^\s*[=+\-@]/.test(value)
     ? `'${value}`
     : String(value)
@@ -29,12 +30,12 @@ function timestamp(finding: Finding): string {
     const date = new Date(finding.ts)
     if (!Number.isNaN(date.getTime())) return date.toISOString()
   }
-  return finding.time
+  return ''
 }
 
 export function buildFindingsCsv(findings: Finding[]): string {
   const extraKeys = [...new Set(findings.flatMap((finding) => Object.keys(finding.extra ?? {})))].sort()
-  const rows: (string | number)[][] = [
+  const rows: (string | number | null)[][] = [
     [...FIXED_HEADERS, ...extraKeys],
     ...findings.map((finding) => [
       finding.id,

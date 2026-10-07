@@ -47,6 +47,13 @@ export interface TurnConfig {
   verbs: readonly string[];
   result_cap: number;
   recall_limit: number;
+  // The entity keys the run opens on, for the episodic read. Empty is the default
+  // and means a run that recalls nothing: which keys a run is about is the
+  // workflow's answer, and a harness that guessed would query on prose.
+  recall_keys?: readonly string[];
+  // Lets this turn run against a ledger that already holds a terminal. Only for a turn
+  // that describes a run rather than continues one -- never one that can reach a tool.
+  after_terminal?: boolean;
   signal?: AbortSignal;
 }
 
@@ -57,6 +64,9 @@ export interface Attempt {
   // never parses what was rendered, and rendering stays in one place.
   result: ToolResult;
   wrapped: Wrapped;
+  // Set by invoke. Absent when the attempt never ran: a refusal, a rejection,
+  // or a result served from an earlier pass of the ledger.
+  duration_ms?: number;
 }
 
 // tool and args are null when the run parked on a checkpoint the harness did not
@@ -74,6 +84,9 @@ export interface Outcome<T> {
   // Set only when parked: the call the harness stopped at, and the checkpoint a
   // resolution must answer for it to go through.
   pending: Pending | null;
+  // Set only when the role answered but never in a shape the schema accepts: a defect
+  // in the emission, structured so a workflow never parses the reason to see it.
+  emission_rejected?: true;
   // True when the tool loop was stopped by the cap rather than by the model, so
   // a workflow knows the answer was reached over a truncated set of calls.
   capped: boolean;
@@ -82,6 +95,9 @@ export interface Outcome<T> {
   turns: number;
   rejected: string[];
   reason: string;
+  // What this turn spent, tallied by the turn itself: the pool's running total is only
+  // this turn's spend when nothing else is spending concurrently.
+  cost_usd: number;
 }
 
 // The workflow's events for this turn; the harness appends its own as it burns them.

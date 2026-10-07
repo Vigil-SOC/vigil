@@ -1,13 +1,15 @@
 """Detection Rules API endpoints for managing detection rule sources."""
 
+import asyncio
 import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from core.deps import provide_detection_rules, provide_mcp_client
+from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections.detection_rules_service import DetectionRulesService
+from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.routing import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
@@ -34,7 +36,7 @@ class AddSourceRequest(BaseModel):
 
 
 @router.get("/sources")
-async def list_sources(
+def list_sources(
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -48,7 +50,7 @@ async def list_sources(
 
 
 @router.get("/sources/{source_id}")
-async def get_source(
+def get_source(
     source_id: str,
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
@@ -68,7 +70,7 @@ async def get_source(
 
 
 @router.post("/sources")
-async def add_source(
+def add_source(
     request: AddSourceRequest,
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
@@ -94,13 +96,10 @@ async def add_source(
         return {"success": True, "source": source}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error adding source: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/sources/{source_id}")
-async def remove_source(
+def remove_source(
     source_id: str,
     delete_files: bool = False,
     service: DetectionRulesService = Depends(provide_detection_rules),
@@ -126,6 +125,7 @@ async def update_source(
     source_id: str,
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """
     Update a single detection rule source (git pull or rescan).
@@ -137,23 +137,22 @@ async def update_source(
         Updated source details
     """
     try:
-        source = service.update_source(source_id)
+        # git pull runs up to 120s; keep it off the event loop.
+        source = await asyncio.to_thread(service.update_source, source_id)
 
         # After updating, restart the security-detections MCP server to rebuild index
-        await _restart_security_detections_mcp(mcp_client, service)
+        await _restart_security_detections_mcp(mcp_client, service, registry)
 
         return {"success": True, "source": source}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error updating source: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/update-all")
 async def update_all_sources(
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """
     Update all detection rule sources (git pull all repos).
@@ -161,16 +160,16 @@ async def update_all_sources(
     Returns:
         Results for each source update
     """
-    results = service.update_all()
+    results = await asyncio.to_thread(service.update_all)
 
     # After updating all, restart the security-detections MCP server
-    await _restart_security_detections_mcp(mcp_client, service)
+    await _restart_security_detections_mcp(mcp_client, service, registry)
 
     return {"success": True, "results": results}
 
 
 @router.get("/stats")
-async def get_stats(
+def get_stats(
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -184,7 +183,7 @@ async def get_stats(
 
 
 @router.get("/mcp-env")
-async def get_mcp_env(
+def get_mcp_env(
     service: DetectionRulesService = Depends(provide_detection_rules),
 ):
     """
@@ -201,6 +200,7 @@ async def get_mcp_env(
 async def reload_service(
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """
     Reload the detection rules service (re-reads config and rescans all sources).
@@ -209,29 +209,18 @@ async def reload_service(
     Returns:
         Success status with updated stats
     """
-
-    # Re-read config
-    service._load_config()
-
-    # Rescan all sources
-    for source in service.sources:
-        from pathlib import Path
-
-        source["rule_count"] = service._count_rules(
-            Path(source["local_path"]), source["format"], source.get("subdirectory", "")
-        )
-        if Path(source["local_path"]).exists():
-            source["status"] = "ready"
-    service._save_config()
+    await asyncio.to_thread(service.reload)
 
     # Restart the MCP server
-    await _restart_security_detections_mcp(mcp_client, service)
+    await _restart_security_detections_mcp(mcp_client, service, registry)
 
-    stats = service.get_stats()
+    stats = await asyncio.to_thread(service.get_stats)
     return {"success": True, "stats": stats}
 
 
-async def _restart_security_detections_mcp(mcp_client, service: DetectionRulesService):
+async def _restart_security_detections_mcp(
+    mcp_client, service: DetectionRulesService, registry: MCPRegistry
+):
     """
     Restart the security-detections MCP server to pick up new/updated rule sources.
     This triggers a re-index of all detection rules in the MCP server.
@@ -248,12 +237,20 @@ async def _restart_security_detections_mcp(mcp_client, service: DetectionRulesSe
                 server = mcp_service.servers[server_name]
                 server.env.update(env_vars)
 
-                # Stop and restart
-                mcp_service.stop_server(server_name)
-
-                # Disconnect and reconnect MCP client
+                # Restart, not disable: a failed reconnect must not hide tools.
                 await mcp_client.disconnect_from_server(server_name)
-                await mcp_client.connect_to_server(server_name, persistent=True)
+                reconnected = await mcp_client.connect_to_server(
+                    server_name, persistent=True
+                )
+                if reconnected:
+                    try:
+                        register_connected(registry, mcp_client, server_name)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "MCP registry register during restart failed for %s: %s",
+                            server_name,
+                            exc,
+                        )
 
                 logger.info(f"Restarted {server_name} MCP server with updated env vars")
             else:

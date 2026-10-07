@@ -1,0 +1,68 @@
+[
+  {
+    "name": "finding-003 fixed interval to a bare ip the source calls c2",
+    "input": {
+      "id": "finding-003",
+      "title": "C2 Beacon Communication",
+      "description": "Regular outbound connections to known C2 infrastructure",
+      "severity": "critical",
+      "source": "crowdstrike",
+      "external_id": "cs-detection-11223",
+      "timestamp": "2026-01-27T11:15:00Z",
+      "raw_data": {
+        "src_ip": "10.0.5.120",
+        "dst_ip": "185.220.101.5",
+        "dst_port": 443,
+        "bytes_sent": 1024,
+        "bytes_received": 2048,
+        "frequency": "every 60 seconds"
+      },
+      "mitre_techniques": ["T1071.001", "T1573.001"],
+      "iocs": {
+        "ips": ["10.0.5.120", "185.220.101.5"],
+        "domains": ["malicious-c2.example.com"]
+      }
+    },
+    "expect": ["verdict: c2", "destination: 185.220.101.5"]
+  },
+  {
+    "name": "fixed 300s ntp poll with small symmetric payloads",
+    "input": {
+      "id": "finding-ntp-300",
+      "title": "Regular time sync",
+      "description": "Host sends small symmetric payloads to an NTP pool on a fixed 300 second interval",
+      "severity": "low",
+      "source": "zeek",
+      "timestamp": "2026-02-02T04:00:00Z",
+      "raw_data": {
+        "src_ip": "10.0.1.15",
+        "dst_host": "pool.ntp.org",
+        "dst_port": 123,
+        "bytes_sent": 48,
+        "bytes_received": 48,
+        "frequency": "every 300 seconds, fixed, no jitter"
+      }
+    },
+    "expect": ["verdict: benign-periodic"]
+  },
+  {
+    "name": "jittered https to an unremarkable cloud ip",
+    "input": {
+      "id": "finding-cloud-jitter",
+      "title": "Recurring outbound HTTPS",
+      "description": "A workstation opens HTTPS sessions on an uneven interval to a cloud address, with no reputation attached to the finding",
+      "severity": "medium",
+      "source": "zeek",
+      "timestamp": "2026-02-11T16:40:00Z",
+      "raw_data": {
+        "src_ip": "10.0.8.21",
+        "dst_ip": "3.224.10.50",
+        "dst_port": 443,
+        "bytes_sent": 2100,
+        "bytes_received": 86000,
+        "frequency": "roughly every 40 to 110 seconds, with jitter"
+      }
+    },
+    "expect": ["periodicity:", "confidence:", "next:"]
+  }
+]

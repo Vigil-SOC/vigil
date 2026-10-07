@@ -16,6 +16,8 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
+from core.llm.providers import registry as model_registry  # noqa: E402
+from core.llm.providers.discovery import ModelMeta  # noqa: E402
 from core.llm.providers.registry import COMPONENTS  # noqa: E402
 from core.llm.providers.registry import (  # noqa: E402
     ComponentAssignment,
@@ -23,6 +25,7 @@ from core.llm.providers.registry import (  # noqa: E402
     _catalog_entry,
     is_valid_component,
 )
+from core.llm.router.router import ProviderSpec  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -32,13 +35,11 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def test_components_enum_includes_all_seven():
+def test_components_enum():
     expected = {
         "chat_default",
         "triage",
         "investigation",
-        "orchestrator_plan",
-        "orchestrator_review",
         "summarization",
         "reporting",
     }
@@ -50,13 +51,37 @@ def test_is_valid_component():
     assert is_valid_component("nope") is False
 
 
-def test_cost_rates_known_anthropic_model():
+def _seed(provider_type, model_id, inp=3e-6, out=1.5e-5, **caps):
+    """Record one model the way the sync records discovery plus the datasheet."""
+    model_registry.record_live_meta(
+        provider_type,
+        [
+            ModelMeta(
+                id=model_id,
+                display_name=caps.pop("display_name", model_id),
+                context_window=caps.pop("context_window", 0),
+                capabilities=caps,
+                input_cost_per_token=inp,
+                output_cost_per_token=out,
+            )
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clean_live_meta():
+    model_registry.clear_live_meta()
+    yield
+    model_registry.clear_live_meta()
+
+
+def test_cost_rates_come_from_live_meta():
+    _seed("anthropic", "claude-sonnet-4-5-20250929")
     input_rate, output_rate = ModelRegistry.get_cost_rates(
         "claude-sonnet-4-5-20250929", "anthropic"
     )
-    # Catalog says $3/$15 per 1M tokens.
-    assert input_rate == pytest.approx(3.0 / 1_000_000)
-    assert output_rate == pytest.approx(15.0 / 1_000_000)
+    assert input_rate == pytest.approx(3e-6)
+    assert output_rate == pytest.approx(1.5e-5)
 
 
 def test_cost_rates_ollama_is_zero():
@@ -74,9 +99,17 @@ def test_cost_rates_unknown_cloud_model_degrades_gracefully():
     )
     assert input_rate == 0.0
     assert output_rate == 0.0
+    assert ModelRegistry.get_pricing_source("does-not-exist-1.0", "openai") == "unknown"
 
 
 def test_get_model_info_populates_capabilities():
+    _seed(
+        "anthropic",
+        "claude-sonnet-4-5-20250929",
+        context_window=200_000,
+        supports_tools=True,
+        supports_thinking=True,
+    )
     info = ModelRegistry.get_model_info(
         provider_id="anthropic-default",
         provider_type="anthropic",
@@ -87,85 +120,39 @@ def test_get_model_info_populates_capabilities():
     assert info.supports_tools is True
     assert info.supports_thinking is True
     assert info.context_window == 200_000
+    assert info.pricing_source == "exact"
 
 
 def test_catalog_entry_ollama_has_no_tools():
     entry = _catalog_entry("ollama", "llama3.1:8b")
     assert entry["supports_tools"] is False
-    assert entry["input_per_m"] == 0.0
+    assert entry["input"] == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Layered catalog — tier heuristic + live meta + pricing_source (GH #139)
-# ---------------------------------------------------------------------------
-
-
-def test_tier_heuristic_anthropic_haiku_future():
-    """A model NOT in the exact catalog should fall to the heuristic
-    layer and get tier pricing, not $0. Uses a hypothetical future
-    Haiku variant so the test survives _CATALOG additions."""
-    entry = _catalog_entry("anthropic", "claude-haiku-9-9-hypothetical")
-    assert entry["input_per_m"] == pytest.approx(0.80)
-    assert entry["output_per_m"] == pytest.approx(4.0)
-    assert entry["pricing_source"] == "heuristic"
-
-
-def test_tier_heuristic_openai_gpt4o_mini():
-    entry = _catalog_entry("openai", "gpt-4o-mini-2024-07-18")
-    assert entry["input_per_m"] == pytest.approx(0.15)
-    assert entry["output_per_m"] == pytest.approx(0.60)
-    assert entry["pricing_source"] == "heuristic"
-
-
-def test_tier_heuristic_openai_o3_mini_orders_before_o1():
-    """Regex order matters: o3-mini should NOT match o3 first."""
-    entry = _catalog_entry("openai", "o3-mini")
-    assert entry["input_per_m"] == pytest.approx(1.10)
-    assert entry["pricing_source"] == "heuristic"
-
-
-def test_exact_catalog_wins_over_heuristic():
-    # claude-sonnet-4-5 is in _CATALOG → "exact", even though it also
-    # matches the sonnet tier.
-    entry = _catalog_entry("anthropic", "claude-sonnet-4-5-20250929")
-    assert entry["pricing_source"] == "exact"
-    assert entry["input_per_m"] == pytest.approx(3.0)
-
-
-def test_pricing_source_unknown_for_unrecognized_model():
-    entry = _catalog_entry("openai", "completely-unknown-xyz")
+def test_a_model_without_gateway_rates_is_unknown_whatever_its_name():
+    # No tier guess from the id: an unpriced opus is unpriced, not $15/$75.
+    entry = _catalog_entry("anthropic", "claude-opus-9-hypothetical")
     assert entry["pricing_source"] == "unknown"
-    assert entry["input_per_m"] == 0.0
+    assert entry["input"] == 0.0
 
 
-def test_live_meta_populates_context_window(monkeypatch):
-    """record_live_meta should feed display_name / context / caps into
-    the catalog lookup for models not in the static _CATALOG."""
-    from core.llm.providers import registry as model_registry
-
+def test_live_meta_without_rates_keeps_caps_and_stays_unknown():
     class _M:
         id = "claude-haiku-3-5-20241022"
         display_name = "Claude Haiku 3.5 (live)"
         context_window = 200_000
-        capabilities = {
-            "supports_tools": True,
-            "supports_thinking": False,
-            "supports_vision": True,
-        }
+        capabilities = {"supports_tools": True, "supports_vision": True}
 
-    try:
-        model_registry.record_live_meta("anthropic", [_M()])
-        entry = _catalog_entry("anthropic", "claude-haiku-3-5-20241022")
-        assert entry["context_window"] == 200_000
-        assert entry["display_name"] == "Claude Haiku 3.5 (live)"
-        assert entry["supports_vision"] is True
-        # Pricing still comes from the tier heuristic for this id.
-        assert entry["pricing_source"] == "heuristic"
-    finally:
-        model_registry.clear_live_meta("anthropic")
+    model_registry.record_live_meta("anthropic", [_M()])
+    entry = _catalog_entry("anthropic", "claude-haiku-3-5-20241022")
+    assert entry["context_window"] == 200_000
+    assert entry["display_name"] == "Claude Haiku 3.5 (live)"
+    assert entry["supports_vision"] is True
+    assert entry["pricing_source"] == "unknown"
 
 
 def test_get_model_info_deprecated_flag():
+    _seed("anthropic", "claude-sonnet-4-5-20250929")
     info = ModelRegistry.get_model_info(
         provider_id="anthropic-default",
         provider_type="anthropic",
@@ -208,19 +195,6 @@ def test_env_empty_string_disables_extras(monkeypatch):
     assert get_extra_model_ids("anthropic") == ()
 
 
-def test_extras_catalog_entry_has_exact_pricing():
-    """3.x entries were added to _CATALOG so they render with correct
-    context/pricing instead of the tier heuristic fallback."""
-    entry = _catalog_entry("anthropic", "claude-3-5-haiku-20241022")
-    assert entry["pricing_source"] == "exact"
-    assert entry["context_window"] == 200_000
-    assert entry["input_per_m"] == pytest.approx(0.80)
-
-    entry = _catalog_entry("anthropic", "claude-3-haiku-20240307")
-    assert entry["input_per_m"] == pytest.approx(0.25)
-    assert entry["output_per_m"] == pytest.approx(1.25)
-
-
 def test_is_extra_model_flips_after_registration():
     from core.llm.providers import registry as model_registry
 
@@ -255,12 +229,10 @@ class _StubRegistry(ModelRegistry):
         self,
         *,
         assignments: Optional[Dict[str, ComponentAssignment]] = None,
-        default_anthropic: Optional[Dict[str, str]] = None,
         active_providers=None,
     ):
         super().__init__()
         self._assignments = assignments or {}
-        self._default_anthropic = default_anthropic
         self._active = active_providers or []
 
     def get_all_assignments(  # type: ignore[override]
@@ -268,14 +240,33 @@ class _StubRegistry(ModelRegistry):
     ) -> Dict[str, ComponentAssignment]:
         return self._assignments
 
-    def _default_anthropic_provider(self):  # type: ignore[override]
-        return self._default_anthropic
-
     def _active_providers(self):  # type: ignore[override]
         return self._active
 
 
-def test_resolve_uses_explicit_component_assignment():
+OLLAMA_DEFAULT = ProviderSpec(
+    provider_id="bifrost-ollama",
+    provider_type="ollama",
+    base_url=None,
+    api_key_ref=None,
+    default_model="llama3.1:8b",
+    config={},
+)
+
+
+@pytest.fixture
+def default_provider(monkeypatch):
+    """Set what the terminal rung (get_default_provider_spec) returns."""
+
+    def _set(spec: Optional[ProviderSpec]) -> None:
+        monkeypatch.setattr(model_registry, "get_default_provider_spec", lambda: spec)
+
+    _set(None)
+    return _set
+
+
+def test_resolve_uses_explicit_component_assignment(default_provider):
+    default_provider(OLLAMA_DEFAULT)
     reg = _StubRegistry(
         assignments={
             "triage": ComponentAssignment(
@@ -295,7 +286,9 @@ def test_resolve_uses_explicit_component_assignment():
     assert model == "llama3:latest"
 
 
-def test_resolve_falls_back_to_chat_default():
+def test_resolve_falls_back_to_chat_default(default_provider):
+    # An existing chat_default row (e.g. an upgraded install) outranks the rung.
+    default_provider(OLLAMA_DEFAULT)
     reg = _StubRegistry(
         assignments={
             "chat_default": ComponentAssignment(
@@ -311,37 +304,30 @@ def test_resolve_falls_back_to_chat_default():
     assert model == "claude-sonnet-4-5-20250929"
 
 
-def test_resolve_falls_back_to_default_anthropic_when_db_empty():
-    reg = _StubRegistry(
-        assignments={},
-        default_anthropic={
-            "provider_id": "anthropic-default",
-            "default_model": "claude-sonnet-4-5-20250929",
-        },
+def test_resolve_without_assignments_uses_default_provider_of_any_type(
+    default_provider,
+):
+    # The chain is component → chat_default → the default provider, of any
+    # type. It does not pin a model onto Anthropic (#1005, #1325).
+    default_provider(OLLAMA_DEFAULT)
+    reg = _StubRegistry(assignments={})
+    assert reg.resolve_model_for_component("investigation") == (
+        "bifrost-ollama",
+        "llama3.1:8b",
     )
-    provider, model = reg.resolve_model_for_component("investigation")
-    assert provider == "anthropic-default"
-    assert model == "claude-sonnet-4-5-20250929"
 
 
-def test_resolve_returns_none_when_no_db_and_no_anthropic():
-    reg = _StubRegistry(assignments={}, default_anthropic=None)
+def test_resolve_returns_none_when_no_provider_is_active(default_provider):
+    reg = _StubRegistry(assignments={})
     assert reg.resolve_model_for_component("chat_default") is None
 
 
-def test_agent_override_pins_model_but_uses_default_provider():
-    reg = _StubRegistry(
-        assignments={},
-        default_anthropic={
-            "provider_id": "anthropic-default",
-            "default_model": "claude-sonnet-4-5-20250929",
-        },
-    )
-    provider, model = reg.resolve_model_for_component(
-        "triage", agent_override="claude-opus-4-20250514"
-    )
-    assert provider == "anthropic-default"
-    assert model == "claude-opus-4-20250514"
+def test_resolve_model_for_component_has_no_agent_override():
+    # An agent model is applied by chat, on the provider this chain returns.
+    import inspect
+
+    params = inspect.signature(ModelRegistry.resolve_model_for_component).parameters
+    assert "agent_override" not in params
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +367,36 @@ async def test_list_available_models_uses_live_ids_when_present(monkeypatch):
     ids = [m.model_id for m in await reg.list_available_models()]
     assert ids == ["llama3.1:8b", "mistral:7b"]
     assert "qwen:0.5b" not in ids
+
+
+async def test_list_available_models_keeps_pinned_embedding_as_deprecated():
+    """fetch_provider_models() drops embedding ids from the cached list, so
+    a pinned one must resurface through the orphan-pin branch as
+    deprecated=True rather than vanish — the operator needs to see the bad
+    assignment (#1004). Seeds the real cache so the filter is exercised."""
+    from core.llm.providers import registry as model_registry
+
+    model_registry._MODEL_LIST_CACHE["ollama-local"] = [
+        "llama3.1:8b",
+        "nomic-embed-text:latest",
+    ]
+    reg = _StubRegistry(
+        assignments={
+            "triage": ComponentAssignment(
+                component="triage",
+                provider_id="ollama-local",
+                model_id="nomic-embed-text:latest",
+            ),
+        },
+        active_providers=[_Prov("ollama-local", "ollama", default_model="llama3.1:8b")],
+    )
+    try:
+        by_id = {m.model_id: m for m in await reg.list_available_models()}
+    finally:
+        model_registry._MODEL_LIST_CACHE.pop("ollama-local", None)
+    assert set(by_id) == {"llama3.1:8b", "nomic-embed-text:latest"}
+    assert by_id["llama3.1:8b"].deprecated is False
+    assert by_id["nomic-embed-text:latest"].deprecated is True
 
 
 async def test_fallback_models_reflects_ollama_not_anthropic():

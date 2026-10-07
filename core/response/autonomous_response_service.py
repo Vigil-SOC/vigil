@@ -1,202 +1,30 @@
 """Autonomous response service with approval workflow integration."""
 
-import asyncio
 import logging
-from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.agents.builtins import AgentId
-from core.response.approval_service import ActionType, ApprovalService
-from core.time import utcnow
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
+from core.response.config import ResponseConfig
 
 logger = logging.getLogger(__name__)
-
-
-# Escalation callback type
-EscalationCallback = Callable[[Dict[str, Any], str, str], None]
 
 
 class AutonomousResponseService:
     """Service for managing autonomous threat response with approval workflow."""
 
-    def __init__(self, approvals: Optional[ApprovalService] = None):
-        """Initialize autonomous response service."""
-        self.approval_service = approvals or ApprovalService()
-        self._escalation_callbacks: List[EscalationCallback] = []
-
-    def register_escalation_callback(self, callback: EscalationCallback):
-        """Register a callback for escalation events."""
-        self._escalation_callbacks.append(callback)
-        logger.info(f"Registered escalation callback: {callback.__name__}")
-
-    def unregister_escalation_callback(self, callback: EscalationCallback):
-        """Unregister an escalation callback."""
-        if callback in self._escalation_callbacks:
-            self._escalation_callbacks.remove(callback)
-            logger.info(f"Unregistered escalation callback: {callback.__name__}")
-
-    def _trigger_escalation(
-        self, data: Dict[str, Any], severity: str, action_type: str
-    ):
-        """Trigger all registered escalation callbacks."""
-        for callback in self._escalation_callbacks:
-            try:
-                callback(data, severity, action_type)
-            except Exception as e:
-                logger.error(f"Escalation callback error: {e}")
-
-    async def escalate_to_slack(
-        self, message: str, severity: str, channel: Optional[str] = None
-    ):
-        """Send escalation to Slack channel."""
-        try:
-            import httpx
-
-            from core.config import get_integration_config
-
-            config = get_integration_config("slack")
-            token = config.get("bot_token")
-
-            if not token:
-                logger.warning("Slack not configured for escalation")
-                return False
-
-            target_channel = channel or config.get("default_channel", "#soc-alerts")
-            color_map = {
-                "critical": "#ff0000",
-                "high": "#ff9900",
-                "medium": "#ffcc00",
-                "low": "#36a64f",
-            }
-
-            # Blocking POST inside an async method — offload it.
-            response = await asyncio.to_thread(
-                httpx.post,
-                "https://slack.com/api/chat.postMessage",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "channel": target_channel,
-                    "attachments": [
-                        {
-                            "color": color_map.get(severity.lower(), "#808080"),
-                            "title": f"🚨 SOC Alert - {severity.upper()}",
-                            "text": message,
-                            "footer": "AI-SOC Autonomous Response",
-                            "ts": utcnow().timestamp(),
-                        }
-                    ],
-                },
-                timeout=30,
-                # requests followed redirects by default; httpx does not.
-                follow_redirects=True,
-            )
-
-            if response.status_code == 200 and response.json().get("ok"):
-                logger.info(f"Slack escalation sent to {target_channel}")
-                return True
-            else:
-                logger.warning(f"Slack escalation failed: {response.text}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Slack escalation error: {e}")
-            return False
-
-    async def escalate_to_pagerduty(self, title: str, details: str, severity: str):
-        """Send escalation to PagerDuty."""
-        try:
-            import httpx
-
-            from core.config import get_integration_config
-
-            config = get_integration_config("pagerduty")
-            routing_key = config.get("routing_key") or config.get("integration_key")
-
-            if not routing_key:
-                logger.warning("PagerDuty not configured for escalation")
-                return False
-
-            severity_map = {
-                "critical": "critical",
-                "high": "error",
-                "medium": "warning",
-                "low": "info",
-            }
-
-            # Blocking POST inside an async method — offload it.
-            response = await asyncio.to_thread(
-                httpx.post,
-                "https://events.pagerduty.com/v2/enqueue",
-                json={
-                    "routing_key": routing_key,
-                    "event_action": "trigger",
-                    "payload": {
-                        "summary": title,
-                        "source": "ai-soc-autonomous-response",
-                        "severity": severity_map.get(severity.lower(), "warning"),
-                        "custom_details": {"details": details},
-                    },
-                },
-                timeout=30,
-                # requests followed redirects by default; httpx does not.
-                follow_redirects=True,
-            )
-
-            data = response.json()
-            if data.get("status") == "success":
-                logger.info(f"PagerDuty alert triggered: {data.get('dedup_key')}")
-                return True
-            else:
-                logger.warning(f"PagerDuty escalation failed: {data}")
-                return False
-
-        except Exception as e:
-            logger.error(f"PagerDuty escalation error: {e}")
-            return False
-
-    async def escalate_action(
+    def __init__(
         self,
-        action_data: Dict[str, Any],
-        severity: str,
-        channels: Optional[List[str]] = None,
+        approvals: Optional[ApprovalService] = None,
+        config: Optional[ResponseConfig] = None,
     ):
-        """Escalate an action through configured channels."""
-        channels = channels or ["slack", "pagerduty"]
+        """Initialize autonomous response service.
 
-        title = action_data.get("title", "Autonomous Response Action")
-        description = action_data.get("description", "")
-        target = action_data.get("target", "unknown")
-        confidence = action_data.get("confidence", 0)
-
-        message = f"""
-**Action Required:** {title}
-**Target:** {target}
-**Severity:** {severity.upper()}
-**Confidence:** {confidence:.1%}
-
-{description}
-
-Please review and approve/reject in the SOC dashboard.
-""".strip()
-
-        results = {}
-
-        if "slack" in channels:
-            results["slack"] = await self.escalate_to_slack(message, severity)
-
-        if "pagerduty" in channels and severity in ["critical", "high"]:
-            results["pagerduty"] = await self.escalate_to_pagerduty(
-                title, message, severity
-            )
-
-        # Trigger callbacks
-        self._trigger_escalation(action_data, severity, "escalate_action")
-
-        logger.info(f"Escalation results for {target}: {results}")
-        return results
+        ``config`` defaults to the approval service's band so the two never
+        compare against different lines; the no-arg form reads Settings.
+        """
+        self.approval_service = approvals or ApprovalService(config=config)
+        self.config = config or self.approval_service.config
 
     def correlate_alerts(
         self,
@@ -302,11 +130,11 @@ Please review and approve/reject in the SOC dashboard.
 
     def _get_recommendation(self, confidence: float, indicators: List[str]) -> str:
         """Get recommendation based on confidence and indicators."""
-        if confidence >= 0.90:
+        if confidence >= self.config.confidence_threshold:
             return "AUTO-ISOLATE: Confidence threshold met for automatic isolation"
-        elif confidence >= 0.85:
+        elif confidence >= self.config.review_threshold:
             return "ISOLATE WITH APPROVAL: High confidence, recommend isolation with quick approval"
-        elif confidence >= 0.70:
+        elif confidence >= self.config.monitor_threshold:
             return "MANUAL REVIEW: Moderate confidence, requires analyst review"
         else:
             return "MONITOR: Low confidence, continue monitoring"
@@ -321,7 +149,8 @@ Please review and approve/reject in the SOC dashboard.
         correlation_data: Dict,
     ) -> Optional[Dict]:
         """
-        Create an isolation action (auto-execute if confidence >= 0.90).
+        Create an isolation action (auto-executes when the approval gate
+        approves it, i.e. at or above ``config.confidence_threshold``).
 
         Args:
             ip_address: Target IP address
@@ -334,9 +163,15 @@ Please review and approve/reject in the SOC dashboard.
         Returns:
             Action result
         """
+        # Key on the IP when known; an IP-less finding (ip_address == "unknown")
+        # keys on hostname instead, so distinct IP-less hosts get distinct rows
+        # rather than colliding on the literal string "unknown".
+        target_key = (
+            ip_address if ip_address and ip_address != "unknown" else f"host:{hostname}"
+        )
+
         try:
-            # Create pending action
-            action = self.approval_service.create_action(
+            action, inserted = self.approval_service._put_action(
                 action_type=ActionType.ISOLATE_HOST,
                 title=f"Isolate Host: {hostname or ip_address}",
                 description=f"Network isolation of compromised host based on correlated detections.\n\n"
@@ -348,26 +183,59 @@ Please review and approve/reject in the SOC dashboard.
                 evidence=evidence,
                 created_by=AgentId.AUTO_RESPONDER.value,
                 parameters={"hostname": hostname, "correlation": correlation_data},
+                idempotency_key=f"{ActionType.ISOLATE_HOST.value}:{target_key}",
             )
 
-            # Check if auto-approved (confidence >= 0.90)
-            if action.status == "approved":
+            if not inserted:
+                if action.status == ActionStatus.EXECUTED.value:
+                    return {
+                        "status": "executed",
+                        "reused": True,
+                        "action_id": action.action_id,
+                        "message": f"Host {hostname or ip_address} already isolated",
+                        "confidence": action.confidence,
+                        "result": action.execution_result,
+                    }
+                return {
+                    "status": action.status,
+                    "reused": True,
+                    "action_id": action.action_id,
+                    "message": f"Isolation already recorded for {hostname or ip_address}",
+                    "confidence": action.confidence,
+                    "requires_approval": action.requires_approval,
+                    "result": action.execution_result,
+                }
+
+            if action.status == ActionStatus.APPROVED.value:
                 logger.info(
                     f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})"
                 )
 
-                # Execute isolation (would call actual CrowdStrike API in production)
                 execution_result = self._execute_isolation(
                     ip_address, hostname, reason, confidence
                 )
 
-                # Mark as executed
-                self.approval_service.mark_executed(action.action_id, execution_result)
+                if execution_result.get("success"):
+                    self.approval_service.mark_executed(
+                        action.action_id, execution_result
+                    )
+                    return {
+                        "status": "executed",
+                        "action_id": action.action_id,
+                        "message": f"Host {hostname or ip_address} isolated automatically",
+                        "confidence": confidence,
+                        "result": execution_result,
+                    }
 
+                self.approval_service.mark_failed(
+                    action.action_id,
+                    execution_result.get("error", "Unknown error"),
+                )
                 return {
-                    "status": "executed",
+                    "status": ActionStatus.FAILED.value,
                     "action_id": action.action_id,
-                    "message": f"Host {hostname or ip_address} isolated automatically",
+                    "message": execution_result.get("message")
+                    or f"Isolation of {hostname or ip_address} was not executed",
                     "confidence": confidence,
                     "result": execution_result,
                 }
@@ -375,90 +243,35 @@ Please review and approve/reject in the SOC dashboard.
                 logger.info(
                     f"Action {action.action_id} pending approval (confidence: {confidence:.2%})"
                 )
-
-                # Trigger escalation for pending actions
-                severity = self._determine_severity_from_confidence(
-                    confidence, correlation_data
-                )
-                escalation_data = {
-                    "action_id": action.action_id,
-                    "title": action.title,
-                    "description": action.description,
-                    "target": ip_address,
-                    "hostname": hostname,
-                    "confidence": confidence,
-                    "indicators": correlation_data.get("indicators", []),
-                    "evidence": evidence,
-                }
-                self._trigger_escalation(escalation_data, severity, "pending_approval")
-
                 return {
                     "status": "pending_approval",
                     "action_id": action.action_id,
                     "message": "Isolation action created, awaiting analyst approval",
                     "confidence": confidence,
                     "requires_approval": True,
-                    "escalation_triggered": True,
                 }
 
         except Exception as e:
             logger.error(f"Error creating isolation action: {e}")
             return {"error": str(e)}
 
-    def _determine_severity_from_confidence(
-        self, confidence: float, correlation_data: Dict
-    ) -> str:
-        """Determine severity level from confidence and indicators."""
-        indicators = correlation_data.get("indicators", [])
-
-        # Critical indicators
-        if any(ind in indicators for ind in ["ransomware", "malware"]):
-            return "critical"
-
-        # High confidence + C2 or lateral movement
-        if confidence >= 0.8 and any(
-            ind in indicators for ind in ["c2_communication", "lateral_movement"]
-        ):
-            return "high"
-
-        # Based on confidence
-        if confidence >= 0.85:
-            return "high"
-        elif confidence >= 0.7:
-            return "medium"
-        else:
-            return "low"
-
     def _execute_isolation(
         self, ip_address: str, hostname: Optional[str], reason: str, confidence: float
     ) -> Dict:
         """
-        Execute host isolation via CrowdStrike.
+        Report that host isolation has no executor.
 
-        In production, this would call the actual CrowdStrike API.
-        For now, it returns a mock result.
+        No EDR containment call is wired. A success result would record a
+        containment that never happened.
         """
         logger.info(
-            f"Executing isolation: {hostname or ip_address} (confidence: {confidence:.2%})"
+            f"Isolation not executed: {hostname or ip_address} "
+            f"(confidence: {confidence:.2%}); no EDR executor"
         )
-
-        # Mock execution result
         return {
-            "success": True,
-            "action": "host_isolated",
-            "ip_address": ip_address,
-            "hostname": hostname,
-            "reason": reason,
-            "confidence": confidence,
-            "timestamp": datetime.now().isoformat(),
-            "isolation_type": "network",
-            "message": "Host has been network isolated successfully (MOCK)",
-            "next_steps": [
-                "Verify threat containment",
-                "Conduct forensic analysis",
-                "Remediate threat",
-                "Consider unisolation after remediation",
-            ],
+            "success": False,
+            "error": "unsupported_action_type",
+            "message": "No EDR executor is configured for host isolation",
         }
 
     def execute_approved_actions(self) -> List[Dict]:
@@ -469,8 +282,6 @@ Please review and approve/reject in the SOC dashboard.
             List of execution results
         """
         try:
-            from core.response.approval_service import ActionStatus
-
             # Get approved but not executed actions
             approved_actions = self.approval_service.list_actions(
                 status=ActionStatus.APPROVED
@@ -480,6 +291,14 @@ Please review and approve/reject in the SOC dashboard.
             for action in approved_actions:
                 # Skip if already executed
                 if action.executed_at:
+                    continue
+                # Released by a confidence figure and no person: whoever
+                # supplied that figure also chose the outcome.
+                if not action.requires_approval and not action.approved_by:
+                    logger.warning(
+                        "Action %s was never decided by a person; not executing",
+                        action.action_id,
+                    )
                     continue
 
                 params = action.parameters or {}
@@ -529,83 +348,6 @@ Please review and approve/reject in the SOC dashboard.
         except Exception as e:
             logger.error(f"Error executing approved actions: {e}")
             return []
-
-    def investigate_and_respond(
-        self, finding_id: str, auto_execute: bool = True
-    ) -> Dict:
-        """
-        Full investigation and response workflow for a finding.
-
-        Args:
-            finding_id: Finding ID to investigate
-            auto_execute: Whether to auto-execute high-confidence actions
-
-        Returns:
-            Investigation and response result
-        """
-        try:
-            # Load finding
-            from core.storage.database_data_service import DatabaseDataService
-
-            data_service = DatabaseDataService()
-            finding = data_service.get_finding(finding_id)
-
-            if not finding:
-                return {"error": f"Finding {finding_id} not found"}
-
-            # Extract entity information
-            entity_context = finding.get("entity_context", {})
-            src_ips = entity_context.get("src_ips", [])
-            hostnames = entity_context.get("hostnames", [])
-
-            if not src_ips:
-                return {"error": "No source IPs found in finding"}
-
-            target_ip = src_ips[0]
-            target_hostname = hostnames[0] if hostnames else None
-
-            # Correlate with multiple sources
-            correlation = self.correlate_alerts(
-                tempo_flow_alert=finding,
-                crowdstrike_alert=None,  # Would fetch from CrowdStrike in production
-                splunk_results=None,  # Would fetch from Splunk in production
-            )
-
-            # Determine action
-            confidence = correlation["confidence"]
-
-            if confidence >= 0.85 and auto_execute:
-                # Create isolation action
-                action_result = self.create_isolation_action(
-                    ip_address=target_ip,
-                    hostname=target_hostname,
-                    confidence=confidence,
-                    reason=f"Automated response to finding {finding_id}",
-                    evidence=[finding_id],
-                    correlation_data=correlation,
-                )
-
-                return {
-                    "finding_id": finding_id,
-                    "target": target_ip,
-                    "correlation": correlation,
-                    "action": action_result,
-                }
-            else:
-                # Just report findings
-                return {
-                    "finding_id": finding_id,
-                    "target": target_ip,
-                    "correlation": correlation,
-                    "action": {
-                        "status": "no_action",
-                        "reason": f"Confidence below threshold ({confidence:.2%} < 0.85)",
-                    },
-                }
-
-        except Exception as e:
-            logger.error(f"Error in investigate_and_respond: {e}")
-            return {"error": str(e)}
 
     # ------------------------------------------------------------------
     # Cloudflare action factories + executor
@@ -678,6 +420,3 @@ Please review and approve/reject in the SOC dashboard.
         except Exception as e:  # noqa: BLE001
             logger.exception("Cloudflare action %s failed", action_type)
             return {"success": False, "error": str(e)}
-
-
-# Singleton instance

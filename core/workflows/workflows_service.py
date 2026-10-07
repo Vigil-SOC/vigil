@@ -1,15 +1,16 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import yaml
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.queue import new_run_id
+from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
+from core.workflows.enablement import disabled_message, is_enabled
+from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflow_run_service import WorkflowRunService
 
 logger = logging.getLogger(__name__)
@@ -18,37 +19,174 @@ logger = logging.getLogger(__name__)
 # agent layer's vocabulary, so they are stated here once rather than inline.
 COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
+ROOT_CAUSE_RUN_KIND = "root_cause"
+ADJUDICATE_RUN_KIND = "adjudicate"
+# hunt and adjudicate drive the hypothesis loop. root_cause does not: it traces
+# backward on its own workflow, so a gate on "is this the hunt loop?" must not
+# catch it. Everything that asks is_hunt_like reads this set.
+HUNT_LIKE_RUN_KINDS = frozenset({HUNT_RUN_KIND, ADJUDICATE_RUN_KIND})
 WORKFLOW_SCHEME = "workflow:"
 
 
-def _nothing_to_run(workflow: "WorkflowDefinition") -> str:
-    if workflow.run_kind == HUNT_RUN_KIND:
-        return "" if workflow.metadata.get("hypotheses") else "hypotheses"
+def is_hunt_like(run_kind: Optional[str]) -> bool:
+    """True when a run_kind drives the hunt hypothesis loop (hunt, adjudicate)."""
+    return run_kind in HUNT_LIKE_RUN_KINDS
+
+
+def _objectives(metadata: Dict[str, Any]) -> List[str]:
+    raw = metadata.get("objectives") or []
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+# None rather than a number, so a caller that says nothing leaves the definition's
+# count rather than pinning every run to whatever this file thinks.
+def _asked_iterations(parameters: Optional[Dict[str, Any]]) -> Optional[int]:
+    stated = (parameters or {}).get("iterations")
+    try:
+        return min(int(stated), MAX_ITERATIONS) if stated is not None else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+# The harness already takes an overrides block naming budgets or runtime, so a cost
+# ceiling needs no new contract. None leaves the resolver's, which is the shipped one.
+def _asked_overrides(parameters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    stated = (parameters or {}).get("max_cost_usd")
+    if stated is None:
+        return None
+    try:
+        ceiling = float(stated)
+    except (TypeError, ValueError):
+        return None
+    if not 0 < ceiling < float("inf"):
+        return None
+    return {"budgets": {"max_cost_usd": min(ceiling, MAX_COST_USD)}}
+
+
+# A key carrying None is not an absent key: JSON null reaches TypeScript as a value,
+# which a reader checking `=== undefined` takes as one.
+def _omit_unset(request: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: value for key, value in request.items() if value is not None}
+
+
+# One statement per line, so an operator can put up more than one belief without a
+# second field. Blank lines are spacing rather than an empty hypothesis.
+def _asked_hypotheses(parameters: Optional[Dict[str, Any]]) -> List[str]:
+    stated = (parameters or {}).get("hypothesis") or ""
+    return [line.strip() for line in str(stated).splitlines() if line.strip()]
+
+
+# None rather than an empty map, because this one goes through `_omit_unset`:
+# a key carrying nothing would reach the harness as a statement that the claims
+# are about nothing.
+def _asked_hypothesis_subjects(
+    parameters: Optional[Dict[str, Any]], asked: List[str]
+) -> Optional[Dict[str, List[str]]]:
+    return kept_subjects((parameters or {}).get("hypothesis_subjects"), asked) or None
+
+
+# A hunt argues the null against a claim, and neither "idk" nor "credential access"
+# can be argued against, though both clear a not-blank check.
+#
+# A heuristic: it recognises a sentence, not a true one. Four words is the shortest
+# real claim in a definition, and a verb is what separates a claim from a topic.
+MIN_HYPOTHESIS_WORDS = 4
+# Irregular past tenses are listed because "ed " catches only the regular ones.
+# Widening admits more claims; a subject label still carries no verb to match.
+_TOPIC_VERBS = (
+    " is ",
+    " are ",
+    " was ",
+    " were ",
+    " has ",
+    " have ",
+    " had ",
+    " been ",
+    " will ",
+    " can ",
+    " could ",
+    " does ",
+    " do ",
+    " did ",
+    " ran ",
+    " runs ",
+    " left ",
+    " took ",
+    " sent ",
+    " got ",
+    " made ",
+    " came ",
+    " went ",
+    " saw ",
+    " broke ",
+    " held ",
+    " kept ",
+    " lost ",
+    " found ",
+    " gave ",
+    " began ",
+    " wrote ",
+    " read ",
+    " built ",
+    " brought ",
+    " spoke ",
+    " stole ",
+    " hid ",
+    "s to ",
+    "ing ",
+    "ed ",
+)
+
+
+def _not_a_claim(statement: str) -> bool:
+    words = statement.split()
+    if len(words) < MIN_HYPOTHESIS_WORDS:
+        return True
+    padded = f" {statement.lower()} "
+    return not any(verb in padded for verb in _TOPIC_VERBS)
+
+
+# A hunt tests what it was given, from the definition or from this caller. Neither
+# must carry one alone; between them one is, or the run tests nothing.
+def _has_trace_target(parameters: Optional[Dict[str, Any]]) -> bool:
+    params = parameters or {}
+    return any(
+        str(params.get(key) or "").strip()
+        for key in ("context", "finding_id", "case_id")
+    )
+
+
+def _nothing_to_run(
+    workflow: "WorkflowDefinition", parameters: Optional[Dict[str, Any]] = None
+) -> str:
+    # A trace has no phases and no hypotheses. The target check is separate.
+    if workflow.run_kind == ROOT_CAUSE_RUN_KIND:
+        return ""
+    if is_hunt_like(workflow.run_kind):
+        if workflow.metadata.get("hypotheses"):
+            return ""
+        asked = _asked_hypotheses(parameters)
+        if not asked:
+            return "hypotheses"
+        return "claims" if all(_not_a_claim(one) for one in asked) else ""
+    # The lead's job is the objectives and the body, so an empty phase list is
+    # not an empty run. Compose still walks phases, and one with none has nothing.
+    if workflow.run_kind == "investigate":
+        return ""
     return "" if workflow.phases else "phases"
 
 
-# Real YAML rather than the regex reader this replaced. That reader could not carry
-# a phase list, and PyYAML has been a declared dependency the whole time it avoided it.
-def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
-    if not match:
-        return {}
-
+# A workflow with no or unreadable front matter is one with empty metadata; the
+# body is still loaded so the file shows up and the operator can see what is wrong.
+def _read_workflow_file(content: str) -> Tuple[Dict[str, Any], str]:
     try:
-        parsed = yaml.safe_load(match.group(1))
-    except yaml.YAMLError as exc:
+        metadata, body_start = split_frontmatter(content)
+    except FrontmatterError as exc:
         logger.warning("unreadable workflow front matter: %s", exc)
-        return {}
-
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _get_frontmatter_end(content: str) -> int:
-    """Get the character index where frontmatter ends and body begins."""
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
-    if match:
-        return match.end()
-    return 0
+        return {}, content[exc.body_offset :].strip()
+    return metadata or {}, content[body_start:].strip()
 
 
 class WorkflowDefinition:
@@ -61,12 +199,26 @@ class WorkflowDefinition:
         metadata: Dict[str, Any],
         body: str,
         source: str = "file",
+        updated_at: Optional[str] = None,
+        version: Optional[int] = None,
     ):
         self.id = workflow_id
         self.file_path = file_path
         self.metadata = metadata
         self.body = body
         self.source = source  # "file" or "custom"
+        # Custom rows only. File workflows leave this unset so to_dict omits it.
+        self.updated_at = updated_at
+        # Custom rows carry their row's version. A file workflow declares it in
+        # front matter; missing or not an int reads as 1.
+        if version is None:
+            declared = metadata.get("version")
+            version = (
+                declared
+                if isinstance(declared, int) and not isinstance(declared, bool)
+                else 1
+            )
+        self.version = version
 
     @property
     def name(self) -> str:
@@ -131,13 +283,37 @@ class WorkflowDefinition:
             "use_case": self.use_case,
             "trigger_examples": self.trigger_examples,
             "source": self.source,
+            # What a run records as workflow_version, so a run says which edit ran.
+            "version": self.version,
+            # The console reads this to know a run takes a turn count rather than
+            # walking phases, instead of keying off the workflow id.
+            "run_kind": self.run_kind,
+            # Derived, so the console asks whether a definition drives the
+            # hypothesis loop rather than listing the kinds that do. A new
+            # hunt-like kind joins HUNT_LIKE_RUN_KINDS and every client follows.
+            "hunt_like": is_hunt_like(self.run_kind),
+            # The reader shows these. None is an empty list and an empty map,
+            # the same shapes the resolver already reads.
+            "objectives": _objectives(self.metadata),
+            "checkpoints": self._checkpoints_on_wire(),
         }
+        if self.source == "custom":
+            result["updated_at"] = self.updated_at
         if include_body:
             result["body"] = self.body
         # Custom workflows carry structured phases for the builder UI
         if "phases" in self.metadata:
             result["phases"] = self.metadata["phases"]
         return result
+
+    # Class to "ask" or "auto", validated the same way a run resolves them.
+    # An empty declaration is {}, not an omitted key.
+    def _checkpoints_on_wire(self) -> Dict[str, Any]:
+        from core.workflows.playbook_resolver import _checkpoints
+
+        if not self.metadata.get("checkpoints"):
+            return {}
+        return _checkpoints(self)
 
 
 def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
@@ -159,12 +335,19 @@ def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
     }
 
     body = _render_custom_workflow_body(wf, phases)
+    updated_at = wf.get("updated_at")
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+    elif updated_at is not None:
+        updated_at = str(updated_at)
     return WorkflowDefinition(
         workflow_id=wf["workflow_id"],
         file_path=None,
         metadata=metadata,
         body=body,
         source="custom",
+        updated_at=updated_at,
+        version=wf.get("version") or 1,
     )
 
 
@@ -255,9 +438,7 @@ class WorkflowsService:
 
             try:
                 content = workflow_file.read_text(encoding="utf-8")
-                metadata = _parse_yaml_frontmatter(content)
-                body_start = _get_frontmatter_end(content)
-                body = content[body_start:].strip()
+                metadata, body = _read_workflow_file(content)
 
                 workflow_id = workflow_dir.name
                 workflow = WorkflowDefinition(
@@ -318,6 +499,18 @@ class WorkflowsService:
             return custom
         return self._cache.get(workflow_id)
 
+    def version_of(self, workflow_id: str) -> Optional[int]:
+        """Version of a defined workflow, None when the id names none.
+
+        Tolerant: run recording is best-effort, so a failed lookup is None.
+        """
+        try:
+            workflow = self.get_workflow(workflow_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"Version lookup failed for {workflow_id}: {exc}")
+            return None
+        return workflow.version if workflow else None
+
     def get_workflow_dict(
         self, workflow_id: str, include_body: bool = True
     ) -> Optional[Dict[str, Any]]:
@@ -334,6 +527,11 @@ class WorkflowsService:
         workflow_id: str,
         parameters: Dict[str, Any],
         triggered_by: Optional[str] = None,
+        # Who started it, when that is not the same fact as what started it.
+        # triggered_by doubled as both until a caller had a reason to key on it:
+        # a root-cause run's is the handoff it traces back from, which is a join
+        # key and reads as nonsense in the "started by" an operator is shown.
+        actor: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Start a workflow as a compose run on the agent layer.
 
@@ -346,14 +544,49 @@ class WorkflowsService:
         workflow = self.get_workflow(workflow_id)
         if not workflow:
             return {"success": False, "error": f"Workflow not found: {workflow_id}"}
+        # The one check every starter reaches, the router and the handoff alike.
+        if not is_enabled(workflow_id):
+            return {
+                "success": False,
+                "error": disabled_message(workflow_id),
+                "disabled": True,
+            }
         # Caught here as well as in the resolver, so a definition with nothing to
         # run is refused before it leaves a run record behind. The two loops read
         # different sections, so they are empty in different ways.
-        missing = _nothing_to_run(workflow)
+        missing = _nothing_to_run(workflow, parameters)
+        if missing == "claims":
+            return {
+                "success": False,
+                "error": (
+                    "A hypothesis has to be a claim the hunt can argue against. "
+                    '"credential access" names a subject; "credentials taken '
+                    'from HOST-42 were reused elsewhere" can be shown false.'
+                ),
+            }
+        if missing == "hypotheses":
+            return {
+                "success": False,
+                "error": (
+                    "A hunt needs a hypothesis to test. State one per line in "
+                    "Hypothesis -- what a hunt is out to test is a claim about "
+                    f"your estate, and {workflow_id} ships none."
+                ),
+            }
         if missing:
             return {
                 "success": False,
                 "error": f"Workflow declares no {missing}: {workflow_id}",
+            }
+        if workflow.run_kind == ROOT_CAUSE_RUN_KIND and not _has_trace_target(
+            parameters
+        ):
+            return {
+                "success": False,
+                "error": (
+                    "A root-cause trace needs a finding to trace. "
+                    "Pass context, finding_id, or case_id."
+                ),
             }
 
         workflow_dict = workflow.to_dict(include_body=False)
@@ -365,27 +598,43 @@ class WorkflowsService:
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
             workflow_version=workflow_dict.get("version"),
-            trigger_context=dict(parameters or {}),
+            # run_kind rides along so finalize_run can label the outcome without a
+            # column: the same value the start job below carries.
+            trigger_context={**dict(parameters or {}), "run_kind": workflow.run_kind},
             triggered_by=triggered_by,
             run_id=new_run_id(),
         )
         if not run_id:
             return {"success": False, "error": "Could not persist run (DB unavailable)"}
 
+        asked = _asked_hypotheses(parameters)
         job = build_start_job(
             run_id=run_id,
-            # The definition's, not a constant: threat-hunt drives the hypothesis
-            # loop and the other four walk their phases, from one entry point.
+            # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
-            request={
-                # A reference, not a path: the agent layer asks for the resolved
-                # layers at run start, so an edited definition reaches the next run.
-                "arch": "",
-                "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
-                "config": "",
-                "prompt": self._build_target_context(parameters),
-            },
-            enqueued_by=triggered_by or "api",
+            request=_omit_unset(
+                {
+                    # A reference, not a path: the layers resolve at run start, so an
+                    # edited definition reaches the next run.
+                    "arch": "",
+                    "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
+                    "config": "",
+                    "prompt": self._build_target_context(parameters),
+                    # On the job, not in the playbook: the reference names a definition
+                    # every run of it shares.
+                    "hypotheses": asked,
+                    "hypothesis_subjects": _asked_hypothesis_subjects(
+                        parameters, asked
+                    ),
+                    "iterations": _asked_iterations(parameters),
+                    "overrides": _asked_overrides(parameters),
+                    # True only: _omit_unset keeps None out, so an unset flag leaves the
+                    # config's policy rather than pinning every run to this side's.
+                    "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
+                    or None,
+                }
+            ),
+            enqueued_by=actor or triggered_by or "api",
         )
         try:
             job_id = await enqueue_run(job)

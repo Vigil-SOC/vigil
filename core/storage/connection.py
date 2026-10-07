@@ -5,7 +5,9 @@ Handles database connections, session management, and connection pooling.
 """
 
 import asyncio
+import json
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -14,8 +16,9 @@ from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from core.storage.db_proxy import ProxyConfig
@@ -27,7 +30,6 @@ from core.secrets import get_secret
 # Unused by name, which is the point -- the import is the registration.
 from core.storage.models import (  # noqa: F401
     AIDecisionLog,
-    AttackLayer,
     Base,
     Case,
     CaseAttachment,
@@ -50,6 +52,8 @@ from core.storage.models import (  # noqa: F401
     CustomAgent,
     CustomWorkflow,
     Finding,
+    FindingMitrePrediction,
+    IntakeTrigger,
     IntegrationConfig,
     Investigation,
     InvestigationLog,
@@ -58,12 +62,13 @@ from core.storage.models import (  # noqa: F401
     Role,
     SharedIOC,
     SketchMapping,
-    Skill,
     SLAPolicy,
     SystemConfig,
     User,
     UserPreference,
 )
+from core.storage.reference_seed import seed_empty_tables
+from core.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -192,11 +197,10 @@ def _load_connection_string_secret() -> Optional[str]:
     """Read POSTGRESQL_CONNECTION_STRING from the **encrypted store only**.
 
     Deliberately not ``get_secret()``: that falls back to the environment, and
-    ``services/api/main.py`` stuffs a hardcoded default connection string into
-    ``os.environ`` for the MCP servers whenever the secret is unset. Reading
-    through the fallback chain would let that default outrank an operator's
-    POSTGRES_* variables — silently pinning them to localhost. The encrypted
-    store is where Settings -> PostgreSQL writes, so it alone expresses intent.
+    ``services/api/main.py`` mirrors the stored DSN into ``os.environ`` for
+    child processes. Reading through the fallback chain would let that copy
+    outrank an operator's POSTGRES_* variables. The encrypted store is where
+    Settings -> PostgreSQL writes, so it alone expresses intent.
 
     Local import for the same reason as :func:`_load_platform_db_proxy` —
     ``database/`` must not hard-depend on the secrets manager at import time.
@@ -213,13 +217,107 @@ def _load_connection_string_secret() -> Optional[str]:
             else None
         )
     except Exception as e:  # noqa: BLE001
-        logger.debug("Could not read POSTGRESQL_CONNECTION_STRING: %s", e)
+        logger.warning("Could not read POSTGRESQL_CONNECTION_STRING: %s", e)
         return None
+
+
+def _session_timeout_options(config: "DatabaseConfig") -> str:
+    """libpq ``options`` carrying the server-side session timeouts (#1443).
+
+    Only positive values are sent; 0 leaves the server default in place.
+    """
+    timeouts = (
+        ("statement_timeout", getattr(config, "statement_timeout_ms", 0)),
+        (
+            "idle_in_transaction_session_timeout",
+            getattr(config, "idle_in_transaction_timeout_ms", 0),
+        ),
+    )
+    return " ".join(f"-c {name}={int(ms)}" for name, ms in timeouts if int(ms) > 0)
+
+
+def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
+    """DBAPI connect args for the platform engine.
+
+    ``connect_timeout`` and ``options`` are libpq parameters, so they are only
+    sent to a PostgreSQL URL; any other dialect gets none.
+    """
+    if make_url(url).get_backend_name() != "postgresql":
+        return {}
+    # Bounded so validating an unreachable host fails in seconds rather than
+    # hanging a worker thread for the OS TCP timeout (~75s).
+    args: Dict[str, Any] = {"connect_timeout": 5}
+    options = _session_timeout_options(config)
+    if options:
+        # An explicit ``options`` replaces libpq's PGOPTIONS fallback, which is
+        # how an eval process selects a memory snapshot (core/memory/snapshot.py).
+        # Carry it through, after ours: the last -c for a setting wins, so an
+        # operator's PGOPTIONS still overrides these defaults.
+        env_options = os.environ.get("PGOPTIONS", "")  # noqa: ENV001 - libpq var
+        env_options = env_options.strip()
+        args["options"] = f"{options} {env_options}" if env_options else options
+    return args
+
+
+# Passwords this repo ships in Compose, Helm and env.example. Anyone can read them.
+_SHIPPED_DEFAULT_PASSWORDS = frozenset(
+    {"deeptempo_secure_password_change_me", "change-me-before-production"}
+)
+_DEV_MODE_PASSWORD = "deeptempo_secure_password_change_me"
+_shipped_default_logged = False
+
+
+class MissingPostgresPasswordError(RuntimeError):
+    """No Postgres password resolved and DEV_MODE is off. Fatal at startup."""
+
+
+def _flag_shipped_default(password: str) -> None:
+    """ERROR once per process when the password in use is a published default.
+
+    Logged, not refused: existing Compose installs initialised their volume
+    with it, and refusing would lock them out of their own database.
+    """
+    global _shipped_default_logged
+    if (
+        password in _SHIPPED_DEFAULT_PASSWORDS
+        and not _shipped_default_logged
+        and not get_settings().dev_mode
+    ):
+        _shipped_default_logged = True
+        logger.error(
+            "The Postgres password in use is a published default shipped with "
+            "Vigil. Set POSTGRES_PASSWORD to a unique value (and change it in "
+            "the database) before exposing this deployment."
+        )
+
+
+def resolve_postgres_password() -> str:
+    """The POSTGRES_PASSWORD to connect with; fails closed outside DEV_MODE."""
+    value = get_secret("POSTGRES_PASSWORD")
+    if value:
+        _flag_shipped_default(value)
+        return value
+    if get_settings().dev_mode:
+        logger.warning(
+            "POSTGRES_PASSWORD not set; using the published DEV_MODE default. "
+            "Do not use this outside development."
+        )
+        return _DEV_MODE_PASSWORD
+    raise MissingPostgresPasswordError(
+        "POSTGRES_PASSWORD is required when DEV_MODE=false. Set it in the "
+        "environment or .env (or configure POSTGRESQL_CONNECTION_STRING in "
+        "Settings) before starting."
+    )
 
 
 class DatabaseConfig:
     def __init__(self, *, connection_string: Optional[str] = None):
-        """Initialize from the connection-string secret, else the environment."""
+        """Initialize from the encrypted-store DSN, else POSTGRES_*.
+
+        DATABASE_URL is not consulted — that is the TypeScript agent's
+        knob, and ``scripts/migrate_schema.py``. Inserting it as a third
+        source would break the ranking this class is built on.
+        """
         dsn = (
             connection_string
             if connection_string is not None
@@ -245,6 +343,8 @@ class DatabaseConfig:
         self.max_overflow = settings.db_max_overflow
         self.pool_timeout = settings.db_pool_timeout
         self.pool_recycle = settings.db_pool_recycle
+        self.statement_timeout_ms = settings.db_statement_timeout_ms
+        self.idle_in_transaction_timeout_ms = settings.db_idle_in_transaction_timeout_ms
         try:
             self.proxy = _load_platform_db_proxy()
         except Exception as e:  # noqa: BLE001
@@ -260,9 +360,7 @@ class DatabaseConfig:
         self.port = settings.postgres_port
         self.database = settings.postgres_db
         self.user = settings.postgres_user
-        self.password = (
-            get_secret("POSTGRES_PASSWORD") or "deeptempo_secure_password_change_me"
-        )
+        self.password = resolve_postgres_password()
         self.ssl_mode = settings.postgres_ssl_mode
         self.extra_query: Dict[str, str] = {}
 
@@ -272,6 +370,7 @@ class DatabaseConfig:
         self.database = parsed.database
         self.user = parsed.user
         self.password = parsed.password
+        _flag_shipped_default(parsed.password)
         self.ssl_mode = parsed.query.get("sslmode") or get_settings().postgres_ssl_mode
         self.extra_query = {k: v for k, v in parsed.query.items() if k != "sslmode"}
 
@@ -402,17 +501,16 @@ class DatabaseManager:
                 port,
             )
 
+        url = config.get_database_url(host=host, port=port)
         engine = create_engine(
-            config.get_database_url(host=host, port=port),
+            url,
             echo=echo,
             pool_size=config.pool_size,
             max_overflow=config.max_overflow,
             pool_timeout=config.pool_timeout,
             pool_recycle=config.pool_recycle,
             pool_pre_ping=True,  # Verify connections before using them
-            # Bounded so validating an unreachable host fails in seconds rather
-            # than hanging a worker thread for the OS TCP timeout (~75s).
-            connect_args={"connect_timeout": 5},
+            connect_args=_engine_connect_args(config, url),
         )
 
         return engine, proxy
@@ -584,6 +682,9 @@ class DatabaseManager:
         ``empty`` no Vigil tables (safe to provision) / ``ok`` / ``drifted``
         (tables exist, columns missing — needs scripts/migrate_schema.py, since
         create_all is checkfirst=True and won't alter them) / ``unknown``.
+
+        A column the model allows NULL in but the table declares NOT NULL is
+        drift too (``not_null_columns``): every insert of a NULL there fails.
         """
         if self._engine is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
@@ -592,23 +693,37 @@ class DatabaseManager:
             present = set(inspector.get_table_names())
         except Exception as e:  # noqa: BLE001
             logger.warning("Could not inspect target schema: %s", e)
-            return {"state": "unknown", "missing_tables": [], "missing_columns": {}}
+            return {
+                "state": "unknown",
+                "missing_tables": [],
+                "missing_columns": {},
+                "not_null_columns": {},
+            }
 
         expected = set(Base.metadata.tables)
         missing_tables = sorted(expected - present)
         missing_columns: Dict[str, list] = {}
+        not_null_columns: Dict[str, list] = {}
         for name in sorted(expected & present):
             try:
-                actual = {c["name"] for c in inspector.get_columns(name)}
+                actual = {c["name"]: c["nullable"] for c in inspector.get_columns(name)}
             except Exception:  # noqa: BLE001
                 continue
-            gap = sorted({c.name for c in Base.metadata.tables[name].columns} - actual)
+            model_columns = Base.metadata.tables[name].columns
+            gap = sorted({c.name for c in model_columns} - set(actual))
             if gap:
                 missing_columns[name] = gap
+            tightened = sorted(
+                c.name
+                for c in model_columns
+                if c.nullable and actual.get(c.name) is False
+            )
+            if tightened:
+                not_null_columns[name] = tightened
 
         if not (expected & present):
             state = "empty"
-        elif missing_columns or missing_tables:
+        elif missing_columns or missing_tables or not_null_columns:
             state = "drifted"
         else:
             state = "ok"
@@ -616,22 +731,13 @@ class DatabaseManager:
             "state": state,
             "missing_tables": missing_tables,
             "missing_columns": missing_columns,
+            "not_null_columns": not_null_columns,
         }
 
     def create_tables(self):
         """Create all database tables."""
         if self._engine is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
-
-        try:
-            # Enable pgvector before create_all(); the findings table uses
-            # VECTOR(768) which requires the extension to exist first.
-            with self._engine.connect() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                conn.commit()
-        except Exception as e:
-            # Non-fatal: pgvector may be unavailable in non-embedding deployments.
-            logger.warning(f"Could not enable pgvector extension: {e}")
 
         try:
             Base.metadata.create_all(self._engine)
@@ -883,6 +989,11 @@ def check_schema_drift(
         ]
         detail = ", ".join(missing) or "none"
         tables = ", ".join(report["missing_tables"])
+        not_null = ", ".join(
+            f"{table}.{column}"
+            for table, columns in sorted(report.get("not_null_columns", {}).items())
+            for column in columns
+        )
 
         if state == "empty":
             summary = (
@@ -899,6 +1010,11 @@ def check_schema_drift(
                 "this database, and check it has a step for each column above — "
                 "it only covers columns registered by hand."
             )
+            if not_null:
+                summary += (
+                    f" Also NOT NULL where the models allow NULL, so inserts of "
+                    f"NULL fail: {not_null}."
+                )
 
         if not _schema_drift_logged:
             logger.error("%s", summary)
@@ -915,13 +1031,128 @@ def check_schema_drift(
     return report
 
 
+_reference_seed_done: set[str] = set()
+_reference_seed_failed_at: Dict[str, float] = {}
+# Serializes seeding within the process; across processes the seed file's
+# ON CONFLICT DO NOTHING keeps a second writer from duplicating rows.
+_reference_seed_lock = threading.Lock()
+
+
+def reset_reference_seed_check() -> None:
+    """Forget which databases have been seeded. For tests."""
+    with _reference_seed_lock:
+        _reference_seed_done.clear()
+        _reference_seed_failed_at.clear()
+    _schema_stamped.clear()
+
+
+def seed_reference_tables(db_manager: Optional["DatabaseManager"] = None) -> None:
+    """Give the default-data tables create_all built their rows, if still empty.
+
+    Once per database per process, because init_database() runs on every
+    DatabaseDataService construction. Never raises: the rows are defaults a
+    user can create by hand, not something to refuse to serve over. A failure
+    is logged and retried after ``_SCHEMA_RECHECK_SECONDS``, like the drift check.
+    """
+    manager = db_manager if db_manager is not None else get_db_manager()
+    if manager.engine is None:
+        return
+    key = manager.engine.url.render_as_string(hide_password=True)
+    with _reference_seed_lock:
+        if key in _reference_seed_done:
+            return
+        failed_at = _reference_seed_failed_at.get(key)
+        if failed_at is not None and (
+            time.monotonic() - failed_at < _SCHEMA_RECHECK_SECONDS
+        ):
+            return
+        try:
+            with manager.engine.begin() as conn:
+                inserted, failed = seed_empty_tables(conn)
+        except FileNotFoundError as e:
+            # Nothing a retry can change: this install ships no seed file.
+            _reference_seed_done.add(key)
+            logger.warning("Default SLA policies and case templates not seeded: %s", e)
+            return
+        except Exception as e:  # noqa: BLE001
+            _reference_seed_failed_at[key] = time.monotonic()
+            logger.error(
+                "Could not seed default SLA policies and case templates: %s", e
+            )
+            return
+        if failed:
+            _reference_seed_failed_at[key] = time.monotonic()
+        else:
+            _reference_seed_done.add(key)
+            _reference_seed_failed_at.pop(key, None)
+    for table, rows in inserted.items():
+        logger.info("Seeded %d default row(s) into the empty table %s", rows, table)
+    for table, error in failed.items():
+        logger.error("Could not seed the default rows of %s: %s", table, error)
+
+
+SCHEMA_VERSION_KEY = "schema_version"
+
+_schema_stamped: set[str] = set()
+
+
+def _read_stamp(conn: Connection) -> Optional[str]:
+    """The stamped version, or None for a database with no ``system_config``
+    table or no row. Every other failure raises: it must not read as "no stamp"."""
+    if conn.execute(text("SELECT to_regclass('system_config')")).scalar() is None:
+        return None
+    value = conn.execute(
+        text("SELECT value FROM system_config WHERE key = :key"),
+        {"key": SCHEMA_VERSION_KEY},
+    ).scalar()
+    return value["version"] if value else None
+
+
+def read_schema_version(config: "DatabaseConfig") -> Optional[str]:
+    """The schema version a database was last provisioned at, on its own connection."""
+    engine = create_engine(
+        config.get_database_url(),
+        poolclass=NullPool,
+        connect_args={"connect_timeout": 5},
+    )
+    try:
+        with engine.connect() as conn:
+            return _read_stamp(conn)
+    finally:
+        engine.dispose()
+
+
+def _stamp_schema_version(engine: Engine) -> None:
+    """Record ``__version__`` as the schema version, if it is not already."""
+    key = engine.url.render_as_string(hide_password=True)
+    if key in _schema_stamped:
+        return
+    with engine.begin() as conn:
+        if _read_stamp(conn) != __version__:
+            conn.execute(
+                text(
+                    "INSERT INTO system_config (key, value, description, config_type)"
+                    " VALUES (:key, CAST(:value AS jsonb), :description, 'system')"
+                    " ON CONFLICT (key) DO UPDATE"
+                    " SET value = EXCLUDED.value, updated_at = now()"
+                ),
+                {
+                    "key": SCHEMA_VERSION_KEY,
+                    "value": json.dumps({"version": __version__}),
+                    "description": "Vigil version this schema was last provisioned at",
+                },
+            )
+    _schema_stamped.add(key)
+
+
 def init_database(echo: bool = False, create_tables: bool = True):
     """
     Initialize the database.
 
     Args:
         echo: If True, log all SQL statements
-        create_tables: If True, create all tables
+        create_tables: If True, create all tables, and seed the default rows
+            of those create_all alone builds (see ``seed_reference_tables``)
 
     Raises:
         SchemaDriftError: if the schema cannot serve the models and
@@ -935,3 +1166,15 @@ def init_database(echo: bool = False, create_tables: bool = True):
 
     # After create_all, so we report what the schema actually ended up as.
     check_schema_drift(db_manager, provisioned=create_tables)
+
+    # Here rather than in a SQL file: the Helm db-init Job applies SQL before
+    # the backend can create these tables, and marks it applied for good.
+    if create_tables:
+        seed_reference_tables(db_manager)
+        # Only once create_all and the drift check have returned: a stamp
+        # the schema never reached would hide the version it is really at.
+        try:
+            _stamp_schema_version(db_manager.engine)
+        except Exception as e:  # noqa: BLE001
+            # The old stamp stays and the next start tries again.
+            logger.error("Could not record the schema version: %s", e)

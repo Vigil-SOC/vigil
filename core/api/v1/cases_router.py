@@ -1,0 +1,766 @@
+"""Cases — versioned contract surface (``/api/v1/cases``).
+
+The case record and its lifecycle: list, get, create, update, close, merge,
+search, the case summary, finding links, evidence (chain of custody), and IOCs.
+These are the durable record an external caller or the platform reads and
+writes.
+
+Everything console-flavoured or unsettled stays on the unversioned router in
+``services/api/routers/cases.py`` at ``/api/cases``: comments, watchers, tasks,
+activities, resolution steps, SLA, escalation, relationships, per-case report
+generation, and the destructive ``DELETE /all`` and ``DELETE /{id}`` wipes.
+
+Request schemas for the contract routes are defined here (they are part of the
+contract); the console router does not use them.
+"""
+
+from dataclasses import asdict
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
+
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
+from core.cases import case_journal_service, case_records_service
+from core.cases.case_evidence_service import CaseEvidenceService
+from core.cases.case_ioc_service import CaseIOCService
+from core.cases.case_state import detail_fields
+from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.combined_state import queue_item
+from core.findings.source_link import resolve_source_link
+from core.response.approval_service import needs_you
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.case_repository import PAGE_LIMIT, CaseRepository
+from core.storage.database_data_service import DatabaseDataService
+from core.storage.models import CaseClosureInfo, User
+from core.storage.schemas import (
+    CaseClosureInfoSchema,
+    CaseEvidenceSchema,
+    CaseIOCSchema,
+    CaseSchema,
+)
+from core.storage.schemas.case_api import (
+    CaseCloseResponse,
+    CaseDetailResponse,
+    CaseEvidenceListResponse,
+    CaseIOCBulkResponse,
+    CaseIOCExportResponse,
+    CaseIOCListResponse,
+    CaseLinkedFinding,
+    CaseListResponse,
+    CaseMergeResponse,
+    CaseSearchResponse,
+    CaseSuccessResponse,
+    CaseSummaryResponse,
+)
+from core.storage.unit_of_work import unit_of_work
+from core.time import utcnow
+
+router = APIRouter()
+
+_CASES_WRITE = [permission_gate("cases.write")]
+
+ROUTER_META = RouterMeta(
+    prefix="/api/v1/cases",
+    tags=["cases"],
+    auth=Auth.REQUIRED,
+    legacy_prefixes=("/api/cases",),
+)
+
+data_service = DatabaseDataService()
+
+
+def _get_ingestion_service(source: str):
+    """Return the ingestion service for a given data source, or None."""
+    if source == "elastic":
+        try:
+            from core.integrations.elastic.ingestion import ElasticIngestion
+
+            return ElasticIngestion()
+        except Exception:
+            return None
+    # Future: add splunk, crowdstrike, etc.
+    return None
+
+
+def _record_status_close(session, case_id: str, closed_by: str) -> None:
+    """Record who closed a Case that was closed by editing its status.
+
+    This is how the console closes a Case: it PATCHes the status and asks for no
+    category. Left unrecorded, the close that matters most -- a person looked and
+    said no -- reaches episodic memory as nothing at all, because there is no
+    closure row for the Case Distil to read a category or an actor from.
+
+    The category is ``unspecified``, which is not a determination and does not
+    pretend to be one: it says the Case was closed and no reason was stated, and
+    becomes an inconclusive Verdict rather than a claim nobody made. It goes
+    through ``close_case`` like every other close, so this path stops the SLA
+    resolution clock and indexes the Case's IOCs as the others do, and cannot
+    overwrite a determination an earlier close already stated.
+
+    This lands in the request's own transaction while the status change went
+    through ``data_service`` in its own, so a failure here 500s with the Case
+    already closed and no closure row. The Distil reads that as a close with no
+    stated reason -- the Verdict is still written, at Trust ``agent`` rather
+    than ``analyst``. Degraded, and never a Case that closed and vanished.
+    """
+    from core.cases.case_workflow_service import CaseWorkflowService
+
+    CaseWorkflowService().close_case(
+        session,
+        case_id,
+        closure_category=ClosureCategory.UNSPECIFIED,
+        closed_by=closed_by,
+        closed_by_kind=ClosedByKind.ANALYST,
+    )
+
+
+async def _sync_upstream_status(case_id: str, new_status: str) -> None:
+    """Best-effort sync of case status to the upstream SIEM."""
+    import logging
+
+    _logger = logging.getLogger(__name__)
+    try:
+        case = data_service.get_case(case_id)
+        if not case:
+            return
+        # Only sync findings that came from a SIEM with upstream support
+        finding_ids = case.get("finding_ids", [])
+        for fid in finding_ids:
+            finding = data_service.get_finding(fid)
+            if not finding:
+                continue
+            source = finding.get("data_source", "")
+            alert_id = (finding.get("metadata") or {}).get(f"{source}_alert_id") or (
+                finding.get("metadata") or {}
+            ).get("elastic_alert_id")
+            if not alert_id:
+                continue
+            # Lazy-load the right ingestion service
+            svc = _get_ingestion_service(source)
+            if svc is None:
+                continue
+            try:
+                await svc.update_upstream_alert_status(alert_id, new_status)
+                _logger.info(
+                    f"Synced status '{new_status}' to {source} alert {alert_id}"
+                )
+            except NotImplementedError:
+                pass
+            except Exception as exc:
+                _logger.warning(
+                    f"Failed to sync status to {source} alert {alert_id}: {exc}"
+                )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            f"Upstream status sync error for case {case_id}: {exc}"
+        )
+
+
+class CaseCreate(BaseModel):
+    """Case creation request."""
+
+    title: str
+    description: str = ""
+    finding_ids: List[str]
+    priority: str = "medium"
+    status: str = "open"
+
+
+class CaseUpdate(BaseModel):
+    """Case update request."""
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    notes: Optional[str] = None
+    assignee: Optional[str] = None
+
+
+class EvidenceAdd(BaseModel):
+    """Add evidence to case."""
+
+    evidence_type: str
+    name: str
+    collected_by: str
+    description: Optional[str] = None
+    file_path: Optional[str] = None
+    source: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class IOCAdd(BaseModel):
+    """Add IOC to case."""
+
+    ioc_type: str
+    value: str
+    threat_level: Optional[str] = None
+    confidence: Optional[float] = None
+    source: Optional[str] = None
+    tags: Optional[List[str]] = None
+    context: Optional[str] = None
+
+
+class IOCBulkAdd(BaseModel):
+    """Bulk add IOCs."""
+
+    iocs: List[Dict]
+
+
+class ClosureInfo(BaseModel):
+    """Close case with metadata.
+
+    No ``closed_by``: who closed it is the authenticated principal, not
+    something a client says about itself. Episodic memory reads it as Trust
+    (#733), and a client-supplied name would let any caller claim an analyst
+    concluded.
+    """
+
+    closure_category: ClosureCategory
+    root_cause: Optional[str] = None
+    lessons_learned: Optional[str] = None
+    recommendations: Optional[str] = None
+    executive_summary: Optional[str] = None
+    false_positive_reason: Optional[str] = None
+    closure_notes: Optional[str] = None
+
+
+class MergeRequest(BaseModel):
+    """Merge another case into this one."""
+
+    source_case_id: str
+    merged_by: str = "system"
+
+
+class SearchRequest(BaseModel):
+    """Advanced search request."""
+
+    query_text: Optional[str] = None
+    status: Optional[List[str]] = None
+    priority: Optional[List[str]] = None
+    assignee: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    mitre_techniques: Optional[List[str]] = None
+    created_after: Optional[datetime] = None
+    created_before: Optional[datetime] = None
+    limit: int = 100
+    offset: int = 0
+
+
+def _blank(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _needs_you_case_ids() -> set[str]:
+    """Case ids from one uncapped ``needs_you()`` read. Blank ids are dropped."""
+    found: set[str] = set()
+    for item in needs_you()["items"]:
+        case_id = item.get("case_id") if isinstance(item, dict) else None
+        if isinstance(case_id, str) and case_id:
+            found.add(case_id)
+    return found
+
+
+def _empty_queue(limit: int, offset: int) -> dict:
+    """Demo mode, and a database that is not connected, have nothing to page."""
+    return {
+        "cases": [],
+        "total": 0,
+        "limit": limit,
+        "offset": offset,
+        "has_more": False,
+        "strip": {
+            "by_state": {},
+            "sla_at_risk": 0,
+            "closed_today": 0,
+            "agent_closure_share": 0.0,
+        },
+    }
+
+
+@router.get("", response_model=CaseListResponse)
+def get_cases(
+    state: Optional[str] = None,
+    workflow: Optional[str] = None,
+    priority: Optional[str] = None,
+    data_source: Optional[str] = None,
+    sla_at_risk: bool = False,
+    assignee: Optional[str] = None,
+    closed: Optional[bool] = None,
+    query: Optional[str] = None,
+    limit: int = Query(default=PAGE_LIMIT, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """One page of the case queue, plus the strip.
+
+    Default is cases that are not closed. One ``needs_you()`` read supplies
+    the case ids that sort first; then resolution time left ascending, rows
+    with no SLA last, then last activity descending. The same set marks
+    ``needs_you`` on each row. Page size defaults to the repository limit.
+    """
+    if not data_service.is_using_database():
+        return _empty_queue(limit, offset)
+
+    now = utcnow()
+    needs_you_ids = _needs_you_case_ids()
+    with unit_of_work() as session:
+        repo = CaseRepository(session)
+        rows, total = repo.queue(
+            limit=limit,
+            offset=offset,
+            query_text=_blank(query),
+            priority=_blank(priority),
+            assignee=_blank(assignee),
+            workflow=_blank(workflow),
+            data_source=_blank(data_source),
+            sla_at_risk=sla_at_risk,
+            state=_blank(state),
+            closed=closed,
+            now=now,
+            needs_you_ids=needs_you_ids,
+        )
+        strip = repo.strip(now=now)
+    return {
+        "cases": [
+            asdict(queue_item(row, now, needs_you=row.case_id in needs_you_ids))
+            for row in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+        "strip": asdict(strip),
+    }
+
+
+def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
+    """Rows that still exist for the ids already on the case, in that order.
+
+    One query. An id with no row is omitted. ``source_link`` is the same
+    resolver Overview uses, and ``configs`` is the per-source cache it passes.
+    """
+    ids = (
+        [item for item in finding_ids if isinstance(item, str)]
+        if isinstance(finding_ids, list)
+        else []
+    )
+    rows = {
+        row.finding_id: row for row in CaseRepository(session).resolve_findings(ids)
+    }
+    configs: Dict[str, Dict[str, str]] = {}
+    entries: List[CaseLinkedFinding] = []
+    for finding_id in ids:
+        row = rows.get(finding_id)
+        if row is None:
+            continue
+        entries.append(
+            CaseLinkedFinding(
+                finding_id=row.finding_id,
+                description=row.description,
+                source_link=resolve_source_link(
+                    {
+                        "evidence_links": list(row.evidence_links or []),
+                        "data_source": row.data_source,
+                        "external_id": row.external_id,
+                    },
+                    configs=configs,
+                ),
+            )
+        )
+    return entries
+
+
+@router.get("/{case_id}", response_model=CaseDetailResponse)
+def get_case(case_id: str, session: UnitOfWorkSession):
+    """
+    Get a specific case by ID.
+
+    ``combined_state`` is the one function the header pill reads. Investigations
+    are newest first; the audit run is ``run_id_for`` of the latest, never the
+    shadow adjudication. ``linked_findings`` is one entry per linked finding
+    that still exists, with ``source_link`` when the resolver can fill one.
+
+    Args:
+        case_id: The case ID
+
+    Returns:
+        Case details
+    """
+    loaded = data_service.get_case(case_id)
+    if not loaded:
+        raise HTTPException(status_code=404, detail="Case not found")
+    # Copy: a demo-mode case is the stored dict, and this read must not write it.
+    case = dict(loaded)
+    investigations = case_records_service.list_case_investigations(session, case_id)
+    closure = session.get(CaseClosureInfo, case_id)
+    case.update(detail_fields(case.get("status"), investigations, closure))
+    case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
+    return case
+
+
+@router.post("", dependencies=_CASES_WRITE, response_model=CaseSchema)
+def create_case(case_data: CaseCreate):
+    """
+    Create a new case.
+
+    Args:
+        case_data: Case creation data
+
+    Returns:
+        Created case
+    """
+    case = data_service.create_case(
+        title=case_data.title,
+        finding_ids=case_data.finding_ids,
+        priority=case_data.priority,
+        description=case_data.description,
+        status=case_data.status,
+    )
+
+    if not case:
+        raise HTTPException(status_code=500, detail="Failed to create case")
+
+    # Automatically assign SLA policy based on priority
+    try:
+        from core.cases.case_sla_service import CaseSLAService
+
+        sla_service = CaseSLAService()
+
+        case_id = case.get("case_id")
+        if case_id:
+            # This will auto-select the default policy for the case priority
+            sla_result = sla_service.assign_sla_to_case(case_id, sla_policy_id=None)
+            if sla_result:  # truthy only when the case ends up with an SLA
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(f"Auto-assigned SLA policy to case {case_id}")
+    except Exception as e:
+        # Don't fail case creation if SLA assignment fails
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to auto-assign SLA to case {case.get('case_id')}: {e}")
+
+    return case
+
+
+@router.patch(
+    "/{case_id}", dependencies=_CASES_WRITE, response_model=CaseSuccessResponse
+)
+def update_case(
+    case_id: str,
+    case_data: CaseUpdate,
+    session: UnitOfWorkSession,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update an existing case.
+
+    Args:
+        case_id: The case ID
+        case_data: Case update data
+
+    Returns:
+        Success status
+    """
+    # Build updates dict
+    updates = {}
+    if case_data.title is not None:
+        updates["title"] = case_data.title
+    if case_data.description is not None:
+        updates["description"] = case_data.description
+    if case_data.status is not None:
+        updates["status"] = case_data.status
+    if case_data.priority is not None:
+        updates["priority"] = case_data.priority
+    if case_data.notes is not None:
+        case = data_service.get_case(case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        notes = case.get("notes") or []
+        notes.append(
+            {
+                "timestamp": utcnow().isoformat() + "Z",
+                "content": case_data.notes,
+            }
+        )
+        updates["notes"] = notes
+
+    # Read before the write, because what makes this a close is the transition:
+    # re-PATCHing `closed` onto an already-closed Case is an edit, and stamping
+    # it would move the closure's date and re-derive its Verdict for nothing.
+    was_closed = (data_service.get_case(case_id) or {}).get("status") == "closed"
+
+    success = data_service.update_case(case_id, **updates)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Case not found or update failed")
+
+    if updates.get("status") == "closed" and not was_closed:
+        _record_status_close(session, case_id, current_user.username)
+    elif was_closed and updates.get("status") not in (None, "closed"):
+        from core.cases.case_workflow_service import CaseWorkflowService
+
+        CaseWorkflowService().reopen_case(session, case_id)
+
+    # Fire upstream SIEM status sync when status changes
+    if case_data.status is not None:
+        background_tasks.add_task(_sync_upstream_status, case_id, case_data.status)
+
+    return {"success": True}
+
+
+@router.post(
+    "/{case_id}/findings/{finding_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+)
+def add_finding_to_case(case_id: str, finding_id: str):
+    """
+    Add a finding to a case.
+
+    Args:
+        case_id: The case ID
+        finding_id: The finding ID to add
+
+    Returns:
+        Updated case
+    """
+    linked = case_journal_service.link_finding(data_service, case_id, finding_id)
+    if linked is None:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(status_code=500, detail="Failed to add finding")
+
+    return data_service.get_case(case_id)
+
+
+@router.delete(
+    "/{case_id}/findings/{finding_id}",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+)
+def remove_finding_from_case(case_id: str, finding_id: str):
+    """
+    Remove a finding from a case.
+
+    Args:
+        case_id: The case ID
+        finding_id: The finding ID to remove
+
+    Returns:
+        Updated case
+    """
+    unlinked = case_journal_service.unlink_finding(data_service, case_id, finding_id)
+    if unlinked is None:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(status_code=500, detail="Failed to remove finding")
+
+    return data_service.get_case(case_id)
+
+
+@router.get("/stats/summary", response_model=CaseSummaryResponse)
+def get_cases_summary():
+    """
+    Get summary statistics for cases.
+
+    Counted and grouped in SQL over every case, so ``total`` is not capped by
+    a row limit (#1438).
+
+    Returns:
+        Summary statistics
+    """
+    return data_service.get_cases_summary()
+
+
+@router.post(
+    "/{case_id}/evidence", dependencies=_CASES_WRITE, response_model=CaseEvidenceSchema
+)
+def add_evidence(case_id: str, data: EvidenceAdd):
+    """Add evidence to case."""
+    evidence_service = CaseEvidenceService()
+    try:
+        evidence = evidence_service.add_evidence(
+            case_id=case_id,
+            evidence_type=data.evidence_type,
+            name=data.name,
+            collected_by=data.collected_by,
+            description=data.description,
+            file_path=data.file_path,
+            source=data.source,
+            tags=data.tags,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not evidence:
+        raise HTTPException(status_code=500, detail="Failed to add evidence")
+    return CaseEvidenceSchema.dump(evidence)
+
+
+@router.get("/{case_id}/evidence", response_model=CaseEvidenceListResponse)
+def get_evidence(case_id: str, evidence_type: Optional[str] = None):
+    """Get all evidence for case."""
+    evidence_service = CaseEvidenceService()
+    evidence_list = evidence_service.get_case_evidence(case_id, evidence_type)
+    return {"evidence": CaseEvidenceSchema.dump_many(evidence_list)}
+
+
+@router.post("/{case_id}/iocs", dependencies=_CASES_WRITE, response_model=CaseIOCSchema)
+def add_ioc(case_id: str, data: IOCAdd):
+    """Add IOC to case."""
+    ioc_service = CaseIOCService()
+    ioc = ioc_service.add_ioc(
+        case_id=case_id,
+        ioc_type=data.ioc_type,
+        value=data.value,
+        threat_level=data.threat_level,
+        confidence=data.confidence,
+        source=data.source,
+        tags=data.tags,
+        context=data.context,
+    )
+    if not ioc:
+        raise HTTPException(status_code=500, detail="Failed to add IOC")
+    return CaseIOCSchema.dump(ioc)
+
+
+@router.get("/{case_id}/iocs", response_model=CaseIOCListResponse)
+def get_iocs(case_id: str, ioc_type: Optional[str] = None):
+    """Get all IOCs for case."""
+    ioc_service = CaseIOCService()
+    iocs = ioc_service.get_case_iocs(case_id, ioc_type)
+    return {"iocs": CaseIOCSchema.dump_many(iocs)}
+
+
+@router.post(
+    "/{case_id}/iocs/bulk",
+    dependencies=_CASES_WRITE,
+    response_model=CaseIOCBulkResponse,
+)
+def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
+    """Bulk add IOCs to case."""
+    ioc_service = CaseIOCService()
+    count = ioc_service.bulk_add_iocs(case_id, data.iocs)
+    return {"added": count}
+
+
+@router.get("/{case_id}/iocs/export", response_model=CaseIOCExportResponse)
+def export_iocs(case_id: str, format: str = "json"):
+    """Export IOCs (json, csv, or stix)."""
+    ioc_service = CaseIOCService()
+
+    if format == "csv":
+        content = ioc_service.export_iocs_csv(case_id)
+        return {"format": "csv", "content": content}
+    elif format == "stix":
+        content = ioc_service.export_iocs_stix(case_id)
+        return {"format": "stix", "content": content}
+    else:
+        content = ioc_service.export_iocs_json(case_id)
+        return {"format": "json", "content": content}
+
+
+@router.post(
+    "/{case_id}/close", dependencies=_CASES_WRITE, response_model=CaseCloseResponse
+)
+def close_case(
+    case_id: str,
+    data: ClosureInfo,
+    session: UnitOfWorkSession,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+):
+    """Close case with closure metadata."""
+
+    from core.cases.case_workflow_service import CaseWorkflowService
+
+    closure = CaseWorkflowService().close_case(
+        session,
+        case_id,
+        closure_category=data.closure_category,
+        closed_by=current_user.username,
+        closed_by_kind=ClosedByKind.ANALYST,
+        root_cause=data.root_cause,
+        lessons_learned=data.lessons_learned,
+        recommendations=data.recommendations,
+        executive_summary=data.executive_summary,
+        false_positive_reason=data.false_positive_reason,
+        closure_notes=data.closure_notes,
+    )
+    if not closure:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # The PATCH route has always told the upstream SIEM when a status changed, and
+    # this one never did: a Case closed here, by either MCP tool or by a merge,
+    # stayed open in the SIEM that raised it. Best-effort and fire-and-forget, as
+    # it is there -- the close is recorded either way.
+    background_tasks.add_task(_sync_upstream_status, case_id, "closed")
+    return {"success": True, "closure": CaseClosureInfoSchema.dump(closure)}
+
+
+@router.post(
+    "/{case_id}/merge", dependencies=_CASES_WRITE, response_model=CaseMergeResponse
+)
+def merge_cases(
+    case_id: str,
+    data: MergeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Merge source case into target case.
+
+    Moves all findings, timeline entries, activities, IOCs, evidence, tasks,
+    and comments from the source case into the target. The source case is
+    closed with a note and linked via a 'merged_into' relationship.
+    """
+    if case_id == data.source_case_id:
+        raise HTTPException(status_code=400, detail="Cannot merge a case into itself")
+
+    from core.cases.case_workflow_service import CaseWorkflowService
+
+    # A missing case surfaces as NotFoundError, which the shared handler
+    # renders as a 404 naming which of the two it was.
+    moved_findings = CaseWorkflowService().merge_cases(
+        case_id, data.source_case_id, current_user.username
+    )
+
+    result_case = data_service.get_case(case_id)
+    return {
+        "success": True,
+        "target_case": result_case,
+        "findings_moved": moved_findings,
+        "source_case_status": "closed",
+        "message": f"Case {data.source_case_id} merged into {case_id}",
+    }
+
+
+@router.post("/search", response_model=CaseSearchResponse)
+def search_cases(data: SearchRequest):
+    """Advanced case search."""
+    from core.cases.case_search_service import CaseSearchService
+
+    search_service = CaseSearchService()
+
+    results = search_service.search_cases(
+        query_text=data.query_text,
+        status=data.status,
+        priority=data.priority,
+        assignee=data.assignee,
+        tags=data.tags,
+        mitre_techniques=data.mitre_techniques,
+        created_after=data.created_after,
+        created_before=data.created_before,
+        limit=data.limit,
+        offset=data.offset,
+    )
+    return results

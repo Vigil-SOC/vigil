@@ -16,11 +16,16 @@ from core.agents.custom_agent_service import (
     CustomAgentNotFound,
     CustomAgentService,
 )
+from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.deps import provide_agent_ai, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
+from core.llm.chat_layers import changes_for_tool
 from core.llm.system_prompt import validate_system_prompt
+from core.llm.tool_schemas import ALL_TOOLS
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +65,7 @@ class CustomAgentCreate(BaseModel):
     max_tokens: int = 4096
     enable_thinking: bool = False
     model: Optional[str] = None
+    fallback_model: Optional[str] = None
 
     @field_validator("system_prompt_override")
     @classmethod
@@ -83,6 +89,7 @@ class CustomAgentUpdate(BaseModel):
     max_tokens: Optional[int] = None
     enable_thinking: Optional[bool] = None
     model: Optional[str] = None
+    fallback_model: Optional[str] = None
 
     @field_validator("system_prompt_override")
     @classmethod
@@ -117,13 +124,13 @@ def _with_effective_prompt(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/agents/custom")
-async def list_custom_agents() -> Dict[str, Any]:
+def list_custom_agents() -> Dict[str, Any]:
     agents = service.list_agents()
     return {"agents": agents}
 
 
 @router.get("/agents/custom/_meta/tools")
-async def list_available_tools(
+def list_available_tools(
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> Dict[str, Any]:
     """Return MCP tool names grouped by server prefix for the UI multiselect.
@@ -177,9 +184,13 @@ async def list_available_tools(
             server = "other"
         grouped.setdefault(server, []).append(name)
 
+    # What each tool does to the outside world: the connected MCP tools and
+    # Vigil's built-in ones, which are always there. A name missing here is not connected.
+    names = set(tools) | {t["name"] for t in ALL_TOOLS if t.get("name")}
     return {
         "tools": tools,
         "grouped": grouped,
+        "changes": {n: changes_for_tool(n) for n in sorted(names)},
     }
 
 
@@ -209,7 +220,7 @@ async def generate_custom_agent(
 
 
 @router.get("/agents/custom/{agent_id}")
-async def get_custom_agent(agent_id: str) -> Dict[str, Any]:
+def get_custom_agent(agent_id: str) -> Dict[str, Any]:
     row = service.get_agent(agent_id)
     if not row:
         raise HTTPException(
@@ -219,8 +230,10 @@ async def get_custom_agent(agent_id: str) -> Dict[str, Any]:
 
 
 @router.post("/agents/{source_agent_id}/fork", status_code=201)
-async def fork_agent(
-    source_agent_id: str, request: Optional[ForkAgentRequest] = None
+def fork_agent(
+    source_agent_id: str,
+    request: Optional[ForkAgentRequest] = None,
+    current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """Fork any agent (built-in or custom) into a new editable custom copy.
 
@@ -241,6 +254,7 @@ async def fork_agent(
             source_profile=source,
             source_id=source_agent_id,
             new_name=new_name,
+            changed_by=current_user.user_id,
         )
         agent_manager.refresh_custom_agents()
         return _with_effective_prompt(row)
@@ -248,15 +262,18 @@ async def fork_agent(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error forking agent %s", source_agent_id)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/agents/custom", status_code=201)
-async def create_custom_agent(request: CustomAgentCreate) -> Dict[str, Any]:
+def create_custom_agent(
+    request: CustomAgentCreate,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
     try:
-        row = service.create_agent(request.model_dump(exclude_unset=False))
+        row = service.create_agent(
+            request.model_dump(exclude_unset=False),
+            changed_by=current_user.user_id,
+        )
         _refresh_manager()
         return _with_effective_prompt(row)
     except CustomAgentAlreadyExists as e:
@@ -265,14 +282,13 @@ async def create_custom_agent(request: CustomAgentCreate) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error creating custom agent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.patch("/agents/custom/{agent_id}")
-async def update_custom_agent(
-    agent_id: str, request: CustomAgentUpdate
+def update_custom_agent(
+    agent_id: str,
+    request: CustomAgentUpdate,
+    current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     if not agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
         raise HTTPException(
@@ -281,7 +297,7 @@ async def update_custom_agent(
         )
     try:
         updates = request.model_dump(exclude_unset=True)
-        row = service.update_agent(agent_id, updates)
+        row = service.update_agent(agent_id, updates, changed_by=current_user.user_id)
         _refresh_manager()
         return _with_effective_prompt(row)
     except CustomAgentNotFound:
@@ -292,28 +308,30 @@ async def update_custom_agent(
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating custom agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/agents/custom/{agent_id}", status_code=204)
-async def delete_custom_agent(agent_id: str):
+def delete_custom_agent(
+    agent_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
     if not agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
         raise HTTPException(
             status_code=400,
             detail=f"Refusing to delete built-in agent: {agent_id}",
         )
     try:
-        deleted = service.delete_agent(agent_id)
+        deleted = service.delete_agent(agent_id, changed_by=current_user.user_id)
         if not deleted:
             raise HTTPException(
                 status_code=404, detail=f"Custom agent not found: {agent_id}"
+            )
+        # Ids derive from the name; a stale off entry would switch a re-created agent off.
+        if not set_agent_enabled(agent_id, True, str(current_user.user_id)):
+            logger.warning(
+                "Could not clear disabled state for deleted agent %s", agent_id
             )
         _refresh_manager()
         return None
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error deleting custom agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))

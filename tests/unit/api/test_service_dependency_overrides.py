@@ -2,18 +2,14 @@
 # through a Depends provider, so a test swaps in a stub via
 # app.dependency_overrides and never touches a database, an LLM or an MCP process.
 
-import os
 from types import SimpleNamespace
-
-os.environ.setdefault("DEV_MODE", "true")
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.deps import provide_approvals, provide_workflows
-from core.response.approvals_router import router as approvals_router
+from core.api.v1.approvals_router import router as approvals_router
 
 
 def _action(action_id="ACT-1", workflow_run_id=None):
@@ -38,6 +34,8 @@ def _action(action_id="ACT-1", workflow_run_id=None):
         parameters={},
         workflow_run_id=workflow_run_id,
         workflow_phase_id=None,
+        reversibility="reversible",
+        idempotency_key=None,
     )
 
 
@@ -70,10 +68,11 @@ class StubWorkflows:
 
 
 @pytest.fixture()
-def app():
+def app(authenticate_app):
     # A bare app with just the router under test: no lifespan runs, so nothing
     # populates app.state and the overrides below are the only wiring.
     application = FastAPI()
+    authenticate_app(application)
     application.include_router(approvals_router, prefix="/api")
     return application
 
@@ -119,8 +118,9 @@ def test_approving_a_workflow_linked_action_resumes_the_run(app, monkeypatch):
     )
 
     assert resp.status_code == 200
-    assert approvals.approved == [("ACT-1", "tester")]
-    assert resumed == [("wfr-1", "ACT-1", "tester")]
+    # The decider is the session user; the body's claim is not recorded.
+    assert approvals.approved == [("ACT-1", "test-admin")]
+    assert resumed == [("wfr-1", "ACT-1", "test-admin")]
     assert resp.json()["resume_result"]["status"] == "completed"
 
 

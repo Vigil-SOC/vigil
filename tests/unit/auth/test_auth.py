@@ -9,13 +9,6 @@ DB-touching flows (authenticate_user, check_permission) are covered by
 integration tests.
 """
 
-import os
-
-# Pin a deterministic JWT secret before importing auth_service so the
-# module's import-time secret loader uses it. Without this, running the
-# test suite without JWT_SECRET_KEY in DEV_MODE=false would fail.
-os.environ.setdefault("DEV_MODE", "true")
-
 import jwt
 import pytest
 
@@ -26,8 +19,8 @@ from core.auth.auth_service import (
     password_matches_any,
 )
 
-
 # ----- Password hashing -----
+
 
 class TestPasswordHashing:
     def test_hash_produces_bcrypt_hash(self):
@@ -49,6 +42,7 @@ class TestPasswordHashing:
 
 
 # ----- JWT -----
+
 
 class _FakeUser:
     user_id = "user-abc"
@@ -100,6 +94,7 @@ class TestJWT:
 
 
 # ----- Password history helper -----
+
 
 class TestPasswordHistoryHelper:
     def test_empty_history_matches_nothing(self):

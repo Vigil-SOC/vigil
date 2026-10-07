@@ -1,9 +1,11 @@
-import type { RegisteredTool, ToolResult } from "../contracts/tool.js";
+import type { RegisteredTool, ToolPrincipal, ToolResult } from "../contracts/tool.js";
 import type { ToolDispatch } from "./seams.js";
 
 export interface RemoteOptions {
   url: string;
   token: string;
+  // Sent with every call when present; left off the body entirely when not.
+  principal?: ToolPrincipal;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -26,27 +28,53 @@ function resultOf(body: unknown): ToolResult {
   return unavailable("the endpoint answered with neither rows nor a known failure");
 }
 
+// One signal for a call that must end on whichever comes first: its own deadline
+// or the run letting go. Shared with the keyed memory read, which needs the same
+// two and would otherwise write them again.
+//
+// Wired by hand rather than with AbortSignal.any, which attaches to the run's
+// signal on every call and lets go only when the composite is collected: one long
+// run piles a listener per call onto the one signal until Node warns about it.
+// This one unwires in release.
+export interface Deadline {
+  signal: AbortSignal;
+  timedOut: () => boolean;
+  release: () => void;
+}
+
+export function deadline(timeoutMs: number, signal?: AbortSignal): Deadline {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const halt = new AbortController();
+  const relay = (source: AbortSignal) => () => halt.abort(source.reason);
+  const onTimeout = relay(timeout);
+  const onAbort = signal === undefined ? undefined : relay(signal);
+  if (signal?.aborted === true) halt.abort(signal.reason);
+  timeout.addEventListener("abort", onTimeout, { once: true });
+  if (onAbort !== undefined) signal?.addEventListener("abort", onAbort, { once: true });
+
+  return {
+    signal: halt.signal,
+    timedOut: () => timeout.aborted,
+    release: () => {
+      timeout.removeEventListener("abort", onTimeout);
+      if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
 // Satisfies the same port as localDispatch, so neither the loop nor a workflow
 // knows whether a tool runs in this process. Bounds travel and are applied there.
 export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   const call = options.fetch ?? globalThis.fetch;
   return {
     invoke: async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> => {
+      // A tool the registry answers itself never leaves the process: every call routes
+      // through this dispatch, so a local implementation was otherwise unreachable.
+      if (tool.local) return tool.invoke(args);
+
       // The tool's timeout and the run's abort both end this call, so whichever
       // fires first does: a lost lease must not wait out a 30s tool.
-      //
-      // Wired by hand rather than with AbortSignal.any, which attaches to the
-      // run's signal on every call and lets go only when the composite is
-      // collected: one long run piles a listener per tool call onto the one
-      // signal until Node warns about it. This one unwires in the finally.
-      const timeout = AbortSignal.timeout(tool.bounds.timeoutMs);
-      const halt = new AbortController();
-      const relay = (source: AbortSignal) => () => halt.abort(source.reason);
-      const onTimeout = relay(timeout);
-      const onAbort = signal === undefined ? undefined : relay(signal);
-      if (signal?.aborted === true) halt.abort(signal.reason);
-      timeout.addEventListener("abort", onTimeout, { once: true });
-      if (onAbort !== undefined) signal?.addEventListener("abort", onAbort, { once: true });
+      const held = deadline(tool.bounds.timeoutMs, signal);
 
       // Unwired around the whole call, body included: reading the body is still
       // work the run's abort should be able to stop.
@@ -60,15 +88,19 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
               tool: tool.id,
               args,
               bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
+              ...(options.principal === undefined ? {} : { principal: options.principal }),
             }),
-            signal: halt.signal,
+            signal: held.signal,
           });
         } catch (error) {
           // The far side never answered, so nothing is known about the tool itself.
-          const timedOut = error instanceof Error && error.name === "TimeoutError";
-          if (timedOut) return { ok: false, failure: { kind: "timeout", timeoutMs: tool.bounds.timeoutMs } };
-          // An aborted run is not a tool that failed, so it is not recorded as one.
+          // The run first, and before the deadline: when both have fired, nobody is
+          // waiting for this answer, and an aborted run is not a tool that failed.
           if (signal?.aborted === true) return unavailable("the run was aborted");
+          // Read off the timer rather than off the error's name: a run whose own
+          // signal is a timeout aborts with a TimeoutError, which is the run's
+          // deadline and not this tool's.
+          if (held.timedOut()) return { ok: false, failure: { kind: "timeout", timeoutMs: tool.bounds.timeoutMs } };
           return unavailable(error instanceof Error ? error.message : String(error));
         }
 
@@ -79,8 +111,7 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
           return unavailable(error instanceof Error ? error.message : String(error));
         }
       } finally {
-        timeout.removeEventListener("abort", onTimeout);
-        if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+        held.release();
       }
     },
   };

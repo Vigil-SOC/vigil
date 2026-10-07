@@ -124,3 +124,24 @@ def test_bare_directory_is_not_created_on_read(home):
     vigil_path()
     state_dir_status()
     assert not (home / ".vigil").exists()
+
+
+@pytest.mark.unit
+def test_root_home_falls_back_to_safe_directory(monkeypatch):
+    monkeypatch.delenv("VIGIL_DIR", raising=False)
+    with patch.object(Path, "home", return_value=Path("/")):
+        target = vigil_path("test.json")
+        assert target != Path("/.vigil/test.json")
+        assert target.name == "test.json"
+        assert target.parent.name == ".vigil"
+        assert str(target).startswith("/home/vigil") or str(target).startswith("/tmp")
+
+
+@pytest.mark.unit
+def test_root_home_safe_write(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIGIL_DIR", raising=False)
+    with patch.object(Path, "home", return_value=Path("/")):
+        with patch("core.config._safe_home", return_value=tmp_path):
+            target = vigil_path("test.json", write=True)
+            assert target == tmp_path / ".vigil" / "test.json"
+            assert (tmp_path / ".vigil").is_dir()

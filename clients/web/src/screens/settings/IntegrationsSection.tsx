@@ -1,33 +1,44 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { EmptyState, TextInput } from '../../shared/ui'
 import { useMcpServers, useIntegrationsConfig } from './useSettings'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import {
   getIntegrationForServer,
-  HIDDEN_MCP_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
   prettyServerName,
 } from './integrationsData'
-import DataIngestionPanel from './DataIngestion'
-import DetectionRulesPanel from './DetectionRulesPanel'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
+import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { SectionProps } from './types'
 
-type IntegrationsTab = 'servers' | 'ingestion' | 'detection'
+type IntegrationsTab = 'servers' | 'surface'
 const TABS: [IntegrationsTab, string][] = [
-  ['servers', 'Connectors'],
-  ['ingestion', 'Manual Upload'],
-  ['detection', 'Detection Rules'],
+  // "Connector" is the page extension (CONTEXT.md); these are the MCP servers
+  // Vigil calls out to, and the next tab is the one Vigil is.
+  ['servers', 'MCP Servers'],
+  ['surface', 'Vigil’s MCP Server'],
 ]
 
+function tabFromQuery(value: string | null): IntegrationsTab {
+  if (value === 'servers' || value === 'surface') return value
+  return 'servers'
+}
+
 export default function IntegrationsSection({ notify }: SectionProps) {
-  const [tab, setTab] = useState<IntegrationsTab>('servers')
+  const [searchParams] = useSearchParams()
+  const requested = tabFromQuery(searchParams.get('tab'))
+  const [tab, setTab] = useState<IntegrationsTab>(requested)
+
+  useEffect(() => {
+    setTab(requested)
+  }, [requested])
   return (
     <>
       <div className="tabs" style={{ gap: 4 }}>
@@ -38,14 +49,13 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         ))}
       </div>
       {tab === 'servers' && <ServersPanel notify={notify} />}
-      {tab === 'ingestion' && <DataIngestionPanel notify={notify} />}
-      {tab === 'detection' && <DetectionRulesPanel notify={notify} />}
+      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
     </>
   )
 }
 
 function ServersPanel({ notify }: SectionProps) {
-  const { servers, statuses, enabled, phase, error, reload, setServerEnabled } = useMcpServers()
+  const { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled } = useMcpServers()
   const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = useIntegrationsConfig()
   // refresh the extension registry so a newly-configured connector mounts at once
   const { reload: reloadExtensions } = useExtensions()
@@ -54,11 +64,6 @@ function ServersPanel({ notify }: SectionProps) {
   const [builderOpen, setBuilderOpen] = useState(false)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
 
-  const visible = useMemo(
-    () => servers.filter((n) => !HIDDEN_MCP_SERVERS.has(n)),
-    [servers],
-  )
-
   const grouped = useMemo(() => {
     const q = search.toLowerCase()
     const match = (n: string) =>
@@ -66,18 +71,18 @@ function ServersPanel({ notify }: SectionProps) {
     const claimed = new Set<string>()
     const out: { label: string; servers: string[] }[] = []
     for (const cat of MCP_CATEGORIES) {
-      const inCat = visible.filter((n) => cat.servers.includes(n))
+      const inCat = servers.filter((n) => cat.servers.includes(n))
       inCat.forEach((n) => claimed.add(n))
       const shown = inCat.filter(match)
       if (shown.length) out.push({ label: cat.label, servers: shown })
     }
-    const other = visible.filter((n) => !claimed.has(n)).filter(match)
+    const other = servers.filter((n) => !claimed.has(n)).filter(match)
     if (other.length) out.push({ label: 'Other', servers: other })
     return out
-  }, [visible, search])
+  }, [servers, search])
 
-  const enabledCount = visible.filter((n) => enabled[n]).length
-  const runningCount = visible.filter((n) => statuses[n] === 'running').length
+  const enabledCount = servers.filter((n) => enabled[n]).length
+  const runningCount = servers.filter((n) => statuses[n] === 'running').length
 
   // gate M: MCP server on/off (agent tools)
   const onToggleMcp = async (name: string, want: boolean) => {
@@ -110,7 +115,7 @@ function ServersPanel({ notify }: SectionProps) {
         <div className="flex gap-2 flex-wrap flex-1">
           <span className="chip" style={{ color: 'var(--accent-2)' }}>{enabledCount} Enabled</span>
           <span className="chip" style={{ color: 'var(--ok)' }}>{runningCount} Running</span>
-          <span className="chip">{visible.length} Active</span>
+          <span className="chip">{servers.length} Active</span>
         </div>
         <div className="search" style={{ minWidth: 220 }}>
           <Icon name="search" size={15} />
@@ -125,7 +130,7 @@ function ServersPanel({ notify }: SectionProps) {
       </div>
 
       {phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
-      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load connectors" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
 
       {phase === 'ready' && grouped.length === 0 && (
         <EmptyState
@@ -147,6 +152,12 @@ function ServersPanel({ notify }: SectionProps) {
               {cat.servers.map((name) => {
                 const isEnabled = !!enabled[name]
                 const isRunning = statuses[name] === 'running'
+                const rowError = errors[name]
+                const missing = missingCredentials[name] ?? []
+                const sessionDetail = [
+                  missing.length ? `Missing ${missing.join(', ')}` : '',
+                  rowError || '',
+                ].filter(Boolean).join(' — ')
                 const integration = getIntegrationForServer(name)
                 const isConfigured = integration
                   ? intCfg.enabled_integrations.includes(integration.id)
@@ -216,6 +227,11 @@ function ServersPanel({ notify }: SectionProps) {
                     <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
                       {SERVER_DESCRIPTIONS.get(name) || integration?.description || 'Custom MCP integration.'}
                     </p>
+                    {sessionDetail && (
+                      <p className="text-[11px] text-tx-3 leading-snug line-clamp-2" title={sessionDetail}>
+                        {sessionDetail}
+                      </p>
+                    )}
                     <div className="flex items-center gap-1.5 mt-auto">
                       <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor }} />
                       <span className="text-xs text-tx-3 flex-1">{label}</span>
@@ -242,7 +258,7 @@ function ServersPanel({ notify }: SectionProps) {
           onClose={() => setBuilderOpen(false)}
           onSave={(id) => {
             setBuilderOpen(false)
-            notify('ok', `Custom integration "${id}" saved. Restart connectors to load it.`)
+            notify('ok', `Custom integration "${id}" saved. Restart the MCP servers to load it.`)
             reload()
             reloadInt()
           }}

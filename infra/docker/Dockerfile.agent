@@ -43,16 +43,19 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 FROM node:20-slim AS runtime
 
-ARG VIGIL_VERSION=dev
+ARG VIGIL_VERSION=
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
 WORKDIR /app
 
-# Nothing here needs apt except the base image's own gnutls, which ships two
-# fixable CRITICALs (CVE-2026-33845, CVE-2026-42010). Pinned because hadolint
-# asks for it; Trivy is what says when the pin has gone stale.
+# Nothing here needs apt except the base image's own gnutls (two fixable
+# CRITICALs: CVE-2026-33845, CVE-2026-42010) and perl-base (CVE-2026-13221,
+# CVE-2026-42496, CVE-2026-8376). Pinned because hadolint asks for it; Trivy is
+# what says when a pin has gone stale.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgnutls30=3.7.9-2+deb12u7 \
+    && apt-get install -y --no-install-recommends \
+        libgnutls30=3.7.9-2+deb12u7 \
+        perl-base=5.36.0-7+deb12u4 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/agent/package.json services/agent/package-lock.json ./
@@ -63,8 +66,10 @@ RUN npm ci --omit=dev \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY --from=build /build/dist ./dist
+# tsc emits only .js; arch/registry.ts resolves the arch YAMLs next to itself.
+COPY --from=build /build/arch/*.yaml ./dist/arch/
 
-RUN echo "${VIGIL_VERSION}" > /app/VERSION
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 
 # 6989 serve: chat, run projections, and its own probes.
 # 6990 worker: probes only.

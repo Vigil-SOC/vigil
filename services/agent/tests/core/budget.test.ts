@@ -12,7 +12,7 @@ function reporting(used_usd: number, limit_usd: number): Quota {
 }
 
 function spend(counts: Partial<TokenCounts>, cost_usd: number | null = null): SpendPayload {
-  return { model_id: "openai/gpt-4o", provider_type: "openai", role: "lead", tokens: tokens(counts), cost_usd, pricing_source: null };
+  return { model_id: "openai/gpt-4o", provider_type: "openai", role: "lead", tokens: tokens(counts), cost_usd, pricing_source: null, rates: null, fetched_at: null };
 }
 
 function pool(quota: Quota, max_calls = 100, max_cost_usd = 25) {
@@ -131,7 +131,7 @@ describe("the wall clock is a ceiling of its own", () => {
 // What made max_cost_usd mean something: its one reader compared a total nothing
 // added to, so the ceiling refused nothing in any deployment.
 describe("a call is priced from the backend's rates", () => {
-  const RATES = { input: 3e-6, output: 15e-6, cache_read: 3e-7, cache_write: 3.75e-6, source: "exact" };
+  const RATES = { input: 3e-6, output: 15e-6, cache_read: 3e-7, cache_write: 3.75e-6, source: "exact", fetched_at: "2026-09-01T00:00:00+00:00" };
 
   function priced(rates = RATES, max_cost_usd = 25) {
     return budgetOf(
@@ -150,6 +150,25 @@ describe("a call is priced from the backend's rates", () => {
     // difference between billing a cached prompt right and billing it tenfold.
     expect(at.cost_usd).toBeCloseTo(0.003 + 0.0015 + 0.003 + 0.00075, 10);
     expect(at.source).toBe("exact");
+    expect(at.fetched_at).toBe(RATES.fetched_at);
+    expect(at.rates).toEqual({ input: RATES.input, output: RATES.output, cache_read: RATES.cache_read, cache_write: RATES.cache_write });
+  });
+
+  it("keeps unknown with null rates when the catalog prices nothing", async () => {
+    const budget = budgetOf(
+      { max_calls: 100, max_cost_usd: 25, max_wall_ms: 600_000, max_park_ms: 604_800_000 },
+      unmeteredQuota,
+      Date.now,
+      undefined,
+      async () => ({ input: null, output: null, cache_read: null, cache_write: null, source: "unknown", fetched_at: null }),
+    );
+
+    expect(await budget.priceOf("m", "anthropic", tokens({ input: 1000 }))).toEqual({
+      cost_usd: null,
+      source: "unknown",
+      rates: null,
+      fetched_at: null,
+    });
   });
 
   // A $0.00 nobody could price and a $0.00 from a real entry are the same number
@@ -163,7 +182,7 @@ describe("a call is priced from the backend's rates", () => {
       async () => null,
     );
 
-    expect(await budget.priceOf("m", "anthropic", tokens({ input: 1000 }))).toEqual({ cost_usd: null, source: null });
+    expect(await budget.priceOf("m", "anthropic", tokens({ input: 1000 }))).toEqual({ cost_usd: null, source: null, rates: null, fetched_at: null });
   });
 
   // The ceiling with no gateway behind it, which is every deployment: unmeteredQuota
@@ -183,7 +202,7 @@ describe("a call is priced from the backend's rates", () => {
 // only when something priced the call. Unreachable pricing refused nothing at all.
 describe("a dollar ceiling with nothing pricing the calls", () => {
   const limits = { max_calls: 100, max_cost_usd: 5, max_wall_ms: 600_000, max_park_ms: 604_800_000 };
-  const unpriced = { model_id: "m", provider_type: "p", role: "lead", tokens: ZERO_TOKENS, cost_usd: null, pricing_source: null };
+  const unpriced = { model_id: "m", provider_type: "p", role: "lead", tokens: ZERO_TOKENS, cost_usd: null, pricing_source: null, rates: null, fetched_at: null };
 
   // A source that is wired and answering null, which is pricing failing rather
   // than pricing nobody asked for.

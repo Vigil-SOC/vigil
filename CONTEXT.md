@@ -6,7 +6,12 @@ files and cross-cutting infrastructure has a deliberate home. `core/` has two
 tiers: **capability domains** (what the SOC does) and a **shared-infrastructure
 tier** (`storage`, `platform`) that capability domains depend on. One section
 reaches outside `core/`: the **agent layer**'s vocabulary is here because its
-terms collide with the domains' rather than sitting apart from them.
+terms collide with the domains' rather than sitting apart from them. A third
+grouping, the **versioned API surface** (`core/api/v1/`), sits above the
+capability domains: it composes them into the frozen HTTP contract and imports
+domains freely. Nothing under `core/` imports it back (`.importlinter`): where
+a console router and a v1 router answer the same read, the read lives in the
+domain and both call down into it.
 
 ## Language
 
@@ -133,6 +138,135 @@ several — Splunk has both an official server and the self-hosted one Vigil shi
 `mcp-config.json` key.
 _Avoid_: integration id, tool name
 
+**Declared Gap**:
+A question an investigation never gathered evidence for, carrying why nothing was
+gathered. Not a **Verdict** with an empty outcome: it has no activity window,
+because there was no activity to bound. Gaps are the common case rather than the
+exception, and what ranks an entity up is accumulation of them across
+investigations, never being one.
+_Avoid_: visibility gap (that is a tool that could not answer), unknown, null result
+
+**Episodic Memory** (`memory`):
+What earlier investigations saw and concluded, so a later run stops re-deriving
+a settled answer. A hunt's is derived from its **Ledger** at the terminal; a
+**Case**'s is derived from the Case itself when it closes, and has no Ledger
+behind it at all. Reorders the frontier and never decides (ADR 0015).
+_Avoid_: MemPalace (the component this replaced, since removed), cache, RAG
+
+**Distil** (`memory`):
+The job that turns a finished investigation into Episodic Memory rows. One per
+kind of investigation -- a hunt's reads the Ledger, a Case's reads the closed
+Case -- and both poll rather than being told, so a lost signal is a late write
+and not a missing one.
+_Avoid_: ETL, sync, ingest (those move data; this concludes about it)
+
+**Memory Snapshot** (`memory`):
+A frozen copy of **Episodic Memory**, held as a Postgres schema and named by
+date. An eval process reads one by putting it on its `search_path`, so the same
+hunts can be scored twice without the corpus moving underneath them -- the
+**Distil** polls, so live memory grows between two runs and the score moves with
+it. An empty one is the control the measurement rests on. Kept and never
+overwritten: an old one read by new code measures the code, a new one measures
+the system. Covers the exact-join tier only -- narrative search's corpus lives
+outside Postgres, so a snapshot freezes half of what a run can recall.
+_Avoid_: backup, restore, fixture, baseline, as-of (an as-of filter is what this
+replaces; the empty one is a **control**, and _baseline_ belongs to **Golden**)
+
+**Closure Category** (`cases`):
+What closing a **Case** determined: `resolved`, `false_positive`, `duplicate`,
+`unable_to_resolve`, or `unspecified` for a close that stated none. All but
+`duplicate` map to a **Verdict** outcome; `duplicate` writes none. `unspecified`
+is a recorded absence, not a determination.
+_Avoid_: resolution, disposition, reason
+
+**Entity Key**:
+The `type:value` string an **Episodic Memory** row is written and queried on --
+`ip:10.0.0.5`, `host:dc01`. Minted by one rule, defang then case-fold, sparing the
+types where case is significant, so a stored key and a queried key cannot be
+normalised two ways. A `shared_iocs` key is the same shape on a different
+vocabulary and is not one of these.
+_Avoid_: IOC key, indicator, entity id
+
+**Recall**:
+One read of **Episodic Memory** on exact entity keys. A run performs one at start
+and renders it into the frozen prefix; a worker performs one mid-run through the
+`recall_entity` tool, which lands in the prompt tail and leaves the prefix
+undisturbed. Recall never contributes to corroboration — it reorders what to look
+at and settles nothing (ADR 0015).
+
+A run's keys come from what the run was opened on. A hunt's are the subjects an
+operator declared for the hypotheses actually being put up, and where none were
+declared, the entities the hypotheses name. An investigation opened on findings
+has neither, so its keys are the entities its trigger findings carry.
+Declared keys first because a person typed them and the spec refused the
+unusable ones; extraction at all because a scheduled hunt declares none, and the
+autonomous path would otherwise never read memory. A key read out of a statement
+can be beside the point rather than wrong, which spends prefix budget and, since
+recall only reorders, can never move a **Verdict**.
+_Avoid_: search, retrieval, lookup (unqualified), context
+
+**Recall Event**:
+The **Ledger** record of one run-start **Recall**. A read that was served carries
+the keys queried, the rows returned with their provenance, what was dropped and
+why, and the selection parameters in force; a read that could not be served is an
+**Unavailable Read**, which carries the keys and the reason and none of the rest.
+It carries rows and not an order — the order they were
+presented in is a fold, so ranking may change without invalidating a historical
+Ledger. The parameters are copied in rather than referenced, because a **RunSpec**
+records the arch by name and not by version.
+_Avoid_: recall log (that is the audit table, which is Python's), snapshot
+(unqualified -- a **Memory Snapshot** is the frozen corpus, not this record)
+
+**Unavailable Read**:
+The **Recall Event** a run journals when the read could not be served at all --
+the far side down, the token wrong, the answer unreadable. It carries the keys
+asked about and why, and it is deliberately not an empty **Recall**: empty lists
+mean *known-to-be-none*, so recording an outage that way would say those entities
+have no history, which is true of every entity while memory is down -- so nothing
+would look wrong. A run that opens on one carries no recalled rows for the rest of
+its life rather than retrying on a later turn, because a read that succeeded on
+turn four would move a prefix the run had already decided against. The run itself
+still finishes: **Recall** reorders and never decides, so losing it costs a run an
+aid and not an input.
+_Avoid_: failed recall, empty recall, **Declared Gap** (that is a question an
+investigation left open, not a read that did not happen), **Visibility Gap** (that
+is a tool that could not answer about the estate)
+
+**Sighting**:
+What one investigation observed about one entity from one source. One row per
+entity, investigation and source, so growth tracks hunts and not telemetry
+volume. The weaker and truer claim a **Verdict** does not make: *seen during a run
+that concluded X*, rather than a subject of that conclusion.
+_Avoid_: finding, evidence, observation, hit
+
+**Source Tier**:
+What a source *is*: `telemetry` observed our own estate, `feed` asserts about the
+world, `not_evidence` is neither. Distinct from **Trust**, which is who
+concluded — `analyst` or `agent`. Both sit on a **Verdict**'s sources, and one
+does not imply the other: a feed can be cited by an analyst.
+_Avoid_: connector trust, confidence, severity
+
+**Stance**:
+How one source bore on a **Verdict**: `supports`, `weakens` or `neither`. Replaces
+a flat corroborated list, which cannot express direction — a source that weakened
+a hypothesis and a source that never bore on it are not the same row.
+_Avoid_: corroboration (that is the effect of several sources agreeing, not one
+source's direction), confidence, polarity, sentiment
+
+**Trust**:
+Who concluded — `analyst` when a person closed it at a keyboard, `agent` when a
+program did. A program holding a credential minted by a person is still a
+program: it acts with that person's standing, `closed_by` records whose, and
+`analyst` is the one record this system will not let an agent claim on its own
+behalf. The other axis on a **Verdict**'s sources, alongside **Source Tier**.
+Unrelated to **Connector Trust**, which is about admitting a third-party origin.
+_Avoid_: connector trust, source tier, confidence
+
+**Verdict**:
+What one investigation concluded about one hypothesis, naming its subjects
+rather than every entity its evidence touched (ADR 0016).
+_Avoid_: finding, case closure, outcome
+
 ### Shared-infrastructure tier
 
 **Storage** (`storage`):
@@ -145,8 +279,8 @@ Python package and **no** `core/platform/db/` — all DB code lives here.
 
 **Platform** (`platform`):
 Process/config/runtime plumbing — local service orchestration and process
-supervision, autostart config, runtime-config resolution, memory-palace paths,
-demo-data seeding, URL/SSRF safety. Not a junk drawer: a file belongs here only
+supervision, autostart config, runtime-config resolution, demo-data seeding,
+URL/SSRF safety. Not a junk drawer: a file belongs here only
 if it's runtime plumbing with no owning capability. The cut against a capability
 domain is **mechanism vs. knowledge**: supervising a process, or resolving a
 setting, is `platform`; knowing what the setting *means* is the domain's.
@@ -168,6 +302,23 @@ so losing the file loses the data: the secrets store, `mcp_server_enabled.json`,
 `detection_sources.json`, `custom_integrations/`. Only Originals constrain where
 the State Directory can live.
 
+### Versioned API surface
+
+**`core/api/v1/`**:
+The frozen HTTP contract — the subset of routes an external caller (the platform,
+contributors, other tools) may rely on, versioned under `/api/v1`. A route lives
+here because it is a durable record or an act on one; console-only wiring stays
+on the unversioned routers under `services/api/routers/` and `core/<domain>/`.
+Membership is by file: a route in this package is a promise, guarded by the
+`contract.snapshot.json` pin. Each router dual-mounts (its `/api/v1/<res>` path
+plus the pre-version `/api/<res>` via `RouterMeta.legacy_prefixes`) so existing
+callers keep working during the port. This package composes the capability
+domains (and may import them); the shared-infrastructure tier must not import it
+(`.importlinter` tiers contract). See `core/api/v1/README.md` for the recipe and
+the internal/external test.
+_Avoid_: "the API" (ambiguous with the unversioned console routes), calling a
+console route "v1".
+
 ### Agent layer
 
 Vocabulary of `services/agent/` — TypeScript, outside `core/`, but the terms
@@ -175,7 +326,9 @@ collide with the capability domains above often enough to belong beside them.
 
 **Ledger**:
 The append-only event log of one run, and its only durable record. Every other
-view of a run is derived from it rather than stored beside it.
+view of a run is derived from it rather than stored beside it. The application
+role `vigil_app` may `SELECT` and `INSERT`; `UPDATE`, `DELETE` and `TRUNCATE`
+are revoked at the database.
 _Avoid_: journal, audit log, history
 
 **Fold**:
@@ -201,6 +354,14 @@ run-scoped concept, distinct from **Source Evidence**, which attaches to a
 Finding.
 _Avoid_: finding, result, observation
 
+**Visibility Gap**:
+Something a run could not see because a tool timed out or was unavailable —
+recorded so an absence of evidence is not read as evidence of absence. A refusal
+or a bad argument is a defect and must never be recorded as one
+(`services/agent/contracts/tool.ts`). Distinct from a **Declared Gap**, which is
+a question nobody gathered evidence for rather than a lookup that failed.
+_Avoid_: declared gap, error, failure, unknown
+
 **Digest**:
 The bounded view of a Projection presented to the lead for a single decision:
 recent Evidence, entities seen, open questions. Its sampling is seeded from the
@@ -216,7 +377,22 @@ expected output)
 
 **Fold Equivalence**:
 The property the gate asserts — every Fold over a historical Ledger reproduces
-its Golden byte-for-byte, projection and derivations alike.
+its Golden byte-for-byte, projection and derivations alike. Its inputs are the
+pre-harness Ledgers under `tests/fixtures/runs/`; a run recorded by current code
+is **Replay**'s fixture and not one of these.
+
+**Replay**:
+Rebuilding what a decision was shown from the Ledger alone, and checking it
+against what was journaled at the time: the **Digest** from the events before the
+decision, and the recalled rows from the **Recall Event**. Distinct from **Fold
+Equivalence** — that check compares this implementation against the one it
+replaced, over a fixture population closed to old-format Ledgers, while a Replay
+reads a run this code recorded (`tests/fixtures/replay/`). A Replay that
+re-queried **Episodic Memory** rather than reading the journaled rows would read a
+neighbourhood that has moved since the run, and pass while showing a decision
+something it never saw.
+_Avoid_: fold, re-run, regression test (a regression snapshot is the fixture; the
+Replay is the check)
 
 ### Console (web client)
 
@@ -241,6 +417,30 @@ _Avoid_: page, tab, view
 ## Relationships
 
 - A **Case** groups one or more **Findings**
+- **Episodic Memory** derives **Verdicts** from a **Ledger** after a hunt
+  terminates, and from a **Case** when it closes; it never writes during a run,
+  and a run reads it once at start (ADR 0015)
+- Closing a **Case** writes one **Verdict**, whose Trust is `analyst` when a
+  person closed it and `agent` otherwise — including when a program closed it
+  with a person's credential, which `closed_by` names; reopening the Case
+  withdraws the Verdict
+- A **Verdict**'s sources each carry a **Source Tier** and the Verdict carries
+  one **Trust**. The two are independent axes: **Trust** is who concluded, and
+  a `feed`-tier source can be cited by an `analyst`
+- **Source Tier** is stamped at write time, never joined at read time, so
+  recategorising an **Integration** later cannot change how a past **Verdict**
+  was corroborated
+- **Trust** is unrelated to **Connector Trust**, which is about admitting a
+  third-party origin rather than weighing a conclusion
+- A **Recall** returns **Sightings**, **Verdicts** and **Declared Gaps** in one
+  shape, carried two ways: journaled verbatim as the **Recall Event** at run
+  start, and returned as the single row of a `recall_entity` tool result mid-run.
+  One result shape and not two — a second copy of it is a second contract, and the
+  second one drifts. An **Unavailable Read** is not that second copy: it is the
+  account of a read that did not happen, which only the harness ever writes.
+  Declared in `core/memory/recall_contract.py` and
+  `services/agent/contracts/memory.ts`, with a ratchet that fails when they
+  disagree
 - **Ingestion** produces **Findings** and depends on **Storage** (never the reverse)
 - **Federation** drives **Ingestion** (an adapter wraps an ingestion service);
   Ingestion never depends on Federation
@@ -383,3 +583,13 @@ _Avoid_: page, tab, view
   is therefore closed — the ten committed runs plus whatever old-format ledgers
   still exist. A hunt run by current code can be a regression snapshot, never a
   Golden.
+- **`type:value` keys are minted by two rules that disagree.** An **Entity Key**
+  (`core/memory/entity_keys.py`) defangs and keeps case for `arn` and `aws_key`; a
+  `shared_iocs` key (`core/storage/shared_ioc_repository.py`) does neither, and
+  spells a host `hostname` where memory spells it `host`. Handing one subsystem's
+  keys to the other returns no rows, which reads as an entity nobody has looked
+  at rather than as a bad query. Resolved: they stay separate, because unifying
+  them is a migration of a live table. The one shared piece is the
+  `entity_context` spelling map, which yields candidates in memory's vocabulary --
+  `make_key` aliases `host` back to `hostname` on the way in, so the older keys
+  are unchanged.

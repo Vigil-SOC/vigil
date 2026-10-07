@@ -53,7 +53,7 @@ function spend(): Parameters<InProcessState["append"]>[1][number] {
     run_id: RUN,
     run_kind: "investigate",
     kind: "spend",
-    payload: { model_id: "m", provider_type: "scripted", role: "lead", tokens: { input: 10, output: 1, cache_read: 0, cache_write: 0 }, cost_usd: null, pricing_source: null },
+    payload: { model_id: "m", provider_type: "scripted", role: "lead", tokens: { input: 10, output: 1, cache_read: 0, cache_write: 0 }, cost_usd: null, pricing_source: null, rates: null, fetched_at: null },
   };
 }
 

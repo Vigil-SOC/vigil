@@ -3,19 +3,23 @@
 The orchestrator runs three loops:
   1. Intake loop: picks up new findings/tasks and creates investigations
   2. Supervision loop: monitors running agents, detects stuck/runaway ones
-  3. Review loop: evaluates completed investigations, approves or requests rework
+  3. Review loop: approves investigations the agent concluded as completed
 
-It does NOT maintain a persistent Claude conversation. It calls Claude
-only for judgment calls (skill selection for ambiguous cases, review evaluation).
+It does NOT maintain a persistent Claude conversation.
 All routine operations are pure Python logic.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
 from core.config import get_settings
@@ -54,18 +58,48 @@ try:
         description="Stuck agents detected and killed",
         unit="1",
     )
+
+    def _observe_intake_queue_depth(_options: Any):
+        try:
+            from opentelemetry.metrics import Observation
+
+            return [Observation(_count_queued_intake_rows())]
+        except Exception as e:
+            logger.debug("intake queue depth observation failed: %s", e)
+            return []
+
+    _intake_queue_depth = _orch_meter.create_observable_gauge(
+        "soc_daemon_orchestrator_intake_queue_depth",
+        callbacks=[_observe_intake_queue_depth],
+        description="Queued intake triggers waiting for admission",
+        unit="1",
+    )
 except Exception:
     _tracer = None  # type: ignore[assignment]
-    _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = None  # type: ignore[assignment]
+    _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
+        _intake_queue_depth
+    ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
-from core.agents.queue import build_start_job, enqueue_run
-from core.integrations.mcp.client import process_mcp_client
+from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
+from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
+from core.response.config import decision_rule
+from core.storage.connection import get_db_manager
+from core.storage.models import (
+    IN_FLIGHT_INVESTIGATION_STATUSES,
+    IntakeTrigger,
+    Investigation,
+)
+from core.threat_intel.mitre_lookup import iter_techniques, resolve_technique
+from core.workflows.enablement import is_enabled
+from core.workflows.hypothesis_subjects import kept_subjects
+from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
+from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
+    _infer_title,
     count_steps,
-    generate_case_review_context,
-    generate_case_review_plan,
     generate_initial_context,
     generate_initial_state,
     generate_plan,
@@ -75,6 +109,341 @@ from services.daemon.shared_intel import SharedIntelligence
 from services.daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
+
+
+def _count_queued_intake_rows() -> int:
+    with get_db_manager().session_scope() as session:
+        return session.query(IntakeTrigger).filter_by(state="queued").count()
+
+
+# Proactive hunts (nightly, intel) never hold more than this many slots, so a
+# detection arriving on a quiet fleet still finds one free.
+SCHEDULE_RUN_CEILING = 1
+
+
+def _count_investigations_in_flight() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(Investigation)
+            .filter(Investigation.status.in_(IN_FLIGHT_INVESTIGATION_STATUSES))
+            .count()
+        )
+
+
+def _count_schedule_runs_in_flight() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(IntakeTrigger)
+            .join(
+                Investigation,
+                Investigation.investigation_id == IntakeTrigger.investigation_id,
+            )
+            .filter(
+                IntakeTrigger.kind == "schedule",
+                Investigation.status.in_(IN_FLIGHT_INVESTIGATION_STATUSES),
+            )
+            .count()
+        )
+
+
+# related_to: the type the case screen labels and an analyst's link defaults to.
+def _link_cases(case_a: str, case_b: str, notes: str) -> None:
+    from core.cases.case_records_service import link_cases
+    from core.storage.connection import get_db_manager
+
+    with get_db_manager().session_scope() as session:
+        link_cases(
+            session,
+            case_a,
+            case_b,
+            relationship_type="related_to",
+            created_by=ORCHESTRATOR_ACTOR,
+            notes=notes,
+        )
+
+
+def lift_ai_enrichment(finding: Dict) -> Dict:
+    """Copy ``ai_enrichment`` keys onto the top level ``select_workflow`` reads."""
+    nested = finding.get("ai_enrichment")
+    if not isinstance(nested, dict) or not nested:
+        return finding
+    from services.daemon.processor import _AI_ANALYSIS_KEYS
+
+    lifted = dict(finding)
+    for key in _AI_ANALYSIS_KEYS:
+        if key in nested and lifted.get(key) is None:
+            lifted[key] = nested[key]
+    return lifted
+
+
+class _Overlap(str, Enum):
+    """What overlapping live work means for the Trigger that overlaps it.
+
+    Three outcomes, because a single ``None`` cannot say which of them
+    happened and the caller would have to walk the overlap a second time to
+    find out — a second walk that can disagree with the first.
+    """
+
+    MERGED = "merged"  # attached to a Case; the row is decided
+    HOLD = "hold"  # a Case is or may be there, but we could not attach
+    LAUNCH = "launch"  # every overlapping run read clean and none has a Case
+
+
+_SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
+_BAND_RANK = {name: i for i, name in enumerate(_SEVERITY_BANDS)}
+
+
+def _as_naive_utc(value: Any) -> Optional[datetime]:
+    """Parse a dump-string or datetime into the naive UTC ``utcnow`` uses."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+    return dt
+
+
+def intake_age_seconds(row: Dict, now: datetime) -> float:
+    """Age of a queued row. Missing ``created_at`` reads as new, not oldest."""
+    created = _as_naive_utc(row.get("created_at"))
+    if created is None:
+        return 0.0
+    return (now - created).total_seconds()
+
+
+def intake_severity_band(
+    kind: Optional[str],
+    *,
+    finding_severity: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> str:
+    """Map a row onto a ranked band. Detection reads the finding; others the row."""
+    raw = finding_severity if kind == "detection" else priority
+    if raw is None or not str(raw).strip():
+        return "unknown"
+    name = str(raw).strip().lower()
+    return name if name in _BAND_RANK else "unknown"
+
+
+def rank_intake_row(
+    row: Dict,
+    *,
+    now: datetime,
+    ttl_seconds: int,
+    promote_fraction: float,
+) -> tuple:
+    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+
+    Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
+    ``low`` precedes ``medium``. Detection rows read current finding severity
+    from ``_finding``; ``schedule`` and ``human_ask`` read the row's ``priority``.
+    """
+    age = intake_age_seconds(row, now)
+    remaining = ttl_seconds - age
+    promoted = 0 < remaining <= ttl_seconds * promote_fraction
+    finding = row.get("_finding")
+    finding_severity = finding.get("severity") if isinstance(finding, dict) else None
+    band = intake_severity_band(
+        row.get("kind"),
+        finding_severity=finding_severity,
+        priority=row.get("priority"),
+    )
+    created = _as_naive_utc(row.get("created_at"))
+    return (
+        0 if promoted else 1,
+        _BAND_RANK[band],
+        created if created is not None else now,
+    )
+
+
+def insert_intake_trigger(
+    *,
+    kind: str,
+    priority: str = "medium",
+    finding_id: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
+    """Insert a queued trigger. ``None`` when a queued row for this finding already exists."""
+    from sqlalchemy.exc import IntegrityError
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    try:
+        with get_db_manager().session_scope() as session:
+            row = IntakeTrigger(
+                kind=kind,
+                state="queued",
+                finding_id=finding_id,
+                priority=priority or "medium",
+                payload=payload or {},
+            )
+            session.add(row)
+            session.flush()
+            return row.id
+    except IntegrityError:
+        logger.info(
+            "intake already has a queued row for finding %s", finding_id or "(none)"
+        )
+        return None
+
+
+@dataclass(frozen=True)
+class CaseSpec:
+    """Case to mint in the launch transaction. ``case_id`` is assigned before plan files."""
+
+    title: str
+    finding_ids: List[str]
+    priority: str
+    case_id: Optional[str] = None
+
+
+def _new_case_id() -> str:
+    return f"case-{utcnow().strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:8]}"
+
+
+def _human_ask_case_title(
+    hypothesis: Optional[str], findings: List[Dict], workflow_id: str
+) -> str:
+    """Title for a Case minted from a Human Ask: hypothesis first, else the finding."""
+    if hypothesis and str(hypothesis).strip():
+        return str(hypothesis).strip()[:200]
+    if findings:
+        return _infer_title(findings[0], workflow_id)[:200]
+    return _infer_title({}, workflow_id)[:200]
+
+
+# Shadow adjudication (#880). The second run over an admitted finding is addressed
+# from the investigation id like the real one, so the pair joins by recomputing
+# rather than by a column. A uuid5 of the suffixed id rather than a suffixed uuid:
+# agent_events.run_id is a uuid column and would refuse the string.
+SHADOW_HYPOTHESIS_FILE = "shadow_hypothesis.txt"
+
+
+def shadow_run_id_for(investigation_id: str) -> str:
+    return run_id_for(f"{investigation_id}-shadow")
+
+
+def _shadow_hypothesis(findings: List[Dict]) -> str:
+    """One line the adjudicator puts on its board: what intake read into the finding.
+
+    The definition declares ``hypotheses: []`` and the hunt loop refuses a run with
+    none stated, so this is required, not decorative. Title, the entities the
+    finding names, and the tactic of its top predicted technique -- the same
+    reading ``_infer_title`` makes, spelled out as a claim."""
+    if not findings:
+        return ""
+    finding = findings[0]
+    title = str(finding.get("title") or finding.get("description") or "").strip()
+    subject = title or "the admitted finding"
+
+    # All of them, because the same keys become the claim's subjects: a subject
+    # set wider than what the line names would be a guess, not a statement.
+    entities = finding_entity_keys([finding])
+    where = f" involving {', '.join(entities)}" if entities else ""
+
+    # iter_techniques spans every shape mitre_predictions is stored in.
+    techniques = list(iter_techniques(finding))
+    intent = ""
+    if techniques:
+        top = max(techniques, key=lambda t: _confidence(t.get("confidence")))
+        tid, name, tactic = resolve_technique(top)
+        if tid:
+            technique = f"{tid} {name}" if name and name != tid else tid
+            # The tactic when the taxonomy knows it; the technique alone when not.
+            intent = (
+                f" and is {technique} activity"
+                if tactic == "Unknown"
+                else f" and is {tactic} activity ({technique})"
+            )
+    return f"{subject}{where} is what intake says it is{intent}"
+
+
+def _confidence(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _mint_case(session, spec: CaseSpec) -> str:
+    """Insert a Case and its finding links on the caller's session. Does not commit."""
+    from sqlalchemy import select
+
+    from core.storage.models import Case, Finding
+
+    case_id = spec.case_id or _new_case_id()
+    now = utcnow()
+    case = Case(
+        case_id=case_id,
+        title=(spec.title or "Investigation")[:200],
+        description="",
+        status="open",
+        priority=spec.priority,
+        timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
+    )
+    session.add(case)
+    session.flush()
+    if spec.finding_ids:
+        rows = (
+            session.execute(
+                select(Finding).where(Finding.finding_id.in_(spec.finding_ids))
+            )
+            .scalars()
+            .all()
+        )
+        case.findings.extend(rows)
+        session.flush()
+    return case_id
+
+
+def _record_human_ask_document(
+    session, case_id: Optional[str], document: Optional[str]
+) -> None:
+    """Record the Human Ask's document on the Case. No-op when either is missing.
+
+    The string is opaque, so it goes in ``description`` (Text) and never in
+    ``file_path``: that column is resolved against the evidence store and
+    hashed, which is wrong for a URL and worse for a path a caller chose.
+
+    Written straight onto the launch session rather than through
+    ``CaseEvidenceService``: that service's constructor mkdirs an evidence
+    directory, and this path stores no file. A mkdir that fails would take the
+    launch down with it, and the row is the same either way.
+    """
+    if not case_id or not document:
+        return
+    from core.storage.models import CaseEvidence
+
+    now = utcnow()
+    session.add(
+        CaseEvidence(
+            case_id=case_id,
+            evidence_type="document",
+            name="Document on the Human Ask",
+            description=str(document),
+            collected_by="human_ask",
+            collected_at=now,
+            chain_of_custody=[
+                {
+                    "timestamp": now.isoformat(),
+                    "action": "collected",
+                    "user": "human_ask",
+                    "notes": "Document supplied on the Human Ask",
+                }
+            ],
+        )
+    )
+
+
+class _TriggerAlreadyDecided(Exception):
+    """The CAS on a queued trigger matched zero rows."""
 
 
 def _inv_as_dict(inv):
@@ -98,25 +467,20 @@ class Orchestrator:
         self,
         config: OrchestratorConfig,
         approvals: Optional[ApprovalService] = None,
-        mcp_client=None,
+        workflows: Optional[WorkflowsService] = None,
     ):
         self.config = config
         self._enabled = config.enabled
         self._shutdown_event: Optional[asyncio.Event] = None
         self._approvals = approvals or ApprovalService()
-        self._mcp_client = (
-            mcp_client if mcp_client is not None else process_mcp_client()
-        )
+        # Read for the run_kind a definition declares; the file cache needs no DB.
+        self._workflows = workflows or WorkflowsService()
 
         self.workdir = WorkdirManager(config.workdir_base)
         self.shared_intel = SharedIntelligence()
 
-        self.investigation_queue: asyncio.Queue = asyncio.Queue()
-
         self._data_service = None
-        self._claude_service = None
-        self._hourly_costs: List[Dict] = []
-        self._mp = self._init_mempalace()
+        self._hourly_paused = False
 
         self.stats = {
             "investigations_created": 0,
@@ -127,6 +491,7 @@ class Orchestrator:
             "dedup_prevented": 0,
             "total_cost_usd": 0.0,
         }
+        self._intake_surge_active = False
 
     @property
     def enabled(self) -> bool:
@@ -178,15 +543,13 @@ class Orchestrator:
             logger.info(
                 f"  Max cost/investigation: ${self.config.max_cost_per_investigation}"
             )
-            logger.info(
-                f"  Auto-assign severities: {self.config.auto_assign_severities}"
-            )
             logger.info(f"  Dry run: {self.config.dry_run}")
 
             tasks = [
                 asyncio.create_task(self._intake_loop(shutdown_event)),
                 asyncio.create_task(self._supervision_loop(shutdown_event)),
                 asyncio.create_task(self._review_loop(shutdown_event)),
+                asyncio.create_task(self._distil_loop(shutdown_event)),
             ]
 
             while not shutdown_event.is_set() and self._enabled:
@@ -233,23 +596,15 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _intake_loop(self, shutdown_event: asyncio.Event):
-        """Consume the investigation queue and create new investigations."""
+        """Drain queued trigger rows and create new investigations."""
         while not shutdown_event.is_set():
             try:
                 if not self._enabled:
                     await self._sleep(shutdown_event, 10)
                     continue
 
-                # Process queued items
-                while not self.investigation_queue.empty():
-                    try:
-                        item = self.investigation_queue.get_nowait()
-                        await self._process_intake_item(item, shutdown_event)
-                    except asyncio.QueueEmpty:
-                        break
-
-                # Also pick up queued investigations from the database
-                await self._pickup_queued_investigations(shutdown_event)
+                await self._drain_intake(shutdown_event)
+                await self._pickup_assigned_investigations(shutdown_event)
 
             except asyncio.CancelledError:
                 break
@@ -258,69 +613,256 @@ class Orchestrator:
 
             await self._sleep(shutdown_event, self.config.loop_interval)
 
-    async def _process_intake_item(self, item: Dict, shutdown_event: asyncio.Event):
-        """Process a single item from the investigation queue."""
-        item_type = item.get("type")
+    async def _drain_intake(self, shutdown_event: asyncio.Event):
+        """Merge and expire every queued row, then launch in rank order while a slot is free."""
+        now = utcnow()
+        launchable: List[Dict] = []
+        for row in self._queued_intake_triggers():
+            kept = self._resolve_intake_row(row, now)
+            if kept is not None:
+                launchable.append(kept)
 
-        if item_type == "finding":
-            finding = item.get("data", {})
-            await self._create_investigation_for_finding(finding, shutdown_event)
-        elif item_type == "manual":
-            await self._create_manual_investigation(item, shutdown_event)
+        launchable.sort(
+            key=lambda r: rank_intake_row(
+                r,
+                now=now,
+                ttl_seconds=self.config.intake_ttl_seconds,
+                promote_fraction=self.config.intake_ttl_promote_fraction,
+            )
+        )
+        # Rows stay queued while the hour is at the cap; they launch once old
+        # spend rolls out of the window.
+        if not self._hourly_budget_exhausted():
+            schedule_runs = self._schedule_runs_in_flight()
+            for row in launchable:
+                if self._in_flight() >= self.config.max_concurrent_agents:
+                    break
+                is_schedule = row.get("kind") == "schedule"
+                # Skipped, not a break: rows behind it may be detections.
+                if is_schedule and schedule_runs >= SCHEDULE_RUN_CEILING:
+                    continue
+                await self._process_intake_row(row, shutdown_event)
+                if is_schedule:
+                    schedule_runs += 1
+
+        depth = self._queued_intake_depth()
+        if depth is not None:
+            self._record_intake_depth(depth)
+
+    def _schedule_runs_in_flight(self) -> int:
+        try:
+            return _count_schedule_runs_in_flight()
+        except Exception as e:
+            # Unknown reads as full: hold hunts rather than risk every slot.
+            logger.error(f"Failed to count in-flight schedule runs: {e}")
+            return SCHEDULE_RUN_CEILING
+
+    def _queued_intake_depth(self) -> Optional[int]:
+        try:
+            return _count_queued_intake_rows()
+        except Exception as e:
+            logger.error(f"Failed to count intake queue: {e}")
+            return None
+
+    def _record_intake_depth(self, depth: int) -> None:
+        """Notify once when queued depth crosses the surge constant."""
+        threshold = self.config.intake_surge_depth
+        was_active = getattr(self, "_intake_surge_active", False)
+        now_active = depth > threshold
+        self._intake_surge_active = now_active
+        if now_active and not was_active:
+            self._write_intake_surge_notification(depth)
+
+    def _write_intake_surge_notification(self, depth: int) -> None:
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import CaseNotification
+
+            with get_db_manager().session_scope() as session:
+                session.add(
+                    CaseNotification(
+                        case_id=None,
+                        user_id="admin",
+                        notification_type="intake_surge",
+                        title="Intake queue surge",
+                        message=f"Intake queue depth is {depth}",
+                        delivery_channel="ui",
+                        priority="high",
+                        notification_metadata={"queue_depth": depth},
+                    )
+                )
+            logger.info("Intake surge notification written at depth %s", depth)
+        except Exception as e:
+            logger.error(f"Failed to create intake surge notification: {e}")
+
+    def _resolve_intake_row(self, row: Dict, now: datetime) -> Optional[Dict]:
+        """Expire or merge a queued row. Capacity does not wait on this pass."""
+        if intake_age_seconds(row, now) >= self.config.intake_ttl_seconds:
+            self._decide_trigger(row.get("id"), state="expired", reason="ttl_expired")
+            return None
+        if row.get("kind") == "detection":
+            finding = self._hydrate_detection_finding(row)
+            row["_finding"] = finding
+            if finding is not None and self._merge_if_overlaps(finding, row.get("id")):
+                return None
+        return row
+
+    def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
+        """True when this row is not launching this tick (merged, or held).
+
+        A failed attach is not a merge: no ``dedup_prevented`` bump, no
+        ``_decide_trigger``. Returning True still skips launch so the row
+        stays ``queued`` and the next tick retries.
+
+        Overlap with only caseless live runs (hunts, legacy) is not a merge:
+        False, so the row proceeds to Claim and opens its own Case.
+        """
+        overlapping = self.shared_intel.check_overlap(finding)
+        if not overlapping:
+            return False
+        finding_id = finding.get("finding_id", "unknown")
+        outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
+        if outcome is _Overlap.LAUNCH:
+            return False
+        if outcome is _Overlap.HOLD:
+            return True
+        self.stats["dedup_prevented"] += 1
+        if _dedup_prevented is not None:
+            _dedup_prevented.add(1)
+        self._decide_trigger(
+            trigger_id,
+            state="merged",
+            reason="overlaps_open_work",
+            merged_into=merged_into,
+        )
+        return True
+
+    async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
+        kind = row.get("kind")
+        trigger_id = row.get("id")
+        if kind == "detection":
+            finding = (
+                row["_finding"]
+                if "_finding" in row
+                else self._hydrate_detection_finding(row)
+            )
+            if finding is None:
+                logger.warning(
+                    "intake row %s has no finding to launch; leaving queued", trigger_id
+                )
+                return
+            await self._create_investigation_for_finding(
+                finding, shutdown_event, trigger_id=trigger_id
+            )
+        elif kind in ("schedule", "human_ask"):
+            item = dict(row.get("payload") or {})
+            item["priority"] = row.get("priority") or item.get("priority") or "medium"
+            if kind == "schedule":
+                item.setdefault("trigger_type", "scheduled")
+            await self._create_manual_investigation(
+                item, shutdown_event, trigger_id=trigger_id
+            )
         else:
-            logger.warning(f"Unknown intake item type: {item_type}")
+            logger.warning(f"Unknown intake kind: {kind}")
 
     async def _create_investigation_for_finding(
-        self, finding: Dict, shutdown_event: asyncio.Event
+        self,
+        finding: Dict,
+        shutdown_event: asyncio.Event,
+        trigger_id: Optional[int] = None,
     ):
         """Create an investigation for a finding, with dedup checks."""
-        finding_id = finding.get("finding_id", "unknown")
-        severity = (finding.get("severity") or "").lower()
+        # Same band the ranker uses: empty or a name that is not a rating
+        # is unknown, not an invented medium. A detection can arrive from
+        # Gate 1 or from a live feed hit; neither path invents a medium.
+        priority = intake_severity_band(
+            "detection", finding_severity=finding.get("severity")
+        )
 
-        if severity not in self.config.auto_assign_severities:
-            return
-
-        overlapping = self.shared_intel.check_overlap(finding)
-        if overlapping:
-            logger.info(
-                f"Finding {finding_id} overlaps with {overlapping}, adding to existing investigation"
-            )
-            self.stats["dedup_prevented"] += 1
-            if _dedup_prevented is not None:
-                _dedup_prevented.add(1)
-            self._log_ai_decision(
-                decision_type="dedup_prevention",
-                inv_id=overlapping,
-                reasoning=f"Finding {finding_id} shares entities with existing investigation {overlapping}. Skipping to avoid duplicate work.",
-                action="skip_investigation",
-                confidence=0.9,
-            )
+        if self._merge_if_overlaps(finding, trigger_id):
             return
 
         workflow_id = select_workflow(finding)
-        self._log_ai_decision(
-            decision_type="skill_selection",
-            inv_id=finding_id,
-            reasoning=f"Selected workflow '{workflow_id}' for finding {finding_id} (severity={severity}, title={finding.get('title', 'N/A')[:100]})",
-            action=f"assign_workflow:{workflow_id}",
-            confidence=0.85,
-        )
+        if not is_enabled(workflow_id):
+            logger.info(
+                "workflow %s is turned off; routing finding %s to %s",
+                workflow_id,
+                finding.get("finding_id"),
+                FALLBACK_WORKFLOW,
+            )
+            workflow_id = FALLBACK_WORKFLOW
+        finding_id = finding.get("finding_id")
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
-            priority=severity or "medium",
+            priority=priority,
+            mint_case=CaseSpec(
+                title=_infer_title(finding, workflow_id)[:200],
+                finding_ids=[finding_id] if finding_id else [],
+                priority=priority,
+            ),
             shutdown_event=shutdown_event,
+            trigger_id=trigger_id,
         )
 
+    def _attach_to_overlapping_case(
+        self, finding_id: str, overlapping: List[str]
+    ) -> Tuple[_Overlap, Optional[str]]:
+        """Attach a finding to the Case of the first overlapping live run that has one.
+
+        The ``case_id`` comes back with ``MERGED`` and is always a
+        ``cases.case_id``. ``LAUNCH`` means every overlapping run read clean
+        and none of them is on a Case: not a merge, so the caller goes on to
+        Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
+        next tick retries.
+
+        ``check_overlap`` names only rows that are live, so an investigation
+        that will not read is a failed read rather than a caseless run:
+        ``get_investigation`` answers ``None`` for a database error the same
+        way it does for a row that is gone. Launching on that would open a
+        second run on an entity a Case already covers, so an unreadable row
+        holds.
+        """
+        for inv_id in overlapping:
+            investigation = self.get_investigation(inv_id)
+            if investigation is None:
+                logger.warning(
+                    f"Finding {finding_id} overlaps investigation {inv_id} "
+                    f"but it would not read; leaving queued"
+                )
+                return _Overlap.HOLD, None
+            case_id = investigation.get("case_id")
+            if not case_id:
+                continue
+            # No data service reads as a failed attach: logged, never raised.
+            added = bool(self._data_service) and self._data_service.add_finding_to_case(
+                case_id, finding_id
+            )
+            if added:
+                logger.info(
+                    f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
+                )
+                return _Overlap.MERGED, case_id
+            logger.warning(
+                f"Finding {finding_id} overlaps investigation {inv_id} "
+                f"but could not be attached to case {case_id}; leaving queued"
+            )
+            return _Overlap.HOLD, None
+        return _Overlap.LAUNCH, None
+
     async def _create_manual_investigation(
-        self, item: Dict, shutdown_event: asyncio.Event
+        self,
+        item: Dict,
+        shutdown_event: asyncio.Event,
+        trigger_id: Optional[int] = None,
     ):
         """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
-        finding_ids = item.get("finding_ids", [])
-        case_id = item.get("case_id")
+        finding_ids = item.get("finding_ids") or []
+        case_id = item.get("case_id") or None
         hypothesis = item.get("hypothesis")
+        hypothesis_subjects = item.get("hypothesis_subjects")
 
         findings = []
         if self._data_service and finding_ids:
@@ -329,14 +871,27 @@ class Orchestrator:
                 if f:
                     findings.append(f)
 
+        mint = None
+        if not case_id and finding_ids:
+            mint = CaseSpec(
+                title=_human_ask_case_title(hypothesis, findings, workflow_id),
+                finding_ids=list(finding_ids),
+                priority=item.get("priority") or "medium",
+            )
+
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=findings,
-            trigger_type="manual",
+            # The intake is shared, so what put the item on it is the item's to say.
+            trigger_type=item.get("trigger_type") or "manual",
             priority=item.get("priority", "medium"),
             case_id=case_id,
+            mint_case=mint,
             hypothesis=hypothesis,
+            hypothesis_subjects=hypothesis_subjects,
             shutdown_event=shutdown_event,
+            trigger_id=trigger_id,
+            document=item.get("document"),
         )
 
     async def _create_investigation(
@@ -346,10 +901,20 @@ class Orchestrator:
         trigger_type: str,
         priority: str,
         case_id: Optional[str] = None,
+        mint_case: Optional[CaseSpec] = None,
         hypothesis: Optional[str] = None,
+        hypothesis_subjects: Optional[Dict[str, List[str]]] = None,
         shutdown_event: Optional[asyncio.Event] = None,
+        trigger_id: Optional[int] = None,
+        document: Optional[str] = None,
     ):
         """Core investigation creation logic."""
+        if mint_case is not None:
+            case_id = case_id or mint_case.case_id or _new_case_id()
+            mint_case = replace(mint_case, case_id=case_id)
+        if findings and not case_id:
+            raise ValueError("a run opened on findings needs a case")
+
         inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         total_steps = count_steps(workflow_id)
 
@@ -363,22 +928,44 @@ class Orchestrator:
         )
         self.workdir.write_state(inv_id, state)
 
-        context_md = generate_initial_context(findings)
-        # Append any prior MemPalace intelligence for the trigger entities
-        if findings:
-            prior_context = self._fetch_prior_palace_context(findings[0])
-            if prior_context:
-                context_md = context_md + "\n\n" + prior_context
-        self.workdir.write_file(inv_id, "context.md", context_md)
-
-        for finding in findings:
-            self.shared_intel.register_entities(inv_id, finding)
-
-        can_start_now = (
-            not self.config.dry_run
-            and shutdown_event
-            and self._in_flight() < self.config.max_concurrent_agents
+        self.workdir.write_file(
+            inv_id,
+            "context.md",
+            generate_initial_context(findings, case_id, document),
         )
+        # What this run is about, so the harness's keyed read has something to ask
+        # on. Written even when empty: an investigation whose findings name no
+        # entity asked nothing rather than being handed keys nobody minted.
+        self.workdir.write_file(
+            inv_id, "recall_keys.json", json.dumps(finding_entity_keys(findings))
+        )
+        # Beside the context and read back the same way at enqueue: what the hunt was
+        # opened to test reaches its board as a hypothesis, not as prose in the brief.
+        if hypothesis:
+            self.workdir.write_file(inv_id, "hypotheses.txt", hypothesis)
+        # What each of those claims is about, keyed by the claim. Stated by the
+        # caller or absent: nothing here reads a finding and guesses, because a
+        # guessed subject and a stated one are the same bytes downstream, and a
+        # Verdict recalled under an entity that was never in the claim is worse
+        # than one recalled under nothing.
+        if hypothesis and hypothesis_subjects:
+            self.workdir.write_file(
+                inv_id, "hypothesis_subjects.json", json.dumps(hypothesis_subjects)
+            )
+        # The shadow run's one hypothesis, derived here where the finding is in
+        # hand and read back at enqueue, which sees only ids. Only a detection
+        # finding gets a shadow; a manual or scheduled run has nothing to adjudicate.
+        if trigger_type == "finding" and is_enabled(SHADOW_WORKFLOW_ID):
+            try:
+                line = _shadow_hypothesis(findings)
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 — an odd finding costs the shadow, not intake
+                logger.warning("no shadow hypothesis for %s: %s", inv_id, exc)
+                line = ""
+            self.workdir.write_file(inv_id, SHADOW_HYPOTHESIS_FILE, line)
+
+        shutting_down = shutdown_event is not None and shutdown_event.is_set()
 
         # Start root investigation span — will be the parent for all agent spans
         _inv_span = None
@@ -410,7 +997,7 @@ class Orchestrator:
             "trigger_ids": [
                 f.get("finding_id") for f in findings if f.get("finding_id")
             ],
-            "status": "assigned" if can_start_now else "queued",
+            "status": "assigned",
             "workdir": str(workdir),
             "current_step": 1,
             "total_steps": total_steps,
@@ -422,7 +1009,21 @@ class Orchestrator:
             "run_id": run_id_for(inv_id),
         }
 
-        self._save_investigation(inv_record)
+        saved = self._save_investigation(
+            inv_record,
+            trigger_id=trigger_id,
+            mint_case=mint_case,
+            document=document,
+        )
+        if not saved:
+            logger.warning(
+                "intake row %s already decided; not launching %s",
+                trigger_id,
+                inv_id,
+            )
+            return
+
+        self.shared_intel.register_investigation(inv_id, findings)
         self.stats["investigations_created"] += 1
         if _inv_created is not None:
             _inv_created.add(1)
@@ -449,31 +1050,27 @@ class Orchestrator:
 
         await self._check_cross_correlations(inv_id)
 
-        if can_start_now:
+        if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
-        else:
-            logger.info(f"Agent pool full, {inv_id} queued for pickup")
 
-    async def _pickup_queued_investigations(self, shutdown_event: asyncio.Event):
-        """Check database for investigations waiting to be assigned to agents."""
-        if self.config.dry_run:
+    async def _pickup_assigned_investigations(self, shutdown_event: asyncio.Event):
+        """Re-enqueue assigned investigations after a restart."""
+        if self.config.dry_run or self._hourly_budget_exhausted():
             return
 
-        for status in ("assigned", "queued"):
-            investigations = self._get_investigations_by_status(status)
-            for inv in investigations:
-                inv_id = inv.get("investigation_id") or (
-                    inv.investigation_id if hasattr(inv, "investigation_id") else None
-                )
-                if not inv_id:
-                    continue
-                if self._in_flight() >= self.config.max_concurrent_agents:
-                    return
+        for inv in self._get_investigations_by_status("assigned"):
+            inv_id = inv.get("investigation_id") or (
+                inv.investigation_id if hasattr(inv, "investigation_id") else None
+            )
+            if not inv_id:
+                continue
+            if self._in_flight() >= self.config.max_concurrent_agents:
+                return
 
-                self._update_investigation_status(inv_id, "assigned")
-                inv_dict = _inv_as_dict(inv)
-                inv_dict["status"] = "assigned"
-                await self._enqueue_investigation(inv_dict)
+            self._update_investigation_status(inv_id, "assigned")
+            inv_dict = _inv_as_dict(inv)
+            inv_dict["status"] = "assigned"
+            await self._enqueue_investigation(inv_dict)
 
     # -------------------------------------------------------------------------
     # Supervision Loop
@@ -527,10 +1124,9 @@ class Orchestrator:
                     if not inv_id:
                         continue
 
-                    last_activity = inv_dict.get("last_activity_at")
+                    # Dump dicts carry "+00:00" strings; `now` is naive UTC.
+                    last_activity = _as_naive_utc(inv_dict.get("last_activity_at"))
                     if last_activity:
-                        if isinstance(last_activity, str):
-                            last_activity = datetime.fromisoformat(last_activity)
                         idle_seconds = (now - last_activity).total_seconds()
                         if idle_seconds > self.config.stale_threshold:
                             logger.warning(
@@ -582,8 +1178,6 @@ class Orchestrator:
                             inv_id, "failed", "Cost budget exceeded"
                         )
 
-                self._track_hourly_cost()
-
                 if not hasattr(self, "_supervision_tick"):
                     self._supervision_tick = 0
                 self._supervision_tick += 1
@@ -605,10 +1199,15 @@ class Orchestrator:
     # The run: enqueued here, driven by the agent worker, read back as a projection
     # -------------------------------------------------------------------------
 
-    IN_FLIGHT = ("assigned", "executing", "waiting_approval")
+    IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
 
     def _in_flight(self) -> int:
-        return sum(len(self._get_investigations_by_status(s)) for s in self.IN_FLIGHT)
+        try:
+            return _count_investigations_in_flight()
+        except Exception as e:
+            # Unknown reads as full: a failed count must not lift the cap.
+            logger.error("Failed to count in-flight investigations: %s", e)
+            return self.config.max_concurrent_agents
 
     # A run belongs to the worker, so nothing here stops one. The record is marked
     # and the run finishes or hits its ceiling; reaping a stalled worker is #633.
@@ -623,15 +1222,69 @@ class Orchestrator:
                         "Orchestrator stopped while the run was in flight",
                     )
 
+    # Absent and unreadable answer the same, because both mean the run's inputs
+    # are not there to be read, and a half-read investigation is not a better one.
+    def _read_sidecar_json(self, inv_id: str, filename: str) -> Any:
+        held = self.workdir.read_file(inv_id, filename)
+        if not held:
+            return None
+        try:
+            return json.loads(held)
+        except ValueError:
+            logger.warning("%s has an unreadable %s", inv_id, filename)
+            return None
+
+    # An empty map rather than None, because a JSON null reaches the agent layer
+    # as a value where a missing key reads as unset.
+    def _hypothesis_subjects(
+        self, inv_id: str, stated: List[str]
+    ) -> Dict[str, List[str]]:
+        declared = self._read_sidecar_json(inv_id, "hypothesis_subjects.json")
+        return {} if declared is None else kept_subjects(declared, stated)
+
+    # normalise_keys carries the absent, the non-list and the unusable to the same
+    # empty answer, which is what a run that recalls nothing is.
+    def _recall_keys(self, inv_id: str) -> List[str]:
+        return normalise_keys(self._read_sidecar_json(inv_id, "recall_keys.json"))
+
+    # WorkflowDefinition.run_kind, including its absent-field default of compose.
+    # A missing workflow and a kind outside RUN_KINDS are refused, not coerced:
+    # the caller's except marks the investigation failed rather than queueing a
+    # run no worker has a loop for.
+    def _declared_run_kind(self, workflow_id: str) -> str:
+        workflow = self._workflows.get_workflow(workflow_id)
+        if workflow is None:
+            raise ValueError(f"no such workflow: {workflow_id}")
+        declared = workflow.run_kind
+        if declared not in RUN_KINDS:
+            raise ValueError(f"{workflow_id} declares unknown run_kind {declared!r}")
+        return str(declared)
+
     async def _enqueue_investigation(self, inv_record: Dict) -> None:
         inv_id = inv_record["investigation_id"]
         run_id = inv_record.get("run_id") or run_id_for(inv_id)
+        # One per line, as the console's run modal sends them. Empty for a workflow
+        # that walks phases and has no board to put them on.
+        hypotheses = [
+            line.strip()
+            for line in (
+                self.workdir.read_file(inv_id, "hypotheses.txt") or ""
+            ).splitlines()
+            if line.strip()
+        ]
+        subjects = self._hypothesis_subjects(inv_id, hypotheses)
         request = {
             # The workflow resolves both layers, so no config path travels beside it.
             "playbook": f"workflow:{inv_record['workflow_id']}",
             "config": "",
             "arch": "",
             "prompt": self.workdir.read_file(inv_id, "context.md") or "",
+            "hypotheses": hypotheses,
+            "hypothesis_subjects": subjects,
+            # What the run opens its episodic read on. A hunt derives its own from
+            # the hypotheses being put up; an investigation has none, so its keys
+            # are the entities the findings it was opened on carry.
+            "recall_keys": self._recall_keys(inv_id),
             # ORCHESTRATOR_MAX_COST and ORCHESTRATOR_MAX_RUNTIME keep their meaning
             # as the ceilings the budget seam refuses the next call at.
             "overrides": {
@@ -643,13 +1296,57 @@ class Orchestrator:
             },
         }
 
+        # Coverage, finalize_run and the listings read this row. A restart
+        # re-enters with the same run id, and a refused write must not stop
+        # the job being queued.
+        runs = WorkflowRunService()
+        row = None
         try:
+            run_kind = self._declared_run_kind(inv_record["workflow_id"])
+            try:
+                if runs.get_run(run_id) is None:
+                    context: Dict[str, Any] = {
+                        "run_kind": run_kind,
+                        "hypothesis_subjects": subjects,
+                        "hypothesis": "\n".join(hypotheses),
+                        "investigation_id": inv_id,
+                    }
+                    case_id = inv_record.get("case_id")
+                    if case_id:
+                        context["case_id"] = case_id
+                    row = runs.begin_run(
+                        run_id=run_id,
+                        workflow_id=inv_record["workflow_id"],
+                        workflow_name=inv_record["workflow_id"],
+                        workflow_source="agent",
+                        workflow_version=self._workflows.version_of(
+                            inv_record["workflow_id"]
+                        ),
+                        trigger_context=context,
+                        triggered_by="orchestrator",
+                    )
+                    if row is None:
+                        logger.warning("no workflow_runs row for %s", run_id)
+                else:
+                    logger.info("run %s already recorded; not rewriting", run_id)
+            except Exception as exc:  # noqa: BLE001 — a refused row still enqueues
+                logger.warning("no workflow_runs row for %s: %s", run_id, exc)
+                row = None
+
             job = build_start_job(
-                run_id, "investigate", request, enqueued_by="orchestrator"
+                run_id,
+                run_kind,
+                request,
+                enqueued_by="orchestrator",
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
             logger.error("could not enqueue %s: %s", inv_id, exc)
+            # Otherwise coverage stays "running" for a hunt that never started.
+            if row is not None:
+                runs.finalize_run(
+                    run_id, status="failed", error=f"Could not enqueue: {exc}"
+                )
             self._update_investigation_status(
                 inv_id, "failed", f"Could not enqueue: {exc}"
             )
@@ -657,6 +1354,91 @@ class Orchestrator:
 
         self._update_investigation_status(inv_id, "executing")
         logger.info("enqueued investigation %s as run %s", inv_id, run_id)
+
+        # After the real run is queued and its row says so: a shadow that fails
+        # must never mark the investigation failed or hold up its transition.
+        try:
+            await self._enqueue_shadow_adjudication(inv_record, request)
+        except Exception as exc:  # noqa: BLE001 — the shadow is best-effort
+            logger.error(
+                "could not enqueue shadow adjudication for %s: %s", inv_id, exc
+            )
+
+    # Shadow mode (#880): one more job over the same finding, on the adjudicate
+    # loop, that executes nothing and journals which workflow it would have run.
+    # No investigations row and no AIDecisionLog entry: the ledger is its record,
+    # and the workflow_runs row is what lets Workflows History and replay reach it.
+    async def _enqueue_shadow_adjudication(
+        self, inv_record: Dict, request: Dict[str, Any]
+    ) -> None:
+        if not is_enabled(SHADOW_WORKFLOW_ID):
+            return
+        if inv_record.get("trigger_type") != "finding":
+            return
+        inv_id = inv_record["investigation_id"]
+        hypothesis = (
+            self.workdir.read_file(inv_id, SHADOW_HYPOTHESIS_FILE) or ""
+        ).strip()
+        if not hypothesis:
+            # The definition refuses a run with none stated; nothing here reads the
+            # finding back from the DB to invent one.
+            logger.info("no shadow hypothesis for %s; no shadow run", inv_id)
+            return
+
+        intake_workflow = inv_record["workflow_id"]
+        shadow_id = shadow_run_id_for(inv_id)
+        # The same brief, budgets and recall keys the real run got, so the two
+        # decisions are over the same evidence; only the framing differs.
+        shadow = copy.deepcopy(request)
+        shadow["playbook"] = f"workflow:{SHADOW_WORKFLOW_ID}"
+        shadow["prompt"] = (
+            f"{request['prompt']}\n\n## Intake's choice\n\n"
+            f"Intake admitted this finding and chose the `{intake_workflow}` "
+            "workflow. Decide independently whether the finding is what intake "
+            "says it is and which catalogue workflow it warrants; execute nothing."
+        )
+        shadow["hypotheses"] = [hypothesis]
+        # Stated, not guessed: the claim names these very entities.
+        keys = list(request.get("recall_keys") or [])
+        shadow["hypothesis_subjects"] = {hypothesis: keys} if keys else {}
+
+        runs = WorkflowRunService()
+        # A restart re-enqueues assigned investigations; a shadow already on
+        # record is not started twice.
+        if runs.get_run(shadow_id) is not None:
+            logger.info("shadow run %s already recorded; not re-enqueued", shadow_id)
+            return
+        # Row first, as the API does: an answerable checkpoint needs it to exist.
+        # begin_run returns None on a DB failure rather than raising.
+        row = runs.begin_run(
+            run_id=shadow_id,
+            workflow_id=SHADOW_WORKFLOW_ID,
+            workflow_name=SHADOW_WORKFLOW_ID,
+            workflow_source="agent",
+            workflow_version=self._workflows.version_of(SHADOW_WORKFLOW_ID),
+            trigger_context={
+                "run_kind": "adjudicate",
+                "investigation_id": inv_id,
+                "intake_workflow_id": intake_workflow,
+            },
+            triggered_by="orchestrator",
+        )
+        if row is None:
+            logger.warning("no workflow_runs row for shadow run %s", shadow_id)
+
+        job = build_start_job(
+            shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
+        )
+        try:
+            await enqueue_run(job, job_id=shadow_id)
+        except Exception as exc:
+            # Otherwise the row reads as running forever with no job behind it.
+            if row is not None:
+                runs.finalize_run(
+                    shadow_id, status="failed", error=f"Could not enqueue: {exc}"
+                )
+            raise
+        logger.info("enqueued shadow adjudication of %s as run %s", inv_id, shadow_id)
 
     # The ledger is the record and this row is the copy an operator reads, so the
     # copy is reconciled from the projection rather than written alongside it.
@@ -700,7 +1482,11 @@ class Orchestrator:
                 if inv is None:
                     logger.warning("progress for %s: row not found", inv_id)
                     return
-                inv.iteration_count = projection.get("iterations", 0)
+                # Hunt folds report `iteration`; lead folds report `iterations`.
+                counted = projection.get("iterations")
+                inv.iteration_count = (
+                    projection.get("iteration", 0) if counted is None else counted
+                )
                 inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")
@@ -720,18 +1506,78 @@ class Orchestrator:
             parameters={"investigation_id": inv_id},
         )
 
-    def _track_hourly_cost(self):
-        """Track rolling hourly cost for budget enforcement."""
-        now = utcnow()
-        cutoff = now - timedelta(hours=1)
-        self._hourly_costs = [c for c in self._hourly_costs if c["ts"] > cutoff]
-        hourly_total = sum(c["cost"] for c in self._hourly_costs)
+    def _hourly_cost(self) -> Optional[float]:
+        """Recorded cost of investigations active in the last hour; None if unreadable.
 
-        if hourly_total >= self.config.max_total_hourly_cost:
-            logger.warning(
-                f"Hourly cost ${hourly_total:.2f} exceeds limit ${self.config.max_total_hourly_cost:.2f}, pausing intake"
-            )
-            self._enabled = False
+        Keyed on last_activity_at, which every reconcile of an in-flight run
+        stamps, so in-flight runs count in full and a finished run drops out an
+        hour after its last update. An unpriced run is stored as 0.0 (#985).
+        """
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import Investigation
+
+            cutoff = utcnow() - timedelta(hours=1)
+            with get_db_manager().session_scope() as session:
+                total = (
+                    session.query(func.sum(Investigation.cost_usd))
+                    .filter(Investigation.last_activity_at >= cutoff)
+                    .scalar()
+                )
+            return float(total or 0.0)
+        except Exception as e:
+            logger.error(f"Failed to read hourly cost: {e}")
+            return None
+
+    def _hourly_cost_limit(self) -> float:
+        """The cap as saved in Settings, falling back to startup config.
+
+        Read live so the daemon's gate and the API's status payload (a separate
+        process on default config) agree, and a saved change applies at once.
+        """
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import SystemConfig
+
+            with get_db_manager().session_scope() as session:
+                cfg = (
+                    session.query(SystemConfig)
+                    .filter_by(key="orchestrator.settings")
+                    .first()
+                )
+                if cfg and isinstance(cfg.value, dict):
+                    saved = cfg.value.get("max_total_hourly_cost")
+                    if saved is not None:
+                        return float(saved)
+        except Exception as e:
+            logger.warning("Hourly cost limit read failed, using config: %s", e)
+        return self.config.max_total_hourly_cost
+
+    def _hourly_budget_exhausted(self) -> bool:
+        """Gate intake on the rolling hour; logs once per pause/resume transition.
+
+        Not a write to _enabled: _sync_enabled_from_db would undo it within 5s.
+        """
+        spent = self._hourly_cost()
+        limit = self._hourly_cost_limit()
+        paused = self._hourly_pause_decision(spent, limit)
+        if spent is None:
+            return paused
+        if paused != getattr(self, "_hourly_paused", False):
+            self._hourly_paused = paused
+            if paused:
+                logger.warning(
+                    f"Hourly cost ${spent:.4f} reached limit ${limit:.4f}, pausing intake"
+                )
+            else:
+                logger.info(
+                    f"Hourly cost ${spent:.4f} below limit ${limit:.4f}, resuming intake"
+                )
+        return paused
+
+    def _hourly_pause_decision(self, spent: Optional[float], limit: float) -> bool:
+        # Unknown spend reads as over the cap, including on a cold start.
+        return spent is None or spent >= limit
 
     # -------------------------------------------------------------------------
     # Review Loop
@@ -761,101 +1607,147 @@ class Orchestrator:
 
             await self._sleep(shutdown_event, self.config.loop_interval)
 
-    async def _review_investigation(self, inv_id: str):
-        """Review a completed investigation's results."""
-        state = self.workdir.read_state(inv_id)
+    # Its own loop rather than a step of the supervision one: the Distils are not
+    # supervising anything, they read terminals and closures the rest of the
+    # system has already left behind. Slower than the others because nothing
+    # waits on either — memory is read at the start of the next run, so a write
+    # that lands minutes later is a write that lands in time.
+    async def _distil_loop(self, shutdown_event: asyncio.Event):
+        """Turn finished hunts and closed cases into episodic memory (#731, #733)."""
+        from core.memory.distil import distil_once
 
-        completed_steps = state.get("completed_steps", [])
-        total_steps = state.get("total_steps", 0)
-        summary = state.get("summary", "")
-        proposed_actions = state.get("proposed_actions", [])
+        while not shutdown_event.is_set():
+            try:
+                if not self._enabled:
+                    await self._sleep(shutdown_event, 10)
+                    continue
 
-        completeness = len(completed_steps) / total_steps if total_steps > 0 else 0
+                # Both on this tick rather than in a loop of its own: neither is
+                # supervising anything, both poll for work already finished, and
+                # a second loop would be a second interval to keep in step.
+                await self._case_distil_tick()
 
-        if completeness >= 0.8 and summary:
-            self._update_investigation_status(inv_id, "completed")
-            self.stats["investigations_completed"] += 1
-            if _inv_completed is not None:
-                _inv_completed.add(1)
-            self.stats["reviews_completed"] += 1
-            self.shared_intel.unregister_investigation(inv_id)
-            self._persist_investigation_to_palace(inv_id, state)
+                written = await distil_once()
+                if written["investigations"]:
+                    logger.info(
+                        "Distilled %s investigation(s): %s sightings, %s verdicts, %s gaps",
+                        written["investigations"],
+                        written["sightings"],
+                        written["verdicts"],
+                        written["gaps"],
+                    )
+                # Surfaced here and not only where they happened: one refusal in
+                # a log is a line nobody reads, and a tick that wrote nothing
+                # because everything failed must not look like a tick with
+                # nothing to do.
+                if written["refused"] or written["unreadable"] or written["failed"]:
+                    logger.warning(
+                        "Distil left %s investigation(s) undistilled: "
+                        "%s refused, %s unreadable, %s failed",
+                        written["refused"] + written["unreadable"] + written["failed"],
+                        written["refused"],
+                        written["unreadable"],
+                        written["failed"],
+                    )
 
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "review_passed",
-                    "completeness": completeness,
-                    "proposed_actions_count": len(proposed_actions),
-                },
-            )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                # Logged and retried rather than swallowed into a quiet stop: a
+                # Distil that dies silently is a memory that reads as empty
+                # rather than as broken, and empty is what an entity nobody has
+                # looked at also reads as.
+                logger.error(f"Distil loop error: {e}", exc_info=True)
 
+            await self._sleep(shutdown_event, self.config.loop_interval)
+
+    async def _case_distil_tick(self):
+        """Turn closed Cases into Verdicts (#733).
+
+        Its own method so that a failure here costs the Case Distil and not the
+        hunt one: they write different rows from different sources, and a
+        closure this job cannot map must not stop a finished hunt reaching
+        memory.
+        """
+        from core.memory.case_distil import case_distil_once
+
+        try:
+            written = await case_distil_once()
+        except Exception as e:
+            logger.error(f"Case Distil error: {e}", exc_info=True)
+            return
+
+        if written["cases"]:
             logger.info(
-                f"Investigation {inv_id} APPROVED ({completeness:.0%} complete, {len(proposed_actions)} actions)"
+                "Distilled %s closed case(s): %s verdicts",
+                written["cases"],
+                written["verdicts"],
+            )
+        if written["withdrawn"]:
+            logger.info(
+                "Withdrew %s Verdict(s) from reopened case(s)", written["withdrawn"]
+            )
+        if written["refused"] or written["failed"]:
+            logger.warning(
+                "Case Distil left %s case(s) undistilled: %s refused, %s failed",
+                written["refused"] + written["failed"],
+                written["refused"],
+                written["failed"],
             )
 
-            self._log_ai_decision(
-                decision_type="review_approve",
-                inv_id=inv_id,
-                reasoning=f"Investigation completed {completeness:.0%} of steps with valid summary. {len(proposed_actions)} proposed actions.",
-                action="approve",
-                confidence=completeness,
-            )
+    async def _review_investigation(self, inv_id: str):
+        """Approve an investigation that reached review.
 
-            self._send_notification(
-                inv_id,
-                "investigation_complete",
-                f"Investigation {inv_id} completed",
-                f"Investigation completed at {completeness:.0%} with {len(proposed_actions)} proposed actions.",
-                priority="normal",
-            )
+        ``_reconcile`` only moves a run here when the terminal outcome is
+        ``completed``. That conclusion is the review; the workdir is not
+        scored again.
+        """
+        state = self.workdir.read_state(inv_id)
+        proposed_actions = state.get("proposed_actions", [])
+        rule = decision_rule("review.terminal_outcome", "completed")
 
-            if proposed_actions:
-                for action in proposed_actions:
-                    if action.get("requires_approval"):
-                        await self._create_approval_action(inv_id, action)
+        self._update_investigation_status(inv_id, "completed")
+        self.stats["investigations_completed"] += 1
+        if _inv_completed is not None:
+            _inv_completed.add(1)
+        self.stats["reviews_completed"] += 1
+        self.shared_intel.close_investigation(inv_id, state.get("case_id"))
 
-            case_id = state.get("case_id")
-            if case_id and state.get("workflow_id") != "case-review":
-                await self._maybe_trigger_case_review(case_id)
+        self.workdir.append_log(
+            inv_id,
+            {
+                "event": "review_passed",
+                "proposed_actions_count": len(proposed_actions),
+            },
+        )
 
-        else:
-            notes = f"Review incomplete: {completeness:.0%} steps done."
-            if not summary:
-                notes += " Missing summary."
-            missing = [i for i in range(1, total_steps + 1) if i not in completed_steps]
-            if missing:
-                notes += f" Missing steps: {missing}"
+        logger.info(
+            f"Investigation {inv_id} APPROVED ({len(proposed_actions)} actions)"
+        )
 
-            self._update_investigation_status(inv_id, "needs_rework", notes)
-            self.stats["reviews_completed"] += 1
+        self._log_ai_decision(
+            decision_type="review_approve",
+            inv_id=inv_id,
+            reasoning=(
+                f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
+            ),
+            action="approve",
+            confidence=1.0,
+            rule=rule,
+        )
 
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "review_needs_rework",
-                    "notes": notes,
-                    "completeness": completeness,
-                },
-            )
+        self._send_notification(
+            inv_id,
+            "investigation_complete",
+            f"Investigation {inv_id} completed",
+            f"Investigation completed with {len(proposed_actions)} proposed actions.",
+            priority="normal",
+        )
 
-            logger.info(f"Investigation {inv_id} NEEDS REWORK: {notes}")
-
-            self._log_ai_decision(
-                decision_type="review_rework",
-                inv_id=inv_id,
-                reasoning=notes,
-                action="needs_rework",
-                confidence=completeness,
-            )
-
-            self._send_notification(
-                inv_id,
-                "investigation_needs_review",
-                f"Investigation {inv_id} needs rework",
-                notes,
-                priority="high",
-            )
+        if proposed_actions:
+            for action in proposed_actions:
+                if action.get("requires_approval"):
+                    await self._create_approval_action(inv_id, action)
 
     async def _create_approval_action(self, inv_id: str, action: Dict):
         """Create an approval action for proposed response."""
@@ -879,198 +1771,16 @@ class Orchestrator:
                 reason=f"[Auto-investigation {inv_id}] {action.get('reason', '')}",
                 evidence=[inv_id],
                 created_by=ORCHESTRATOR_ACTOR,
+                # The 0.8 is a constant, and the proposal is the agent's.
+                human_only=True,
             )
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:
             logger.error(f"Failed to create approval action: {e}")
 
-    async def _maybe_trigger_case_review(self, case_id: str):
-        """Trigger a case-review agent if one hasn't already run for this case."""
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation as InvModel
-
-            with get_db_manager().session_scope() as session:
-                existing = (
-                    session.query(InvModel)
-                    .filter(
-                        InvModel.workflow_id == "case-review",
-                        InvModel.case_id == case_id,
-                        InvModel.status.notin_(["failed"]),
-                    )
-                    .first()
-                )
-                if existing:
-                    logger.debug(
-                        f"Case-review already exists for {case_id}: {existing.investigation_id}"
-                    )
-                    return
-
-            case_data = None
-            if self._data_service:
-                case_data = self._data_service.get_case(case_id)
-            if not case_data:
-                logger.warning(f"Case {case_id} not found, skipping case review")
-                return
-
-            case_title = case_data.get("title", case_id)
-            finding_ids = case_data.get("finding_ids", [])
-            priority = case_data.get("priority", "medium")
-
-            inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
-            total_steps = count_steps("case-review")
-
-            workdir = self.workdir.create(inv_id)
-
-            plan_md = generate_case_review_plan(
-                inv_id, case_id, case_title, finding_ids, priority
-            )
-            self.workdir.write_file(inv_id, "plan.md", plan_md)
-
-            state = generate_initial_state(
-                inv_id, "case-review", case_id, [], total_steps
-            )
-            self.workdir.write_state(inv_id, state)
-
-            context_md = generate_case_review_context(case_id, case_title, finding_ids)
-            self.workdir.write_file(inv_id, "context.md", context_md)
-
-            inv_record = {
-                "investigation_id": inv_id,
-                "case_id": case_id,
-                "workflow_id": "case-review",
-                "trigger_type": "case_review",
-                "trigger_ids": finding_ids[:10],
-                "status": "assigned",
-                "workdir": str(workdir),
-                "current_step": 1,
-                "total_steps": total_steps,
-                "priority": priority,
-                "max_iterations": self.config.max_iterations_per_agent,
-                "max_cost_usd": self.config.max_cost_per_investigation,
-                "max_runtime_seconds": self.config.max_runtime_per_investigation,
-            }
-
-            self._save_investigation(inv_record)
-
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "investigation_created",
-                    "workflow_id": "case-review",
-                    "trigger_type": "case_review",
-                    "case_id": case_id,
-                },
-            )
-
-            logger.info(
-                f"Created case-review investigation {inv_id} for case {case_id}"
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Failed to trigger case review for {case_id}: {e}", exc_info=True
-            )
-
     # -------------------------------------------------------------------------
     # AI Decision Logging
     # -------------------------------------------------------------------------
-
-    def _init_mempalace(self):
-        """Initialize MemPalace data directory for daemon persistence.
-
-        MemPalace is a core dependency (not user-toggleable) — investigation
-        summaries are always written as JSON files directly into the palace
-        data directory, and the MemPalace Searcher is used for cross-run
-        lookups. The legacy MEMPALACE_DAEMON_ENABLED env gate is honoured
-        only when explicitly set to "false" to allow emergency disable in
-        broken environments.
-        """
-        if get_settings().mempalace_daemon_enabled is False:
-            logger.warning(
-                "MemPalace daemon integration disabled via MEMPALACE_DAEMON_ENABLED=false "
-                "(core dependency — only disable for emergency debugging)"
-            )
-            return None
-        try:
-            # Route through the single helper (#129) so the daemon,
-            # MCP server, and ClaudeService all resolve the same path.
-            from core.platform.mempalace_paths import (
-                get_closed_cases_dir,
-                get_palace_path,
-            )
-
-            data_dir = get_palace_path()
-            get_closed_cases_dir()  # mkdir side-effect for investigation snapshots
-            logger.info(f"MemPalace daemon integration enabled (data_dir={data_dir})")
-            return data_dir
-        except Exception as e:
-            logger.debug(f"MemPalace daemon init failed: {e}")
-            return None
-
-    def _persist_investigation_to_palace(self, inv_id: str, state: Dict) -> None:
-        """Store completed investigation summary as a JSON file in the palace data directory."""
-        if not self._mp:
-            return
-        try:
-            closed_cases_dir = self._mp / "investigations" / "closed-cases"
-            closed_cases_dir.mkdir(parents=True, exist_ok=True)
-            safe_id = inv_id.replace("/", "_")
-            dest = closed_cases_dir / f"{safe_id}.json"
-            dest.write_text(
-                json.dumps(
-                    {
-                        "inv_id": inv_id,
-                        "workflow_id": state.get("workflow_id"),
-                        "summary": state.get("summary", ""),
-                        "proposed_actions": state.get("proposed_actions", []),
-                        "completed_steps": state.get("completed_steps", []),
-                        "case_id": state.get("case_id"),
-                        "completed_at": utcnow().isoformat(),
-                    },
-                    indent=2,
-                )
-            )
-            logger.debug(f"Persisted investigation {inv_id} to MemPalace closed-cases")
-        except Exception as e:
-            logger.debug(f"MemPalace investigation persist failed: {e}")
-
-    def _fetch_prior_palace_context(self, finding: Dict) -> str:
-        """Query MemPalace Searcher for prior intelligence on a finding's entity set."""
-        if not self._mp:
-            return ""
-        try:
-            from mempalace.searcher import search_memories
-
-            ctx = finding.get("entity_context") or {}
-            terms = []
-            for ip in (ctx.get("src_ips") or []) + (
-                ctx.get("dest_ips") or ctx.get("dst_ips") or []
-            ):
-                terms.append(ip)
-            if ctx.get("src_ip"):
-                terms.append(ctx["src_ip"])
-            if ctx.get("dst_ip"):
-                terms.append(ctx["dst_ip"])
-            for d in ctx.get("domains") or []:
-                terms.append(d)
-            for h in ctx.get("file_hashes") or []:
-                terms.append(h)
-            if not terms:
-                return ""
-
-            query = " ".join(terms[:8])
-            results = search_memories(query=query, palace_path=str(self._mp))
-            if not results:
-                return ""
-
-            lines = ["## Prior Intelligence from MemPalace\n"]
-            for r in (results or [])[:5]:
-                lines.append(f"- {str(r)[:300]}")
-            return "\n".join(lines)
-        except Exception as e:
-            logger.debug(f"MemPalace prior context fetch failed: {e}")
-            return ""
 
     def _log_ai_decision(
         self,
@@ -1079,8 +1789,13 @@ class Orchestrator:
         reasoning: str,
         action: str,
         confidence: float = 1.0,
+        rule: Optional[str] = None,
     ):
-        """Log a master agent decision to the AIDecisionLog table."""
+        """Log a master agent decision to the AIDecisionLog table.
+
+        ``rule`` is the rendered ``decision_rule`` for decisions made on a
+        threshold; it lands in ``decision_metadata["rule"]``.
+        """
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import AIDecisionLog, Investigation
@@ -1114,6 +1829,7 @@ class Orchestrator:
                     decision_metadata={
                         "source": ORCHESTRATOR_ACTOR,
                         "investigation_id": inv_id,
+                        **({"rule": rule} if rule else {}),
                     },
                 )
                 session.add(entry)
@@ -1151,20 +1867,14 @@ class Orchestrator:
             case_b = inv_b.get("case_id") if inv_b else None
 
             if case_a and case_b and case_a != case_b:
+                notes = f"Shared IOCs: {', '.join(shared_keys[:10])}"
                 try:
-                    client = self._mcp_client
-                    if client:
-                        await client.call_tool(
-                            "link_related_cases",
-                            {
-                                "case_id": case_a,
-                                "related_case_id": case_b,
-                                "relationship": "shared_iocs",
-                            },
-                        )
-                        logger.info(f"Linked cases {case_a} <-> {case_b}")
-                except Exception as e:
-                    logger.debug(f"Failed to link cases: {e}")
+                    await asyncio.to_thread(_link_cases, case_a, case_b, notes)
+                    logger.info(f"Linked cases {case_a} <-> {case_b}")
+                except Exception:
+                    logger.warning(
+                        f"Failed to link cases {case_a} <-> {case_b}", exc_info=True
+                    )
 
             cross_note = (
                 f"\n\n## Cross-Investigation Note\n"
@@ -1296,20 +2006,36 @@ class Orchestrator:
     # Database Helpers
     # -------------------------------------------------------------------------
 
-    def _save_investigation(self, inv_record: Dict):
-        """Save a new investigation record to the database."""
+    def _save_investigation(
+        self,
+        inv_record: Dict,
+        trigger_id: Optional[int] = None,
+        mint_case: Optional[CaseSpec] = None,
+        document: Optional[str] = None,
+    ) -> bool:
+        """Save a new investigation; with a trigger id, CAS it launched in the same transaction.
+
+        When ``mint_case`` is given, the Case (and ``case_findings``) are written
+        in this session so a crash cannot leave a Case with no run, or a run
+        with no Case. A document on a Human Ask is recorded on that Case here.
+        """
         try:
+            from sqlalchemy import update
+
             from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
+            from core.storage.models import IntakeTrigger, Investigation
 
             with get_db_manager().session_scope() as session:
+                if mint_case is not None:
+                    inv_record["case_id"] = _mint_case(session, mint_case)
+                _record_human_ask_document(session, inv_record.get("case_id"), document)
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
                     case_id=inv_record.get("case_id"),
                     workflow_id=inv_record["workflow_id"],
                     trigger_type=inv_record["trigger_type"],
                     trigger_ids=inv_record.get("trigger_ids", []),
-                    status=inv_record.get("status", "queued"),
+                    status=inv_record.get("status", "assigned"),
                     workdir=inv_record["workdir"],
                     current_step=inv_record.get("current_step", 0),
                     total_steps=inv_record.get("total_steps", 0),
@@ -1321,12 +2047,94 @@ class Orchestrator:
                         "max_cost_usd", self.config.max_cost_per_investigation
                     ),
                     max_runtime_seconds=inv_record.get(
-                        "max_runtime_seconds", self.config.max_runtime_per_investigation
+                        "max_runtime_seconds",
+                        self.config.max_runtime_per_investigation,
                     ),
                 )
                 session.add(inv)
+                if trigger_id is None:
+                    return True
+                session.flush()
+                claimed = session.execute(
+                    update(IntakeTrigger)
+                    .where(
+                        IntakeTrigger.id == trigger_id,
+                        IntakeTrigger.state == "queued",
+                    )
+                    .values(
+                        state="launched",
+                        investigation_id=inv_record["investigation_id"],
+                        case_id=inv_record.get("case_id"),
+                        decided_at=utcnow(),
+                    )
+                    .returning(IntakeTrigger.id)
+                ).scalar_one_or_none()
+                if claimed is None:
+                    raise _TriggerAlreadyDecided()
+            return True
+        except _TriggerAlreadyDecided:
+            return False
         except Exception as e:
             logger.error(f"Failed to save investigation to DB: {e}")
+            return False
+
+    def _queued_intake_triggers(self) -> List[Dict]:
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import IntakeTrigger
+            from core.storage.schemas import IntakeTriggerSchema
+
+            with get_db_manager().session_scope() as session:
+                rows = (
+                    session.query(IntakeTrigger)
+                    .filter_by(state="queued")
+                    .order_by(IntakeTrigger.created_at.asc())
+                    .all()
+                )
+                return IntakeTriggerSchema.dump_many(rows)
+        except Exception as e:
+            logger.error(f"Failed to read intake queue: {e}")
+            return []
+
+    def _hydrate_detection_finding(self, row: Dict) -> Optional[Dict]:
+        finding_id = row.get("finding_id")
+        if not finding_id or not self._data_service:
+            return None
+        finding = self._data_service.get_finding(finding_id)
+        return lift_ai_enrichment(finding) if finding else None
+
+    def _decide_trigger(
+        self,
+        trigger_id: Optional[int],
+        *,
+        state: str,
+        reason: Optional[str] = None,
+        merged_into: Optional[str] = None,
+    ) -> None:
+        if trigger_id is None:
+            return
+        try:
+            from sqlalchemy import update
+
+            from core.storage.connection import get_db_manager
+            from core.storage.models import IntakeTrigger
+
+            with get_db_manager().session_scope() as session:
+                session.execute(
+                    update(IntakeTrigger)
+                    .where(
+                        IntakeTrigger.id == trigger_id,
+                        IntakeTrigger.state == "queued",
+                    )
+                    .values(
+                        state=state,
+                        reason=reason,
+                        merged_into=merged_into,
+                        decided_at=utcnow(),
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Failed to decide intake row {trigger_id}: {e}")
 
     def _get_investigations_by_status(self, status: str) -> List:
         """Query investigations by status from the database."""
@@ -1410,14 +2218,17 @@ class Orchestrator:
             for i in all_inv
             if i.get("status") in ("assigned", "executing")
         )
-        hourly = sum(c["cost"] for c in self._hourly_costs)
+        spent = self._hourly_cost()
+        limit = self._hourly_cost_limit()
+        hourly = spent or 0.0
         return {
             "total_cost_usd": round(total, 4),
             "active_cost_usd": round(active_cost, 4),
             "hourly_cost_usd": round(hourly, 4),
-            "hourly_budget_remaining": round(
-                self.config.max_total_hourly_cost - hourly, 4
-            ),
+            "hourly_budget_remaining": round(limit - hourly, 4),
+            # /status reports `enabled` from the settings row, which a pause
+            # never touches, so the pause is reported here.
+            "hourly_paused": self._hourly_pause_decision(spent, limit),
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
 
@@ -1451,7 +2262,6 @@ class Orchestrator:
             logger.warning(f"Workdir cleanup failed after purge: {e}")
 
         self.shared_intel = SharedIntelligence()
-        self._hourly_costs = []
 
         logger.warning(
             f"Purged {deleted} investigations and reset workdir tree at {self.workdir.base_dir}"

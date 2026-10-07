@@ -1,6 +1,7 @@
 import type { Projection } from "./ledger.js";
 import type { Verdicts } from "./config.js";
 import type { DispatchRecord, EvidenceRecord, EvidenceStrength, LinkRelation } from "./types.js";
+import { DROPPED } from "./sanitize.js";
 
 export const NULL_CHECK_PROVENANCE = "null_check";
 export const CRITIC_SOURCE_SYSTEM = "critic";
@@ -10,15 +11,25 @@ export const UNDECLARED_SOURCE = "undeclared";
 // no EDR on that subnet" is a fact about visibility that no query would ever
 export const OPERATOR_GAP_PROVENANCE = "operator_gap";
 
+// A capability the arch's roles asked for that this deployment binds no tool to:
+// nothing was installed to fail, and no query will discover it.
+export const DEPLOYMENT_GAP_PROVENANCE = "deployment_gap";
+
+// Stated rather than discovered: both name a blind spot no dispatch can close, unlike
+// a tool_failure a retry might.
+function declaredGap(record: EvidenceRecord): boolean {
+  return record.provenance === OPERATOR_GAP_PROVENANCE || record.provenance === DEPLOYMENT_GAP_PROVENANCE;
+}
+
 // The one gap reader over evidence, which is why a new kind of blind spot
 // updates exactly this function and the count below it.
 export function isGap(record: EvidenceRecord): boolean {
-  return record.provenance === "tool_failure" || record.provenance === OPERATOR_GAP_PROVENANCE;
+  return record.provenance === "tool_failure" || declaredGap(record);
 }
 
 // What went unanswered, not how many times it failed: three retries of one query
 // are one blind spot. The intent is the key when no lead owns the dispatch.
-function gapKey(dispatch: DispatchRecord): string {
+export function gapKey(dispatch: DispatchRecord): string {
   return dispatch.question_id ?? dispatch.query_intent;
 }
 
@@ -27,20 +38,44 @@ function gapKey(dispatch: DispatchRecord): string {
 export function openGaps(projection: Projection, hypothesisId: string): number {
   const answered = new Set<string>();
   const unanswered = new Set<string>();
+  // The latest completed dispatch per key: a call-level gap (a tool that timed out under
+  // a worker that still answered) stays open until a later dispatch on the same key
+  // completes without it. Dispatches fold in creation order, so a replay agrees.
+  const latest = new Map<string, string>();
 
   for (const dispatch of projection.dispatches.values()) {
     if (dispatch.target_hypothesis_id !== hypothesisId) continue;
-    if (dispatch.status === "complete") answered.add(gapKey(dispatch));
-    if (dispatch.status === "failed") unanswered.add(gapKey(dispatch));
+    if (dispatch.status === "complete") {
+      answered.add(gapKey(dispatch));
+      latest.set(gapKey(dispatch), dispatch.dispatch_id);
+    }
+    // Counting our own ceiling would mean a hunt that ran out of money also loses the
+    // ability to conclude once it is extended, and counting an operator's stop would
+    // do the same to a hunt somebody paused. A worker that could not shape its answer
+    // is a defect, not a blind spot (CONTEXT.md, Visibility Gap).
+    if (dispatch.status === "failed" && (dispatch.stopped_by ?? null) === null) {
+      unanswered.add(gapKey(dispatch));
+    }
   }
 
+  // Counted per (key, tool): two kinds of failure from one tool are one blind spot.
+  const callGaps = new Set<string>();
+
   for (const record of projection.evidence.values()) {
-    if (record.provenance !== OPERATOR_GAP_PROVENANCE) continue;
-    if (record.payload["hypothesis_id"] !== hypothesisId) continue;
+    const { tool, gap_key } = record.payload;
+    if (record.provenance === "tool_failure" && typeof tool === "string" && typeof gap_key === "string") {
+      if (record.dispatch_id !== null && latest.get(gap_key) === record.dispatch_id) callGaps.add(`${gap_key}\0${tool}`);
+      continue;
+    }
+    if (!declaredGap(record)) continue;
+    // A blind spot the hunt cannot attribute is one it carries into every claim, so
+    // an unattributed gap floors open_gaps for the whole run.
+    const bears = record.payload["hypothesis_id"];
+    if (bears !== null && bears !== undefined && bears !== hypothesisId) continue;
     unanswered.add(record.summary);
   }
 
-  return [...unanswered].filter((key) => !answered.has(key)).length;
+  return [...unanswered].filter((key) => !answered.has(key)).length + callGaps.size;
 }
 
 // Read off the appended record rather than the critic's return value, so a
@@ -57,9 +92,58 @@ function survivedDisconfirmation(projection: Projection, hypothesisId: string, l
   const checks = nullChecksFor(projection, hypothesisId);
   const latest = checks[checks.length - 1];
   if (latest === undefined || latest.payload["survives"] !== true) return false;
+  if (arguedWasCut(latest)) return false;
 
   const argued = new Set((latest.payload["argued_evidence_ids"] as string[] | undefined) ?? []);
   return linked.every((evidenceId) => argued.has(evidenceId));
+}
+
+// A list the sanitiser shortened, which is not a list the critic did not argue against.
+// Both fail the predicate -- unsure is not cleared -- but they are told apart so the
+// report does not say the benign explanation stood when the critic ruled it out.
+function arguedWasCut(check: EvidenceRecord): boolean {
+  const dropped = check.payload[`argued_evidence_ids${DROPPED}`];
+  return (typeof dropped === "number" && dropped > 0) || check.payload["argued_evidence_ids"] === undefined;
+}
+
+// Why the disconfirmation predicate failed, for a report that would otherwise report
+// our own trimming as the critic's finding.
+export function disconfirmationUnmet(projection: Projection, hypothesisId: string): string {
+  const checks = nullChecksFor(projection, hypothesisId);
+  const latest = checks[checks.length - 1];
+  if (latest === undefined) return "no argue-the-null pass was run against it";
+  if (latest.payload["survives"] !== true) {
+    return "the strongest benign explanation was not ruled out against everything now linked to it";
+  }
+  if (arguedWasCut(latest)) {
+    return "the critic ruled the benign explanation out, but its record of what it argued against was too large to keep in full";
+  }
+  return "the strongest benign explanation was not ruled out against everything now linked to it";
+}
+
+// Distinct techniques evidence bearing on this hypothesis actually cited, not
+// what the hypothesis was declared to test -- a hunt can find something its
+// playbook did not name. Presentation only: nothing here is part of the
+// journaled report, so a run's frozen record cannot disagree with a rendering
+// of it.
+export function citedTechniques(projection: Projection, hypothesisId: string): string[] {
+  const cited = projection.links
+    .filter((link) => link.hypothesis_id === hypothesisId && link.relation !== "neither")
+    .map((link) => projection.evidence.get(link.evidence_id)?.attack_technique)
+    .filter((technique): technique is string => typeof technique === "string" && technique !== "");
+  return [...new Set(cited)].sort();
+}
+
+// Whether anything this finding rests on was attested by the telemetry rather than
+// chosen by the adversary. One sensor-attested basis is enough: a connection count and
+// an attacker-chosen filename in the same record still leaves the count standing.
+//
+// Falls back to the record-level boolean where no basis was named, so a ledger written
+// before the split reads exactly as it did.
+export function sensorAttested(record: EvidenceRecord): boolean {
+  const rests = record.rests_on ?? [];
+  if (rests.length === 0) return !record.attacker_influenceable;
+  return rests.some((basis) => basis.authored === "sensor");
 }
 
 export function evidenceStrength(projection: Projection, hypothesisId: string): EvidenceStrength {
@@ -80,16 +164,29 @@ export function evidenceStrength(projection: Projection, hypothesisId: string): 
     contradicting_records: contradicting.length,
     open_gaps: openGaps(projection, hypothesisId),
     // Vacuously true with no support at all, which is the fail-closed answer.
-    attacker_influenceable_only: supporting.every((record) => record.attacker_influenceable),
+    // Named for what it gates rather than for what it counts: true when nothing
+    // supporting this claim rests on an observation the adversary could not have written.
+    attacker_influenceable_only: !supporting.some(sensorAttested),
     survived_disconfirmation: survivedDisconfirmation(projection, hypothesisId, allLinked),
   };
 }
 
 // Every predicate a verdict fails, so "not proven" is never a bare no.
-export function unmetPredicates(strength: EvidenceStrength, verdicts: Verdicts): string[] {
+// why is the projection and hypothesis the strength was read from, where the caller has
+// them: without it a predicate that failed because we trimmed the critic's record reads
+// as the critic having found against the hypothesis.
+export function unmetPredicates(
+  strength: EvidenceStrength,
+  verdicts: Verdicts,
+  why?: { projection: Projection; hypothesisId: string },
+): string[] {
   const unmet: string[] = [];
   if (!strength.survived_disconfirmation) {
-    unmet.push("the strongest benign explanation was not ruled out against everything now linked to it");
+    unmet.push(
+      why === undefined
+        ? "the strongest benign explanation was not ruled out against everything now linked to it"
+        : disconfirmationUnmet(why.projection, why.hypothesisId),
+    );
   }
   if (strength.corroborating_sources < verdicts.min_corroborating_sources) {
     unmet.push(
@@ -97,7 +194,7 @@ export function unmetPredicates(strength: EvidenceStrength, verdicts: Verdicts):
     );
   }
   if (strength.attacker_influenceable_only) {
-    unmet.push("every supporting record sits in a field an adversary could have written");
+    unmet.push("nothing supporting it rests on an observation the telemetry attested rather than the adversary authored");
   }
   if (strength.open_gaps >= verdicts.gap_lock_threshold) {
     unmet.push(`${strength.open_gaps} open visibility gap(s) bear on it`);

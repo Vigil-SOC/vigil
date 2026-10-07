@@ -4,7 +4,7 @@ import os
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -21,6 +21,23 @@ DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 DEFAULT_SANDBOX_FILE_TYPES = "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"
 
 
+def _safe_home() -> Path:
+    """Return the user's home directory, or a safe writable fallback if home is root (/)."""
+    try:
+        home = Path.home()
+    except Exception:
+        home = Path("/")
+    if home == Path("/") or str(home) == "/":
+        # When running in a container where HOME=/ or unset, Path.home() is Path("/").
+        # Root (/) is never a valid user home directory and writing to /.vigil will fail
+        # with PermissionError (Errno 13).
+        if Path("/home/vigil").is_dir():
+            return Path("/home/vigil")
+        # Last-resort writable fallback when HOME is unusable.
+        return Path("/tmp")  # nosec B108
+    return home
+
+
 # The State Directory: the one per-install directory holding what the metadata
 # DB does not. VIGIL_DIR if exported, else ~/.vigil — nothing else. A write that
 # cannot happen raises; callers that want to degrade catch it themselves.
@@ -34,7 +51,7 @@ def vigil_path(*parts: str, write: bool = False) -> Path:
     if override:
         target = legacy = Path(override)
     else:
-        home = Path.home()  # per call, so tests can patch home
+        home = _safe_home()
         target, legacy = home / _VIGIL_DIRNAME, home / _LEGACY_DIRNAME
     if parts:
         target, legacy = target.joinpath(*parts), legacy.joinpath(*parts)
@@ -80,11 +97,36 @@ def state_dir_status() -> dict:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def dotenv_allowed() -> bool:
+    """False when this process has already decided where its config comes from.
+
+    A test run sets ``VIGIL_DISABLE_DOTENV`` before collection so that nothing
+    reads a developer's ``.env`` and makes the suite answer differently on one
+    machine than another. Every reader of a ``.env`` has to ask -- pydantic's
+    ``env_file`` here and the secrets backend that reads the state directory's
+    own file -- because a single unguarded one puts the developer's
+    configuration back.
+
+    ``os.environ``, not ``Settings``: this is answered while ``Settings`` is
+    still being defined, like ``VIGIL_DIR``. The vendor tool servers ask the
+    same question inline (GH #974) rather than importing this: spawned outside
+    the repo they may have no ``core`` package to import from.
+    """
+    disabled = os.environ.get("VIGIL_DISABLE_DOTENV")  # noqa: ENV001 - pre-Settings
+    return not disabled
+
+
+def _settings_env_file() -> Optional[Path]:
+    if not dotenv_allowed():
+        return None
+    return REPO_ROOT / ".env"
+
+
 class Settings(BaseSettings):
     # Anchored to the repo so the same .env loads regardless of working directory.
     # Real env vars still win, keeping container and Helm injection authoritative.
     model_config = SettingsConfigDict(
-        env_file=REPO_ROOT / ".env",
+        env_file=_settings_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -96,18 +138,21 @@ class Settings(BaseSettings):
     environment: str = "development"
     release_version: str = "unknown"
     demo_mode: Optional[bool] = None
-    data_backend: str = "database"
     autostart_services: Optional[str] = None
     max_upload_size_mb: int = 500
+    # os.pathsep-separated roots beyond the home directory that local detection
+    # rule sources may live under.
+    vigil_detection_local_roots: str = ""
     vigil_context_path: str = ""
     vigil_frontend_url: str = ""
-    mempalace_palace_path: Optional[str] = None
-    # Call sites disagree on the default (shared_intel off, orchestrator on), so
-    # this stays tri-state and each site supplies its own fallback.
-    mempalace_daemon_enabled: Optional[bool] = None
+    # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
+    vigil_intent_path: str = ""
+    # One extra root of SKILL.md directories, read alongside core/skills/library.
+    vigil_skills_path: str = ""
 
-    # Database
-    database_url: Optional[str] = None
+    # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
+    # agent and scripts/migrate_schema.py can keep it in the environment.
+    # Python sessions go through DatabaseConfig (encrypted DSN / POSTGRES_*).
     postgresql_connection_string: Optional[str] = None
     postgres_host: str = "localhost"
     postgres_port: int = 5432
@@ -119,6 +164,12 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
     db_config_check_interval: float = 5.0
+    # Server-side session timeouts in milliseconds, sent as libpq `options`
+    # on every platform-engine connection; 0 (or less) disables one. Statement
+    # timeout is off by default so long maintenance queries keep working; an
+    # idle-in-transaction session is always a leak, so it is bounded. See #1443.
+    db_statement_timeout_ms: int = 0
+    db_idle_in_transaction_timeout_ms: int = 300000
     # Refuse to start when the schema cannot serve the models. Off by
     # default: a missing nullable column should not take a running SOC
     # offline. See #562.
@@ -138,6 +189,11 @@ class Settings(BaseSettings):
     vigil_frame_options_enabled: bool = True
     vigil_content_type_options_enabled: bool = True
     vigil_referrer_policy_enabled: bool = True
+    # Vigil's own MCP surface, served over HTTP for callers that are not Vigil.
+    # Off on a fresh install: it is another front door into a SOC, and one
+    # nobody asked for should not be listening. This is the floor an operator
+    # sets before boot; the Settings toggle overrides it at runtime.
+    vigil_mcp_enabled: bool = False
     vigil_csrf_enabled: bool = True
     vigil_csrf_report_only: bool = True
     vigil_csrf_exempt_paths: Optional[str] = None
@@ -187,8 +243,8 @@ class Settings(BaseSettings):
     # Observability
     sentry_dsn: str = ""
     vigil_otel_enabled: bool = False
-    vigil_otel_record_llm_content: bool = False
-    vigil_otel_record_ioc_values: bool = False
+    # Process log output: "json" (one object per line) or plain "text".
+    vigil_log_format: Literal["json", "text"] = "json"
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 
     # Daemon
@@ -199,7 +255,7 @@ class Settings(BaseSettings):
     daemon_webhook_port: int = 8081
     daemon_auto_triage: bool = True
     daemon_auto_enrich: bool = True
-    daemon_batch_size: int = 10
+    daemon_triage_timeout: int = 60
     daemon_enrich_max_inflight: int = 50
     daemon_enrich_backfill: bool = True
     daemon_enrich_backfill_interval: int = 300
@@ -207,6 +263,11 @@ class Settings(BaseSettings):
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
     daemon_confidence_threshold: float = 0.90
+    # The rest of the confidence band (#916); see core.response.config.
+    daemon_review_threshold: float = 0.85
+    daemon_monitor_threshold: float = 0.70
+    daemon_critical_action_floor: float = 0.70
+    daemon_high_action_floor: float = 0.80
     daemon_force_approval: bool = False
     daemon_dry_run: bool = False
     daemon_escalation_enabled: bool = True
@@ -216,15 +277,22 @@ class Settings(BaseSettings):
     daemon_slack_enabled: Optional[bool] = None
     daemon_slack_channel: str = "#soc-alerts"
     daemon_pagerduty_enabled: bool = False
-    daemon_threat_hunt_enabled: bool = True
     daemon_threat_hunt_interval: int = 86400
+    # Known-answer probes (#923): an hourly sweep, injected once a day by id.
+    daemon_probes_enabled: bool = True
+    daemon_probe_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
-    # Separate from cleanup_retention_days on purpose: that governs bulk data
-    # retention and wants a long horizon, while an unanswered containment
-    # proposal goes stale in days (#675).
+    # Separate from cleanup_retention_days on purpose: that only ages out the
+    # episodic read log, while an unanswered containment proposal goes stale
+    # in days (#675).
     daemon_approval_expiry_days: int = 7
     daemon_metrics_enabled: bool = True
+    daemon_metrics_port: int = 9090
     daemon_health_host: str = "localhost"
+    # Address the daemon's own listeners bind to (health/status/metrics/webhook).
+    # Separate from daemon_health_host, which is the client address the backend
+    # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.
+    daemon_bind_host: str = "0.0.0.0"  # nosec B104
     daemon_health_port: int = 9091
 
     # Orchestrator
@@ -234,16 +302,10 @@ class Settings(BaseSettings):
     orchestrator_max_iterations: int = 50
     orchestrator_max_cost: float = 5.0
     orchestrator_max_hourly_cost: float = 20.0
-    orchestrator_max_daily_cost: float = 100.0
     orchestrator_max_runtime: int = 3600
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
-    orchestrator_auto_assign: bool = True
-    orchestrator_auto_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
     orchestrator_dry_run: bool = False
-    orchestrator_dedup_window: int = 30
-    orchestrator_agent_loop_delay: int = 2
-    orchestrator_context_max_chars: int = 10000
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False
@@ -281,7 +343,6 @@ class Settings(BaseSettings):
     @field_validator(
         "extension_connector_allowlist",
         "daemon_escalate_severities",
-        "orchestrator_auto_severities",
         "kafka_topics",
         mode="before",
     )
@@ -293,7 +354,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "demo_mode",
-        "mempalace_daemon_enabled",
         "daemon_slack_enabled",
         "mcp_auto_connect_on_startup",
         mode="before",
@@ -346,16 +406,78 @@ def _load_json_config(path: Path) -> dict:
         return {}
 
 
+def load_integrations_config(config_service: Any = None) -> dict[str, Any]:
+    """Enabled set and per-integration config. The database owns both.
+
+    Rows in ``integration_configs`` win. ``integrations_config.json`` is only
+    the fallback when that table is empty or unreachable — ``list_integrations``
+    already returns ``[]`` on error, and a failure before that call is treated
+    the same way. ``configured`` is false only when neither source has anything.
+
+    Pass ``config_service`` when the caller already holds one (the settings
+    route). Otherwise this builds one. An integration that is not enabled is
+    still present under ``integrations``; ``get_integration_config`` is what
+    hides it.
+    """
+    rows = _integration_rows(config_service)
+    if rows:
+        return {
+            "configured": True,
+            "enabled_integrations": [
+                row["integration_id"] for row in rows if row.get("enabled")
+            ],
+            "integrations": {
+                row["integration_id"]: row.get("config") or {} for row in rows
+            },
+        }
+    return _integrations_from_file()
+
+
+def _integration_rows(config_service: Any) -> list:
+    try:
+        if config_service is None:
+            # core.storage.connection imports get_settings from this module, so
+            # a top-level import of core.storage would cycle.
+            from core.storage.config_service import get_config_service
+
+            config_service = get_config_service()
+        return config_service.list_integrations() or []
+    except Exception:
+        logger.warning(
+            "Integration config unavailable from the database; using the file",
+            exc_info=True,
+        )
+        return []
+
+
+def _integrations_from_file() -> dict[str, Any]:
+    path = vigil_path("integrations_config.json")
+    if not path.exists():
+        return {
+            "configured": False,
+            "enabled_integrations": [],
+            "integrations": {},
+        }
+    data = _load_json_config(path)
+    integrations = data.get("integrations") or {}
+    return {
+        "configured": True,
+        "enabled_integrations": list(data.get("enabled_integrations") or []),
+        "integrations": {
+            integration_id: cfg or {} for integration_id, cfg in integrations.items()
+        },
+    }
+
+
 def get_integration_config(integration_id: str) -> dict[str, Any]:
-    data = _load_json_config(vigil_path("integrations_config.json"))
-    if integration_id not in data.get("enabled_integrations", []):
+    data = load_integrations_config()
+    if integration_id not in data["enabled_integrations"]:
         return {}
-    return data.get("integrations", {}).get(integration_id, {})
+    return data["integrations"].get(integration_id) or {}
 
 
 def is_integration_enabled(integration_id: str) -> bool:
-    data = _load_json_config(vigil_path("integrations_config.json"))
-    return integration_id in data.get("enabled_integrations", [])
+    return integration_id in load_integrations_config()["enabled_integrations"]
 
 
 def get_general_config(key: str, default: Any = None) -> Any:

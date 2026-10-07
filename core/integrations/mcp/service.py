@@ -5,8 +5,7 @@ import logging
 import os
 import platform
 import re
-import subprocess
-from datetime import datetime
+import sys
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
@@ -14,9 +13,13 @@ from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.mcp.child_env import ca_bundle_env
+from core.integrations.mcp.packaged import installed_launch
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
+
+# Stands in for "$" inside an already-substituted value (see _substitute_env_vars).
+_LITERAL_DOLLAR = "\x00"
 
 
 # Matches ${VAR_NAME} placeholders in mcp-config.json values/args. Anchored
@@ -67,7 +70,6 @@ class MCPServer:
         args: List[str],
         cwd: str,
         env: Dict[str, str],
-        server_type: str = "unknown",
         required_env_vars: Optional[List[str]] = None,
     ):
         self.name = name
@@ -75,147 +77,9 @@ class MCPServer:
         self.args = args
         self.cwd = cwd
         self.env = env
-        self.process: Optional[subprocess.Popen] = None
-        self.status = "stopped"
-        self.start_time: Optional[datetime] = None
-        self.server_type = server_type  # "fastmcp" or "stdio"
         # Credential placeholders declared in mcp-config.json for this
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
-
-    def start(self) -> bool:
-        """Start the MCP server."""
-        if self.process is not None:
-            logger.warning(f"Server {self.name} is already running")
-            return False
-
-        try:
-            # Prepare environment
-            env = os.environ.copy()  # noqa: ENV001 - MCP child process env
-            # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is not enough.
-            env.update(ca_bundle_env())
-            env.update(self.env)
-
-            # Start process
-            self.process = subprocess.Popen(
-                [self.command] + self.args,
-                cwd=self.cwd,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-
-            self.status = "running"
-            self.start_time = datetime.now()
-            logger.info(f"Started MCP server: {self.name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to start MCP server {self.name}: {e}")
-            self.status = "error"
-            return False
-
-    def stop(self) -> bool:
-        """Stop the MCP server."""
-        if self.process is None:
-            return True
-
-        try:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-
-            self.process = None
-            self.status = "stopped"
-            self.start_time = None
-            logger.info(f"Stopped MCP server: {self.name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to stop MCP server {self.name}: {e}")
-            return False
-
-    def is_running(self) -> bool:
-        """Check if the server is running."""
-        # First check if we have a process object and it's still alive
-        if self.process is not None:
-            if self.process.poll() is None:
-                # Process is still running
-                return True
-            else:
-                # Process has terminated
-                self.status = "stopped"
-                self.process = None
-                return False
-
-        # If no process object, check if the process is running externally
-        # by checking for the process by command line arguments
-        try:
-            # Extract module name from args (e.g., "tools.deeptempo_findings" -> "deeptempo_findings")
-            module_name = None
-            for arg in self.args:
-                if arg.startswith("tools."):
-                    parts = arg.split(".")
-                    if len(parts) >= 2:
-                        module_name = parts[1]
-                    break
-
-            if module_name:
-                # On Unix systems (macOS, Linux), use pgrep
-                if platform.system() != "Windows":
-                    try:
-                        result = subprocess.run(
-                            ["pgrep", "-f", f"tools.*{module_name}"],
-                            capture_output=True,
-                            text=True,
-                            timeout=2,
-                        )
-                        if result.returncode == 0 and result.stdout.strip():
-                            self.status = "running"
-                            return True
-                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-                        pass
-                else:
-                    # On Windows, use tasklist with findstr
-                    try:
-                        result = subprocess.run(
-                            [
-                                "tasklist",
-                                "/FI",
-                                "IMAGENAME eq python.exe",
-                                "/FO",
-                                "CSV",
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=2,
-                        )
-                        if result.returncode == 0 and module_name in result.stdout:
-                            self.status = "running"
-                            return True
-                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-                        pass
-        except Exception as e:
-            logger.debug(f"Error checking external process status: {e}")
-
-        return False
-
-    def get_status(self) -> str:
-        """Get server status."""
-        if self.server_type == "stdio":
-            return "stdio (MCP integration)"
-        if self.is_running():
-            return "running"
-        return self.status
-
-    def get_log_path(self) -> Path:
-        """Get the log file path for this server."""
-        # Keep hyphens as servers log to files with hyphens (e.g., deeptempo-findings.log)
-        return Path(f"/tmp/{self.name}.log")
 
 
 class MCPService:
@@ -253,6 +117,8 @@ class MCPService:
             self.python_exe = self.venv_path / "Scripts" / "python.exe"
         else:
             self.python_exe = self.venv_path / "bin" / "python"
+        if not self.python_exe.is_file():
+            self.python_exe = Path(sys.executable)
 
         # Load enabled state (servers default to disabled)
         self._enabled_servers: Dict[str, bool] = self._load_enabled_state()
@@ -284,14 +150,19 @@ class MCPService:
         except Exception as e:
             logger.error(f"Could not save MCP enabled state: {e}")
 
-    # Internal/platform servers that should be on by default
+    # Internal/platform servers that should be on by default.
+    #
+    # Vigil's own server is not here: it is not a server Vigil connects to but
+    # functions in this process, registered by core.integrations.mcp.in_process
+    # and reachable whether or not anything is enabled.
     _DEFAULT_ENABLED = {
-        "deeptempo-findings",
-        "tempo-flow",
         "security-detections",
-        "approval",
-        "attack-layer",
-        "mempalace",
+        # The self-hosted SIEM a hunt reads through telemetry_search -- the
+        # customer's own Splunk, the expected telemetry path, not an optional
+        # add-on. Safe to default-on: it declares no env placeholder (its config
+        # comes from Settings via resolve(), #1113), so with nothing configured
+        # it starts and answers "Splunk not configured", not failing a boot.
+        "splunk-selfhosted",
     }
 
     def is_server_enabled(self, server_name: str) -> bool:
@@ -326,48 +197,36 @@ class MCPService:
         Resolves against ``env`` — the environment the child is actually spawned
         with — so anything the spawn site pinned there is seen rather than
         collapsed to an empty string.
-        """
-        import re
 
+        Only the template is expanded. A resolved value is spliced in as plain
+        text, so a stored value that itself contains ``${...}`` (a saved
+        connector URL, say) cannot name another variable or secret to read.
+        """
         source: Mapping[str, str] = os.environ if env is None else env  # noqa: ENV001
         pattern = r"\$\{([^}:]+)(?::-((?:\$\{[^}]+\}|[^{}])*))?\}"
 
         def replace_var(match):
             var_name = match.group(1)
             default = match.group(2)
-            env_val = source.get(var_name)  # operator export wins
-            if env_val is None:
-                env_val = get_secret(var_name)  # UI-set credential, no restart needed
-            if env_val is not None:
-                return env_val
+            # A non-empty export wins; empty counts as unset, as in bash ${VAR:-d}
+            # and everywhere else credentials resolve.
+            env_val = source.get(var_name) or get_secret(var_name)
+            if env_val:
+                return env_val.replace("$", _LITERAL_DOLLAR)
             if default is not None:
-                return self._substitute_env_vars(default, env)
+                return self._substitute_env_vars(default, env).replace(
+                    "$", _LITERAL_DOLLAR
+                )
             return ""
 
+        # Repeat only to unwind nested defaults; resolved values carry no "$"
+        # until the end, so they are never matched again.
         prev = None
         while prev != value:
             prev = value
             value = re.sub(pattern, replace_var, value)
 
-        return value
-
-    def _detect_server_type(self, args: List[str]) -> str:
-        """
-        Detect if a server is FastMCP or stdio-based by checking the module path.
-
-        FastMCP servers: deeptempo_findings
-        Stdio servers: All others (designed for advanced MCP integration)
-        """
-        for arg in args:
-            # Every in-repo server lives under tools/ (#632 vendored the four
-            # that were a submodule into tools/mcp/).
-            if "." in arg and arg.startswith("tools"):
-                fastmcp_tools = ["deeptempo_findings"]
-                for fastmcp in fastmcp_tools:
-                    if fastmcp in arg:
-                        return "fastmcp"
-                return "stdio"
-        return "unknown"
+        return value.replace(_LITERAL_DOLLAR, "$")
 
     def reload_server_configs(self) -> None:
         """Rebuild server configs so a connectorUrl saved after startup is
@@ -429,13 +288,13 @@ class MCPService:
                     # Inherit the backend's environment so servers that need
                     # runtime config not declared in mcp-config.json can connect
                     # — notably the POSTGRES_* vars DatabaseService reads for
-                    # case/DB tools (deeptempo-findings). Declared config env
+                    # case/DB tools (vigil). Declared config env
                     # entries still take precedence. Required-credential
                     # detection scans the raw config above, not this spawn env,
                     # so dormancy behavior is unchanged.
                     env = os.environ.copy()  # noqa: ENV001 - MCP child env
-                    # mcp-config.json refers to ${VIGIL_DIR}; an unset var would
-                    # substitute to "" and root child paths at "/".
+                    # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
+                    # would substitute to "" and root child paths at "/".
                     env.setdefault("VIGIL_DIR", str(vigil_path()))
                     # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
                     # not enough.
@@ -460,6 +319,10 @@ class MCPService:
                         raw_env_strs, raw_args
                     )
 
+                    # Launch the image's baked copy of a pinned npx/uvx entry
+                    # instead of downloading it; anything not baked is as declared.
+                    command, args = installed_launch(command, args)
+
                     server_configs.append(
                         {
                             "name": server_name,
@@ -467,7 +330,6 @@ class MCPService:
                             "args": args,
                             "cwd": cwd,
                             "env": env,
-                            "server_type": self._detect_server_type(args),
                             "required_env_vars": required_env_vars,
                         }
                     )
@@ -477,13 +339,10 @@ class MCPService:
                 )
             except Exception as e:
                 logger.error(f"Error loading mcp-config.json: {e}")
-                # Fall back to default servers if config loading fails
-                server_configs = self._get_default_servers(
-                    python_exe_str, project_path_str
-                )
+                server_configs = []
         else:
-            logger.warning("mcp-config.json not found, using default servers")
-            server_configs = self._get_default_servers(python_exe_str, project_path_str)
+            logger.warning("mcp-config.json not found")
+            server_configs = []
 
         # Dynamically update security-detections server env vars from DetectionRulesService
         for config in server_configs:
@@ -516,113 +375,6 @@ class MCPService:
             logger.warning(f"Could not enrich security-detections env vars: {e}")
 
         return config
-
-    def _get_default_servers(
-        self, python_exe_str: str, project_path_str: str
-    ) -> List[Dict]:
-        """Get default server configurations if mcp-config.json is not available."""
-        return [
-            {
-                "name": "deeptempo-findings",
-                "command": python_exe_str,
-                "args": ["-m", "tools.deeptempo_findings"],
-                "cwd": project_path_str,
-                "env": {"PYTHONPATH": project_path_str},
-                "server_type": "fastmcp",
-            }
-        ]
-
-    # NOTE: the former `start_server` / `start_all` / `stop_all` methods were
-    # removed when the MCP enable toggle became the single runtime lever.
-    # They were Popen-subprocess monitors that explicitly refused stdio
-    # servers (every server in mcp-config.json is stdio), so they never
-    # worked for users anyway. Runtime connect/disconnect is now owned by
-    # core.integrations.mcp.client.connect_to_server / disconnect_from_server.
-
-    def stop_server(self, server_name: str) -> bool:
-        """Stop a Popen-managed server if one was spawned.
-
-        Kept for completeness: a stdio server never gets a Popen child via
-        this class (it's driven by the MCP SDK's ``stdio_client`` through
-        ``mcp_client``), so for the current config this is effectively a
-        no-op. Still called defensively from ``PUT /enabled`` when a
-        non-stdio ``running`` status is observed.
-        """
-        if server_name not in self.servers:
-            logger.error(f"Unknown server: {server_name}")
-            return False
-        return self.servers[server_name].stop()
-
-    def get_server_status(self, server_name: str) -> Optional[str]:
-        """
-        Get the status of an MCP server.
-
-        Args:
-            server_name: Name of the server.
-
-        Returns:
-            Status string or None if server not found.
-        """
-        if server_name not in self.servers:
-            return None
-
-        return self.servers[server_name].get_status()
-
-    def get_all_statuses(self) -> Dict[str, str]:
-        """
-        Get status of all servers.
-
-        Returns:
-            Dictionary mapping server names to status strings.
-        """
-        statuses = {}
-        for name, server in self.servers.items():
-            statuses[name] = server.get_status()
-        return statuses
-
-    def get_server_log(self, server_name: str, lines: int = 100) -> str:
-        """
-        Get log content for a server.
-
-        Args:
-            server_name: Name of the server.
-            lines: Number of lines to retrieve (from end).
-
-        Returns:
-            Log content as string.
-        """
-        if server_name not in self.servers:
-            return ""
-
-        log_path = self.servers[server_name].get_log_path()
-
-        if not log_path.exists():
-            return f"Log file not yet created. Start the server to generate logs.\n\nExpected log path: {log_path}"
-
-        try:
-            with open(log_path, "r") as f:
-                all_lines = f.readlines()
-                if not all_lines:
-                    return f"Log file is empty. Server may not have started yet.\n\nLog path: {log_path}"
-                return "".join(all_lines[-lines:])
-        except Exception as e:
-            return f"Error reading log: {e}"
-
-    def test_server(self, server_name: str) -> bool:
-        """
-        Test if a server is responding.
-
-        Args:
-            server_name: Name of the server to test.
-
-        Returns:
-            True if server appears to be running, False otherwise.
-        """
-        if server_name not in self.servers:
-            return False
-
-        server = self.servers[server_name]
-        return server.is_running()
 
     def list_servers(self) -> List[str]:
         """

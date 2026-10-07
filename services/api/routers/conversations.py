@@ -33,10 +33,12 @@ ROUTER_META = RouterMeta(
 
 
 class UpdateConversationRequest(BaseModel):
-    """PATCH body — rename and/or archive (either or both)."""
+    """PATCH body — rename, archive, and/or attach a case."""
 
     title: Optional[str] = None
     archived: Optional[bool] = None
+    # Present and "" clears the attached case. Omitted leaves it alone.
+    case_id: Optional[str] = None
 
 
 class ImportConversationsRequest(BaseModel):
@@ -50,6 +52,7 @@ async def list_conversations(
     archived: bool = Query(False, description="Include archived conversations"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    q: Optional[str] = Query(None, description="Match title, case id, or page key"),
     current_user: User = Depends(get_current_user),
 ):
     """List the current user's conversations, newest activity first."""
@@ -58,6 +61,7 @@ async def list_conversations(
         include_archived=archived,
         limit=limit,
         offset=offset,
+        q=q,
     )
     return {"conversations": items}
 
@@ -93,8 +97,12 @@ async def update_conversation(
     body: UpdateConversationRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Rename and/or archive a conversation."""
-    if body.title is None and body.archived is None:
+    """Rename, archive, and/or attach a case. Does not create a conversation."""
+    if (
+        body.title is None
+        and body.archived is None
+        and "case_id" not in body.model_fields_set
+    ):
         raise HTTPException(status_code=400, detail="Nothing to update")
 
     result = None
@@ -105,6 +113,10 @@ async def update_conversation(
     if body.archived is not None:
         result = conversation_service.set_archived(
             conversation_id, current_user.user_id, body.archived
+        )
+    if "case_id" in body.model_fields_set:
+        result = conversation_service.set_case_id(
+            conversation_id, current_user.user_id, body.case_id or ""
         )
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found")

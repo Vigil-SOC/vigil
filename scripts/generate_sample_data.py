@@ -30,7 +30,6 @@ from core.platform.demo_data_service import (  # noqa: E402  (needs sys.path abo
     MITRE_TECHNIQUES,
     SEVERITIES,
     SEVERITY_WEIGHTS,
-    generate_embedding,
     generate_entity_context,
     generate_mitre_predictions,
     generate_username,
@@ -61,7 +60,6 @@ def generate_finding(days_back: int = 30) -> Dict[str, Any]:
         "mitre_predictions": generate_mitre_predictions(),
         "entity_context": generate_entity_context(),
         "cluster_id": random.choice(CLUSTERS) if random.random() < 0.7 else None,
-        "embedding": generate_embedding(),
     }
 
     # Add description based on detected techniques
@@ -172,14 +170,10 @@ def ingest_via_api(
     findings_success = 0
     for finding in findings:
         try:
-            # Remove embedding for API ingestion (too large for form data)
-            finding_data = {k: v for k, v in finding.items() if k != "embedding"}
-            finding_data["embedding"] = [0.0] * 768  # Placeholder
-
             response = requests.post(
                 f"{base_url}/api/ingest/ingest-string",
                 data={
-                    "data": json.dumps(finding_data),
+                    "data": json.dumps(finding),
                     "format": "json",
                     "data_type": "finding",
                 },

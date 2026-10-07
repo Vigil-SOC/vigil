@@ -1,9 +1,18 @@
 import { scrub } from "../../core/security.js";
-import type { Digest, EntityView, EvidenceView, HypothesisView } from "./types.js";
+import { sensorAttested } from "./strength.js";
+import type { Digest, DispatchRequest, EntityView, EvidenceView, HypothesisView, NullCheckInput } from "./types.js";
 
 // The digest as the lead reads it: buildDigest decides what is in it, this only
 // how it is written. Evidence carries its id, because the lead is asked to cite them.
 const EVIDENCE_CAP = 4_000;
+const DIRECTIVE_CAP = 2_000;
+
+// Operator text is direction, but the lead cannot tell a person's words from a
+// line forged to look like a section: so it is scrubbed, capped, and kept to one
+// line, which cannot open a heading of its own.
+function bullet(text: string, cap: number): string {
+  return `- ${scrub(text, cap).replace(/\s*\n\s*/g, " ")}`;
+}
 
 // One delimited shape for anything a model reads as evidence, expansions included:
 // a raw payload arriving undelimited would read as the digest's own voice.
@@ -42,13 +51,29 @@ function weakening(weakens: Digest["weakens"]): string {
   return entries.map(([id, views]) => `Against ${id}:\n${views.map(evidence).join("\n")}`).join("\n\n");
 }
 
+// Two ceilings: which one binds is the fact worth having, and the slack on the other
+// matters too, since an operator reading the same line is who can lift it.
+function budgetLine(remaining: Digest["budget_remaining"]): string {
+  const cash = `$${remaining.cost_usd.toFixed(2)}`;
+  if (remaining.iterations <= 0) {
+    return `This is the last turn: none remain after this decision. ${cash} of the allowance is still unspent, so turns are what bound this hunt, not money.`;
+  }
+  if (remaining.cost_usd <= 0) {
+    return `The allowance is spent: ${remaining.iterations} turn(s) remain but there is nothing left to spend on them.`;
+  }
+  return `${remaining.iterations} turn(s) after this one and ${cash} left; whichever runs out first ends the hunt.`;
+}
+
 export function renderDigest(digest: Digest): string {
-  const budget = `${digest.budget_remaining.iterations} iteration(s), $${digest.budget_remaining.cost_usd.toFixed(2)}`;
+  const budget = budgetLine(digest.budget_remaining);
   const focus = [digest.focus.entity, digest.focus.hypothesis].filter((part) => part !== null).join(" / ");
+  const { count, evidence_ids: named } = digest.omitted;
   const omitted =
-    digest.omitted.count === 0
+    count === 0
       ? ""
-      : `${digest.omitted.count} routine record(s) compressed out: ${digest.omitted.evidence_ids.join(", ")}`;
+      : named.length < count
+        ? `${count} record(s) compressed out. The ${named.length} most salient, any of which can be expanded by id: ${named.join(", ")}`
+        : `${count} record(s) compressed out: ${named.join(", ")}`;
 
   return [
     `# ${digest.hunt_name} — iteration ${digest.iteration}`,
@@ -67,10 +92,69 @@ export function renderDigest(digest: Digest): string {
     section("Open questions", digest.open_questions.map((one) => `- ${one}`).join("\n")),
     // Last, and named as direction: everything above is data, and the lead is
     // told which is which rather than being left to infer it from position.
-    section("Operator directives", digest.directives.map((one) => `- ${one}`).join("\n")),
-    section("Notes", digest.notes.map((one) => `- ${one}`).join("\n")),
+    section("Operator directives", digest.directives.map((one) => bullet(one, DIRECTIVE_CAP)).join("\n")),
+    section("Notes", digest.notes.map((one) => bullet(one, EVIDENCE_CAP)).join("\n")),
     section("Budget remaining", budget),
   ]
     .filter((part) => part !== "")
+    .join("\n\n");
+}
+
+
+// What a worker is told. The hypothesis ids are here because the prompt asks it to
+// cite them, and the scope because without one a worker invents its own bounds.
+export function renderDispatch(request: DispatchRequest, narrative: string): string {
+  const lines = ["# Query intent", request.query_intent];
+  if (request.focus) lines.push("", "## Your focus", request.focus);
+  if (request.target_hypothesis_id !== null) {
+    lines.push("", `This bears on hypothesis ${request.target_hypothesis_id}.`);
+  }
+  // Defensive: this renders a prompt, and a throw would fail the whole dispatch.
+  const scope = request.scope ?? {};
+  if (Object.keys(scope).length > 0) lines.push("", "## Scope", JSON.stringify(scope));
+  if (narrative) lines.push("", "## Scenario", narrative);
+  return lines.join("\n");
+}
+
+// The critic argues against the records themselves, so they arrive delimited and
+// carrying the two attributes the argument turns on. Raw JSON would read as our voice.
+// The basis, flattened for an attribute, and absent when the worker named none: the
+// critic's whole job is to argue the benign case, and which half of a record the
+// adversary authored is the argument's best lever.
+function basisAttr(record: { rests_on?: { field: string; authored: string }[] }): string {
+  const named = (record.rests_on ?? []).map((basis) => `${basis.field}:${basis.authored}`).join(" ");
+  return named === "" ? "" : ` rests_on="${scrub(named, EVIDENCE_CAP)}"`;
+}
+
+export function renderNullCheck(check: NullCheckInput): string {
+  const lines = [
+    "# Hypothesis put up for a verdict",
+    `[${check.hypothesis_id}] ${check.statement}`,
+    "",
+    "## Everything the hunt has linked to it",
+  ];
+
+  if (check.evidence.length === 0) lines.push("Nothing is linked to this hypothesis.");
+  for (const { relation, record } of check.evidence) {
+    lines.push(
+      `<vigil:evidence id="${record.evidence_id}" relation="${relation}" source="${record.source_system}" ` +
+        `sensor_attested="${sensorAttested(record)}"${basisAttr(record)}>`,
+      scrub(record.summary, EVIDENCE_CAP),
+      record.why_notable ? `why notable: ${scrub(record.why_notable, EVIDENCE_CAP)}` : "",
+      scrub(JSON.stringify(record.payload), EVIDENCE_CAP),
+      "</vigil:evidence>",
+    );
+  }
+
+  if (check.narrative) lines.push("", "## Scenario", check.narrative);
+  return lines.filter((line) => line !== "").join("\n");
+}
+
+
+// The playbook's standing brief plus this run's own. One function because all three
+// roles read it, and a worker told less than the lead queries an estate it does not know.
+export function narrativeOf(spec: { narrative: string; prompt: string }): string {
+  return [spec.narrative, spec.prompt && `## What this run is about\n\n${spec.prompt}`]
+    .filter((part) => part)
     .join("\n\n");
 }

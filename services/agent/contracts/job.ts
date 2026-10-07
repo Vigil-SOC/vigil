@@ -26,6 +26,22 @@ export interface StartRequest {
   config: string;
   prompt: string;
   overrides?: Record<string, unknown>;
+  // What the caller wants tested, beside what the playbook states. Per-run, so it is
+  // not resolvable from the reference.
+  hypotheses?: string[];
+  // What each of those claims is about, keyed by the statement rather than paired
+  // by position: an order the caller cannot see is not an order they can get right.
+  // Values are `type:value` keys, the form the hunt already writes an entity in.
+  hypothesis_subjects?: Record<string, string[]>;
+  // Entity Keys the run opens its episodic read on, minted Python-side by the one rule.
+  // Optional and additive, so a job queued before the field existed still parses.
+  recall_keys?: string[];
+  // How many turns this run may take. Per-run for the same reason; absent leaves the
+  // config's.
+  iterations?: number;
+  // Whether a person approves the hypotheses before the hunt spends anything. The policy
+  // defaults to auto, so a headless run advances with nobody to ask.
+  approve_hypotheses?: boolean;
 }
 
 // A resume carries no request, so a resume path that read one would not compile.

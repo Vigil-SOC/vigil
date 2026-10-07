@@ -12,8 +12,13 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from core.config import get_integration_config
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.integrations._base.config import resolve
+from core.integrations._base.config_gap import (
+    report_config_complete,
+    report_config_gap,
+)
+from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -26,6 +31,12 @@ DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)
 _FOLLOW_REDIRECTS = True
 
 
+def _push(bucket: List[str], value: Any) -> None:
+    text = str(value).strip() if value else ""
+    if text and text not in bucket:
+        bucket.append(text)
+
+
 class MicrosoftDefenderIngestion(SIEMIngestionService):
     """Microsoft Defender ingestion service."""
 
@@ -33,7 +44,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         """Initialize Microsoft Defender ingestion."""
         super().__init__()
         self.siem_name = "Microsoft Defender"
-        self.config = get_integration_config("microsoft-defender")
+        self.config = resolve(MICROSOFT_DEFENDER)
         self.access_token = None
 
     def _get_access_token(self) -> Optional[str]:
@@ -41,16 +52,26 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         Get OAuth2 access token for Microsoft Defender API.
 
         Returns:
-            Access token or None
+            Access token, or None when credentials are not configured.
+
+        Raises:
+            Exception: when the token exchange itself fails.
         """
         try:
             tenant_id = self.config.get("tenant_id")
             client_id = self.config.get("client_id")
             client_secret = self.config.get("client_secret")
 
-            if not all([tenant_id, client_id, client_secret]):
-                logger.error("Microsoft Defender configuration incomplete")
+            required = {
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                report_config_gap(logger, "Microsoft Defender", missing)
                 return None
+            report_config_complete(logger, "Microsoft Defender")
 
             # Get token
             token_url = (
@@ -76,13 +97,15 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
 
         except Exception as e:
             logger.error(f"Error getting Microsoft Defender access token: {e}")
-            return None
+            # A failed token exchange is an outage, not missing configuration.
+            raise
 
     async def fetch_alerts(
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
+        oldest_first: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Fetch alerts from Microsoft Defender.
@@ -91,6 +114,10 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             start_time: Start time for alert query
             end_time: End time for alert query
             limit: Maximum number of alerts to fetch
+            oldest_first: Order by creation time ascending, so a batch that
+                fills ``limit`` is a contiguous oldest-first prefix of the
+                window. Federation asks for this; the default stays newest
+                first for the daemon poller.
 
         Returns:
             List of raw alert dictionaries
@@ -119,7 +146,11 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             params = {
                 "$filter": f"alertCreationTime ge {start_time.isoformat()}Z and alertCreationTime le {end_time.isoformat()}Z",
                 "$top": limit,
-                "$orderby": "alertCreationTime desc",
+                "$orderby": (
+                    "alertCreationTime asc"
+                    if oldest_first
+                    else "alertCreationTime desc"
+                ),
             }
 
             response = await asyncio.to_thread(
@@ -139,10 +170,11 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
 
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             logger.error(f"Microsoft Defender API error: {e}")
-            return []
+            # Raise, not []: federation must record the failure and keep its cursor.
+            raise
         except Exception as e:
             logger.error(f"Error fetching Microsoft Defender alerts: {e}")
-            return []
+            raise
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]
@@ -150,79 +182,64 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         """
         Transform Microsoft Defender alert to finding format.
 
-        Args:
-            alert: Raw alert from Microsoft Defender
-
-        Returns:
-            Finding dictionary
+        Emits the keys ``ingest_finding`` persists: description, entity_context,
+        mitre_predictions. MDE often leaves description empty and puts the text
+        in title.
         """
         try:
-            # Generate finding ID
             finding_id = f"defender-{alert.get('id', uuid.uuid4().hex[:12])}"
 
-            # Extract entities
-            entities = {
-                "ip_addresses": [],
-                "domains": [],
-                "usernames": [],
-                "hostnames": [],
-                "file_hashes": [],
+            src_ips: List[str] = []
+            domains: List[str] = []
+            usernames: List[str] = []
+            hostnames: List[str] = []
+            file_hashes: List[str] = []
+
+            for item in alert.get("evidence") or []:
+                entity_type = (item.get("entityType") or "").lower()
+                if entity_type == "ip":
+                    _push(src_ips, item.get("ipAddress"))
+                elif entity_type == "url":
+                    _push(domains, item.get("url"))
+                elif entity_type == "user":
+                    _push(usernames, item.get("userPrincipalName"))
+                elif entity_type == "machine":
+                    _push(hostnames, item.get("deviceDnsName"))
+                elif entity_type == "file":
+                    _push(file_hashes, item.get("sha256"))
+                    _push(file_hashes, item.get("sha1"))
+                    _push(file_hashes, item.get("md5"))
+
+            title = alert.get("title") or "Microsoft Defender Alert"
+            description = (alert.get("description") or "").strip() or title
+
+            mitre_predictions = {
+                str(tid): 1.0 for tid in (alert.get("mitreTechniques") or []) if tid
             }
 
-            # Extract from evidence
-            evidence = alert.get("evidence", [])
-            for item in evidence:
-                entity_type = item.get("entityType", "").lower()
+            entity_context: Dict[str, Any] = {
+                "src_ips": src_ips,
+                "hostnames": hostnames,
+                "usernames": usernames,
+                "domains": domains,
+                "file_hashes": file_hashes,
+            }
+            if alert.get("category"):
+                entity_context["category"] = alert["category"]
+            if alert.get("threatFamilyName"):
+                entity_context["threat_family"] = alert["threatFamilyName"]
 
-                if entity_type == "ip":
-                    entities["ip_addresses"].append(item.get("ipAddress", ""))
-                elif entity_type == "url":
-                    entities["domains"].append(item.get("url", ""))
-                elif entity_type == "user":
-                    entities["usernames"].append(item.get("userPrincipalName", ""))
-                elif entity_type == "machine":
-                    entities["hostnames"].append(item.get("deviceDnsName", ""))
-                elif entity_type == "file":
-                    if item.get("sha256"):
-                        entities["file_hashes"].append(item["sha256"])
-                    if item.get("sha1"):
-                        entities["file_hashes"].append(item["sha1"])
-                    if item.get("md5"):
-                        entities["file_hashes"].append(item["md5"])
-
-            # Extract MITRE ATT&CK
-            mitre_techniques = alert.get("mitreTechniques", [])
-
-            # Build finding
-            finding = {
+            return {
                 "finding_id": finding_id,
-                "title": alert.get("title", "Microsoft Defender Alert"),
-                "description": alert.get("description", ""),
-                "severity": self.normalize_severity(alert.get("severity")),
                 "data_source": "microsoft_defender",
                 "timestamp": alert.get("alertCreationTime", utcnow().isoformat()),
-                "raw_data": alert,
-                "metadata": {
-                    "alert_id": alert.get("id"),
-                    "category": alert.get("category"),
-                    "status": alert.get("status"),
-                    "classification": alert.get("classification"),
-                    "determination": alert.get("determination"),
-                    "assigned_to": alert.get("assignedTo"),
-                    "machine_id": alert.get("machineId"),
-                    "detection_source": alert.get("detectionSource"),
-                    "threat_family_name": alert.get("threatFamilyName"),
-                    "first_activity": alert.get("firstActivityTime"),
-                    "last_activity": alert.get("lastActivityTime"),
-                },
-                "entities": entities,
-                "mitre_attack": {
-                    "tactics": [],
-                    "techniques": mitre_techniques,
-                },
+                "severity": self.normalize_severity(alert.get("severity")),
+                "status": "new",
+                "title": title,
+                "description": description,
+                "entity_context": entity_context,
+                "mitre_predictions": mitre_predictions,
             }
-
-            return finding
 
         except Exception as e:
             logger.error(f"Error transforming Microsoft Defender alert: {e}")

@@ -32,16 +32,17 @@ exporters:
     tls:
       insecure: true
 
-  # Prometheus pulls metrics from the collector's built-in exporter endpoint
+  # Prometheus pulls metrics from the collector's built-in exporter endpoint.
+  # No namespace prefix: series must carry the same names here as on the
+  # direct backend/daemon scrapes so one PromQL name fits both routes.
   prometheus:
     endpoint: 0.0.0.0:8889
-    namespace: vigil
     const_labels:
       environment: docker
 
-  # Debug logging at warn level — change to "detailed" for local troubleshooting
+  # Minimal debug output — change to "detailed" for local troubleshooting
   debug:
-    verbosity: warn
+    verbosity: basic
 
 service:
   pipelines:

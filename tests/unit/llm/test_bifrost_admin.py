@@ -1,11 +1,11 @@
 """Unit tests for core.llm.bifrost.admin sync helpers.
 
 Covers the key upsert path against Bifrost's ``/api/providers/{name}/keys``
-subresource: empty-list guard, dedup, create-vs-update, clearing, and error
-handling. Two of these are regression tests for traps in that API — keys are
-absent from the provider document, and secrets come back masked on read, so a
-naive read-modify-write stores the mask as the credential. httpx is
-monkeypatched via a fake client so tests don't depend on a running Bifrost.
+subresource and the OpenAI-compatible ``network_config.base_url`` push on
+the provider document. The recording client must distinguish those two
+GETs — a shared payload is what hid the keys-subresource contract change.
+httpx is monkeypatched via a fake client so tests don't depend on a
+running Bifrost.
 """
 
 from __future__ import annotations
@@ -50,6 +50,8 @@ class _RecordingClient:
         post_status=200,
         delete_status=200,
         write_payload=None,
+        provider_payload=None,
+        provider_status=200,
     ):
         self._get_payload = get_payload
         self._get_status = get_status
@@ -57,6 +59,12 @@ class _RecordingClient:
         self._post_status = post_status
         self._delete_status = delete_status
         self._write_payload = write_payload if write_payload is not None else {}
+        # Provider document is a different resource from /keys. Default to an
+        # empty doc (no keys) so a shared payload cannot hide that split.
+        self._provider_payload = (
+            provider_payload if provider_payload is not None else {}
+        )
+        self._provider_status = provider_status
         self.calls: List[Dict[str, Any]] = []
 
     def __enter__(self):
@@ -71,7 +79,9 @@ class _RecordingClient:
 
     def get(self, url, **kwargs):
         self.calls.append({"method": "GET", "url": url, "kwargs": kwargs})
-        return _FakeResp(self._get_status, self._get_payload)
+        if "/keys" in url:
+            return _FakeResp(self._get_status, self._get_payload)
+        return _FakeResp(self._provider_status, self._provider_payload)
 
     def put(self, url, **kwargs):
         return self._record("PUT", self._put_status, url, kwargs)
@@ -103,6 +113,22 @@ def _key_doc(models=None, value="sk-ant-****-masked", key_id="key-1"):
         ],
         "total": 1,
     }
+
+
+def _provider_doc(base_url=None, extra_network=None, **extra):
+    network = {"default_request_timeout_in_seconds": 30, "max_retries": 3}
+    if extra_network:
+        network.update(extra_network)
+    if base_url is not None:
+        network["base_url"] = base_url
+    doc = {
+        "name": "openai",
+        "network_config": network,
+        "concurrency_and_buffer_size": {"concurrency": 1000, "buffer_size": 5000},
+        "send_back_raw_request": False,
+    }
+    doc.update(extra)
+    return doc
 
 
 def test_sync_provider_models_skips_empty_list():
@@ -172,7 +198,10 @@ def test_write_never_echoes_the_masked_value_back():
         )
 
     body = [c for c in rec.calls if c["method"] == "PUT"][0]["kwargs"]["json"]
-    assert body["value"]["value"] == _SECRET
+    assert body["value"] == _SECRET
+    # And not the wrapper either: Bifrost stores that verbatim as the credential,
+    # which reads back as its own masked JSON and 401s every call.
+    assert not isinstance(body["value"], dict)
     assert masked not in str(body)
 
 
@@ -251,7 +280,9 @@ def test_push_provider_key_updates_existing_key_in_place():
     put = [c for c in rec.calls if c["method"] == "PUT"][0]
     assert put["url"].endswith("/api/providers/anthropic/keys/key-1")
     body = put["kwargs"]["json"]
-    assert body["value"] == {"value": "sk-ant-new", "type": "plain_text"}
+    # Bare, not wrapped: the wrapper is accepted with a 200 and stored as the
+    # credential itself, which 401s every call afterwards.
+    assert body["value"] == "sk-ant-new"
     # Carries the existing allow-list forward rather than wiping it.
     assert body["models"] == ["claude-opus-4-7"]
 
@@ -263,7 +294,7 @@ def test_push_provider_key_creates_key_when_absent():
 
     post = [c for c in rec.calls if c["method"] == "POST"][0]
     assert post["url"].endswith("/api/providers/anthropic/keys")
-    assert post["kwargs"]["json"]["value"]["value"] == "sk-ant-new"
+    assert post["kwargs"]["json"]["value"] == "sk-ant-new"
 
 
 def test_push_provider_key_deletes_on_empty_value():
@@ -291,14 +322,14 @@ def test_push_provider_key_reports_false_on_write_error():
 
 
 class _FakeProviderRow:
-    def __init__(self, provider_id, provider_type):
+    def __init__(self, provider_id, provider_type, base_url=None, is_default=False):
         self.provider_id = provider_id
         self.provider_type = provider_type
-        self.base_url = None
+        self.base_url = base_url
         self.api_key_ref = None
         self.config = {}
         self.is_active = True
-        self.is_default = False
+        self.is_default = is_default
 
 
 class _FakeSessionScope:
@@ -475,6 +506,143 @@ def test_sync_all_unions_across_same_type_providers(monkeypatch):
     _reset_registry()
 
 
+def _priced(mid, inp, out):
+    from core.llm.providers.discovery import ModelMeta
+
+    return ModelMeta(
+        id=mid, display_name=mid, input_cost_per_token=inp, output_cost_per_token=out
+    )
+
+
+def test_catalogue_reads_rates_and_prefers_an_operator_override(monkeypatch):
+    """Bifrost v2.2.1 reports an override beside the base rate, not in place of it."""
+    import asyncio
+
+    import httpx
+
+    from core.llm.bifrost import admin as ba
+
+    entries = [
+        {
+            "name": "claude-opus-4-7",
+            "max_output_tokens": 128000,
+            "input_cost_per_token": 5e-06,
+            "output_cost_per_token": 2.5e-05,
+            "cache_read_input_token_cost": 5e-07,
+            "cache_creation_input_token_cost": 6.25e-06,
+            "overridden_pricing": {
+                "input_cost_per_token": 1e-06,
+                "output_cost_per_token": 2e-06,
+            },
+        },
+        {"name": "no-price", "max_output_tokens": 1, "input_cost_per_token": None},
+    ]
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json={"models": entries})
+    )
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        ba.httpx, "AsyncClient", lambda **kw: real_client(transport=transport, **kw)
+    )
+
+    opus, unpriced = asyncio.run(ba.fetch_catalogue_models("anthropic"))
+    assert (opus.input_cost_per_token, opus.output_cost_per_token) == (1e-06, 2e-06)
+    assert opus.cache_read_cost_per_token == 5e-07
+    assert opus.cache_write_cost_per_token == 6.25e-06
+    assert unpriced.input_cost_per_token is None
+
+
+def test_sync_all_prices_from_the_datasheet_without_changing_the_list(monkeypatch):
+    """Discovery answered, so it alone decides the list; the datasheet is read
+    anyway, for every type (ollama included), and supplies only the rates."""
+    import asyncio
+
+    from core.llm.bifrost import admin as ba
+    from core.llm.providers import registry as model_registry
+
+    _reset_registry()
+    _patch_db(
+        monkeypatch,
+        [_FakeProviderRow("ant", "anthropic"), _FakeProviderRow("oll", "ollama")],
+    )
+
+    async def fake_fetch_row(row_dict, discovery, key=None):
+        if row_dict["provider_type"] == "ollama":
+            return [_M("llama3.1:8b")]
+        return [_M("claude-opus-4-7")]
+
+    sheets = {
+        "anthropic": [
+            _priced("claude-opus-4-7", 5e-6, 2.5e-5),
+            _priced("claude-not-discovered", 1e-6, 2e-6),
+        ],
+        "ollama": [_priced("llama3.1:8b", 1e-7, 2e-7)],
+    }
+
+    async def fake_catalogue(provider_type):
+        return sheets.get(provider_type)
+
+    monkeypatch.setattr(ba, "_fetch_meta_for_row", fake_fetch_row)
+    monkeypatch.setattr(ba, "fetch_catalogue_models", fake_catalogue)
+    monkeypatch.setattr(ba, "sync_provider_models", lambda *a, **k: True)
+    monkeypatch.setenv("ANTHROPIC_EXTRA_MODELS", "")
+
+    asyncio.run(ba.sync_all_provider_models())
+
+    assert model_registry._MODEL_LIST_CACHE["ant"] == ["claude-opus-4-7"]
+    assert model_registry._MODEL_LIST_CACHE["oll"] == ["llama3.1:8b"]
+    assert {"ant", "oll"} <= model_registry._LIVE_CATALOGUES
+    registry = model_registry.get_registry()
+    assert registry.get_cost_rates("claude-opus-4-7", "anthropic") == (5e-6, 2.5e-5)
+    assert registry.get_pricing_source("llama3.1:8b", "ollama") == "exact"
+    _reset_registry()
+
+
+def test_refresh_gateway_rates_fills_rates_without_the_full_sync(monkeypatch):
+    """The worker and daemon price calls too, but must never write to Bifrost."""
+    import asyncio
+
+    from core.llm.bifrost import admin as ba
+    from core.llm.providers import registry as model_registry
+
+    _reset_registry()
+
+    class _Query:
+        def filter(self, *_):
+            return self
+
+        def distinct(self):
+            return iter([("anthropic",), ("vertex",)])
+
+    class _Scope:
+        def __enter__(self):
+            return type("S", (), {"query": lambda self, *_: _Query()})()
+
+        def __exit__(self, *exc):
+            return False
+
+    fake_db = type("DB", (), {"_engine": object(), "session_scope": lambda s: _Scope()})
+    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: fake_db())
+
+    async def fake_catalogue(provider_type):
+        return [_priced(f"{provider_type}-m", 1e-6, 2e-6)]
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("the rates refresh must not write to Bifrost")
+
+    monkeypatch.setattr(ba, "fetch_catalogue_models", fake_catalogue)
+    monkeypatch.setattr(ba, "sync_provider_models", forbidden)
+    monkeypatch.setattr(ba, "_do_sync_all_provider_models", forbidden)
+
+    asyncio.run(ba.refresh_gateway_rates())
+
+    registry = model_registry.get_registry()
+    assert registry.get_pricing_source("anthropic-m", "anthropic") == "exact"
+    assert registry.get_pricing_source("vertex-m", "vertex") == "exact"
+    assert model_registry._MODEL_LIST_CACHE == {}
+    _reset_registry()
+
+
 def test_sync_all_falls_back_when_all_fetches_fail(monkeypatch):
     """Every row's fetch failing → per-row cache gets bootstrap + extras,
     Bifrost allow-list gets the union."""
@@ -622,3 +790,394 @@ def test_fetch_meta_for_row_ollama_bypasses_ssrf_ip_gate():
         "base_url": "http://10.64.201.1:11434",
         "allow_loopback": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# sync_provider_base_url — OpenAI-compatible custom host (#586)
+# ---------------------------------------------------------------------------
+
+
+def _provider_puts(rec):
+    return [c for c in rec.calls if c["method"] == "PUT" and "/keys" not in c["url"]]
+
+
+def _key_writes(rec):
+    return [
+        c for c in rec.calls if c["method"] in ("PUT", "POST") and "/keys" in c["url"]
+    ]
+
+
+def test_recording_client_distinguishes_provider_document_from_keys():
+    """The test double must not share a payload across the two GETs.
+
+    A single payload made provider-document reads look like they had keys,
+    which is the contract the gateway dropped and the suite kept green.
+    """
+    rec = _RecordingClient(
+        get_payload=_key_doc(models=["anthropic/claude-sonnet-5"]),
+        provider_payload=_provider_doc(),
+    )
+    with rec as client:
+        prov = client.get("http://localhost:8080/api/providers/openai")
+        keys = client.get("http://localhost:8080/api/providers/openai/keys")
+    assert "keys" not in prov.json()
+    assert "network_config" in prov.json()
+    assert keys.json()["keys"][0]["models"] == ["anthropic/claude-sonnet-5"]
+
+
+def test_sync_provider_base_url_trims_trailing_v1():
+    rec = _RecordingClient(provider_payload=_provider_doc())
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.sync_provider_base_url(
+            "openai", "https://openrouter.ai/api/v1"
+        )
+    assert ok is True
+    put = _provider_puts(rec)[0]
+    assert put["url"].endswith("/api/providers/openai")
+    assert "/keys" not in put["url"]
+    body = put["kwargs"]["json"]
+    assert body["network_config"]["base_url"] == "https://openrouter.ai/api"
+    assert "keys" not in body
+
+
+def test_sync_provider_base_url_keeps_path_prefix_without_v1_suffix():
+    rec = _RecordingClient(provider_payload=_provider_doc())
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.sync_provider_base_url(
+            "openai", "https://litellm.example/openai"
+        )
+    assert ok is True
+    body = _provider_puts(rec)[0]["kwargs"]["json"]
+    assert body["network_config"]["base_url"] == "https://litellm.example/openai"
+
+
+def test_sync_provider_base_url_preserves_unrelated_network_config():
+    rec = _RecordingClient(
+        provider_payload=_provider_doc(
+            extra_network={"retry_backoff_initial": 500, "insecure_skip_verify": False}
+        )
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        bifrost_admin.sync_provider_base_url("openai", "https://together.xyz/v1")
+    network = _provider_puts(rec)[0]["kwargs"]["json"]["network_config"]
+    assert network["base_url"] == "https://together.xyz"
+    assert network["default_request_timeout_in_seconds"] == 30
+    assert network["max_retries"] == 3
+    assert network["retry_backoff_initial"] == 500
+    assert network["insecure_skip_verify"] is False
+
+
+def test_sync_provider_base_url_is_idempotent_for_v1_and_bare_forms():
+    for stored, existing in (
+        ("https://openrouter.ai/api/v1", "https://openrouter.ai/api"),
+        ("https://openrouter.ai/api", "https://openrouter.ai/api"),
+    ):
+        rec = _RecordingClient(provider_payload=_provider_doc(base_url=existing))
+        with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+            ok = bifrost_admin.sync_provider_base_url("openai", stored)
+        assert ok is True
+        assert _provider_puts(rec) == []
+        assert any(c["method"] == "GET" and "/keys" not in c["url"] for c in rec.calls)
+
+
+def test_sync_provider_base_url_skips_anthropic_and_ollama():
+    rec = _RecordingClient(provider_payload=_provider_doc())
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        assert (
+            bifrost_admin.sync_provider_base_url(
+                "anthropic", "https://proxy.example/anthropic/v1"
+            )
+            is True
+        )
+        assert (
+            bifrost_admin.sync_provider_base_url("ollama", "http://localhost:11434")
+            is True
+        )
+    assert rec.calls == []
+
+
+def test_sync_provider_base_url_skips_empty_and_stock_openai():
+    rec = _RecordingClient(provider_payload=_provider_doc())
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        assert bifrost_admin.sync_provider_base_url("openai", None) is True
+        assert bifrost_admin.sync_provider_base_url("openai", "") is True
+        assert (
+            bifrost_admin.sync_provider_base_url("openai", "https://api.openai.com/v1")
+            is True
+        )
+    assert _provider_puts(rec) == []
+    assert all(c["method"] == "GET" and "/keys" not in c["url"] for c in rec.calls)
+
+
+def test_sync_provider_base_url_returns_false_when_provider_missing():
+    rec = _RecordingClient(provider_status=404, provider_payload=None)
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.sync_provider_base_url(
+            "openai", "https://openrouter.ai/api/v1"
+        )
+    assert ok is False
+    assert _provider_puts(rec) == []
+
+
+def test_sync_provider_base_url_returns_false_on_put_error():
+    rec = _RecordingClient(provider_payload=_provider_doc(), put_status=500)
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.sync_provider_base_url(
+            "openai", "https://openrouter.ai/api/v1"
+        )
+    assert ok is False
+
+
+def test_sync_provider_base_url_clears_stale_custom_host_when_reverting_to_stock():
+    rec = _RecordingClient(
+        provider_payload=_provider_doc(base_url="https://openrouter.ai/api")
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.sync_provider_base_url("openai", "https://api.openai.com/v1")
+    assert ok is True
+    network = _provider_puts(rec)[0]["kwargs"]["json"]["network_config"]
+    assert "base_url" not in network
+    assert network["default_request_timeout_in_seconds"] == 30
+
+
+def test_base_url_put_omits_readback_only_fields():
+    rec = _RecordingClient(
+        provider_payload=_provider_doc(
+            status="active",
+            config_hash="abc",
+            keys=[{"id": "should-not-be-echoed", "models": ["gpt-4o"]}],
+        )
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        bifrost_admin.sync_provider_base_url("openai", "https://openrouter.ai/api/v1")
+    body = _provider_puts(rec)[0]["kwargs"]["json"]
+    assert "keys" not in body
+    assert "status" not in body
+    assert "config_hash" not in body
+    assert "name" not in body
+    assert "network_config" in body
+    assert "concurrency_and_buffer_size" in body
+
+
+def test_base_url_refresh_keeps_namespaced_model_on_key_allow_list():
+    rec = _RecordingClient(
+        get_payload=_key_doc(models=["anthropic/claude-sonnet-5", "gpt-4o"]),
+        provider_payload=_provider_doc(),
+    )
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        assert bifrost_admin.sync_provider_base_url(
+            "openai", "https://openrouter.ai/api/v1"
+        )
+        assert bifrost_admin.sync_provider_models(
+            "openai",
+            ["anthropic/claude-sonnet-5", "gpt-4o"],
+            key_value=_SECRET,
+        )
+    assert "keys" not in _provider_puts(rec)[0]["kwargs"]["json"]
+    key_put = _key_writes(rec)[0]
+    assert key_put["kwargs"]["json"]["models"] == [
+        "anthropic/claude-sonnet-5",
+        "gpt-4o",
+    ]
+    assert key_put["kwargs"]["json"]["value"] == _SECRET
+    assert not isinstance(key_put["kwargs"]["json"]["value"], dict)
+
+
+def test_connection_test_success_leaves_bifrost_on_stock_host():
+    """Regression: discovery (and the connection probe) dial the custom host
+    directly. A green test is therefore not proof the gateway will route
+    there — that was the #586 failure mode.
+    """
+    rec = _RecordingClient(provider_payload=_provider_doc())
+
+    class _FakeDiscovery:
+        @staticmethod
+        async def fetch_openai_models(*_a, **_kw):
+            return []
+
+    row = {
+        "provider_id": "openrouter",
+        "provider_type": "openai",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_ref": None,
+        "config": {},
+    }
+
+    import asyncio
+
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        asyncio.run(
+            bifrost_admin._fetch_meta_for_row(row, _FakeDiscovery, key="sk-or-test")
+        )
+
+    # Direct discovery never writes the gateway document.
+    assert rec.calls == []
+    assert "base_url" not in rec._provider_payload["network_config"]
+
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        bifrost_admin.sync_provider_base_url("openai", row["base_url"])
+
+    assert (
+        _provider_puts(rec)[0]["kwargs"]["json"]["network_config"]["base_url"]
+        == "https://openrouter.ai/api"
+    )
+
+
+def test_sync_all_pushes_default_openai_row_base_url(monkeypatch):
+    from core.llm.bifrost import admin as ba
+
+    _reset_registry()
+
+    rows = [
+        _FakeProviderRow(
+            "stock", "openai", base_url="https://api.openai.com/v1", is_default=False
+        ),
+        _FakeProviderRow(
+            "openrouter",
+            "openai",
+            base_url="https://openrouter.ai/api/v1",
+            is_default=True,
+        ),
+    ]
+    _patch_db(monkeypatch, rows)
+
+    async def fake_fetch_row(row_dict, discovery, key=None):
+        return [_M("gpt-4o"), _M("anthropic/claude-sonnet-5")]
+
+    rec = _RecordingClient(
+        get_payload=_key_doc(models=["gpt-4o"]),
+        provider_payload=_provider_doc(),
+    )
+    monkeypatch.setattr(ba, "_fetch_meta_for_row", fake_fetch_row)
+    monkeypatch.setattr(ba, "_resolve_row_key", lambda row: _SECRET)
+    monkeypatch.setattr(ba.httpx, "Client", lambda: rec)
+    monkeypatch.setenv("ANTHROPIC_EXTRA_MODELS", "")
+
+    import asyncio
+
+    result = asyncio.run(ba.sync_all_provider_models())
+
+    assert result["bifrost_base_url"]["openai"] is True
+    assert (
+        _provider_puts(rec)[0]["kwargs"]["json"]["network_config"]["base_url"]
+        == "https://openrouter.ai/api"
+    )
+    key_put = _key_writes(rec)[0]
+    assert "anthropic/claude-sonnet-5" in key_put["kwargs"]["json"]["models"]
+    _reset_registry()
+
+
+# ---------------------------------------------------------------------------
+# default_model_for_provider_type — ollama floors to a chat model (#1003)
+# ---------------------------------------------------------------------------
+
+
+def _ollama_meta(*specs):
+    """``ModelMeta`` stand-ins from ``(id, is_embedding)`` pairs.
+
+    ``is_embedding=None`` leaves the key absent, as ``fetch_ollama_models``
+    does for a server that reports no capabilities.
+    """
+    from core.llm.providers.discovery import ModelMeta
+
+    return [
+        ModelMeta(
+            id=mid,
+            display_name=mid,
+            capabilities={} if emb is None else {"is_embedding": emb},
+        )
+        for mid, emb in specs
+    ]
+
+
+def _ollama_floor(monkeypatch, models):
+    import asyncio
+
+    async def _fake_list(base_url, discovery=None):
+        return models
+
+    monkeypatch.setattr(bifrost_admin, "_list_ollama_models", _fake_list)
+    return asyncio.run(bifrost_admin.default_model_for_provider_type("ollama"))
+
+
+def test_ollama_floor_skips_embedding_model_listed_first(monkeypatch):
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("qwen2.5:14b", False),
+        ("llama3.1:8b", False),
+    )
+    assert _ollama_floor(monkeypatch, models) == "qwen2.5:14b"
+
+
+def test_ollama_floor_skips_embedding_model_listed_last(monkeypatch):
+    models = _ollama_meta(
+        ("qwen2.5:14b", False),
+        ("llama3.1:8b", False),
+        ("nomic-embed-text:latest", True),
+    )
+    assert _ollama_floor(monkeypatch, models) == "qwen2.5:14b"
+
+
+def test_ollama_floor_is_none_when_only_embedding_models_pulled(monkeypatch, caplog):
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("mxbai-embed-large:latest", True),
+    )
+    with caplog.at_level("WARNING"):
+        assert _ollama_floor(monkeypatch, models) is None
+    assert "No pulled model to floor a mirrored ollama row to" in caplog.text
+
+
+def test_ollama_floor_falls_back_to_name_when_capability_flag_absent(monkeypatch):
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", None),
+        ("llama3.1:8b", None),
+    )
+    assert _ollama_floor(monkeypatch, models) == "llama3.1:8b"
+
+
+def test_ollama_floor_prefers_mid_tier_chat_model(monkeypatch):
+    """The surviving ids go through ``_preferred_floor``, not index 0."""
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("qwen2.5:72b", False),
+        ("mistral-small:latest", False),
+    )
+    assert _ollama_floor(monkeypatch, models) == "mistral-small:latest"
+
+
+def test_gemini_floor_prefers_latest_alias_over_retired_pin(monkeypatch):
+    """Retired flash pins listed ahead of the alias must not win the floor (#1122)."""
+    import asyncio
+
+    from core.llm.providers.discovery import ModelMeta
+
+    async def _fake_catalogue(provider_type):
+        return [
+            ModelMeta(id=mid, display_name=mid)
+            for mid in ("gemini-2.0-flash", "gemini-2.5-pro", "gemini-flash-latest")
+        ]
+
+    monkeypatch.setattr(bifrost_admin, "fetch_catalogue_models", _fake_catalogue)
+    assert (
+        asyncio.run(bifrost_admin.default_model_for_provider_type("gemini"))
+        == "gemini-flash-latest"
+    )
+
+
+def test_self_hosted_chat_models_excludes_embedding_ids(monkeypatch):
+    """So ``_upsert_row`` corrects a row already floored to an embedding model."""
+    import asyncio
+
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("llama3.1:8b", False),
+    )
+
+    async def _fake_list(base_url, discovery=None):
+        return models
+
+    monkeypatch.setattr(bifrost_admin, "_list_ollama_models", _fake_list)
+    assert asyncio.run(bifrost_admin.self_hosted_chat_models("ollama")) == [
+        "llama3.1:8b"
+    ]

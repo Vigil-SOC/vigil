@@ -1,12 +1,13 @@
 """Unit tests for services/elastic_ingestion.py."""
 
+import hashlib
 import json
-import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.integrations.elastic.ingestion import ElasticIngestion
+import pytest
 
+from core.integrations.elastic.ingestion import ElasticIngestion
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "fixtures"
 
@@ -19,11 +20,15 @@ def sample_alerts():
 
 @pytest.fixture
 def ingestion():
-    with patch("core.integrations.elastic.ingestion.get_integration_config") as mock_cfg:
-        mock_cfg.return_value = {
+    with patch("core.integrations.elastic.ingestion.resolve") as mock_resolve:
+        mock_resolve.return_value = {
             "elasticsearch_url": "https://es.test:9200",
             "kibana_url": "https://kibana.test:5601",
             "api_key": "test-key",
+            "username": None,
+            "password": None,
+            "index_pattern": None,
+            "verify_ssl": None,
         }
         svc = ElasticIngestion()
         # Prevent actual IngestionService init
@@ -75,10 +80,75 @@ class TestTransformAlert:
         assert finding["title"] == "Elastic Security Alert"
         assert finding["severity"] == "medium"
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"kibana.alert.rule.name": "Kibana rule"},
+            {"rule": {"level": 10, "description": "Wazuh rule"}},
+        ],
+        ids=["kibana", "wazuh"],
+    )
+    def test_long_alert_id_fits_finding_id_column(self, ingestion, source):
+        """Kibana detection alert _ids are 64-char SHA-256 hex (#1434)."""
+        alert_id = hashlib.sha256(b"x").hexdigest()
+        finding = ingestion.transform_alert_to_finding(
+            {"_id": alert_id, "_source": source}
+        )
+        assert finding is not None
+        # findings.finding_id is String(50)
+        assert len(finding["finding_id"]) <= 50
+        assert finding["finding_id"].startswith(f"elastic-{alert_id[:20]}")
+        # The full id survives for dedup and for upstream status sync.
+        assert finding["external_id"] == alert_id
+        assert finding["metadata"]["elastic_alert_id"] == alert_id
+
+    def test_short_alert_id_is_unchanged(self, ingestion):
+        finding = ingestion.transform_alert_to_finding({"_id": "abc", "_source": {}})
+        assert finding["finding_id"] == "elastic-abc"
+        assert finding["external_id"] == "abc"
+
     def test_handles_transform_error(self, ingestion):
         # Pass completely invalid data
         finding = ingestion.transform_alert_to_finding(None)
         assert finding is None
+
+
+class TestGetElasticService:
+
+    def test_resolved_api_key_reaches_the_client(self, ingestion):
+        svc = ingestion._get_elastic_service()
+        assert svc is not None
+        assert svc.api_key == "test-key"
+        assert svc.verify_ssl is True
+        assert svc.index_pattern == ".alerts-security.alerts-default"
+
+    def test_returns_none_without_elasticsearch_url(self):
+        with patch("core.integrations.elastic.ingestion.resolve") as mock_resolve:
+            mock_resolve.return_value = {
+                "elasticsearch_url": None,
+                "api_key": "test-key",
+                "verify_ssl": None,
+            }
+            ingestion = ElasticIngestion()
+            ingestion.ingestion_service = MagicMock()
+            assert ingestion._get_elastic_service() is None
+
+    def test_verify_ssl_false_is_preserved(self):
+        with patch("core.integrations.elastic.ingestion.resolve") as mock_resolve:
+            mock_resolve.return_value = {
+                "elasticsearch_url": "https://es.test:9200",
+                "kibana_url": None,
+                "api_key": "test-key",
+                "username": None,
+                "password": None,
+                "index_pattern": None,
+                "verify_ssl": False,
+            }
+            ingestion = ElasticIngestion()
+            ingestion.ingestion_service = MagicMock()
+            svc = ingestion._get_elastic_service()
+            assert svc is not None
+            assert svc.verify_ssl is False
 
 
 class TestFetchAlerts:
@@ -103,13 +173,24 @@ class TestFetchAlerts:
             assert alerts == []
 
     @pytest.mark.asyncio
-    async def test_fetch_returns_empty_on_error(self, ingestion):
+    async def test_fetch_raises_on_error(self, ingestion):
+        """An empty result would let the federation cursor skip the outage."""
         mock_svc = MagicMock()
         mock_svc.fetch_detection_alerts = AsyncMock(side_effect=Exception("fail"))
         ingestion._elastic_service = mock_svc
 
-        alerts = await ingestion.fetch_alerts()
-        assert alerts == []
+        with pytest.raises(Exception, match="fail"):
+            await ingestion.fetch_alerts()
+
+    @pytest.mark.asyncio
+    async def test_fetch_raises_when_the_search_fails(self, ingestion):
+        # ElasticService returns None on any request failure.
+        mock_svc = MagicMock()
+        mock_svc.fetch_detection_alerts = AsyncMock(return_value=None)
+        ingestion._elastic_service = mock_svc
+
+        with pytest.raises(RuntimeError):
+            await ingestion.fetch_alerts()
 
 
 class TestUpdateUpstreamAlertStatus:
@@ -131,9 +212,7 @@ class TestUpdateUpstreamAlertStatus:
         ingestion._elastic_service = mock_svc
 
         await ingestion.update_upstream_alert_status("a1", "in_progress")
-        mock_svc.update_alert_status.assert_called_once_with(
-            ["a1"], "acknowledged"
-        )
+        mock_svc.update_alert_status.assert_called_once_with(["a1"], "acknowledged")
 
     @pytest.mark.asyncio
     async def test_returns_false_when_no_service(self, ingestion):

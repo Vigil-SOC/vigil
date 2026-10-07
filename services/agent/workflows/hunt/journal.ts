@@ -16,7 +16,6 @@ export class Journal {
   private events: HuntEvent[] = [];
   private pending: Body[] = [];
   private view: Projection | null = null;
-  private written = 0;
 
   private constructor(
     private readonly state: State<HuntKinds>,
@@ -25,15 +24,19 @@ export class Journal {
     private readonly runKind: RunKind,
   ) {}
 
+  // runKind is the fallback, not the answer: the kind was settled when the run
+  // opened, and it is on the first event. Trusting a caller's instead is how one
+  // ledger ends up with events stamped two different ways -- the resume job says
+  // what it was told, and only the ledger knows what the run actually is.
   static async open(
     state: State<HuntKinds>,
     queue: DirectiveQueue,
     runId: string,
     runKind: RunKind = "hunt",
   ): Promise<Journal> {
-    const journal = new Journal(state, queue, runId, runKind);
-    journal.events = await state.read(runId);
-    journal.written = journal.events.length;
+    const events = await state.read(runId);
+    const journal = new Journal(state, queue, runId, events[0]?.run_kind ?? runKind);
+    journal.events = events;
     return journal;
   }
 
@@ -81,8 +84,19 @@ export class Journal {
     const batch = this.pending;
     this.pending = [];
     const owned = batch.map((body) => ({ ...body, run_id: this.runId, run_kind: this.runKind }) as NewEvent<HuntKinds>);
-    this.written = await this.state.append(this.runId, owned);
+    await this.state.append(this.runId, owned);
     this.events = await this.state.read(this.runId);
+    this.view = null;
+  }
+
+  // Picks up what other writers put on the ledger since the last read -- the stream
+  // journals each call's spend straight to State, never through append -- without
+  // making the buffered iteration durable. The pending tail keeps its place after
+  // the stored events, as it will when flush lands it.
+  async refresh(): Promise<void> {
+    const stored = await this.state.read(this.runId);
+    const tail = this.events.slice(this.events.length - this.pending.length);
+    this.events = [...stored, ...tail.map((event, at) => ({ ...event, seq: stored.length + at }))];
     this.view = null;
   }
 

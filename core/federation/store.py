@@ -23,21 +23,32 @@ GLOBAL_KEY = "federation.settings"
 # ---------------------------------------------------------------------------
 
 
+def read_global_settings() -> Dict[str, Any]:
+    """Like :func:`get_global_settings`, but a store error raises.
+
+    For callers that must tell "federation is off" from "could not read".
+    """
+    from core.storage.config_service import get_config_service
+
+    cfg = get_config_service().get_system_config(GLOBAL_KEY)
+    return cfg if isinstance(cfg, dict) else {"enabled": False}
+
+
 def get_global_settings() -> Dict[str, Any]:
     """Return the federation.settings JSON, defaulting to ``{"enabled": False}``."""
     try:
-        from core.storage.config_service import get_config_service
-
-        cfg = get_config_service().get_system_config(GLOBAL_KEY)
-        if isinstance(cfg, dict):
-            return cfg
+        return read_global_settings()
     except Exception as e:
-        logger.debug("federation.settings read failed: %s", e)
-    return {"enabled": False}
+        logger.warning("federation.settings read failed: %s", e)
+        return {"enabled": False}
 
 
-def set_global_settings(value: Dict[str, Any], updated_by: str = "api") -> None:
-    """Write ``federation.settings`` (read-modify-write so we don't drop fields)."""
+def set_global_settings(value: Dict[str, Any], updated_by: str) -> None:
+    """Write ``federation.settings`` (read-modify-write so we don't drop fields).
+
+    ``updated_by`` is the actor stored on the audit row. Callers name one;
+    there is no placeholder default.
+    """
     try:
         from core.storage.config_service import get_config_service
 
@@ -63,7 +74,7 @@ def is_globally_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 
-@default_on_error(list, level="debug")
+@default_on_error(list, level="warning")
 def list_sources() -> List[Dict[str, Any]]:
     """All federation_sources rows as dicts."""
     from core.storage.connection import get_db_manager
@@ -75,8 +86,8 @@ def list_sources() -> List[Dict[str, Any]]:
         return FederationSourceSchema.dump_many(rows)
 
 
-@default_on_error(None, level="debug")
-def get_source(source_id: str) -> Optional[Dict[str, Any]]:
+def read_source(source_id: str) -> Optional[Dict[str, Any]]:
+    """Like :func:`get_source`, but a store error raises instead of reading as no row."""
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
     from core.storage.schemas import FederationSourceSchema
@@ -84,6 +95,11 @@ def get_source(source_id: str) -> Optional[Dict[str, Any]]:
     with get_db_manager().session_scope() as session:
         row = session.get(FederationSource, source_id)
         return FederationSourceSchema.dump(row) if row else None
+
+
+@default_on_error(None, level="warning")
+def get_source(source_id: str) -> Optional[Dict[str, Any]]:
+    return read_source(source_id)
 
 
 @default_on_error(None, level="warning")
@@ -125,19 +141,36 @@ def update_source(source_id: str, fields: Dict[str, Any]) -> Optional[Dict[str, 
 
 
 def record_success(
-    source_id: str, *, cursor: Dict[str, Any], when: Optional[datetime] = None
+    source_id: str,
+    *,
+    cursor: Dict[str, Any],
+    when: Optional[datetime] = None,
+    dropped: int = 0,
 ) -> None:
+    """Advance the cursor and add this tick's ``dropped`` to the running total."""
     when = when or utcnow()
-    update_source(
-        source_id,
-        {
-            "last_poll_at": when,
-            "last_success_at": when,
-            "last_error": None,
-            "consecutive_errors": 0,
-            "cursor": cursor or {},
-        },
-    )
+    try:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import FederationSource
+
+        with get_db_manager().session_scope() as session:
+            # Row lock so concurrent writers add to the total instead of racing it.
+            row = (
+                session.query(FederationSource)
+                .filter_by(source_id=source_id)
+                .with_for_update()
+                .one_or_none()
+            )
+            if row is None:
+                return
+            row.last_poll_at = when
+            row.last_success_at = when
+            row.last_error = None
+            row.consecutive_errors = 0
+            row.cursor = cursor or {}
+            row.dropped_total = (row.dropped_total or 0) + max(dropped, 0)
+    except Exception as e:
+        logger.warning("record_success(%s) failed: %s", source_id, e)
 
 
 def record_failure(source_id: str, error: str) -> None:
@@ -154,4 +187,4 @@ def record_failure(source_id: str, error: str) -> None:
             row.last_error = (error or "")[:2000]
             row.consecutive_errors = (row.consecutive_errors or 0) + 1
     except Exception as e:
-        logger.debug("record_failure(%s) failed: %s", source_id, e)
+        logger.warning("record_failure(%s) failed: %s", source_id, e)

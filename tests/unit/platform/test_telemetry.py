@@ -5,15 +5,16 @@ The sanitizer tests are **security-critical** — they verify that sensitive
 data patterns are scrubbed before leaving the process.
 """
 
+import json
 import os
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _reload_telemetry():
     """Force-reset telemetry module state to allow re-initialization in tests."""
@@ -28,6 +29,7 @@ def _reload_telemetry():
 # ---------------------------------------------------------------------------
 # core.telemetry — no-op behaviour when disabled
 # ---------------------------------------------------------------------------
+
 
 class TestTelemetryDisabled:
     """When VIGIL_OTEL_ENABLED is not set or false, everything is no-op."""
@@ -121,17 +123,55 @@ class TestTelemetryInitFailure:
             span.end()
 
 
+class TestMeterProviderReaders:
+    """_do_init attaches both readers — Prometheus for the scrape, OTLP push
+    for processes with no HTTP port — never one as a fallback for the other."""
+
+    def test_both_readers_attached(self):
+        from opentelemetry import metrics as otel_metrics
+        from opentelemetry import trace as otel_trace
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+            OTLPMetricExporter,
+        )
+        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+        tel = _reload_telemetry()
+        # _do_init is called directly (it does not read the flag). The global
+        # providers can only be set once per process; keep the test's out.
+        with patch.object(otel_metrics, "set_meter_provider"), patch.object(
+            otel_trace, "set_tracer_provider"
+        ):
+            tel._do_init("svc")
+        try:
+            # The provider's own readers, not MeterProvider._all_metric_readers:
+            # that is a class-level WeakSet shared by every provider in the
+            # process, and a shut-down reader from an earlier test stays in it
+            # until the cyclic GC happens to run (flaky 3 == 2 in CI).
+            readers = list(tel._meter_provider._metric_readers)
+            assert len(readers) == 2
+            prom = [r for r in readers if isinstance(r, PrometheusMetricReader)]
+            otlp = [r for r in readers if isinstance(r, PeriodicExportingMetricReader)]
+            assert len(prom) == 1 and len(otlp) == 1
+            assert isinstance(otlp[0]._exporter, OTLPMetricExporter)
+        finally:
+            tel.shutdown()
+
+
 # ---------------------------------------------------------------------------
 # Investigation ID context var
 # ---------------------------------------------------------------------------
 
+
 class TestInvestigationContext:
     def test_default_is_none(self):
         from core.telemetry import get_investigation_id
+
         get_investigation_id()  # must not raise
 
     def test_set_and_get(self):
         from core.telemetry import set_investigation_id, get_investigation_id
+
         set_investigation_id("inv-test-123")
         assert get_investigation_id() == "inv-test-123"
         set_investigation_id(None)
@@ -139,46 +179,100 @@ class TestInvestigationContext:
 
 
 # ---------------------------------------------------------------------------
+# Structured logging
+# ---------------------------------------------------------------------------
+
+
+def _record(msg, args=(), exc_info=None):
+    import logging
+
+    return logging.LogRecord("svc.mod", logging.ERROR, __file__, 1, msg, args, exc_info)
+
+
+class TestJsonLogging:
+    def test_same_call_site_groups_by_msg_template(self):
+        from core.telemetry import _OTELJsonFormatter
+
+        fmt = _OTELJsonFormatter()
+        a = json.loads(fmt.format(_record("job %s failed", ("a1",))))
+        b = json.loads(fmt.format(_record("job %s failed", ("b2",))))
+        assert a["msg_template"] == b["msg_template"] == "job %s failed"
+        assert a["message"] == "job a1 failed" and b["message"] == "job b2 failed"
+        assert {"ts", "level", "logger", "trace_id", "span_id"} <= a.keys()
+        assert "%f" not in a["ts"] and a["ts"].endswith("+00:00")
+
+    def test_non_str_msg_has_empty_template(self):
+        from core.telemetry import _OTELJsonFormatter
+
+        out = json.loads(_OTELJsonFormatter().format(_record(ValueError("x"))))
+        assert out["msg_template"] == ""
+
+    def test_exc_type_only_with_exc_info(self):
+        from core.telemetry import _OTELJsonFormatter
+
+        fmt = _OTELJsonFormatter()
+        assert "exc_type" not in json.loads(fmt.format(_record("plain")))
+        try:
+            raise KeyError("k")
+        except KeyError:
+            rec = _record("boom", exc_info=sys.exc_info())
+        out = json.loads(fmt.format(rec))
+        assert out["exc_type"] == "builtins.KeyError"
+        assert "KeyError" in out["exception"]
+
+    def test_configure_logging_without_otel(self, tmp_path, monkeypatch, capsys):
+        import logging
+
+        import core.telemetry as tel
+
+        monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+        monkeypatch.setattr(tel, "get_settings", lambda: MagicMock(vigil_log_format="json"))
+        root = logging.getLogger()
+        saved, level = root.handlers[:], root.level
+        try:
+            tel.configure_logging("INFO")
+            logging.getLogger("svc.mod").info("started %s", 1)
+            logging.getLogger("svc.mod").debug("hidden")
+            for h in root.handlers:
+                h.flush()
+        finally:
+            for h in root.handlers[:]:
+                root.removeHandler(h)
+                h.close()
+            for h in saved:
+                root.addHandler(h)
+            root.setLevel(level)
+        line = json.loads(capsys.readouterr().err.strip())
+        assert line["msg_template"] == "started %s" and line["message"] == "started 1"
+        logged = (tmp_path / "vigil.log").read_text().strip().splitlines()
+        assert len(logged) == 1 and json.loads(logged[0]) == line
+
+
+# ---------------------------------------------------------------------------
 # Configuration helpers
 # ---------------------------------------------------------------------------
+
 
 class TestConfigHelpers:
     def test_is_otel_enabled_true(self):
         from core.telemetry import _is_otel_enabled
+
         for val in ("true", "True", "1", "yes", "YES"):
             with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": val}):
                 assert _is_otel_enabled() is True
 
     def test_is_otel_enabled_false(self):
         from core.telemetry import _is_otel_enabled
+
         for val in ("false", "0", "no", ""):
             with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": val}):
                 assert _is_otel_enabled() is False
-
-    def test_llm_content_default_off(self):
-        from core.telemetry import _should_record_llm_content
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k != "VIGIL_OTEL_RECORD_LLM_CONTENT"
-        }
-        with patch.dict(os.environ, env, clear=True):
-            assert _should_record_llm_content() is False
-
-    def test_ioc_values_default_off(self):
-        from core.telemetry import _should_record_ioc_values
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k != "VIGIL_OTEL_RECORD_IOC_VALUES"
-        }
-        with patch.dict(os.environ, env, clear=True):
-            assert _should_record_ioc_values() is False
 
 
 # ---------------------------------------------------------------------------
 # core.telemetry_sanitizer — SECURITY TESTS
 # ---------------------------------------------------------------------------
+
 
 class TestSensitiveAttributeScrubber:
     """
@@ -190,6 +284,7 @@ class TestSensitiveAttributeScrubber:
     @pytest.fixture
     def scrubber(self):
         from core.telemetry_sanitizer import SensitiveAttributeScrubber
+
         return SensitiveAttributeScrubber()
 
     # ---- Key-based redaction ----
@@ -291,9 +386,12 @@ class TestSensitiveAttributeScrubber:
         assert scrubber._should_redact("http.method", "GET") is False
         assert scrubber._should_redact("http.status_code", 200) is False
         assert scrubber._should_redact("vigil.tool.tier", "safe") is False
-        assert scrubber._should_redact(
-            "gen_ai.request.model", "claude-sonnet-4-5-20250929"
-        ) is False
+        assert (
+            scrubber._should_redact(
+                "gen_ai.request.model", "claude-sonnet-4-5-20250929"
+            )
+            is False
+        )
 
     def test_numeric_values_not_redacted(self, scrubber):
         assert scrubber._should_redact("gen_ai.usage.input_tokens", 1500) is False
@@ -322,9 +420,7 @@ class TestSensitiveAttributeScrubber:
         span.set_attribute("http.method", "POST")
         span.set_attribute("safe.attr", "hello")
         span.set_attribute("my.api_key", "sk-ant-api03-secretstuff1234567890abcdef")
-        span.set_attribute(
-            "finding.description", "User admin logged in from 10.0.0.1"
-        )
+        span.set_attribute("finding.description", "User admin logged in from 10.0.0.1")
         span.set_attribute("gen_ai.usage.input_tokens", 500)
         span.end()
 
@@ -373,10 +469,57 @@ class TestSensitiveAttributeScrubber:
         assert attrs["http.status_code"] == 200
         provider.shutdown()
 
+    def test_on_end_always_redacts_content_despite_old_env_flags(self):
+        try:
+            from opentelemetry.sdk.trace import TracerProvider
+        except ImportError:
+            pytest.skip("opentelemetry-sdk not installed")
+
+        from core.telemetry_sanitizer import SensitiveAttributeScrubber
+
+        provider = TracerProvider()
+        scrubber = SensitiveAttributeScrubber()
+        redacted_keys = (
+            "gen_ai.prompt",
+            "gen_ai.completion",
+            "llm.prompt",
+            "llm.response",
+            "finding.description",
+            "finding.raw_event",
+            "finding.payload",
+            "finding.entity_context",
+            "finding.entity_id",  # regression: was covered by the old IOC block
+        )
+        old_flags = {
+            "VIGIL_OTEL_RECORD_LLM_CONTENT": "true",
+            "VIGIL_OTEL_RECORD_IOC_VALUES": "true",
+        }
+        with patch.dict(os.environ, old_flags):
+            span = provider.get_tracer("test").start_span("content")
+            for key in redacted_keys:
+                span.set_attribute(key, "plain content")
+            span.set_attribute("safe.attr", "hello")
+            span.end()
+            scrubber.on_end(span)
+
+        attrs = dict(span.attributes)
+        assert all(attrs[k] == "[REDACTED]" for k in redacted_keys)
+        assert attrs["safe.attr"] == "hello"
+        provider.shutdown()
+
+    def test_removed_opt_in_settings_are_ignored(self):
+        from core.config import Settings
+
+        assert not hasattr(Settings, "vigil_otel_record_llm_content")
+        assert not hasattr(Settings, "vigil_otel_record_ioc_values")
+        with patch.dict(os.environ, {"VIGIL_OTEL_RECORD_LLM_CONTENT": "true"}):
+            assert not hasattr(Settings(), "vigil_otel_record_llm_content")
+
 
 # ---------------------------------------------------------------------------
 # Sanitizer stub when SDK not installed
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizerStub:
     def test_stub_methods_exist(self):
@@ -392,6 +535,7 @@ class TestSanitizerStub:
 # ---------------------------------------------------------------------------
 # Fallback no-op types
 # ---------------------------------------------------------------------------
+
 
 class TestFallbackNoOps:
     """The fallback types must be fully functional no-ops."""
@@ -434,3 +578,181 @@ class TestFallbackNoOps:
         meter.create_observable_gauge("g")
         u = meter.create_up_down_counter("u")
         u.add(-1)
+
+
+# ---------------------------------------------------------------------------
+# record_llm_call — the GenAI instruments (#894)
+# ---------------------------------------------------------------------------
+
+
+def _collect_points(reader):
+    """{metric_name: [(attributes_dict, value)]} from an InMemoryMetricReader."""
+    out = {}
+    data = reader.get_metrics_data()
+    if data is None:  # nothing recorded yet
+        return out
+    for rm in data.resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                for pt in metric.data.data_points:
+                    value = getattr(pt, "value", None)
+                    if value is None:  # histogram
+                        value = pt.sum
+                    out.setdefault(metric.name, []).append((dict(pt.attributes), value))
+    return out
+
+
+class TestRecordLLMCall:
+    @pytest.fixture
+    def reader(self):
+        from opentelemetry import metrics as otel_metrics
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+        tel = _reload_telemetry()
+        reader = InMemoryMetricReader()
+        provider = MeterProvider(metric_readers=[reader])
+        # The global provider can only be set once per process; go through the
+        # module's own accessor instead.
+        with patch.object(otel_metrics, "get_meter", provider.get_meter):
+            tel._initialized = True
+            tel._genai_metrics = None
+            yield reader
+        tel._genai_metrics = None
+        tel._initialized = False
+        provider.shutdown()
+
+    def test_one_call_hits_all_four_instruments(self, reader):
+        from core.telemetry import record_llm_call
+
+        record_llm_call(
+            model="gpt-4o-mini",
+            provider="openai",
+            input_tokens=100,
+            output_tokens=40,
+            cache_read_tokens=25,
+            duration_s=1.5,
+            cost_usd=0.0042,
+        )
+        points = _collect_points(reader)
+        base = {"model": "gpt-4o-mini", "provider": "openai"}
+
+        assert points["vigil.llm.calls.total"] == [(base, 1)]
+        assert points["vigil.llm.duration.seconds"] == [(base, 1.5)]
+        assert points["vigil.llm.cost.usd.total"] == [(base, 0.0042)]
+        tokens = {p[0]["token_type"]: p[1] for p in points["vigil.llm.tokens.total"]}
+        assert tokens == {"input": 100, "output": 40, "cache_read": 25}
+        # Only model/provider(/token_type) — no ids, no content.
+        for pts in points.values():
+            for attrs, _ in pts:
+                assert set(attrs) <= {"model", "provider", "token_type"}
+
+    def test_budget_unenforced_counter_carries_only_the_reason(self, reader):
+        from core.telemetry import record_budget_unenforced
+
+        record_budget_unenforced("read_error")
+        record_budget_unenforced("read_error")
+        record_budget_unenforced("dev_mode")
+        points = _collect_points(reader)["vigil.llm.budget.unenforced.total"]
+        assert sorted((a["reason"], v) for a, v in points) == [
+            ("dev_mode", 1),
+            ("read_error", 2),
+        ]
+
+    def test_unpriced_call_skips_cost_but_real_zero_records(self, reader):
+        from core.telemetry import record_llm_call
+
+        common = dict(provider="p", input_tokens=10, output_tokens=5, duration_s=0.2)
+        record_llm_call(model="unpriced", cost_usd=None, **common)
+        record_llm_call(model="free", cost_usd=0.0, **common)
+        points = _collect_points(reader)
+
+        called = {p[0]["model"] for p in points["vigil.llm.calls.total"]}
+        assert called == {"unpriced", "free"}
+        assert points["vigil.llm.cost.usd.total"] == [
+            ({"model": "free", "provider": "p"}, 0.0)
+        ]
+
+    def test_instruments_cached_once_initialized(self, reader):
+        import core.telemetry as tel
+
+        tel.record_llm_call(
+            model="m",
+            provider="p",
+            input_tokens=1,
+            output_tokens=1,
+            duration_s=0.1,
+            cost_usd=0.0,
+        )
+        first = tel._genai_metrics
+        tel.record_llm_call(
+            model="m",
+            provider="p",
+            input_tokens=1,
+            output_tokens=1,
+            duration_s=0.1,
+            cost_usd=0.0,
+        )
+        assert first is not None and tel._genai_metrics is first
+        points = _collect_points(reader)
+        assert points["vigil.llm.calls.total"][0][1] == 2
+
+    def test_noop_meter_is_never_cached_before_init(self):
+        """Recording before init_telemetry() must not pin the no-op meter."""
+        tel = _reload_telemetry()
+        tel._genai_metrics = None
+        tel.record_llm_call(
+            model="m",
+            provider="p",
+            input_tokens=1,
+            output_tokens=1,
+            duration_s=0.1,
+            cost_usd=0.0,
+        )
+        assert tel._genai_metrics is None
+
+    def test_never_raises_when_instrument_creation_fails(self):
+        import core.telemetry as tel
+
+        tel._genai_metrics = None
+        with patch.object(
+            tel, "create_genai_metrics", side_effect=RuntimeError("boom")
+        ):
+            tel.record_llm_call(
+                model="m",
+                provider="p",
+                input_tokens=1,
+                output_tokens=1,
+                duration_s=0.0,
+                cost_usd=0.0,
+            )
+
+    def test_bad_values_skip_the_whole_record(self, reader):
+        """A non-numeric field must neither raise nor leave a partial record."""
+        from core.telemetry import record_llm_call
+
+        record_llm_call(
+            model=None,
+            provider=None,
+            input_tokens="bad",  # type: ignore[arg-type]
+            output_tokens=0,
+            duration_s=0.0,
+            cost_usd=0.0,
+        )
+        assert _collect_points(reader) == {}
+
+    def test_fallback_meter_not_cached_even_when_initialized(self, reader):
+        """get_meter() can hand back the no-op meter after init if the SDK
+        misbehaves; that must not be pinned as the process-wide instruments."""
+        import core.telemetry as tel
+
+        with patch.object(tel, "get_meter", return_value=tel._FallbackNoOpMeter()):
+            tel.record_llm_call(
+                model="m",
+                provider="p",
+                input_tokens=1,
+                output_tokens=1,
+                duration_s=0.0,
+                cost_usd=0.0,
+            )
+        assert tel._genai_metrics is None

@@ -17,18 +17,51 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
+from opentelemetry.metrics import Observation
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from core.response.config import ResponseConfig, approval_requirement, decision_rule
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
+from core.storage.models import Investigation, WorkflowRun
+from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
+
+_pending_gauge: Any = None
+
+
+def register_pending_gauge(service: "ApprovalService") -> None:
+    """Export the approval queue depth as an observable gauge, once per process.
+
+    Not in ``__init__``: the service is constructed in many places and each
+    registration would stack another callback onto the same instrument. The
+    caller that owns the process-wide instance (API boot) calls this.
+    """
+    global _pending_gauge
+    if _pending_gauge is not None:
+        return
+
+    def _observe(_options: Any) -> Iterable[Observation]:
+        try:
+            return [Observation(len(service.list_pending_approvals()))]
+        except Exception as e:  # a DB outage drops the sample, not the process
+            logger.debug("approvals.pending observation failed: %s", e)
+            return []
+
+    _pending_gauge = get_meter("vigil.response.approvals").create_observable_gauge(
+        "vigil.approvals.pending",
+        callbacks=[_observe],
+        description="Actions awaiting approval",
+        unit="1",
+    )
 
 
 class ActionType(Enum):
@@ -55,6 +88,13 @@ class ActionStatus(Enum):
     REJECTED = "rejected"
     EXECUTED = "executed"
     FAILED = "failed"
+
+
+class Reversibility(Enum):
+    """Whether an executed action can be undone."""
+
+    REVERSIBLE = "reversible"
+    IRREVERSIBLE = "irreversible"
 
 
 @dataclass
@@ -86,6 +126,8 @@ class PendingAction:
     # #128 — workflow phase approvals link back here.
     workflow_run_id: Optional[str] = None
     workflow_phase_id: Optional[str] = None
+    reversibility: str = Reversibility.REVERSIBLE.value
+    idempotency_key: Optional[str] = None
 
 
 def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
@@ -110,131 +152,60 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
         parameters=dict(row.parameters or {}),
         workflow_run_id=row.workflow_run_id,
         workflow_phase_id=row.workflow_phase_id,
+        reversibility=row.reversibility or Reversibility.REVERSIBLE.value,
+        idempotency_key=row.idempotency_key,
     )
+
+
+def _nonfailed_by_key(session, key: str) -> Optional[ApprovalActionRow]:
+    """The live row for ``key``, if any. Failed rows are excluded so they can retry."""
+    return session.execute(
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.idempotency_key == key)
+        .where(ApprovalActionRow.status != ActionStatus.FAILED.value)
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 class ApprovalService:
     """Service for managing approval workflow for autonomous actions."""
 
-    def __init__(self, data_dir: Optional[Path] = None, dry_run: bool = False):
+    def __init__(self, config: Optional[ResponseConfig] = None):
         """
         Initialize approval service.
 
         Args:
-            data_dir: retained for backwards compatibility with callers
-                that previously passed a data directory; ignored now
-                that storage lives in Postgres.
-            dry_run: If True, don't execute actions, just log them
+            config: the confidence band; read from Settings when omitted so
+                the no-arg form callers use still honours env (#916).
         """
-        self.dry_run = dry_run
-        # data_dir retained as attribute so any caller introspecting
-        # it doesn't break; no filesystem I/O is performed anymore.
-        self.data_dir = data_dir
-        self._load_config()
+        self.config = config or ResponseConfig.from_settings()
+        self.force_manual_approval = False
 
     # ------------------------------------------------------------------
-    # Config (force_manual_approval) — unchanged, still db/config-backed
+    # Config (force_manual_approval) — db/config-backed, read per decision
     # ------------------------------------------------------------------
+    #
+    # ``self.force_manual_approval`` is this process forcing approval on
+    # (the daemon does when DAEMON_FORCE_APPROVAL is set) and is never
+    # written to the row. The row is what Settings writes and the SQL seed
+    # creates (Act); it is read at each decision so a long-lived service sees
+    # a change without a restart. Nothing here writes it.
 
-    def _load_config(self):
-        """Load approval configuration from database."""
+    def _stored_force_manual_approval(self) -> bool:
+        """The stored flag; Act when no row exists, Assist when the read fails."""
         try:
-            config_service = get_config_service()
-            config_value = config_service.get_system_config(
-                "approval.force_manual_approval"
-            )
-            if config_value:
-                self.force_manual_approval = config_value.get("enabled", False)
-                logger.debug(
-                    "Loaded approval config: force_manual_approval=%s",
-                    self.force_manual_approval,
-                )
-            else:
-                self.force_manual_approval = False
-                self._save_config()
+            value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
         except Exception as e:  # noqa: BLE001
-            logger.error("Error loading approval config: %s", e)
-            self.force_manual_approval = False
-
-    def _save_config(self):
-        """Save approval configuration to database."""
-        try:
-            config_value = {"enabled": self.force_manual_approval}
-            config_service = get_config_service(user_id="approval_service")
-            config_service.set_system_config(
-                key="approval.force_manual_approval",
-                value=config_value,
-                description="Force manual approval for all actions",
-                config_type="approval",
-                change_reason="Updated by approval service",
+            logger.error(
+                "Cannot read the approval setting; requiring manual approval: %s", e
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error saving approval config: %s", e)
+            return True
+        return bool(value.get("enabled", False)) if value else False
 
     def set_force_manual_approval(self, force: bool):
-        """Set whether to force manual approval for all actions."""
+        """Force manual approval for this process; the stored row is left as is."""
         self.force_manual_approval = force
-        self._save_config()
         logger.info("Force manual approval set to: %s", force)
-
-    def get_force_manual_approval(self) -> bool:
-        """Get the current force manual approval setting."""
-        return self.force_manual_approval
-
-    def should_auto_approve(
-        self,
-        action: Dict,
-        threshold: float = 0.90,
-        force_manual: bool = False,
-    ) -> bool:
-        """Decide if an action should auto-approve based on confidence."""
-        if force_manual or self.get_force_manual_approval():
-            return False
-        confidence = action.get("confidence", 0.0)
-        if confidence >= threshold:
-            return True
-        if confidence >= 0.85:
-            return True
-        return False
-
-    def needs_flag(self, confidence: float) -> bool:
-        """Check if an action needs a flag (confidence 0.85-0.89)."""
-        return 0.85 <= confidence < 0.90
-
-    def get_action_decision(self, action: Dict, threshold: float = 0.90) -> str:
-        """Get the decision for an action based on confidence."""
-        confidence = action.get("confidence", 0.0)
-        if confidence < 0.70:
-            return "monitor_only"
-        elif confidence < 0.85:
-            return "manual_approval"
-        else:
-            return "auto_approve"
-
-    def is_valid_action_type(self, action_type: str) -> bool:
-        """Check if an action type is valid."""
-        try:
-            ActionType(action_type)
-            return True
-        except ValueError:
-            return False
-
-    def validate_action(self, action: Dict) -> tuple[bool, List[str]]:
-        """Validate an action payload."""
-        errors = []
-        required_fields = ["type", "target", "confidence"]
-        for field in required_fields:
-            if field not in action:
-                errors.append(f"Missing required field: {field}")
-        if "type" in action and not self.is_valid_action_type(action["type"]):
-            errors.append(f"Invalid action type: {action['type']}")
-        if "confidence" in action:
-            confidence = action.get("confidence", 0.0)
-            if not (0.0 <= confidence <= 1.0):
-                errors.append(
-                    f"Confidence must be between 0.0 and 1.0, got {confidence}"
-                )
-        return (len(errors) == 0, errors)
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed
@@ -253,17 +224,77 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
+        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        idempotency_key: Optional[str] = None,
+        human_only: bool = False,
     ) -> PendingAction:
         """Create a new pending action.
 
         Workflow phase approvals pass ``workflow_run_id`` and
         ``workflow_phase_id`` so the approvals UI / resume endpoint can
         link back to the paused run.
+
+        Irreversible actions always require approval. ``human_only`` holds the
+        row for a person whatever ``confidence`` says: for callers whose
+        confidence is their own claim (an agent, a model's reading of alert
+        text) and so cannot be what releases the action. A second call with
+        the same ``idempotency_key`` returns the existing non-failed row.
         """
-        if self.force_manual_approval:
-            requires_approval = True
-        else:
-            requires_approval = confidence < 0.90
+        action, _inserted = self._put_action(
+            action_type=action_type,
+            title=title,
+            description=description,
+            target=target,
+            confidence=confidence,
+            reason=reason,
+            evidence=evidence,
+            created_by=created_by,
+            parameters=parameters,
+            workflow_run_id=workflow_run_id,
+            workflow_phase_id=workflow_phase_id,
+            reversibility=reversibility,
+            idempotency_key=idempotency_key,
+            human_only=human_only,
+        )
+        return action
+
+    def _put_action(
+        self,
+        action_type: ActionType,
+        title: str,
+        description: str,
+        target: str,
+        confidence: float,
+        reason: str,
+        evidence: List[str],
+        created_by: str = "system",
+        parameters: Optional[Dict] = None,
+        workflow_run_id: Optional[str] = None,
+        workflow_phase_id: Optional[str] = None,
+        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        idempotency_key: Optional[str] = None,
+        human_only: bool = False,
+    ) -> tuple[PendingAction, bool]:
+        """Insert an approval row, or return the existing non-failed one.
+
+        The bool is True when this call inserted. Isolation uses it so a
+        reused approved/pending row is not executed again.
+        """
+        key = idempotency_key or None
+
+        # The branch that set requires_approval is appended to the caller's
+        # narrative so the row records the rule it was decided by (#917).
+        forced = (
+            human_only
+            or self.force_manual_approval
+            or self._stored_force_manual_approval()
+        )
+        requires_approval, rule = approval_requirement(
+            forced, reversibility, confidence, self.config
+        )
+        if human_only:
+            rule = decision_rule("approval.human_only", True)
+        reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         status = (
@@ -275,6 +306,10 @@ class ApprovalService:
         try:
             db = get_db_manager()
             with db.session_scope() as session:
+                if key:
+                    existing = _nonfailed_by_key(session, key)
+                    if existing is not None:
+                        return _row_to_pending(existing), False
                 row = ApprovalActionRow(
                     action_id=action_id,
                     action_type=action_type.value,
@@ -291,6 +326,8 @@ class ApprovalService:
                     parameters=dict(parameters or {}),
                     workflow_run_id=workflow_run_id,
                     workflow_phase_id=workflow_phase_id,
+                    reversibility=reversibility.value,
+                    idempotency_key=key,
                 )
                 session.add(row)
                 session.flush()
@@ -301,7 +338,16 @@ class ApprovalService:
                 title,
                 confidence,
             )
-            return pending
+            return pending, True
+        except IntegrityError:
+            if not key:
+                raise
+            db = get_db_manager()
+            with db.session_scope() as session:
+                existing = _nonfailed_by_key(session, key)
+            if existing is None:
+                raise
+            return _row_to_pending(existing), False
         except SQLAlchemyError as e:
             logger.error("DB error creating action: %s", e)
             raise
@@ -529,184 +575,126 @@ class ApprovalService:
         """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
 
-    def get_audit_trail(self, action_id: str) -> List[Dict]:
-        """Get audit trail for a specific action."""
-        action = self.get_action(action_id)
-        if not action:
-            return []
 
-        trail = [
-            {
-                "event": "created",
-                "timestamp": action.created_at,
-                "user": action.created_by,
-                "details": {
-                    "action_type": action.action_type,
-                    "target": action.target,
-                    "confidence": action.confidence,
-                },
-            }
+def _text_id(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _case_id_for_action(
+    action: PendingAction,
+    runs: Dict[str, Any],
+    investigations: Dict[str, Optional[str]],
+) -> Optional[str]:
+    """One case id, in the order #1301 settled. Later sources fill a gap only."""
+    params = action.parameters if isinstance(action.parameters, dict) else {}
+    direct = _text_id(params.get("case_id"))
+    if direct:
+        return direct
+    if action.workflow_run_id:
+        ctx = runs.get(action.workflow_run_id) or {}
+        from_run = _text_id(ctx.get("case_id")) if isinstance(ctx, dict) else None
+        if from_run:
+            return from_run
+    investigation_id = _text_id(params.get("investigation_id"))
+    if investigation_id:
+        return _text_id(investigations.get(investigation_id))
+    return None
+
+
+def _case_lookups(
+    actions: List[PendingAction],
+) -> tuple[Dict[str, Any], Dict[str, Optional[str]]]:
+    """Run trigger contexts and investigation case ids those actions can name."""
+    run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
+    investigation_ids: set[str] = set()
+    for action in actions:
+        params = action.parameters if isinstance(action.parameters, dict) else {}
+        investigation_id = _text_id(params.get("investigation_id"))
+        if investigation_id:
+            investigation_ids.add(investigation_id)
+    runs: Dict[str, Any] = {}
+    investigations: Dict[str, Optional[str]] = {}
+    if not run_ids and not investigation_ids:
+        return runs, investigations
+    db = get_db_manager()
+    with db.session_scope() as session:
+        if run_ids:
+            rows = session.query(WorkflowRun).filter(WorkflowRun.run_id.in_(run_ids))
+            for row in rows:
+                ctx = row.trigger_context
+                runs[row.run_id] = ctx if isinstance(ctx, dict) else {}
+        if investigation_ids:
+            rows = session.query(Investigation).filter(
+                Investigation.investigation_id.in_(investigation_ids)
+            )
+            for row in rows:
+                investigations[row.investigation_id] = row.case_id
+    return runs, investigations
+
+
+def _kind_for_action(action: PendingAction) -> str:
+    params = action.parameters if isinstance(action.parameters, dict) else {}
+    checkpoint = params.get("checkpoint_id")
+    if isinstance(checkpoint, str):
+        return "checkpoint" if checkpoint.strip() else "approval"
+    return "checkpoint" if checkpoint else "approval"
+
+
+def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
+    """Pending rows that need a person, oldest first, with no cap.
+
+    Not ``list_pending_approvals`` or ``list_actions``: those are newest-first,
+    and ``list_actions`` stops at 500, which hides the oldest asks.
+    """
+    db = get_db_manager()
+    with db.session_scope() as session:
+        stmt = (
+            select(ApprovalActionRow)
+            .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+            .where(ApprovalActionRow.requires_approval.is_(True))
+            .order_by(ApprovalActionRow.created_at.asc())
+        )
+        actions = [
+            _row_to_pending(row) for row in session.execute(stmt).scalars().all()
         ]
-
-        if action.approved_at:
-            if action.status in [
-                ActionStatus.APPROVED.value,
-                ActionStatus.EXECUTED.value,
-            ]:
-                trail.append(
-                    {
-                        "event": "approved",
-                        "timestamp": action.approved_at,
-                        "user": action.approved_by,
-                        "details": {},
-                    }
-                )
-            elif action.status == ActionStatus.REJECTED.value:
-                trail.append(
-                    {
-                        "event": "rejected",
-                        "timestamp": action.approved_at,
-                        "user": action.approved_by,
-                        "details": {"reason": action.rejection_reason},
-                    }
-                )
-
-        if action.executed_at:
-            trail.append(
-                {
-                    "event": (
-                        "executed"
-                        if action.status == ActionStatus.EXECUTED.value
-                        else "failed"
-                    ),
-                    "timestamp": action.executed_at,
-                    "user": "system",
-                    "details": {"result": action.execution_result},
-                }
-            )
-
-        return trail
-
-    def execute_action(self, action: Dict) -> Dict:
-        """Execute an action (with dry run support)."""
-        if self.dry_run:
-            logger.info(
-                "DRY RUN: Would execute %s on %s",
-                action.get("type"),
-                action.get("target"),
-            )
-            return {
-                "status": "dry_run",
-                "would_execute": True,
-                "action": action,
+    runs, investigations = _case_lookups(actions)
+    wanted = _text_id(case_id)
+    items: List[Dict[str, Any]] = []
+    for action in actions:
+        resolved = _case_id_for_action(action, runs, investigations)
+        if wanted is not None and resolved != wanted:
+            continue
+        items.append(
+            {
+                "kind": _kind_for_action(action),
+                "source_id": action.action_id,
+                "title": action.title,
+                "reason": action.reason,
+                "created_at": action.created_at,
+                "reversibility": action.reversibility,
+                "case_id": resolved,
             }
-        logger.warning(
-            "Action execution not yet fully implemented: %s",
-            action.get("type"),
         )
-        return {
-            "status": "not_implemented",
-            "message": "Action execution requires service integration",
-            "action": action,
-        }
+    return {"count": len(items), "items": items}
 
-    def execute_approved_action(self, action_id: str) -> Dict:
-        """Execute an approved action by ID."""
-        action = self.get_action(action_id)
-        if not action:
-            return {"error": f"Action {action_id} not found"}
-        if action.status != ActionStatus.APPROVED.value:
-            return {
-                "error": (
-                    f"Action {action_id} is not approved " f"(status: {action.status})"
-                )
-            }
-        action_dict = {
-            "type": action.action_type,
-            "target": action.target,
-            "confidence": action.confidence,
-            "parameters": action.parameters,
-        }
-        result = self.execute_action(action_dict)
-        if result.get("status") == "success":
-            self.mark_executed(action_id, result)
-        elif result.get("status") not in ["dry_run", "not_implemented"]:
-            self.mark_failed(action_id, result.get("error", "Unknown error"))
-        return result
 
-    def add_to_queue(self, action: Dict) -> str:
-        """Add an action to the approval queue (wraps create_action)."""
-        is_valid, errors = self.validate_action(action)
-        if not is_valid:
-            raise ValueError(f"Invalid action: {', '.join(errors)}")
-        pending_action = self.create_action(
-            action_type=ActionType(action["type"]),
-            title=action.get("title", f"{action['type']}: {action['target']}"),
-            description=action.get("description", action.get("reasoning", "")),
-            target=action["target"],
-            confidence=action["confidence"],
-            reason=action.get("reasoning", action.get("reason", "")),
-            evidence=action.get("evidence", []),
-            created_by=action.get("created_by", "system"),
-            parameters=action.get("parameters"),
-            workflow_run_id=action.get("workflow_run_id"),
-            workflow_phase_id=action.get("workflow_phase_id"),
-        )
-        return pending_action.action_id
+def pending_approval_case_ids() -> set[str]:
+    """Case ids that currently need a person.
 
-    def log_approval_decision(
-        self,
-        action: Dict,
-        decision: str,
-        user: str,
-        reasoning: Optional[str] = None,
-    ) -> Dict:
-        """Log an approval decision."""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "action_type": action.get("type"),
-            "target": action.get("target"),
-            "confidence": action.get("confidence"),
-            "decision": decision,
-            "user": user,
-            "reasoning": reasoning or action.get("reasoning", ""),
-            "dry_run": self.dry_run,
-        }
-        logger.info(
-            "Approval decision logged: %s by %s for %s",
-            decision,
-            user,
-            action.get("type"),
-        )
-        return log_entry
-
-    def log_execution(
-        self,
-        action_id: str,
-        status: str,
-        result: Optional[Dict] = None,
-        error: Optional[str] = None,
-    ) -> Dict:
-        """Log action execution result."""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "action_id": action_id,
-            "status": status,
-            "result": result,
-            "error": error,
-            "dry_run": self.dry_run,
-        }
-        if status == "success":
-            logger.info("Action %s executed successfully", action_id)
-            if not self.dry_run:
-                self.mark_executed(action_id, result or {})
-        elif status == "failed":
-            logger.error("Action %s failed: %s", action_id, error)
-            if not self.dry_run:
-                self.mark_failed(action_id, error or "Unknown error")
-        else:
-            logger.info(
-                "Action %s execution skipped (dry run or other reason)",
-                action_id,
-            )
-        return log_entry
+    Calls ``list_pending_approvals()`` and does not query ``approval_actions``.
+    A case id resolves from ``parameters.case_id``, then
+    ``workflow_runs.trigger_context.case_id``, then ``investigations.case_id``.
+    """
+    actions = ApprovalService().list_pending_approvals()
+    if not actions:
+        return set()
+    runs, investigations = _case_lookups(actions)
+    found: set[str] = set()
+    for action in actions:
+        resolved = _case_id_for_action(action, runs, investigations)
+        if resolved:
+            found.add(resolved)
+    return found

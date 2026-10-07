@@ -223,11 +223,9 @@ class CaseSearchService:
         """
         Find cases related to a given case.
 
-        Finds cases with:
-        - Shared IOCs
-        - Same MITRE techniques
-        - Similar time windows
-        - Explicit relationships
+        Scores other cases on two signals:
+        - Shared IOCs (10 points per matching IOC row)
+        - Shared MITRE techniques (5 points per technique in common)
 
         Args:
             case_id: Case ID
@@ -270,7 +268,9 @@ class CaseSearchService:
                     .filter(
                         and_(
                             Case.case_id != case_id,
-                            Case.mitre_techniques.overlap(case.mitre_techniques),
+                            # Generic ``sqlalchemy.ARRAY`` has no ``.overlap()``;
+                            # spell Postgres' array-overlap operator directly.
+                            Case.mitre_techniques.op("&&")(case.mitre_techniques),
                         )
                     )
                     .all()
@@ -297,12 +297,18 @@ class CaseSearchService:
                 related_cases.items(), key=lambda x: x[1]["score"], reverse=True
             )[:max_results]
 
-            # Get full case data
+            # Get full case data in one query, then emit in score order.
+            top_ids = [case_id_rel for case_id_rel, _ in sorted_cases]
+            rel_cases_by_id = {}
+            if top_ids:
+                rel_cases_by_id = {
+                    c.case_id: c
+                    for c in session.query(Case).filter(Case.case_id.in_(top_ids))
+                }
+
             result = []
             for case_id_rel, meta in sorted_cases:
-                rel_case = (
-                    session.query(Case).filter(Case.case_id == case_id_rel).first()
-                )
+                rel_case = rel_cases_by_id.get(case_id_rel)
                 if rel_case:
                     case_dict = CaseSchema.dump(rel_case)
                     case_dict["similarity_score"] = meta["score"]

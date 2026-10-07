@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseSLA, SLAPolicy
@@ -50,7 +51,7 @@ class SLAPolicyUpdate(BaseModel):
 
 
 @router.get("/")
-async def list_sla_policies(
+def list_sla_policies(
     session: UnitOfWorkSession,
     active_only: bool = False,
     priority_level: Optional[str] = None,
@@ -84,7 +85,7 @@ async def list_sla_policies(
 
 
 @router.get("/{policy_id}")
-async def get_sla_policy(policy_id: str, session: UnitOfWorkSession):
+def get_sla_policy(policy_id: str, session: UnitOfWorkSession):
     """
     Get a specific SLA policy by ID.
 
@@ -103,7 +104,7 @@ async def get_sla_policy(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.post("/")
-async def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
+def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
     """
     Create a new SLA policy.
 
@@ -179,7 +180,7 @@ async def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
 
 
 @router.put("/{policy_id}")
-async def update_sla_policy(
+def update_sla_policy(
     policy_id: str,
     data: SLAPolicyUpdate,
     session: UnitOfWorkSession,
@@ -258,18 +259,39 @@ async def update_sla_policy(
     return SLAPolicySchema.dump(policy)
 
 
+# What the operator is told when a case still references the policy. `force` is
+# not offered, because it could never have worked: `case_slas.sla_policy_id` is
+# a foreign key with no `ON DELETE` clause, and the column is NOT NULL, so
+# there is no detaching -- honouring the promise would have meant deleting the
+# per-case SLA history, which is the record of whether the SOC answered on
+# time. Deactivating retires the policy exactly as intended:
+# `CaseSLAService` selects on `is_active`, so no new case takes it, and the
+# cases that used it keep their deadlines and their breaches.
+# {cases} is a parenthetical naming how many, or nothing when the count could
+# not see them -- not a number, so the sentence reads either way.
+_STILL_REFERENCED = (
+    "Cannot delete an SLA policy that cases still reference{cases}. "
+    "Deactivate it instead with PUT /api/sla-policies/{{policy_id}} "
+    "(is_active=false): no new case will take it, and the cases that used it "
+    "keep their SLA history."
+)
+
+
+def _still_referenced(policy_id: str, count: int | None = None) -> str:
+    cases = f" ({count} case(s))" if count else ""
+    return _STILL_REFERENCED.format(cases=cases).replace("{policy_id}", policy_id)
+
+
 @router.delete("/{policy_id}")
-async def delete_sla_policy(
+def delete_sla_policy(
     policy_id: str,
     session: UnitOfWorkSession,
-    force: bool = False,
 ):
     """
-    Delete an SLA policy.
+    Delete an SLA policy that no case references.
 
     Args:
         policy_id: The policy ID
-        force: Force delete even if policy is in use
 
     Returns:
         Success message
@@ -279,23 +301,34 @@ async def delete_sla_policy(
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
 
-    # Check if policy is in use
-
     in_use = session.query(CaseSLA).filter(CaseSLA.sla_policy_id == policy_id).count()
 
-    if in_use > 0 and not force:
+    if in_use > 0:
         raise HTTPException(
-            status_code=400,
-            detail=f"Cannot delete policy that is in use by {in_use} case(s). Use force=true to delete anyway.",
+            status_code=409, detail=_still_referenced(policy_id, in_use)
         )
 
     session.delete(policy)
+
+    # Flush inside the handler so the constraint speaks while there is still
+    # something here to translate it. The count above and the delete are two
+    # statements, so another transaction can insert a case_slas row between
+    # them: the policy reads as unused and is referenced by the time this
+    # commits. At commit time, after this handler has returned, that surfaces
+    # as a bare "Internal server error"; here it is the same 409 the count
+    # would have given, without the number, because this path never saw one.
+    try:
+        session.flush()
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409, detail=_still_referenced(policy_id)
+        ) from None
 
     return {"success": True, "message": f"SLA policy {policy_id} deleted successfully"}
 
 
 @router.post("/{policy_id}/set-default")
-async def set_default_policy(policy_id: str, session: UnitOfWorkSession):
+def set_default_policy(policy_id: str, session: UnitOfWorkSession):
     """
     Set a policy as the default for its priority level.
 
@@ -329,7 +362,7 @@ async def set_default_policy(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.get("/{policy_id}/usage")
-async def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
+def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
     """
     Get usage statistics for an SLA policy.
 
@@ -385,7 +418,7 @@ async def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.get("/{policy_id}/cases")
-async def get_policy_cases(
+def get_policy_cases(
     policy_id: str,
     session: UnitOfWorkSession,
     status: Optional[str] = None,

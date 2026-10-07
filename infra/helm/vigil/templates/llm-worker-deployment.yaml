@@ -46,17 +46,52 @@ spec:
                   key: {{ include "vigil.postgres.passwordSecretKey" . }}
             {{- include "vigil.env" . | nindent 12 }}
             {{- include "vigil.stateEnv" . | nindent 12 }}
+            {{- include "vigil.caBundleEnv" . | nindent 12 }}
             {{- with .Values.llmWorker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- /* No port to probe: an ARQ worker is reached through Redis. Each
+                 probe asks ARQ whether this pod's health key exists; the worker
+                 rewrites it every 30 s from its poll loop (health_check_interval
+                 in services/worker/jobs.py) and it expires 31 s later, so a
+                 wedged loop lets it lapse.
+
+                 Startup covers on_startup (gateway rate fetch, router init)
+                 before the first key is written: up to 30 x 10 s = 300 s, as
+                 backend allows. Liveness then tolerates 4 x 30 s = 120 s
+                 without the key -- about four refresh cycles -- so one slow
+                 check or a short Redis blip cannot flap it, while a wedged
+                 worker is restarted within roughly 2.5 min. Readiness drops
+                 after two misses, which halts a rollout whose new pods never
+                 start polling. */}}
+          startupProbe:
+            exec:
+              command: ["arq", "--check", "services.worker.jobs.WorkerSettings"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["arq", "--check", "services.worker.jobs.WorkerSettings"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 4
+          readinessProbe:
+            exec:
+              command: ["arq", "--check", "services.worker.jobs.WorkerSettings"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 2
           resources:
             {{- toYaml .Values.llmWorker.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             {{- include "vigil.stateVolumeMount" . | nindent 12 }}
+            {{- include "vigil.caBundleVolumeMount" . | nindent 12 }}
       volumes:
         {{- include "vigil.stateVolume" . | nindent 8 }}
+        {{- include "vigil.caBundleVolume" . | nindent 8 }}
       {{- with .Values.llmWorker.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -39,7 +40,12 @@ DIRECTIVE_FIELDS = (
     "hypothesis_id",
     "tenant",
     "revoke",
+    "grant",
 )
+
+# What an extend may buy. Typed rather than left to the prose parser: `extend ""`
+# parsed to nothing, journaled a note and left the hunt parked at its ceiling.
+GRANT_ARMS = ("iterations", "cost_usd", "wall_ms")
 
 
 # Malformed, so it is refused before it reaches the queue.
@@ -78,6 +84,8 @@ def build_directive(
     unknown = sorted(set(extra) - set(DIRECTIVE_FIELDS))
     if unknown:
         raise InvalidDirective(f"unknown directive fields: {', '.join(unknown)}")
+    if extra.get("grant") is not None:
+        extra = {**extra, "grant": _checked_grant(extra["grant"])}
 
     return {
         "directive_id": new_directive_id(),
@@ -88,6 +96,31 @@ def build_directive(
         "origin": "inbox",
         **{name: value for name, value in extra.items() if value is not None},
     }
+
+
+# A grant is arithmetic on a ceiling: a value that is not a finite number reaches the
+# controller as a NaN budget, which is a hunt with no ceiling at all. Refused here so
+# the queue never carries one.
+def _checked_grant(grant: Any) -> Dict[str, float]:
+    if not isinstance(grant, dict):
+        raise InvalidDirective("a grant names how many iterations, dollars or minutes")
+    asked = {}
+    for arm in GRANT_ARMS:
+        value = grant.get(arm, 0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise InvalidDirective(f"a grant's {arm} must be a number, not {value!r}")
+        if not math.isfinite(value) or value < 0:
+            raise InvalidDirective(
+                f"a grant's {arm} must be finite and at least 0, not {value!r}"
+            )
+        # Floored on the two arms that count whole things, as the prose parser does.
+        asked[arm] = float(value) if arm == "cost_usd" else float(math.floor(value))
+    if not any(asked.values()):
+        raise InvalidDirective(
+            "an extend that grants nothing leaves the hunt parked where it was; "
+            "say how many iterations, dollars or minutes"
+        )
+    return asked
 
 
 # The reads agent_runs_router already makes, in one pass: a directive is only

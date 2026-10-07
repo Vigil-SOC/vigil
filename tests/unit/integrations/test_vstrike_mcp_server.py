@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mcp.types import CallToolResult
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -299,3 +300,43 @@ async def test_call_tool_ui_rightpanel_focus_forwards_extras(mock_service):
             "vstrike_ui_rightpanel_focus", {"future_field": "x"}
         )
     mock_service.ui_rightpanel_focus.assert_called_once_with(future_field="x")
+
+
+@pytest.mark.asyncio
+async def test_on_call_tool_turns_handler_exceptions_into_error_results(mock_service):
+    """v2 does not wrap exceptions; do it at on_call_tool or they become JSON-RPC."""
+    with patch.object(vstrike_module, "_get_service", return_value=mock_service):
+        result = await vstrike_module._on_call_tool(
+            None,
+            SimpleNamespace(
+                name="vstrike_get_segment_findings",
+                arguments={"segment": "dmz", "limit": "bad"},
+            ),
+        )
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is True
+    assert "invalid literal" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_on_call_tool_flags_handled_failure_as_error(mock_service):
+    with patch.object(vstrike_module, "_get_service", return_value=mock_service):
+        result = await vstrike_module._on_call_tool(
+            None,
+            SimpleNamespace(name="does_not_exist", arguments={}),
+        )
+    assert isinstance(result, CallToolResult)
+    assert result.is_error is True
+    assert "Unknown tool" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_on_call_tool_keeps_success_content_unflagged(mock_service):
+    with patch.object(vstrike_module, "_get_service", return_value=mock_service):
+        result = await vstrike_module._on_call_tool(
+            None,
+            SimpleNamespace(
+                name="vstrike_get_asset_topology", arguments={"asset_id": "a1"}
+            ),
+        )
+    assert result.is_error is False

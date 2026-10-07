@@ -45,7 +45,6 @@ from core.storage.schemas.case_entities import (
     SLAPolicySchema,
 )
 from core.storage.schemas.config import (
-    AttackLayerSchema,
     ConfigAuditLogSchema,
     FederationSourceSchema,
     IntegrationConfigSchema,
@@ -62,11 +61,14 @@ from core.storage.schemas.workflow import (
     CustomWorkflowSchema,
     InvestigationLogSchema,
     InvestigationSchema,
-    SkillSchema,
     WorkflowRunPhaseSchema,
     WorkflowRunSchema,
 )
-from tests.unit.storage.orm_sample_instances import build_empty, build_populated, build_related
+from tests.unit.storage.orm_sample_instances import (
+    build_empty,
+    build_populated,
+    build_related,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -100,16 +102,7 @@ def _variant(model, cases):
 
 # model name -> {golden case key: callable(instance) -> dict}
 SCHEMA_REGISTRY: dict[str, dict] = {
-    # Core models, whose serialized shape is gated by a flag.
-    "Finding": _variant(
-        models.Finding,
-        {
-            "populated.to_dict.with_embedding": FindingSchema.dump,
-            "populated.to_dict.without_embedding": FindingSchema.dump_summary,
-            "empty.to_dict.with_embedding": FindingSchema.dump,
-            "empty.to_dict.without_embedding": FindingSchema.dump_summary,
-        },
-    ),
+    "Finding": _standard(models.Finding, FindingSchema),
     "Case": _variant(
         models.Case,
         {
@@ -140,10 +133,9 @@ SCHEMA_REGISTRY: dict[str, dict] = {
     # Users and roles.
     "User": _standard(models.User, UserSchema),
     "Role": _standard(models.Role, RoleSchema),
-    # Workflows, skills and agents.
+    # Workflows and agents.
     "CustomWorkflow": _standard(models.CustomWorkflow, CustomWorkflowSchema),
     "WorkflowRunPhase": _standard(models.WorkflowRunPhase, WorkflowRunPhaseSchema),
-    "Skill": _standard(models.Skill, SkillSchema),
     "CustomAgent": _standard(models.CustomAgent, CustomAgentSchema),
     "ApprovalAction": _standard(models.ApprovalAction, ApprovalActionSchema),
     "Investigation": _standard(models.Investigation, InvestigationSchema),
@@ -199,7 +191,6 @@ SCHEMA_REGISTRY: dict[str, dict] = {
     "SharedIOC": _standard(models.SharedIOC, SharedIOCSchema),
     "ThreatIndicator": _standard(models.ThreatIndicator, ThreatIndicatorSchema),
     "SketchMapping": _standard(models.SketchMapping, SketchMappingSchema),
-    "AttackLayer": _standard(models.AttackLayer, AttackLayerSchema),
 }
 
 

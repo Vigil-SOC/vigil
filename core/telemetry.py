@@ -8,8 +8,6 @@ the application.
 Environment variables:
     VIGIL_OTEL_ENABLED              Master switch ("true"/"1"/"yes" to enable)
     OTEL_EXPORTER_OTLP_ENDPOINT     Collector address (default http://localhost:4317)
-    VIGIL_OTEL_RECORD_LLM_CONTENT   Opt-in to recording LLM prompts/responses (default off)
-    VIGIL_OTEL_RECORD_IOC_VALUES    Opt-in to recording raw finding/IOC content (default off)
     ENVIRONMENT                     Deployment environment label (default "development")
     RELEASE_VERSION                 Service version label (default "unknown")
 """
@@ -19,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.config import get_settings, vigil_path
@@ -61,14 +60,6 @@ def get_investigation_id() -> Optional[str]:
 def _is_otel_enabled() -> bool:
     return get_settings().vigil_otel_enabled
 
-
-# Opt-in flag helpers live in core.telemetry_config so the sanitizer can
-# read them without importing this module (breaks the import cycle).
-# Re-exported here for backwards compatibility with existing callers/tests.
-from core.telemetry_config import (  # noqa: E402,F401
-    _should_record_ioc_values,
-    _should_record_llm_content,
-)
 
 # ---------------------------------------------------------------------------
 # Fallback no-op classes (used when OTEL is disabled or SDK missing)
@@ -230,29 +221,26 @@ def _do_init(service_name: str) -> None:
     _tracer_provider = tracer_provider
 
     # --- MeterProvider ---
-    try:
-        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    # Two readers, not either/or. The Prometheus reader registers its collector
+    # on prometheus_client's default REGISTRY, which is what the backend
+    # /metrics route and the daemon's :9090 listener serve. The OTLP reader
+    # pushes to the collector so processes with no HTTP port (llm-worker)
+    # still appear on the collector's Prometheus exporter.
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        OTLPMetricExporter,
+    )
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-        metric_reader = PrometheusMetricReader()
-        logger.debug("Using PrometheusMetricReader on port 9090")
-    except Exception:
-        try:
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-                OTLPMetricExporter,
-            )
-            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-
-            metric_reader = PeriodicExportingMetricReader(
-                OTLPMetricExporter(endpoint=endpoint, insecure=True)
-            )
-        except Exception:
-            metric_reader = None
-
-    meter_kwargs: dict = {"resource": resource}
-    if metric_reader is not None:
-        meter_kwargs["metric_readers"] = [metric_reader]
-
-    meter_provider = MeterProvider(**meter_kwargs)
+    # OTLP first: constructing PrometheusMetricReader registers on REGISTRY, so
+    # anything that can raise happens before that side effect.
+    otlp_reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(endpoint=endpoint, insecure=True)
+    )
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[PrometheusMetricReader(), otlp_reader],
+    )
     metrics.set_meter_provider(meter_provider)
     _meter_provider = meter_provider
 
@@ -285,7 +273,6 @@ def init_telemetry(service_name: str) -> bool:
     try:
         _do_init(service_name)
         _initialized = True
-        _install_json_logging()
         return True
     except Exception as exc:
         logger.warning("OpenTelemetry initialization failed (non-fatal): %s", exc)
@@ -350,9 +337,9 @@ def extract_traceparent(carrier: dict) -> Any:
 
 def create_genai_metrics(meter: Any) -> dict:
     """
-    Create and return the 4 GenAI metric instruments used for LLM observability.
+    Create and return the GenAI metric instruments used for LLM observability.
 
-    Keys: llm_calls, llm_duration, llm_tokens, llm_cost_usd
+    Keys: llm_calls, llm_duration, llm_tokens, llm_cost_usd, llm_budget_unenforced
     """
     return {
         "llm_calls": meter.create_counter(
@@ -371,7 +358,91 @@ def create_genai_metrics(meter: Any) -> dict:
             "vigil.llm.cost.usd.total",
             description="Cumulative LLM cost in USD",
         ),
+        "llm_budget_unenforced": meter.create_counter(
+            "vigil.llm.budget.unenforced.total",
+            description="LLM dispatches sent without a Bifrost virtual key (x-bf-vk)",
+        ),
     }
+
+
+# GenAI instruments, created on first record. Only cached once the real
+# MeterProvider is installed: get_meter() before init_telemetry() returns
+# _FallbackNoOpMeter, and caching that would silence the counters for the
+# life of the process.
+_genai_metrics: Optional[dict] = None
+
+
+def record_llm_call(
+    *,
+    model: Optional[str],
+    provider: Optional[str],
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    duration_s: float,
+    cost_usd: Optional[float],
+) -> None:
+    """
+    Record one completed LLM call on the four GenAI instruments.
+
+    Attributes are limited to ``model`` / ``provider`` (plus ``token_type`` on
+    the token counter) — never prompt or response content. Runs on the
+    request path, so it swallows every exception; it is a no-op when OTEL is
+    disabled. An unpriced call (``cost_usd is None``) is still counted, but
+    adds nothing to the cost instrument rather than a guessed $0.
+    """
+    global _genai_metrics
+    try:
+        # Normalise everything before touching any instrument so a bad value
+        # skips the whole record rather than leaving the four out of step.
+        tokens = {
+            "input": int(input_tokens or 0),
+            "output": int(output_tokens or 0),
+            "cache_read": int(cache_read_tokens or 0),
+            "cache_creation": int(cache_creation_tokens or 0),
+        }
+        duration = max(float(duration_s or 0.0), 0.0)
+        cost = None if cost_usd is None else max(float(cost_usd), 0.0)
+        attrs = {"model": model or "unknown", "provider": provider or "unknown"}
+
+        metrics = _genai_metrics
+        if metrics is None:
+            meter = get_meter("vigil.llm")
+            metrics = create_genai_metrics(meter)
+            if _initialized and not isinstance(meter, _FallbackNoOpMeter):
+                _genai_metrics = metrics
+
+        metrics["llm_calls"].add(1, attrs)
+        metrics["llm_duration"].record(duration, attrs)
+        if cost is not None:
+            metrics["llm_cost_usd"].add(cost, attrs)
+        for token_type, count in tokens.items():
+            if count:
+                metrics["llm_tokens"].add(count, {**attrs, "token_type": token_type})
+    except Exception:
+        pass
+
+
+def record_budget_unenforced(reason: str) -> None:
+    """
+    Count one LLM dispatch that went out without ``x-bf-vk``.
+
+    ``reason`` is the budget enforcement status (``read_error``,
+    ``not_configured``, ``dev_mode``, ``unlimited``). Never raises; a no-op when
+    OTEL is disabled.
+    """
+    global _genai_metrics
+    try:
+        metrics = _genai_metrics
+        if metrics is None:
+            meter = get_meter("vigil.llm")
+            metrics = create_genai_metrics(meter)
+            if _initialized and not isinstance(meter, _FallbackNoOpMeter):
+                _genai_metrics = metrics
+        metrics["llm_budget_unenforced"].add(1, {"reason": reason})
+    except Exception:
+        pass
 
 
 def shutdown() -> None:
@@ -381,7 +452,7 @@ def shutdown() -> None:
     Safe to call even when OTEL was never initialized.
     After shutdown, init_telemetry() may be called again.
     """
-    global _initialized, _tracer_provider, _meter_provider
+    global _initialized, _tracer_provider, _meter_provider, _genai_metrics
 
     if _tracer_provider is not None:
         try:
@@ -399,6 +470,7 @@ def shutdown() -> None:
 
     _tracer_provider = None
     _meter_provider = None
+    _genai_metrics = None  # instruments belong to the provider just shut down
     _initialized = False  # reset so init_telemetry() can be called again
 
 
@@ -424,46 +496,82 @@ def current_trace_ids() -> tuple[str, str]:
     return "", ""
 
 
-def _install_json_logging() -> None:
+TEXT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Libraries that log routine per-request/per-query chatter at INFO. Pinned so a
+# root level of INFO shows Vigil's own records, not theirs.
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "sqlalchemy.engine",
+    "urllib3",
+    "watchfiles",
+    "asyncio",
+)
+
+
+class _OTELJsonFormatter(logging.Formatter):
+    """One JSON object per record, with trace ids and a stable grouping key.
+
+    ``msg_template`` (``record.msg`` before args are applied) plus ``logger``
+    and ``exc_type`` identify a call site without regex-normalising
+    ``message``. Neither carries argument values.
     """
-    Replace the root logger's handlers with structured JSON output.
 
-    Each log line includes trace_id and span_id from the current OTEL span
-    so that logs can be correlated with traces in Jaeger/Grafana.
-    Retains file output alongside stdout.
+    def format(self, record: logging.LogRecord) -> str:
+        trace_id, span_id = current_trace_ids()
+
+        entry: dict = {
+            # formatTime goes through time.strftime, which has no %f.
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(
+                timespec="microseconds"
+            ),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "msg_template": record.msg if isinstance(record.msg, str) else "",
+            "trace_id": trace_id,
+            "span_id": span_id,
+        }
+
+        inv_id = get_investigation_id()
+        if inv_id:
+            entry["vigil.investigation.id"] = inv_id
+
+        if record.exc_info:
+            exc_cls = record.exc_info[0]
+            if exc_cls is not None:
+                entry["exc_type"] = f"{exc_cls.__module__}.{exc_cls.__qualname__}"
+            entry["exception"] = self.formatException(record.exc_info)
+
+        for key, val in record.__dict__.items():
+            if key.startswith("vigil."):
+                entry[key] = val
+
+        return json.dumps(entry, default=str)
+
+
+def configure_logging(level: str | int = "INFO") -> None:
     """
+    Install the process's root logging: stdout plus ``vigil.log`` in the State
+    Directory, at *level*. Independent of OTEL; called by the backend, daemon
+    and llm-worker on startup.
 
-    class _OTELJsonFormatter(logging.Formatter):
-        def format(self, record: logging.LogRecord) -> str:
-            trace_id, span_id = current_trace_ids()
-
-            entry: dict = {
-                "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%f"),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-                "trace_id": trace_id,
-                "span_id": span_id,
-            }
-
-            inv_id = get_investigation_id()
-            if inv_id:
-                entry["vigil.investigation.id"] = inv_id
-
-            if record.exc_info:
-                entry["exception"] = self.formatException(record.exc_info)
-
-            for key, val in record.__dict__.items():
-                if key.startswith("vigil."):
-                    entry[key] = val
-
-            return json.dumps(entry, default=str)
+    ``VIGIL_LOG_FORMAT`` picks JSON (default; carries trace_id/span_id from the
+    active OTEL span, empty when none) or the plain text format.
+    """
+    formatter: logging.Formatter = (
+        logging.Formatter(TEXT_LOG_FORMAT)
+        if get_settings().vigil_log_format == "text"
+        else _OTELJsonFormatter()
+    )
 
     root = logging.getLogger()
     for handler in root.handlers[:]:
         root.removeHandler(handler)
-
-    formatter = _OTELJsonFormatter()
+    root.setLevel(level.upper() if isinstance(level, str) else level)
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     console = logging.StreamHandler()
     console.setFormatter(formatter)

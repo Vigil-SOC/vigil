@@ -10,9 +10,10 @@ import logging
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from core.deps import provide_mcp_client
+from core.deps import provide_mcp_client, provide_mcp_registry
+from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
 from core.integrations.mcp.service import MCPService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -95,21 +96,33 @@ async def list_servers():
 
 
 @router.get("/servers/status")
-async def get_servers_status():
-    """
-    Get status of all MCP servers including enabled state.
+async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
+    """Session state for every catalog server.
 
-    Returns:
-        List of server status objects with enabled flag
+    ``status`` is ``running`` only while that server's persistent session is
+    connected. With no MCP client, every server is disconnected: the catalog
+    has no session state of its own. Dormant reconnect stays on
+    ``GET /connections/status``.
     """
-    statuses_dict = mcp_service.get_all_statuses()
-    enabled_dict = mcp_service.get_all_enabled_states()
-    # Convert dict to list of objects for frontend
-    statuses_list = [
-        {"name": name, "status": status, "enabled": enabled_dict.get(name, False)}
-        for name, status in statuses_dict.items()
-    ]
-    return {"statuses": statuses_list}
+    enabled = mcp_service.get_all_enabled_states()
+    connected = mcp_client.get_connection_status() if mcp_client else {}
+    statuses = []
+    for name in mcp_service.list_servers():
+        is_up = bool(connected.get(name))
+        row: Dict = {
+            "name": name,
+            "status": "running" if is_up else "disconnected",
+            "enabled": bool(enabled.get(name, False)),
+        }
+        if mcp_client and not is_up:
+            missing = mcp_client.get_missing_credentials(name)
+            if missing:
+                row["missing_credentials"] = missing
+            err = mcp_client.get_last_error(name)
+            if err:
+                row["error"] = err
+        statuses.append(row)
+    return {"statuses": statuses}
 
 
 @router.get("/servers/enabled")
@@ -129,6 +142,7 @@ async def set_server_enabled(
     request: ServerEnabledRequest,
     current_user: User = Depends(get_current_active_user),
     mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """Enable or disable an MCP server and apply the change at runtime.
 
@@ -184,12 +198,17 @@ async def set_server_enabled(
             except Exception as exc:  # noqa: BLE001
                 connected = False
                 error = f"{type(exc).__name__}: {exc}"
+            if connected:
+                try:
+                    register_connected(registry, mcp_client, server_name)
+                except Exception as exc:  # noqa: BLE001 — do not change this response
+                    logger.debug(
+                        "MCP registry register after enable failed for %s: %s",
+                        server_name,
+                        exc,
+                    )
     else:
-        # Disable → stop any running monitor process + tear down the
-        # persistent MCP session so tools disappear from the pool.
-        status = mcp_service.get_server_status(server_name)
-        if status == "running":
-            mcp_service.stop_server(server_name)
+        # Disable → tear down the persistent MCP session so tools leave the pool.
         if mcp_client is not None:
             try:
                 await mcp_client.disconnect_from_server(server_name)
@@ -197,6 +216,14 @@ async def set_server_enabled(
                 logger.debug(
                     "Disconnect for %s failed (non-fatal): %s", server_name, exc
                 )
+        try:
+            deactivate(registry, server_name)
+        except Exception as exc:  # noqa: BLE001 — do not change this response
+            logger.debug(
+                "MCP registry deactivate after disable failed for %s: %s",
+                server_name,
+                exc,
+            )
 
     return {
         "success": True,
@@ -252,89 +279,6 @@ async def get_connections_status(mcp_client=Depends(provide_mcp_client)):
     }
 
 
-@router.get("/servers/{server_name}/status")
-async def get_server_status(server_name: str):
-    """
-    Get status of a specific server.
-
-    Args:
-        server_name: Name of the server
-
-    Returns:
-        Server status
-    """
-    status = mcp_service.get_server_status(server_name)
-    if status is None:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    return {"server": server_name, "status": status}
-
-
-# NOTE: the former POST /servers/{name}/start + /stop endpoints were
-# removed when PUT /enabled became transactional. Every server in
-# mcp-config.json is stdio-based, which the old `start_server` path
-# explicitly refused (core/integrations/mcp/service.py), so those endpoints never
-# worked for users. The enable toggle is now the single lever.
-
-
-# NOTE: the former /servers/start-all + /servers/stop-all endpoints were
-# removed alongside /start + /stop. They called the same stdio-hostile
-# service methods and nothing in the UI invoked them.
-
-
-@router.get("/servers/{server_name}/logs")
-async def get_server_logs(server_name: str, lines: int = 100):
-    """
-    Get logs for a specific server.
-
-    Args:
-        server_name: Name of the server
-        lines: Number of log lines to retrieve
-
-    Returns:
-        Server logs
-    """
-    logs = mcp_service.get_server_log(server_name, lines=lines)
-
-    if logs == "":
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    # Prepend the last connect-failure reason, if any — this is what
-    # actually tells the user why a server isn't reachable. The log file
-    # itself only exists for servers started via the monitor path.
-    try:
-        from core.integrations.mcp.client import process_mcp_client
-
-        last_err = process_mcp_client().get_last_error(server_name)
-        if last_err:
-            logs = f"[last connect error] {last_err}\n\n{logs}"
-    except Exception:
-        pass
-
-    return {"server": server_name, "logs": logs}
-
-
-@router.get("/servers/{server_name}/test")
-async def test_server(
-    server_name: str,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Test if a server is responding.
-
-    Admin-gated because the underlying ``test_server`` call can spawn
-    a subprocess to probe a stdio MCP server.
-    """
-    require_integrations_admin(current_user)
-    _validate_known_server(server_name)
-    is_running = mcp_service.test_server(server_name)
-
-    return {
-        "server": server_name,
-        "is_running": is_running,
-        "status": "healthy" if is_running else "not responding",
-    }
-
-
 @router.post("/servers/reload")
 async def reload_servers(
     current_user: User = Depends(get_current_active_user),
@@ -345,30 +289,132 @@ async def reload_servers(
 
     Reinitialises the process-wide ``MCPService`` in place so both the
     API and the ``MCPClient`` see the new catalog. Previously-enabled
-    servers are reconnected automatically; the old Popen-monitor path
-    is gone (#125), so there's nothing here analogous to "restart
-    running servers" — just enumerate new servers and let the enable
-    toggle drive connects.
+    servers are reconnected automatically.
     """
     require_integrations_admin(current_user)
     logger.info("User %s requested MCP server reload", current_user.user_id)
-    try:
-        svc = _service()
-        # Reinitialise servers dict in place so the MCPClient's reference
-        # to this same instance keeps seeing the new catalog.
-        svc.servers.clear()
-        svc._initialize_servers()
+    svc = _service()
+    # Reinitialise servers dict in place so the MCPClient's reference
+    # to this same instance keeps seeing the new catalog.
+    svc.servers.clear()
+    svc._initialize_servers()
 
-        new_servers = list(svc.servers.keys())
+    new_servers = list(svc.servers.keys())
 
-        return {
-            "success": True,
-            "message": "MCP servers reloaded successfully",
-            "total_servers": len(new_servers),
-            "servers": new_servers,
-        }
+    return {
+        "success": True,
+        "message": "MCP servers reloaded successfully",
+        "total_servers": len(new_servers),
+        "servers": new_servers,
+    }
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to reload MCP servers: {str(e)}"
-        )
+
+# --- Vigil's own MCP surface ------------------------------------------------
+#
+# Everything above configures the servers Vigil calls out to. These configure
+# the one Vigil is: whether it listens, and which credentials open it.
+
+
+class SurfaceToggle(BaseModel):
+    enabled: bool
+
+
+class CredentialMint(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    expires_in_days: Optional[int] = Field(default=None, ge=1, le=3650)
+
+
+@router.get("/surface")
+async def get_surface(current_user: User = Depends(get_current_active_user)):
+    """Whether Vigil's own tools are reachable, and whether anything can reach them."""
+    from core.auth.mcp_credential_service import list_for_user
+    from core.integrations.mcp.surface import is_enabled
+    from services.api.mcp_surface import MOUNT_PATH
+
+    credentials = list_for_user(current_user.user_id)
+    return {
+        "enabled": is_enabled(),
+        "path": MOUNT_PATH,
+        "credentials": [c.to_dict() for c in credentials],
+    }
+
+
+@router.put("/surface")
+async def set_surface(
+    body: SurfaceToggle,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Open or close the surface. Takes effect without a restart."""
+    require_integrations_admin(current_user)
+
+    from core.integrations.mcp.surface import set_enabled
+
+    if not set_enabled(body.enabled, updated_by=str(current_user.user_id)):
+        raise HTTPException(status_code=500, detail="Could not save the setting")
+
+    logger.warning(
+        "MCP surface %s by %s",
+        "opened" if body.enabled else "closed",
+        current_user.username,
+    )
+    return {"enabled": body.enabled}
+
+
+@router.post("/surface/credentials", status_code=201)
+async def mint_credential(
+    body: CredentialMint,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Issue a credential for the signed-in user.
+
+    The token is in this response and nowhere else. It is not stored and cannot
+    be shown again; an operator who loses one mints another and revokes this.
+    """
+    require_integrations_admin(current_user)
+
+    from datetime import timedelta
+
+    from core.auth.mcp_credential_service import mint
+    from core.time import utcnow
+
+    expires_at = (
+        utcnow() + timedelta(days=body.expires_in_days)
+        if body.expires_in_days
+        else None
+    )
+    minted = mint(current_user.user_id, body.label, expires_at=expires_at)
+    if minted is None:
+        raise HTTPException(status_code=500, detail="Could not mint a credential")
+
+    return {
+        "token": minted.token,
+        "credential": minted.record.to_dict(),
+        "warning": "This token is shown once. Store it now; it cannot be recovered.",
+    }
+
+
+@router.delete("/surface/credentials/{credential_id}")
+async def revoke_credential(
+    credential_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Withdraw a credential. What it could reach, it can no longer reach."""
+    require_integrations_admin(current_user)
+
+    from core.auth.mcp_credential_service import list_for_user, revoke
+
+    # Only your own: a credential names a principal, and revoking someone
+    # else's is an act on their account rather than on your configuration.
+    if credential_id not in {
+        c.credential_id
+        for c in list_for_user(current_user.user_id, include_revoked=True)
+    }:
+        raise HTTPException(status_code=404, detail="Credential not found")
+
+    if not revoke(credential_id):
+        raise HTTPException(status_code=409, detail="Already revoked")
+
+    logger.warning(
+        "MCP credential %s revoked by %s", credential_id, current_user.username
+    )
+    return {"revoked": credential_id}

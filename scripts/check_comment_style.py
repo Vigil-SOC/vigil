@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCOPED = (
     "services/agent",
     "core/agents/queue.py",
-    "core/agents/agent_runs_router.py",
+    "core/api/v1/agent_runs_router.py",
     "core/agents/tool_registry.py",
     "core/agents/tools_router.py",
     "core/llm/cost/rates.py",
@@ -29,6 +29,7 @@ SCOPED = (
     "infra/database/init/19_agent_ledger.sql",
     "infra/database/init/20_agent_directives.sql",
     "infra/database/init/21_agent_run_leases.sql",
+    "infra/database/init/31_agent_ledger_hash_chain.sql",
 )
 SKIP = ("node_modules", "package-lock.json", "dist", "__pycache__")
 

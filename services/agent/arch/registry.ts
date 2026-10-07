@@ -3,15 +3,19 @@ import type { AgentEvent, RunKind } from "../contracts/events.js";
 import type { Notes } from "../core/memory.js";
 import type { State } from "../core/seams.js";
 import { SpecError, type Owned } from "../core/spec.js";
+import { composeProjection } from "../workflows/compose/projection.js";
+import { huntDistil } from "../workflows/hunt/distil.js";
 import type { HuntKinds } from "../workflows/hunt/ledger.js";
 import { huntProjection } from "../workflows/hunt/projection.js";
 import { huntNotes } from "../workflows/hunt/recall.js";
 import { leadProjection } from "../workflows/lead/projection.js";
 import type { LeadKinds } from "../workflows/lead/workflow.js";
+import { rootCauseProjection } from "../workflows/rootcause/projection.js";
+import type { RootCauseKinds } from "../workflows/rootcause/proof.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
 // than switched on in the worker: an agent type is a file and an entry, not a branch.
-export type WorkflowId = "lead" | "compose" | "hunt";
+export type WorkflowId = "lead" | "compose" | "hunt" | "rootcause";
 
 export interface ArchEntry {
   arch: string;
@@ -27,20 +31,52 @@ export interface ArchEntry {
   // What a reader outside this process is told about a run of this kind. Absent
   // means there is nothing to report but the terminal the ledger already carries.
   projection?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
+  // What episodic memory is told about a finished run of this kind; the fold
+  // itself says why it is not the projection. Absent means a run of this kind is
+  // not distilled, which is the honest default rather than empty rows.
+  distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
 }
 
+// The hunt lead-loop, minus its arch prompt. `hunt` and `adjudicate` run this exact
+// loop — same actions, halts, ownership, projection and notes — and differ only in
+// the arch that frames the lead's job, so the shared mechanics live here and drift
+// between the kinds is impossible rather than a two-place edit. `root_cause` does
+// not: a backward trace is its own workflow.
+// notes/projection are retyped here because this is the one place that already knows
+// the kind, the same trade the worker makes when it hands a ledger to a workflow.
+const HUNT_LOOP: Omit<ArchEntry, "arch"> = {
+  workflow: "hunt",
+  actions: ["INVESTIGATE", "EXPAND", "PIVOT", "DEEPEN", "ABANDON", "VALIDATE", "CHECKPOINT", "CONCLUDE", "HANDOFF_IR"],
+  halts: ["CONCLUDE"],
+  owned: { playbook: ["hypotheses", "attack_techniques", "data_domains"], config: ["enrichment", "checkpoints", "hypothesis_loop"] },
+  notes: (state, runId) => huntNotes(state as unknown as State<HuntKinds>, runId),
+  projection: (runId, events) => huntProjection(runId, events as readonly AgentEvent<HuntKinds>[]),
+};
+
 const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
+  // distil is not in HUNT_LOOP: huntDistil stamps investigation_kind "hunt", and
+  // that is the only kind episodic memory accepts for a run. Sharing it would
+  // file an adjudication under a kind it is not.
   hunt: {
     arch: packaged("threathunt.yaml"),
-    workflow: "hunt",
-    actions: ["INVESTIGATE", "EXPAND", "PIVOT", "DEEPEN", "ABANDON", "VALIDATE", "CHECKPOINT", "CONCLUDE", "HANDOFF_IR"],
-    halts: ["CONCLUDE"],
-    owned: { playbook: ["hypotheses", "attack_techniques", "data_domains"], config: ["enrichment", "checkpoints", "hypothesis_loop"] },
-    // Retyped here because this entry is the one place that already knows the
-    // kind, the same trade the worker makes when it hands a ledger to a workflow.
-    notes: (state, runId) => huntNotes(state as unknown as State<HuntKinds>, runId),
-    projection: (runId, events) => huntProjection(runId, events as readonly AgentEvent<HuntKinds>[]),
+    ...HUNT_LOOP,
+    distil: (runId, events) => huntDistil(runId, events as readonly AgentEvent<HuntKinds>[]),
   },
+  // One investigator, prose, no hunt vocabulary. checkpoints is owned so a
+  // definition that sets hypothesis_approval: ask still parses and can park.
+  root_cause: {
+    arch: packaged("rootcause.yaml"),
+    workflow: "rootcause",
+    actions: [],
+    halts: [],
+    owned: { config: ["checkpoints"] },
+    projection: (runId, events) => rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),
+  },
+  // adjudicate is a hunt run as a second opinion: the lead is shown a finding
+  // intake admitted and the workflow intake chose, tests the stated intent against
+  // the seeded benign account, and proposes a workflow without starting one. Same
+  // HUNT_LOOP, no distil for the reason given above.
+  adjudicate: { arch: packaged("adjudicate.yaml"), ...HUNT_LOOP },
   investigate: {
     arch: packaged("investigate.yaml"),
     workflow: "lead",
@@ -50,7 +86,13 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   },
   // No actions: nothing emits one. A step ends when its agent answers, and the run
   // ends when the list does, so there is no verb for a model to choose or to halt on.
-  compose: { arch: packaged("compose.yaml"), workflow: "compose", actions: [], halts: [] },
+  compose: {
+    arch: packaged("compose.yaml"),
+    workflow: "compose",
+    actions: [],
+    halts: [],
+    projection: composeProjection,
+  },
   // No actions: the lead answers in prose, so there is no emission to constrain.
   // Served over SSE by serve.ts rather than the queue, so drive() never sees it.
   chat: { arch: packaged("chat.yaml"), workflow: "lead", actions: [], halts: [] },
@@ -72,4 +114,12 @@ export function archFor(kind: RunKind): ArchEntry {
 
 export function registeredKinds(): RunKind[] {
   return (Object.keys(REGISTERED) as RunKind[]).sort();
+}
+
+// Whether a kind runs the shared hunt lead-loop -- `hunt`, `adjudicate`, and any
+// future kind that reuses HUNT_LOOP. The one place the membership is decided, so a
+// new hunt-like kind is registered above and nothing downstream has to be found and
+// widened by hand. Mirrors Python's is_hunt_like / HUNT_LIKE_RUN_KINDS.
+export function isHuntLike(kind: RunKind): boolean {
+  return REGISTERED[kind]?.workflow === "hunt";
 }

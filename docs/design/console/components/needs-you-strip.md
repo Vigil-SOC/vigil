@@ -1,0 +1,2 @@
+# Needs you strip
+Shown under the tab strip on every tab except Summary while a decision is pending. Full width, padding 8px 24px, `poor-bg` with 1px `poor-ln` bottom. Content: blinking dot · "Needs you" (700, `poor`) · the ask · "· pauses in 4 min 12 s" (`tx2`) · spacer · "Decide on Summary" (26px, `poor` fill, white) · "Hold" (26px outlined). Disappears once decided.

@@ -1,4 +1,5 @@
 import type { AgentEvent, CheckpointPayload, PatchPayload, ResolutionPayload } from "../../contracts/events.js";
+import type { Narrative } from "./narrative.js";
 import type { State } from "../../core/seams.js";
 import type {
   DecisionRecord,
@@ -24,6 +25,8 @@ export type HuntKinds = {
   // The report is a deliverable the fold ignores, so its shape is the report
   // builder's to own rather than the ledger's.
   finalize: unknown;
+  // Written at the end and again on request: the latest wins, the earlier ones stay.
+  narrative: Narrative;
 };
 
 export type HuntEvent = AgentEvent<HuntKinds>;
@@ -102,9 +105,18 @@ export function fold(events: readonly HuntEvent[]): Projection {
       case "evidence":
         view.evidence.set(event.payload.evidence_id, structuredClone(event.payload));
         break;
-      case "link":
-        view.links.push(structuredClone(event.payload));
+      // Upserted, not appended: the lead re-rules on every observation each iteration,
+      // and evidenceStrength counting duplicate and self-contradicting links is corrupt,
+      // not thorough. The latest ruling is the belief; the ledger holds the earlier ones.
+      case "link": {
+        const link = structuredClone(event.payload);
+        const at = view.links.findIndex(
+          (held) => held.evidence_id === link.evidence_id && held.hypothesis_id === link.hypothesis_id,
+        );
+        if (at === -1) view.links.push(link);
+        else view.links[at] = link;
         break;
+      }
       case "dispatch":
         view.dispatches.set(
           (event.payload as unknown as DispatchRecord).dispatch_id,
@@ -136,10 +148,25 @@ export function fold(events: readonly HuntEvent[]): Projection {
       // the hunt's: no belief moved because a process restarted.
       case "resumed":
         break;
-      case "finalize":
+      // One spend event is one model call, summed the way seedFrom() sums them for
+      // the harness pool: the two counters read the same events, so they agree by
+      // construction. Folded here rather than patched at decision time, so the figure
+      // is right mid-iteration too -- which is where a hunt that trips its ceiling
+      // stops, since the iteration that crossed it is the one that never finished.
+      // Ledgers written before this arm also carry hunt patches naming cost_usd;
+      // a patch overwrites rather than adds, and each was written after the spend
+      // it summed, so replaying one counts nothing twice.
       case "spend":
-        // Neither is state. The report is derived from the fold, so the fold must
-        // never derive anything from it; spend is the budget's and the gateway's.
+        view.hunt.cost_usd += event.payload.cost_usd ?? 0;
+        break;
+      case "finalize":
+      case "narrative":
+      // Recall is an input to the run's decisions and never a belief of the hunt's:
+      // a fold that read episodic rows would make this projection depend on what
+      // other runs concluded, and the fold is one run's own account of itself.
+      case "recall":
+        // None is state: the narrative is an account of the fold, so it cannot also be
+        // an input to it.
         break;
       default:
         // A kind added without a fold arm is a silent hole in the projection, so

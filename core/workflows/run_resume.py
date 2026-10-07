@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 # Off the run event the worker journaled, never assumed: a hunt resumed as a
 # compose is handed to the wrong workflow, which then finds nothing it recognises.
-def _run_kind(run_id: str) -> Optional[str]:
+#
+# Public because it is not only the resume path that needs it. Anything asking what
+# kind a run is has to read it here: the first event carries the kind the worker
+# opened the run as, which is the same value that worker decides everything else
+# from. A run's workflow row can say something different -- a run started from file
+# paths is named for its loop, not its definition -- so answering from that row
+# instead is how two parts of one system come to disagree about one run.
+def run_kind_of(run_id: str) -> Optional[str]:
     try:
         uuid.UUID(run_id)
     except ValueError:
@@ -36,7 +43,7 @@ def _run_kind(run_id: str) -> Optional[str]:
 
 # Asks the agent layer to pick the run back up after a decision.
 async def resume_run(run_id: str, action_id: str, decided_by: str) -> Dict[str, Any]:
-    run_kind = _run_kind(run_id)
+    run_kind = run_kind_of(run_id)
     if run_kind is None:
         # Nothing on the ledger to resume. The decision is still recorded; there
         # is simply no agent-layer run behind it, which a compose-era approval is.

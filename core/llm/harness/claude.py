@@ -1,46 +1,17 @@
-"""Claude API service for Anthropic integration with Agent SDK support."""
+"""One-shot Anthropic completions. Tools and the loop live in the agent layer."""
 
 import json
 import logging
 import time
 import uuid
-from pathlib import Path  # noqa: F401 — patched as ``claude.Path`` in tests
 from typing import Any, Dict, List, Optional, Union
 
+from core.config import get_settings
+from core.llm.cost.calls import CallQuote, quote_call
 from core.llm.defaults import DEFAULT_MODEL
+from core.llm.router.router import bifrost_headers
 from core.secrets import get_secret
-
-# GH #89 — resolve the summarization model via ai_model_configs with a safe
-# fallback to the historical hardcoded default. Defined at module scope so
-# the registry import stays lazy and tests can monkeypatch it trivially.
-_SUMMARIZATION_DEFAULT = DEFAULT_MODEL
-
-
-def _resolve_summarization_model() -> str:
-    try:
-        from core.llm.providers.registry import get_registry
-
-        resolved = get_registry().resolve_model_for_component("summarization")
-        if resolved is not None:
-            return resolved[1]
-    except (
-        Exception
-    ) as exc:  # noqa: BLE001 — never let model resolution break summarization
-        logging.getLogger(__name__).debug(
-            "summarization model resolution failed, using default: %s", exc
-        )
-    return _SUMMARIZATION_DEFAULT
-
-
-# Import backend tool support
-try:
-    from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-
-    BACKEND_TOOLS_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"Backend tools not available: {e}")
-    BACKEND_TOOLS = []
-    BACKEND_TOOLS_AVAILABLE = False
+from core.telemetry import record_llm_call
 
 try:
     # Anthropic imports are retained for type references and the Bifrost-routed
@@ -58,231 +29,23 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
-# OTEL instrumentation (lazy to avoid hard dependency)
-try:
-    from core.telemetry import create_genai_metrics, get_meter, get_tracer
-
-    _cs_tracer = get_tracer("vigil.services.claude")
-    _cs_meter = get_meter("vigil.services.claude")
-    _cs_genai_metrics = create_genai_metrics(_cs_meter)
-    _OTEL_CS_AVAILABLE = True
-except Exception:
-    _OTEL_CS_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
-
-from core.chat.context_manager import ContextManager  # noqa: E402
-
-# Sub-module imports (lazy to avoid circular deps at module load)
-from core.chat.session_manager import SessionManager  # noqa: E402
-from core.detections.detection_rules_service import DetectionRulesService  # noqa: E402
-from core.integrations.mcp.client import process_mcp_client  # noqa: E402
-from core.integrations.mcp.registry import MCPRegistry  # noqa: E402
 
 
 class ClaudeService:
-    """Service for interacting with Claude API with Agent SDK support."""
+    """One completion at a time. Callers that need a system prompt pass one."""
 
-    SERVICE_NAME = "deeptempo-ai-soc"
-    API_KEY_NAME = "claude_api_key"
-
-    def __init__(
-        self,
-        enable_thinking: bool = False,
-        thinking_budget: int = 10000,
-        provider_api_key_ref: Optional[str] = None,
-        mcp_client=None,
-        mcp_registry: Optional[MCPRegistry] = None,
-        detection_rules: Optional[DetectionRulesService] = None,
-    ):
-        """One completion at a time. Tools and the loop live in the agent layer.
-
-        Args:
-            enable_thinking: Retained for callers; the one-shot sends no thinking.
-            thinking_budget: Likewise.
-            provider_api_key_ref: Optional secret-manager key for a non-default
-                Anthropic provider row (GH #88). When set, _load_api_key reads
-                this secret first before the legacy CLAUDE_API_KEY fallback chain.
+    def __init__(self, provider_api_key_ref: Optional[str] = None):
+        """Args:
+        provider_api_key_ref: Optional secret-manager key for a non-default
+            Anthropic provider row (GH #88). When set, _load_api_key reads
+            this secret first before the legacy CLAUDE_API_KEY fallback chain.
         """
-        self._mcp_client = (
-            mcp_client if mcp_client is not None else process_mcp_client()
-        )
-        self._mcp_registry = mcp_registry or MCPRegistry()
-        self._detection_rules = detection_rules or DetectionRulesService()
-
         self.client: Optional[Anthropic] = None
         self.async_client: Optional[AsyncAnthropic] = None
         self.api_key: Optional[str] = None
         self.provider_api_key_ref = provider_api_key_ref
-        self.enable_thinking = enable_thinking
-        self.thinking_budget = thinking_budget
-
-        self._session_mgr = SessionManager()
-        self._context_mgr = ContextManager()
-        self.default_system_prompt = self._get_default_system_prompt()
         self._load_api_key()
-        self._context_mgr.update_clients(self.client, self.async_client)
-
-    def _get_default_system_prompt(self) -> str:
-        """Get default system prompt with Claude 4.5 best practices."""
-        return """You are Claude, an AI assistant for security operations and analysis in the Vigil SOC platform.
-
-<default_to_action>
-By default, implement changes rather than only suggesting them. If the user's intent is unclear, infer the most useful likely action and proceed, using tools to discover any missing details instead of guessing. Try to infer the user's intent about whether a tool call (e.g., file edit or read) is intended or not, and act accordingly.
-</default_to_action>
-
-<use_parallel_tool_calls>
-If you intend to call multiple tools and there are no dependencies between the tool calls, make all of the independent tool calls in parallel. Prioritize calling tools simultaneously whenever the actions can be done in parallel rather than sequentially. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. Maximize use of parallel tool calls where possible to increase speed and efficiency. However, if some tool calls depend on previous calls to inform dependent values like the parameters, do NOT call these tools in parallel and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls.
-</use_parallel_tool_calls>
-
-<investigate_before_answering>
-Never speculate about data you have not retrieved. If the user references a specific finding, case, or other security entity, you MUST use the appropriate MCP tool to fetch it before answering. Make sure to investigate and retrieve relevant data BEFORE answering questions. Never make any claims about security data before investigating - give grounded and hallucination-free answers.
-</investigate_before_answering>
-
-<available_mcp_tools>
-You have access to MCP (Model Context Protocol) tools that connect to various security platforms and data sources. The tools are prefixed with the server name (e.g., "deeptempo-findings_get_finding"). Use these tools to:
-
-1. **Findings & Cases**: Retrieve and analyze security findings and cases from DeepTempo
-   - Finding IDs start with "f-" (e.g., "f-20260109-40d9379b")
-   - Case IDs start with "case-" (e.g., "case-20260114-a1b2c3d4")
-   - Use deeptempo-findings server tools: list_findings, get_finding, list_cases, get_case, create_case, update_case
-
-2. **Security Integrations**: Query data from various security platforms
-   - The available integrations are dynamically loaded based on what's configured
-   - Tools are named with the pattern: {integration-name}_{tool-name}
-   - Check your available tools to see which integrations are active
-
-3. **Threat Intelligence**: Analyze indicators, URLs, files, etc.
-   - Use tools for VirusTotal, Shodan, AnyRun, Hybrid Analysis, etc. (if available)
-   - These help enrich findings with external context
-
-4. **Investigation Workflows**: Execute predefined investigation workflows
-   - Automate common SOC investigation patterns
-   - Use tempo_flow_server tools for workflows
-
-5. **MITRE ATT&CK Analysis**: Analyze and visualize attack techniques
-   - Use attack-layer server tools: get_technique_rollup, get_findings_by_technique, create_attack_layer
-   - Generate ATT&CK Navigator layers for visualization
-
-When a user mentions an ID or entity (finding, case, IP, hash, domain), ALWAYS use the appropriate MCP tool to retrieve it first. Never try to access these as files - they are stored in databases and accessed via MCP tools.
-</available_mcp_tools>
-
-<recognizing_security_entities>
-Common patterns you should recognize and how to handle them:
-
-- Finding IDs: "f-YYYYMMDD-XXXXXXXX" → Use deeptempo-findings_get_finding tool
-- Case IDs: "case-YYYYMMDD-XXXXXXXX" → Use deeptempo-findings_get_case tool
-- IP addresses: X.X.X.X → Consider using IP geolocation or threat intel tools
-- Domain names: example.com → Consider using URL analysis or threat intel tools
-- File hashes: MD5/SHA1/SHA256 → Consider using malware analysis tools
-- URLs: http(s)://... → Consider using URL analysis tools
-
-IMPORTANT: When a user says "analyze [ID]", "check [ID]", "investigate [ID]", etc., your FIRST action should ALWAYS be to use the appropriate MCP tool to fetch that entity's data.
-</recognizing_security_entities>
-
-<security_analysis_workflow>
-When analyzing security findings and cases:
-1. **Retrieve**: Use MCP tools to fetch the finding/case data first
-2. **Understand**: Parse the severity, data source, MITRE techniques, and context
-3. **Correlate**: Look for related findings or patterns using similarity/correlation tools
-4. **Enrich**: Use threat intelligence tools to add external context
-5. **Analyze**: Provide clear assessment of the threat, impact, and recommended actions
-6. **Act**: Be thorough but efficient - prioritize actionable insights
-</security_analysis_workflow>
-
-<case_management_capabilities>
-You have comprehensive tools to manage ALL aspects of cases during investigations:
-
-**1. FINDINGS MANAGEMENT**
-- Add single/multiple findings to cases
-- Remove findings from cases
-- Track why findings were added
-
-**2. ACTIVITIES & NOTES**
-- Log investigation activities automatically
-- Activity types: note, action_taken, investigation_step, analysis, communication, task_update
-- Track all investigation actions
-
-**3. TIMELINE & KILL CHAIN**
-- Build chronological attack timelines
-- Tag MITRE ATT&CK techniques
-- Document attack progression stages
-- Create structured kill chain cases
-
-**4. COMMENTS & COLLABORATION**
-- Add comments to cases (threaded discussions)
-- Get all comments for review
-- Support team collaboration on investigations
-- Use: `add_case_comment(case_id, author, content)`
-
-**5. EVIDENCE MANAGEMENT**
-- Add evidence/artifacts with chain of custody
-- Types: file, log, network_capture, memory_dump, screenshot
-- Track who collected what and when
-- Use: `add_case_evidence(case_id, evidence_type, name, collected_by, ...)`
-
-**6. IOCs (Indicators of Compromise)**
-- Add IOCs: IP addresses, domains, hashes, URLs, emails, file names
-- Bulk add multiple IOCs at once
-- Track threat level and confidence
-- Get all IOCs for a case
-- Use: `add_case_ioc(case_id, ioc_type, value, threat_level, ...)` or `bulk_add_iocs(case_id, iocs)`
-
-**7. TASK MANAGEMENT**
-- Create investigation tasks
-- Assign tasks to team members
-- Update task status (pending, in_progress, completed, cancelled)
-- Track task completion
-- Use: `add_case_task(case_id, title, ...)` and `update_case_task(task_id, status, ...)`
-
-**8. CASE RELATIONSHIPS**
-- Link related cases (duplicate, related, parent, child, blocks, blocked_by)
-- Track case relationships
-- Build case hierarchies
-- Use: `link_related_cases(case_id, related_case_id, relationship_type, created_by, ...)`
-
-**9. ESCALATIONS**
-- Escalate cases to higher tiers or management
-- Track escalation reasons and urgency
-- Auto-update priority for critical escalations
-- Use: `escalate_case(case_id, escalated_from, escalated_to, reason, urgency_level)`
-
-**10. CASE CLOSURE**
-- Properly close cases with full metadata
-- Categories: resolved, false_positive, duplicate, unable_to_resolve
-- Document root cause, lessons learned, recommendations
-- Include executive summary
-- Use: `close_case(case_id, closure_category, closed_by, root_cause, lessons_learned, ...)`
-
-**11. RESOLUTION STEPS**
-- Document remediation actions taken
-- Track results of each action
-- Build comprehensive resolution timeline
-
-**WHEN THE USER SAYS:**
-- "Add this to case-123" → Add finding automatically
-- "Comment that this is suspicious" → Add comment to case
-- "Log evidence from the firewall" → Add evidence to case
-- "Add IOC 192.168.1.5 as malicious IP" → Add IOC with threat level
-- "Create a task to analyze the malware" → Add task to case
-- "This is related to case-456" → Link cases as related
-- "Escalate this to the SOC manager" → Escalate case
-- "Close this case - it was a false positive" → Close case with category
-- "Add these 5 IPs as IOCs" → Bulk add IOCs
-
-**BE COMPREHENSIVE AND PROACTIVE:**
-- Add IOCs as you discover them
-- Create tasks for follow-up work
-- Add evidence as it's collected
-- Link related cases when patterns emerge
-- Escalate when appropriate
-- Document everything in comments and activities
-- Close cases properly with full metadata
-
-**NO PERMISSION NEEDED**: Just do it and confirm what you did. The user expects you to manage cases completely.
-</case_management_capabilities>
-
-Your goal is to help SOC analysts work more efficiently by leveraging all available tools and integrations to provide comprehensive, accurate, and actionable security analysis. When investigating, you should automatically build out cases with all relevant findings, activities, timeline entries, and MITRE mappings as the investigation progresses."""
 
     def _load_api_key(self) -> bool:
         """Load API key from secure storage.
@@ -324,7 +87,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
                     self.api_key = discover_anthropic_api_key()
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug("UI-provider key discovery skipped: %s", exc)
+                    logger.warning("UI-provider key discovery skipped: %s", exc)
 
             if self.api_key and ANTHROPIC_AVAILABLE:
                 # Set longer timeout for operations that may take more than 10 minutes
@@ -357,60 +120,17 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         """
         return self.api_key is not None and self.client is not None
 
-    def _extract_content_blocks(
-        self, content, include_thinking: bool = False
-    ) -> Union[str, List[Dict]]:
-        """
-        Extract content blocks from Claude's response.
-
-        Args:
-            content: Response content blocks
-            include_thinking: Whether to include thinking blocks in the output
-
-        Returns:
-            String (if only one text block) or list of content blocks
-        """
+    def _extract_content_blocks(self, content) -> Union[str, List[Dict]]:
+        """Text blocks from a one-shot response. A single block is a string."""
         blocks = []
-
-        logger.debug(
-            f"🔍 Extracting content blocks - include_thinking: {include_thinking}, content_len: {len(content) if content else 0}"
-        )
-
-        for i, content_block in enumerate(content):
-            if hasattr(content_block, "type"):
-                block_type = content_block.type
-
-                if block_type == "text" and hasattr(content_block, "text"):
-                    text_len = len(content_block.text)
-                    logger.debug(f"  Block {i}: text ({text_len} chars)")
-                    blocks.append({"type": "text", "text": content_block.text})
-                elif (
-                    block_type == "thinking"
-                    and include_thinking
-                    and hasattr(content_block, "thinking")
-                ):
-                    thinking_len = len(content_block.thinking)
-                    logger.info(f"  💭 Block {i}: thinking ({thinking_len} chars)")
-                    blocks.append({"type": "thinking", "text": content_block.thinking})
-                elif block_type == "thinking" and not include_thinking:
-                    logger.debug(
-                        f"  Block {i}: thinking (skipped - include_thinking=False)"
-                    )
-
-        logger.debug(f"📦 Extracted {len(blocks)} blocks")
-
-        # If only one text block, return as string for backward compatibility
-        if len(blocks) == 1 and blocks[0]["type"] == "text":
-            logger.debug("   Returning single text block as string")
+        for content_block in content or []:
+            if getattr(content_block, "type", None) == "text" and hasattr(
+                content_block, "text"
+            ):
+                blocks.append({"type": "text", "text": content_block.text})
+        if len(blocks) == 1:
             return blocks[0]["text"]
-
-        # If we have multiple blocks or thinking blocks, return as list
-        if blocks:
-            logger.debug("   Returning multiple blocks as list")
-            return blocks
-
-        logger.warning("   No blocks extracted!")
-        return None
+        return blocks or None
 
     # ------------------------------------------------------------------
     # Reasoning-trace persistence (GH #79)
@@ -484,30 +204,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 )
         return out
 
-    # Keys the Anthropic content-block wire schema accepts per block type.
-    # Response blocks are replayed verbatim into the next request during the
-    # tool-use loop; some gateways (e.g. a LiteLLM proxy fronting
-    # ANTHROPIC_BASE_URL) annotate returned tool_use blocks with a bookkeeping
-    # "caller" field, and the Anthropic SDK retains such unknown fields. Strict
-    # request validation then rejects them ("Extra inputs are not permitted").
-    # Unlike _serialize_response_blocks, this preserves every spec field —
-    # notably thinking-block "signature", which the API requires when extended
-    # thinking and tool use are combined.
-    _RESEND_ALLOWED_BLOCK_KEYS: Dict[str, set] = {
-        "text": {"type", "text", "citations", "cache_control"},
-        "thinking": {"type", "thinking", "signature", "cache_control"},
-        "redacted_thinking": {"type", "data", "cache_control"},
-        "tool_use": {"type", "id", "name", "input", "cache_control"},
-        "tool_result": {
-            "type",
-            "tool_use_id",
-            "content",
-            "is_error",
-            "cache_control",
-        },
-        "image": {"type", "source", "cache_control"},
-    }
-
     @staticmethod
     def _sanitize_messages_for_log(messages: List[Dict]) -> List[Dict]:
         """Strip heavy image base64 payloads from messages before logging."""
@@ -572,6 +268,31 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return []
         return []
 
+    @staticmethod
+    def _call_cost(
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> CallQuote:
+        """USD and the rates behind it, from one catalog read (GH #89, #1190).
+
+        Cache tokens are priced at their own rates. Any lookup failure is
+        unpriced: null cost, null rates, null fetch time.
+        """
+        try:
+            return quote_call(
+                model,
+                "anthropic",
+                int(input_tokens or 0),
+                int(output_tokens or 0),
+                cache_read_tokens=int(cache_read_tokens or 0),
+                cache_creation_tokens=int(cache_creation_tokens or 0),
+            )
+        except Exception:
+            return CallQuote.unpriced()
+
     def _persist_interaction(
         self,
         *,
@@ -592,11 +313,14 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         duration_ms: int = 0,
         error: Optional[str] = None,
         interaction_id: Optional[str] = None,
+        quote: Optional[CallQuote] = None,
     ) -> None:
         """Fire-and-forget insert of an LLMInteractionLog row.
 
         Runs in the calling thread; failures are logged but never re-raised
-        so persistence can never break the request path.
+        so persistence can never break the request path. ``quote`` is the
+        single catalog read that priced the call. When the caller has not
+        priced it yet, this reads the catalog once and stores that result.
         """
         try:
             from core.storage.connection import get_db_manager
@@ -612,32 +336,14 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             tool_calls = [b for b in blocks if b["type"] == "tool_use"]
             tool_results_in = self._extract_prior_tool_results(request_messages)
 
-            try:
-                # GH #89: use the model registry for per-provider pricing.
-                # #184 Phase 3: include cache tokens so reads (0.1×) and
-                # writes (1.25×) are priced correctly instead of being
-                # treated as full-rate input.
-                from core.llm.cost.calls import compute_call_cost
-
-                cost_usd = compute_call_cost(
+            if quote is None:
+                quote = self._call_cost(
                     model,
-                    "anthropic",
-                    int(input_tokens or 0),
-                    int(output_tokens or 0),
-                    cache_read_tokens=int(cache_read_tokens or 0),
-                    cache_creation_tokens=int(cache_creation_tokens or 0),
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
                 )
-            except Exception:
-                cost_usd = 0.0
-
-            # #186: capture which Bifrost VK serviced this call so we can
-            # group spend per-VK in analytics. Empty in dev / bypass mode.
-            try:
-                from core.llm.cost.budget import get_active_vk
-
-                _vk = get_active_vk()
-            except Exception:
-                _vk = None
 
             row = LLMInteractionLog(
                 # Caller-supplied interaction_id (#185 Bifrost correlation)
@@ -661,20 +367,22 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 output_tokens=int(output_tokens or 0),
                 cache_read_tokens=int(cache_read_tokens or 0),
                 cache_creation_tokens=int(cache_creation_tokens or 0),
-                cost_usd=float(cost_usd or 0.0),
+                cost_usd=None if quote.cost_usd is None else float(quote.cost_usd),
+                input_cost_per_token=quote.input_cost_per_token,
+                output_cost_per_token=quote.output_cost_per_token,
+                cache_read_cost_per_token=quote.cache_read_cost_per_token,
+                cache_write_cost_per_token=quote.cache_write_cost_per_token,
+                rates_fetched_at=quote.rates_fetched_at,
                 duration_ms=int(duration_ms or 0),
                 error=error,
-                virtual_key_id=_vk,
+                # Never the key. Older rows stored it; the migration nulls them (#1268).
+                virtual_key_id=None,
             )
             db_manager = get_db_manager()
             with db_manager.session_scope() as session:
                 session.add(row)
         except Exception as exc:
             logger.warning(f"LLMInteractionLog persist failed (non-fatal): {exc}")
-
-    # Back-compat class attributes — delegated to ContextManager.
-    TOOL_RESPONSE_BUDGETS: Dict[str, int] = ContextManager.TOOL_RESPONSE_BUDGETS
-    MAX_TOOL_RESPONSE_TOKENS = ContextManager.MAX_TOOL_RESPONSE_TOKENS
 
     def chat(
         self,
@@ -693,18 +401,23 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return None
 
         messages = list(context or []) + [{"role": "user", "content": message}]
-        effective_system_prompt = (
-            system_prompt if system_prompt is not None else self.default_system_prompt
-        )
+        # Minted once: sent as the x-bf-lh-* header (Bifrost records it as the
+        # log entry's custom metadata) and written to the row below, so the
+        # two stores can be joined (#185).
+        interaction_id = str(uuid.uuid4())
+        extra_headers = bifrost_headers(interaction_id)
+        # ANTHROPIC_BASE_URL points this client off Bifrost (clients.py).
+        # x-bf-vk is a Bifrost header; do not send the key anywhere else.
+        if get_settings().anthropic_base_url.strip():
+            extra_headers.pop("x-bf-vk", None)
         api_kwargs: Dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "messages": messages,
-            # Correlates the Bifrost LogEntry with the row persisted below.
-            "extra_headers": {"x-bf-lh-vigil-interaction-id": str(uuid.uuid4())},
+            "extra_headers": extra_headers,
         }
-        if effective_system_prompt:
-            api_kwargs["system"] = effective_system_prompt
+        if system_prompt:
+            api_kwargs["system"] = system_prompt
 
         started = time.monotonic()
         try:
@@ -713,252 +426,52 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             logger.error(f"Error in Claude chat: {exc}")
             raise
 
+        duration_s = time.monotonic() - started
         usage = getattr(response, "usage", None)
+        response_model = getattr(response, "model", model)
+        input_tokens = (getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        output_tokens = (getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        cache_read = (getattr(usage, "cache_read_input_tokens", 0) or 0) if usage else 0
+        cache_creation = (
+            (getattr(usage, "cache_creation_input_tokens", 0) or 0) if usage else 0
+        )
+        # Priced once and shared by the log row and the GenAI instruments
+        # (#894, #1190). A second catalog read would re-fire the
+        # pricing-unknown counter and could stamp a different fetch.
+        quote = self._call_cost(
+            response_model, input_tokens, output_tokens, cache_read, cache_creation
+        )
         self._persist_interaction(
             session_id=session_id,
             agent_id=agent_id,
             investigation_id=investigation_id,
-            model=getattr(response, "model", model),
-            system_prompt=effective_system_prompt,
+            model=response_model,
+            system_prompt=system_prompt,
             request_messages=messages,
             response_content=list(response.content) if response.content else [],
             thinking_enabled=False,
             thinking_budget=None,
             stop_reason=getattr(response, "stop_reason", None),
-            input_tokens=getattr(usage, "input_tokens", 0) if usage else 0,
-            output_tokens=getattr(usage, "output_tokens", 0) if usage else 0,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            duration_ms=int(duration_s * 1000),
+            interaction_id=interaction_id,
+            quote=quote,
+        )
+        # Direct-SDK path: never enters LLMRouter.dispatch, so this is the
+        # only record for the call.
+        record_llm_call(
+            model=response_model,
+            provider="anthropic",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            duration_s=duration_s,
+            cost_usd=quote.cost_usd,
         )
 
         extracted = self._extract_content_blocks(response.content)
         return extracted if isinstance(extracted, str) else json.dumps(extracted)
-
-    def analyze_finding(self, finding: Dict) -> str:
-        """
-        Analyze a security finding using Claude.
-
-        Args:
-            finding: Finding dictionary.
-
-        Returns:
-            Analysis text.
-        """
-        system_prompt = (
-            "You are a security analyst helping to analyze security findings. "
-            "Provide clear, actionable analysis of security findings including "
-            "threat assessment, recommended actions, and context."
-        )
-
-        # Build a clean copy: drop embedding and strip None values for a cleaner prompt
-        clean = {k: v for k, v in finding.items() if v is not None and k != "embedding"}
-        finding_text = json.dumps(clean, indent=2, default=str)
-
-        message = f"Analyze this security finding:\n\n{finding_text}\n\nProvide a detailed analysis."
-
-        return self.chat(message, system_prompt=system_prompt, model=DEFAULT_MODEL)
-
-    async def generate_event_analysis(
-        self,
-        event_data: Dict,
-        related_events: List[Dict],
-        finding_data: Optional[Dict] = None,
-    ) -> Dict[str, Any]:
-        """
-        Generate comprehensive incident analysis for a timeline event.
-
-        This method provides AI-powered analysis for SOC analysts to quickly understand
-        security events in context.
-
-        Args:
-            event_data: The main event data
-            related_events: List of related events in the time window
-            finding_data: Optional associated finding data
-
-        Returns:
-            Dictionary with analysis fields:
-            - incident_summary: Plain language summary of what happened
-            - attack_narrative: Story of the attack based on event sequence
-            - entity_analysis: Explanation of entity relationships
-            - threat_assessment: Risk level and severity justification
-            - investigation_priorities: What to investigate next
-            - response_recommendations: Immediate recommended actions
-            - timeline_correlation: How this event fits in the timeline
-            - confidence_score: Confidence in the analysis (0.0-1.0)
-        """
-        system_prompt = """You are an expert SOC analyst providing incident analysis for timeline events.
-
-Your analysis should help SOC analysts quickly understand:
-- What happened in this security event
-- How it relates to other events
-- What entities (IPs, hosts, users) are involved
-- What threat it represents
-- What to investigate next
-- What actions to take
-
-Provide clear, actionable analysis in JSON format. Be concise but thorough.
-Focus on practical insights that help with investigation and response."""
-
-        # Prepare event context
-        event_time = event_data.get("start", "")
-        event_type = event_data.get("type", "unknown")
-        event_severity = event_data.get("severity", "unknown")
-
-        # Build context about entities (handles both singular and plural field formats)
-        entities_summary = ""
-        if finding_data and finding_data.get("entity_context"):
-            entity_ctx = finding_data["entity_context"]
-            entities_list = []
-            src_ips = entity_ctx.get("src_ips") or []
-            if not src_ips and entity_ctx.get("src_ip"):
-                src_ips = [entity_ctx["src_ip"]]
-            dst_ips = entity_ctx.get("dst_ips") or entity_ctx.get("dest_ips") or []
-            if not dst_ips and entity_ctx.get("dst_ip"):
-                dst_ips = [entity_ctx["dst_ip"]]
-            hostnames = entity_ctx.get("hostnames") or []
-            if not hostnames and entity_ctx.get("hostname"):
-                hostnames = [entity_ctx["hostname"]]
-            users = entity_ctx.get("users") or entity_ctx.get("usernames") or []
-            if not users and entity_ctx.get("user"):
-                users = [entity_ctx["user"]]
-            if src_ips:
-                entities_list.append(
-                    f"Source IPs: {', '.join(str(ip) for ip in src_ips[:5])}"
-                )
-            if dst_ips:
-                entities_list.append(
-                    f"Destination IPs: {', '.join(str(ip) for ip in dst_ips[:5])}"
-                )
-            if hostnames:
-                entities_list.append(
-                    f"Hosts: {', '.join(str(h) for h in hostnames[:5])}"
-                )
-            if users:
-                entities_list.append(f"Users: {', '.join(str(u) for u in users[:5])}")
-            entities_summary = "\n".join(entities_list)
-
-        # Build related events context
-        related_summary = ""
-        if related_events:
-            related_summary = (
-                f"\n{len(related_events)} related events in time window:\n"
-            )
-            for i, re in enumerate(related_events[:10], 1):
-                re_time = re.get("start", "")
-                re_sev = re.get("severity", "unknown")
-                re_content = re.get("content", "")[:100]
-                related_summary += f"{i}. [{re_sev}] {re_time} - {re_content}\n"
-
-        # Build finding context
-        finding_summary = ""
-        if finding_data:
-            desc = finding_data.get("description") or "N/A"
-            finding_summary = f"""
-Associated Finding:
-- ID: {finding_data.get('finding_id') or 'N/A'}
-- Severity: {finding_data.get('severity') or 'unknown'}
-- Data Source: {finding_data.get('data_source') or 'unknown'}
-- Anomaly Score: {float(finding_data.get('anomaly_score') or 0)}
-- Description: {desc[:200]}
-"""
-            mitre_preds = finding_data.get("mitre_predictions") or {}
-            if mitre_preds:
-                top_techniques = sorted(
-                    mitre_preds.items(), key=lambda x: float(x[1] or 0), reverse=True
-                )[:3]
-                finding_summary += f"\nTop MITRE Techniques: {', '.join([f'{t[0]} ({float(t[1] or 0):.2f})' for t in top_techniques])}"
-
-        prompt = f"""Analyze this security event and provide comprehensive incident analysis.
-
-EVENT DETAILS:
-- Time: {event_time}
-- Type: {event_type}
-- Severity: {event_severity}
-- Content: {event_data.get('content', '')}
-
-{finding_summary}
-
-ENTITIES INVOLVED:
-{entities_summary if entities_summary else 'No entity information available'}
-
-RELATED EVENTS:
-{related_summary if related_summary else 'No related events in time window'}
-
-Provide analysis in the following JSON format:
-{{
-  "incident_summary": "2-3 sentence plain language summary of what happened",
-  "attack_narrative": "Story explaining the attack sequence and progression",
-  "entity_analysis": "Explanation of how entities are connected and their roles",
-  "threat_assessment": "Risk level assessment and severity justification",
-  "investigation_priorities": ["Priority 1", "Priority 2", "Priority 3"],
-  "response_recommendations": ["Action 1", "Action 2", "Action 3"],
-  "timeline_correlation": "How this event fits in the bigger picture",
-  "confidence_score": 0.85
-}}
-
-Provide only the JSON, no additional text."""
-
-        try:
-            # Use chat method to get analysis
-            response = self.chat(
-                prompt, system_prompt=system_prompt, model=DEFAULT_MODEL
-            )
-
-            # Parse JSON response
-            # Claude might wrap it in markdown code blocks, so handle that
-            response_text = response.strip()
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
-
-            analysis = json.loads(response_text)
-
-            # Validate required fields
-            required_fields = [
-                "incident_summary",
-                "attack_narrative",
-                "entity_analysis",
-                "threat_assessment",
-                "investigation_priorities",
-                "response_recommendations",
-                "timeline_correlation",
-            ]
-            for field in required_fields:
-                if field not in analysis:
-                    analysis[field] = f"Analysis for {field} not available"
-
-            if "confidence_score" not in analysis:
-                analysis["confidence_score"] = 0.7
-
-            return analysis
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse event analysis JSON: {e}")
-            # Return fallback analysis
-            return {
-                "incident_summary": "AI analysis generated but could not be parsed properly.",
-                "attack_narrative": "Event analysis is available but needs manual review.",
-                "entity_analysis": "Entity relationships detected in event data.",
-                "threat_assessment": f"Event severity: {event_severity}",
-                "investigation_priorities": [
-                    "Review event details",
-                    "Check entity context",
-                    "Correlate with related events",
-                ],
-                "response_recommendations": [
-                    "Investigate further",
-                    "Monitor related systems",
-                    "Review security logs",
-                ],
-                "timeline_correlation": "Event occurred in the specified time window with related security events.",
-                "confidence_score": 0.5,
-                "error": "JSON parsing failed",
-            }
-        except Exception as e:
-            logger.error(f"Error generating event analysis: {e}")
-            raise
-
-    # Agent SDK Methods

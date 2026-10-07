@@ -45,6 +45,7 @@ class PersistentServerSession:
         self.stdio_context = None
         self.session_context = None
         self.is_connected = False
+        self.last_error: Optional[str] = None
         self.lock = asyncio.Lock()
 
     async def connect(self) -> bool:
@@ -76,6 +77,7 @@ class PersistentServerSession:
                 return True
 
             except Exception as e:
+                self.last_error = f"{type(e).__name__}: {e}"
                 logger.error(f"Failed to connect to {self.server_name}: {e}")
                 await self._cleanup()
                 return False
@@ -139,7 +141,7 @@ class PersistentServerSession:
                         content_list.append({"type": "text", "text": str(content_item)})
 
                 return {
-                    "error": result.isError if hasattr(result, "isError") else False,
+                    "error": result.is_error,
                     "content": content_list,
                 }
 
@@ -198,19 +200,29 @@ class MCPClient:
         self.last_missing_credentials: Dict[str, List[str]] = {}
 
     async def connect_to_server(
-        self, server_name: str, persistent: bool = True
+        self,
+        server_name: str,
+        persistent: bool = True,
+        skip_enabled_check: bool = False,
     ) -> bool:
         """
         Connect to an MCP server, cache its tools, and optionally maintain persistent connection.
 
-        Only connects if the server is enabled in the MCP service. On failure, the
+        Only connects if the server is enabled in the MCP service, unless
+        ``skip_enabled_check`` is set for a temporary pre-enable probe. On failure, the
         exception message is recorded on ``self.last_errors[server_name]`` so the
         Settings → MCP UI can surface *why* a connection failed (missing binary,
         credentials, package not installed) instead of a generic "Failed to connect".
 
+        A server that is already connected returns here without calling ``list_tools``.
+        Callers that need a fresh handshake have to list tools on that session themselves.
+
         Args:
             server_name: Name of the server to connect to
             persistent: If True, maintain persistent connection for reuse
+            skip_enabled_check: Probe a disabled server anyway. The disabled
+                return below records no error, so a test would look like a
+                silent failure that never contacted the process.
 
         Returns:
             True if successful, False otherwise
@@ -236,8 +248,11 @@ class MCPClient:
             self.last_errors[server_name] = "Server not present in mcp-config.json"
             return False
 
-        # Skip disabled servers
-        if not self.mcp_service.is_server_enabled(server_name):
+        # Skip disabled servers. A pre-enable probe sets skip_enabled_check
+        # so this return — False with no last_error — is not the test result.
+        if not skip_enabled_check and not self.mcp_service.is_server_enabled(
+            server_name
+        ):
             logger.debug(f"Server {server_name} is disabled, skipping connection")
             return False
 
@@ -284,8 +299,12 @@ class MCPClient:
                         server_name, server_params
                     )
 
-                # Connect
+                # Connect. The session logs and swallows the spawn error;
+                # keep it on last_errors so a probe can report it.
                 if not await self.persistent_sessions[server_name].connect():
+                    err = self.persistent_sessions[server_name].last_error
+                    if err:
+                        self.last_errors[server_name] = err
                     return False
 
                 # Get tools from the persistent session
@@ -303,7 +322,7 @@ class MCPClient:
             self.tools_cache[server_name] = []
             for tool in tools_result.tools:
                 # Get input schema - handle both dict and object formats
-                input_schema = tool.inputSchema
+                input_schema = tool.input_schema
                 if hasattr(input_schema, "model_dump"):
                     input_schema = input_schema.model_dump()
                 elif hasattr(input_schema, "dict"):
@@ -331,7 +350,7 @@ class MCPClient:
         except Exception as e:
             # Preserve the exception text so the UI can surface the real
             # reason (e.g. "FileNotFoundError: uvx", "ModuleNotFoundError:
-            # mempalace", "missing env var GITHUB_TOKEN") instead of a
+            # mcp", "missing env var GITHUB_TOKEN") instead of a
             # generic "Failed to connect".
             self.last_errors[server_name] = f"{type(e).__name__}: {e}"
             logger.error(f"Failed to connect to {server_name}: {e}")
@@ -546,14 +565,23 @@ class MCPClient:
         try:
             # Apply timeout
             result = await asyncio.wait_for(_call_tool_persistent(), timeout=timeout)
+            is_err = bool(result.get("error")) if isinstance(result, dict) else False
+            if is_err:
+                _detail = next(
+                    (c["text"] for c in result.get("content") or [] if c.get("text")),
+                    "",
+                )[:200]
+                logger.warning(
+                    "Tool call %s.%s returned an error: %s",
+                    server_name,
+                    tool_name,
+                    _detail,
+                )
             try:
                 if _mcp_span is not None:
-                    is_err = (
-                        result.get("error", False)
-                        if isinstance(result, dict)
-                        else False
-                    )
                     _mcp_span.set_attribute("vigil.tool.success", not is_err)
+                    if is_err and _SC is not None:
+                        _mcp_span.set_status(_SC.ERROR, _detail)
                     _mcp_span.set_attribute(
                         "vigil.tool.output_size", len(_json.dumps(result, default=str))
                     )
@@ -682,7 +710,7 @@ _process_client: Optional[MCPClient] = None
 def build_mcp_client() -> Optional[MCPClient]:
     """Build a client, or None when the MCP SDK is not installed."""
     if not MCP_AVAILABLE:
-        logger.warning("MCP SDK not available. Install with: pip install mcp")
+        logger.error("MCP SDK not available. Install with: pip install mcp")
         return None
     return MCPClient(MCPService())
 

@@ -1,8 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 // preflight is OFF: the console's own reset lives in styles.css under
 // @layer base, so Tailwind's global reset would fight it. Color tokens point at
-// the CSS variables defined on .soc-console, keeping the accent runtime-swappable
-// from Settings -> Appearance.
+// the CSS variables defined on .soc-console, which alias the design tokens.
 module.exports = {
   content: ['./src/**/*.{ts,tsx}'],
   corePlugins: { preflight: false },
@@ -40,11 +39,11 @@ module.exports = {
         lg: '13px',
       },
       fontFamily: {
-        sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
-        mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+        sans: ['var(--font-ui)'],
+        mono: ['var(--font-mono)'],
       },
       boxShadow: {
-        panel: '0 1px 0 #ffffff06 inset, 0 8px 24px -16px #000000cc',
+        panel: '0 8px 24px -16px var(--shadow)',
       },
     },
   },

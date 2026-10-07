@@ -1,10 +1,12 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } from "electron";
+import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, clipboard } from "electron";
 import { spawn, execFileSync, ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import * as http from "http";
 import * as crypto from "crypto";
 import * as readline from "readline";
+import { openAppLog, captureToFile, snapshotContainerLogs } from "./logkeep";
+import { supportCommand } from "./supportcmd";
 
 const BACKEND_URL = "http://127.0.0.1:6987";
 const HEALTH_URL = `${BACKEND_URL}/api/health`;
@@ -75,6 +77,7 @@ const configPath = () => path.join(app.getPath("userData"), "config.json");
 interface Config {
   repoRoot?: string;
   jwtSecret?: string;
+  agentInternalToken?: string;
 }
 
 function readConfig(): Config {
@@ -104,6 +107,16 @@ function jwtSecret(): string {
   const secret = crypto.randomBytes(48).toString("base64url");
   writeConfig({ jwtSecret: secret });
   return secret;
+}
+
+// Shared secret between the backend and the agent containers on /internal; the
+// backend refuses those calls without one, so no workflow could run.
+function agentInternalToken(): string {
+  const saved = readConfig().agentInternalToken;
+  if (saved) return saved;
+  const token = crypto.randomBytes(48).toString("base64url");
+  writeConfig({ agentInternalToken: token });
+  return token;
 }
 
 /* ---------------- locating the Vigil source tree ---------------- */
@@ -357,7 +370,13 @@ function augmentedEnv(): NodeJS.ProcessEnv {
   return { ...process.env, PATH: loginShellPath() };
 }
 
+// Set at startup once app.getPath("logs") is usable; no-op until then.
+let appLog: (line: string) => void = () => {};
+
 function sendSplash(channel: string, payload: unknown): void {
+  if ((channel === "log" || channel === "error") && typeof payload === "string") {
+    appLog(channel === "error" ? `ERROR ${payload}` : payload);
+  }
   if (splashWindow && !splashWindow.isDestroyed()) {
     splashWindow.webContents.send(channel, payload);
   }
@@ -426,12 +445,17 @@ function runScript(name: string, args: string[] = [], doneWhen?: string): Promis
   });
 }
 
-// VIGIL_VERSION pins the backend image to this app's version so the two can
-// never drift apart.
+// VIGIL_VERSION pins the backend and agent images to this app's version so
+// they can never drift apart.
 const spawnCompose = (args: string[]) =>
   spawn("docker", args, {
     cwd: standaloneDir(),
-    env: { ...augmentedEnv(), VIGIL_VERSION: app.getVersion(), JWT_SECRET_KEY: jwtSecret() },
+    env: {
+      ...augmentedEnv(),
+      VIGIL_VERSION: app.getVersion(),
+      JWT_SECRET_KEY: jwtSecret(),
+      AGENT_INTERNAL_TOKEN: agentInternalToken(),
+    },
   });
 
 // Run `docker compose …`, streaming progress to the splash.
@@ -465,16 +489,32 @@ async function stopStack(keepDocker = false): Promise<void> {
 async function openLogs(): Promise<void> {
   if (mode !== "standalone") return void shell.openPath(path.join(repoRoot!, "logs"));
   const file = path.join(app.getPath("temp"), "vigil-logs.txt");
-  const text = await new Promise<string>((resolve) => {
-    const proc = spawnCompose(composeArgs("logs", "--tail", "500", "--no-color"));
-    let out = "";
-    proc.stdout!.on("data", (d) => (out += d));
-    proc.stderr!.on("data", (d) => (out += d));
-    proc.on("close", () => resolve(out));
-    proc.on("error", (e) => resolve(String(e)));
-  });
-  fs.writeFileSync(file, text || "No container logs yet.");
+  const r = await captureToFile(spawnCompose, composeArgs("logs", "--tail", "500", "--no-color"), file);
+  if (r.error) fs.writeFileSync(file, String(r.error));
+  else if (!r.bytes) fs.writeFileSync(file, "No container logs yet.");
   await shell.openPath(file);
+}
+
+// Shows the command for this install and offers to copy it. Never runs the
+// script: the bundle is for the user to produce and review in a terminal.
+async function showSupportCommand(): Promise<void> {
+  const dir = app.isPackaged
+    ? path.join(process.resourcesPath, "vigil-support")
+    : path.join(repoRoot ?? path.join(__dirname, "..", "..", ".."), "scripts", "vigil-support");
+  const command = supportCommand(dir);
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    title: "Support Bundle",
+    message: "Support bundle command",
+    detail:
+      "Run this in a terminal. It writes one redacted .tar.gz to the current " +
+      "directory and uploads nothing. Re-run with sudo to include logs that need elevation.\n\n" +
+      command,
+    buttons: ["Copy", "Close"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) clipboard.writeText(command);
 }
 
 // The pinned backend image is the large one and the one that changes per
@@ -543,6 +583,22 @@ async function bringUpStandalone(): Promise<boolean> {
   }
 
   phase("services", "start");
+  // Existing volumes skip initdb. Apply SQL (including vigil_app) before the
+  // backend logs in as that role, or `up --wait` deadlocks on /api/health.
+  if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres"))) !== 0) {
+    phase("services", "fail");
+    sendSplash("error", "The Vigil containers did not start. See the log above.");
+    return false;
+  }
+  if (
+    (await runCompose(
+      composeArgs("run", "--rm", "--no-deps", "--entrypoint", "sh", "db-seed", "/apply.sh"),
+    )) !== 0
+  ) {
+    phase("services", "fail");
+    sendSplash("error", "Could not prepare the database. See the log above.");
+    return false;
+  }
   if ((await runCompose(composeArgs("up", "-d", "--wait"))) !== 0) {
     phase("services", "fail");
     sendSplash("error", "The Vigil containers did not start. See the log above.");
@@ -725,6 +781,7 @@ function trayTemplate(): Electron.MenuItemConstructorOptions[] {
       },
     },
     { label: "Open Logs", click: () => openLogs() },
+    { label: "Support Bundle Command…", click: () => void showSupportCommand() },
     { type: "separator" },
     { label: "Quit Vigil", click: () => app.quit() },
   ];
@@ -761,6 +818,7 @@ ipcMain.handle("retry", async () => {
 ipcMain.handle("quit", () => app.quit());
 
 app.whenReady().then(async () => {
+  appLog = openAppLog(app.getPath("logs"));
   // Order matters: the external apps we drive must exist, and we must know
   // where the source tree is, before any script can run.
   if (!(await checkDependencies())) return app.exit(1);
@@ -802,8 +860,17 @@ app.on("before-quit", async (e) => {
   const teardown = (async () => {
     // `down` without -v: containers go, the volumes holding cases and
     // credentials stay.
-    if (mode === "standalone") await runCompose(composeArgs("down"));
-    else await runScript("app_down.sh", ["--stop-docker"]);
+    if (mode === "standalone") {
+      // `down` removes the containers and their logs, so save them first. The
+      // 5 s cap leaves most of the 15 s quit deadline for `down` itself.
+      await snapshotContainerLogs(
+        spawnCompose,
+        composeArgs("logs", "--no-color", "--timestamps"),
+        app.getPath("logs"),
+        5000,
+      ).catch(() => {});
+      await runCompose(composeArgs("down"));
+    } else await runScript("app_down.sh", ["--stop-docker"]);
   })().catch(() => {}); // best effort
   const deadline = new Promise((r) => setTimeout(r, 15000)); // a wedged daemon must not trap the quit
   await Promise.race([teardown, deadline]);

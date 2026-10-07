@@ -1,26 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import '../../../../../docs/design/console/tokens/tokens.css'
 import '../../styles.css'
+import '../../shell/shell.css'
 import { useAuth } from '../../contexts/AuthContext'
 import { bootstrapApi } from '../../services/api'
 import { Icon } from '../../shared/icons'
 import { VigilLogo } from '../../shared/VigilLogo'
-import { accentVars } from '../../shared/accent'
-import { SocThemeProvider, useSocTheme } from '../../shell/theme'
+import { useColorScheme } from '../../contexts/ColorSchemeContext'
 
 export default function LoginScreen() {
-  // outside the console shell, so it brings its own theme provider
-  return (
-    <SocThemeProvider>
-      <LoginInner />
-    </SocThemeProvider>
-  )
-}
-
-function LoginInner() {
   const navigate = useNavigate()
   const { login } = useAuth()
-  const { scheme, setScheme, accent } = useSocTheme()
+  const { scheme, setScheme } = useColorScheme()
 
   const [usernameOrEmail, setUsernameOrEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -93,9 +85,8 @@ function LoginInner() {
 
   return (
     <div
-      className="soc-console auth-root"
+      className={`soc-console auth-root ${scheme === 'light' ? 'vg-light' : 'vg-dark'}`}
       data-theme={scheme}
-      style={accentVars(accent.a, accent.b)}
     >
       <div className="auth" data-screen-label="Sign in">
         <button

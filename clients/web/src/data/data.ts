@@ -1,16 +1,20 @@
 import type { IconName } from '../shared/icons'
 
 export type ConsoleScreenKey =
+  | 'overview'
+  | 'triage'
   | 'dashboard'
+  | 'home'
   | 'cases'
   | 'metrics'
   | 'analytics'
   | 'decisions'
   | 'workflows'
   | 'autoops'
+  | 'health'
   | 'settings'
 
-/** A rail item carrying a gate only renders when the gate is satisfied. */
+/** A nav item carrying a gate only renders when the gate is satisfied. */
 export interface NavGate {
   /** an integration id, matched against the enabled-integrations list */
   integration?: string
@@ -18,21 +22,25 @@ export interface NavGate {
 }
 
 /** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
- *  made it vanish confusingly — and Timesketch has no screen yet. */
+ *  made it vanish confusingly. */
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
+  ['home', 'Home', 'home'],
+  ['graph', 'Overview', 'overview'],
+  ['clock', 'Triage', 'triage'],
   ['grid', 'Dashboard', 'dashboard'],
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
   ['pie', 'Analytics', 'analytics'],
   ['brain', 'AI Decisions', 'decisions'],
-  ['flow', 'Workflows & Skills', 'workflows'],
+  ['flow', 'Agents & workflows', 'workflows'],
   ['bot', 'Auto Ops', 'autoops'],
+  ['chart', 'Health', 'health'],
   ['gear', 'Settings', 'settings'],
 ]
 
 export interface Finding {
   id: string
-  sev: 'Critical' | 'High' | 'Medium' | 'Low'
+  sev: 'Critical' | 'High' | 'Medium' | 'Low' | 'Unrated'
   tech: string
   conf: number
   tactic: string
@@ -42,20 +50,34 @@ export interface Finding {
   time: string
   /** `time` above is display-only and not safely comparable */
   ts?: number
-  score: number
+  score: number | null
   status: 'open' | 'investigating' | 'closed'
   /** entity_context keys the fixed fields don't cover. Sources disagree about
    *  these (CrowdStrike sends device_id and no dest_ips, Splunk the reverse), so
    *  they are carried through and rendered as columns derived from the rows. */
   extra?: Record<string, string>
+  /** addresses on this finding an analyst has excluded; non-empty means the
+   *  queue hides it by default */
+  excludedIps?: string[]
 }
+
+export const MISSING_FINDING_SCORE = 'Not provided' as const
+export const MISSING_FINDING_SEVERITY = 'Unrated' as const
+export const MISSING_FINDING_TIME = 'Source time unavailable' as const
 
 export interface CaseRow {
   id: string
   title: string
   desc?: string
-  status: 'open' | 'investigating' | 'closed'
-  prio: 'critical' | 'high' | 'medium' | 'low'
+  /** Combined state when the queue sent one, otherwise the case status. */
+  status: string
+  prio: 'critical' | 'high' | 'medium' | 'low' | 'unknown'
+  workflowId?: string
+  iterations?: number | null
+  costUsd?: number | null
+  maxCostUsd?: number | null
+  budgetHealth?: string | null
+  comments?: number
   owner: string
   ownerName: string
   findings: number
@@ -67,15 +89,21 @@ export interface CaseRow {
   /** display strings can't sort */
   updatedTs?: number
   createdTs?: number
+  /** True when this queue row is in the same needs-you set that sorted it first. */
+  needsYou?: boolean
 }
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
+  overview: ['Overview', 'What arrived today and where it went'],
+  triage: ['Triage', 'What intake did with what arrived'],
   dashboard: ['Dashboard', 'Security operations overview'],
+  home: ['Home', 'What needs a person'],
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],
   analytics: ['Analytics Dashboard', 'Security operations analytics'],
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
-  workflows: ['Workflows & Skills', 'Pre-built multi-agent workflows for common SOC operations'],
+  workflows: ['Agents & workflows', 'How Vigil works a case. Workflows are the plays, agents do the work, skills are what agents know how to do, and tool permissions decide what they may change on their own.'],
   autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],
+  health: ['Health', 'Operational health — LLM spend, approvals waiting, recent workflow runs, probe scores'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

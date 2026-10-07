@@ -6,7 +6,7 @@ const DELIMITER = /<\/?vigil:/gi;
 
 // Truncation is marked rather than silent: output that just stops is
 // indistinguishable from output that was genuinely that short.
-function clamp(text: string, cap: number): string {
+export function clamp(text: string, cap: number): string {
   return text.length <= cap ? text : `${text.slice(0, cap)} [truncated ${text.length - cap} chars]`;
 }
 

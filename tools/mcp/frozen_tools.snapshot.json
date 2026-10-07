@@ -1,0 +1,731 @@
+{
+  "add_case_evidence": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "description": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Description"
+      },
+      "evidence_type": {
+        "title": "Evidence Type",
+        "type": "string"
+      },
+      "file_path": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "File Path"
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "source": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source"
+      },
+      "tags": {
+        "anyOf": [
+          {
+            "items": {},
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Tags"
+      }
+    },
+    "required": [
+      "case_id",
+      "evidence_type",
+      "name"
+    ],
+    "title": "add_case_evidenceArguments",
+    "type": "object"
+  },
+  "add_case_ioc": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "confidence": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Confidence"
+      },
+      "context": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Context"
+      },
+      "ioc_type": {
+        "title": "Ioc Type",
+        "type": "string"
+      },
+      "source": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source"
+      },
+      "tags": {
+        "anyOf": [
+          {
+            "items": {},
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Tags"
+      },
+      "threat_level": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Threat Level"
+      },
+      "value": {
+        "title": "Value",
+        "type": "string"
+      }
+    },
+    "required": [
+      "case_id",
+      "ioc_type",
+      "value"
+    ],
+    "title": "add_case_iocArguments",
+    "type": "object"
+  },
+  "add_finding_to_case": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "finding_id": {
+        "title": "Finding Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "case_id",
+      "finding_id"
+    ],
+    "title": "add_finding_to_caseArguments",
+    "type": "object"
+  },
+  "approve_action": {
+    "properties": {
+      "action_id": {
+        "title": "Action Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action_id"
+    ],
+    "title": "approve_actionArguments",
+    "type": "object"
+  },
+  "bulk_add_iocs": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "iocs": {
+        "items": {},
+        "title": "Iocs",
+        "type": "array"
+      }
+    },
+    "required": [
+      "case_id",
+      "iocs"
+    ],
+    "title": "bulk_add_iocsArguments",
+    "type": "object"
+  },
+  "close_case": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "closure_category": {
+        "title": "Closure Category",
+        "type": "string"
+      },
+      "closure_notes": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Closure Notes"
+      },
+      "executive_summary": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Executive Summary"
+      },
+      "false_positive_reason": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "False Positive Reason"
+      },
+      "lessons_learned": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Lessons Learned"
+      },
+      "recommendations": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Recommendations"
+      },
+      "root_cause": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Root Cause"
+      }
+    },
+    "required": [
+      "case_id",
+      "closure_category"
+    ],
+    "title": "close_caseArguments",
+    "type": "object"
+  },
+  "create_case": {
+    "properties": {
+      "assignee": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Assignee"
+      },
+      "description": {
+        "default": "",
+        "title": "Description",
+        "type": "string"
+      },
+      "finding_ids": {
+        "anyOf": [
+          {
+            "items": {},
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Finding Ids"
+      },
+      "priority": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Priority"
+      },
+      "severity": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Severity"
+      },
+      "status": {
+        "default": "new",
+        "title": "Status",
+        "type": "string"
+      },
+      "tags": {
+        "anyOf": [
+          {
+            "items": {},
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Tags"
+      },
+      "title": {
+        "title": "Title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "title": "create_caseArguments",
+    "type": "object"
+  },
+  "get_approval_action": {
+    "properties": {
+      "action_id": {
+        "title": "Action Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action_id"
+    ],
+    "title": "get_approval_actionArguments",
+    "type": "object"
+  },
+  "get_case": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "case_id"
+    ],
+    "title": "get_caseArguments",
+    "type": "object"
+  },
+  "get_case_iocs": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "ioc_type": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ioc Type"
+      }
+    },
+    "required": [
+      "case_id"
+    ],
+    "title": "get_case_iocsArguments",
+    "type": "object"
+  },
+  "get_finding": {
+    "properties": {
+      "finding_id": {
+        "title": "Finding Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "finding_id"
+    ],
+    "title": "get_findingArguments",
+    "type": "object"
+  },
+  "list_approval_actions": {
+    "properties": {
+      "action_type": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Action Type"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Status"
+      }
+    },
+    "title": "list_approval_actionsArguments",
+    "type": "object"
+  },
+  "list_cases": {
+    "properties": {
+      "limit": {
+        "default": 50,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "priority": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Priority"
+      },
+      "severity": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Severity"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Status"
+      }
+    },
+    "title": "list_casesArguments",
+    "type": "object"
+  },
+  "list_findings": {
+    "properties": {
+      "cluster_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Cluster Id"
+      },
+      "data_source": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Data Source"
+      },
+      "limit": {
+        "default": 20,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "min_anomaly_score": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Min Anomaly Score"
+      },
+      "offset": {
+        "default": 0,
+        "title": "Offset",
+        "type": "integer"
+      },
+      "severity": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Severity"
+      },
+      "sort_by": {
+        "default": "timestamp",
+        "title": "Sort By",
+        "type": "string"
+      },
+      "sort_order": {
+        "default": "desc",
+        "title": "Sort Order",
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Status"
+      }
+    },
+    "title": "list_findingsArguments",
+    "type": "object"
+  },
+  "reject_action": {
+    "properties": {
+      "action_id": {
+        "title": "Action Id",
+        "type": "string"
+      },
+      "reason": {
+        "title": "Reason",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action_id",
+      "reason"
+    ],
+    "title": "reject_actionArguments",
+    "type": "object"
+  },
+  "remove_finding_from_case": {
+    "properties": {
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "finding_id": {
+        "title": "Finding Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "case_id",
+      "finding_id"
+    ],
+    "title": "remove_finding_from_caseArguments",
+    "type": "object"
+  },
+  "update_case": {
+    "properties": {
+      "add_note": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Add Note"
+      },
+      "assignee": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Assignee"
+      },
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "description": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Description"
+      },
+      "priority": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Priority"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Status"
+      },
+      "title": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Title"
+      }
+    },
+    "required": [
+      "case_id"
+    ],
+    "title": "update_caseArguments",
+    "type": "object"
+  }
+}

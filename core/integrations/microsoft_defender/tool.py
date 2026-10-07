@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+# Spawned as ``python3 core/integrations/<vendor>/tool.py`` with a narrowed env,
+# so the repo root is not on sys.path and PYTHONPATH is not forwarded. Add it
+# here so the ``core.*`` imports below resolve; otherwise they fail at spawn.
+_REPO_ROOT = str(Path(__file__).resolve().parents[3])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import asyncio
 import json
 import logging
@@ -8,11 +18,12 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+from core.integrations._base.aad_token import TokenError, fetch_client_credentials_token
 from core.integrations._base.config import resolve
+from core.integrations._base.tool_result import run_tool
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 
 logger = logging.getLogger(__name__)
-server = Server("microsoft-defender")
 
 
 def result(data):
@@ -20,30 +31,25 @@ def result(data):
 
 
 def get_token():
+    """Access token, or None when credentials are not configured.
+
+    Raises ``TokenError`` when they are configured but the exchange fails.
+    """
     config = resolve(MICROSOFT_DEFENDER)
     tenant = config.get("tenant_id")
     client_id = config.get("client_id")
     client_secret = config.get("client_secret")
     if not all([tenant, client_id, client_secret]):
         return None
-    try:
-        resp = httpx.post(
-            f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "scope": "https://api.securitycenter.microsoft.com/.default",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json().get("access_token")
-    except Exception:
-        return None
+    return fetch_client_credentials_token(
+        "Microsoft Defender",
+        tenant,
+        client_id,
+        client_secret,
+        "https://api.securitycenter.microsoft.com/.default",
+    )
 
 
-@server.list_tools()
 async def handle_list_tools():
     return [
         types.Tool(
@@ -79,9 +85,11 @@ async def handle_list_tools():
     ]
 
 
-@server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None):
-    token = get_token()
+    try:
+        token = get_token()
+    except TokenError as exc:
+        return result({"error": str(exc)})
     if not token:
         return result({"error": "Microsoft Defender not configured"})
 
@@ -134,6 +142,21 @@ async def handle_call_tool(name: str, arguments: dict | None):
         return result({"error": f"Unknown tool: {name}"})
     except Exception as e:
         return result({"error": str(e)})
+
+
+async def _on_list_tools(_ctx, _params):
+    return types.ListToolsResult(tools=await handle_list_tools())
+
+
+async def _on_call_tool(_ctx, params):
+    return await run_tool(handle_call_tool, params)
+
+
+server = Server(
+    "microsoft-defender",
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 
 async def main():

@@ -33,16 +33,12 @@ logger = logging.getLogger(__name__)
 
 
 RESET_TOKEN_PURPOSE = "vigil-password-reset"
-DEFAULT_TTL_SECONDS = 3600  # 1 hour
 
 _USED_TOKEN_PREFIX = "password_reset_used:"
 
 
 def _ttl_seconds() -> int:
-    try:
-        return get_settings().password_reset_ttl_seconds
-    except ValueError:
-        return DEFAULT_TTL_SECONDS
+    return get_settings().password_reset_ttl_seconds
 
 
 def _get_serializer() -> URLSafeTimedSerializer:

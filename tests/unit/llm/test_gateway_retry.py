@@ -18,8 +18,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 from core.llm.cost.budget import BudgetExceeded
-from core.llm.gateway_retry import (EXHAUSTED, RETRYABLE, backoff_s,
-                                    retry_after_s, through_gateway, translate)
+from core.llm.gateway_retry import (
+    ATTEMPTS,
+    EXHAUSTED,
+    RETRYABLE,
+    backoff_s,
+    retry_after_s,
+    through_gateway,
+    translate,
+)
 
 LIMITER = REPO_ROOT / "services" / "agent" / "core" / "limiter.ts"
 
@@ -145,6 +152,36 @@ class TestBackoff:
         assert backoff_s(0, Refused(429, headers={"retry-after": "soon"})) > 0
 
 
+class TestACeilingIsNotAStumble:
+    """A 504 is Bifrost saying the call took longer than it allows, which it will say
+    again just as fast. Retried three times it costs a caller ninety seconds and three
+    upstream generations to learn nothing."""
+
+    @pytest.mark.asyncio
+    async def test_a_ceiling_is_tried_twice_and_not_three_times(self):
+        calls = {"n": 0}
+
+        async def always_over():
+            calls["n"] += 1
+            raise Refused(504)
+
+        with pytest.raises(Refused):
+            await through_gateway(always_over)
+        assert calls["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_a_rate_limit_still_gets_every_attempt(self):
+        calls = {"n": 0}
+
+        async def busy():
+            calls["n"] += 1
+            raise Refused(429)
+
+        with pytest.raises(Refused):
+            await through_gateway(busy)
+        assert calls["n"] == ATTEMPTS
+
+
 class TestTheTwoHalvesAgree:
     """The agent worker applies the same policy in TypeScript. If one changes
     without the other, a 429 behaves differently depending on which process
@@ -157,6 +194,16 @@ class TestTheTwoHalvesAgree:
         listed = re.search(r"RETRYABLE = new Set\(\[([^\]]*)\]\)", self._limiter())
         assert listed, "RETRYABLE not found in limiter.ts"
         assert {int(n) for n in re.findall(r"\d+", listed.group(1))} == set(RETRYABLE)
+
+    # Split out of RETRYABLE on both sides: a ceiling answers identically every attempt,
+    # so three of them buy nothing and cost a caller its whole call in wall clock.
+    def test_both_give_a_ceiling_one_more_attempt_rather_than_three(self):
+        from core.llm.gateway_retry import CEILING
+
+        listed = re.search(r"CEILING = new Set\(\[([^\]]*)\]\)", self._limiter())
+        assert listed, "CEILING not found in limiter.ts"
+        assert {int(n) for n in re.findall(r"\d+", listed.group(1))} == set(CEILING)
+        assert not (CEILING & set(RETRYABLE)), "a status cannot be on both paths"
 
     def test_both_treat_a_spent_budget_as_terminal(self):
         assert f"status === {EXHAUSTED}" in self._limiter()

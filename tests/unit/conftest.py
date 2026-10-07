@@ -31,12 +31,12 @@ from sqlalchemy import text
 # service unit job, which runs `-m "not external_service"` with no Postgres.
 _DB_MARKERS = ("external_service",)
 
-# Mirrors what CI's "Enable Postgres extensions" step installs. Individually
-# tolerant, matching DatabaseManager.create_tables(): an image without pgvector
-# should fail on the CREATE TABLE that needs it, naming the real problem,
+# Mirrors what CI's "Enable Postgres extensions" step installs. Both ship with
+# stock Postgres; pg_trgm is what the findings GIN index (gin_trgm_ops) needs.
+# Individually tolerant, matching DatabaseManager.create_tables(): a missing
+# extension should fail on the CREATE that needs it, naming the real problem,
 # rather than here.
 _EXTENSIONS = (
-    "CREATE EXTENSION IF NOT EXISTS vector",
     "CREATE EXTENSION IF NOT EXISTS pg_trgm",
     'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
 )
@@ -97,6 +97,13 @@ def throwaway_database():
 
     pinned = pytest.MonkeyPatch()
     pinned.setattr(connection_module, "db_config_generation", lambda: 0.0)
+    # Keep it the bare ORM schema. init_database() seeds the default SLA
+    # policies and case templates into empty tables, which the first
+    # DatabaseDataService a test builds would trigger; a test that makes its
+    # own default policy would then find two. Seed tests call it themselves.
+    pinned.setattr(
+        connection_module, "seed_empty_tables", lambda conn, sql=None: ({}, {})
+    )
 
     try:
         for statement in _EXTENSIONS:
@@ -135,3 +142,36 @@ def _isolate_database(request):
     """
     if any(request.node.get_closest_marker(m) for m in _DB_MARKERS):
         request.getfixturevalue("throwaway_database")
+
+
+# Episodic rows, shared because two suites seed them: #732's read tests and
+# #735's grant test. Every one of them reads the whole table, so ordering
+# between tests would otherwise decide what they see.
+@pytest.fixture
+def episodic_session():
+    from core.storage.connection import get_db_session
+    from core.storage.models import (
+        EpisodicDistilMarker,
+        EpisodicGap,
+        EpisodicReadLog,
+        EpisodicSighting,
+        EpisodicVerdict,
+        EpisodicVerdictSource,
+    )
+
+    db = get_db_session()
+    try:
+        for model in (
+            EpisodicVerdictSource,
+            EpisodicVerdict,
+            EpisodicSighting,
+            EpisodicGap,
+            EpisodicDistilMarker,
+            EpisodicReadLog,
+        ):
+            db.query(model).delete()
+        db.commit()
+        yield db
+    finally:
+        db.rollback()
+        db.close()

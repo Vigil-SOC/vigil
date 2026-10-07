@@ -2,6 +2,7 @@
 // the hunt workflow, the checkpoint mirror, and Python's two permitted reads.
 
 import type { BudgetLimits, SpendPayload } from "./budget.js";
+import type { RecallPayload } from "./memory.js";
 
 // Adding a kind is never a migration: kind is text in the table and validated here
 // against a closed union. Changing an existing kind's payload bumps this.
@@ -9,7 +10,12 @@ export const EVENT_SCHEMA_VERSION = 1;
 
 // tally is the conformance workflow, not a product surface: it keeps the harness
 // boundary exercised by something that is not a real domain.
-export const RUN_KINDS = ["hunt", "investigate", "compose", "chat", "tally"] as const;
+// root-cause reuses the hunt loop (its arch entry declares workflow: "hunt"): a
+// hunt confirms that a threat exists, root-cause works backward from a confirmed
+// one to how it got there. Same machinery, its own kind so it is never mislabelled.
+// adjudicate is the same loop again, framed as a shadow second opinion on a finding
+// intake already admitted: it proposes a workflow and executes nothing.
+export const RUN_KINDS = ["hunt", "root_cause", "adjudicate", "investigate", "compose", "chat", "tally"] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
 
 // Domain-free, so the harness never imports a workflow's vocabulary.
@@ -17,6 +23,7 @@ export type RunKind = (typeof RUN_KINDS)[number];
 export const RUN_EVENT_KINDS = [
   "run",
   "spend",
+  "recall",
   "dispatch",
   "checkpoint",
   "resolution",
@@ -148,6 +155,10 @@ export interface TerminalHandoff {
 export interface RunEventPayloads {
   run: RunPayload;
   spend: SpendPayload;
+  // The read of episodic memory the run opened on, verbatim. Journaled because
+  // the prefix carries the rows but nothing else records them, and a rebuild that
+  // re-reads memory reads a neighbourhood that has moved since (ADR 0015).
+  recall: RecallPayload;
   dispatch: DispatchPayload;
   checkpoint: CheckpointPayload;
   resolution: ResolutionPayload;

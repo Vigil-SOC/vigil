@@ -56,7 +56,14 @@ class LLMInteractionLogSchema(ORMSchema):
     stop_reason: Optional[str] = None
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
-    cost_usd: ZeroFloat = 0.0
+    # NULL means unpriced (#1115), so it is not floored at zero.
+    cost_usd: Optional[float] = None
+    # The rates and fetch time behind cost_usd (#1190). NULL when unpriced.
+    input_cost_per_token: Optional[float] = None
+    output_cost_per_token: Optional[float] = None
+    cache_read_cost_per_token: Optional[float] = None
+    cache_write_cost_per_token: Optional[float] = None
+    rates_fetched_at: Optional[str] = None
     duration_ms: Optional[int] = None
     error: Optional[str] = None
     request_messages: Optional[Any] = None
@@ -169,6 +176,8 @@ class ConversationSummarySchema(ORMSchema):
     id: Optional[str] = None
     user_id: Optional[str] = None
     title: Optional[str] = None
+    case_id: Optional[str] = None
+    page_context: Optional[str] = None
     agent_id: Optional[str] = None
     model: Optional[str] = None
     archived: Optional[bool] = None

@@ -8,13 +8,15 @@
     "enabled": true,
     "type": "sqlite",
     "config": {
-      "path": "./logs.db"
+      "path": "/app/data/logs.db"
     }
   },
   "providers": {
     "anthropic": {
       "network_config": {
-        "default_request_timeout_in_seconds": 1800
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
       },
       "keys": [
         {
@@ -22,27 +24,41 @@
           "weight": 1,
           "value": "env.ANTHROPIC_API_KEY",
           "models": [
-            "claude-opus-4-7",
-            "claude-sonnet-4-6",
-            "claude-sonnet-4-5-20250929",
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            "claude-haiku-4-5-20251001"
+            "*"
           ]
         }
       ]
     },
     "openai": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
       "keys": [
         {
           "name": "default-openai-key",
           "weight": 1,
           "value": "env.OPENAI_API_KEY",
           "models": [
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-4o",
-            "gpt-4o-mini"
+            "*"
+          ]
+        }
+      ]
+    },
+    "gemini": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": [
+        {
+          "name": "default-gemini-key",
+          "weight": 1,
+          "value": "env.GEMINI_API_KEY",
+          "models": [
+            "*"
           ]
         }
       ]
@@ -50,7 +66,9 @@
     "ollama": {
       "network_config": {
         "default_request_timeout_in_seconds": 1800,
-        "allow_private_network": true
+        "allow_private_network": true,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
       },
       "keys": [
         {
@@ -62,6 +80,28 @@
           "models": [
             "*"
           ]
+        }
+      ]
+    },
+    "vertex": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800,
+        "stream_idle_timeout_in_seconds": 300,
+        "max_retries": 0
+      },
+      "keys": [
+        {
+          "name": "default-vertex-key",
+          "weight": 1,
+          "value": "env.GOOGLE_APPLICATION_CREDENTIALS",
+          "models": [
+            "*"
+          ],
+          "vertex_key_config": {
+            "project_id": "env.VERTEX_PROJECT_ID",
+            "region": "env.VERTEX_REGION",
+            "auth_credentials": "env.GOOGLE_APPLICATION_CREDENTIALS"
+          }
         }
       ]
     }

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { Markdown } from '../../shared/Markdown'
+import { Cost, fmtCost } from '../../shared/cost'
 import { orchestratorApi } from '../../services/api'
 import { useInvestigationDetail, type InvestigationDetailData } from './useInvestigationDetail'
 import { StatusBadge } from './statusBadge'
@@ -64,7 +65,7 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
             {detail && <StatusBadge status={detail.status} />}
           </div>
           <p className="text-xs text-tx-3 mt-0.5 truncate">
-            {detail ? `${detail.skill_id} · ${detail.iteration_count} iterations · $${Number(detail.cost_usd || 0).toFixed(4)}` : 'Loading…'}
+            {detail ? `${detail.skill_id} · ${detail.iteration_count} iterations · ${fmtCost(detail.cost_usd, undefined, 4)}` : 'Loading…'}
           </p>
         </div>
         <span className="grow" />
@@ -193,7 +194,7 @@ function OverviewTab({
                   <span style={{ color: 'var(--tx-faint)' }}>{e.ts?.split('T')[1]?.split('.')[0] || ''}</span>{' '}
                   <span style={{ color: e.event === 'error' ? 'var(--crit)' : 'var(--ok)' }}>{e.event}</span>{' '}
                   {e.iteration ? <span className="text-tx-3">iter={e.iteration} </span> : null}
-                  {e.cost_usd ? <span className="text-tx-3">${e.cost_usd} </span> : null}
+                  {e.cost_usd != null && <span className="text-tx-3"><Cost usd={e.cost_usd} digits={4} /> </span>}
                   <span className="text-tx-2">{e.reason || ''}</span>
                 </div>
               ))}
@@ -284,7 +285,7 @@ function ReasoningTab({ interactions }: { interactions: Interaction[] }) {
                 {it.thinking_content ? ` · 💭 ${it.thinking_content.length}c` : ''}
                 {it.tool_calls?.length ? ` · 🔧 ${it.tool_calls.length}` : ''}
               </span>
-              <span className="text-xs text-tx-faint">{it.input_tokens ?? 0}/{it.output_tokens ?? 0} tok · ${Number(it.cost_usd || 0).toFixed(4)}</span>
+              <span className="text-xs text-tx-faint">{it.input_tokens ?? 0}/{it.output_tokens ?? 0} tok · <Cost usd={it.cost_usd} digits={4} /></span>
               <Icon name={open ? 'chevD' : 'chevR'} size={14} />
             </button>
             {open && (

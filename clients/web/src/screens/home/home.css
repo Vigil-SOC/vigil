@@ -1,0 +1,106 @@
+.home-screen .home-headline {
+  margin: 0;
+  padding: 22px 22px 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.home-screen .home-share {
+  margin: 6px 0 0;
+  padding: 0 22px;
+  color: var(--tx-3);
+  font-size: 13px;
+}
+
+.home-screen .home-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.home-screen .home-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.home-screen .home-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.home-screen .home-meta {
+  margin: 6px 0 0;
+  color: var(--tx-3);
+  font-size: 12px;
+}
+
+.home-screen .home-reason {
+  margin: 8px 0 0;
+  color: var(--tx-2);
+  font-size: 13px;
+}
+
+.home-screen .home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.home-screen .home-reject {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.home-screen .home-reject textarea {
+  min-width: 220px;
+  flex: 1;
+}
+
+.home-screen .home-steps {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-screen .home-step {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home-screen .home-step h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.home-screen .home-step p {
+  margin: 4px 0 0;
+  color: var(--tx-3);
+  font-size: 12px;
+}
+
+.home-screen .home-step-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.home-screen .home-alerts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}

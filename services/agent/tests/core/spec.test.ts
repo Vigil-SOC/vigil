@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor, registeredKinds } from "../../arch/registry.js";
+import { archFor, isHuntLike, registeredKinds } from "../../arch/registry.js";
 import { buildSpec, SpecError, type SpecPaths } from "../../core/spec.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -49,14 +49,15 @@ function loadArchOnly(body: string, handled: readonly string[] = ["EXAMINE", "CO
 }
 
 describe("the registry resolves a run kind to an arch", () => {
-  it("registers the four shipped arches and nothing else", () => {
-    expect(registeredKinds()).toEqual(["chat", "compose", "hunt", "investigate"]);
+  it("registers the shipped arches and nothing else", () => {
+    expect(registeredKinds()).toEqual(["adjudicate", "chat", "compose", "hunt", "investigate", "root_cause"]);
   });
 
   // Adding an agent type is an arch file and an entry. Nothing in the worker
   // names a kind, so a new one reaches its loop without a branch being added.
   it("names the loop that drives each kind, rather than leaving the worker to switch", () => {
     expect(archFor("hunt").workflow).toBe("hunt");
+    expect(archFor("root_cause").workflow).toBe("rootcause");
     expect(archFor("investigate").workflow).toBe("lead");
     expect(archFor("compose").workflow).toBe("compose");
   });
@@ -64,6 +65,21 @@ describe("the registry resolves a run kind to an arch", () => {
   // A kind in the union with no arch behind it is the failure this prevents.
   it("refuses a run kind nothing is registered for", () => {
     expect(() => archFor("tally")).toThrow(/no architecture is registered for run_kind tally/);
+  });
+
+  // Read off the entry rather than listed anywhere, so a kind that shares the hunt
+  // loop is hunt-like by having been registered with it. Everything that gates on
+  // "is this the hunt loop?" asks this, which is what stops one caller being widened
+  // for a new kind and the next three being found later, one bug at a time.
+  it("answers which kinds run the hunt loop from what they were registered with", () => {
+    expect(isHuntLike("hunt")).toBe(true);
+    expect(isHuntLike("root_cause")).toBe(false);
+    expect(isHuntLike("adjudicate")).toBe(true);
+    expect(isHuntLike("investigate")).toBe(false);
+    expect(isHuntLike("compose")).toBe(false);
+    expect(isHuntLike("chat")).toBe(false);
+    // Registered for nothing at all, so it drives no loop rather than throwing.
+    expect(isHuntLike("tally")).toBe(false);
   });
 });
 
@@ -77,14 +93,60 @@ describe("the shipped arches", () => {
     expect(spec.digest["evidence_window"]).toBe(25);
   });
 
+  // The hunt loop with an adjudicator's brief: same workers, critic and fan-out as
+  // threathunt.yaml, a lead that proposes a workflow and may not hand off to IR.
+  it("loads adjudicate.yaml as the hunt fan-out, minus HANDOFF_IR, plus proposed_workflow", () => {
+    const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch }, archFor("adjudicate").actions);
+    expect(spec.arch).toBe("adjudicate");
+    expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
+    expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
+    expect(spec.roles.critic).toBeDefined();
+    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
+    expect(properties["action"]?.enum).not.toContain("HANDOFF_IR");
+    expect(properties["action"]?.enum).toContain("CONCLUDE");
+    expect(properties["proposed_workflow"]).toEqual({ type: ["string", "null"] });
+    expect(spec.roles.lead?.output_schema?.["required"]).not.toContain("proposed_workflow");
+    expect(spec.roles.lead?.prompt).toContain("You execute nothing");
+  });
+
   // The other shape the indirection has to carry: one role, its tools, no fan-out.
+  it("loads rootcause.yaml as one investigator answering in prose", () => {
+    const spec = buildSpec(
+      {
+        arch: archFor("root_cause").arch,
+        playbook: fixture("case.playbook.yaml"),
+        config: scratchFile(
+          "rootcause.config.yaml",
+          [
+            "model: scripted/model",
+            "budgets: { max_calls: 32, max_cost_usd: 15, max_wall_ms: 5400000 }",
+            "runtime: { max_turns: 32, result_cap: 8000, recall_limit: 1 }",
+            "tools:",
+            "  - { id: record, kind: local, description: record a step, parameters: { type: object } }",
+            "  - { id: finish, kind: local, description: finish the trace, parameters: { type: object } }",
+            "approvals: []",
+          ].join("\n"),
+        ),
+      },
+      archFor("root_cause").actions,
+      archFor("root_cause").owned,
+    );
+    expect(spec.arch).toBe("rootcause");
+    expect(spec.dispatch.topology).toBe("single");
+    expect(spec.roles.workers).toEqual({});
+    expect(spec.roles.critic).toBeUndefined();
+    expect(spec.roles.lead?.output_schema).toBeNull();
+    expect(spec.roles.lead?.tools).toEqual(["record", "finish"]);
+    expect(spec.roles.lead?.needs).toEqual(["telemetry_search"]);
+  });
+
   it("loads investigate.yaml as a single lead with no workers and no critic", () => {
     const spec = buildSpec(CASE, archFor("investigate").actions);
     expect(spec.arch).toBe("investigate");
     expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });
     expect(spec.roles.workers).toEqual({});
     expect(spec.roles.critic).toBeUndefined();
-    expect(spec.roles.lead?.tools).toEqual(["case_records"]);
+    expect(spec.roles.lead?.tools).toEqual(["case_records", "get_finding"]);
   });
 
   it("generates the roster from the worker registry and narrows worker_agent_id to it", () => {

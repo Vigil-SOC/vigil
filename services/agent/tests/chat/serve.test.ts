@@ -1,14 +1,34 @@
+import { readFileSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
-import { chatServer, chatSpec, memoryFor, type ChatRequest } from "../../serve.js";
+import type { HarnessFactory } from "../../harness.js";
+import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest, type VerifyRun } from "../../serve.js";
+import type { ReplayReport } from "../../workflows/hunt/replay.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
 
 const TOKEN = "a-shared-secret";
 const RUN = "5a2c2d3e-0000-4000-8000-000000000989";
+const HUNT = "5a2c2d3e-0000-4000-8000-000000000890";
+const FIXTURE = join(import.meta.dirname, "..", "fixtures", "replay", "hunt-recall.jsonl.gz");
+
+// The recorded hunt, re-keyed: its run_id is not a uuid and the store assigns
+// seq/ts/schema_version itself, so the envelope is stripped back to a NewEvent.
+function recordedHunt(): NewEvent<unknown>[] {
+  return gunzipSync(readFileSync(FIXTURE))
+    .toString("utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as AgentEvent<unknown>)
+    .map(({ seq: _seq, ts: _ts, schema_version: _schema, ...event }) => ({ ...event, run_id: HUNT }));
+}
 
 const CONFIG = `
 model: anthropic/claude-opus-5
@@ -26,11 +46,11 @@ let state: InProcessState;
 let base: string;
 let stop: () => void;
 
-async function listen(script: readonly ScriptedTurn[]): Promise<void> {
+async function listen(script: readonly ScriptedTurn[], verify?: VerifyRun): Promise<void> {
   state = new InProcessState();
   // Ready by construction: the ledger here is in-process, so there is no Postgres
   // for readiness to be reporting on.
-  const server = chatServer(state, async () => true, scriptedHarness(script));
+  const server = chatServer(state, async () => true, scriptedHarness(script), verify);
   await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   stop = () => server.close();
@@ -42,6 +62,10 @@ async function post(body: unknown, token = TOKEN, path = "/chat/stream"): Promis
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
+}
+
+async function get(path: string, token = TOKEN): Promise<Response> {
+  return fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } });
 }
 
 function framesIn(text: string): unknown[] {
@@ -89,6 +113,28 @@ describe("a chat turn over SSE", () => {
   });
 });
 
+// The API signs the person in the conversation; this layer hands it to the harness
+// that dispatches the turn's tools, and invents nothing when there is none (#1087).
+describe("whom the turn's tools act for", () => {
+  async function principalsSeen(requests: readonly ChatRequest[]): Promise<(string | undefined)[]> {
+    const seen: (string | undefined)[] = [];
+    const scripted = scriptedHarness([{ content: "ok" }, { content: "ok" }]);
+    const build: HarnessFactory = (kind, spec, runState, memory, seed, principal) => {
+      seen.push(principal);
+      return scripted(kind, spec, runState, memory, seed);
+    };
+    for (const request of requests) {
+      const res = { write: () => true, end: () => undefined, writableEnded: false, destroyed: false } as unknown as ServerResponse;
+      await streamChat(new InProcessState(), request, res, build);
+    }
+    return seen;
+  }
+
+  it("passes the principal the request carried, and none when it carried none", async () => {
+    expect(await principalsSeen([asked({ principal: "signed.by.api" }), asked()])).toEqual(["signed.by.api", undefined]);
+  });
+});
+
 describe("who may call it", () => {
   it("refuses a request with no token", async () => {
     await listen([]);
@@ -119,6 +165,170 @@ describe("who may call it", () => {
       body: "{not json",
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("replaying what the hunt lead was shown", () => {
+  // The route is the live test: the recorded hunt goes in through the store, the
+  // report comes back over HTTP, and it says what recall-replay.test.ts says.
+  it("rebuilds every decision and the recalled rows from the ledger alone", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+
+    const res = await get(`/runs/${HUNT}/replay`);
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as ReplayReport;
+    expect(report.hunt_id).toMatch(/^hunt-/);
+    expect(report.recalled.join("\n")).toContain("192.0.2.10 is a scheduled backup target");
+    expect(report.decisions.length).toBeGreaterThan(1);
+    expect(report.decisions.every((decision) => decision.mismatch === null)).toBe(true);
+    expect(report.reproduced).toBe(report.decisions.length);
+    expect(await state.read(HUNT)).toHaveLength(recordedHunt().length);
+  });
+
+  it("narrows to one decision and keeps the report-level recall", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    const whole = (await get(`/runs/${HUNT}/replay`).then((res) => res.json())) as ReplayReport;
+    const wanted = whole.decisions[1]!;
+
+    const res = await get(`/runs/${HUNT}/replay?decision_id=${wanted.decision_id}`);
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as ReplayReport;
+    expect(report.decisions).toEqual([wanted]);
+    expect(report.reproduced).toBe(1);
+    expect(report.hunt_id).toBe(whole.hunt_id);
+    expect(report.recalled).toEqual(whole.recalled);
+  });
+
+  it("404s a decision the hunt never made", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/replay?decision_id=not-one`)).status).toBe(404);
+  });
+
+  it("refuses a request with no token", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/replay`, "")).status).toBe(401);
+  });
+
+  it("returns an investigate run's decisions and calls, and 404s compose", async () => {
+    await listen([]);
+    const investigate = "5a2c2d3e-0000-4000-8000-000000000891";
+    const compose = "5a2c2d3e-0000-4000-8000-000000000892";
+    await state.append(investigate, [
+      { run_id: investigate, run_kind: "investigate", kind: "run", payload: { run_kind: "investigate" } },
+      { run_id: investigate, run_kind: "investigate", kind: "decision", payload: { action: "EXAMINE", rationale: "look", worker: "worker" } },
+      {
+        run_id: investigate,
+        run_kind: "investigate",
+        kind: "dispatch",
+        payload: {
+          dispatch_id: "dsp-1",
+          agent_id: "worker",
+          status: "complete",
+          question_id: null,
+          failure_reason: null,
+          cost_usd: 0.05,
+          calls: [{ tool: "case_records", arguments: "{}", result: "abcd" }],
+        },
+      },
+    ] as never);
+    await state.append(compose, [
+      { run_id: compose, run_kind: "compose", kind: "run", payload: { run_kind: "compose" } },
+    ] as never);
+
+    const res = await get(`/runs/${investigate}/replay`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { run_kind: string; decisions: { action: string; calls: unknown[] }[] };
+    expect(body.run_kind).toBe("investigate");
+    expect(body.decisions.map((decision) => decision.action)).toEqual(["EXAMINE"]);
+    expect(body.decisions[0]?.calls).toEqual([{ tool: "case_records", arguments: "{}", result: "abcd" }]);
+    expect(body).not.toHaveProperty("reproduced");
+    expect((await get(`/runs/${compose}/replay`)).status).toBe(404);
+  });
+
+  it("returns a root-cause run's steps in ledger order", async () => {
+    await listen([]);
+    const trace = "5a2c2d3e-0000-4000-8000-000000000893";
+    await state.append(trace, [
+      { run_id: trace, run_kind: "root_cause", kind: "run", payload: { run_kind: "root_cause" } },
+      { run_id: trace, run_kind: "root_cause", kind: "notice", payload: { text: "no flow logs" } },
+    ] as never);
+
+    const res = await get(`/runs/${trace}/replay`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ run_kind: "root_cause", steps: [{ kind: "notice", text: "no flow logs" }] });
+  });
+
+  it("404s a run that is not a hunt, and one that does not exist", async () => {
+    await listen([{ content: "ok" }]);
+    await post(asked()).then((res) => res.text());
+    expect((await get(`/runs/${RUN}/replay`)).status).toBe(404);
+    expect((await get("/runs/5a2c2d3e-0000-4000-8000-00000000dead/replay")).status).toBe(404);
+  });
+
+  it("502s a hunt-like ledger the fold refuses, rather than hanging", async () => {
+    await listen([]);
+    const [opened] = recordedHunt();
+    await state.append(HUNT, [opened!, { ...opened!, kind: "not-a-kind" as never }]);
+    expect((await get(`/runs/${HUNT}/replay`)).status).toBe(502);
+  });
+
+  // Taking a query here did not loosen the siblings: they still match the raw url.
+  it("leaves the other GET routes refusing a query string", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(404);
+    expect((await get(`/runs/${HUNT}/projection`)).status).toBe(200);
+  });
+});
+
+describe("reading a run's ledger", () => {
+  it("omits snapshots unless the caller asks", async () => {
+    await listen([]);
+    await state.append(RUN, [
+      {
+        run_id: RUN,
+        run_kind: "investigate",
+        kind: "decision",
+        payload: { action: "EXAMINE", rationale: "look", worker: null },
+        snapshot: { digest: "secret" },
+      } as NewEvent<Record<string, unknown>>,
+    ]);
+
+    const plain = await get(`/runs/${RUN}/events`);
+    expect(plain.status).toBe(200);
+    const body = (await plain.json()) as { events: { kind: string; snapshot?: unknown }[] };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]?.kind).toBe("decision");
+    expect(body.events[0]?.snapshot).toBeUndefined();
+
+    const full = await get(`/runs/${RUN}/events?snapshots=1`);
+    expect(((await full.json()) as { events: { snapshot?: unknown }[] }).events[0]?.snapshot).toEqual({
+      digest: "secret",
+    });
+  });
+});
+
+describe("verifying a run's chain", () => {
+  it("returns the chain walk verifyLedger produced", async () => {
+    const asked: string[] = [];
+    await listen([], async (runId) => {
+      asked.push(runId);
+      return { ok: true, events: 3, runs: 1 };
+    });
+
+    const res = await get(`/runs/${RUN}/verify`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, events: 3, runs: 1 });
+    expect(asked).toEqual([RUN]);
+  });
+
+  it("refuses a request with no token", async () => {
+    await listen([], async () => ({ ok: true, events: 0, runs: 0 }));
+    expect((await get(`/runs/${RUN}/verify`, "")).status).toBe(401);
   });
 });
 

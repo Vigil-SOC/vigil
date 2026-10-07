@@ -14,17 +14,15 @@ not an end-to-end MCP spin-up.
 
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
-
-# Keep CSRF out of the way — exercised elsewhere.
-os.environ.setdefault("DEV_MODE", "true")
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+
+from core.deps import provide_mcp_client, provide_mcp_registry
+from core.integrations.mcp.registry import MCPRegistry
 
 
 @pytest.fixture(scope="module")
@@ -35,34 +33,36 @@ def client():
         yield c
 
 
-@contextmanager
-def _override_mcp_client(client, fake_client):
-    """Swap the MCP client the handler receives (#459) for the duration."""
-    from core.deps import provide_mcp_client
+@pytest.fixture(autouse=True)
+def _authenticated(client, authenticate_app):
+    """The suite runs with auth on; these are contract checks, not auth checks."""
+    authenticate_app(client.app)
 
+
+@contextmanager
+def _override_mcp(client, fake_client, registry=None):
+    """Swap the MCP client (and optionally registry) the handler receives."""
     client.app.dependency_overrides[provide_mcp_client] = lambda: fake_client
+    if registry is not None:
+        client.app.dependency_overrides[provide_mcp_registry] = lambda: registry
     try:
         yield
     finally:
         client.app.dependency_overrides.pop(provide_mcp_client, None)
+        client.app.dependency_overrides.pop(provide_mcp_registry, None)
 
 
 @pytest.fixture
 def fake_server_known():
-    """Patch mcp_service so ``deeptempo-findings`` is a known, settable server."""
+    """Patch mcp_service so ``splunk-selfhosted`` is a known, settable server."""
     from services.api.routers import mcp as mcp_api
 
-    # Make set_server_enabled succeed (server exists); status is the stdio
     with patch.object(
         mcp_api.mcp_service, "set_server_enabled", return_value=True
     ), patch.object(
         mcp_api.mcp_service,
-        "get_server_status",
-        return_value="stdio (MCP integration)",
-    ), patch.object(
-        mcp_api.mcp_service,
         "list_servers",
-        return_value=["deeptempo-findings", "virustotal"],
+        return_value=["splunk-selfhosted", "virustotal"],
     ):
         yield
 
@@ -79,9 +79,9 @@ class TestEnableTransactional:
         fake_client.get_last_error = MagicMock(return_value=None)
         fake_client.disconnect_from_server = AsyncMock(return_value=True)
 
-        with _override_mcp_client(client, fake_client):
+        with _override_mcp(client, fake_client):
             r = client.put(
-                "/api/mcp/servers/deeptempo-findings/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": True},
             )
 
@@ -91,7 +91,7 @@ class TestEnableTransactional:
         assert body["connected"] is True
         assert body["error"] is None
         fake_client.connect_to_server.assert_awaited_once_with(
-            "deeptempo-findings", persistent=True
+            "splunk-selfhosted", persistent=True
         )
         fake_client.disconnect_from_server.assert_not_called()
 
@@ -106,7 +106,7 @@ class TestEnableTransactional:
         )
         fake_client.disconnect_from_server = AsyncMock(return_value=True)
 
-        with _override_mcp_client(client, fake_client):
+        with _override_mcp(client, fake_client):
             r = client.put(
                 "/api/mcp/servers/virustotal/enabled",
                 json={"enabled": True},
@@ -125,9 +125,9 @@ class TestEnableTransactional:
         fake_client.connect_to_server = AsyncMock(return_value=True)
         fake_client.disconnect_from_server = AsyncMock(return_value=True)
 
-        with _override_mcp_client(client, fake_client):
+        with _override_mcp(client, fake_client):
             r = client.put(
-                "/api/mcp/servers/deeptempo-findings/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": False},
             )
 
@@ -136,10 +136,89 @@ class TestEnableTransactional:
         assert body["enabled"] is False
         # connected is None when disabling — we didn't attempt a connect.
         assert body["connected"] is None
-        fake_client.disconnect_from_server.assert_awaited_once_with(
-            "deeptempo-findings"
-        )
+        fake_client.disconnect_from_server.assert_awaited_once_with("splunk-selfhosted")
         fake_client.connect_to_server.assert_not_called()
+
+
+@pytest.mark.integration
+class TestEnableUpdatesRegistry:
+    """Enable/disable must write the registry so chat sees the change with no refresh."""
+
+    def test_enable_makes_tools_visible_without_refresh(
+        self, client, fake_server_known
+    ):
+        registry = MCPRegistry()
+        fake_client = MagicMock()
+        fake_client.tools_cache = {
+            "splunk-selfhosted": [
+                {
+                    "name": "list_findings",
+                    "description": "list them",
+                    "inputSchema": {},
+                }
+            ]
+        }
+        fake_client.connect_to_server = AsyncMock(return_value=True)
+        fake_client.get_last_error = MagicMock(return_value=None)
+
+        with _override_mcp(client, fake_client, registry):
+            r = client.put(
+                "/api/mcp/servers/splunk-selfhosted/enabled",
+                json={"enabled": True},
+            )
+
+        assert r.status_code == 200, r.text
+        assert [t["name"] for t in registry.get_all_tools()] == [
+            "splunk-selfhosted_list_findings"
+        ]
+
+    def test_disable_removes_tools_without_refresh(self, client, fake_server_known):
+        registry = MCPRegistry()
+        registry.register_server(
+            "splunk-selfhosted",
+            {},
+            [{"name": "list_findings", "description": "list them", "inputSchema": {}}],
+        )
+        fake_client = MagicMock()
+        fake_client.disconnect_from_server = AsyncMock(return_value=True)
+
+        with _override_mcp(client, fake_client, registry):
+            r = client.put(
+                "/api/mcp/servers/splunk-selfhosted/enabled",
+                json={"enabled": False},
+            )
+
+        assert r.status_code == 200, r.text
+        assert registry.get_all_tools() == []
+
+    def test_registry_write_failure_does_not_change_the_response(
+        self, client, fake_server_known
+    ):
+        registry = MCPRegistry()
+        fake_client = MagicMock()
+        fake_client.tools_cache = {
+            "splunk-selfhosted": [
+                {"name": "list_findings", "description": "x", "inputSchema": {}}
+            ]
+        }
+        fake_client.connect_to_server = AsyncMock(return_value=True)
+        fake_client.get_last_error = MagicMock(return_value=None)
+
+        with patch(
+            "services.api.routers.mcp.register_connected",
+            side_effect=RuntimeError("registry down"),
+        ), _override_mcp(client, fake_client, registry):
+            r = client.put(
+                "/api/mcp/servers/splunk-selfhosted/enabled",
+                json={"enabled": True},
+            )
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["success"] is True
+        assert body["enabled"] is True
+        assert body["connected"] is True
+        assert body["error"] is None
 
 
 @pytest.mark.integration
@@ -147,7 +226,7 @@ class TestDeadEndpointsGone:
     """The broken /start + /stop paths should no longer exist."""
 
     def test_start_endpoint_is_removed(self, client):
-        r = client.post("/api/mcp/servers/deeptempo-findings/start")
+        r = client.post("/api/mcp/servers/splunk-selfhosted/start")
         # Either 404 (route not registered) or 405 (method not allowed) is
         # acceptable — just never a 500 or 200 from the old broken handler.
         assert r.status_code in (404, 405), r.text

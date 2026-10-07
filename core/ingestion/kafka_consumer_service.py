@@ -5,7 +5,7 @@ to the daemon's finding queue (``daemon/processor.py`` consumes from
 the same queue as ``daemon/poller.py``'s output). Per-message flow:
 
     Kafka record -> JSON decode -> dedup check (Redis) ->
-    enqueue for processing -> mark processed -> commit offset
+    enqueue for processing -> wait until stored -> mark processed -> commit offset
 
 MVP scope: JSON only. No Avro, no Schema Registry, no DLQ.
 Malformed messages are logged and skipped; the consumer keeps going.
@@ -23,11 +23,14 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.kafka_config import KafkaConfig
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+_RETRY_BACKOFF_SECONDS = 2
 
 
 class KafkaConsumerService:
@@ -117,19 +120,19 @@ class KafkaConsumerService:
                 try:
                     # getmany so we can check shutdown frequently
                     batches = await self._consumer.getmany(timeout_ms=1000)
-                    for tp, msgs in batches.items():
-                        for msg in msgs:
-                            await self._handle_message(tp.topic, msg)
-                        # Commit offsets for this partition after processing
-                        if msgs:
-                            await self._consumer.commit()
+                    results = [
+                        await self._process_partition(tp, msgs)
+                        for tp, msgs in batches.items()
+                    ]
+                    if not all(results):
+                        await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     self._record_error(f"poll error: {e}")
                     logger.error("Kafka consumer poll error: %s", e)
                     # Brief backoff before retry
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
         finally:
             self._running = False
             self.stats["connected"] = False
@@ -144,8 +147,74 @@ class KafkaConsumerService:
             except Exception:
                 pass
 
-    async def _handle_message(self, topic: str, msg) -> None:
+    async def _process_partition(self, tp, msgs) -> bool:
+        """Handle one partition and commit it once stored. On any failure rewind
+        to the uncommitted offset (stored ids are dedup-marked and skipped) and
+        return False, so the other partitions in the poll are still processed."""
+        try:
+            if await self._handle_batch(tp.topic, msgs):
+                if msgs:
+                    await self._consumer.commit({tp: msgs[-1].offset + 1})
+                return True
+            reason = "findings not stored"
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._record_error(f"poll error: {e}")
+            reason = str(e)
+        logger.error("Kafka: rewinding %s to offset %s: %s", tp, msgs[0].offset, reason)
+        self._consumer.seek(tp, msgs[0].offset)
+        return False
+
+    async def _handle_message(self, topic: str, msg) -> bool:
         """Decode, dedupe, and enqueue a single Kafka message."""
+        return await self._handle_batch(topic, [msg])
+
+    async def _handle_batch(self, topic: str, msgs) -> bool:
+        """Decode, dedupe, and enqueue one partition's messages, in order.
+
+        True once every new finding is reported stored, so the caller may
+        commit the offset; False means at least one was not and the offset
+        must stay. The dedup set is checked once and marked once per batch
+        rather than twice per message; only stored ids are marked.
+        """
+        findings = [f for f in (self._decode(topic, m) for m in msgs) if f]
+        seen = await self._dedup.are_processed(f["finding_id"] for f in findings)
+        pending: Pending = []
+        try:
+            for finding in findings:
+                finding_id = finding["finding_id"]
+                if finding_id in seen:
+                    self.stats["duplicates_skipped"] += 1
+                    logger.debug("Kafka: duplicate finding_id=%s skipped", finding_id)
+                    continue
+
+                finding.setdefault("data_source", f"kafka:{topic}")
+                ack = new_ack()
+                await self._output_queue.put(
+                    {
+                        "type": "finding",
+                        "source": f"kafka:{topic}",
+                        "data": finding,
+                        "timestamp": utcnow().isoformat(),
+                        "dedup": self._dedup,
+                        "dedup_key": finding_id,
+                        "ack": ack,
+                    }
+                )
+                # A repeat of this id later in the batch is a duplicate.
+                seen.add(finding_id)
+                pending.append((finding_id, ack))
+                self.stats["messages_enqueued"] += 1
+            all_stored = await wait_all(pending)
+        finally:
+            # Also on cancellation: mark what was stored before the stop.
+            stored = stored_keys(pending)
+            await self._dedup.mark_many(stored)
+        return all_stored
+
+    def _decode(self, topic: str, msg) -> Optional[Dict[str, Any]]:
+        """The message as a finding dict with an id, or None (stats updated)."""
         self.stats["messages_consumed"] += 1
         self.stats["last_message_at"] = utcnow().isoformat()
 
@@ -158,7 +227,7 @@ class KafkaConsumerService:
             self.stats["decode_errors"] += 1
             self._record_error(f"decode error on topic {topic}: {e}")
             logger.warning("Kafka: skipping malformed message on %s: %s", topic, e)
-            return
+            return None
 
         if not isinstance(finding, dict):
             self.stats["decode_errors"] += 1
@@ -167,31 +236,13 @@ class KafkaConsumerService:
                 topic,
                 type(finding).__name__,
             )
-            return
+            return None
 
-        finding_id = finding.get("finding_id")
-        if not finding_id:
+        if not finding.get("finding_id"):
             self.stats["missing_id_errors"] += 1
             logger.warning("Kafka: skipping message on %s with no finding_id", topic)
-            return
-
-        if await self._dedup.is_processed(finding_id):
-            self.stats["duplicates_skipped"] += 1
-            logger.debug("Kafka: duplicate finding_id=%s skipped", finding_id)
-            return
-
-        finding.setdefault("data_source", f"kafka:{topic}")
-
-        await self._output_queue.put(
-            {
-                "type": "finding",
-                "source": f"kafka:{topic}",
-                "data": finding,
-                "timestamp": utcnow().isoformat(),
-            }
-        )
-        await self._dedup.mark_processed(finding_id)
-        self.stats["messages_enqueued"] += 1
+            return None
+        return finding
 
     def _record_error(self, msg: str) -> None:
         self.stats["last_error"] = msg

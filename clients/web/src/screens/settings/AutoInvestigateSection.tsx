@@ -2,81 +2,53 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
+  ConfirmDialog,
   Field,
   NumberInput,
-  Select,
   SettingsCard,
   TextInput,
   Toggle,
   ToggleRow,
 } from '../../shared/ui'
 import {
+  matchesProfile,
   ORCHESTRATOR_DEFAULTS,
+  raisesLimit,
+  useForceManualApproval,
   useOrchestrator,
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
+import { fmtCost } from '../../shared/cost'
+import IntentReportCard from './IntentReportCard'
 
-const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low']
+type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
 
-type PresetKey = 'conservative' | 'balanced' | 'aggressive'
-type PresetValues = Pick<
-  OrchestratorConfig,
-  | 'max_concurrent_agents'
-  | 'max_iterations_per_agent'
-  | 'max_runtime_per_investigation'
-  | 'max_cost_per_investigation'
-  | 'max_total_hourly_cost'
-  | 'max_total_daily_cost'
->
+const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
+  switch (pending.kind) {
+    case 'config':
+      return {
+        title: 'Raise investigation limits?',
+        body: 'This increases a cost, runtime, or concurrency cap. Confirm to save.',
+      }
+    case 'act':
+      return {
+        title: 'Switch to Act?',
+        body: 'Act stops forcing manual approval, so autonomous response can proceed on its own.',
+      }
+    default: {
+      const _exhaustive: never = pending
+      return _exhaustive
+    }
+  }
+}
 
-const PRESETS = {
-  conservative: {
-    label: 'Conservative',
-    summary: 'Minimal spend · 2 agents · tight limits',
-    values: {
-      max_concurrent_agents: 2,
-      max_iterations_per_agent: 25,
-      max_runtime_per_investigation: 1800,
-      max_cost_per_investigation: 1.0,
-      max_total_hourly_cost: 5.0,
-      max_total_daily_cost: 25.0,
-    },
-  },
-  balanced: {
-    label: 'Balanced',
-    summary: 'Recommended · 3 agents · $20/hr · $100/day',
-    values: {
-      max_concurrent_agents: 3,
-      max_iterations_per_agent: 50,
-      max_runtime_per_investigation: 3600,
-      max_cost_per_investigation: 5.0,
-      max_total_hourly_cost: 20.0,
-      max_total_daily_cost: 100.0,
-    },
-  },
-  aggressive: {
-    label: 'Aggressive',
-    summary: 'Broad coverage · 5 agents · $60/hr · $300/day',
-    values: {
-      max_concurrent_agents: 5,
-      max_iterations_per_agent: 100,
-      max_runtime_per_investigation: 7200,
-      max_cost_per_investigation: 15.0,
-      max_total_hourly_cost: 60.0,
-      max_total_daily_cost: 300.0,
-    },
-  },
-} satisfies Record<PresetKey, { label: string; summary: string; values: PresetValues }>
-
-const matchesPreset = (cfg: OrchestratorConfig, key: PresetKey) =>
-  (Object.entries(PRESETS[key].values) as [keyof PresetValues, number][]).every(
-    ([k, v]) => cfg[k] === v,
-  )
-
-const detectActivePreset = (cfg: OrchestratorConfig): PresetKey | 'custom' => {
-  for (const key of Object.keys(PRESETS) as PresetKey[]) if (matchesPreset(cfg, key)) return key
-  return 'custom'
+function errorText(err: unknown, fallback: string): string {
+  if (typeof err === 'object' && err && 'response' in err) {
+    const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+    if (typeof detail === 'string' && detail) return detail
+  }
+  return fallback
 }
 
 interface NumOpts {
@@ -88,16 +60,19 @@ interface NumOpts {
 }
 
 export default function AutoInvestigateSection({ notify }: SectionProps) {
-  const { config, setConfig, status, models, phase, save } = useOrchestrator()
+  const { config, setConfig, profiles, status, phase, save } = useOrchestrator()
+  const approval = useForceManualApproval()
   const lastSaved = useRef<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [advanced, setAdvanced] = useState(false)
+  const [intentRevision, setIntentRevision] = useState(0)
+  const [pending, setPending] = useState<PendingSave | null>(null)
 
   useEffect(() => {
     if (phase === 'ready') lastSaved.current = config
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
-  if (phase === 'loading') {
+  if (phase === 'loading' || approval.phase === 'loading') {
     return <div className="text-sm text-tx-3 py-16 text-center">Loading Auto Investigate config…</div>
   }
 
@@ -106,29 +81,84 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       await save(next)
       lastSaved.current = next
       notify('ok', 'Auto Investigate settings saved.')
+      setIntentRevision((n) => n + 1)
     } catch {
       notify('err', 'Failed to save Auto Investigate settings.')
     }
   }
 
-  const applyAndSave = (patch: Partial<OrchestratorConfig>) => {
-    const next = { ...config, ...patch }
+  const commitConfig = (next: OrchestratorConfig) => {
     setConfig(next)
+    if (raisesLimit(lastSaved.current, next)) {
+      setPending({ kind: 'config', next })
+      return
+    }
     persist(next)
   }
 
+  const applyAndSave = (patch: Partial<OrchestratorConfig>) => {
+    commitConfig({ ...config, ...patch })
+  }
+
   const persistIfChanged = () => {
-    if (JSON.stringify(config) !== JSON.stringify(lastSaved.current)) persist(config)
+    if (JSON.stringify(config) !== JSON.stringify(lastSaved.current)) commitConfig(config)
   }
 
-  const activePreset = detectActivePreset(config)
-
-  const toggleSeverity = (sev: string) => {
-    const cur = config.auto_assign_severities
-    applyAndSave({
-      auto_assign_severities: cur.includes(sev) ? cur.filter((s) => s !== sev) : [...cur, sev],
-    })
+  const saveApproval = async (enabled: boolean) => {
+    try {
+      await approval.save(enabled)
+      notify('ok', 'Auto Investigate settings saved.')
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to save Auto Investigate settings.'))
+    }
   }
+
+  const selectAssist = () => {
+    if (approval.enabled) return
+    saveApproval(true)
+  }
+
+  const selectAct = () => {
+    if (approval.environment_wins) {
+      saveApproval(false)
+      return
+    }
+    if (!approval.enabled) return
+    setPending({ kind: 'act' })
+  }
+
+  const confirmPending = () => {
+    if (!pending) return
+    const current = pending
+    setPending(null)
+    switch (current.kind) {
+      case 'config':
+        persist(current.next)
+        return
+      case 'act':
+        saveApproval(false)
+        return
+      default: {
+        const _exhaustive: never = current
+        return _exhaustive
+      }
+    }
+  }
+
+  const dismissPending = () => {
+    if (pending?.kind === 'config') setConfig(lastSaved.current)
+    setPending(null)
+  }
+
+  let activeProfile: string | 'custom' = 'custom'
+  for (const [key, profile] of Object.entries(profiles)) {
+    if (matchesProfile(config, profile.values)) {
+      activeProfile = key
+      break
+    }
+  }
+  const assistOn = approval.enabled || approval.environment_wins
+  const dialog = pending ? pendingCopy(pending) : null
 
   const numField = (label: string, field: keyof OrchestratorConfig, opts: NumOpts = {}) => {
     const unlimited = Boolean(opts.allowUnlimited) && (config[field] as number) === 0
@@ -163,26 +193,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     )
   }
 
-  const modelField = (label: string, field: 'plan_model' | 'review_model', hint: string) => {
-    const current = config[field]
-    const ids = models.map((m) => m.model_id)
-    const shown = !current || ids.includes(current) ? ids : [...ids, current]
-    const options = shown.map((id) => {
-      const info = models.find((m) => m.model_id === id)
-      return { value: id, label: info?.display_name || id }
-    })
-    return (
-      <Field label={label} hint={hint}>
-        <Select
-          value={current}
-          options={options}
-          placeholder={options.length ? 'Select a model…' : 'No models — add a provider in AI Config'}
-          onSelect={(v) => applyAndSave({ [field]: v })}
-        />
-      </Field>
-    )
-  }
-
   return (
     <>
       <SettingsCard
@@ -198,7 +208,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               {status.total_investigations !== undefined &&
                 ` · ${status.total_investigations} investigation(s)`}
               {status.cost?.total_cost_usd !== undefined &&
-                ` · Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
+                ` · Total cost: ${fmtCost(status.cost.total_cost_usd)}`}
             </span>
           </div>
         )}
@@ -217,29 +227,56 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           checked={config.dry_run}
           onChange={(v) => applyAndSave({ dry_run: v })}
         />
-        <ToggleRow
-          label="Auto-assign new findings for investigation"
-          checked={config.auto_assign_findings}
-          onChange={(v) => applyAndSave({ auto_assign_findings: v })}
-        />
+      </SettingsCard>
 
-        <div className="mt-4">
-          <span className="text-[13px] text-tx-2">Auto-investigate severities</span>
-          <div className="flex gap-2 flex-wrap mt-2">
-            {ALL_SEVERITIES.map((sev) => {
-              const on = config.auto_assign_severities.includes(sev)
-              return (
-                <button
-                  key={sev}
-                  className={`chip${on ? ' sel' : ''}`}
-                  onClick={() => toggleSeverity(sev)}
-                >
-                  {sev.charAt(0).toUpperCase() + sev.slice(1)}
-                </button>
-              )
-            })}
+      <SettingsCard
+        title="Response mode"
+        desc="Assist forces a person to approve each response. Act does not. Act is the default."
+      >
+        {approval.phase === 'error' ? (
+          <div className="settings-banner err">
+            <Icon name="alert" size={14} />
+            <span>Could not load the response mode. Reload to try again.</span>
           </div>
-        </div>
+        ) : (
+          <>
+            {approval.environment_wins && (
+              <div className="settings-banner info mb-3">
+                <Icon name="info" size={14} />
+                <span>The environment wins. Act cannot be saved.</span>
+              </div>
+            )}
+            <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+              <button
+                onClick={selectAssist}
+                className={`card card-sq text-left p-3.5 transition-colors ${
+                  assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
+                }`}
+                style={assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[13px] font-semibold text-tx">Assist</span>
+                  {assistOn && <span className="chip sel">Active</span>}
+                </div>
+                <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
+              </button>
+              <button
+                onClick={selectAct}
+                className={`card card-sq text-left p-3.5 transition-colors ${
+                  !assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
+                }`}
+                style={!assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[13px] font-semibold text-tx">Act</span>
+                  <span className="chip">Recommended</span>
+                  {!assistOn && <span className="chip sel">Active</span>}
+                </div>
+                <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
+              </button>
+            </div>
+          </>
+        )}
       </SettingsCard>
 
       <SettingsCard
@@ -247,28 +284,27 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         desc="Pick a profile to set agent concurrency, runtime, and cost limits in one click. Fine-tune any value under Advanced."
       >
         <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-          {(Object.keys(PRESETS) as PresetKey[]).map((key) => {
-            const p = PRESETS[key]
-            const selected = activePreset === key
+          {Object.entries(profiles).map(([key, profile]) => {
+            const selected = activeProfile === key
             return (
               <button
                 key={key}
-                onClick={() => applyAndSave(p.values)}
+                onClick={() => applyAndSave(profile.values)}
                 className={`card card-sq text-left p-3.5 transition-colors ${
                   selected ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
                 }`}
                 style={selected ? { borderColor: 'var(--accent-line)' } : undefined}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[13px] font-semibold text-tx">{p.label}</span>
+                  <span className="text-[13px] font-semibold text-tx">{profile.label}</span>
+                  {profile.recommended && <span className="chip">Recommended</span>}
                   {selected && <span className="chip sel">Active</span>}
                 </div>
-                <span className="text-xs text-tx-3">{p.summary}</span>
               </button>
             )
           })}
         </div>
-        {activePreset === 'custom' && (
+        {activeProfile === 'custom' && (
           <div className="settings-banner info mt-3">
             <Icon name="info" size={14} />
             <span>
@@ -281,7 +317,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
 
       <SettingsCard
         title="Advanced"
-        desc="Fine-tune limits, timing, models, and storage."
+        desc="Fine-tune limits, timing, and storage."
         actions={
           <button className="btn ghost" onClick={() => setAdvanced((a) => !a)}>
             <Icon name={advanced ? 'chevD' : 'chevR'} /> {advanced ? 'Hide' : 'Show'}
@@ -320,9 +356,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 {numField('Hourly cost limit', 'max_total_hourly_cost', {
                   min: 1, max: 500, unit: '$', hint: 'Pause intake if exceeded', allowUnlimited: true,
                 })}
-                {numField('Daily cost limit', 'max_total_daily_cost', {
-                  min: 1, max: 1000, unit: '$', hint: 'Hard daily ceiling', allowUnlimited: true,
-                })}
               </div>
             </div>
 
@@ -332,20 +365,15 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               </h4>
               <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 {numField('Loop interval', 'loop_interval', { min: 10, max: 600, unit: 's', hint: 'Orchestrator check interval' })}
-                {numField('Agent loop delay', 'agent_loop_delay', { min: 1, max: 30, unit: 's', hint: 'Pause between iterations' })}
                 {numField('Stale threshold', 'stale_threshold', { min: 60, max: 3600, unit: 's', hint: 'Kill idle agents after this' })}
-                {numField('Dedup window', 'dedup_window_minutes', { min: 5, max: 1440, unit: 'min', hint: 'Overlap detection window' })}
-                {numField('Context max chars', 'context_max_chars', { min: 1000, max: 100000, hint: 'Max context.md in prompt' })}
               </div>
             </div>
 
             <div>
               <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2">
-                Models &amp; storage
+                Storage
               </h4>
               <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                {modelField('Plan model', 'plan_model', 'Model for agent planning')}
-                {modelField('Review model', 'review_model', 'Model for master review')}
                 <Field label="Working directory" hint="Base path for investigation files">
                   <TextInput
                     value={config.workdir_base}
@@ -366,6 +394,18 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <span className="text-xs text-tx-3">Hidden — click Show to fine-tune limits.</span>
         )}
       </SettingsCard>
+
+      <IntentReportCard reloadKey={intentRevision} />
+
+      <ConfirmDialog
+        open={dialog != null}
+        title={dialog?.title ?? ''}
+        body={dialog?.body ?? ''}
+        confirmLabel="Save"
+        danger={false}
+        onConfirm={confirmPending}
+        onClose={dismissPending}
+      />
     </>
   )
 }

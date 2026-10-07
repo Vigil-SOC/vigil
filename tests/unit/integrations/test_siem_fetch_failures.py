@@ -1,0 +1,287 @@
+"""A SIEM fetch that fails must raise, so federation keeps its cursor (#1214).
+
+Returning [] made a failed poll look like a successful empty one: the runner
+recorded success and advanced the cursor past the outage. Sentinel, Defender
+and Elastic still return [] when their configuration is incomplete. Security
+Hub has no such check: it falls back to boto3's default credential chain, and
+an enabled source that finds no credentials raises like any other outage.
+A client that cannot be constructed (Elastic, OpenSearch) is an outage too.
+"""
+
+import sys
+import types
+from unittest.mock import MagicMock, patch
+
+import httpx
+import pytest
+import respx
+
+pytestmark = pytest.mark.unit
+
+
+# -- Azure Sentinel --------------------------------------------------------
+
+
+@pytest.fixture
+def fake_azure_sdk(monkeypatch):
+    """The Azure SDK is optional; stub the two modules fetch_alerts imports."""
+    identity = types.ModuleType("azure.identity")
+    identity.ClientSecretCredential = MagicMock()
+    insights = types.ModuleType("azure.mgmt.securityinsight")
+    insights.SecurityInsights = MagicMock()
+    for name, module in {
+        "azure": types.ModuleType("azure"),
+        "azure.identity": identity,
+        "azure.mgmt": types.ModuleType("azure.mgmt"),
+        "azure.mgmt.securityinsight": insights,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    return insights
+
+
+def _sentinel(config):
+    from core.integrations.azure_sentinel.ingestion import AzureSentinelIngestion
+
+    with patch(
+        "core.integrations.azure_sentinel.ingestion.resolve",
+        return_value=config,
+    ):
+        return AzureSentinelIngestion()
+
+
+_SENTINEL_CONFIG = {
+    "tenant_id": "t",
+    "client_id": "c",
+    "client_secret": "s",
+    "subscription_id": "sub",
+    "resource_group": "rg",
+    "workspace_name": "ws",
+}
+
+
+@pytest.mark.asyncio
+async def test_sentinel_api_failure_raises(fake_azure_sdk):
+    fake_azure_sdk.SecurityInsights.return_value.incidents.list.side_effect = (
+        RuntimeError("workspace unreachable")
+    )
+    with pytest.raises(RuntimeError, match="workspace unreachable"):
+        await _sentinel(_SENTINEL_CONFIG).fetch_alerts()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["azure.identity", "azure.mgmt.securityinsight"])
+async def test_sentinel_missing_sdk_raises(monkeypatch, missing):
+    monkeypatch.setitem(sys.modules, missing, None)  # makes the import fail
+    with pytest.raises(RuntimeError, match="pip install azure-mgmt-securityinsight"):
+        await _sentinel(_SENTINEL_CONFIG).fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_sentinel_incomplete_config_is_not_a_failure(fake_azure_sdk):
+    assert await _sentinel({"tenant_id": "t"}).fetch_alerts() == []
+
+
+# -- AWS Security Hub ------------------------------------------------------
+
+
+def _security_hub():
+    from core.integrations.aws_security_hub.ingestion import (
+        AWSSecurityHubIngestion,
+    )
+
+    with patch(
+        "core.integrations.aws_security_hub.ingestion.resolve",
+        return_value={
+            "region": "us-east-1",
+            "access_key_id": "a",
+            "secret_access_key": "b",
+        },
+    ):
+        return AWSSecurityHubIngestion()
+
+
+@pytest.mark.asyncio
+async def test_security_hub_client_error_raises():
+    from botocore.exceptions import ClientError
+
+    error = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "no"}}, "GetFindings"
+    )
+    client = MagicMock()
+    client.get_paginator.return_value.paginate.side_effect = error
+    with patch("boto3.client", return_value=client):
+        with pytest.raises(ClientError):
+            await _security_hub().fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_security_hub_missing_boto3_raises(monkeypatch):
+    monkeypatch.setitem(sys.modules, "boto3", None)
+    with pytest.raises(RuntimeError, match="boto3 not installed"):
+        await _security_hub().fetch_alerts()
+
+
+# -- Microsoft Defender ----------------------------------------------------
+
+
+def _defender(config):
+    from core.integrations.microsoft_defender.ingestion import (
+        MicrosoftDefenderIngestion,
+    )
+
+    with patch(
+        "core.integrations.microsoft_defender.ingestion.resolve",
+        return_value=config,
+    ):
+        return MicrosoftDefenderIngestion()
+
+
+_DEFENDER_CONFIG = {"tenant_id": "t", "client_id": "c", "client_secret": "s"}
+
+
+@pytest.mark.asyncio
+async def test_defender_token_failure_raises():
+    with patch(
+        "core.integrations.microsoft_defender.ingestion.httpx.post",
+        side_effect=httpx.ConnectError("login unreachable"),
+    ):
+        with pytest.raises(httpx.ConnectError):
+            await _defender(_DEFENDER_CONFIG).fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_defender_api_failure_raises():
+    request = httpx.Request(
+        "GET", "https://api.securitycenter.microsoft.com/api/alerts"
+    )
+    denied = httpx.Response(403, request=request)
+    svc = _defender(_DEFENDER_CONFIG)
+    with patch.object(svc, "_get_access_token", return_value="token"), patch(
+        "core.integrations.microsoft_defender.ingestion.httpx.get",
+        return_value=denied,
+    ):
+        with pytest.raises(httpx.HTTPStatusError):
+            await svc.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_defender_incomplete_config_is_not_a_failure():
+    assert await _defender({}).fetch_alerts() == []
+
+
+@pytest.mark.asyncio
+async def test_sentinel_compares_aware_incident_times(fake_azure_sdk):
+    """The SDK returns aware datetimes; the window is naive UTC."""
+    from datetime import datetime, timedelta, timezone
+
+    def incident(name, created):
+        # A real object, not a MagicMock: the SDK names below must be the
+        # ones fetch_alerts reads. A mock would invent the old names.
+        data = types.SimpleNamespace(alerts_count=2, tactics=["InitialAccess"])
+        return types.SimpleNamespace(
+            name=name,
+            title="Incident",
+            description="",
+            severity="Medium",
+            status="New",
+            created_time_utc=created,
+            last_modified_time_utc=None,
+            owner=None,
+            labels=[],
+            additional_data=data,
+        )
+
+    now = datetime.now(timezone.utc)
+    fake_azure_sdk.SecurityInsights.return_value.incidents.list.return_value = [
+        incident("recent", now - timedelta(hours=1)),
+        incident("old", now - timedelta(days=3)),
+    ]
+    incidents = await _sentinel(_SENTINEL_CONFIG).fetch_alerts()
+    assert [i["id"] for i in incidents] == ["recent"]
+    assert incidents[0]["alert_count"] == 2
+    assert incidents[0]["last_updated_time"] is None
+    fake_azure_sdk.SecurityInsights.return_value.incidents.list.assert_called_once_with(
+        resource_group_name="rg", workspace_name="ws"
+    )
+    sys.modules["azure.identity"].ClientSecretCredential.assert_called_once_with(
+        tenant_id="t", client_id="c", client_secret="s"
+    )
+
+
+@pytest.mark.asyncio
+async def test_elastic_without_url_is_not_a_failure():
+    from core.integrations.elastic.ingestion import ElasticIngestion
+
+    with patch(
+        "core.integrations.elastic.ingestion.resolve",
+        return_value={"elasticsearch_url": None, "kibana_url": None},
+    ):
+        assert await ElasticIngestion().fetch_alerts() == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_elastic_without_kibana_raises_when_the_index_search_fails():
+    """No Kibana means the index is read directly (a Wazuh indexer), so an
+    unreachable indexer is an outage, not missing configuration."""
+    from core.integrations.elastic.ingestion import ElasticIngestion
+
+    respx.post("https://es.test:9200/wazuh-alerts-4.x-*/_search").mock(
+        return_value=httpx.Response(503, text="unavailable")
+    )
+    with patch(
+        "core.integrations.elastic.ingestion.resolve",
+        return_value={
+            "elasticsearch_url": "https://es.test:9200",
+            "kibana_url": None,
+            "index_pattern": "wazuh-alerts-4.x-*",
+        },
+    ):
+        ingestion = ElasticIngestion()
+    with pytest.raises(RuntimeError, match="index search failed"):
+        await ingestion.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_elastic_client_construction_error_raises():
+    from core.integrations.elastic.ingestion import ElasticIngestion
+
+    with patch(
+        "core.integrations.elastic.ingestion.resolve",
+        return_value={"elasticsearch_url": "https://es.test:9200"},
+    ):
+        ingestion = ElasticIngestion()
+    with patch(
+        "core.integrations.elastic.ingestion.ElasticService",
+        side_effect=ValueError("bad ca_cert_path"),
+    ):
+        with pytest.raises(ValueError, match="bad ca_cert_path"):
+            await ingestion.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_opensearch_client_construction_error_raises():
+    from core.integrations.opensearch.ingestion import OpenSearchIngestion
+
+    with patch(
+        "core.integrations.opensearch.ingestion.resolve",
+        return_value={"opensearch_url": "https://os.test:9200"},
+    ):
+        ingestion = OpenSearchIngestion()
+    with patch(
+        "core.integrations.opensearch.ingestion.OpenSearchService",
+        side_effect=ValueError("bad ca_cert_path"),
+    ):
+        with pytest.raises(ValueError, match="bad ca_cert_path"):
+            await ingestion.fetch_alerts()
+
+
+@pytest.mark.asyncio
+async def test_opensearch_without_url_is_not_a_failure():
+    from core.integrations.opensearch.ingestion import OpenSearchIngestion
+
+    with patch(
+        "core.integrations.opensearch.ingestion.resolve",
+        return_value={"opensearch_url": None},
+    ):
+        assert await OpenSearchIngestion().fetch_alerts() == []

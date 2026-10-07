@@ -22,9 +22,18 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.time import utcnow
+from core.webhook_rejections import (
+    BAD_TOKEN,
+    DISABLED,
+    NO_SECRET,
+    record_rejection,
+    rejection_counts,
+)
 from services.daemon.config import PollingConfig
 
 logger = logging.getLogger(__name__)
@@ -32,6 +41,54 @@ logger = logging.getLogger(__name__)
 
 class IngestionError(RuntimeError):
     """An ingestion service reported success=False for a poll."""
+
+
+def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
+    """Coerce a webhook ``mitre_predictions`` value to the canonical
+    ``{technique_id: confidence}`` dict every consumer assumes.
+
+    Accepted: dict (passed through as-is, values unvalidated), list/tuple of
+    technique ids, list of ``{"technique"|"id": ..., "confidence"|"score": ...}``
+    dicts, a single id string, or None. 1.0 is the "present, no score"
+    precedent used by the internal producers. Any other type, or a list entry
+    with no technique id, raises ValueError so the request fails with a 400
+    rather than the field being silently emptied downstream.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        items: list = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        raise ValueError(
+            f"finding {finding_id}: mitre_predictions must be a dict, list or "
+            f"string, got {type(raw).__name__}"
+        )
+
+    out: Dict[str, float] = {}
+    for item in items:
+        score: Any = 1.0
+        if isinstance(item, dict):
+            # `or` rather than .get(default): a present-but-null key falls through.
+            technique = item.get("technique") or item.get("id")
+            score = item.get("confidence")
+            if score is None:
+                score = item.get("score")
+            # bool is an int subclass; True/False are not confidences.
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                score = 1.0
+        else:
+            technique = item
+        if not isinstance(technique, str) or not technique.strip():
+            raise ValueError(
+                f"finding {finding_id}: mitre_predictions entry {item!r} has no "
+                "technique id"
+            )
+        out[technique.strip()] = float(score)
+    return out
 
 
 @dataclass
@@ -65,6 +122,7 @@ class DataPoller:
         self._aws_security_hub_state = PollState()
         self._microsoft_defender_state = PollState()
         self._elastic_state = PollState()
+        self._opensearch_state = PollState()
         self._generic_state = PollState()
 
         # Durable per-source dedup sets (Redis-backed)
@@ -84,6 +142,7 @@ class DataPoller:
         self._aws_security_hub_service = None
         self._microsoft_defender_service = None
         self._elastic_service = None
+        self._opensearch_service = None
 
         # Stats
         self.stats = {
@@ -99,8 +158,12 @@ class DataPoller:
             "microsoft_defender_findings": 0,
             "elastic_polls": 0,
             "elastic_findings": 0,
+            "opensearch_polls": 0,
+            "opensearch_findings": 0,
             "webhook_findings": 0,
+            "dropped": 0,
             "errors": 0,
+            "webhook_rejections": {},
         }
 
     def set_output_queue(self, queue: asyncio.Queue):
@@ -111,40 +174,42 @@ class DataPoller:
     def _init_services(self):
         """Initialize data source services."""
         try:
-            from core.config import get_integration_config, is_integration_enabled
+            from core.config import is_integration_enabled
+            from core.integrations._base.config import resolve
 
             # Initialize Splunk service if configured
             if is_integration_enabled("splunk"):
                 try:
                     from core.integrations.splunk.client import SplunkService
+                    from core.integrations.splunk.descriptor import SPLUNK
 
-                    splunk_config = get_integration_config("splunk")
+                    splunk_config = resolve(SPLUNK)
                     self._splunk_service = SplunkService(
-                        server_url=splunk_config.get("server_url", ""),
-                        username=splunk_config.get("username", ""),
-                        password=splunk_config.get("password", ""),
-                        verify_ssl=splunk_config.get("verify_ssl", False),
+                        server_url=splunk_config["server_url"] or "",
+                        username=splunk_config["username"] or "",
+                        password=splunk_config["password"] or "",
+                        verify_ssl=splunk_config["verify_ssl"],
+                        ca_cert_path=splunk_config["ca_cert_path"],
                     )
                     logger.info("Splunk service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize Splunk service: {e}")
+                    logger.error(f"Failed to initialize Splunk service: {e}")
 
             # Initialize CrowdStrike service if configured
             if is_integration_enabled("crowdstrike"):
                 try:
                     from core.integrations.crowdstrike.client import CrowdStrikeService
+                    from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 
-                    cs_config = get_integration_config("crowdstrike")
+                    cs_config = resolve(CROWDSTRIKE)
                     self._crowdstrike_service = CrowdStrikeService(
-                        client_id=cs_config.get("client_id", ""),
-                        client_secret=cs_config.get("client_secret", ""),
-                        base_url=cs_config.get(
-                            "base_url", "https://api.crowdstrike.com"
-                        ),
+                        client_id=cs_config["client_id"] or "",
+                        client_secret=cs_config["client_secret"] or "",
+                        base_url=cs_config["base_url"] or "https://api.crowdstrike.com",
                     )
                     logger.info("CrowdStrike service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize CrowdStrike service: {e}")
+                    logger.error(f"Failed to initialize CrowdStrike service: {e}")
 
             # Initialize Azure Sentinel service if configured
             if is_integration_enabled("azure-sentinel"):
@@ -156,7 +221,7 @@ class DataPoller:
                     self._azure_sentinel_service = AzureSentinelIngestion()
                     logger.info("Azure Sentinel service initialized")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize Azure Sentinel service: {e}")
+                    logger.error(f"Failed to initialize Azure Sentinel service: {e}")
 
             # Initialize AWS Security Hub service if configured
             if is_integration_enabled("aws-security-hub"):
@@ -168,9 +233,7 @@ class DataPoller:
                     self._aws_security_hub_service = AWSSecurityHubIngestion()
                     logger.info("AWS Security Hub service initialized")
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize AWS Security Hub service: {e}"
-                    )
+                    logger.error(f"Failed to initialize AWS Security Hub service: {e}")
 
             # Initialize Microsoft Defender service if configured
             if is_integration_enabled("microsoft-defender"):
@@ -182,7 +245,7 @@ class DataPoller:
                     self._microsoft_defender_service = MicrosoftDefenderIngestion()
                     logger.info("Microsoft Defender service initialized")
                 except Exception as e:
-                    logger.warning(
+                    logger.error(
                         f"Failed to initialize Microsoft Defender service: {e}"
                     )
 
@@ -194,9 +257,19 @@ class DataPoller:
                     self._elastic_service = ElasticIngestion()
                     logger.info("Elastic Security service initialized")
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize Elastic Security service: {e}"
+                    logger.error(f"Failed to initialize Elastic Security service: {e}")
+
+            # Initialize OpenSearch service if configured
+            if is_integration_enabled("opensearch"):
+                try:
+                    from core.integrations.opensearch.ingestion import (
+                        OpenSearchIngestion,
                     )
+
+                    self._opensearch_service = OpenSearchIngestion()
+                    logger.info("OpenSearch service initialized")
+                except Exception as e:
+                    logger.error(f"Failed to initialize OpenSearch service: {e}")
 
             # Initialize data service for database access
             from core.storage.database_data_service import DatabaseDataService
@@ -285,8 +358,17 @@ class DataPoller:
         self.stats["splunk_polls"] += 1
         logger.debug("Polling Splunk for new alerts...")
 
-        # Calculate time range
-        lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
+        # After a successful poll, look back to that timestamp (rounded up one
+        # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
+        # Cap at 60 minutes: an uncapped window can exceed the ~60s job timeout,
+        # fail, and then retry the same window forever. First run keeps the
+        # fixed interval window.
+        last = self._splunk_state.last_poll_time
+        if last is not None:
+            delta_minutes = max(int((utcnow() - last).total_seconds() // 60) + 1, 1)
+            lookback_minutes = min(delta_minutes, 60)
+        else:
+            lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
         earliest_time = f"-{lookback_minutes}m"
 
         # Query for notable events / security alerts
@@ -296,8 +378,17 @@ class DataPoller:
             "`notable` | head 100",
         ]
 
+        # search() returns None on any error (it logs and swallows them), so a
+        # query failed if it returned None or raised. An empty list ran and
+        # found nothing; it falls through, since on non-ES installs
+        # `index=notable` is empty by design and the fallbacks must be reached.
+        # A failed query raises, so the loop counts an error and leaves
+        # last_poll_time alone, else a fallback's results would hide the events
+        # it missed. The last query is exempt: the `notable` macro is undefined
+        # without Enterprise Security, so it fails there, and as a last resort
+        # after empty queries it cannot discard anything.
         findings = []
-        for query in queries:
+        for i, query in enumerate(queries):
             try:
                 # search() polls its job with time.sleep for up to ~60s,
                 # which would otherwise freeze the whole daemon loop.
@@ -308,12 +399,17 @@ class DataPoller:
                     latest_time="now",
                     max_count=100,
                 )
-                if results:
-                    findings.extend(results)
-                    break  # Use first successful query
+                error = "search returned no result" if results is None else None
             except Exception as e:
-                logger.debug(f"Splunk query failed: {query} - {e}")
+                results, error = None, str(e)
+            if results is None:
+                logger.warning("Splunk query failed (%s): %s", query, error)
+                if i < len(queries) - 1:
+                    raise RuntimeError(f"Splunk: query failed ({query}): {error}")
                 continue
+            if results:
+                findings.extend(results)
+                break  # Use first successful query
 
         # Process findings
         new_count = 0
@@ -322,7 +418,9 @@ class DataPoller:
             if finding and not await self._splunk_dedup.is_processed(
                 finding["finding_id"]
             ):
-                if await self._enqueue_finding(finding, "splunk"):
+                if await self._enqueue_finding(
+                    finding, "splunk", self._splunk_dedup, finding["finding_id"]
+                ):
                     await self._splunk_dedup.mark_processed(finding["finding_id"])
                     new_count += 1
 
@@ -390,7 +488,6 @@ class DataPoller:
             "raw_event": event,
             "anomaly_score": 0.5,  # Default score
             "mitre_predictions": {},
-            "embedding": [],
         }
 
     async def _poll_crowdstrike_loop(self, shutdown_event: asyncio.Event):
@@ -436,6 +533,14 @@ class DataPoller:
                 limit=100,
             )
 
+            # None means the query failed; raise so the loop counts an error
+            # and leaves last_poll_time alone. [] is a clean empty poll.
+            if detections is None:
+                detail = getattr(self._crowdstrike_service, "last_error", None)
+                raise RuntimeError(
+                    "CrowdStrike detections query failed"
+                    + (f": {detail}" if detail else "")
+                )
             if not detections:
                 return
 
@@ -445,7 +550,12 @@ class DataPoller:
                 if finding and not await self._crowdstrike_dedup.is_processed(
                     finding["finding_id"]
                 ):
-                    if await self._enqueue_finding(finding, "crowdstrike"):
+                    if await self._enqueue_finding(
+                        finding,
+                        "crowdstrike",
+                        self._crowdstrike_dedup,
+                        finding["finding_id"],
+                    ):
                         await self._crowdstrike_dedup.mark_processed(
                             finding["finding_id"]
                         )
@@ -467,7 +577,7 @@ class DataPoller:
         if not detection_id:
             return None
 
-        finding_id = f"cs-{detection_id[:32]}"
+        finding_id = fit_id("cs-", detection_id, FINDING_ID_MAX)
 
         # Map severity
         severity_raw = detection.get("max_severity_displayname", "Medium")
@@ -511,12 +621,17 @@ class DataPoller:
             "raw_event": detection,
             "anomaly_score": detection.get("max_confidence", 50) / 100.0,
             "mitre_predictions": mitre_predictions,
-            "embedding": [],
         }
 
     async def _run_webhook_server(self, shutdown_event: asyncio.Event):
         """Run a simple webhook server for external ingestion."""
         from aiohttp import web
+
+        def reject(request: web.Request, reason: str, detail: Optional[str] = None):
+            record_rejection(
+                f"daemon{request.path}", reason, request.remote, detail=detail
+            )
+            self.stats["webhook_rejections"] = rejection_counts("daemon/")
 
         async def handle_webhook(request: web.Request) -> web.Response:
             """Handle incoming webhook data."""
@@ -524,10 +639,7 @@ class DataPoller:
             # request must present a matching bearer (constant-time compare).
             token = self.config.webhook_token
             if not token:
-                logger.error(
-                    "Ingest webhook rejected: DAEMON_WEBHOOK_TOKEN is not set "
-                    "(fail-closed; ingestion disabled until configured)"
-                )
+                reject(request, NO_SECRET, "DAEMON_WEBHOOK_TOKEN is not set")
                 return web.json_response(
                     {"error": "ingest disabled: server missing DAEMON_WEBHOOK_TOKEN"},
                     status=503,
@@ -536,6 +648,7 @@ class DataPoller:
                 request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             )
             if not hmac.compare_digest(presented, token):
+                reject(request, BAD_TOKEN)
                 return web.json_response({"error": "unauthorized"}, status=401)
             try:
                 data = await request.json()
@@ -558,6 +671,11 @@ class DataPoller:
                     s for f in findings if (s := f.get("data_source")) in disabled
                 }
                 if blocked:
+                    reject(
+                        request,
+                        DISABLED,
+                        f"sources={sorted(blocked)[:10]}",
+                    )
                     return web.json_response(
                         {
                             "error": f"ingestion disabled for source(s): {sorted(blocked)}"
@@ -565,7 +683,6 @@ class DataPoller:
                         status=503,
                     )
 
-                count = 0
                 for finding_data in findings:
                     finding_id = finding_data.get("finding_id")
                     if not finding_id:
@@ -574,11 +691,29 @@ class DataPoller:
                         finding_id = f"webhook-{uuid.uuid4().hex[:16]}"
                         finding_data["finding_id"] = finding_id
 
+                # Untrusted payload: coerce to the canonical {technique: score}
+                # dict once here, before anything is enqueued, so a bad entry
+                # 400s the whole batch (via the except below) instead of
+                # breaking triage and dropping technique rows downstream.
+                for finding_data in findings:
+                    finding_data["mitre_predictions"] = normalize_mitre_predictions(
+                        finding_data.get("mitre_predictions"),
+                        finding_data["finding_id"],
+                    )
+
+                count = 0
+                for finding_data in findings:
+                    finding_id = finding_data["finding_id"]
                     if not await self._webhook_dedup.is_processed(finding_id):
                         finding_data["data_source"] = finding_data.get(
                             "data_source", "webhook"
                         )
-                        if await self._enqueue_finding(finding_data, "webhook"):
+                        if await self._enqueue_finding(
+                            finding_data,
+                            "webhook",
+                            self._webhook_dedup,
+                            finding_id,
+                        ):
                             await self._webhook_dedup.mark_processed(finding_id)
                             count += 1
 
@@ -591,7 +726,7 @@ class DataPoller:
 
         async def health_check(request: web.Request) -> web.Response:
             """Health check endpoint."""
-            return web.json_response({"status": "healthy", "stats": self.stats})
+            return web.json_response({"status": "healthy"})
 
         app = web.Application()
         app.router.add_post("/ingest", handle_webhook)
@@ -600,10 +735,20 @@ class DataPoller:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
+        site = web.TCPSite(
+            runner, get_settings().daemon_bind_host, self.config.webhook_port
+        )
 
         logger.info(f"Webhook server starting on port {self.config.webhook_port}")
-        await site.start()
+        try:
+            await site.start()
+        except OSError as e:
+            # Don't re-raise: the other polling tasks must keep running.
+            logger.error(
+                "Webhook server failed to bind port %s: %s", self.config.webhook_port, e
+            )
+            await runner.cleanup()
+            return
 
         # Wait for shutdown
         await shutdown_event.wait()
@@ -611,19 +756,24 @@ class DataPoller:
         await runner.cleanup()
         logger.info("Webhook server stopped")
 
-    async def _enqueue_finding(self, finding: Dict[str, Any], source: str) -> bool:
+    async def _enqueue_finding(
+        self,
+        finding: Dict[str, Any],
+        source: str,
+        dedup: Optional[RedisDedupSet] = None,
+        dedup_key: Optional[str] = None,
+    ) -> bool:
         """Hand a finding off for processing. True if it was accepted.
 
         Callers must not mark a finding processed unless this returns True:
         the dedup key is what makes a retry possible, so marking a finding that
         was never stored drops it permanently.
 
-        "Accepted" means handed off, not durable. On the queue path that is a
-        put() onto an in-process asyncio.Queue, so a finding still dies with
-        the daemon if it stops between the put and the processor's write. What
-        this closes is the larger hole: an ingest that raised, or no sink at
-        all, used to be marked processed just the same. Making the queue path
-        durable needs the queue itself to be, which is a separate change.
+        On the queue path the item carries the dedup set and the exact key
+        about to be marked. If the processor gives up on the store, it forgets
+        that key on this same instance. The queue is still in-process, so a
+        daemon stop between put and the store drops the finding. A durable
+        queue is a separate change.
         """
         if self._output_queue:
             await self._output_queue.put(
@@ -632,6 +782,8 @@ class DataPoller:
                     "source": source,
                     "data": finding,
                     "timestamp": utcnow().isoformat(),
+                    "dedup": dedup,
+                    "dedup_key": dedup_key,
                 }
             )
             logger.debug(f"Enqueued finding {finding.get('finding_id')} from {source}")
@@ -664,6 +816,7 @@ class DataPoller:
         "azure_sentinel": ("Azure Sentinel", "incidents"),
         "aws_security_hub": ("AWS Security Hub", "findings"),
         "microsoft_defender": ("Microsoft Defender", "alerts"),
+        "opensearch": ("OpenSearch", "findings"),
     }
 
     async def _poll_ingestion_source(self, source: str):
@@ -676,7 +829,10 @@ class DataPoller:
         self.stats[f"{source}_polls"] += 1
         logger.debug("Polling %s for new %s...", label, noun)
 
-        result = service.ingest_alerts(limit=100)
+        # ingest_alerts() calls asyncio.run(), which raises RuntimeError while
+        # this loop is running. A worker thread also keeps the blocking SDK
+        # and ingest_finding writes off the daemon loop.
+        result = await asyncio.to_thread(service.ingest_alerts, limit=100)
 
         if not result.get("success"):
             # Raise rather than log: the loop is what counts an error and what
@@ -687,8 +843,19 @@ class DataPoller:
             raise IngestionError(f"{label} ingestion failed: {result.get('errors')}")
 
         ingested = result.get("ingested", 0)
+        failed = result.get("failed", 0)
         self.stats[f"{source}_findings"] += ingested
+        # A partial failure is not an outage (no raise, no backoff) but is counted.
+        self.stats["dropped"] += failed
         logger.info("%s: ingested %d %s", label, ingested, noun)
+        if failed:
+            logger.warning(
+                "%s: %d %s failed to ingest (first errors: %s)",
+                label,
+                failed,
+                noun,
+                result.get("errors"),
+            )
 
     async def _poll_ingestion_loop(self, source: str, shutdown_event: asyncio.Event):
         """Poll an ingestion-service source on interval until shutdown."""
@@ -750,14 +917,26 @@ class DataPoller:
             )
 
             new_count = 0
+            dropped = 0
             for alert in alerts:
                 finding = self._elastic_service.transform_alert_to_finding(alert)
-                if finding and not await self._elastic_dedup.is_processed(
-                    finding["finding_id"]
-                ):
-                    if await self._enqueue_finding(finding, "elastic"):
+                if not finding:
+                    dropped += 1
+                    continue
+                if not await self._elastic_dedup.is_processed(finding["finding_id"]):
+                    if await self._enqueue_finding(
+                        finding, "elastic", self._elastic_dedup, finding["finding_id"]
+                    ):
                         await self._elastic_dedup.mark_processed(finding["finding_id"])
                         new_count += 1
+
+            if dropped:
+                logger.warning(
+                    "Elastic Security: dropped %d of %d alert(s) that failed to transform",
+                    dropped,
+                    len(alerts),
+                )
+                self.stats["dropped"] += dropped
 
             if new_count > 0:
                 logger.info(f"Polled {new_count} new findings from Elastic Security")

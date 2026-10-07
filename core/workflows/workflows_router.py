@@ -6,22 +6,30 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.agents.projections import read_projection
+from core.agents.projections import read_projection, read_replay, read_verify
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,
+    provide_mcp_registry,
     provide_workflow_ai,
     provide_workflow_runs,
     provide_workflows,
 )
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
+from core.workflows.enablement import set_workflow_enabled
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
+
+_DECIDE = [permission_gate("ai_decisions.approve")]
 
 ROUTER_META = RouterMeta(
     prefix="/api",
@@ -29,6 +37,16 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
+
+# What gives a run something to work on. A turn count or a cost ceiling says how far
+# to go and never where, so neither is a target.
+TARGET_PARAMS = frozenset({"finding_id", "case_id", "context", "hypothesis"})
+
+# Rewrites in flight. One press is a whole model call over a run's record, and the two
+# an impatient operator makes race to append to the same ledger. Per process, which is
+# what a second worker behind a load balancer would slip past -- it bounds the common
+# case (one person, one console) without a lock nobody else here takes.
+_narrating: set[str] = set()
 
 
 # -----------------------------------------------------------------------------
@@ -43,6 +61,26 @@ class WorkflowExecuteRequest(BaseModel):
     case_id: Optional[str] = None
     context: Optional[str] = None
     hypothesis: Optional[str] = None
+    # What each stated claim is about, keyed by the claim itself. Nothing here is
+    # inferred: `host`, `user` and `process` have no shape a reader could find in a
+    # sentence, so a subject is declared or a Verdict is recalled by nobody.
+    hypothesis_subjects: Optional[Dict[str, List[str]]] = None
+    # Turns, not model calls. Bounded so a typo cannot enqueue an hour of spend.
+    iterations: Optional[int] = Field(default=None, ge=1, le=40)
+    # What the caller will spend on this question, which is not a property of the
+    # definition. Bounded because a mistyped ceiling is money.
+    max_cost_usd: Optional[float] = Field(default=None, gt=0, le=100)
+    # Whether the hunt stops and asks before it spends. The policy defaults to auto,
+    # so a headless run advances with nobody at a terminal.
+    approve_hypotheses: Optional[bool] = None
+
+
+class HuntCoverageRequest(BaseModel):
+    """A threat report and/or what was already extracted from it (#903)."""
+
+    report: Optional[str] = None
+    entity_keys: List[str] = Field(default_factory=list)
+    techniques: List[str] = Field(default_factory=list)
 
 
 class WorkflowPhaseSchema(BaseModel):
@@ -102,17 +140,43 @@ class WorkflowRunCancelRequest(BaseModel):
 # -----------------------------------------------------------------------------
 
 
+# The catalog reads are the frozen contract, served at /api/v1/workflows by
+# core/api/v1/workflows_router.py. These two routes keep the pre-version
+# /api/workflows paths working by reading the same core.workflows.catalog
+# functions. They must stay in THIS router so first-match order with
+# /workflows/custom (which looks like a {workflow_id}) is decided by decorator
+# order, not cross-router mount order.
 @router.get("/workflows")
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
-    """
-    List all available workflows (file-based + database-backed custom).
+    """List all available workflows."""
+    return catalog.listing(service)
 
-    Returns:
-        { workflows: [...], count: int }
-    """
-    workflows = service.list_workflows()
 
-    return {"workflows": workflows, "count": len(workflows)}
+class WorkflowEnabledRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/workflows/{workflow_id}/enabled")
+async def set_enabled(
+    workflow_id: str,
+    body: WorkflowEnabledRequest,
+    service: WorkflowsService = Depends(provide_workflows),
+    current_user: User = Depends(get_current_user),
+):
+    """Turn a workflow (built-in or custom) on or off. Setting the current state is a no-op."""
+    if service.get_workflow(workflow_id) is None:
+        raise HTTPException(
+            status_code=404, detail=f"Workflow not found: {workflow_id}"
+        )
+    try:
+        saved = set_workflow_enabled(
+            workflow_id, body.enabled, str(current_user.user_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not saved:
+        raise HTTPException(status_code=500, detail="Could not save workflow setting")
+    return {"id": workflow_id, "enabled": body.enabled}
 
 
 # Static routes MUST come before parameterized {workflow_id} routes
@@ -159,9 +223,6 @@ async def create_custom_workflow(
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error creating custom workflow")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/workflows/custom/{workflow_id}")
@@ -199,9 +260,6 @@ async def update_custom_workflow(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Error updating custom workflow")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/workflows/custom/{workflow_id}")
@@ -244,6 +302,45 @@ async def generate_workflow(
 
 
 # -----------------------------------------------------------------------------
+# Hunt coverage (#903)
+# -----------------------------------------------------------------------------
+
+
+@router.post("/workflows/threat-hunt/coverage")
+async def check_hunt_coverage(payload: HuntCoverageRequest):
+    """Say whether a threat report is already hunted: ``running``, ``concluded``
+    or ``uncovered``. Read-only -- the caller decides whether to POST the
+    returned ``proposal`` to ``/workflows/threat-hunt/execute``.
+
+    The same function as the ``check_hunt_coverage`` agent tool, imported here
+    so the router does not pull a database session factory in at import.
+    """
+    from core.memory.hunt_coverage import check_coverage
+
+    try:
+        return check_coverage(
+            report=payload.report,
+            entity_keys=payload.entity_keys,
+            techniques=payload.techniques,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.get("/workflows/threat-hunt/feed-proposals")
+async def propose_feed_hunts(limit: int = 200):
+    """Recent feed indicators nobody has hunted, each with a ``proposal`` body
+    for ``/workflows/threat-hunt/execute`` (#905). Read-only, like the
+    coverage route above and the ``propose_feed_hunts`` agent tool.
+    """
+    from core.threat_intel.threat_feed_service import (
+        propose_hunts_from_recent_indicators,
+    )
+
+    return propose_hunts_from_recent_indicators(limit=limit)
+
+
+# -----------------------------------------------------------------------------
 # Parameterized discovery/execution routes (keep at bottom so specific paths
 # like /workflows/custom and /workflows/reload match first)
 # -----------------------------------------------------------------------------
@@ -254,11 +351,13 @@ async def get_workflow(
     workflow_id: str,
     service: WorkflowsService = Depends(provide_workflows),
 ):
+    """Get one workflow.
+
+    Defined after /workflows/custom so decorator order resolves the {workflow_id}
+    vs /custom ambiguity within this router.
     """
-    Get full details for a specific workflow (custom or file-based).
-    """
-    workflow = service.get_workflow_dict(workflow_id, include_body=True)
-    if not workflow:
+    workflow = catalog.detail(service, workflow_id)
+    if workflow is None:
         raise HTTPException(
             status_code=404,
             detail=f"Workflow not found: {workflow_id}",
@@ -266,7 +365,33 @@ async def get_workflow(
     return workflow
 
 
-@router.post("/workflows/{workflow_id}/execute")
+# Console wiring for the start-a-hunt modal, deliberately unversioned: it is a
+# modal-only shape, and the frozen run surface is /api/v1/agent-runs.
+@router.get("/workflows/{workflow_id}/preflight")
+async def get_workflow_preflight(
+    workflow_id: str,
+    service: WorkflowsService = Depends(provide_workflows),
+    registry=Depends(provide_mcp_registry),
+):
+    """What a run of this workflow is before it runs, for every kind.
+
+    ``{roles, model, skills, permissions, budgets, checkpoints}`` with a note
+    beside any that is empty, plus ``{capabilities, pricing}`` for a hunt-kind
+    workflow; 404 for an unknown id.
+    """
+    result = hunt_preflight.preflight(service, registry, workflow_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+    return result
+
+
+@router.post(
+    "/workflows/{workflow_id}/execute",
+    dependencies=[permission_gate("ai_chat.use")],
+)
 async def execute_workflow(
     workflow_id: str,
     request: WorkflowExecuteRequest,
@@ -287,7 +412,7 @@ async def execute_workflow(
 
     parameters = {k: v for k, v in request.model_dump().items() if v is not None}
 
-    if not parameters:
+    if not TARGET_PARAMS & parameters.keys():
         raise HTTPException(
             status_code=400,
             detail=(
@@ -305,7 +430,9 @@ async def execute_workflow(
 
     if not result.get("success"):
         error = result.get("error", "Unknown error during workflow execution")
-        raise HTTPException(status_code=500, detail=error)
+        raise HTTPException(
+            status_code=409 if result.get("disabled") else 500, detail=error
+        )
 
     return result
 
@@ -332,29 +459,22 @@ async def get_workflow_run(
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     row["phases"] = run_service.list_phases(run_id)
-    if _is_hunt(workflows, row.get("workflow_id")):
-        row["hunt"] = await read_projection(run_id)
+    folded = await read_projection(run_id)
+    if catalog.is_hunt(workflows, row.get("workflow_id")):
+        row["hunt"] = folded
+    else:
+        row["projection"] = folded
     return row
 
 
-# A hunt writes no phase rows: it has beliefs to report, not steps. The agent
-# layer owns them, so they are read from it rather than folded here.
-def _is_hunt(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
-    from core.workflows.workflows_service import HUNT_RUN_KIND
-
-    if not workflow_id:
-        return False
-    definition = workflows.get_workflow(str(workflow_id))
-    return definition is not None and definition.run_kind == HUNT_RUN_KIND
-
-
-@router.post("/workflows/runs/{run_id}/resume")
+@router.post("/workflows/runs/{run_id}/resume", dependencies=_DECIDE)
 async def resume_workflow_run(
     run_id: str,
     request: WorkflowRunResumeRequest,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approval_service: ApprovalService = Depends(provide_approvals),
     workflows: WorkflowsService = Depends(provide_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Resume a paused workflow run (#128).
 
@@ -374,7 +494,7 @@ async def resume_workflow_run(
             detail=f"Run {run_id} is not paused (status={run.get('status')})",
         )
 
-    approved_by = request.approved_by or "analyst"
+    approved_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
@@ -382,18 +502,26 @@ async def resume_workflow_run(
         raise HTTPException(
             status_code=409, detail=f"Run {run_id} has no pending approval"
         )
+    if len(pending) > 1:
+        # Resume names no action, so with several pending it would pick one unseen.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} has {len(pending)} pending approvals; "
+            "decide each through /approvals/{action_id}",
+        )
 
     approval_service.approve_action(pending[0].action_id, approved_by=approved_by)
     return await resume_run(run_id, pending[0].action_id, approved_by)
 
 
-@router.post("/workflows/runs/{run_id}/cancel")
+@router.post("/workflows/runs/{run_id}/cancel", dependencies=_DECIDE)
 async def cancel_workflow_run(
     run_id: str,
     request: WorkflowRunCancelRequest,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approval_service: ApprovalService = Depends(provide_approvals),
     workflows: WorkflowsService = Depends(provide_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Cancel a paused or running workflow run (#128).
 
@@ -401,13 +529,14 @@ async def cancel_workflow_run(
     as ``cancelled`` with the supplied reason.
     """
     from core.response.approval_service import ActionStatus
+    from core.workflows.run_cancel import stop_run
     from core.workflows.run_resume import resume_run
 
     run = run_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
-    rejected_by = request.rejected_by or "analyst"
+    rejected_by = current_user.username
     pending = approval_service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
@@ -421,10 +550,10 @@ async def cancel_workflow_run(
     if run.get("status") == "paused" and pending:
         return await resume_run(run_id, pending[0].action_id, rejected_by)
 
-    # Running-but-not-paused runs: we can't interrupt the in-flight
-    # Claude call here, but we can mark the row cancelled so history
-    # reflects the user's intent. (Background-worker support would
-    # let us actually stop execution; that's out of scope for #128.)
+    # Ask the run to stop, then make sure it does: the abort lets a hunt settle itself
+    # and write a report, and the escalation behind it covers a worker that cannot.
+    stopped = stop_run(run_id, request.reason, rejected_by)
+
     run_service.finalize_run(
         run_id,
         status="cancelled",
@@ -435,7 +564,129 @@ async def cancel_workflow_run(
         "status": "cancelled",
         "run_id": run_id,
         "rejection_reason": request.reason,
+        **stopped,
     }
+
+
+@router.post("/workflows/runs/{run_id}/narrate")
+async def narrate_workflow_run(
+    run_id: str,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Write a fresh account of ``run_id`` from its ledger.
+
+    Answerable whichever state the run is in, a finished one included:
+    the write-up reads the record and appends to it, so it needs neither
+    the run's lease nor its loop.
+    """
+    from core.agents.projections import write_narrative
+
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run_id in _narrating:
+        raise HTTPException(
+            status_code=409,
+            detail="This run is already being written up. Reopen it when that finishes.",
+        )
+    _narrating.add(run_id)
+    try:
+        narrative = await write_narrative(run_id)
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not write up run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    finally:
+        _narrating.discard(run_id)
+
+    await _restate_summary(run_id, run_service)
+    return {"success": True, "narrative": narrative}
+
+
+@router.get("/workflows/runs/{run_id}/replay")
+async def replay_workflow_run(
+    run_id: str,
+    decision_id: Optional[str] = None,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Rebuild what each decision of a hunt was shown and compare it to the record.
+
+    Not part of the polled run detail: this folds the whole ledger on the agent
+    side, so it is answered only when an operator asks. Serve decides what is
+    hunt-like; a run with nothing to replay is a 404 here too.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        report = await read_replay(run_id, decision_id)
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not replay run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"Nothing to replay for run: {run_id}"
+        )
+    return report
+
+
+@router.get("/workflows/runs/{run_id}/verify")
+async def verify_workflow_run(
+    run_id: str,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Walk the hash chain of ``run_id``. The agent layer hashes it.
+
+    Python forwards the result and does not re-check the chain.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        result = await read_verify(run_id)
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not verify run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail=f"Nothing to verify for run: {run_id}"
+        )
+    return result
+
+
+# result_summary was rendered with the account this rewrite supersedes. The console
+# reads the projection and would show the new one either way, but the row is what an
+# export and the case note the run filed both read, so leaving it makes two accounts
+# of one hunt. Best effort: the account is written and journaled whatever happens here.
+async def _restate_summary(run_id: str, run_service: WorkflowRunService) -> None:
+    try:
+        projection = await read_projection(run_id) or {}
+        restated = projection.get("report_markdown")
+        if restated:
+            run_service.set_result_summary(run_id, restated)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not restate the stored summary of %s: %s", run_id, exc)
+
+
+@router.delete("/workflows/runs/{run_id}")
+async def delete_workflow_run(
+    run_id: str,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Remove a finished run from the listings.
+
+    A mark, not a drop: the row and the agent ledger behind it stay
+    readable by run_id, because that ledger is the only account of what
+    the agents did. A run still in flight is refused — cancel it first,
+    so nothing is hidden while a worker is still writing to it.
+    """
+    run = run_service.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run.get("status") in ("running", "paused"):
+        raise HTTPException(
+            status_code=409,
+            detail="This run has not finished. Cancel it before removing it.",
+        )
+    if not run_service.delete_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    return {"success": True, "run_id": run_id}
 
 
 @router.get("/workflows/{workflow_id}/runs")

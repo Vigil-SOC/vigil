@@ -30,9 +30,9 @@ function App() {
             element={<ProtectedRoute><SetupScreen /></ProtectedRoute>}
           />
 
-          {/* Primary app — the SOC console, gated behind auth + first-run setup.
-              Each screen owns a URL (/<screen>); cases deep-link to a specific
-              case via the ?case=<caseId> query param. */}
+          {/* Primary app — the SOC console, behind auth. First visit (no
+              vigil.setupDismissed) is sent to /setup once. Each screen owns a
+              URL (/<screen>); cases deep-link via ?case=<caseId>. */}
           <Route
             element={
               <ProtectedRoute>

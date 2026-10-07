@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.integrations._base.search_params import validate_index
+from core.integrations._base.tls import tls_verify
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +23,7 @@ class ElasticService:
         password: Optional[str] = None,
         verify_ssl: bool = True,
         index_pattern: str = ".alerts-security.alerts-default",
+        ca_cert_path: Optional[str] = None,
     ):
         self.elasticsearch_url = elasticsearch_url.rstrip("/")
         self.kibana_url = (kibana_url or "").rstrip("/") or None
@@ -28,6 +32,7 @@ class ElasticService:
         self.password = password
         self.verify_ssl = verify_ssl
         self.index_pattern = index_pattern
+        self.ca_cert_path = ca_cert_path or None
 
         self._es_client: Optional[httpx.AsyncClient] = None
         self._kibana_client: Optional[httpx.AsyncClient] = None
@@ -47,7 +52,7 @@ class ElasticService:
             base_url=self.elasticsearch_url,
             headers=headers,
             auth=auth,
-            verify=self.verify_ssl,
+            verify=tls_verify(self.verify_ssl, self.ca_cert_path),
             timeout=30.0,
         )
 
@@ -67,7 +72,7 @@ class ElasticService:
             base_url=self.kibana_url,
             headers=headers,
             auth=auth,
-            verify=self.verify_ssl,
+            verify=tls_verify(self.verify_ssl, self.ca_cert_path),
             timeout=30.0,
         )
 
@@ -132,13 +137,19 @@ class ElasticService:
         size: int = 100,
         sort: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Run an Elasticsearch query and return the raw response body."""
-        target = index or self.index_pattern
+        """Run an Elasticsearch query and return the raw response body.
+
+        A failed request returns None, but a client that cannot be built (an
+        unusable CA path) or an invalid index name raises, so the caller
+        reports why.
+        """
+        target = validate_index(index or self.index_pattern)
         body: Dict[str, Any] = {"query": query, "size": size}
         if sort:
             body["sort"] = sort
+        client = self.es_client
         try:
-            resp = await self.es_client.post(f"/{target}/_search", json=body)
+            resp = await client.post(f"/{target}/_search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
@@ -152,7 +163,9 @@ class ElasticService:
             query={
                 "bool": {
                     "must": [{"multi_match": {"query": ip, "fields": ["*"]}}],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index,
@@ -165,7 +178,9 @@ class ElasticService:
             query={
                 "bool": {
                     "must": [{"multi_match": {"query": file_hash, "fields": ["*"]}}],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index,
@@ -185,11 +200,17 @@ class ElasticService:
                                     "user.name",
                                     "user.id",
                                     "winlog.event_data.TargetUserName",
+                                    # Wazuh indexer (wazuh-alerts-4.x-*)
+                                    "data.srcuser",
+                                    "data.dstuser",
+                                    "data.win.eventdata.targetUserName",
                                 ],
                             }
                         }
                     ],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index,
@@ -209,11 +230,16 @@ class ElasticService:
                                     "host.name",
                                     "host.hostname",
                                     "agent.hostname",
+                                    # Wazuh indexer: its pipeline drops `host`
+                                    "agent.name",
+                                    "data.win.system.computer",
                                 ],
                             }
                         }
                     ],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
+                    "filter": [
+                        {"range": {"@timestamp": {"gte": f"now-{int(hours)}h"}}}
+                    ],
                 }
             },
             index=index,
@@ -221,8 +247,9 @@ class ElasticService:
 
     async def get_indices(self) -> Optional[List[str]]:
         """List available indices."""
+        client = self.es_client
         try:
-            resp = await self.es_client.get("/_cat/indices?format=json")
+            resp = await client.get("/_cat/indices?format=json")
             resp.raise_for_status()
             return [idx["index"] for idx in resp.json() if "index" in idx]
         except Exception as exc:
@@ -246,10 +273,9 @@ class ElasticService:
             "size": size,
             "sort": [{sort_field: {"order": sort_order}}],
         }
+        client = self.kibana_client
         try:
-            resp = await self.kibana_client.post(
-                "/api/detection_engine/signals/search", json=body
-            )
+            resp = await client.post("/api/detection_engine/signals/search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:

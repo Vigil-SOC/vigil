@@ -2,19 +2,21 @@
 
 from typing import Any, Optional
 
-from core.storage.schemas.base import Embedding, OptDateTime, ORMSchema
+from pydantic import model_validator
 
-# List/summary responses never consume the embedding, and shipping a
-# 768-float vector per row is expensive — omit the field entirely.
-WITHOUT_EMBEDDING = {"embedding"}
+from core.storage.schemas.base import OptDateTime, ORMSchema
+
+
+def _predictions_map(obj: Any) -> dict:
+    """Rebuild `{technique_id: confidence}` from child rows."""
+    rows = getattr(obj, "mitre_prediction_rows", None)
+    if not rows:
+        return {}
+    return {row.technique_id: row.confidence for row in rows}
 
 
 class FindingSchema(ORMSchema):
-    """A security finding.
-
-    ``embedding`` is present by default; callers that don't need the vector
-    should use :meth:`dump_summary`.
-    """
+    """A security finding."""
 
     finding_id: Optional[str] = None
     description: Optional[str] = None
@@ -31,14 +33,18 @@ class FindingSchema(ORMSchema):
     ai_enrichment: Optional[Any] = None
     created_at: OptDateTime = None
     updated_at: OptDateTime = None
-    embedding: Embedding = None
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _hydrate_predictions(cls, data: Any, handler):
+        """Nested dumps (e.g. CaseWithFindings) never call ``dump``."""
+        validated = handler(data)
+        if getattr(data, "mitre_prediction_rows", None) is not None:
+            validated.mitre_predictions = _predictions_map(data)
+        return validated
 
     @classmethod
-    def dump_summary(cls, obj: Any, **kwargs: Any) -> dict:
-        """Serialize without the embedding vector."""
-        return cls.dump(obj, exclude=WITHOUT_EMBEDDING, **kwargs)
-
-    @classmethod
-    def dump_many_summary(cls, objs: Any, **kwargs: Any) -> list[dict]:
-        """Serialize an iterable without embedding vectors."""
-        return [cls.dump_summary(obj, **kwargs) for obj in objs]
+    def dump(cls, obj: Any, **kwargs: Any) -> dict:
+        data = super().dump(obj, **kwargs)
+        data["mitre_predictions"] = _predictions_map(obj)
+        return data

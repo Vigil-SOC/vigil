@@ -43,6 +43,24 @@ def normalize_timestamp(timestamp_str: str) -> datetime:
     return dt
 
 
+def _dated(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The findings that have a timestamp, and so a place on a timeline.
+
+    ``findings.timestamp`` is nullable: LogLM rows can arrive with no event time.
+    An undated finding is left off rather than failing the whole response.
+    """
+    return [f for f in findings if f.get("timestamp")]
+
+
+def _column_time(dt: datetime) -> datetime:
+    """``dt`` as the naive UTC ``findings.timestamp`` holds, for a query bound.
+
+    An aware bound is sent as ``timestamptz``, and comparing that to the naive
+    column reads the column in the session's time zone rather than in UTC.
+    """
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class TimelineEvent(BaseModel):
     """Timeline event model."""
 
@@ -146,11 +164,11 @@ async def get_case_timeline(case_id: str):
 
     # Add findings as events
     findings = data_service.get_findings_by_case(case_id)
-    for finding in findings:
+    for finding in _dated(findings):
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
-                content=f"Finding: {finding['finding_id']} - {finding.get('severity', 'unknown')}",
+                content=f"Finding: {finding['finding_id']} - {finding.get('severity') or 'unknown'}",
                 start=normalize_timestamp(finding["timestamp"]),
                 type="finding",
                 severity=finding.get("severity"),
@@ -197,23 +215,40 @@ async def get_finding_context_timeline(
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
+    # The window is centred on the finding's own time. An undated finding has
+    # none, and centring it anywhere else would invent one.
+    if not finding.get("timestamp"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Finding {finding_id} has no timestamp, "
+                "so there is no time window around it"
+            ),
+        )
+
     finding_time = normalize_timestamp(finding["timestamp"])
     start_time = finding_time - timedelta(minutes=time_window_minutes)
     end_time = finding_time + timedelta(minutes=time_window_minutes)
 
-    # Get findings in time window
-    all_findings = data_service.get_findings(limit=1000)
+    # Get findings in time window. The query takes the bounds too, not just the
+    # loop below: ``timestamp DESC`` returns undated findings first, and a page
+    # of them would leave no room for the neighbours.
+    all_findings = data_service.get_findings(
+        limit=1000,
+        timestamp_start=_column_time(start_time),
+        timestamp_end=_column_time(end_time),
+    )
 
     events: List[TimelineEvent] = []
 
-    for f in all_findings:
+    for f in _dated(all_findings):
         f_time = normalize_timestamp(f["timestamp"])
         if start_time <= f_time <= end_time:
             is_target = f["finding_id"] == finding_id
             events.append(
                 TimelineEvent(
                     id=f"finding-{f['finding_id']}",
-                    content=f"{'🎯 ' if is_target else ''}Finding: {f['finding_id']} - {f.get('severity', 'unknown')}",
+                    content=f"{'🎯 ' if is_target else ''}Finding: {f['finding_id']} - {f.get('severity') or 'unknown'}",
                     start=f_time,
                     type="finding",
                     severity=f.get("severity"),
@@ -262,12 +297,31 @@ async def get_timeline_range(
     start_time = normalize_timestamp(start) if start else None
     end_time = normalize_timestamp(end) if end else None
 
-    # Get findings
-    all_findings = data_service.get_findings(limit=limit)
+    # Undated findings are left out in the query rather than skipped after it:
+    # timestamp DESC puts NULLs first in Postgres, so a page of them would
+    # otherwise fill the limit and leave the dashboard's timeline empty. Findings
+    # naming an analyst-excluded IP are left out too: this is the dashboard's
+    # timeline, and it describes the queue. The range and the filters go into
+    # the query too, so the limit counts matching findings: filtered after the
+    # fetch, a window older than the newest ``limit`` findings came back empty.
+    all_findings = data_service.get_findings(
+        limit=limit,
+        dated_only=True,
+        exclusions="hide",
+        severity=severity,
+        data_source=data_source,
+        timestamp_start=_column_time(start_time) if start_time else None,
+        timestamp_end=_column_time(end_time) if end_time else None,
+    )
 
     events: List[TimelineEvent] = []
 
     for finding in all_findings:
+        # The demo data service ignores dated_only and the filters below, so they
+        # are applied here as well; a finding with no time cannot be placed on a
+        # timeline either way.
+        if not finding.get("timestamp"):
+            continue
         f_time = normalize_timestamp(finding["timestamp"])
 
         # Filter by time range if specified
@@ -287,7 +341,7 @@ async def get_timeline_range(
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
-                content=f"Finding: {finding['finding_id']} - {finding.get('severity', 'unknown')}",
+                content=f"Finding: {finding['finding_id']} - {finding.get('severity') or 'unknown'}",
                 start=f_time,
                 type="finding",
                 severity=finding.get("severity"),
@@ -328,24 +382,31 @@ async def get_cluster_timeline(cluster_id: str):
     """
     data_service = DatabaseDataService()
 
-    # Get findings in cluster
-    all_findings = data_service.get_findings(limit=1000)
+    def in_cluster(page: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # Demo data ignores the query's filters.
+        return [f for f in page if f.get("cluster_id") == cluster_id]
 
-    # Filter by cluster_id
-    findings = [f for f in all_findings if f.get("cluster_id") == cluster_id]
+    # ``timestamp DESC`` returns undated findings first, so without dated_only a
+    # cluster's own undated findings could fill the page ahead of its dated ones.
+    findings = in_cluster(
+        data_service.get_findings(limit=1000, cluster_id=cluster_id, dated_only=True)
+    )
 
-    if not findings:
+    # An all-undated cluster still exists, so it is checked apart from the page.
+    if not findings and not in_cluster(
+        data_service.get_findings(limit=1, cluster_id=cluster_id)
+    ):
         raise HTTPException(
             status_code=404, detail="Cluster not found or has no findings"
         )
 
     events: List[TimelineEvent] = []
 
-    for finding in findings:
+    for finding in _dated(findings):
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
-                content=f"Finding: {finding['finding_id']} - {finding.get('severity', 'unknown')}",
+                content=f"Finding: {finding['finding_id']} - {finding.get('severity') or 'unknown'}",
                 start=normalize_timestamp(finding["timestamp"]),
                 type="finding",
                 severity=finding.get("severity"),
@@ -368,213 +429,4 @@ async def get_cluster_timeline(cluster_id: str):
 
     return TimelineResponse(
         events=events, total=len(events), start_time=start_time, end_time=end_time
-    )
-
-
-class EventVisualizationResponse(BaseModel):
-    """Event visualization data model."""
-
-    event: TimelineEvent
-    finding: Optional[Dict[str, Any]] = None
-    related_events: List[TimelineEvent] = []
-    entity_graph: Dict[str, Any] = {}
-    mitre_techniques: List[Dict[str, Any]] = []
-    ai_analysis: Optional[Dict[str, Any]] = None
-    metadata: Dict[str, Any] = {}
-
-
-@router.get("/event/{event_id}/visualization")
-async def get_event_visualization(
-    event_id: str,
-    time_window_minutes: int = Query(default=30, ge=5, le=240),
-    include_ai_analysis: bool = Query(default=True),
-):
-    """
-    Get comprehensive visualization data for a timeline event.
-
-    This endpoint provides all data needed for incident visualization:
-    - Event details and metadata
-    - Associated finding (if applicable)
-    - Related events in time window
-    - Entity relationship graph
-    - MITRE ATT&CK techniques
-    - AI-generated incident analysis
-
-    Args:
-        event_id: Event identifier (format: {type}-{id})
-        time_window_minutes: Minutes before/after to include related events
-        include_ai_analysis: Whether to generate AI analysis (requires Claude API)
-
-    Returns:
-        Comprehensive event visualization data
-    """
-    data_service = DatabaseDataService()
-
-    # Parse event ID to determine type and actual ID
-    # Format: finding-{finding_id}, activity-{case_id}-{idx}, note-{case_id}-{idx}
-    event_parts = event_id.split("-", 1)
-    if len(event_parts) < 2:
-        raise HTTPException(status_code=400, detail="Invalid event ID format")
-
-    event_type = event_parts[0]
-    actual_id = event_parts[1]
-
-    # Get the main event data
-    event_data = None
-    finding_data = None
-    case_data = None
-
-    if event_type == "finding":
-        # This is a finding event
-        finding_data = data_service.get_finding(actual_id)
-        if not finding_data:
-            raise HTTPException(status_code=404, detail="Finding not found")
-
-        event_data = TimelineEvent(
-            id=event_id,
-            content=f"Finding: {finding_data['finding_id']} - {finding_data.get('severity', 'unknown')}",
-            start=normalize_timestamp(finding_data["timestamp"]),
-            type="finding",
-            severity=finding_data.get("severity"),
-            metadata={
-                "finding_id": finding_data["finding_id"],
-                "data_source": finding_data.get("data_source"),
-                "anomaly_score": finding_data.get("anomaly_score"),
-                "entity_context": finding_data.get("entity_context"),
-                "description": finding_data.get("description"),
-            },
-        )
-    elif event_type in ["activity", "note", "timeline"]:
-        # This is a case-related event
-        case_id_parts = actual_id.split("-")
-        if len(case_id_parts) >= 2:
-            case_id = f"{case_id_parts[0]}-{case_id_parts[1]}"
-            case_data = data_service.get_case(case_id)
-            if not case_data:
-                raise HTTPException(status_code=404, detail="Case not found")
-
-            # Try to find the specific event in the case data
-            # This is a simplified version - in production you'd want to store events with IDs
-            event_data = TimelineEvent(
-                id=event_id,
-                content=f"{event_type.capitalize()} event",
-                start=normalize_timestamp(case_data["created_at"]),
-                type=event_type,
-                metadata={"case_id": case_id},
-            )
-    else:
-        raise HTTPException(status_code=400, detail="Unknown event type")
-
-    if not event_data:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    # Get related events in time window
-    event_time = event_data.start
-    start_time = event_time - timedelta(minutes=time_window_minutes)
-    end_time = event_time + timedelta(minutes=time_window_minutes)
-
-    related_events: List[TimelineEvent] = []
-    all_findings = data_service.get_findings(limit=1000)
-
-    for f in all_findings:
-        f_time = normalize_timestamp(f["timestamp"])
-        if (
-            start_time <= f_time <= end_time
-            and f["finding_id"] != finding_data.get("finding_id")
-            if finding_data
-            else True
-        ):
-            related_events.append(
-                TimelineEvent(
-                    id=f"finding-{f['finding_id']}",
-                    content=f"Finding: {f['finding_id']} - {f.get('severity', 'unknown')}",
-                    start=f_time,
-                    type="finding",
-                    severity=f.get("severity"),
-                    metadata={
-                        "finding_id": f["finding_id"],
-                        "data_source": f.get("data_source"),
-                        "anomaly_score": f.get("anomaly_score"),
-                        "entity_context": f.get("entity_context"),
-                    },
-                )
-            )
-
-    # Sort related events by time
-    related_events.sort(key=lambda e: e.start)
-
-    # Build entity graph for this event and related events
-    from core.findings.graph_builder_service import GraphBuilderService
-
-    graph_builder = GraphBuilderService()
-
-    findings_for_graph = []
-    if finding_data:
-        findings_for_graph.append(finding_data)
-    # Add related findings
-    for re in related_events[:10]:  # Limit to 10 related events for graph
-        if re.metadata and re.metadata.get("finding_id"):
-            rf = data_service.get_finding(re.metadata["finding_id"])
-            if rf:
-                findings_for_graph.append(rf)
-
-    entity_graph = {}
-    if findings_for_graph:
-        entity_graph = graph_builder.build_entity_graph(findings_for_graph)
-
-    # Extract MITRE ATT&CK techniques
-    mitre_techniques = []
-    if finding_data:
-        mitre_preds = finding_data.get("mitre_predictions", {})
-        predicted_techniques = finding_data.get("predicted_techniques", [])
-
-        if mitre_preds:
-            for technique_id, confidence in sorted(
-                mitre_preds.items(), key=lambda x: x[1], reverse=True
-            )[:5]:
-                mitre_techniques.append(
-                    {
-                        "technique_id": technique_id,
-                        "confidence": confidence,
-                        "name": technique_id,  # In production, look up technique name
-                    }
-                )
-        elif predicted_techniques:
-            for tech in predicted_techniques[:5]:
-                mitre_techniques.append(
-                    {"technique_id": tech, "confidence": 0.0, "name": tech}
-                )
-
-    # Generate AI analysis if requested
-    ai_analysis = None
-    if include_ai_analysis and finding_data:
-        try:
-            from core.llm.harness.claude import ClaudeService
-
-            claude_service = ClaudeService()
-
-            if claude_service.has_api_key():
-                ai_analysis = await claude_service.generate_event_analysis(
-                    event_data.model_dump(),
-                    [e.model_dump() for e in related_events],
-                    finding_data,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to generate AI analysis: {e}")
-            ai_analysis = {"error": "AI analysis unavailable"}
-
-    # Build response
-    return EventVisualizationResponse(
-        event=event_data,
-        finding=finding_data,
-        related_events=related_events,
-        entity_graph=entity_graph,
-        mitre_techniques=mitre_techniques,
-        ai_analysis=ai_analysis,
-        metadata={
-            "time_window_minutes": time_window_minutes,
-            "related_events_count": len(related_events),
-            "entities_count": len(entity_graph.get("nodes", [])),
-            "mitre_techniques_count": len(mitre_techniques),
-        },
     )

@@ -1,4 +1,4 @@
-"""Serialization schemas for the workflow, skill and agent models."""
+"""Serialization schemas for the workflow and agent models."""
 
 from typing import Any, Optional
 
@@ -50,8 +50,9 @@ class WorkflowRunSchema(ORMSchema):
     finished_at: OptDateTime = None
     duration_ms: Optional[int] = None
     total_cost_usd: ZeroFloat = 0.0
-    skill_tools_available: JsonList = Field(default_factory=list)
     error: Optional[str] = None
+    outcome: Optional[str] = None
+    reason: Optional[str] = None
     result_summary: Optional[str] = None
 
     @classmethod
@@ -78,25 +79,6 @@ class WorkflowRunPhaseSchema(ORMSchema):
     error: Optional[str] = None
 
 
-class SkillSchema(ORMSchema):
-    """Skill."""
-
-    skill_id: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    input_schema: JsonDict = Field(default_factory=dict)
-    output_schema: JsonDict = Field(default_factory=dict)
-    required_tools: JsonList = Field(default_factory=list)
-    prompt_template: Optional[str] = None
-    execution_steps: JsonList = Field(default_factory=list)
-    is_active: Optional[bool] = None
-    created_by: Optional[str] = None
-    version: Optional[int] = None
-    created_at: OptDateTime = None
-    updated_at: OptDateTime = None
-
-
 class CustomAgentSchema(ORMSchema):
     """CustomAgent."""
 
@@ -114,6 +96,7 @@ class CustomAgentSchema(ORMSchema):
     max_tokens: Optional[int] = None
     enable_thinking: Optional[bool] = None
     model: Optional[str] = None
+    fallback_model: Optional[str] = None
     component_category: Optional[str] = None
     forked_from: Optional[str] = None
     created_by: Optional[str] = None
@@ -144,6 +127,25 @@ class ApprovalActionSchema(ORMSchema):
     parameters: JsonDict = Field(default_factory=dict)
     workflow_run_id: Optional[str] = None
     workflow_phase_id: Optional[str] = None
+    reversibility: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+
+class IntakeTriggerSchema(ORMSchema):
+    """IntakeTrigger."""
+
+    id: Optional[int] = None
+    kind: Optional[str] = None
+    state: Optional[str] = None
+    reason: Optional[str] = None
+    finding_id: Optional[str] = None
+    priority: Optional[str] = None
+    payload: JsonDict = Field(default_factory=dict)
+    investigation_id: Optional[str] = None
+    case_id: Optional[str] = None
+    merged_into: Optional[str] = None
+    created_at: OptDateTime = None
+    decided_at: OptDateTime = None
 
 
 class InvestigationSchema(ORMSchema):

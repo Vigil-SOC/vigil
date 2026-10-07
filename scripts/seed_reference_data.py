@@ -17,7 +17,6 @@ not stop the rest.
 """
 
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -26,55 +25,10 @@ sys.path.insert(0, str(project_root))
 
 from sqlalchemy import text  # noqa: E402
 from core.storage.connection import init_database, get_db_manager  # noqa: E402
+from core.storage.reference_seed import split_statements  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("seed_reference_data")
-
-# psql-style client directives the SQL files may carry; the driver rejects them.
-_SKIP_PREFIXES = ("\\", "\\connect", "\\c ")
-_DOLLAR_TAG = re.compile(r"\$[A-Za-z_0-9]*\$")
-
-
-def _statements(sql: str):
-    """Split on top-level ';', treating one inside a single-quoted string or a
-    dollar-quoted ($tag$) body as literal so PL/pgSQL bodies stay whole."""
-    buf: list[str] = []
-    i, n = 0, len(sql)
-    in_squote = False
-    dollar_tag = None
-    while i < n:
-        if dollar_tag is not None:
-            if sql.startswith(dollar_tag, i):
-                buf.append(dollar_tag)
-                i += len(dollar_tag)
-                dollar_tag = None
-                continue
-        elif in_squote:
-            if sql[i] == "'":
-                in_squote = False
-        elif sql[i] == "'":
-            in_squote = True
-        elif sql[i] == "$":
-            m = _DOLLAR_TAG.match(sql, i)
-            if m:
-                dollar_tag = m.group(0)
-                buf.append(dollar_tag)
-                i += len(dollar_tag)
-                continue
-        elif sql[i] == ";":
-            yield from _emit("".join(buf))
-            buf = []
-            i += 1
-            continue
-        buf.append(sql[i])
-        i += 1
-    yield from _emit("".join(buf))
-
-
-def _emit(stmt: str):
-    s = stmt.strip()
-    if s and not s.startswith(_SKIP_PREFIXES):
-        yield s
 
 
 def main() -> int:
@@ -92,7 +46,7 @@ def main() -> int:
         return 1
     for f in files:
         applied = 0
-        for stmt in _statements(f.read_text()):
+        for stmt in split_statements(f.read_text()):
             try:
                 with engine.begin() as conn:
                     conn.execute(text(stmt))

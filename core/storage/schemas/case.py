@@ -15,9 +15,25 @@ from core.storage.schemas.finding import FindingSchema
 
 
 def _to_finding_ids(value: Any) -> Any:
+    """Accept ORM findings, dumped ids, or inlined finding dicts.
+
+    ``dump()`` reads the ``findings`` relationship; FastAPI then re-validates
+    the dumped dict (``finding_ids: list[str]``) when this schema is a
+    ``response_model``. Both shapes have to round-trip.
+    """
     if not value:
         return []
-    return [finding.finding_id for finding in value]
+    ids: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            ids.append(item)
+        elif isinstance(item, dict):
+            fid = item.get("finding_id")
+            if isinstance(fid, str):
+                ids.append(fid)
+        else:
+            ids.append(item.finding_id)
+    return ids
 
 
 FindingIds = Annotated[list[str], BeforeValidator(_to_finding_ids)]

@@ -28,11 +28,6 @@ import { fromText } from "../workflows/hunt/entities.js";
 
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
-interface Entity {
-  type: string;
-  value: string;
-}
-
 const PAD = 4;
 const pad = (index: number): string => String(index + 1).padStart(PAD, "0");
 

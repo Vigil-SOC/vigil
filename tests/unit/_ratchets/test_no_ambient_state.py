@@ -27,7 +27,9 @@ SINGLETON_ALLOWED = {
     ("services/api/routers/agents.py", "agent_manager"),
     ("services/api/routers/analytics.py", "ai_insights_service"),
     ("core/threat_intel/attack_router.py", "data_service"),
-    ("core/cases/case_metrics_router.py", "metrics_service"),
+    ("core/api/v1/case_metrics_router.py", "metrics_service"),
+    ("core/api/v1/cases_router.py", "data_service"),
+    ("core/api/v1/findings_router.py", "data_service"),
     ("core/cases/case_search_router.py", "search_service"),
     ("core/cases/case_templates_router.py", "workflow_service"),
     ("services/api/routers/cases.py", "data_service"),
@@ -49,9 +51,9 @@ LAZY_SINGLETON_ALLOWED = {
     ("core/storage/connection.py", "get_db_manager"),
     ("core/ingestion/ingestion_jobs.py", "get_job_registry"),
     ("core/secrets_manager.py", "get_secrets_manager"),
-    ("core/storage/config_service.py", "get_config_service"),
     ("core/llm/providers/registry.py", "get_registry"),
     ("core/integrations/elastic/tool.py", "get_elastic_service"),
+    ("core/integrations/opensearch/tool.py", "get_opensearch_service"),
     ("core/integrations/splunk/tool.py", "get_splunk_service"),
     ("core/integrations/vstrike/client.py", "get_vstrike_service"),
     # Module-private and already injectable: every caller may pass its own
@@ -91,7 +93,10 @@ def _callee_name(node: ast.AST):
 def _env_reads(rel_path: Path):
     lines, tree = _parse(rel_path)
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Attribute) or node.attr not in ("getenv", "environ"):
+        if not isinstance(node, ast.Attribute) or node.attr not in (
+            "getenv",
+            "environ",
+        ):
             continue
         if not (isinstance(node.value, ast.Name) and node.value.id == "os"):
             continue

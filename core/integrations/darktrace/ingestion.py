@@ -22,7 +22,10 @@ from core.ingestion.siem_ingestion_service import SIEMIngestionService
 logger = logging.getLogger(__name__)
 
 DATA_SOURCE = "darktrace"
-DEFAULT_EMBEDDING_DIM = 768
+
+
+# Incident identifiers, in order of preference.
+_INCIDENT_KEYS = ("uuid", "id")
 
 
 def _finding_id(prefix: str, stable_key: str, ts: datetime) -> str:
@@ -31,7 +34,9 @@ def _finding_id(prefix: str, stable_key: str, ts: datetime) -> str:
     ``stable_key`` is hashed so the same Darktrace event always produces the
     same finding_id (idempotent replay through the webhook).
     """
-    digest = hashlib.sha1(f"{prefix}:{stable_key}".encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha1(  # identifier only; changing it would break replay dedup
+        f"{prefix}:{stable_key}".encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:8]
     return f"f-{ts.strftime('%Y%m%d')}-{digest}"
 
 
@@ -165,7 +170,6 @@ class DarktraceIngestionService(SIEMIngestionService):
 
         return {
             "finding_id": _finding_id("dt-mb", str(pbid), ts),
-            "embedding": [0.0] * DEFAULT_EMBEDDING_DIM,
             "mitre_predictions": _extract_mitre(model.get("tags")),
             "anomaly_score": score,
             "timestamp": ts.isoformat(),
@@ -179,8 +183,8 @@ class DarktraceIngestionService(SIEMIngestionService):
 
     def transform_ai_analyst(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform a Darktrace AI Analyst Incident/Event."""
-        uuid = alert.get("uuid") or alert.get("id")
-        if not uuid:
+        incident_ref = next((alert[k] for k in _INCIDENT_KEYS if alert.get(k)), None)
+        if not incident_ref:
             logger.warning("Darktrace AI Analyst payload missing uuid; skipping")
             return None
 
@@ -211,13 +215,12 @@ class DarktraceIngestionService(SIEMIngestionService):
             evidence_links.append(
                 {
                     "type": "flow",
-                    "ref": f"{self.console_url}/#aianalyst/incident/{uuid}",
+                    "ref": f"{self.console_url}/#aianalyst/incident/{incident_ref}",
                 }
             )
 
         return {
-            "finding_id": _finding_id("dt-ai", str(uuid), ts),
-            "embedding": [0.0] * DEFAULT_EMBEDDING_DIM,
+            "finding_id": _finding_id("dt-ai", str(incident_ref), ts),
             "mitre_predictions": _extract_mitre(
                 alert.get("mitreTactics") or alert.get("tags")
             ),
@@ -240,7 +243,8 @@ class DarktraceIngestionService(SIEMIngestionService):
         # on every worker restart and break idempotent replay dedup. Use a
         # stable SHA-1 digest over sorted JSON instead.
         fallback_key = hashlib.sha1(
-            json.dumps({k: str(v) for k, v in sorted(alert.items())}).encode("utf-8")
+            json.dumps({k: str(v) for k, v in sorted(alert.items())}).encode("utf-8"),
+            usedforsecurity=False,
         ).hexdigest()
         key = (
             alert.get("id") or alert.get("eventId") or alert.get("name") or fallback_key
@@ -253,7 +257,6 @@ class DarktraceIngestionService(SIEMIngestionService):
 
         return {
             "finding_id": _finding_id("dt-sys", str(key), ts),
-            "embedding": [0.0] * DEFAULT_EMBEDDING_DIM,
             "mitre_predictions": {},
             "anomaly_score": score,
             "timestamp": ts.isoformat(),

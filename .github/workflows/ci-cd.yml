@@ -8,7 +8,7 @@ on:
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -18,16 +18,14 @@ jobs:
   # ============================================================================
   lint-backend:
     name: Lint Backend
-    # Canonical repo only. Forks can't run this pipeline (private submodules +
-    # missing secrets) so pushes to a fork's main/develop just email the owner
+    # Canonical repo only. Forks can't run this pipeline (missing secrets) so
+    # pushes to a fork's main/develop just email the owner
     # a failure. For pull_request events github.repository is the BASE repo, so
     # contributor PRs against Vigil-SOC/vigil still run CI as normal.
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -105,6 +103,46 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
+  # Regenerating the committed OpenAPI types must be a no-op. The spec is
+  # dumped from app.openapi() (no running server); unannotated routes staying
+  # empty in the output is expected.
+  check-generated-api-types:
+    name: Generated API Types
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: clients/web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: clients/web
+        run: npm ci
+
+      - name: Regenerate OpenAPI types
+        run: python scripts/generate_frontend_types.py
+
+      - name: Types match the spec
+        run: |
+          git add -A -- clients/web/src/services/generated
+          git diff --cached --exit-code -- clients/web/src/services/generated
+
   lint-docker:
     name: Lint Dockerfiles
     if: github.repository == 'Vigil-SOC/vigil'
@@ -113,7 +151,7 @@ jobs:
       - uses: actions/checkout@v7
       
       - name: Run hadolint
-        uses: hadolint/hadolint-action@v3.4.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: infra/docker/Dockerfile.backend
           ignore: DL3008,DL3009
@@ -123,7 +161,7 @@ jobs:
       # (#635) and installs no apt packages, so the two rules waived above have
       # nothing to say about it. Advisory here would only let it rot.
       - name: Run hadolint (agent)
-        uses: hadolint/hadolint-action@v3.4.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: infra/docker/Dockerfile.agent
 
@@ -178,13 +216,18 @@ jobs:
       # process.argv[1], which --eval leaves undefined. That is the whole point --
       # it proves every import resolves inside the image (the failure mode that
       # typecheck cannot see, since tsc reads .ts and node runs the emitted .js)
-      # without needing a Postgres or a Redis to connect to.
-      - name: Smoke test — both entry points load
+      # without needing a Postgres or a Redis to connect to. It also checks every
+      # registered arch file shipped, since tsc emits none of the YAML.
+      - name: Smoke test — entry points load and arch files ship
         run: |
           docker run --rm vigil-agent:ci \
             node --input-type=module -e "
               await import('/app/dist/worker.js');
               await import('/app/dist/serve.js');
+              const { existsSync } = await import('node:fs');
+              const { archFor, registeredKinds } = await import('/app/dist/arch/registry.js');
+              const missing = registeredKinds().map((k) => archFor(k).arch).filter((p) => !existsSync(p));
+              if (missing.length) throw new Error('arch files missing from image: ' + missing.join(', '));
               console.log('agent ok');
             "
 
@@ -219,8 +262,6 @@ jobs:
           - { os: macos-latest,  arch: arm64  }
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Show the host Python that must NOT be used
         run: |
@@ -281,8 +322,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -352,7 +391,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: agent_test
           POSTGRES_USER: test
@@ -374,7 +413,7 @@ jobs:
         ports:
           - 6379:6379
     env:
-      DATABASE_URL: postgres://test:test@localhost:5432/agent_test
+      AGENT_TEST_DATABASE_URL: postgres://test:test@localhost:5432/agent_test
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v7
@@ -390,10 +429,32 @@ jobs:
         working-directory: services/agent
         run: npm ci
 
+      # Goldens are the output of the implementation being replaced, at a commit
+      # that is not an ancestor of main and is absent from a depth-1 checkout.
+      # Pin that SHA. Do not follow the threat-hunt branch tip, and do not
+      # vendor its ai/ tree into this checkout. The generator loads that tree
+      # by path; its modules need yaml, which this job already installed.
+      # Run from the repo root: git archive pathspecs are relative to the cwd,
+      # and `ai/` exists only at the root of that commit.
+      - name: Check fold goldens against the original implementation
+        env:
+          FOLD_GOLDEN_SOURCE: 2051232ab97e95da8f081a616a843977db937abd
+        run: |
+          root="$(mktemp -d)"
+          git fetch --depth 1 origin "$FOLD_GOLDEN_SOURCE"
+          git archive "$FOLD_GOLDEN_SOURCE" ai | tar -x -C "$root"
+          mkdir -p "$root/node_modules"
+          ln -s "$PWD/services/agent/node_modules/yaml" "$root/node_modules/yaml"
+          ./services/agent/node_modules/.bin/tsx services/agent/scripts/generate-fold-goldens.ts \
+            --original "$root" \
+            --ledgers services/agent/tests/fixtures/runs \
+            --check services/agent/tests/fixtures/runs
+
       - name: Apply agent-layer schema
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d agent_test \
             -f infra/database/init/19_agent_ledger.sql \
+            -f infra/database/init/31_agent_ledger_hash_chain.sql \
             -f infra/database/init/20_agent_directives.sql \
             -f infra/database/init/21_agent_run_leases.sql
 
@@ -406,6 +467,38 @@ jobs:
         run: npm test
 
   # ============================================================================
+  # Column snapshot must not change inside a patch release
+  # ============================================================================
+  # A PR that only updates the snapshot (VERSION untouched) stays green. The
+  # release PR is what fails: VERSION moved, major.minor did not, and the
+  # snapshot differs from the previous v* tag.
+  schema-snapshot-patch-gate:
+    name: Schema Snapshot Patch Gate
+    if: github.repository == 'Vigil-SOC/vigil' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Default checkout is depth 1 and does not fetch tags, so
+          # `git show v0.6.0:<snapshot>` cannot resolve the tag. Full history
+          # makes the three-dot VERSION diff against the PR base work; tags
+          # are fetched explicitly below.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch release tags
+        # An unknown tag fails the gate. A tag that resolves but whose tree
+        # has no snapshot file is the bootstrap pass. Fetching is what makes
+        # those two outcomes different; a shallow clone reports both as an
+        # unknown object.
+        run: git fetch --force --tags origin
+
+      - name: Fail a patch release that changes the column snapshot
+        env:
+          SCHEMA_GATE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check_schema_snapshot_patch.py
+
+  # ============================================================================
   # Integration Tests
   # ============================================================================
   test-integration:
@@ -414,7 +507,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -439,7 +532,8 @@ jobs:
           - 6379:6379
     env:
       TESTING: "true"
-      DEV_MODE: "true"
+      # Auth on, as a fresh install runs; tests/conftest.py supplies the JWT secret.
+      DEV_MODE: "false"
       SECRET_KEY: "test-secret-key"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
@@ -451,8 +545,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -479,7 +571,7 @@ jobs:
       - name: Enable Postgres extensions
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
       - name: Initialize schema
         # Strict here, and only here: CI provisions from empty, so a schema that
@@ -498,8 +590,91 @@ jobs:
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
             -f infra/database/init/19_agent_ledger.sql \
+            -f infra/database/init/31_agent_ledger_hash_chain.sql \
             -f infra/database/init/20_agent_directives.sql \
             -f infra/database/init/21_agent_run_leases.sql
+
+      - name: Install restic and pg_dump
+        # backup create shells out to both. pg_dump's major must be at least the
+        # server's (16). restic is pinned.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl bzip2 ca-certificates
+          pg_major() {
+            pg_dump --version | sed -n 's/.*PostgreSQL) \([0-9][0-9]*\).*/\1/p'
+          }
+          need_client=0
+          if ! command -v pg_dump >/dev/null 2>&1; then
+            need_client=1
+          else
+            major="$(pg_major)"
+            if [ -z "$major" ] || [ "$major" -lt 16 ]; then
+              need_client=1
+            fi
+          fi
+          if [ "$need_client" -eq 1 ]; then
+            sudo apt-get install -y gnupg
+            curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              | sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+            . /etc/os-release
+            echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+              | sudo tee /etc/apt/sources.list.d/pgdg.list
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-16
+          fi
+          if [ -x /usr/lib/postgresql/16/bin/pg_dump ]; then
+            echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+            export PATH="/usr/lib/postgresql/16/bin:${PATH}"
+          fi
+          major="$(pg_major)"
+          if [ -z "$major" ] || [ "$major" -lt 16 ]; then
+            echo "pg_dump $(pg_dump --version) is older than server 16" >&2
+            exit 1
+          fi
+          version=0.19.1
+          case "$(uname -m)" in
+            x86_64) arch=amd64; sha=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;;
+            aarch64) arch=arm64; sha=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL -o /tmp/restic.bz2 \
+            "https://github.com/restic/restic/releases/download/v${version}/restic_${version}_linux_${arch}.bz2"
+          echo "${sha}  /tmp/restic.bz2" | sha256sum -c -
+          bunzip2 -f /tmp/restic.bz2
+          sudo install -m 0755 /tmp/restic /usr/local/bin/restic
+          restic version
+          pg_dump --version
+
+      # restic talks to S3 with the process AWS credentials. The image's default
+      # command is not `server`, so name it. minio/minio left Docker Hub; this
+      # tag is a community build of the same server.
+      - name: Start MinIO
+        run: |
+          set -euo pipefail
+          docker rm -f vigil-minio >/dev/null 2>&1 || true
+          docker run -d --name vigil-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=vigilbackup \
+            -e MINIO_ROOT_PASSWORD=vigilbackupsecret \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z \
+            server /data
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs vigil-minio >&2 || true
+            echo "MinIO did not answer on port 9000" >&2
+            exit 1
+          fi
+          docker exec vigil-minio \
+            mc alias set local http://127.0.0.1:9000 vigilbackup vigilbackupsecret
+          docker exec vigil-minio mc mb --ignore-existing local/vigil-backup
 
       - name: Run integration tests
         run: |
@@ -525,7 +700,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -546,8 +721,6 @@ jobs:
       POSTGRES_DB: deeptempo_test
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -563,7 +736,7 @@ jobs:
       - name: Enable Postgres extensions
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
       - name: Initialize schema
         # Strict here, and only here: CI provisions from empty, so a schema that
@@ -582,6 +755,162 @@ jobs:
           pytest tests/unit/ -m external_service -v --no-cov
 
   # ============================================================================
+  # Helm Install Schema — does a fresh chart install end with every ORM table?
+  # ============================================================================
+  # The jobs above run init_database() as the database owner before any init
+  # SQL, so they cannot see what a Helm install does. There the db-init Job
+  # applies dbInit.sqlFiles as the chart user first, and the backend then runs
+  # create_all as vigil_app, which holds no REFERENCES on the chart user's
+  # tables. A new ORM table with a foreign key to one of them must therefore be
+  # created by a listed SQL file; if it is not, create_all fails, and since it is
+  # one transaction every table it was creating goes with it. 0.6.0 shipped that
+  # way: mcp_credentials was left out, and 29 of 52 tables with it. This job
+  # provisions in that order, as those roles, from the chart's own Job.
+  test-helm-install-schema:
+    name: Helm Install Schema
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # As the chart's own Postgres runs: its image, database and user, which
+        # the image makes the superuser, as it does in the StatefulSet.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: deeptempo_soc
+          POSTGRES_USER: deeptempo
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_PASSWORD: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Render the db-init Job
+        run: |
+          # The Job uses none of the subcharts, and all are off by default, so a
+          # copy of the chart without them renders without fetching them.
+          cp -R infra/helm/vigil "$RUNNER_TEMP/chart"
+          yq -i 'del(.dependencies)' "$RUNNER_TEMP/chart/Chart.yaml"
+          helm template ci "$RUNNER_TEMP/chart" \
+            --show-only templates/db-init-job.yaml > "$RUNNER_TEMP/db-init-job.yaml"
+
+      - name: Run the db-init Job as the chart user
+        env:
+          # The service answers to its id on the job network, as the chart's
+          # Postgres Service answers to its name in the cluster.
+          NETWORK: ${{ job.services.postgres.network }}
+        run: |
+          # The Job's image and command, run as its pod runs them: uid 70, a
+          # read-only root filesystem, and the chart's SQL bundle at /sql.
+          job="$RUNNER_TEMP/db-init-job.yaml"
+          container='.spec.template.spec.containers[] | select(.name == "db-init")'
+          readarray -d '' command < <(yq -0 "$container | .command[]" "$job")
+          docker run --rm --network "$NETWORK" --user 70:70 --read-only \
+            -v "$PWD/infra/helm/vigil/files/database-init:/sql:ro" \
+            -e PGHOST=postgres -e PGPORT=5432 -e PGDATABASE="$POSTGRES_DB" \
+            -e PGUSER=deeptempo -e PGPASSWORD="$POSTGRES_PASSWORD" \
+            "$(yq "$container | .image" "$job")" "${command[@]}"
+
+      - name: Initialize schema as vigil_app
+        id: init-schema
+        # As the backend starts under the chart: _env.tpl logs it in as
+        # vigil_app, and services/api/main.py calls init_database() at startup.
+        # Strict for the reason the jobs above are (#562), and it covers what
+        # theirs cannot: here about half the ORM tables come from init SQL, as on
+        # a real install, so a table whose SQL disagrees with its model is drift.
+        env:
+          POSTGRES_USER: vigil_app
+          DB_STRICT_SCHEMA: "true"
+        run: |
+          python -c "from core.storage.connection import init_database; init_database()"
+
+      - name: Every ORM table exists
+        # Also after a failed create_all, to name the tables it left out.
+        if: ${{ !cancelled() && steps.init-schema.outcome != 'skipped' }}
+        env:
+          POSTGRES_USER: vigil_app
+        run: |
+          python - <<'PY'
+          from sqlalchemy import inspect
+
+          from core.storage.connection import get_db_manager
+          from core.storage.models import Base
+
+          manager = get_db_manager()
+          manager.initialize()
+          expected = set(Base.metadata.tables)
+          missing = sorted(expected - set(inspect(manager.engine).get_table_names()))
+          print(f"{len(expected) - len(missing)} of {len(expected)} ORM tables exist")
+          if missing:
+              print(f"::error::Missing after a Helm install: {', '.join(missing)}")
+              raise SystemExit(1)
+          PY
+
+      - name: Default rows are seeded
+        # init_database() seeds the default SLA policies and case templates into
+        # empty tables after create_all (#1246), and logs rather than fails when
+        # it cannot, so only a count shows an install left without them. The
+        # expected count is one row per INSERT the backend's seeder finds, so a
+        # multi-row VALUES default would need this to count rows instead.
+        env:
+          POSTGRES_USER: vigil_app
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+
+          from core.storage.connection import get_db_manager
+          from core.storage.reference_seed import SEED_FILE, find_seed_file, inserts_by_table
+
+          path = find_seed_file()
+          if path is None:
+              print(f"::error::{SEED_FILE} not found; the backend seeds nothing without it")
+              raise SystemExit(1)
+          expected = {t: len(s) for t, s in inserts_by_table(path.read_text()).items()}
+          if not expected:
+              print(f"::error::No INSERT found in {SEED_FILE}; this check needs updating")
+              raise SystemExit(1)
+
+          manager = get_db_manager()
+          manager.initialize()
+          short = []
+          with manager.engine.connect() as conn:
+              quote = conn.dialect.identifier_preparer.quote
+              for table, want in sorted(expected.items()):
+                  got = conn.execute(text(f"SELECT count(*) FROM {quote(table)}")).scalar()
+                  print(f"{table}: {got} of {want} default rows")
+                  if got != want:
+                      short.append(f"{table} has {got}, expected {want}")
+          if short:
+              print(f"::error::Default rows after a Helm install: {'; '.join(short)}")
+              raise SystemExit(1)
+          PY
+
+  # ============================================================================
   # Security Scanning
   # ============================================================================
   security-scan-python:
@@ -590,8 +919,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -601,15 +928,21 @@ jobs:
       - name: Install Bandit
         run: pip install bandit[toml]
       
+      # Gate: medium-or-higher severity and confidence. A justified exception is
+      # a `# nosec Bxxx - <reason>` at the call site.
       - name: Run Bandit
-        run: bandit -r core/ services/ tools/ scripts/ -f json -o bandit-report.json || true
-      
+        run: bandit -r core/ services/ tools/ scripts/ -ll -ii
+
+      - name: Write Bandit report
+        if: always()
+        run: bandit -r core/ services/ tools/ scripts/ -ll -ii -f json -o bandit-report.json --exit-zero
+
       - name: Upload Bandit results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: bandit-report
           path: bandit-report.json
-        continue-on-error: true
 
   security-scan-npm:
     name: Security Scan - NPM
@@ -623,10 +956,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       
+      # --omit=dev audits what ships. clients/web's remaining highs are the
+      # braces chain under tailwindcss (build-time only; the fix is a breaking
+      # tailwind 4 upgrade).
       - name: Run npm audit
-        working-directory: clients/web
-        run: npm audit --audit-level=moderate || true
-        continue-on-error: true
+        run: |
+          status=0
+          for dir in clients/web services/agent clients/desktop; do
+            echo "::group::npm audit ($dir)"
+            (cd "$dir" && npm audit --omit=dev --audit-level=high) || status=1
+            echo "::endgroup::"
+          done
+          exit $status
 
   # ============================================================================
   # Build Docker Images
@@ -642,8 +983,6 @@ jobs:
     
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

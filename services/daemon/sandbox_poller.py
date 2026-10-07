@@ -23,8 +23,31 @@ import httpx
 from core.config import get_integration_config, get_settings
 from core.secrets import get_secret
 from core.time import utcnow
+from services.daemon.vendor_errors import (
+    AUTH_STATUSES,
+    note_response,
+    vendor_cooling_down,
+)
 
 logger = logging.getLogger(__name__)
+
+# Terminal sub statuses: never re-polled.
+_FINAL_STATUSES = ("failed", "expired", "reported")
+
+
+class SandboxAuthError(Exception):
+    """The sandbox rejected our credentials (401/403) while polling."""
+
+    def __init__(self, vendor: str, status: int) -> None:
+        super().__init__(f"{vendor} rejected the API key (HTTP {status})")
+        self.vendor = vendor
+        self.status = status
+
+
+def _check(vendor: str, resp: Any) -> None:
+    """Record auth/quota rejections; raise on auth, treat 429 as not ready."""
+    if note_response(vendor, resp) and resp.status_code in AUTH_STATUSES:
+        raise SandboxAuthError(vendor, resp.status_code)
 
 
 class SandboxPoller:
@@ -55,7 +78,13 @@ class SandboxPoller:
         """Scan recent findings, advance any pending sandbox submissions."""
         self._init_services()
         if not self._data_service:
-            return {"checked": 0, "completed": 0, "expired": 0, "errors": 0}
+            return {
+                "checked": 0,
+                "completed": 0,
+                "expired": 0,
+                "failed": 0,
+                "errors": 0,
+            }
 
         try:
             findings = await asyncio.to_thread(self._data_service.get_findings)
@@ -63,9 +92,15 @@ class SandboxPoller:
             findings = self._data_service.get_findings()
         except Exception as e:
             logger.error(f"Failed to list findings for sandbox poll: {e}")
-            return {"checked": 0, "completed": 0, "expired": 0, "errors": 1}
+            return {
+                "checked": 0,
+                "completed": 0,
+                "expired": 0,
+                "failed": 0,
+                "errors": 1,
+            }
 
-        stats = {"checked": 0, "completed": 0, "expired": 0, "errors": 0}
+        stats = {"checked": 0, "completed": 0, "expired": 0, "failed": 0, "errors": 0}
 
         for finding in findings or []:
             # processor.py nests its enrichment payload under the ai_enrichment
@@ -87,12 +122,12 @@ class SandboxPoller:
                     task_id = sub.get("task_id")
                     if not task_id:
                         continue
-                    stats["checked"] += 1
 
                     # Skip if we already have a report for this (hash, sandbox)
                     report_key = f"{hash_val}:{sandbox_name}"
-                    if report_key in reports:
+                    if report_key in reports or sub.get("status") in _FINAL_STATUSES:
                         continue
+                    stats["checked"] += 1
 
                     # Enforce timeout
                     if self._is_expired(sub):
@@ -103,6 +138,12 @@ class SandboxPoller:
 
                     try:
                         report = await self._fetch_report(sandbox_name, task_id)
+                    except SandboxAuthError as e:
+                        sub["status"] = "failed"
+                        sub["error"] = f"http_{e.status}"
+                        stats["failed"] += 1
+                        updated = True
+                        continue
                     except Exception as e:
                         logger.debug(
                             f"Fetch report failed for {sandbox_name}/{task_id}: {e}"
@@ -176,7 +217,7 @@ class SandboxPoller:
     async def _fetch_cape(self, task_id: str) -> Optional[Dict[str, Any]]:
         base = get_settings().cape_sandbox_url.rstrip("/")
         api_key = get_secret("CAPE_SANDBOX_API_KEY") or ""
-        if not base:
+        if not base or vendor_cooling_down("cape"):
             return None
         headers = {"Authorization": f"Token {api_key}"} if api_key else {}
         status_resp = await asyncio.to_thread(
@@ -186,6 +227,7 @@ class SandboxPoller:
             timeout=15,
             follow_redirects=True,
         )
+        _check("cape", status_resp)
         if status_resp.status_code != 200:
             return None
         status_data = status_resp.json()
@@ -199,6 +241,7 @@ class SandboxPoller:
             timeout=60,
             follow_redirects=True,
         )
+        _check("cape", report_resp)
         if report_resp.status_code == 200:
             return report_resp.json()
         return None
@@ -206,7 +249,7 @@ class SandboxPoller:
     async def _fetch_hybrid(self, task_id: str) -> Optional[Dict[str, Any]]:
         cfg = get_integration_config("hybrid_analysis") or {}
         api_key = cfg.get("api_key") or get_secret("HYBRID_ANALYSIS_API_KEY") or ""
-        if not api_key:
+        if not api_key or vendor_cooling_down("hybrid_analysis"):
             return None
         resp = await asyncio.to_thread(
             httpx.get,
@@ -215,6 +258,7 @@ class SandboxPoller:
             timeout=30,
             follow_redirects=True,
         )
+        _check("hybrid_analysis", resp)
         if resp.status_code == 200:
             data = resp.json()
             # Hybrid Analysis returns state=SUCCESS when done
@@ -225,7 +269,7 @@ class SandboxPoller:
     async def _fetch_anyrun(self, task_id: str) -> Optional[Dict[str, Any]]:
         cfg = get_integration_config("anyrun") or {}
         api_key = cfg.get("api_key") or get_secret("ANYRUN_API_KEY") or ""
-        if not api_key:
+        if not api_key or vendor_cooling_down("anyrun"):
             return None
         resp = await asyncio.to_thread(
             httpx.get,
@@ -234,6 +278,7 @@ class SandboxPoller:
             timeout=30,
             follow_redirects=True,
         )
+        _check("anyrun", resp)
         if resp.status_code == 200:
             data = resp.json()
             if str(data.get("status", "")).lower() == "done":
@@ -243,7 +288,7 @@ class SandboxPoller:
     async def _fetch_joe(self, task_id: str) -> Optional[Dict[str, Any]]:
         api_key = get_secret("JOE_SANDBOX_API_KEY") or get_secret("JBXAPIKEY") or ""
         base = get_settings().joe_sandbox_url.rstrip("/")
-        if not api_key:
+        if not api_key or vendor_cooling_down("joe_sandbox"):
             return None
         resp = await asyncio.to_thread(
             httpx.post,
@@ -252,6 +297,7 @@ class SandboxPoller:
             timeout=30,
             follow_redirects=True,
         )
+        _check("joe_sandbox", resp)
         if resp.status_code == 200:
             data = resp.json()
             if str(data.get("status", "")).lower() == "finished":

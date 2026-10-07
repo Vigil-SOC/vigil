@@ -1,0 +1,306 @@
+"""Approvals API — list/approve/reject pending human-in-the-loop actions (#128).
+
+Workflow phase approvals surface here alongside any other pending
+action the ``ApprovalService`` is tracking (e.g. daemon-triggered
+containment actions). Approving a workflow-linked action auto-resumes
+the paused run; rejecting cancels it with the supplied reason.
+"""
+
+import logging
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from core.auth.current_user import get_current_user
+from core.auth.permissions import permission_gate
+from core.deps import provide_approvals
+from core.response.approval_service import ApprovalService, needs_you
+from core.routing import Auth, RouterMeta
+from core.storage.models import User
+
+router = APIRouter()
+
+_DECIDE = [permission_gate("ai_decisions.approve")]
+
+ROUTER_META = RouterMeta(
+    # Versioned contract surface. The whole approvals router is external — every
+    # route is a durable record or an act on it (list, get, approve, reject) —
+    # so it moves wholesale rather than splitting. Routes carry the full
+    # ``/approvals`` path, so the prefix is the version root, not ``/api/v1/approvals``.
+    prefix="/api/v1",
+    tags=["approvals"],
+    auth=Auth.REQUIRED,
+    legacy_prefixes=("/api",),
+)
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+
+class ApproveRequest(BaseModel):
+    approved_by: Optional[str] = Field(
+        default=None,
+        description="Identity of the approving analyst. Defaults to 'analyst'.",
+    )
+
+
+class RejectRequest(BaseModel):
+    reason: str = Field(..., description="Why the action is being rejected.")
+    rejected_by: Optional[str] = Field(
+        default=None,
+        description="Identity of the rejecting analyst. Defaults to 'analyst'.",
+    )
+
+
+class PendingActionResponse(BaseModel):
+    """Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+
+    Value types are permissive where the underlying dataclass carries open JSON
+    (evidence, parameters, execution_result); the key set is the promise.
+    """
+
+    action_id: Optional[str] = None
+    action_type: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    target: Optional[Any] = None
+    confidence: Optional[float] = None
+    reason: Optional[str] = None
+    evidence: Optional[Any] = None
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    requires_approval: Optional[bool] = None
+    status: Optional[str] = None
+    approved_at: Optional[str] = None
+    approved_by: Optional[str] = None
+    executed_at: Optional[str] = None
+    execution_result: Optional[Any] = None
+    rejection_reason: Optional[str] = None
+    parameters: Optional[Any] = None
+    workflow_run_id: Optional[str] = None
+    workflow_phase_id: Optional[str] = None
+    reversibility: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+
+class ApprovalListResponse(BaseModel):
+    count: int
+    actions: List[PendingActionResponse] = Field(default_factory=list)
+
+
+class ApprovalActionResult(BaseModel):
+    action: PendingActionResponse
+    resume_result: Optional[Dict[str, Any]] = None
+
+
+class NeedsYouItem(BaseModel):
+    kind: str
+    source_id: str
+    title: str
+    reason: str
+    created_at: str
+    reversibility: str
+    case_id: Optional[str] = None
+
+
+class NeedsYouResponse(BaseModel):
+    count: int
+    items: List[NeedsYouItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _pending_to_dict(action: Any) -> Dict[str, Any]:
+    """Normalise a ``PendingAction`` dataclass to a response dict."""
+    return {
+        "action_id": action.action_id,
+        "action_type": action.action_type,
+        "title": action.title,
+        "description": action.description,
+        "target": action.target,
+        "confidence": action.confidence,
+        "reason": action.reason,
+        "evidence": action.evidence,
+        "created_at": action.created_at,
+        "created_by": action.created_by,
+        "requires_approval": action.requires_approval,
+        "status": action.status,
+        "approved_at": action.approved_at,
+        "approved_by": action.approved_by,
+        "executed_at": action.executed_at,
+        "execution_result": action.execution_result,
+        "rejection_reason": action.rejection_reason,
+        "parameters": action.parameters,
+        "workflow_run_id": action.workflow_run_id,
+        "workflow_phase_id": action.workflow_phase_id,
+        "reversibility": action.reversibility,
+        "idempotency_key": action.idempotency_key,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/approvals", response_model=ApprovalListResponse)
+async def list_approvals(
+    status: Optional[str] = Query(
+        default=None,
+        description=(
+            "Filter by status: pending | approved | rejected | executed | failed."
+        ),
+    ),
+    workflow_run_id: Optional[str] = Query(
+        default=None,
+        description="Restrict to approvals linked to this workflow run.",
+    ),
+    limit: int = Query(default=100, ge=1, le=500),
+    service: ApprovalService = Depends(provide_approvals),
+):
+    """List approval actions, newest first."""
+    from core.response.approval_service import ActionStatus
+
+    status_enum: Optional[ActionStatus] = None
+    if status:
+        try:
+            status_enum = ActionStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+
+    actions = service.list_actions(
+        status=status_enum,
+        workflow_run_id=workflow_run_id,
+        limit=limit,
+    )
+    return {
+        "count": len(actions),
+        "actions": [_pending_to_dict(a) for a in actions],
+    }
+
+
+@router.get("/approvals/pending")
+async def list_pending_approvals(
+    service: ApprovalService = Depends(provide_approvals),
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Shortcut: only actions with ``status=pending`` and
+    ``requires_approval=True``. Used by the AI Decisions approvals tab."""
+    actions = service.list_pending_approvals()
+    return {"actions": [_pending_to_dict(a) for a in actions]}
+
+
+@router.get("/approvals/needs-you", response_model=NeedsYouResponse)
+async def list_needs_you(
+    case_id: Optional[str] = Query(
+        default=None,
+        description="Only items whose resolved case id is this one.",
+    ),
+):
+    """Pending approvals and checkpoints that need a person, oldest first.
+
+    Declared before ``/approvals/{action_id}`` so the literal path is not
+    read as an action id. Uncapped: the decisions list stops at 500.
+    """
+    return needs_you(case_id)
+
+
+@router.get("/approvals/{action_id}", response_model=PendingActionResponse)
+async def get_approval(
+    action_id: str,
+    service: ApprovalService = Depends(provide_approvals),
+):
+    """Fetch a single approval action."""
+    action = service.get_action(action_id)
+    if action is None:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+    return _pending_to_dict(action)
+
+
+@router.post(
+    "/approvals/{action_id}/approve",
+    dependencies=_DECIDE,
+    response_model=ApprovalActionResult,
+)
+async def approve_action(
+    action_id: str,
+    request: ApproveRequest,
+    service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
+):
+    """Approve a pending action.
+
+    If the action is linked to a paused workflow run, the run resumes
+    automatically and the resume result is included in the response.
+    """
+    from core.workflows.run_resume import resume_run
+
+    action = service.get_action(action_id)
+    if action is None:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+
+    # The body field is kept for the frozen contract; the record names the session user.
+    approved_by = current_user.username
+    updated = service.approve_action(action_id, approved_by=approved_by)
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to approve action")
+
+    response: Dict[str, Any] = {
+        "action": _pending_to_dict(updated),
+        "resume_result": None,
+    }
+
+    if updated.workflow_run_id:
+        response["resume_result"] = await resume_run(
+            updated.workflow_run_id, action_id, approved_by
+        )
+
+    return response
+
+
+@router.post(
+    "/approvals/{action_id}/reject",
+    dependencies=_DECIDE,
+    response_model=ApprovalActionResult,
+)
+async def reject_action(
+    action_id: str,
+    request: RejectRequest,
+    service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
+):
+    """Reject a pending action.
+
+    If the action is linked to a paused workflow run, the run is
+    cancelled with the supplied reason.
+    """
+    from core.workflows.run_resume import resume_run
+
+    action = service.get_action(action_id)
+    if action is None:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+
+    rejected_by = current_user.username
+    updated = service.reject_action(
+        action_id, reason=request.reason, rejected_by=rejected_by
+    )
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to reject action")
+
+    response: Dict[str, Any] = {
+        "action": _pending_to_dict(updated),
+        "resume_result": None,
+    }
+
+    if updated.workflow_run_id:
+        response["resume_result"] = await resume_run(
+            updated.workflow_run_id, action_id, rejected_by
+        )
+
+    return response

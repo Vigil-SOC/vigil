@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { basePath } from '../config/basePath'
+import type { Schema } from './apiTypes'
 
 // Auth is cookie-based; withCredentials sends the HttpOnly cookies on every
 // request, including through the Vite dev proxy.
@@ -140,6 +141,16 @@ export const aiDecisionsApi = {
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
 }
 
+export interface NeedsYouItem {
+  kind: 'checkpoint' | 'approval'
+  source_id: string
+  title: string
+  reason: string
+  created_at: string
+  reversibility: string
+  case_id: string | null
+}
+
 export const approvalsApi = {
   list: (params?: {
     status?: string
@@ -148,6 +159,11 @@ export const approvalsApi = {
   }) => api.get('/approvals', { params }),
 
   listPending: () => api.get('/approvals/pending'),
+
+  needsYou: (caseId?: string) =>
+    api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', {
+      params: caseId ? { case_id: caseId } : undefined,
+    }),
 
   getById: (actionId: string) => api.get(`/approvals/${actionId}`),
 
@@ -158,6 +174,9 @@ export const approvalsApi = {
     api.post(`/approvals/${actionId}/reject`, { reason, rejected_by }),
 }
 
+/** how a findings read treats findings naming an analyst-excluded IP */
+export type ExclusionView = 'include' | 'hide' | 'only'
+
 export const findingsApi = {
   getAll: (params?: {
     severity?: string
@@ -165,12 +184,15 @@ export const findingsApi = {
     cluster_id?: number
     min_anomaly_score?: number
     limit?: number
-    force_refresh?: boolean
-  }) => api.get('/findings/', { params }),
+    exclusions?: ExclusionView
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  }) => api.get('/findings', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),
   
-  getSummary: () => api.get('/findings/stats/summary'),
+  getSummary: (params?: { exclusions?: ExclusionView }) =>
+    api.get('/findings/stats/summary', { params }),
   
   export: (format: 'json' | 'jsonl' = 'json') =>
     api.post('/findings/export', null, { params: { output_format: format } }),
@@ -187,134 +209,187 @@ export const findingsApi = {
     }),
 
   deleteAll: () => api.delete('/findings/all'),
+
+  markNoise: (id: string) =>
+    api.post(`/findings/${encodeURIComponent(id)}/noise`),
+
+  clearNoise: (id: string) =>
+    api.delete(`/findings/${encodeURIComponent(id)}/noise`),
+
+  launchIntake: (id: string) =>
+    api.post<{ queued: boolean; already_queued: boolean; trigger_id?: number | null }>(
+      `/findings/${encodeURIComponent(id)}/intake`,
+    ),
+}
+
+export interface IpExclusion {
+  exclusion_id: string
+  ip: string
+  reason: string
+  origin: 'ad_hoc' | 'finding' | 'case' | 'run'
+  origin_ref?: string | null
+  created_by: string
+  created_at?: string | null
+  removed_at?: string | null
+  removed_by?: string | null
+  removal_reason?: string | null
+  active: boolean
+  /** stored findings naming this address; active rows only */
+  hidden_findings?: number | null
+}
+
+export const exclusionsApi = {
+  list: (includeRemoved = false) =>
+    api.get<{ exclusions: IpExclusion[]; total: number; hidden_findings_total: number }>('/exclusions', {
+      params: { include_removed: includeRemoved },
+    }),
+  create: (body: {
+    ip: string
+    reason: string
+    origin?: IpExclusion['origin']
+    origin_ref?: string
+  }) => api.post<IpExclusion>('/exclusions', body),
+  remove: (id: string, reason?: string) =>
+    api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
+}
+
+export interface CaseRecordRow {
+  id: string
+  at: string
+  kind: string
+  source: string
+  chained: boolean
+  text: string
+}
+
+export interface CaseRecordResponse {
+  run_id: string | null
+  investigation_id: string | null
+  rows: CaseRecordRow[]
 }
 
 export const casesApi = {
   getAll: (params?: {
-    status?: string
+    state?: string
+    workflow?: string
     priority?: string
-    force_refresh?: boolean
-  }) => api.get('/cases/', { params }),
-  
-  getById: (id: string) => api.get(`/cases/${id}`),
-  
-  create: (data: {
-    title: string
-    description?: string
-    finding_ids: string[]
-    priority?: string
-    status?: string
-  }) => api.post('/cases/', data),
-  
-  update: (id: string, data: {
-    title?: string
-    description?: string
-    status?: string
-    priority?: string
-    notes?: string
+    data_source?: string
+    sla_at_risk?: boolean
     assignee?: string
-  }) => api.patch(`/cases/${id}`, data),
-  
-  delete: (id: string) => api.delete(`/cases/${id}`),
+    closed?: boolean
+    query?: string
+    limit?: number
+    offset?: number
+  }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
-  deleteAll: () => api.delete('/cases/all'),
-  
-  addActivity: (id: string, data: {
-    activity_type: string
-    description: string
-    details?: any
-  }) => api.post(`/cases/${id}/activities`, data),
-  
-  addResolutionStep: (id: string, data: {
-    description: string
-    action_taken: string
-    result?: string
-  }) => api.post(`/cases/${id}/resolution-steps`, data),
-  
+  getById: (id: string) => api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`),
+
+  create: (data: Schema<'CaseCreate'>) =>
+    api.post<Schema<'CaseSchema'>>('/cases', data),
+
+  update: (id: string, data: Schema<'CaseUpdate'>) =>
+    api.patch<Schema<'CaseSuccessResponse'>>(`/cases/${id}`, data),
+
+  delete: (id: string) =>
+    api.delete<Schema<'CaseSuccessResponse'>>(`/cases/${id}`),
+
+  deleteAll: () => api.delete<Schema<'CasePurgeResponse'>>('/cases/all'),
+
+  addActivity: (id: string, data: Schema<'ActivityAdd'>) =>
+    api.post<Schema<'CaseSchema'>>(`/cases/${id}/activities`, data),
+
+  addResolutionStep: (id: string, data: Schema<'ResolutionStepAdd'>) =>
+    api.post<Schema<'CaseSchema'>>(`/cases/${id}/resolution-steps`, data),
+
   addFinding: (id: string, finding_id: string) =>
-    api.post(`/cases/${id}/findings/${finding_id}`),
-  
+    api.post<Schema<'CaseSchema'>>(`/cases/${id}/findings/${finding_id}`),
+
   removeFinding: (id: string, finding_id: string) =>
-    api.delete(`/cases/${id}/findings/${finding_id}`),
-  
+    api.delete<Schema<'CaseSchema'>>(`/cases/${id}/findings/${finding_id}`),
+
   generateReport: (id: string) =>
-    api.post(`/cases/${id}/generate-report`, null, { timeout: LLM_TIMEOUT }),
-  
-  getSummary: () => api.get('/cases/stats/summary'),
-  
-  getComments: (id: string) => api.get(`/cases/${id}/comments`),
-  addComment: (id: string, data: { content: string; author: string; parent_comment_id?: number | string }) =>
-    api.post(`/cases/${id}/comments`, data),
-  
-  getWatchers: (id: string) => api.get(`/cases/${id}/watchers`),
+    api.post<Schema<'CaseReportResponse'>>(`/cases/${id}/generate-report`, null, {
+      timeout: LLM_TIMEOUT,
+    }),
+
+  getSummary: () => api.get<Schema<'CaseSummaryResponse'>>('/cases/stats/summary'),
+
+  getComments: (id: string) =>
+    api.get<Schema<'CaseCommentsResponse'>>(`/cases/${id}/comments`),
+  addComment: (id: string, data: Schema<'CommentAdd'>) =>
+    api.post<Schema<'CaseCommentSchema'>>(`/cases/${id}/comments`, data),
+
+  getWatchers: (id: string) =>
+    api.get<Schema<'CaseWatchersResponse'>>(`/cases/${id}/watchers`),
   addWatcher: (id: string, userId: string) =>
-    api.post(`/cases/${id}/watchers`, { user_id: userId }),
+    api.post<Schema<'CaseWatcherSchema'>>(`/cases/${id}/watchers`, { user_id: userId }),
   removeWatcher: (id: string, userId: string) =>
-    api.delete(`/cases/${id}/watchers/${userId}`),
-  
+    api.delete<Schema<'CaseSuccessResponse'>>(`/cases/${id}/watchers/${userId}`),
+
+  // No /cases/{id}/tags route — left untyped on purpose. See #699.
   updateTags: (id: string, tags: string[]) =>
     api.put(`/cases/${id}/tags`, { tags }),
-  
-  getEvidence: (id: string) => api.get(`/cases/${id}/evidence`),
-  addEvidence: (id: string, data: {
-    name: string
-    description?: string
-    file_path?: string
-    url?: string
-    evidence_type: string
-  }) => api.post(`/cases/${id}/evidence`, data),
-  
-  getIOCs: (id: string) => api.get(`/cases/${id}/iocs`),
-  addIOC: (id: string, data: {
-    ioc_type: string
-    value: string
-    description?: string
-    source?: string
-    tags?: string[]
-  }) => api.post(`/cases/${id}/iocs`, data),
-  
-  getTasks: (id: string) => api.get(`/cases/${id}/tasks`),
-  addTask: (id: string, data: {
-    title: string
-    description?: string
-    assignee?: string
-    due_date?: string
-    priority?: string
-  }) => api.post(`/cases/${id}/tasks`, data),
-  updateTask: (id: string, taskId: string, data: {
-    status?: string
-    completed_at?: string
-  }) => api.patch(`/cases/${id}/tasks/${taskId}`, data),
-  
-  getSLA: (id: string) => api.get(`/cases/${id}/sla`),
-  assignSLA: (id: string, data: {
-    sla_policy_id?: string  // Optional - if not provided, uses default for priority
-  }) => api.post(`/cases/${id}/sla`, data),
-  pauseSLA: (id: string) => api.post(`/cases/${id}/sla/pause`),
-  resumeSLA: (id: string) => api.post(`/cases/${id}/sla/resume`),
-  
-  linkCase: (id: string, relatedCaseId: string, relationshipType: string) =>
-    api.post(`/cases/${id}/links`, { related_case_id: relatedCaseId, relationship_type: relationshipType }),
-  getLinkedCases: (id: string) => api.get(`/cases/${id}/links`),
-  
-  closeCase: (id: string, data: {
-    resolution_summary: string
-    root_cause?: string
-    lessons_learned?: string
-    recommendations?: string
-  }) => api.post(`/cases/${id}/close`, data),
-  
-  escalate: (id: string, data: {
-    escalation_reason: string
-    escalated_to?: string
-    priority_override?: string
-  }) => api.post(`/cases/${id}/escalate`, data),
-  
-  getAuditLog: (id: string) => api.get(`/cases/${id}/audit-log`),
-  
-  merge: (targetCaseId: string, sourceCaseId: string) =>
-    api.post(`/cases/${targetCaseId}/merge`, { source_case_id: sourceCaseId, merged_by: 'user' }),
 
+  getEvidence: (id: string) =>
+    api.get<Schema<'CaseEvidenceListResponse'>>(`/cases/${id}/evidence`),
+  addEvidence: (id: string, data: Schema<'EvidenceAdd'>) =>
+    api.post<Schema<'CaseEvidenceSchema'>>(`/cases/${id}/evidence`, data),
+
+  getIOCs: (id: string) =>
+    api.get<Schema<'CaseIOCListResponse'>>(`/cases/${id}/iocs`),
+  addIOC: (id: string, data: Schema<'IOCAdd'>) =>
+    api.post<Schema<'CaseIOCSchema'>>(`/cases/${id}/iocs`, data),
+
+  getTasks: (id: string) =>
+    api.get<Schema<'CaseTasksResponse'>>(`/cases/${id}/tasks`),
+  addTask: (id: string, data: Schema<'TaskAdd'>) =>
+    api.post<Schema<'CaseTaskSchema'>>(`/cases/${id}/tasks`, data),
+  updateTask: (id: string, taskId: number, data: Schema<'TaskUpdate'>) =>
+    api.put<Schema<'CaseTaskSchema'>>(`/cases/${id}/tasks/${taskId}`, data),
+
+  getSLA: (id: string) =>
+    api.get<Schema<'CaseSLAStatusSchema'>>(`/cases/${id}/sla`),
+  assignSLA: (id: string, data: Schema<'SLAAssign'>) =>
+    api.post<Schema<'CaseSLASchema'>>(`/cases/${id}/sla`, data),
+  pauseSLA: (id: string) =>
+    api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/sla/pause`),
+  resumeSLA: (id: string) =>
+    api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/sla/resume`),
+
+  linkCase: (
+    id: string,
+    relatedCaseId: string,
+    relationshipType: string,
+    createdBy = 'SOC Analyst',
+  ) =>
+    api.post<Schema<'CaseRelationshipSchema'>>(`/cases/${id}/relationships`, {
+      related_case_id: relatedCaseId,
+      relationship_type: relationshipType,
+      created_by: createdBy,
+    }),
+  getLinkedCases: (id: string) =>
+    api.get<Schema<'CaseRelationshipsResponse'>>(`/cases/${id}/relationships`),
+
+  closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
+    api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
+
+  escalate: (id: string, data: Schema<'EscalationAdd'>) =>
+    api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/escalate`, data),
+
+  getEscalations: (id: string) =>
+    api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
+
+  // The merged record. There is no audit-log route; this read replaced it.
+  getRecord: (id: string) =>
+    api.get<CaseRecordResponse>(`/cases/${id}/record`),
+
+  merge: (targetCaseId: string, sourceCaseId: string) =>
+    api.post<Schema<'CaseMergeResponse'>>(`/cases/${targetCaseId}/merge`, {
+      source_case_id: sourceCaseId,
+      merged_by: 'user',
+    }),
+
+  // No /cases/bulk-update route — left untyped on purpose. See #699.
   bulkUpdate: (data: {
     case_ids: string[]
     updates: {
@@ -361,8 +436,7 @@ export const slaPoliciesApi = {
     is_default?: boolean
   }) => api.put(`/sla-policies/${policyId}`, data),
   
-  delete: (policyId: string, force?: boolean) =>
-    api.delete(`/sla-policies/${policyId}`, { params: { force } }),
+  delete: (policyId: string) => api.delete(`/sla-policies/${policyId}`),
   
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
@@ -403,80 +477,36 @@ export const mcpApi = {
 
   getStatuses: () => api.get('/mcp/servers/status'),
 
-  getServerStatus: (name: string) => api.get(`/mcp/servers/${name}/status`),
-
-  // start/stop were removed: every server in mcp-config.json is stdio-based and
-  // those endpoints refused stdio. setServerEnabled below triggers the connect.
-
-  getLogs: (name: string, lines: number = 100) =>
-    api.get(`/mcp/servers/${name}/logs`, { params: { lines } }),
-
-  testServer: (name: string) => api.get(`/mcp/servers/${name}/test`),
-
   getEnabledStates: () => api.get('/mcp/servers/enabled'),
 
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+
+  // Vigil's own MCP surface: whether it listens, and what may open it.
+  getSurface: () => api.get('/mcp/surface'),
+
+  setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
+
+  // The token is in this response and nowhere else.
+  mintCredential: (label: string, expiresInDays?: number) =>
+    api.post('/mcp/surface/credentials', {
+      label,
+      expires_in_days: expiresInDays ?? null,
+    }),
+
+  revokeCredential: (credentialId: string) =>
+    api.delete(`/mcp/surface/credentials/${credentialId}`),
 }
 
 export const claudeApi = {
-  uploadFile: (file: File) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return api.post('/claude/upload-file', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-  },
-  
   getModels: () => api.get('/claude/models'),
-  
-  summarizeConversation: (data: {
-    messages: Array<{
-      role: string
-      content: string | Array<{
-        type: string
-        text?: string
-        source?: any
-      }>
-    }>
-    model?: string
-  }) => api.post('/claude/summarize', data, { timeout: LLM_TIMEOUT }),
-
-  analyzeFinding: (finding_id: string, context?: string) =>
-    api.post('/claude/analyze-finding', null, {
-      params: { finding_id, context },
-      timeout: LLM_TIMEOUT,
-    }),
-  
-  generateChatReport: (data: {
-    tab_title: string
-    messages: Array<{
-      role: string
-      content: string | Array<{
-        type: string
-        text?: string
-        source?: any
-      }>
-    }>
-    notes?: string
-  }) => api.post('/claude/generate-chat-report', data, { timeout: LLM_TIMEOUT }),
 }
 
 export const agentsApi = {
   listAgents: () => api.get('/agents/agents'),
-  
-  getAgent: (agent_id: string) => api.get(`/agents/agents/${agent_id}`),
-  
-  setCurrentAgent: (agent_id: string) => 
-    api.post('/agents/agents/set-current', null, { params: { agent_id } }),
-  
-  startInvestigation: (data: {
-    finding_id: string
-    agent_id?: string
-    additional_context?: string
-  }) => api.post('/agents/agents/investigate', data, { timeout: LLM_TIMEOUT }),
+  // the router prefix and the route path both say "agents"
+  setEnabled: (agent_id: string, enabled: boolean) =>
+    api.put(`/agents/agents/${agent_id}/enabled`, { enabled }),
 
   listCustom: () => api.get('/agents/custom'),
   getCustom: (agent_id: string) => api.get(`/agents/custom/${agent_id}`),
@@ -527,6 +557,7 @@ export interface CustomAgentPayload {
   max_tokens?: number
   enable_thinking?: boolean
   model?: string | null
+  fallback_model?: string | null
 }
 
 export interface AgentSummary {
@@ -538,6 +569,13 @@ export interface AgentSummary {
   specialization?: string
   /** Action id this agent's decisions are logged under (#476). */
   decision_id?: string
+}
+
+/** Reads the shell folds itself. Health is public; routability is admin-only. */
+export const consoleApi = {
+  getHealth: () => api.get('/health'),
+  getRoutability: () =>
+    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
 
 export const configApi = {
@@ -553,13 +591,17 @@ export const configApi = {
     access_key_id?: string
     secret_access_key?: string
     session_token?: string
-    findings_path?: string
-    cases_path?: string
     parquet_prefix?: string
   }) => api.post('/config/s3', data),
   
   getDemoMode: () => api.get('/config/demo-mode'),
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
+  getSetupSteps: () =>
+    api.get<{
+      steps: { id: string; title: string; state_line: string; done: boolean; href: string }[]
+      alerts_exist: number
+      demo_enabled: boolean
+    }>('/config/setup-steps'),
   resetDemoData: () => api.post('/config/demo-mode/reset'),
   
   getIntegrations: () => api.get('/config/integrations'),
@@ -578,6 +620,11 @@ export const configApi = {
   
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
+
+  getAutonomy: () =>
+    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
+      '/config/autonomy',
+    ),
   
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
@@ -598,10 +645,9 @@ export const configApi = {
 
   getAIOperations: () => api.get('/config/ai-operations'),
   setAIOperations: (data: {
-    prompt_cache_enabled: boolean
-    history_window: number
-    tool_response_budget_default: number
-    thinking_budget: number
+    local_ollama_recovery_enabled: boolean
+    local_ollama_recovery_retry_limit: number
+    local_ollama_recovery_restart_gateway: boolean
   }) => api.post('/config/ai-operations', data),
 
   getDarktrace: () => api.get('/config/darktrace'),
@@ -613,28 +659,27 @@ export const configApi = {
   }) => api.post('/config/darktrace', data),
 
   getOrchestrator: () => api.get('/config/orchestrator'),
+  getIntent: () => api.get('/config/intent'),
   setOrchestrator: (data: {
     enabled: boolean
     dry_run: boolean
-    auto_assign_findings: boolean
-    auto_assign_severities: string[]
     max_concurrent_agents: number
     max_iterations_per_agent: number
     max_runtime_per_investigation: number
     max_cost_per_investigation: number
     max_total_hourly_cost: number
-    max_total_daily_cost: number
     loop_interval: number
-    agent_loop_delay: number
     stale_threshold: number
-    dedup_window_minutes: number
-    context_max_chars: number
-    plan_model: string
-    review_model: string
     workdir_base: string
-  }) => api.post('/config/orchestrator', data),
+  }) => {
+    const rest = { ...data }
+    delete (rest as { profiles?: unknown }).profiles
+    return api.post('/config/orchestrator', rest)
+  },
 
-  getMempalaceHealth: () => api.get<MempalaceHealth>('/config/mempalace/health'),
+  getForceManualApproval: () => api.get('/config/force-manual-approval'),
+  setForceManualApproval: (enabled: boolean) =>
+    api.post('/config/force-manual-approval', { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {
@@ -649,21 +694,6 @@ export interface PlatformDatabaseProxyConfig {
   has_ssh_key_passphrase: boolean
 }
 
-// Mempalace is hidden from the MCP list: it's an always-on core dependency, so
-// its health surfaces on the General tab (#136).
-export interface MempalaceHealth {
-  connected: boolean
-  error: string | null
-  palace_path: string
-  palace_exists: boolean
-  size_bytes: number | null
-  size_human: string | null
-  last_modified_iso: string | null
-  closed_cases_count: number | null
-  memories_count: number | null
-  memories_count_source: 'chromadb' | 'unavailable'
-}
-
 // the backend calls the connector BFF server-to-server, so the mint secret
 // never reaches the browser
 export const extensionsApi = {
@@ -675,7 +705,7 @@ export const extensionsApi = {
 
 export interface LLMProvider {
   provider_id: string
-  provider_type: 'anthropic' | 'openai' | 'ollama'
+  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex'
   name: string
   base_url: string | null
   has_api_key: boolean
@@ -690,60 +720,8 @@ export interface LLMProvider {
   updated_at: string | null
 }
 
-export interface LLMProviderCreate {
-  provider_id?: string
-  provider_type: 'anthropic' | 'openai' | 'ollama'
-  name: string
-  base_url?: string
-  api_key?: string
-  default_model: string
-  is_active?: boolean
-  is_default?: boolean
-  config?: Record<string, any>
-}
-
-export interface LLMProviderUpdate {
-  name?: string
-  base_url?: string
-  api_key?: string
-  default_model?: string
-  is_active?: boolean
-  is_default?: boolean
-  config?: Record<string, any>
-}
-
 export const llmProviderApi = {
   list: () => api.get<LLMProvider[]>('/llm/providers/'),
-  create: (data: LLMProviderCreate) => api.post<LLMProvider>('/llm/providers/', data),
-  discoverModels: (data: {
-    provider_type: string
-    base_url?: string
-    api_key?: string
-    organization?: string
-  }) => api.post<{ models: string[] }>('/llm/providers/discover-models', data),
-  update: (providerId: string, data: LLMProviderUpdate) =>
-    api.put<LLMProvider>(`/llm/providers/${providerId}`, data),
-  remove: (providerId: string) => api.delete(`/llm/providers/${providerId}`),
-  test: (providerId: string) =>
-    api.post<{ success: boolean; provider_id: string; error: string | null }>(
-      `/llm/providers/${providerId}/test`,
-    ),
-  // no provider row required, so the wizard can verify before anything persists
-  testConnection: (data: {
-    provider_type: string
-    base_url?: string
-    api_key?: string
-    default_model?: string
-    organization?: string
-  }) =>
-    api.post<{ success: boolean; error: string | null }>(
-      '/llm/providers/test-connection',
-      data,
-    ),
-  listModels: (providerId: string) =>
-    api.get<{ models: string[] }>(`/llm/providers/${providerId}/models`),
-  setDefault: (providerId: string) =>
-    api.post<LLMProvider>(`/llm/providers/${providerId}/set-default`),
 }
 
 export interface AIModelInfo {
@@ -830,7 +808,7 @@ export interface CostEstimate {
   output_tokens_max: number
   low_usd: number
   high_usd: number
-  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
+  pricing_source: 'exact' | 'zero' | 'unknown'
   token_count_method: 'anthropic_count_tokens' | 'tiktoken' | 'char_heuristic'
 }
 
@@ -912,46 +890,24 @@ export const storageApi = {
   getStatus: () => api.get('/storage/status'),
   getHealth: () => api.get('/storage/health'),
   reconnect: () => api.post('/storage/reconnect'),
-  switchBackend: (backend: string) => api.post('/storage/switch-backend', { backend }),
-}
-
-export const timesketchApi = {
-  getStatus: () => api.get('/timesketch/status'),
-  
-  listSketches: () => api.get('/timesketch/sketches'),
-  
-  createSketch: (data: { name: string; description?: string }) =>
-    api.post('/timesketch/sketches', data),
-  
-  getSketch: (id: number) => api.get(`/timesketch/sketches/${id}`),
-  
-  getDockerStatus: () => api.get('/timesketch/docker/status'),
-  
-  startDocker: (port: number = 5000) =>
-    api.post('/timesketch/docker/start', null, { params: { port } }),
-  
-  stopDocker: () => api.post('/timesketch/docker/stop'),
-  
-  exportToTimesketch: (data: {
-    sketch_id?: string
-    sketch_name?: string
-    sketch_description?: string
-    finding_ids?: string[]
-    case_id?: string
-    timeline_name: string
-  }) => api.post('/timesketch/export', data),
 }
 
 export const attackApi = {
-  getLayer: () => api.get('/attack/layer'),
-  
-  getTechniqueRollup: (min_confidence: number = 0.0, time_range: string = 'all') =>
-    api.get('/attack/techniques/rollup', { params: { min_confidence, time_range } }),
+  getTechniqueRollup: (
+    min_confidence: number = 0.0,
+    time_range: string = 'all',
+    run_id?: string,
+  ) =>
+    api.get('/attack/techniques/rollup', {
+      params: {
+        min_confidence,
+        time_range,
+        ...(run_id ? { run_id } : {}),
+      },
+    }),
   
   getFindingsByTechnique: (technique_id: string) =>
     api.get(`/attack/techniques/${technique_id}/findings`),
-  
-  getTacticsSummary: () => api.get('/attack/tactics/summary'),
 }
 
 export const timelineApi = {
@@ -969,14 +925,6 @@ export const timelineApi = {
   }) => api.get('/timeline/range', { params }),
   
   getClusterTimeline: (cluster_id: string) => api.get(`/timeline/cluster/${cluster_id}`),
-  
-  getEventVisualization: (event_id: string, params?: {
-    time_window_minutes?: number
-    include_ai_analysis?: boolean
-  }) => api.get(`/timeline/event/${event_id}/visualization`, { params }),
-  
-  getFindingEvents: (finding_id: string) => 
-    api.get(`/timeline/finding/${finding_id}/context`, { params: { time_window_minutes: 60 } }),
 }
 
 export const detectionRulesApi = {
@@ -1043,15 +991,60 @@ export interface WorkflowPhase {
   parallel_group?: string | null
 }
 
+/** What a hunt lead was shown before one decision. Mirrors `Digest` in
+ *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
+export interface ReplayDigest {
+  iteration: number
+  narrative: string
+  hypotheses: { hypothesis_id: string; statement: string; status: string }[]
+  recent_evidence: { evidence_id: string; source_system: string; summary: string; salience: string; why_notable: string; instruction_like: boolean }[]
+  focus: { entity: string | null; hypothesis: string | null }
+  omitted: { count: number; evidence_ids: string[] }
+  open_questions: string[]
+  budget_remaining: { iterations: number; cost_usd: number }
+  directives: string[]
+  notes: string[]
+}
+export interface ReplayedDecision {
+  decision_id: string
+  iteration: number
+  action: string
+  target: string | null
+  cost_usd: number
+  /** False when the ledger predates digest_seq and the prefix had to be inferred. */
+  exact: boolean
+  rebuilt: ReplayDigest
+  recorded: ReplayDigest
+  mismatch: string | null
+}
+export interface ReplayReport {
+  hunt_id: string
+  decisions: ReplayedDecision[]
+  reproduced: number
+  inexact: number
+  /** Read off the run's own recall event, not a live memory read. */
+  recalled: string[]
+}
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
+  /** Who runs it, its model, what it may do, where it stops and pauses; a hunt kind adds capabilities and pricing. */
+  preflight: (id: string) => api.get(`/workflows/${id}/preflight`),
+  /** Turns a workflow on or off. A 409 carries the reason it cannot be turned off. */
+  setEnabled: (id: string, enabled: boolean) => api.put(`/workflows/${id}/enabled`, { enabled }),
   execute: (id: string, params: {
     finding_id?: string
     case_id?: string
     context?: string
     hypothesis?: string
+    iterations?: number
+    approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
+  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
+    api.post('/workflows/threat-hunt/coverage', body),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
@@ -1059,11 +1052,33 @@ export const workflowApi = {
   listRuns: (id: string, params: { limit?: number; offset?: number; status?: string } = {}) =>
     api.get(`/workflows/${id}/runs`, { params }),
   getRun: (runId: string) => api.get(`/workflows/runs/${runId}`),
+  // What one decision was shown, rebuilt against the record. Folds the whole ledger on
+  // the agent side, so it is asked for on a click and never on the getRun poll.
+  getReplay: (runId: string, decisionId: string) =>
+    api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
+  replayRun: (runId: string) => api.get(`/workflows/runs/${runId}/replay`),
+  verifyRun: (runId: string) => api.get(`/workflows/runs/${runId}/verify`),
+  // Hides a finished run from History. The row and its ledger stay: what the
+  // agents did is still auditable by run_id after an operator tidies the list.
+  deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),
 
-  // queued, not journalled: the worker holding the ledger turns a directive
-  // into an event on it
-  steer: (runId: string, kind: string, text = '') =>
-    api.post(`/agent-runs/${runId}/directives`, { kind, text }),
+  // Stop, as opposed to steer. Queues the abort so the run can settle itself and write
+  // a report, and escalates behind that: steer('abort') alone leaves a wedged worker running.
+  cancelRun: (runId: string, reason: string, rejectedBy?: string) =>
+    api.post(`/workflows/runs/${runId}/cancel`, { reason, ...(rejectedBy && { rejected_by: rejectedBy }) }),
+
+  // Another pass over the same ledger, for a finished run whose write-up reads badly.
+  // The timeout sits above the backend's own 180s so its answer — the account is still
+  // being written, reopen the run for it — is what an operator sees, not a client giving up.
+  narrateRun: (runId: string) =>
+    api.post(`/workflows/runs/${runId}/narrate`, null, { timeout: LLM_TIMEOUT + 20_000 }),
+
+  // Steer a run that is already going. Queued rather than journalled: the worker holding
+  // the ledger is what turns a directive into an event on it. `fields` carries the typed
+  // half — the entity a benign suppresses, the grant an extend buys — which prose in
+  // `text` cannot say unambiguously, and which the run's regex used to have to guess at.
+  steer: (runId: string, kind: string, text = '', fields?: Record<string, unknown>) =>
+    api.post(`/agent-runs/${runId}/directives`, { kind, text, ...(fields && { fields }) }),
 
   listCustom: (activeOnly: boolean = true) =>
     api.get('/workflows/custom', { params: { active_only: activeOnly } }),
@@ -1194,6 +1209,8 @@ export interface ConversationSummary {
   id: string
   user_id: string | null
   title: string | null
+  case_id: string | null
+  page_context: string | null
   agent_id: string | null
   model: string | null
   archived: boolean
@@ -1240,12 +1257,12 @@ export interface ImportConversationInput {
 
 export const conversationsApi = {
   // trailing slash avoids a 307 to the backend root route
-  list: (params?: { archived?: boolean; limit?: number; offset?: number }) =>
+  list: (params?: { archived?: boolean; limit?: number; offset?: number; q?: string }) =>
     api.get('/conversations/', { params }),
 
   get: (id: string) => api.get(`/conversations/${encodeURIComponent(id)}`),
 
-  update: (id: string, data: { title?: string; archived?: boolean }) =>
+  update: (id: string, data: { title?: string; archived?: boolean; case_id?: string }) =>
     api.patch(`/conversations/${encodeURIComponent(id)}`, data),
 
   delete: (id: string) => api.delete(`/conversations/${encodeURIComponent(id)}`),
@@ -1284,6 +1301,125 @@ export interface BootstrapPayload {
 
 // First-account creation: creating a user otherwise needs an existing admin.
 // Self-closes once any user exists.
+export interface OverviewArrival {
+  data_source: string
+  count: number
+  source_text: string
+}
+
+export interface OverviewOutcome {
+  state: string
+  label: string
+  count: number | null
+  source_text: string
+  info: string | null
+  unmeasured_text: string | null
+}
+
+export interface OverviewAgent {
+  workflow_id: string
+  name: string
+  running: number
+  sample_size: number
+  rate: number | null
+  level: 'good' | 'fair' | 'poor' | null
+  current_step: string | null
+}
+
+export interface OverviewFeedItem {
+  finding_id: string
+  severity: string | null
+  data_source: string
+  status: string
+  terminal_state: string
+  terminal_label: string
+  description: string | null
+  created_at: string | null
+  evidence_links: Array<{ ref?: string }>
+  source_evidence: Record<string, unknown> | null
+  source_link: string | null
+  case_id: string | null
+}
+
+export interface OverviewPayload {
+  day: string
+  empty: boolean
+  arrivals: OverviewArrival[]
+  engine: { source_text: string }
+  outcomes: OverviewOutcome[]
+  running_source: string
+  step_source: string
+  rate_info: string
+  good_at: number
+  fair_at: number
+  agents: OverviewAgent[]
+  feed: OverviewFeedItem[]
+}
+
+export const overviewApi = {
+  get: () => api.get<OverviewPayload>('/overview'),
+}
+
+export interface TriageRow {
+  id: number
+  kind: string
+  kind_label: string
+  state: string
+  state_label: string
+  source: string
+  severity_band: string
+  age_seconds: number
+  ttl_seconds: number
+  last_quarter: boolean
+  score: null
+  trust: null
+  weight: null
+  pickup_seconds: number | null
+  workflow_id: string
+  case_door: string | null
+  document: string | null
+  source_link: string | null
+  source_evidence: Record<string, unknown> | null
+  description: string | null
+  finding_id: string | null
+  created_at: string | null
+  decided_at: string | null
+}
+
+export interface TriageSource {
+  data_source: string
+  arrivals: number
+  lag_seconds: number | null
+  quiet: boolean | null
+}
+
+export interface TriagePayload {
+  rows: TriageRow[]
+  strip: {
+    picked_up: {
+      launched_or_merged: number
+      created_today: number
+      share: number | null
+    }
+    waiting: number
+    cases_created_today: number
+    trust_floor: string
+  }
+  sources: TriageSource[]
+  arrival_info: string
+  unmeasured_text: string
+}
+
+export interface TriageQuery {
+  kind?: string
+  source?: string
+  state?: string
+}
+
+export const triageApi = {
+  get: (params: TriageQuery = {}) => api.get<TriagePayload>('/triage', { params }),
+}
+
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),

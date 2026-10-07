@@ -1,0 +1,81 @@
+[
+  {
+    "name": "finding-004 workstation to file server is not decided by its title",
+    "input": {
+      "id": "finding-004",
+      "title": "Lateral Movement via RDP",
+      "description": "Unusual RDP connection from workstation to server",
+      "severity": "high",
+      "source": "microsoft_defender",
+      "external_id": "defender-alert-44556",
+      "timestamp": "2026-01-27T08:45:00Z",
+      "raw_data": {
+        "src_host": "workstation-089",
+        "dst_host": "fileserver-01",
+        "src_user": "contractor.user",
+        "protocol": "RDP",
+        "port": 3389
+      },
+      "mitre_techniques": ["T1021.001"],
+      "iocs": {
+        "hosts": ["workstation-089", "fileserver-01"],
+        "users": ["contractor.user"]
+      }
+    },
+    "expect": [
+      "verdict:",
+      "technique: T1021.001",
+      "path: workstation-089 -> fileserver-01"
+    ]
+  },
+  {
+    "name": "workstation to workstation off hours with a service account after credential dumping",
+    "input": {
+      "id": "finding-rdp-move-001",
+      "title": "Internal RDP session",
+      "description": "Credential dumping was observed on the source host minutes before this session. An RDP session then opened from one workstation to another.",
+      "severity": "high",
+      "source": "microsoft_defender",
+      "external_id": "defender-alert-rdp-move-001",
+      "timestamp": "2026-01-27T02:17:00Z",
+      "raw_data": {
+        "src_host": "workstation-014",
+        "dst_host": "workstation-077",
+        "src_user": "svc-backup",
+        "protocol": "RDP",
+        "port": 3389
+      },
+      "mitre_techniques": ["T1021.001"],
+      "iocs": {
+        "hosts": ["workstation-014", "workstation-077"],
+        "users": ["svc-backup"]
+      }
+    },
+    "expect": ["verdict: lateral-movement"]
+  },
+  {
+    "name": "jump host to server in business hours with a named admin",
+    "input": {
+      "id": "finding-rdp-admin-001",
+      "title": "RDP session from jump host",
+      "description": "An administrator opened an RDP session from the jump host to a server during the scheduled admin window.",
+      "severity": "low",
+      "source": "microsoft_defender",
+      "external_id": "defender-alert-rdp-admin-001",
+      "timestamp": "2026-01-27T14:05:00Z",
+      "raw_data": {
+        "src_host": "jump-host-02",
+        "dst_host": "appserver-03",
+        "src_user": "alice.admin",
+        "protocol": "RDP",
+        "port": 3389
+      },
+      "mitre_techniques": ["T1021.001"],
+      "iocs": {
+        "hosts": ["jump-host-02", "appserver-03"],
+        "users": ["alice.admin"]
+      }
+    },
+    "expect": ["verdict: expected-admin"]
+  }
+]

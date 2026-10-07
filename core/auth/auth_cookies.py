@@ -21,10 +21,26 @@ logger = logging.getLogger(__name__)
 ACCESS_COOKIE_NAME = "access_token"
 REFRESH_COOKIE_NAME = "refresh_token"
 
-# Path scoping: refresh cookie is only sent to the refresh endpoint so it
-# isn't exposed to every API call the browser makes.
-ACCESS_COOKIE_PATH = "/"
-REFRESH_COOKIE_PATH = "/api/auth/refresh"
+# Unprefixed Path values. Prefixed at set/clear time from vigil_context_path
+# so a subdirectory deploy (example.com/vigil) still sends cookies.
+_ACCESS_COOKIE_PATH = "/"
+_REFRESH_COOKIE_PATH = "/api/auth/refresh"
+
+
+def context_path_prefix() -> str:
+    """Normalized VIGIL_CONTEXT_PATH (no trailing slash). Empty at root."""
+    return get_settings().vigil_context_path.rstrip("/")
+
+
+def cookie_root_path() -> str:
+    """Path for access + CSRF cookies: `{prefix}/` or `/`."""
+    prefix = context_path_prefix()
+    return f"{prefix}/" if prefix else _ACCESS_COOKIE_PATH
+
+
+def refresh_cookie_path() -> str:
+    """Path for the refresh cookie: `{prefix}/api/auth/refresh`."""
+    return f"{context_path_prefix()}{_REFRESH_COOKIE_PATH}"
 
 
 def _cookie_secure() -> bool:
@@ -69,7 +85,7 @@ def set_auth_cookies(
         httponly=True,
         secure=secure,
         samesite=samesite,
-        path=ACCESS_COOKIE_PATH,
+        path=cookie_root_path(),
     )
     response.set_cookie(
         REFRESH_COOKIE_NAME,
@@ -78,7 +94,7 @@ def set_auth_cookies(
         httponly=True,
         secure=secure,
         samesite=samesite,
-        path=REFRESH_COOKIE_PATH,
+        path=refresh_cookie_path(),
     )
 
 
@@ -89,13 +105,13 @@ def clear_auth_cookies(response: Response) -> None:
     samesite = _cookie_samesite()
     response.delete_cookie(
         ACCESS_COOKIE_NAME,
-        path=ACCESS_COOKIE_PATH,
+        path=cookie_root_path(),
         secure=secure,
         samesite=samesite,
     )
     response.delete_cookie(
         REFRESH_COOKIE_NAME,
-        path=REFRESH_COOKIE_PATH,
+        path=refresh_cookie_path(),
         secure=secure,
         samesite=samesite,
     )

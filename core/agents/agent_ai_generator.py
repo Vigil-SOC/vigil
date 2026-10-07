@@ -13,7 +13,6 @@ class AgentAIGenerator:
 
     def __init__(self, mcp_registry: Optional[MCPRegistry] = None) -> None:
         self._mcp_registry = mcp_registry
-        self._mcp_tool_names_cache: Optional[List[str]] = None
 
     async def generate(
         self,
@@ -64,7 +63,6 @@ class AgentAIGenerator:
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,
-                enable_thinking=False,
             )
         except Exception as e:
             logger.exception("Agent generation call failed")
@@ -163,7 +161,9 @@ class AgentAIGenerator:
                     "## Base Prompt Shape\n"
                     "Your `role`, `extra_principles`, and `methodology` fields are "
                     "rendered into this template (Vigil preserves the "
-                    "entity-recognition and memory-palace directives):\n\n"
+                    "entity-recognition directives, and adds a read-only "
+                    "memory block when the agent is granted recall_entity):"
+                    "\n\n"
                     f"{base_prompt_shape}"
                 ),
                 (
@@ -195,9 +195,15 @@ class AgentAIGenerator:
 
     def _agents_context(self) -> str:
         try:
+            from core.agents.enablement import disabled_agent_ids
             from core.agents.manager import SOCAgentLibrary
 
-            agents = SOCAgentLibrary.get_all_agents()
+            disabled = disabled_agent_ids()
+            agents = {
+                k: v
+                for k, v in SOCAgentLibrary.get_all_agents().items()
+                if k not in disabled
+            }
         except Exception as e:
             logger.warning(f"Could not load agent library: {e}")
             return "(agent library unavailable)"
@@ -228,9 +234,17 @@ class AgentAIGenerator:
         return "\n".join(lines)
 
     def _get_mcp_tool_names(self) -> List[str]:
-        if self._mcp_tool_names_cache is None:
-            self._mcp_tool_names_cache = safe_tool_names(self._mcp_registry)
-        return self._mcp_tool_names_cache
+        # Refresh from the running client each turn so a server connected since
+        # startup (e.g. a credential just saved + enabled) is usable without a
+        # restart. Not memoised for the same reason. See registry.refresh_from_client.
+        from core.integrations.mcp.registry import refresh_from_client
+
+        registry = self._mcp_registry or MCPRegistry()
+        try:
+            refresh_from_client(registry)
+        except Exception as e:
+            logger.debug(f"MCP refresh failed: {e}")
+        return safe_tool_names(registry)
 
     def _base_prompt_shape(self) -> str:
         return (

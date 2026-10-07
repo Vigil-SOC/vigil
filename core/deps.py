@@ -17,9 +17,6 @@ from fastapi import Request
 from core.agents.agent_ai_generator import AgentAIGenerator
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
-from core.integrations.integration_compatibility_service import (
-    IntegrationCompatibilityService,
-)
 from core.integrations.mcp.registry import MCPRegistry
 from core.platform.demo_data_service import DemoDataService
 from core.response.approval_service import ApprovalService
@@ -59,10 +56,6 @@ def provide_mcp_registry(request: Request) -> MCPRegistry:
 
 def provide_integration_bridge(request: Request) -> IntegrationBridgeService:
     return request.app.state.integration_bridge
-
-
-def provide_integration_compat(request: Request) -> IntegrationCompatibilityService:
-    return request.app.state.integration_compat
 
 
 def provide_detection_rules(request: Request) -> DetectionRulesService:

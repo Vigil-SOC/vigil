@@ -28,15 +28,19 @@ on the vendor's descriptor; the map below derives itself from the descriptors,
 and only a Catalog Entry with no code behind it is listed literally in
 ``_CATALOG_ONLY_SECRET_FIELDS``. The default ``<INTEGRATION_ID>_<FIELD>``
 convention is built automatically; add an ``_ENV_VAR_OVERRIDES`` entry
-only when the consumer reads the secret under a non-canonical name
+only when the consumer reads the value under a non-canonical name
 (e.g. CrowdStrike's official MCP server reads ``FALCON_*``).
 """
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Mapping
+import json
+import re
+from typing import Dict, Iterable, List, Mapping
 
+from core.config import vigil_path
 from core.integrations._base.descriptor import iter_descriptors
+from core.secrets import get_secret
 
 
 def default_env_var(integration_id: str, field_name: str) -> str:
@@ -62,67 +66,9 @@ _CATALOG_ONLY_SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     # mcp_token: static bearer the LogLM MCP tools present to the connector.
     "loglm": ("mint_secret", "mcp_token"),
     "gcp-threat-intel": ("api_key",),
-    "cortex-xdr": ("api_key",),
-    "trend-micro-vision-one": ("api_token",),
-    "sophos-intercept-x": ("client_secret",),
-    "cybereason": ("password",),
-    "trellix": ("client_secret", "api_key"),
-    "tanium": ("password",),
-    "cynet": ("api_key",),
-    "eset": ("password",),
-    "bitdefender-gravityzone": ("api_key",),
-    "fortinet-fortiedr": ("api_token",),
-    "kaspersky": ("password",),
-    "cisco-secure-endpoint": ("api_key",),
-    "symantec-edr": ("client_secret",),
+    "firecrawl": ("api_key",),
     "cribl-stream": ("password",),
-    "qradar": ("sec_token",),
-    "arcsight": ("password",),
-    "logrhythm": ("api_token",),
-    "exabeam": ("password",),
-    "securonix": ("password",),
-    "sumo-logic": ("access_key",),
-    "graylog": ("api_token",),
-    "aws-guardduty": ("secret_access_key",),
-    "gcp-security": ("credentials_json",),
-    "azure-defender": ("client_secret",),
-    "prisma-cloud": ("secret_key",),
-    "orca-security": ("api_token",),
-    "wiz": ("client_secret",),
-    "lacework": ("api_secret",),
-    "aqua-security": ("password",),
-    "snyk": ("api_token",),
-    "ping-identity": ("client_secret",),
-    "auth0": ("client_secret",),
-    "onelogin": ("client_secret",),
-    "duo-security": ("secret_key",),
-    "jumpcloud": ("api_key",),
-    "sailpoint": ("client_secret",),
-    "cyberark": ("password",),
-    "beyond-trust": ("api_key",),
-    "cisco-firepower": ("password",),
-    "fortinet": ("api_key",),
-    "checkpoint": ("password",),
-    "zscaler": ("api_key", "password"),
-    "sophos": ("api_token",),
     "cloudforce_one": ("api_token",),
-    "juniper-srx": ("password",),
-    "servicenow": ("password",),
-    "thehive": ("api_key",),
-    "cortex-xsoar": ("api_key",),
-    "swimlane": ("password",),
-    "ibm-resilient": ("api_key_secret",),
-    "opsgenie": ("api_key",),
-    "email": ("smtp_password",),
-    "webhook": ("auth_token",),
-    "discord": ("webhook_url",),
-    "mattermost": ("webhook_url",),
-    "timesketch": ("password", "api_token"),
-    "velociraptor": ("api_key",),
-    "grr": ("password",),
-    "autopsy": ("password",),
-    "osquery": ("api_token",),
-    "cuckoo": ("api_token",),
 }
 
 
@@ -140,6 +86,11 @@ _ENV_VAR_OVERRIDES: Mapping[str, Mapping[str, str]] = {
     # mcp-config.json's PagerDuty server reads ${PAGERDUTY_API_KEY},
     # not PAGERDUTY_API_TOKEN.
     "pagerduty": {"api_token": "PAGERDUTY_API_KEY"},
+    # env.example and every existing deployment spell the self-hosted REST
+    # endpoint SPLUNK_URL, not the canonical SPLUNK_SERVER_URL. The resolver's
+    # env fallback for server_url keeps that name so an env-only deployment with
+    # nothing saved in Settings still constructs the client.
+    "splunk": {"server_url": "SPLUNK_URL"},
 }
 
 
@@ -159,13 +110,7 @@ PROXY_SUPPORTED: frozenset[str] = frozenset(
     {
         "splunk",
         "elastic-siem",
-        "qradar",
-        "arcsight",
-        "logrhythm",
-        "exabeam",
-        "securonix",
-        "sumo-logic",
-        "graylog",
+        "opensearch",
         "cribl-stream",
         "misp",
     }
@@ -222,9 +167,81 @@ def _build_registry() -> Dict[str, Dict[str, str]]:
 INTEGRATION_SECRET_FIELDS: Mapping[str, Mapping[str, str]] = _build_registry()
 
 
+# Credentials env.example documents that are not integration form fields: the
+# encrypted store owns them, read via get_secret so a value saved in the UI wins
+# over the environment. Usernames and client IDs ride along; over-redacting them
+# in a support bundle is harmless. Feeds scripts/vigil-support/secret-names.txt.
+ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
+    {
+        "AGENT_INTERNAL_TOKEN",
+        "ALIENVAULT_OTX_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "CAPE_SANDBOX_API_KEY",
+        "CLOUDFORCE_ONE_API_TOKEN",
+        "CLOUDY_WEBHOOK_SECRET",
+        "CRIBL_PASSWORD",
+        "CRIBL_USERNAME",
+        "CROWDSTRIKE_CLIENT_ID",
+        "CROWDSTRIKE_CLIENT_SECRET",
+        "DAEMON_WEBHOOK_TOKEN",
+        "DARKTRACE_WEBHOOK_SECRET",
+        "ELASTIC_SIEM_API_KEY",
+        "ELASTIC_SIEM_PASSWORD",
+        "ELASTIC_SIEM_USERNAME",
+        "OPENSEARCH_PASSWORD",
+        "OPENSEARCH_USERNAME",
+        "GITHUB_TOKEN",
+        "JOE_SANDBOX_API_KEY",
+        "JWT_SECRET_KEY",
+        "KAFKA_SASL_PASSWORD",
+        "KAFKA_SASL_USERNAME",
+        "OPENAI_API_KEY",
+        "PAGERDUTY_ROUTING_KEY",
+        "POSTGRES_PASSWORD",
+        "SHODAN_API_KEY",
+        "SLACK_BOT_TOKEN",
+        "SMTP_PASSWORD",
+        "SPLUNK_PASSWORD",
+        "SPLUNK_USERNAME",
+        "TEAMS_WEBHOOK_URL",
+        "VIRUSTOTAL_API_KEY",
+        "VSTRIKE_API_KEY",
+        "VSTRIKE_INBOUND_API_KEY",
+        "VSTRIKE_PASSWORD",
+        "VSTRIKE_USERNAME",
+    }
+)
+
+
+def _custom_secret_fields(integration_id: str) -> Dict[str, str]:
+    """Password-typed fields of a Custom Integration, from its saved metadata.
+
+    Custom Integrations are defined at runtime, so they are read here rather than
+    built into the registry at import. An unreadable file reads as no secrets.
+    """
+    try:
+        metadata = json.loads(
+            vigil_path("custom_integrations", "metadata.json").read_text()
+        )
+    except (OSError, ValueError):
+        return {}
+    entry = metadata.get(integration_id) if isinstance(metadata, dict) else None
+    fields = entry.get("fields") if isinstance(entry, dict) else None
+    return {
+        field["name"]: env_var_for(integration_id, field["name"])
+        for field in fields or []
+        if isinstance(field, dict)
+        and field.get("type") == "password"
+        and isinstance(field.get("name"), str)
+    }
+
+
 def secret_fields_for(integration_id: str) -> Mapping[str, str]:
     """Return the secret-field map for an integration, empty if unregistered."""
-    return INTEGRATION_SECRET_FIELDS.get(integration_id, {})
+    return INTEGRATION_SECRET_FIELDS.get(integration_id) or _custom_secret_fields(
+        integration_id
+    )
 
 
 def split_secrets(
@@ -273,3 +290,45 @@ def redact_secrets(integration_id: str, config: Dict[str, object]) -> Dict[str, 
 def secret_field_names(integration_id: str) -> Iterable[str]:
     """Iterable over the form-field names that are secrets for an integration."""
     return secret_fields_for(integration_id).keys()
+
+
+# Config keys that say where the integration connects (server_url, connectorUrl,
+# base_url, host, tenant, region, ...).
+_DESTINATION_KEY = re.compile(
+    r"url|uri|host|endpoint|server|domain|address|instance|tenant|region|(?:^|_)port$",
+    re.IGNORECASE,
+)
+
+
+def _same_destination(old: object, new: object) -> bool:
+    def norm(value: object) -> str:
+        return "" if value is None else str(value).strip().rstrip("/")
+
+    return norm(old) == norm(new)
+
+
+def credentials_to_resupply(
+    integration_id: str,
+    stored_config: Mapping[str, object],
+    new_config: Mapping[str, object],
+) -> List[str]:
+    """Secret fields the caller must send again because the destination moved.
+
+    A stored credential follows the saved destination on the next call, so
+    changing where an integration connects must not carry the old credential
+    to the new host. When a destination field differs from the stored one,
+    every secret that is currently set has to be present and non-empty in
+    ``new_config``; the names of those that are not are returned.
+    """
+    moved = any(
+        _DESTINATION_KEY.search(key)
+        and not _same_destination(stored_config.get(key), value)
+        for key, value in new_config.items()
+    )
+    if not moved:
+        return []
+    return [
+        field
+        for field, env_key in secret_fields_for(integration_id).items()
+        if get_secret(env_key) and not new_config.get(field)
+    ]

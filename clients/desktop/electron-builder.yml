@@ -11,6 +11,9 @@ files:
 extraResources:
   - from: standalone
     to: standalone
+  # The support-bundle script, run from a terminal (see "Support Bundle Command…").
+  - from: ../../scripts/vigil-support
+    to: vigil-support
 # Two ways to run: against a checkout (live source, development) or against
 # published images (no source tree, Docker only) — see Mode in src/main.ts.
 # scripts/sign.js ad-hoc signs the mac bundle here. Without a valid signature

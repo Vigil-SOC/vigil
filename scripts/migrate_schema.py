@@ -3,7 +3,14 @@
 Schema migration script for Vigil SOC.
 
 Brings an existing database up to date with the current SQLAlchemy models
-defined in core/storage/models.py. Safe to run multiple times (idempotent).
+defined in core.storage.models. Safe to run multiple times (idempotent).
+
+Each step commits on its own. A step the connecting role lacks the privilege
+for is skipped and named with the role that can run it, and the steps around
+it still apply. On a Helm install the tables the chart's SQL creates belong to
+the chart's database user and the ones create_all builds belong to vigil_app,
+so running as vigil_app may leave a step for the chart's user. The exit status
+is 0 only once every step has applied.
 
 Usage:
     python scripts/migrate_schema.py
@@ -11,7 +18,9 @@ Usage:
     DATABASE_URL="postgresql://user:pass@host:5432/db" python scripts/migrate_schema.py
 """
 
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -24,6 +33,8 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 def get_connection_url():
     url = os.environ.get('DATABASE_URL')
@@ -46,6 +57,31 @@ def get_connection_url():
 
 
 MIGRATIONS = []
+
+def _table_exists(conn, name):
+    """Whether a table is there to be altered.
+
+    Column migrations run after create_all has made any missing tables, but a
+    table can still be absent -- an older database that predates it, a partial
+    restore. ALTER on a missing table would fail the step over a schema problem
+    that is not there.
+    """
+    return conn.execute(
+        text("SELECT to_regclass(:name)"), {"name": name}
+    ).scalar() is not None
+
+
+def _index_exists(conn, name):
+    """Whether an index of that name is already there.
+
+    CREATE INDEX IF NOT EXISTS checks that the role owns the table before it
+    checks the name, so a role that doesn't own the table fails even when there
+    is nothing to create.
+    """
+    return conn.execute(
+        text("SELECT to_regclass(:name)"), {"name": name}
+    ).scalar() is not None
+
 
 def migration(description):
     """Decorator to register a migration step."""
@@ -79,16 +115,12 @@ def add_findings_description(conn):
         ALTER TABLE findings ADD COLUMN IF NOT EXISTS description TEXT;
     """))
 
-@migration("Fix findings.created_at server default to now()")
-def fix_findings_created_at(conn):
+@migration("Add noise mark columns to findings")
+def add_findings_noise_mark(conn):
     conn.execute(text("""
-        ALTER TABLE findings ALTER COLUMN created_at SET DEFAULT now();
-    """))
-
-@migration("Fix findings.updated_at server default to now()")
-def fix_findings_updated_at(conn):
-    conn.execute(text("""
-        ALTER TABLE findings ALTER COLUMN updated_at SET DEFAULT now();
+        ALTER TABLE findings
+            ADD COLUMN IF NOT EXISTS noise_marked_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS noise_marked_by VARCHAR(50);
     """))
 
 @migration("Create GIN trigram index on findings.description")
@@ -96,23 +128,6 @@ def create_findings_description_gin_index(conn):
     conn.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_finding_description
         ON findings USING gin (description gin_trgm_ops);
-    """))
-
-
-# ---------------------------------------------------------------------------
-# cases table
-# ---------------------------------------------------------------------------
-
-@migration("Fix cases.created_at server default to now()")
-def fix_cases_created_at(conn):
-    conn.execute(text("""
-        ALTER TABLE cases ALTER COLUMN created_at SET DEFAULT now();
-    """))
-
-@migration("Fix cases.updated_at server default to now()")
-def fix_cases_updated_at(conn):
-    conn.execute(text("""
-        ALTER TABLE cases ALTER COLUMN updated_at SET DEFAULT now();
     """))
 
 
@@ -138,6 +153,88 @@ def create_llm_interaction_vk_index(conn):
         ON llm_interaction_logs (virtual_key_id, created_at);
     """))
 
+# Rows written before #1268 stored the virtual key (sk-bf-…) in this column.
+# The column stays; the secret does not.
+@migration("Null llm_interaction_logs.virtual_key_id (it stored the key)")
+def null_llm_interaction_virtual_key_id(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    # The ADD COLUMN step above is skipped when this role does not own the
+    # table. Nothing to clear until that column exists.
+    present = conn.execute(text("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'llm_interaction_logs'
+          AND column_name = 'virtual_key_id'
+    """)).scalar()
+    if not present:
+        return
+    conn.execute(text("""
+        UPDATE llm_interaction_logs
+        SET virtual_key_id = NULL
+        WHERE virtual_key_id IS NOT NULL;
+    """))
+
+# Unpriced is stored as NULL, not 0 (#1115). Existing rows are left as they are.
+@migration("Make llm_interaction_logs.cost_usd nullable")
+def make_llm_interaction_cost_nullable(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd DROP NOT NULL;
+    """))
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd DROP DEFAULT;
+    """))
+
+
+# Rates behind cost_usd, frozen when the row is written (#1190). DOUBLE PRECISION
+# because Numeric(10, 6) — the call total's scale — rounds a per-token cache
+# rate below 1e-6 away to zero.
+@migration("Add rate columns to llm_interaction_logs")
+def add_llm_interaction_rate_columns(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs
+            ADD COLUMN IF NOT EXISTS input_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS output_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS cache_read_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS cache_write_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS rates_fetched_at VARCHAR(64);
+    """))
+
+
+# create_all is checkfirst=True, so a table that already exists gets no new index
+# from the model. A hunt handing off looks this column up twice per escalation.
+# On Helm the table belongs to the chart's user, so vigil_app passes here only
+# once the index exists. 36_workflow_runs_triggered_by_index.sql builds it
+# there; this step covers a database that init SQL never reached.
+@migration("Create idx_workflow_runs_triggered_by index")
+def create_workflow_runs_triggered_by_index(conn):
+    if _index_exists(conn, 'idx_workflow_runs_triggered_by'):
+        return
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_workflow_runs_triggered_by
+        ON workflow_runs (triggered_by, started_at);
+    """))
+
+
+# The agent-layer terminal beside the three-value status (#1272). create_all
+# adds no column to a table that already exists. On Helm the table belongs to
+# the chart's user, so vigil_app passes here only once the columns exist.
+# 37_workflow_runs_outcome.sql builds them there; this step covers a database
+# that init SQL never reached. No backfill: rows this side finalized stay null.
+@migration("Add outcome and reason to workflow_runs")
+def add_workflow_run_outcome(conn):
+    if not _table_exists(conn, 'workflow_runs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE workflow_runs
+            ADD COLUMN IF NOT EXISTS outcome TEXT,
+            ADD COLUMN IF NOT EXISTS reason TEXT;
+    """))
+
 
 # ---------------------------------------------------------------------------
 # New tables (create if missing via SQLAlchemy create_all)
@@ -161,6 +258,282 @@ def create_missing_tables(conn):
 
 
 # ---------------------------------------------------------------------------
+# Frozen now() defaults
+# ---------------------------------------------------------------------------
+
+# The models once declared server_default="now()", a plain string, which
+# create_all renders as the literal DEFAULT 'now()'. Postgres folds that to a
+# timestamp at CREATE TABLE, so every table the ORM built holds its own creation
+# time as the default, and a raw-SQL INSERT that omits the column is stamped with
+# it. The models now say text("now()"), but create_all never alters a table it
+# finds. Only a column the models default to now() is touched, and only while
+# its default is a literal or missing, so a second run alters nothing.
+@migration("Replace frozen now() server defaults with now()")
+def fix_frozen_now_defaults(conn):
+    from sqlalchemy.schema import DefaultClause
+    from core.storage.models import Base
+    declared = {
+        (table.name, column.name)
+        for table in Base.metadata.tables.values()
+        for column in table.columns
+        if isinstance(column.server_default, DefaultClause)
+        and str(column.server_default.arg) == 'now()'
+    }
+    live = conn.execute(text("""
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND (column_default IS NULL OR column_default LIKE '''%')
+    """)).all()
+    stale = sorted(declared & {tuple(row) for row in live})
+    quote = conn.dialect.identifier_preparer.quote
+    for table, column in stale:
+        conn.execute(text(
+            f"ALTER TABLE {quote(table)} ALTER COLUMN {quote(column)} SET DEFAULT now();"
+        ))
+    if stale:
+        logger.info(f"  Reset {len(stale)} column default(s) to now(): "
+                    + ", ".join(f"{t}.{c}" for t, c in stale))
+    else:
+        logger.info("  No frozen now() defaults")
+    return stale
+
+
+# ---------------------------------------------------------------------------
+# Episodic memory
+# ---------------------------------------------------------------------------
+
+# Which kind of actor closed a Case (#733). Read as a Verdict's Trust, and a
+# name cannot answer it -- an agent closing as "soc-automation" and a person
+# closing as "nestor" are the same shape of string. Existing rows default to
+# `agent`: `analyst` is the highest-trust record the system produces, and a
+# close nobody can attribute has not earned it.
+@migration("Add closed_by_kind column to case_closure_info")
+def add_case_closure_actor(conn):
+    if not _table_exists(conn, 'case_closure_info'):
+        return
+    conn.execute(text("""
+        ALTER TABLE case_closure_info
+        ADD COLUMN IF NOT EXISTS closed_by_kind TEXT NOT NULL DEFAULT 'agent';
+    """))
+    conn.execute(text("""
+        ALTER TABLE case_closure_info
+        DROP CONSTRAINT IF EXISTS case_closure_info_closed_by_kind_check;
+    """))
+    conn.execute(text("""
+        ALTER TABLE case_closure_info
+        ADD CONSTRAINT case_closure_info_closed_by_kind_check
+            CHECK (closed_by_kind IN ('analyst', 'agent'));
+    """))
+
+
+# The case_findings primary key leads with case_id, so a lookup by finding --
+# Finding.cases on every Finding load, the cascade from findings -- scans the
+# table. create_all adds no index to a table that already exists, and
+# 39_case_findings_finding_index.sql only reaches a table that was there when
+# the init SQL ran, as a role that owns it.
+@migration("Create idx_case_findings_finding index")
+def create_case_findings_finding_index(conn):
+    if not _table_exists(conn, 'case_findings'):
+        return
+    if _index_exists(conn, 'idx_case_findings_finding'):
+        return
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_case_findings_finding
+        ON case_findings (finding_id, case_id);
+    """))
+
+
+# The CHECK below as Postgres 16 prints it back. A version that prints it
+# differently only makes _markers_widened() say no, and the step runs as before.
+MARKERS_ORIGIN_CHECK = (
+    "CHECK ((((investigation_kind = 'hunt'::text) = (origin_run_id IS NOT NULL))"
+    " AND ((origin_run_id IS NULL) = (origin_seq IS NULL))))"
+)
+
+
+def _markers_widened(conn):
+    """Whether episodic_distil_markers already has everything the step makes.
+
+    The step drops and re-creates the index and the CHECK, so without this it
+    needs the table's owner on every run. On Helm that is the chart's user,
+    whose 26_episodic_memory.sql already builds the table this way.
+    """
+    return conn.execute(text("""
+        SELECT
+            (SELECT count(*) FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'episodic_distil_markers'
+               AND ((column_name IN ('origin_run_id', 'origin_seq')
+                     AND is_nullable = 'YES')
+                    OR column_name = 'origin_run_ids')) = 3
+            AND EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND indexname = 'idx_episodic_markers_origin'
+                  AND indexdef LIKE '%USING gin (origin_run_ids)')
+            AND EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = to_regclass('episodic_distil_markers')
+                  AND conname = 'episodic_distil_markers_origin_matches_kind'
+                  AND pg_get_constraintdef(oid) = :check)
+    """), {"check": MARKERS_ORIGIN_CHECK}).scalar()
+
+
+# The runs a marker accounts for (#731), and the origin pair a Case has no value
+# for (#733). A Case is closed and never run, so its marker's origin is absent;
+# the CHECK ties that absence to the kind, so neither shape can be half-written.
+@migration("Widen episodic_distil_markers for Case-authored Verdicts")
+def widen_episodic_distil_markers(conn):
+    if not _table_exists(conn, 'episodic_distil_markers'):
+        return
+    if _markers_widened(conn):
+        return
+    conn.execute(text("""
+        ALTER TABLE episodic_distil_markers
+        ADD COLUMN IF NOT EXISTS origin_run_ids UUID[] NOT NULL
+            DEFAULT ARRAY[]::uuid[];
+    """))
+    # Dropped first, not IF NOT EXISTS: a database created before #731 already
+    # holds an index of this name over origin_run_id, and IF NOT EXISTS would
+    # see the name taken and leave the poll's `@>` containment unindexed.
+    conn.execute(text("DROP INDEX IF EXISTS idx_episodic_markers_origin;"))
+    conn.execute(text("""
+        CREATE INDEX idx_episodic_markers_origin
+        ON episodic_distil_markers USING GIN (origin_run_ids);
+    """))
+    conn.execute(text("""
+        ALTER TABLE episodic_distil_markers
+        ALTER COLUMN origin_run_id DROP NOT NULL;
+    """))
+    conn.execute(text("""
+        ALTER TABLE episodic_distil_markers
+        ALTER COLUMN origin_seq DROP NOT NULL;
+    """))
+    conn.execute(text("""
+        ALTER TABLE episodic_distil_markers
+        DROP CONSTRAINT IF EXISTS episodic_distil_markers_origin_matches_kind;
+    """))
+    conn.execute(text("""
+        ALTER TABLE episodic_distil_markers
+        ADD CONSTRAINT episodic_distil_markers_origin_matches_kind CHECK (
+            (investigation_kind = 'hunt') = (origin_run_id IS NOT NULL)
+            AND (origin_run_id IS NULL) = (origin_seq IS NULL)
+        );
+    """))
+
+
+# ---------------------------------------------------------------------------
+# intake_triggers table
+# ---------------------------------------------------------------------------
+
+# The Case the row was claimed under (#1000). #918 created this table before the
+# column existed, so every database that drained an intake queue between the two
+# has the table without it -- and create_all never alters one it finds. The whole
+# row is selected on every drain, so the missing column fails the queue read
+# rather than one launch: the daemon reports an empty queue and launches nothing.
+@migration("Add case_id column to intake_triggers")
+def add_intake_trigger_case_id(conn):
+    if not _table_exists(conn, 'intake_triggers'):
+        return
+    conn.execute(text("""
+        ALTER TABLE intake_triggers
+        ADD COLUMN IF NOT EXISTS case_id VARCHAR(50);
+    """))
+
+
+# The dock records which page it was opened from and which case was attached
+# (#1328). Nullable, no FK: deleting a case must not delete the conversation.
+@migration("Add case_id and page_context to conversations")
+def add_conversation_case_and_page(conn):
+    if not _table_exists(conn, "conversations"):
+        return
+    conn.execute(text("""
+        ALTER TABLE conversations
+            ADD COLUMN IF NOT EXISTS case_id VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS page_context VARCHAR(120);
+    """))
+
+
+# ---------------------------------------------------------------------------
+# case_templates table
+# ---------------------------------------------------------------------------
+
+# Only create_all builds this table, and until the model declared a server
+# default it made usage_count NOT NULL with none, so raw SQL that omitted the
+# column failed: every template in 05_case_management_extended.sql did. The seed
+# now names it; this gives tables built before the fix the default a new one has.
+@migration("Add custom_agents.fallback_model")
+def add_custom_agent_fallback_model(conn):
+    if not _table_exists(conn, 'custom_agents'):
+        return
+    conn.execute(text("""
+        ALTER TABLE custom_agents
+            ADD COLUMN IF NOT EXISTS fallback_model TEXT;
+    """))
+
+
+# Cumulative count of records a poll received but could not turn into findings.
+@migration("Add federation_sources.dropped_total")
+def add_federation_dropped_total(conn):
+    if not _table_exists(conn, 'federation_sources'):
+        return
+    conn.execute(text("""
+        ALTER TABLE federation_sources
+            ADD COLUMN IF NOT EXISTS dropped_total INTEGER NOT NULL DEFAULT 0;
+    """))
+
+
+@migration("Set case_templates.usage_count server default to 0")
+def set_case_template_usage_count_default(conn):
+    if not _table_exists(conn, 'case_templates'):
+        return
+    conn.execute(text("""
+        ALTER TABLE case_templates ALTER COLUMN usage_count SET DEFAULT 0;
+    """))
+
+
+# ---------------------------------------------------------------------------
+# approval_actions table
+# ---------------------------------------------------------------------------
+
+STUB_ISOLATION_ERROR = (
+    "recorded by the pre-#1276 isolation stub; no containment was made"
+)
+_LOGGED_HOST_CAP = 20
+
+
+# Before #1339 the isolation stub reported success without isolating anything,
+# so its rows say `executed` for hosts that were never contained -- and, through
+# the idempotency key, answer every later isolation of that host with "already
+# isolated". Failed rows are outside the unique index, which releases the key.
+# The original (MOCK) message stays in execution_result as evidence.
+@migration("Mark isolations recorded by the pre-#1276 stub as failed")
+def fail_stub_isolation_actions(conn):
+    if not _table_exists(conn, 'approval_actions'):
+        return
+    targets = conn.execute(text("""
+        UPDATE approval_actions
+        SET status = 'failed',
+            execution_result = execution_result || CAST(:err AS jsonb)
+        WHERE action_type = 'isolate_host'
+          AND status = 'executed'
+          AND execution_result->>'message' LIKE '%(MOCK)%'
+        RETURNING action_id, target
+    """), {"err": json.dumps({"error": STUB_ISOLATION_ERROR})}).all()
+    if not targets:
+        logger.info("  No stub isolation rows needed correcting")
+        return
+    hosts = sorted({t for _, t in targets})
+    shown = ", ".join(hosts[:_LOGGED_HOST_CAP])
+    more = len(hosts) - _LOGGED_HOST_CAP
+    logger.info(
+        f"  Marked {len(targets)} stub isolation row(s) failed; "
+        f"these hosts were never contained: {shown}"
+        + (f" (+{more} more)" if more > 0 else "")
+    )
+
+
+# ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 
@@ -172,7 +545,6 @@ def seed_default_roles(conn):
         logger.info(f"  Roles table already has {count} rows, skipping seed")
         return
 
-    import json
     roles = [
         ('admin', 'Administrator', 'Full system access',
          json.dumps({"admin": True, "manage_users": True, "manage_cases": True,
@@ -194,54 +566,97 @@ def seed_default_roles(conn):
     logger.info("  Seeded default roles: admin, analyst, viewer")
 
 
-@migration("Seed default admin user if users table is empty")
-def seed_default_admin(conn):
-    result = conn.execute(text("SELECT COUNT(*) FROM users"))
-    count = result.scalar()
-    if count > 0:
-        logger.info(f"  Users table already has {count} users, skipping seed")
-        return
-
-    from passlib.hash import bcrypt
-    pw_hash = bcrypt.hash("admin")
-    conn.execute(text("""
-        INSERT INTO users (user_id, username, email, password_hash, full_name, role_id,
-                           is_active, is_verified, mfa_enabled, login_count, created_at, updated_at)
-        VALUES ('user-admin', 'admin', 'admin@deeptempo.local', :pw, 'Administrator', 'admin',
-                true, true, false, 0, now(), now())
-        ON CONFLICT (user_id) DO NOTHING
-    """), {"pw": pw_hash})
-    logger.info("  Seeded default admin user (admin / admin)")
-
-
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
-def run_migrations():
-    url = get_connection_url()
-    safe_url = url.split('@')[-1] if '@' in url else url
-    logger.info(f"Connecting to: ...@{safe_url}")
+# Postgres names the object in its privilege errors, e.g.
+# "must be owner of table workflow_runs".
+_PRIVILEGE_OBJECT = re.compile(
+    r'(?:must be owner of|permission denied for) '
+    r'(?:table|relation|index|view|materialized view|sequence) "?([\w.]+)"?'
+)
 
+
+def _role_to_rerun_as(engine, error):
+    """Who can run a step that failed for want of privilege, or None.
+
+    None means the step failed for another reason. Otherwise the answer names
+    the owner of the object in the error when it can be looked up: only that
+    owner or a superuser may alter a table or add an index to it.
+    """
+    orig = getattr(error, 'orig', None)
+    if getattr(orig, 'pgcode', None) != '42501':
+        return None
+    match = _PRIVILEGE_OBJECT.search(str(orig))
+    if match:
+        try:
+            with engine.connect() as conn:
+                owner = conn.execute(text(
+                    "SELECT pg_get_userbyid(relowner) FROM pg_class "
+                    "WHERE oid = to_regclass(:name)"
+                ), {"name": match.group(1)}).scalar()
+        except Exception:
+            owner = None
+        if owner:
+            return f"{owner} (owner of {match.group(1)}) or a superuser"
+    return "a superuser"
+
+
+def run_migrations(url=None):
+    """Run every step in its own transaction, and return what became of each.
+
+    A failed step rolls back alone: the steps before it stay committed and the
+    ones after it still run. Returns the steps that applied, the ones skipped
+    for want of privilege (with who can run them), and the ones that failed,
+    each numbered as the log numbers it.
+    """
+    url = url or get_connection_url()
+    try:
+        # Log only the server and database; never echo the URL, which carries credentials.
+        target = make_url(url)
+        logger.info(f"Connecting to: {target.host or 'localhost'}:{target.port or 5432}/{target.database}")
+    except ArgumentError:
+        logger.info("Connecting to the configured database")
+
+    # SQLAlchemy 2.1 defaults bare postgresql:// to psycopg3; we ship psycopg2.
+    # (postgres:// is the form env.example/Heroku-style URLs use.)
+    url = re.sub(r'^postgres(ql)?://', 'postgresql+psycopg2://', url)
     engine = create_engine(url)
-
-    applied = 0
-    errors = 0
-
-    with engine.begin() as conn:
-        for desc, fn in MIGRATIONS:
+    applied, skipped, failed = [], [], []
+    try:
+        # Each step connects on its own, so an unreachable database would
+        # otherwise fail, or wait out the TCP timeout, once per step.
+        with engine.connect():
+            pass
+        for number, (desc, fn) in enumerate(MIGRATIONS, 1):
+            logger.info(f"[{number}/{len(MIGRATIONS)}] {desc}")
             try:
-                logger.info(f"[{applied+1}/{len(MIGRATIONS)}] {desc}")
-                fn(conn)
-                applied += 1
+                with engine.begin() as conn:
+                    fn(conn)
             except Exception as e:
-                logger.error(f"  FAILED: {e}")
-                errors += 1
+                role = _role_to_rerun_as(engine, e)
+                if role is None:
+                    logger.error(f"  FAILED: {e}")
+                    failed.append((number, desc))
+                else:
+                    reason = str(e.orig).strip().splitlines()[0]
+                    logger.warning(f"  SKIPPED: {reason}. Run it as {role}.")
+                    skipped.append((number, desc, role))
+            else:
+                applied.append((number, desc))
+    finally:
+        engine.dispose()
 
-    logger.info(f"\nDone: {applied} applied, {errors} errors out of {len(MIGRATIONS)} migrations.")
-    return errors == 0
+    logger.info(
+        f"\nDone: {len(applied)} applied, {len(skipped)} skipped, "
+        f"{len(failed)} failed, out of {len(MIGRATIONS)} migrations."
+    )
+    for number, desc, role in skipped:
+        logger.info(f"  [{number}] {desc}: run the script again as {role}.")
+    return {"applied": applied, "skipped": skipped, "failed": failed}
 
 
 if __name__ == '__main__':
-    success = run_migrations()
-    sys.exit(0 if success else 1)
+    result = run_migrations()
+    sys.exit(1 if result["skipped"] or result["failed"] else 0)

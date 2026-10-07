@@ -1,15 +1,36 @@
 """Autonomous response handler for the SOC daemon."""
 
 import asyncio
+import ipaddress
 import logging
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, Optional, Tuple
 
 from core.response.approval_service import ApprovalService
 from core.response.autonomous_response_service import AutonomousResponseService
-from core.time import utcnow
+from core.response.config import response_action_decision
 from services.daemon.config import EscalationConfig, ResponseConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _actionable_ip(value: Any) -> Optional[str]:
+    """The host address in ``value``, or None for anything not worth acting on."""
+    try:
+        ip = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if (
+        ip.is_loopback
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_link_local
+        or ip.is_reserved
+    ):
+        return None
+    return str(ip)
 
 
 class AutonomousResponder:
@@ -35,6 +56,7 @@ class AutonomousResponder:
         self.stats = {
             "evaluated": 0,
             "auto_executed": 0,
+            "reused": 0,
             "pending_approval": 0,
             "escalated": 0,
             "errors": 0,
@@ -110,24 +132,22 @@ class AutonomousResponder:
 
         logger.debug(f"Evaluating response for finding {finding_id}")
 
-        if not self.response_config.auto_response_enabled:
-            logger.debug("Auto-response disabled, skipping")
-            return
-
-        # Extract relevant data
         severity = finding.get("severity", "medium").lower()
         confidence = finding.get("triage_confidence", 0.5)
         recommended_action = finding.get("recommended_action", "").lower()
         entity_context = finding.get("entity_context", {})
 
-        # Determine if response is needed
-        response_action = self._determine_action(
-            severity, confidence, recommended_action
+        decided = response_action_decision(
+            severity, confidence, recommended_action, self.response_config
         )
 
-        if not response_action:
-            logger.debug(f"No response action needed for {finding_id}")
+        if not decided:
+            if not self.response_config.auto_response_enabled:
+                logger.debug("Auto-response disabled, skipping")
+            else:
+                logger.debug(f"No response action needed for {finding_id}")
             return
+        response_action, rule = decided
 
         # Check if escalation is needed
         should_escalate = self._should_escalate(severity, confidence)
@@ -137,26 +157,17 @@ class AutonomousResponder:
 
         # Create response action
         if response_action in ["isolate", "block"]:
-            await self._create_response_action(finding, response_action, entity_context)
+            await self._create_response_action(
+                finding, response_action, entity_context, rule
+            )
 
     def _determine_action(
         self, severity: str, confidence: float, recommended: str
-    ) -> Optional[str]:
-        """Determine what response action to take."""
-        # High confidence + recommended isolation/block
-        if confidence >= self.response_config.confidence_threshold:
-            if recommended in ["isolate", "block"]:
-                return recommended
-
-        # Critical severity always warrants action
-        if severity == "critical" and confidence >= 0.7:
-            return "isolate"
-
-        # High severity with good confidence
-        if severity == "high" and confidence >= 0.8:
-            return "investigate"
-
-        return None
+    ) -> Optional[Tuple[str, str]]:
+        """``(action, rule)`` from :func:`response_action_decision` (#917)."""
+        return response_action_decision(
+            severity, confidence, recommended, self.response_config
+        )
 
     def _should_escalate(self, severity: str, confidence: float) -> bool:
         """Determine if finding should be escalated."""
@@ -249,7 +260,7 @@ class AutonomousResponder:
                             "title": f"🚨 SOC Alert - {severity.upper()}",
                             "text": message,
                             "footer": "AI-SOC Daemon",
-                            "ts": utcnow().timestamp(),
+                            "ts": time.time(),
                         }
                     ],
                 },
@@ -260,7 +271,7 @@ class AutonomousResponder:
             if response.status_code == 200 and response.json().get("ok"):
                 logger.debug("Slack alert sent successfully")
             else:
-                logger.warning(f"Slack alert failed: {response.text}")
+                logger.error(f"Slack alert failed: {response.text}")
 
         except Exception as e:
             logger.error(f"Slack escalation error: {e}")
@@ -304,18 +315,23 @@ class AutonomousResponder:
             if data.get("status") == "success":
                 logger.debug(f"PagerDuty alert triggered: {data.get('dedup_key')}")
             else:
-                logger.warning(f"PagerDuty alert failed: {data}")
+                logger.error(f"PagerDuty alert failed: {data}")
 
         except Exception as e:
             logger.error(f"PagerDuty escalation error: {e}")
 
     async def _create_response_action(
-        self, finding: Dict[str, Any], action_type: str, entity_context: Dict[str, Any]
+        self,
+        finding: Dict[str, Any],
+        action_type: str,
+        entity_context: Dict[str, Any],
+        rule: str,
     ):
         """Create a response action (pending or auto-approved)."""
         if self.response_config.dry_run:
             logger.info(
-                f"[DRY RUN] Would create {action_type} action for finding {finding.get('finding_id')}"
+                f"[DRY RUN] Would create {action_type} action for finding "
+                f"{finding.get('finding_id')}; {rule}"
             )
             return
 
@@ -326,8 +342,12 @@ class AutonomousResponder:
         target_ip = None
         hostname = None
 
-        if entity_context.get("src_ips"):
-            target_ip = entity_context["src_ips"][0]
+        # The address comes from alert text. Only a routable-looking host address
+        # is acted on; a malformed or loopback/unspecified one is dropped.
+        for candidate in entity_context.get("src_ips") or []:
+            target_ip = _actionable_ip(candidate)
+            if target_ip:
+                break
         if entity_context.get("hostnames"):
             hostname = entity_context["hostnames"][0]
 
@@ -345,13 +365,18 @@ class AutonomousResponder:
             ip_address=target_ip or "unknown",
             hostname=hostname,
             confidence=confidence,
-            reason=f"Automated response to {finding_id}",
+            reason=f"Automated response to {finding_id}; {rule}",
             evidence=[finding_id],
             correlation_data=correlation_data,
         )
 
         if result:
-            if result.get("status") == "executed":
+            if result.get("status") == "executed" and result.get("reused"):
+                self.stats["reused"] += 1
+                logger.info(
+                    f"Skipped {action_type} action for {finding_id}: target already isolated"
+                )
+            elif result.get("status") == "executed":
                 self.stats["auto_executed"] += 1
                 logger.info(f"Auto-executed {action_type} action for {finding_id}")
             elif result.get("status") == "pending_approval":

@@ -9,8 +9,13 @@ cleanly if not.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock
+
 import pytest
 
+from core.storage.connection import get_db_manager
+from core.storage.models import WorkflowRun
 from core.workflows.workflow_run_service import WorkflowRunService, generate_run_id
 
 
@@ -53,7 +58,9 @@ def clean_runs():
 
     def _clear():
         with get_db_manager().session_scope() as s:
-            s.execute(text("DELETE FROM workflow_runs WHERE workflow_id LIKE 'test-wf-%'"))
+            s.execute(
+                text("DELETE FROM workflow_runs WHERE workflow_id LIKE 'test-wf-%'")
+            )
 
     _clear()
     yield
@@ -76,7 +83,6 @@ class TestBeginAndFinalize:
             workflow_source="file",
             trigger_context={"finding_id": "f-test-123"},
             triggered_by="pytest",
-            skill_tools_available=["skill_x"],
         )
         assert run_id is not None
         row = service.get_run(run_id)
@@ -86,7 +92,6 @@ class TestBeginAndFinalize:
         assert row["workflow_name"] == "Test WF"
         assert row["triggered_by"] == "pytest"
         assert row["trigger_context"] == {"finding_id": "f-test-123"}
-        assert row["skill_tools_available"] == ["skill_x"]
         assert row["finished_at"] is None
         assert row["duration_ms"] is None
 
@@ -122,6 +127,23 @@ class TestBeginAndFinalize:
         row = service.get_run(run_id)
         assert row["status"] == "failed"
         assert "RuntimeError" in (row["error"] or "")
+
+    def test_finalize_counts_outcome_by_run_kind_from_trigger_context(
+        self, service, clean_runs, monkeypatch
+    ):
+        counter = MagicMock()
+        monkeypatch.setattr(
+            "core.workflows.workflow_run_service._runs_finished", counter
+        )
+        run_id = service.begin_run(
+            workflow_id="test-wf-kind",
+            workflow_name="Test WF",
+            trigger_context={"run_kind": "investigate"},
+        )
+        assert service.finalize_run(run_id, status="cancelled") is True
+        counter.add.assert_called_once_with(
+            1, {"run_kind": "investigate", "status": "cancelled"}
+        )
 
     def test_finalize_rejects_bad_status(self, service, clean_runs):
         run_id = service.begin_run(
@@ -171,3 +193,82 @@ class TestListRuns:
         # ``list_runs`` calls to_dict(include_result=False) — result_summary
         # should not be in the envelope so list responses stay small.
         assert "result_summary" not in runs[0]
+
+    def test_list_respects_started_at_and_finished_at_bounds(self, service, clean_runs):
+        early = service.begin_run(workflow_id="test-wf-window", workflow_name="W")
+        mid = service.begin_run(workflow_id="test-wf-window", workflow_name="W")
+        late = service.begin_run(workflow_id="test-wf-window", workflow_name="W")
+        for run_id in (early, mid, late):
+            service.finalize_run(run_id, status="completed")
+
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        t1 = datetime(2026, 2, 1, 12, 0, 0)
+        t2 = datetime(2026, 3, 1, 12, 0, 0)
+        stamps = {early: t0, mid: t1, late: t2}
+        with get_db_manager().session_scope() as session:
+            for run_id, started in stamps.items():
+                row = session.get(WorkflowRun, run_id)
+                row.started_at = started
+                row.finished_at = started + timedelta(hours=1)
+
+        in_window = service.list_runs(
+            workflow_id="test-wf-window",
+            status="completed",
+            started_at=datetime(2026, 1, 15),
+            finished_at=datetime(2026, 2, 15),
+        )
+        ids = {row["run_id"] for row in in_window}
+        assert ids == {mid}
+
+    def test_list_finished_after_includes_runs_that_started_earlier(
+        self, service, clean_runs
+    ):
+        overlap = service.begin_run(workflow_id="test-wf-finish", workflow_name="W")
+        mid = service.begin_run(workflow_id="test-wf-finish", workflow_name="W")
+        late = service.begin_run(workflow_id="test-wf-finish", workflow_name="W")
+        for run_id in (overlap, mid, late):
+            service.finalize_run(run_id, status="completed")
+
+        t_start = datetime(2026, 1, 1, 12, 0, 0)
+        t_mid = datetime(2026, 2, 1, 12, 0, 0)
+        t_late = datetime(2026, 3, 1, 12, 0, 0)
+        with get_db_manager().session_scope() as session:
+            for run_id, started, finished in (
+                (overlap, t_start, t_mid),
+                (mid, t_mid, t_mid + timedelta(hours=1)),
+                (late, t_late, t_late + timedelta(hours=1)),
+            ):
+                row = session.get(WorkflowRun, run_id)
+                row.started_at = started
+                row.finished_at = finished
+
+        in_window = service.list_runs(
+            workflow_id="test-wf-finish",
+            status="completed",
+            finished_after=datetime(2026, 1, 15),
+            finished_at=datetime(2026, 2, 15),
+        )
+        ids = {row["run_id"] for row in in_window}
+        assert ids == {overlap, mid}
+
+    def test_list_filters_run_kind_on_trigger_context(self, service, clean_runs):
+        compose = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={"run_kind": "compose"},
+        )
+        hunt = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={"run_kind": "hunt"},
+        )
+        plain = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={},
+        )
+        for run_id in (compose, hunt, plain):
+            service.finalize_run(run_id, status="completed")
+
+        rows = service.list_runs(workflow_id="test-wf-kind-filter", run_kind="compose")
+        assert {row["run_id"] for row in rows} == {compose}

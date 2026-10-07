@@ -16,7 +16,7 @@ class MCPRegistry:
     """
     Central registry that tracks active MCP servers and their available tools.
 
-    Used by ClaudeService and agents to dynamically discover what tools
+    Used by agents to dynamically discover what tools
     are available at runtime, enabling automatic enrichment from active
     MCP integrations (like security-detections, threat intel, etc.)
     """
@@ -33,7 +33,7 @@ class MCPRegistry:
         Register an MCP server and its tools.
 
         Args:
-            name: Server name (e.g., 'security-detections', 'deeptempo-findings')
+            name: Server name (e.g., 'security-detections', 'vigil')
             config: Server config (command, args, env, etc.)
             tools: List of tool definitions (name, description, input_schema)
         """
@@ -53,6 +53,19 @@ class MCPRegistry:
             name for name, info in self._servers.items() if info.get("active", False)
         ]
 
+    def set_active(self, server_name: str, active: bool) -> None:
+        """Mark one server active or inactive. No-op when it is not registered."""
+        info = self._servers.get(server_name)
+        if info is None:
+            return
+        info["active"] = active
+
+    def retain_only(self, active_names: List[str]) -> None:
+        """Mark exactly ``active_names`` active; deactivate every other server."""
+        wanted = set(active_names)
+        for name, info in self._servers.items():
+            info["active"] = name in wanted
+
     def get_all_tools(self) -> List[Dict]:
         """
         Get all tools from all active servers, formatted for Claude API.
@@ -61,62 +74,62 @@ class MCPRegistry:
             List of tool definitions with server-prefixed names.
         """
         all_tools = []
-        seen = set()
+        for server_name, tool_name, tool in self._named_tools():
+            # Prefix the description with the server so the model sees a
+            # tool's provenance — but leave it empty when the tool has none,
+            # so a downstream "drop tools with no description" guard still
+            # fires (a fabricated "[server] " would read as truthy).
+            raw_desc = (tool.get("description") or "").strip()
+            description = f"[{server_name}] {raw_desc}" if raw_desc else ""
 
+            all_tools.append(
+                {
+                    "name": tool_name,
+                    "description": description,
+                    "input_schema": tool.get(
+                        "input_schema",
+                        tool.get(
+                            "inputSchema",
+                            {
+                                "type": "object",
+                                "properties": {},
+                                "required": [],
+                            },
+                        ),
+                    ),
+                }
+            )
+
+        return all_tools
+
+    def tool_servers(self) -> Dict[str, str]:
+        """Which active server each name in ``get_all_tools`` belongs to."""
+        return {name: server for server, name, _ in self._named_tools()}
+
+    def _named_tools(self):
+        from core.integrations.mcp.surface import VIGIL_SERVER
+
+        seen = set()
         for server_name in self.get_active_servers():
             for tool in self._tools_cache.get(server_name, []):
-                # Prefix tool name with server name (matching ClaudeService convention)
-                tool_name = f"{server_name}_{tool['name']}"
+                # Prefix tool name with server name (matching ClaudeService
+                # convention). Vigil's own tools are not prefixed: they are the
+                # same tools an external caller reaches at /mcp, and a tool
+                # that answers to two names is two tools to anyone writing
+                # against it.
+                tool_name = (
+                    tool["name"]
+                    if server_name == VIGIL_SERVER
+                    else f"{server_name}_{tool['name']}"
+                )
                 if tool_name in seen:
                     continue
                 seen.add(tool_name)
-
-                all_tools.append(
-                    {
-                        "name": tool_name,
-                        "description": f"[{server_name}] {tool.get('description', '')}",
-                        "input_schema": tool.get(
-                            "input_schema",
-                            tool.get(
-                                "inputSchema",
-                                {
-                                    "type": "object",
-                                    "properties": {},
-                                    "required": [],
-                                },
-                            ),
-                        ),
-                    }
-                )
-
-        return all_tools
+                yield server_name, tool_name, tool
 
     def get_tool_names(self) -> List[str]:
         """Get all tool names (server-prefixed) from active servers."""
         return [t["name"] for t in self.get_all_tools()]
-
-    def get_agent_sdk_configs(self) -> List[Dict]:
-        """
-        Get MCP server configurations formatted for Agent SDK's
-        ClaudeAgentOptions.mcp_servers parameter.
-
-        Returns:
-            List of MCP server config dicts with name, command, args, env.
-        """
-        configs = []
-        for name in self.get_active_servers():
-            server_info = self._servers.get(name, {})
-            config = server_info.get("config", {})
-            if config.get("command"):
-                configs.append(
-                    {
-                        "name": name,
-                        "command": config["command"],
-                        "args": config.get("args", []),
-                        "env": config.get("env", {}),
-                    }
-                )
-        return configs
 
     def get_summary(self) -> Dict[str, Any]:
         """Get a summary of the registry state."""
@@ -180,9 +193,26 @@ def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Whether this deployment dials every configured MCP server at startup. Off by
+# default under DEV_MODE; an explicit ``mcp_auto_connect_on_startup`` wins either
+# way. ``populate_from_cache`` uses it to decide whether live connection state
+# gates the warm-start cache. services/api/main.py makes the same call for its
+# own startup path; core/ cannot import services/, so the rule lives here.
+def eager_connect_enabled() -> bool:
+    from core.config import get_settings
+
+    settings = get_settings()
+    if settings.mcp_auto_connect_on_startup is not None:
+        return bool(settings.mcp_auto_connect_on_startup)
+    return not settings.dev_mode
+
+
 # The disk cache is a warm-start artifact: a server can appear there and have
 # failed to connect this boot. Registering it anyway lets a model claim a
-# capability it cannot exercise (#129), so live connection state gates it.
+# capability it cannot exercise (#129), so live connection state gates it -- but only
+# where this boot actually dialled. With eager connect off nothing is connected until
+# a call arrives and call_tool reconnects, so the same check drops every server and
+# leaves every capability they answer unbound for the whole boot.
 def populate_from_cache(registry: MCPRegistry) -> int:
     from core.integrations.mcp.client import process_mcp_client
 
@@ -195,11 +225,11 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         return 0
 
     connected: Dict[str, bool] = {}
-    if mcp_client is not None:
+    if eager_connect_enabled() and mcp_client is not None:
         try:
             connected = mcp_client.get_connection_status() or {}
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Could not read MCP connection status: %s", exc)
+            logger.warning("Could not read MCP connection status: %s", exc)
 
     registered = 0
     for name, tools in tools_dict.items():
@@ -211,7 +241,7 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         )
         registered += 1
 
-    logger.info("MCP registry populated from %d connected server(s)", registered)
+    logger.info("MCP registry populated from %d server(s)", registered)
     return registered
 
 
@@ -226,5 +256,100 @@ def safe_tool_names(registry: Optional[MCPRegistry]) -> List[str]:
     try:
         return list((registry or MCPRegistry()).get_tool_names() or [])
     except Exception as e:
-        logger.debug(f"MCP registry unavailable: {e}")
+        logger.warning("MCP registry unavailable: %s", e)
+        return []
+
+
+def register_connected(registry: MCPRegistry, mcp_client, server_name: str) -> bool:
+    """Register one server from the client's ``tools_cache``.
+
+    Called where a connect succeeds so the registry tracks enable intent, not
+    the next reader's liveness check. Best effort: a failure logs a warning and
+    returns False, so an enable endpoint can keep its own result.
+    """
+    try:
+        tools = (getattr(mcp_client, "tools_cache", None) or {}).get(server_name)
+        if not isinstance(tools, list) or not tools:
+            return False
+        registry.register_server(
+            server_name,
+            _server_config(mcp_client, server_name),
+            [_normalised(t) for t in tools],
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — callers must not 500 on a registry write
+        logger.warning("Could not register MCP server %s: %s", server_name, exc)
+        return False
+
+
+def deactivate(registry: MCPRegistry, server_name: str) -> None:
+    """Stop offering a server's tools. Best effort; unknown names are a no-op."""
+    try:
+        registry.set_active(server_name, False)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not deactivate MCP server %s: %s", server_name, exc)
+
+
+def refresh_from_client(registry: MCPRegistry) -> int:
+    """Add servers that connected after startup from the client's ``tools_cache``.
+
+    Unlike ``populate_from_cache`` (a boot warm-start that prefers the on-disk
+    tool cache), this reads the running client's ``tools_cache`` and current
+    connection status so a server connected *after* startup — e.g. a dormant
+    retry came online, or ``call_tool`` created a session — becomes usable on
+    the next turn without a restart. Cheap and idempotent; call it wherever a
+    turn assembles its tool list.
+
+    Does not deactivate. Removal follows disable via ``deactivate``, not
+    liveness: ``is_connected`` goes False on any failed call and stays there
+    until the next one reconnects, so it is not "unreachable".
+    """
+    from core.integrations.mcp import in_process
+    from core.integrations.mcp.client import process_mcp_client
+
+    mcp_client = process_mcp_client()
+    if mcp_client is None:
+        # No vendor client, but Vigil's own tools do not depend on one.
+        return 1 if in_process.register(registry) else 0
+    tools_dict = getattr(mcp_client, "tools_cache", None) or {}
+    try:
+        connected = mcp_client.get_connection_status() or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read MCP connection status: %s", exc)
+        connected = {}
+
+    added = 0
+
+    # Vigil's own tools are in this process and need no connection, so they are
+    # not in the client's cache and would otherwise be missing from every
+    # request path that refreshes through here.
+    from core.integrations.mcp import in_process
+
+    if in_process.register(registry):
+        added += 1
+
+    for name, tools in tools_dict.items():
+        if connected and not connected.get(name, False):
+            continue
+        registry.register_server(
+            name, _server_config(mcp_client, name), [_normalised(t) for t in tools]
+        )
+        added += 1
+    return added
+
+
+def live_mcp_tools(registry: MCPRegistry) -> List[Dict]:
+    """The MCP integrations currently offered, Claude-API-shaped, for one turn.
+
+    Refreshes the registry from the running client (add-path for servers
+    connected outside the enable endpoint), then returns its tools
+    (server-prefixed names). Returns ``[]`` — never raises — when the client or
+    registry is unavailable, so a caller can fall back to built-in tools. This
+    is the one call a request path needs to surface live integrations.
+    """
+    try:
+        refresh_from_client(registry)
+        return registry.get_all_tools() or []
+    except Exception as exc:  # noqa: BLE001 — callers degrade to built-in tools
+        logger.warning("Live MCP tool surface unavailable: %s", exc)
         return []

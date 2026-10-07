@@ -6,6 +6,7 @@ Handles file storage, chain of custody, and evidence tracking.
 
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -41,7 +42,8 @@ class CaseEvidenceService:
         Returns:
             Dictionary with md5 and sha256 hashes
         """
-        md5_hash = hashlib.md5()
+        # md5 is a lookup key for threat-intel feeds; sha256 is the integrity hash
+        md5_hash = hashlib.md5(usedforsecurity=False)
         sha256_hash = hashlib.sha256()
 
         with open(file_path, "rb") as f:
@@ -50,6 +52,21 @@ class CaseEvidenceService:
                 sha256_hash.update(chunk)
 
         return {"md5": md5_hash.hexdigest(), "sha256": sha256_hash.hexdigest()}
+
+    def resolve_stored_file(self, file_path: str) -> Path:
+        """
+        Resolve a caller-supplied path against the evidence store.
+
+        Raises:
+            ValueError: if the path escapes the store (absolute, ``..``, or a symlink out)
+        """
+        root = os.path.realpath(self.storage_path)
+        full_path = os.path.realpath(os.path.join(root, file_path))
+        if not full_path.startswith(root + os.sep):
+            raise ValueError(
+                f"file_path must be inside the evidence store: {file_path!r}"
+            )
+        return Path(full_path)
 
     def add_evidence(
         self,
@@ -79,7 +96,11 @@ class CaseEvidenceService:
 
         Returns:
             Created CaseEvidence or None
+
+        Raises:
+            ValueError: if file_path points outside the evidence store
         """
+        full_path = self.resolve_stored_file(file_path) if file_path else None
         try:
             with unit_of_work(session) as session:
                 # Calculate file hashes if file exists
@@ -87,9 +108,8 @@ class CaseEvidenceService:
                 file_hash_sha256 = None
                 file_size = None
 
-                if file_path:
-                    full_path = self.storage_path / file_path
-                    if full_path.exists():
+                if full_path is not None:
+                    if full_path.is_file():
                         hashes = self.calculate_file_hashes(full_path)
                         file_hash_md5 = hashes["md5"]
                         file_hash_sha256 = hashes["sha256"]
