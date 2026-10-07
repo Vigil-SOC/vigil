@@ -7,7 +7,7 @@ from core.agents.builtins import BUILTIN_AGENTS, AgentProfile, blank_model
 from core.agents.enablement import disabled_agent_ids
 from core.agents.prompts import prompt_for_row, render_confidence_bands
 from core.agents.run_stats import agent_run_stats
-from core.llm.chat_layers import changes_for_tools
+from core.llm.chat_layers import changes_for_tool, changes_for_tools
 from core.llm.providers.registry import get_registry, model_display_name
 from core.response.config import ResponseConfig
 from core.skills.skill_library import READ_SKILL_TOOL, load_skills, skill_roots
@@ -179,6 +179,7 @@ class AgentManager:
                     "component_category": a.component_category,
                     "skills": library if READ_SKILL_TOOL in a.recommended_tools else 0,
                     "changes": changes_for_tools(a.recommended_tools),
+                    "tool_changes": {t: changes_for_tool(t) for t in a.recommended_tools},
                     **run,
                     "enabled": a.id not in disabled,
                 }
