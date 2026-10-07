@@ -82,6 +82,14 @@ function timeLeft(due: string): string {
   return `${span} ${ms < 0 ? 'over' : 'left'}`
 }
 
+/** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
+function waiting(since: string): string {
+  const ms = Date.now() - new Date(since).getTime()
+  if (Number.isNaN(ms)) return ''
+  const min = Math.max(0, Math.round(ms / 60_000))
+  return min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
+}
+
 function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
   if (items.length === 0) return null
   return (
@@ -150,48 +158,69 @@ function CaseNeed({
 }) {
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
+  const waited = waiting(item.created_at)
+  const reversible = item.reversibility === 'reversible'
 
   return (
     <article>
+      <span className="needs-head">
+        <span className="needs-dot" aria-hidden="true" />
+        Needs your decision{waited && ` · waiting ${waited}`}
+      </span>
       <h3>{item.title}</h3>
-      <p className="case-needs-meta">{item.kind} · {item.reversibility}</p>
-      {item.reason && <p className="case-needs-reason">{item.reason}</p>}
-      <div className="case-needs-actions">
-        {item.reversibility === 'reversible' ? (
-          <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item.source_id)}>
+      <dl className="needs-facts">
+        {item.reason && (
+          <>
+            <dt>Why it stopped</dt>
+            <dd>{item.reason}</dd>
+          </>
+        )}
+        <dt>Reversibility</dt>
+        <dd>{reversible ? 'Reversible' : 'Cannot be undone'}</dd>
+      </dl>
+      <div className="needs-actions">
+        {reversible ? (
+          <button type="button" className="btn" disabled={busy} onClick={() => onApprove(item.source_id)}>
             Approve
           </button>
         ) : (
-          <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
         )}
-        {rejecting ? (
-          <form
-            className="case-needs-reject"
-            onSubmit={(event) => {
-              event.preventDefault()
-              const text = reason.trim()
-              if (!text) return
-              onReject(item.source_id, text)
-            }}
-          >
-            <textarea
-              className="feedback-box"
-              aria-label="Rejection reason"
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="Why is this being rejected?"
-              autoFocus
-            />
-            <button type="submit" className="btn danger" disabled={busy || !reason.trim()}>
-              Reject
-            </button>
-          </form>
-        ) : (
-          <button type="button" className="btn danger" disabled={busy} onClick={() => setRejecting(true)}>
-            Reject
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn neutral"
+          aria-expanded={rejecting}
+          disabled={busy}
+          onClick={() => setRejecting((open) => !open)}
+        >
+          Reject
+        </button>
       </div>
+      {rejecting && (
+        <form
+          className="needs-reject"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const text = reason.trim()
+            if (!text) return
+            onReject(item.source_id, text)
+          }}
+        >
+          <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
+          <textarea
+            id={`reject-${item.source_id}`}
+            className="feedback-box"
+            aria-label="Rejection reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why is this being rejected?"
+            autoFocus
+          />
+          <button type="submit" className="btn neutral" disabled={busy || !reason.trim()}>
+            Confirm reject
+          </button>
+        </form>
+      )}
     </article>
   )
 }
@@ -642,7 +671,10 @@ export function CasePage({
     setDecisionError(null)
     try {
       await act()
-      if (seenCase.current === forCase) await loadNeeds()
+      if (seenCase.current === forCase) {
+        await loadNeeds()
+        onChanged()
+      }
     } catch (e) {
       if (seenCase.current === forCase) setDecisionError(detailOf(e, 'Could not update that decision'))
     } finally {
