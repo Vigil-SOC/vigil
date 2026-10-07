@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api, { casesApi, configApi, findingsApi, workflowApi } from '../services/api'
+import { Icon } from '../shared/icons'
 import { useToast } from './toast'
 import type { ConsoleScreenGoOptions } from '../shared/types'
 import {
@@ -19,37 +20,51 @@ import {
   PASTED_NAME,
   proposalFrom,
   readRecents,
+  removeRecent,
+  tagText,
   writeRecent,
   type BoardLink,
+  type Hit,
   type HuntAttachment,
+  type MatchType,
   type JiraReadiness,
   type LiveCommandId,
   type PaletteRow,
   type SearchHits,
 } from './commandBarModel'
 
-function hitFrom(id: unknown, title: unknown): { id: string; title: string } | null {
+const str = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() ? value : undefined)
+
+function hitFrom(id: unknown, title: unknown, extra?: Partial<Hit>): Hit | null {
   if (typeof id !== 'string' || !id) return null
-  return { id, title: typeof title === 'string' && title.trim() ? title : id }
+  return { id, title: str(title) ?? id, ...extra }
 }
 
-function casesOf(data: unknown): { id: string; title: string }[] {
+function casesOf(data: unknown, matchType?: MatchType): Hit[] {
   const cases = (data as { cases?: unknown } | null)?.cases
   if (!Array.isArray(cases)) return []
   return cases
     .map((item) => {
-      const row = item as { case_id?: unknown; title?: unknown; content?: unknown; name?: unknown }
-      return hitFrom(row.case_id, row.title ?? row.name ?? row.content)
+      const row = item as { case_id?: unknown; title?: unknown; content?: unknown; name?: unknown; priority?: unknown; status?: unknown; match_type?: unknown }
+      const type = row.match_type === 'case' || row.match_type === 'comment' || row.match_type === 'evidence' ? row.match_type : matchType
+      return hitFrom(row.case_id, row.title ?? row.name ?? row.content, {
+        priority: str(row.priority),
+        status: str(row.status),
+        matchType: type,
+      })
     })
-    .filter((hit): hit is { id: string; title: string } => hit !== null)
+    .filter((hit): hit is Hit => hit !== null)
 }
 
 async function searchAll(query: string): Promise<SearchHits> {
   const [caseExact, findingExact, text, ioc] = await Promise.all([
-    casesApi.getById(query).then((res) => hitFrom(res.data.case_id, res.data.title)).catch(() => null),
+    casesApi.getById(query).then((res) => {
+      const data = res.data as { priority?: unknown; status?: unknown }
+      return hitFrom(res.data.case_id, res.data.title, { priority: str(data.priority), status: str(data.status) })
+    }).catch(() => null),
     findingsApi.getById(query).then((res) => {
-      const data = res.data as { finding_id?: unknown; title?: unknown }
-      return hitFrom(data.finding_id, data.title)
+      const data = res.data as { finding_id?: unknown; title?: unknown; data_source?: unknown; severity?: unknown }
+      return hitFrom(data.finding_id, data.title, { dataSource: str(data.data_source), severity: str(data.severity) })
     }).catch(() => null),
     api.get('/cases/search/full-text', { params: { query } }).then((res) => res.data).catch(() => null),
     api.get('/cases/search/by-ioc', { params: { ioc_value: query } }).then((res) => res.data).catch(() => null),
@@ -59,9 +74,9 @@ async function searchAll(query: string): Promise<SearchHits> {
     caseExact,
     findingExact,
     textCases: [
-      ...casesOf(textData),
-      ...casesOf({ cases: textData?.comments }),
-      ...casesOf({ cases: textData?.evidence }),
+      ...casesOf(textData, 'case'),
+      ...casesOf({ cases: textData?.comments }, 'comment'),
+      ...casesOf({ cases: textData?.evidence }, 'evidence'),
     ],
     iocCases: casesOf(ioc),
   }
@@ -180,6 +195,11 @@ export default function CommandBar({
   const previewKey = preview ? `${preview.id}:${preview.arg}` : ''
   const previewDisabled = previewView?.disabled ?? true
 
+  const highlightedKey = open ? rows[highlighted]?.key : undefined
+  useEffect(() => {
+    if (highlightedKey) document.getElementById(highlightedKey)?.scrollIntoView?.({ block: 'nearest' })
+  }, [highlightedKey])
+
   useEffect(() => {
     if (previewKey && !previewDisabled) runRef.current?.focus()
   }, [previewKey, previewDisabled])
@@ -247,6 +267,11 @@ export default function CommandBar({
     setRecents(writeRecent(userId, text))
   }, [userId])
 
+  const forget = useCallback((text: string) => {
+    if (userId) setRecents(removeRecent(userId, text))
+    inputRef.current?.focus()
+  }, [userId])
+
   const follow = useCallback((row: PaletteRow) => {
     if (row.dest === 'Recent' && row.recent) {
       setQuery(row.recent)
@@ -255,9 +280,13 @@ export default function CommandBar({
       setActive(0)
       return
     }
-    remember(query)
     setOpen(false)
     setPreview(null)
+    if (row.dest === 'Ask') {
+      onOpenChat(query.trim() || undefined)
+      return
+    }
+    remember(query)
     if (row.dest === 'Case' && row.caseId) onOpenCase(row.caseId)
     else if (row.dest === 'Page' && row.page) onGo(row.page)
     else if (row.dest === 'Alert' && row.findingId) {
@@ -265,7 +294,7 @@ export default function CommandBar({
       inputRef.current?.blur()
       onGo('overview', { search: `?alert=${encodeURIComponent(row.findingId)}` })
     }
-  }, [onGo, onOpenCase, query, remember])
+  }, [onGo, onOpenCase, onOpenChat, query, remember])
 
   const choose = useCallback((row: PaletteRow) => {
     if (row.disabled) return
@@ -412,6 +441,13 @@ export default function CommandBar({
     }
   }
 
+  const groups: { section: string; items: { row: PaletteRow; index: number }[] }[] = []
+  rows.forEach((row, index) => {
+    const last = groups[groups.length - 1]
+    if (last?.section === row.section) last.items.push({ row, index })
+    else groups.push({ section: row.section, items: [{ row, index }] })
+  })
+
   return (
     <div
       className="vg-command-slot"
@@ -425,47 +461,105 @@ export default function CommandBar({
         }
       }}
     >
-      <input
-        ref={inputRef}
-        role="combobox"
-        aria-label="Find a case, ask Vigil, or run a command"
-        aria-expanded={open}
-        aria-controls="vg-command-results"
-        aria-activedescendant={open && rows[highlighted] ? rows[highlighted].key : undefined}
-        placeholder="Find a case, ask Vigil, or run a command"
-        value={query}
-        onChange={(event) => {
-          setQuery(event.target.value)
-          if (!/^\/hunt(\s|$)/i.test(event.target.value.trim())) removeAttachment()
-          setHits(null)
-          setPreview(null)
-          setOpen(true)
-          setActive(0)
-        }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={onInputKeyDown}
-      />
-      <span className="vg-command-kbd">⌘K</span>
+      <div className={`vg-command-bar${open ? ' is-open' : ''}`}>
+        <input
+          ref={inputRef}
+          role="combobox"
+          aria-label="Find a case, ask Vigil, or run a command"
+          aria-expanded={open}
+          aria-controls="vg-command-results"
+          aria-activedescendant={open && rows[highlighted] ? rows[highlighted].key : undefined}
+          placeholder="Ask Vigil, search, or type / for a command"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value)
+            if (!/^\/hunt(\s|$)/i.test(event.target.value.trim())) removeAttachment()
+            setHits(null)
+            setPreview(null)
+            setOpen(true)
+            setActive(0)
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onInputKeyDown}
+        />
+        {query && (
+          <button
+            type="button"
+            className="vg-command-clear"
+            aria-label="Clear search"
+            onClick={() => {
+              setQuery('')
+              removeAttachment()
+              setHits(null)
+              setPreview(null)
+              setActive(0)
+              inputRef.current?.focus()
+            }}
+          >
+            <Icon name="close" size={14} />
+          </button>
+        )}
+        <span className="vg-command-kbd">⌘K</span>
+        <button
+          type="button"
+          className="vg-command-ask"
+          onClick={() => {
+            onOpenChat()
+            setOpen(false)
+            setPreview(null)
+          }}
+        >
+          <Icon name="sparkle" size={13} />
+          Ask Vigil
+        </button>
+      </div>
       {open && (
-        <div className="vg-command-menu" id="vg-command-results" role="listbox">
-          {rows.length === 0 && <div className="vg-command-empty">No matches</div>}
-          {rows.map((row, index) => (
-            <LaterTip key={row.key} later={row.disabled}>
-              <button
-                id={row.key}
-                type="button"
-                role="option"
-                aria-selected={index === highlighted}
-                disabled={row.disabled}
-                className="vg-command-row"
-                onClick={() => choose(row)}
-              >
-                <span className="vg-command-label">{row.label}</span>
-                {row.hint && <span className="vg-command-hint">{row.hint}</span>}
-                <span className="vg-command-dest">{row.dest}</span>
-              </button>
-            </LaterTip>
-          ))}
+        <div className="vg-command-menu">
+          <div className="vg-command-scroll" id="vg-command-results" role="listbox">
+            {rows.length === 0 && <div className="vg-command-empty">No matches</div>}
+            {groups.map((group) => (
+              <div key={group.section} role="group" aria-label={group.section}>
+                <div className="vg-command-section" aria-hidden="true">{group.section}</div>
+                {group.items.map(({ row, index }) => {
+                  const on = index === highlighted
+                  return (
+                    <div key={row.key} className={`vg-command-item${on ? ' is-on' : ''}`}>
+                      <LaterTip later={row.disabled}>
+                        <button
+                          id={row.key}
+                          type="button"
+                          role="option"
+                          aria-selected={on}
+                          disabled={row.disabled}
+                          className="vg-command-row"
+                          onClick={() => choose(row)}
+                        >
+                          <span className="vg-command-icon"><Icon name={row.icon} size={15} /></span>
+                          <span className="vg-command-label">{row.label}</span>
+                          {row.hint && <span className="vg-command-hint">{row.hint}</span>}
+                          <span className="vg-command-desc" title={row.desc}>{row.desc}</span>
+                          <span className="vg-command-dest">
+                            {tagText(row)}
+                            {on && <span className="vg-command-enter">↵</span>}
+                          </span>
+                        </button>
+                      </LaterTip>
+                      {row.dest === 'Recent' && row.recent && (
+                        <button
+                          type="button"
+                          className="vg-command-remove"
+                          aria-label="Remove from history"
+                          onClick={() => forget(row.recent as string)}
+                        >
+                          <Icon name="close" size={13} />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
           {previewView && preview && (
             <div
               className={`vg-command-preview${dragging ? ' dragging' : ''}`}

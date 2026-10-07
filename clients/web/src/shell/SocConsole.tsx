@@ -431,7 +431,7 @@ function SocConsoleInner() {
           <CommandBar
             boards={[...primary, ...more].map((item) => {
               const key = item[2] as string
-              return { key, label: item[1] }
+              return { key, label: item[1], icon: item[0], desc: titles[key]?.[1] ?? '' }
             })}
             onOpenChat={askVigil}
             caseOpen={openCaseId !== null}

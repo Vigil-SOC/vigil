@@ -90,11 +90,11 @@ vi.mock('../services/api', () => ({
 }))
 
 const BOARDS: BoardLink[] = [
-  { key: 'cases', label: 'Cases' },
-  { key: 'workflows', label: 'Agents & workflows' },
-  { key: 'settings', label: 'Settings' },
-  { key: 'dashboard', label: 'Dashboard' },
-  { key: 'metrics', label: 'Case Metrics' },
+  { key: 'cases', label: 'Cases', icon: 'folder', desc: 'Manage investigation cases' },
+  { key: 'workflows', label: 'Agents & workflows', icon: 'flow', desc: 'How Vigil works a case' },
+  { key: 'settings', label: 'Settings', icon: 'gear', desc: 'Configure Vigil' },
+  { key: 'dashboard', label: 'Dashboard', icon: 'grid', desc: 'Security operations overview' },
+  { key: 'metrics', label: 'Case Metrics', icon: 'bars', desc: 'Real-time SOC performance analytics' },
 ]
 
 const RECENTS = 'vigil.command.recents.user-1'
@@ -110,6 +110,10 @@ function renderBar(props?: Partial<ComponentProps<typeof CommandBar>>) {
   )
   return { onOpenChat, onOpenCase, onGo }
 }
+
+const labels = () => screen.getAllByRole('option').map((o) => o.querySelector('.vg-command-label')?.textContent)
+const tags = () => screen.getAllByRole('option').map((o) => o.querySelector('.vg-command-dest')?.textContent?.replace('↵', ''))
+const sections = () => screen.getAllByRole('group').map((g) => g.getAttribute('aria-label'))
 
 function Shell() {
   const [caseId, setCaseId] = useState<string | null>(null)
@@ -140,7 +144,7 @@ beforeEach(() => {
   apiPost.mockReset()
   getIntegrations.mockResolvedValue({ data: { enabled_integrations: [], integrations: {}, secrets_set: {} } })
   getCase.mockImplementation((id: string) => {
-    if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', finding_ids: [] } })
+    if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', priority: 'high', status: 'open', finding_ids: [] } })
     if (id === 'case-9') {
       return Promise.resolve({
         data: { case_id: 'case-9', title: 'Exact case', status: 'open', priority: 'high', assignee: 'ada', finding_ids: [], created_at: '2026-06-15T09:14:00Z', investigations: [] },
@@ -155,13 +159,17 @@ beforeEach(() => {
   })
   getFinding.mockImplementation((id: string) => (
     id === 'f-1'
-      ? Promise.resolve({ data: { finding_id: 'f-1', title: 'LSASS' } })
+      ? Promise.resolve({ data: { finding_id: 'f-1', title: 'LSASS', data_source: 'CrowdStrike', severity: 'high' } })
       : Promise.reject(new Error('missing finding'))
   ))
   apiGet.mockImplementation((path: string) => {
     if (path === '/cases/search/full-text') {
       return Promise.resolve({
-        data: { cases: [{ case_id: 'case-2', title: 'Loader in mail' }], comments: [], evidence: [] },
+        data: {
+          cases: [{ case_id: 'case-2', title: 'Loader in mail', match_type: 'case' }],
+          comments: [{ case_id: 'case-4', content: 'Saw it twice', match_type: 'comment' }],
+          evidence: [],
+        },
       })
     }
     if (path === '/cases/search/by-ioc') {
@@ -218,17 +226,32 @@ describe('CommandBar', () => {
       expect(screen.getAllByRole('option').map((option) => option.querySelector('.vg-command-label')?.textContent)).toEqual([
         'Exact case',
         'Loader in mail',
+        'Saw it twice',
         'Beacon host',
         'Cases',
         'Case Metrics',
+        'Ask Vigil: “case”',
       ])
     })
-    expect(screen.getAllByRole('option').map((option) => option.querySelector('.vg-command-dest')?.textContent)).toEqual([
-      'Case',
-      'Case',
-      'Case',
-      'Page',
-      'Page',
+    expect(tags()).toEqual([
+      'Opens case',
+      'Opens case',
+      'Opens case',
+      'Opens case',
+      'Opens page',
+      'Opens page',
+      'Opens Ask Vigil',
+    ])
+    expect(sections()).toEqual(['Cases', 'Pages', 'Ask Vigil'])
+    const descs = screen.getAllByRole('option').map((o) => o.querySelector('.vg-command-desc')?.textContent)
+    expect(descs).toEqual([
+      'high · open',
+      'Matched title or description',
+      'Matched a comment',
+      '',
+      'Manage investigation cases',
+      'Real-time SOC performance analytics',
+      'Opens chat with your question',
     ])
     expect(getCase).toHaveBeenCalledWith('case')
     expect(getFinding).toHaveBeenCalledWith('case')
@@ -250,14 +273,9 @@ describe('CommandBar', () => {
     localStorage.setItem(RECENTS, JSON.stringify(['beacon']))
     renderBar()
     fireEvent.focus(screen.getByRole('combobox'))
-    expect(screen.getAllByRole('option').map((option) => option.querySelector('.vg-command-label')?.textContent)).toEqual([
-      'beacon',
-      '/investigate',
-      '/hunt',
-      '/replay',
-      '/ask',
-      '/ticket',
-    ])
+    expect(labels()).toEqual(['beacon', '/investigate', '/hunt', '/replay', '/ask', '/ticket', 'Ask Vigil about this page'])
+    expect(sections()).toEqual(['Recent searches', 'Commands', 'Ask Vigil'])
+    expect(tags()[0]).toBe('Search')
     expect(screen.queryByRole('option', { name: /\/hold/ })).not.toBeInTheDocument()
   })
 
@@ -266,7 +284,11 @@ describe('CommandBar', () => {
     const input = screen.getByRole('combobox')
     fireEvent.change(input, { target: { value: '/' } })
     expect(screen.getByRole('option', { name: /\/hold/ })).toBeDisabled()
-    expect(screen.getByRole('option', { name: /Custom commands/ })).toBeDisabled()
+    expect(screen.getByRole('option', { name: /Create a command for any workflow/ })).toBeDisabled()
+    expect(sections()).toEqual(['Commands', 'Custom commands'])
+    expect(tags().slice(-4)).toEqual(['Later', 'Later', 'Later', 'Later'])
+    expect(screen.getByRole('option', { name: /\/hold/ })).toHaveTextContent('Hold a case, or every case of one kind')
+    expect(screen.getByRole('option', { name: /Create a command/ })).toHaveTextContent('Agents & workflows › Commands')
     for (let step = 0; step < 4; step += 1) fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(screen.getByRole('option', { selected: true })).toHaveTextContent('/ticket')
     fireEvent.keyDown(input, { key: 'ArrowDown' })
@@ -313,7 +335,10 @@ describe('CommandBar', () => {
     const { onGo } = renderBar()
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'f-1' } })
     const row = await screen.findByRole('option', { name: /LSASS/ })
-    expect(row.querySelector('.vg-command-dest')).toHaveTextContent('Alert')
+    expect(row.querySelector('.vg-command-dest')).toHaveTextContent('Opens page')
+    expect(row.querySelector('.vg-command-desc')).toHaveTextContent('CrowdStrike · high')
+    // No exact case, so Alerts comes before Cases.
+    expect(sections().slice(0, 2)).toEqual(['Alerts', 'Cases'])
     fireEvent.click(row)
     expect(onGo).toHaveBeenCalledWith('overview', { search: '?alert=f-1' })
   })
@@ -322,7 +347,7 @@ describe('CommandBar', () => {
     renderBar()
     const input = screen.getByRole('combobox')
     fireEvent.change(input, { target: { value: '/' } })
-    for (const name of [/\/hold/, /\/isolate/, /\/phish/, /Custom commands/]) {
+    for (const name of [/\/hold/, /\/isolate/, /\/phish/, /Create a command/]) {
       expect(screen.getByRole('option', { name }).parentElement).toHaveAttribute('title', 'Coming in a later release')
     }
     expect(screen.getByRole('option', { name: /\/ticket/ }).parentElement).not.toHaveAttribute('title')
@@ -330,6 +355,58 @@ describe('CommandBar', () => {
       fireEvent.keyDown(input, { key: 'ArrowDown' })
       expect(screen.getByRole('option', { selected: true })).not.toBeDisabled()
     }
+  })
+
+  it('puts the highlighted row\'s tag on ↵ and moves it with the arrow keys', () => {
+    renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/' } })
+    expect(screen.getByRole('option', { name: /\/investigate/ }).querySelector('.vg-command-dest')).toHaveTextContent('Command↵')
+    expect(screen.getByRole('option', { name: /\/hunt/ }).querySelector('.vg-command-dest')).not.toHaveTextContent('↵')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: /\/hunt/ }).querySelector('.vg-command-dest')).toHaveTextContent('↵')
+    expect(screen.getAllByText('↵')).toHaveLength(1)
+  })
+
+  it('opens chat from the Ask Vigil rows, with the query when there is one', () => {
+    const { onOpenChat } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.click(screen.getByRole('option', { name: /Ask Vigil about this page/ }))
+    expect(onOpenChat).toHaveBeenLastCalledWith(undefined)
+
+    fireEvent.change(input, { target: { value: 'why this beacon' } })
+    const rows = screen.getAllByRole('option')
+    expect(rows[rows.length - 1]).toHaveTextContent('Ask Vigil: “why this beacon”')
+    fireEvent.click(rows[rows.length - 1])
+    expect(onOpenChat).toHaveBeenLastCalledWith('why this beacon')
+    expect(localStorage.getItem(RECENTS)).toBeNull()
+  })
+
+  it('removes one recent search and keeps the menu open', () => {
+    localStorage.setItem(RECENTS, JSON.stringify(['beacon', 'loader']))
+    renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove from history' })[0])
+    expect(JSON.parse(localStorage.getItem(RECENTS) || '[]')).toEqual(['loader'])
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(labels().slice(0, 2)).toEqual(['loader', '/investigate'])
+    expect(input).toHaveFocus()
+  })
+
+  it('clears the query from the × and opens chat from the bar button', () => {
+    const { onOpenChat } = renderBar()
+    const input = screen.getByRole('combobox')
+    expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: '/hunt x' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(input).toHaveValue('')
+    expect(input).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil' }))
+    expect(onOpenChat).toHaveBeenCalledWith()
   })
 
   it('/replay opens Watch a run on the newest investigation', async () => {
