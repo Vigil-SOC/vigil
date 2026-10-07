@@ -25,6 +25,7 @@ import time
 from typing import Iterable, Optional
 
 from core.config import DEFAULT_REDIS_URL, get_settings
+from core.platform.log_redaction import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,9 @@ class RedisDedupSet:
             # Probe connection so we fail fast here rather than per-call
             await self._redis.ping()
             logger.info(
-                "RedisDedupSet[%s] connected to %s", self.namespace, self.redis_url
+                "RedisDedupSet[%s] connected to %s",
+                self.namespace,
+                redact_url(self.redis_url),
             )
             if self._in_fallback:
                 self._in_fallback = False

@@ -1134,8 +1134,8 @@ export interface paths {
          *     emails are registered.
          *
          *     The actual email (with the signed reset token) is sent asynchronously
-         *     via the configured email backend. In dev, the default ConsoleBackend
-         *     just logs the link.
+         *     via the configured email backend. The default ConsoleBackend sends nothing;
+         *     with DEV_MODE on it logs the link.
          */
         post: operations["post_api_auth_password-reset_request"];
         delete?: never;

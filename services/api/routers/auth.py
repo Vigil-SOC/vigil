@@ -811,8 +811,8 @@ def password_reset_request(
     emails are registered.
 
     The actual email (with the signed reset token) is sent asynchronously
-    via the configured email backend. In dev, the default ConsoleBackend
-    just logs the link.
+    via the configured email backend. The default ConsoleBackend sends nothing;
+    with DEV_MODE on it logs the link.
     """
     user = session.query(User).filter(User.email == body.email).first()
     if user and user.is_active:
@@ -821,7 +821,7 @@ def password_reset_request(
         if frontend_base:
             reset_link = f"{frontend_base}/reset-password?token={token}"
         else:
-            # Fall back to a raw token so the dev backend still shows
+            # Fall back to a raw token so a dev console backend still shows
             # something actionable when VIGIL_FRONTEND_URL isn't set.
             reset_link = f"(token) {token}"
         subject = "Vigil SOC — password reset"
@@ -839,9 +839,7 @@ def password_reset_request(
         # Unknown address or inactive user — log for ops visibility but
         # return the same response. Constant-time comparison isn't needed
         # here because the DB lookup already dominates the timing.
-        logger.info(
-            "Password reset requested for unknown/inactive email: %s", body.email
-        )
+        logger.info("Password reset requested for unknown/inactive email")
 
     return {
         "message": (
