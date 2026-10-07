@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { slaLevel } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
+import { SeverityMark } from '../../shared/SeverityMark'
+import { StatePill, statePill } from '../../shared/StatePill'
+import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
@@ -18,6 +22,7 @@ import {
   type RecordChip,
   type RunFold,
 } from './caseFold'
+import './cases.css'
 import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
@@ -56,19 +61,43 @@ function detailOf(error: unknown, fallback: string): string {
   return (error as { message?: string })?.message || fallback
 }
 
+/** Resolve-by clock: "7 h left", or "2 d over" once past due. */
+function timeLeft(due: string): string {
+  const ms = new Date(due).getTime() - Date.now()
+  if (Number.isNaN(ms)) return ''
+  const min = Math.round(Math.abs(ms) / 60_000)
+  const span = min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
+  return `${span} ${ms < 0 ? 'over' : 'left'}`
+}
+
 function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
   if (items.length === 0) return null
   return (
-    <ul className="case-linked">
-      {items.map((item) => (
-        <li key={item.finding_id}>
-          <span>{item.description || item.finding_id}</span>
-          {item.source_link && (
-            <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>
-          )}
-        </li>
-      ))}
-    </ul>
+    <details className="case-fold" open>
+      <summary>Alerts ({items.length})</summary>
+      <ul className="case-linked">
+        {items.map((item) => (
+          <li key={item.finding_id}>
+            <span>{item.description || item.finding_id}</span>
+            {item.source_link && (
+              <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+/** Under the tabs on every tab but Summary while a decision waits; the decision itself is on Summary. */
+function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
+  return (
+    <div className="case-needs-strip">
+      <span className="strip-dot" aria-hidden="true" />
+      <b>Needs you</b>
+      {ask && <span className="strip-ask">{ask}</span>}
+      <button type="button" onClick={onDecide}>Decide on Summary</button>
+    </div>
   )
 }
 
@@ -283,6 +312,7 @@ export function CasePage({
   const [fold, setFold] = useState<RunFold | null>(null)
   const [foldPhase, setFoldPhase] = useState<Phase>('loading')
   const [sla, setSla] = useState<{ due: string; health: string } | null>(null)
+  const [workflowNames, setWorkflowNames] = useState<Record<string, string>>({})
   const [rows, setRows] = useState<CaseRecordRow[]>([])
   const [recordPhase, setRecordPhase] = useState<Phase>('loading')
   const [recordError, setRecordError] = useState<string | null>(null)
@@ -373,6 +403,21 @@ export function CasePage({
       cancelled = true
     }
   }, [runId])
+
+  useEffect(() => {
+    let cancelled = false
+    workflowApi
+      .listAll()
+      .then((res) => {
+        if (cancelled) return
+        const list = (res.data?.workflows ?? []) as { id: string; name?: string }[]
+        setWorkflowNames(Object.fromEntries(list.filter((w) => w.name).map((w) => [w.id, w.name as string])))
+      })
+      .catch(() => undefined) // the header falls back to the id
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -511,6 +556,12 @@ export function CasePage({
 
   const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
+  const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
+  const pillState = closed ? 'closed' : pill
+  const tone = statePill(pillState, needsCount > 0).tone
+  // Reason after the pill: the ask, what a live run is doing, or who closed it.
+  const reason =
+    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''
   const needsBlock = (
     <CaseNeeds
       items={needsItems}
@@ -522,7 +573,7 @@ export function CasePage({
   )
 
   return (
-    <div className="detail-pane">
+    <div className="detail-pane case-page">
       <div className="detail-head">
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
@@ -545,47 +596,41 @@ export function CasePage({
         {phase === 'error' ? (
           <div className="muted" style={{ padding: '6px 0' }}>Couldn’t load this case: {error}</div>
         ) : c ? (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-            <div style={{ flex: 1 }}>
-              <h2>{c.title}</h2>
-              <div className="dh-meta">
-                <span className={`prio ${c.prio}`}>{c.prio[0].toUpperCase()}{c.prio.slice(1)} priority</span>
-                <span className={`status ${pill}`}>{pill}</span>
-                <span>{latest?.workflow_id || 'No workflow'}</span>
-                <span>{c.findings} alerts combined</span>
-                <span>Opened {created}</span>
-                <span>
-                  <Icon name="clock" size={13} /> Resolve by {sla ? when(sla.due) : '—'}
-                  {sla?.health ? ` · ${sla.health}` : ''}
-                </span>
-              </div>
-              <LinkedFindings items={linkedFindings} />
+          <>
+            <h2>{c.title}</h2>
+            <div className="case-state-line">
+              <SeverityMark level={c.prio} />
+              <StatePill state={pillState} needs={needsCount > 0} />
+              {reason && <span className="case-reason">{reason}</span>}
+            </div>
+            <div className="dh-meta">
+              <span>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : 'No workflow'}</span>
+              <span>{c.findings} alerts combined</span>
+              <span>Opened {created}</span>
+              <span>
+                <Icon name="clock" size={13} /> Resolve by {sla ? when(sla.due) : '—'}
+                {left && (
+                  <>
+                    {' · '}
+                    <span className={`case-sla ${slaLevel(sla?.health) ?? ''}`} title={sla?.health ? `SLA ${sla.health}` : undefined}>{left}</span>
+                  </>
+                )}
+              </span>
               <NotMeasured className="case-trust" />
             </div>
-          </div>
+          </>
         ) : (
           <div className="muted" style={{ padding: '6px 0' }}>Loading case…</div>
         )}
+        <TabStrip
+          label="Case sections"
+          tabs={TABS.map((name) => ({ id: name, label: name, count: tabCounts[name] }))}
+          active={tab}
+          onChange={setTab}
+        />
       </div>
 
-      <nav className="detail-tabs" role="tablist" aria-label="Case sections">
-        {TABS.map((name) => (
-          <button
-            key={name}
-            role="tab"
-            aria-selected={tab === name}
-            className={`tab${tab === name ? ' active' : ''}`}
-            onClick={() => setTab(name)}
-          >
-            {name} <span className="case-count">{tabCounts[name]}</span>
-          </button>
-        ))}
-      </nav>
-      {needsCount > 0 && tab !== 'Summary' && (
-        <button type="button" className="case-needs-strip" onClick={() => setTab('Summary')}>
-          Needs you
-        </button>
-      )}
+      {needsCount > 0 && tab !== 'Summary' && <NeedsStrip ask={needsItems[0]?.title} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
@@ -820,6 +865,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
+          <LinkedFindings items={linkedFindings} />
           <div><span className="k">Workflow</span><div>{latest?.workflow_id || '—'}</div></div>
           <div>
             <span className="k">Budget</span>

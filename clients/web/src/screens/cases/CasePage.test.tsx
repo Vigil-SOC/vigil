@@ -39,6 +39,7 @@ vi.mock('../../services/api', () => ({
     getEscalations: vi.fn(() => Promise.resolve({ data: { escalations: [] } })),
   },
   workflowApi: {
+    listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
     getRun: vi.fn((id: string) => Promise.resolve({ data: testState.runs[id] ?? {} })),
     replayRun: vi.fn(),
     verifyRun: vi.fn(),
@@ -185,7 +186,7 @@ describe('case page', () => {
 
     expect(await screen.findByRole('heading', { name: 'Hunt case' })).toBeInTheDocument()
     const header = document.querySelector('.detail-head') as HTMLElement
-    expect(within(header).getByText('executing')).toBeInTheDocument()
+    expect(within(header).getByText('Executing')).toBeInTheDocument()
     expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
     expect(await screen.findByText(/who logged in · threat_hunter/)).toBeInTheDocument()
 
@@ -277,12 +278,14 @@ describe('case page', () => {
 
     expect(await screen.findByText('the scanner')).toBeInTheDocument()
     expect(screen.getByText(/false_positive/)).toBeInTheDocument()
-    expect(screen.getByText(/ada/)).toBeInTheDocument()
+    expect(screen.getByText('Closed by ada')).toBeInTheDocument()
+    expect(document.querySelector('.case-sla')).toBeNull()
+    expect(screen.getByText(/closed by ada \(analyst\)/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
   })
 
-  it('lists linked findings under the count on every tab', async () => {
+  it('lists linked findings in the Alerts fold on every tab', async () => {
     testState.cases = [{
       case_id: 'case-links',
       title: 'Linked case',
@@ -302,16 +305,19 @@ describe('case page', () => {
 
     const header = (await screen.findByRole('heading', { name: 'Linked case' })).closest('.detail-head') as HTMLElement
     expect(within(header).getByText('3 alerts combined')).toBeInTheDocument()
-    expect(within(header).getByText('console alert')).toBeInTheDocument()
-    expect(within(header).getByText('no door')).toBeInTheDocument()
-    expect(within(header).queryByText('gone')).not.toBeInTheDocument()
-    const link = within(header).getByRole('link', { name: 'Open in source' })
+    expect(within(header).queryByText('console alert')).not.toBeInTheDocument()
+    const side = screen.getByRole('complementary', { name: 'Case details' })
+    expect(within(side).getByText('Alerts (2)')).toBeInTheDocument()
+    expect(within(side).getByText('console alert')).toBeInTheDocument()
+    expect(within(side).getByText('no door')).toBeInTheDocument()
+    expect(within(side).queryByText('gone')).not.toBeInTheDocument()
+    const link = within(side).getByRole('link', { name: 'Open in source' })
     expect(link).toHaveAttribute('href', 'https://example.test/alert/1')
-    expect(within(header).getAllByRole('link', { name: 'Open in source' })).toHaveLength(1)
+    expect(within(side).getAllByRole('link', { name: 'Open in source' })).toHaveLength(1)
 
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('no login')).toBeInTheDocument()
-    expect(within(header).getByRole('link', { name: 'Open in source' })).toBeInTheDocument()
+    expect(within(side).getByRole('link', { name: 'Open in source' })).toBeInTheDocument()
     const evidence = screen.getByText('no login').closest('table') ?? screen.getByText('no login').closest('section')
     expect(evidence).toBeTruthy()
     expect(within(evidence as HTMLElement).queryByRole('link', { name: 'Open in source' })).not.toBeInTheDocument()
@@ -379,7 +385,7 @@ describe('case page', () => {
     }]
     renderCase('case-hunt')
     const header = (await screen.findByRole('heading', { name: 'Hunt case' })).closest('.detail-head') as HTMLElement
-    expect(within(header).getByText('executing')).toBeInTheDocument()
+    expect(within(header).getByText('Executing')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Record/ }))
     fireEvent.click(await screen.findByRole('button', { name: 'Why?' }))
     await waitFor(() => expect(streamFetch).toHaveBeenCalled())
@@ -548,7 +554,7 @@ describe('case page', () => {
     expect(body.textContent?.indexOf('Quarantine mailbox')).toBeLessThan(body.textContent?.indexOf('Verdict') ?? -1)
     expect(screen.getByText('the scanner')).toBeInTheDocument()
     expect(screen.queryByText(/Now · phase/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Needs you' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
   })
 
   it('selects Summary from the needs-you strip on another tab', async () => {
@@ -568,11 +574,11 @@ describe('case page', () => {
     renderCase('case-dec')
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Needs you' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Needs you' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Decide on Summary' }))
     expect(screen.getByRole('tab', { name: /^Summary/ })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.queryByRole('button', { name: 'Needs you' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
   })
 
@@ -606,6 +612,63 @@ describe('case page', () => {
       expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Cases' }))
       expect(onBack).toHaveBeenCalled()
+    })
+
+    it('writes the populated header: severity, state, reason, workflow name, alerts, resolve-by', async () => {
+      const due = new Date(Date.now() + 7 * 3600_000).toISOString()
+      vi.mocked(casesApi.getSLA).mockResolvedValueOnce({ data: { resolution_due: due, health_status: 'healthy' } } as never)
+      testState.cases = [{
+        ...open('case-9'),
+        combined_state: 'executing',
+        investigations: [investigation('executing', true, 'run-hunt')],
+      }]
+      testState.runs['run-hunt'] = { hunt: HUNT }
+      renderDetail('case-9')
+      const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
+      expect(within(head).getByText('High')).toBeInTheDocument()
+      expect(within(head).getByText('Executing')).toHaveClass('state-pill', 'live')
+      expect(await within(head).findByText('Incident response')).toBeInTheDocument()
+      expect(within(head).getByText('who logged in')).toHaveClass('case-reason')
+      expect(within(head).getByText('0 alerts combined')).toBeInTheDocument()
+      const left = await within(head).findByText('7 h left')
+      expect(left).toHaveClass('case-sla', 'good')
+      expect(within(head).getByText(/Not measured yet/)).toBeInTheDocument()
+      expect(within(head).getByRole('tab', { name: /^Summary/ })).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('falls back to the workflow id when the catalog does not answer', async () => {
+      vi.mocked(workflowApi.listAll).mockRejectedValueOnce(new Error('down'))
+      testState.cases = [{ ...open('case-9'), investigations: [investigation('open', false, 'run-x')] }]
+      renderDetail('case-9')
+      const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
+      expect(await within(head).findByText('incident-response')).toBeInTheDocument()
+    })
+
+    it('writes the empty header for a case with no workflow or SLA', async () => {
+      vi.mocked(casesApi.getSLA).mockRejectedValueOnce(new Error('no sla'))
+      testState.cases = [open('case-9')]
+      renderDetail('case-9')
+      const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
+      expect(within(head).getByText('No workflow')).toBeInTheDocument()
+      expect(within(head).getByText(/Resolve by —/)).toBeInTheDocument()
+      expect(within(head).getByText('Open')).toHaveClass('idle')
+      expect(head.querySelector('.case-reason')).toBeNull()
+    })
+
+    it('shows Needs you with the ask on the pill, and the strip off Summary only', async () => {
+      testState.cases = [{ ...open('case-9'), combined_state: 'executing' }]
+      vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ case_id: 'case-9' })] } } as never)
+      renderDetail('case-9')
+      const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
+      expect(await within(head).findByText('Needs you')).toHaveClass('state-pill', 'needs')
+      expect(within(head).getByText('Block 1.2.3.4')).toHaveClass('case-reason')
+      expect(document.querySelector('.case-needs-strip')).toBeNull()
+      fireEvent.click(screen.getByRole('tab', { name: /^Checked/ }))
+      const strip = (await screen.findByRole('button', { name: 'Decide on Summary' })).closest('.case-needs-strip') as HTMLElement
+      expect(within(strip).getByText('Block 1.2.3.4')).toBeInTheDocument()
+      expect(within(strip).queryByText(/pauses in/)).not.toBeInTheDocument()
+      fireEvent.click(within(strip).getByRole('button', { name: 'Decide on Summary' }))
+      expect(document.querySelector('.case-needs-strip')).toBeNull()
     })
 
     it('has Expand and Close only in the drawer', async () => {
