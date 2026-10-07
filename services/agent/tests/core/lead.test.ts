@@ -304,7 +304,7 @@ describe("an arch drives the loop", () => {
       threat_intel: ["lookup_indicators"],
     });
     expect(grantsOf(specFor("investigate", "case.playbook.yaml", "case.config.yaml"))).toEqual({
-      lead: ["case_records", "get_finding"],
+      lead: ["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators"],
     });
   });
 });
@@ -382,7 +382,7 @@ describe("the lead opening task carries this run's prompt", () => {
     const opening = (harness.provider as ScriptedProvider).requests[0]?.messages.find((message) => message.role === "user");
     expect(opening?.content).toContain("## What this run is about");
     expect(opening?.content).toContain("f-20260215-abc123");
-    expect(grantsOf(spec).lead).toEqual(["case_records", "get_finding"]);
+    expect(grantsOf(spec).lead).toEqual(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators"]);
   });
 });
 

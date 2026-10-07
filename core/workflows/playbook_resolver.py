@@ -35,10 +35,16 @@ EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
 
-# What the investigate arch's lead asks for. Both are native tools, so a deployment
-# always binds them; naming them as capabilities is what lets a missing one reach
-# the run as a blind spot rather than a log line.
-INVESTIGATE_CAPABILITIES = ("case_records", "get_finding")
+# What the investigate arch's lead asks for. Only telemetry_search needs an
+# integration; the rest are native tools. Naming them as capabilities is what lets
+# a missing one reach the run as a blind spot rather than a log line.
+INVESTIGATE_CAPABILITIES = (
+    "case_records",
+    "get_finding",
+    "telemetry_search",
+    "findings_search",
+    "indicator_lookup",
+)
 
 
 def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, Any]]:
@@ -375,7 +381,11 @@ def resolve(
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
-        "budgets": _budgets(phases),
+        "budgets": (
+            dict(INVESTIGATE_BUDGETS)
+            if definition.run_kind == "investigate"
+            else _budgets(phases)
+        ),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
         # ART execute parks until a human approves. Other grants, and a compose
@@ -426,21 +436,29 @@ ROOT_CAUSE_MAX_CALLS = 1024
 # keys, and a turn is the hunt's unit rather than the harness's.
 HUNT_THRESHOLDS = {"max_iterations": HUNT_ITERATIONS}
 
+# An investigation has no phases to count: its lead decides until it concludes, so
+# it gets as many decisions as a hunt gets iterations, each with a full tool loop.
+INVESTIGATE_BUDGETS = {
+    "max_calls": HUNT_ITERATIONS * (int(DEFAULT_RUNTIME["max_turns"]) + EMIT_ATTEMPTS),
+    **DEFAULT_SPEND,
+}
+
 
 # What this deployment can and cannot answer, without resolving a whole playbook. The
 # console asks before a run starts, so the deployment gap is told before the spend.
 def capability_report(
     registry: Optional["MCPRegistry"] = None,
+    needs: Tuple[str, ...] = HUNT_CAPABILITIES,
 ) -> Dict[str, List[str]]:
     catalogue = _tool_catalogue(registry)
     bound = {
         tool["provides"]
-        for tool in _bound_capabilities(list(HUNT_CAPABILITIES), catalogue)
+        for tool in _bound_capabilities(list(needs), catalogue)
         if tool.get("provides")
     }
     return {
-        "bound": [name for name in HUNT_CAPABILITIES if name in bound],
-        "unbound": [name for name in HUNT_CAPABILITIES if name not in bound],
+        "bound": [name for name in needs if name in bound],
+        "unbound": [name for name in needs if name not in bound],
     }
 
 
