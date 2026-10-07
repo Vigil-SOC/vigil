@@ -15,7 +15,7 @@ from core.workflows.workflows_service import WorkflowsService
 
 HANDOFF = TerminalHandoff(
     case_id="case-abc",
-    title="IR case case-abc — threat-hunt",
+    title="Handoff — threat-hunt",
     markdown="The internal host FYODOR-L (192.168.70.186) is beaconing to 45.77.53.176:443.",
 )
 

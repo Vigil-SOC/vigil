@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
 import { slaLevel } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
@@ -46,6 +47,9 @@ const EXPL_TONE: Record<string, string> = {
   weakened: 'poor',
   'ruled out': 'muted',
 }
+
+const HUNT_WORKFLOW = 'threat-hunt'
+const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
 
 /** "handed_off" → "Handed off". */
 function display(word: string): string {
@@ -536,7 +540,10 @@ export function CasePage({
   }, [id])
 
   const latest = investigations[0] ?? null
-  const runId = latest?.run_id ?? null
+  // A hunt's handoff queues a root-cause run onto the same case; the hunt's own
+  // explanations, evidence and checked data stay read from the hunt run.
+  const runId = (investigations.find((item) => item.workflow_id === HUNT_WORKFLOW) ?? latest)?.run_id ?? null
+  const rootCauseRunId = investigations.find((item) => item.workflow_id === ROOT_CAUSE_WORKFLOW)?.run_id ?? null
   const live = investigations.filter((item) => item.live)
   // The list maps every status other than open/investigating to closed, so a
   // `new` case must not use that fallback while the detail read is in flight.
@@ -889,6 +896,13 @@ export function CasePage({
                               <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
                             </div>
                             {by && <div className="case-expl-by">Added by {by}</div>}
+                            {row.status === 'handed_off' && rootCauseRunId && (
+                              <div className="case-expl-by">
+                                <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
+                                  Root-cause run
+                                </Link>
+                              </div>
+                            )}
                           </div>
                         </li>
                       )
@@ -1183,7 +1197,7 @@ function FindingList({ fold }: { fold: RunFold | null }) {
       <ul>
         {ranked.slice(0, 6).map((row) => (
           <li key={row.hypothesis_id}>
-            {explanationWord(row.status, row.supports, row.weakens)} — {row.statement || row.hypothesis_id}
+            {display(explanationWord(row.status, row.supports, row.weakens))} — {row.statement || row.hypothesis_id}
           </li>
         ))}
       </ul>
