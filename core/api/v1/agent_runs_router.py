@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from core.agents import run_limits
 from core.agents.directives import (
     DIRECTIVE_FIELDS,
     DIRECTIVE_KINDS,
@@ -141,6 +142,11 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.playbook.startswith(WORKFLOW_SCHEME) and not is_enabled(named):
         raise HTTPException(status_code=409, detail=disabled_message(named))
 
+    try:
+        run_limits.check_overrides(request.overrides)
+    except run_limits.OverrideRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     run_id = new_run_id()
     payload: Dict[str, Any] = {
         "arch": request.arch,
@@ -256,7 +262,11 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
 
 class DirectiveRequest(BaseModel):
     kind: str = Field(..., description=f"One of {', '.join(DIRECTIVE_KINDS)}.")
-    text: str = Field(default="", description="What the operator is telling the run.")
+    text: str = Field(
+        default="",
+        max_length=2000,
+        description="What the operator is telling the run.",
+    )
     actor: Optional[str] = Field(
         default=None, description="Who is steering. Defaults to the session user."
     )

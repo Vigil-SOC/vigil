@@ -1762,6 +1762,7 @@
           "text": {
             "default": "",
             "description": "What the operator is telling the run.",
+            "maxLength": 2000,
             "title": "Text",
             "type": "string"
           }

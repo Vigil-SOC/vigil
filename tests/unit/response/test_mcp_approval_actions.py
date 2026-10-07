@@ -91,3 +91,42 @@ def test_create_approval_action_is_listed_while_pending(monkeypatch):
         assert action["created_at"]
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.usefixtures("no_db")
+def test_a_confidence_the_agent_names_never_releases_the_action(monkeypatch):
+    monkeypatch.setenv("DAEMON_CONFIDENCE_THRESHOLD", "0.90")
+    get_settings.cache_clear()
+    try:
+        created = json.loads(
+            vigil.create_approval_action(
+                action_type="block_ip",
+                title="block",
+                description="d",
+                target="203.0.113.7",
+                confidence=1.0,
+                reason="r",
+            )
+        )
+        assert created["status"] == "pending"
+        listed = json.loads(vigil.list_approval_actions(status="pending"))
+        assert listed["count"] == 1
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.usefixtures("no_db")
+@pytest.mark.parametrize("confidence", [5.0, -0.1, float("nan")])
+def test_a_confidence_outside_zero_to_one_is_refused(confidence):
+    refused = json.loads(
+        vigil.create_approval_action(
+            action_type="block_ip",
+            title="block",
+            description="d",
+            target="203.0.113.7",
+            confidence=confidence,
+            reason="r",
+        )
+    )
+    assert "error" in refused
+    assert json.loads(vigil.list_approval_actions())["count"] == 0

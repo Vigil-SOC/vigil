@@ -78,7 +78,7 @@ def response_action_decision(
     precondition: a manifest that disables it reports every finding that
     would have acted as losing its action.
     """
-    if not config.auto_response_enabled:
+    if not config.auto_response_enabled or not 0.0 <= confidence <= 1.0:
         return None
     if confidence >= config.confidence_threshold and recommended in (
         "isolate",
@@ -116,6 +116,10 @@ def approval_requirement(
     if value == "irreversible":
         return True, decision_rule("reversibility", value)
     if value == "reversible":
+        # A confidence is a probability. Anything else (5.0, NaN) is a caller
+        # inflating the number, and must not read as "above the threshold".
+        if not 0.0 <= confidence <= 1.0:
+            return True, decision_rule("response.confidence_range", confidence)
         return confidence < config.confidence_threshold, decision_rule(
             "response.confidence_threshold", config.confidence_threshold, confidence
         )

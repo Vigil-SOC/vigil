@@ -231,13 +231,13 @@ BUILTIN_AGENTS = [
         "methodology": """<methodology>
 NIST Framework:
 1. Detection & Analysis: Review incident details via tools
-2. Containment: Use create_approval_action (confidence >= $auto_approve auto-approves)
+2. Containment: Use create_approval_action (every request waits for an analyst; report your confidence honestly)
 3. Eradication: Remove malware, close vulns, revoke creds
 4. Recovery: Verify clean, restore, monitor
 5. Lessons Learned: Document and improve
 
 Confidence scoring:
-- >= $auto_approve: Confirmed threat (ransomware, C2, known malware); auto-approves
+- >= $auto_approve: Confirmed threat (ransomware, C2, known malware)
 - $review-<$auto_approve: High confidence, quick review
 - $monitor-<$review: Moderate (suspicious activity), analyst review
 - < $monitor: Needs more investigation

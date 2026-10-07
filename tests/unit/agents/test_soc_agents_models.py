@@ -97,7 +97,7 @@ def test_builtin_band_text_is_rendered_from_response_config():
         ">=0.95 auto-approve, 0.88-<0.95 quick review, 0.60-<0.88 human review, "
         "<0.60 escalate"
     ) in agents["auto_responder"].system_prompt
-    assert "confidence >= 0.95 auto-approves" in agents["responder"].system_prompt
+    assert "waits for an analyst" in agents["responder"].system_prompt
     for agent in agents.values():
         assert "$" not in agent.system_prompt, agent.id
 

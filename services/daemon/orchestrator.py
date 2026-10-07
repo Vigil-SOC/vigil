@@ -1765,6 +1765,8 @@ class Orchestrator:
                 reason=f"[Auto-investigation {inv_id}] {action.get('reason', '')}",
                 evidence=[inv_id],
                 created_by=ORCHESTRATOR_ACTOR,
+                # The 0.8 is a constant, and the proposal is the agent's.
+                human_only=True,
             )
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:

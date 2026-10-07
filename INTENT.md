@@ -28,7 +28,7 @@ respond:
   review_threshold: 0.85
   # Below this, keep monitoring rather than act. (DAEMON_MONITOR_THRESHOLD)
   monitor_threshold: 0.70
-  # Isolate a critical finding at or above this. (DAEMON_CRITICAL_ACTION_FLOOR)
+  # Propose isolation for a critical finding at or above this. (DAEMON_CRITICAL_ACTION_FLOOR)
   critical_action_floor: 0.70
   # Investigate a high finding at or above this. (DAEMON_HIGH_ACTION_FLOOR)
   high_action_floor: 0.80
