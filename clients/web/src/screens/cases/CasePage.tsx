@@ -571,6 +571,15 @@ export function CasePage({
     }
   }, [runId])
 
+  // A live run may have added evidence the answer just cited; re-read without blanking the page.
+  const refreshFold = useCallback(() => {
+    if (!runId) return
+    workflowApi
+      .getRun(runId)
+      .then((res) => setFold(readFold(res.data)))
+      .catch(() => undefined) // keep what is shown
+  }, [runId])
+
   useEffect(() => {
     let cancelled = false
     workflowApi
@@ -1071,6 +1080,7 @@ export function CasePage({
         lockedCaseId={id}
         seed={askSeed?.id === id ? askSeed.text : null}
         onSeedConsumed={() => setAskSeed(null)}
+        onTurnDone={refreshFold}
         evidenceIds={fold?.kind === 'hunt' ? fold.evidence.map((row) => row.evidence_id) : []}
         onCite={(evidenceId) => {
           setTab('Evidence')
