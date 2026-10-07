@@ -223,8 +223,8 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
 const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 
 /** The line under each door's count, from the fold already loaded. */
-function doorLines(fold: RunFold | null, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
-  const none = fold ? '' : 'No run yet'
+function doorLines(fold: RunFold | null, foldPhase: Phase, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
+  const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : 'No run yet'
   const tally = new Map<string, number>()
   if (fold?.kind === 'hunt') {
     for (const row of fold.hypotheses) {
@@ -246,12 +246,14 @@ function doorLines(fold: RunFold | null, rows: CaseRecordRow[], recordPhase: Pha
   }
   const recall = fold?.recall
   const recallRows = (recall ? recall.sightings.length + recall.verdicts.length + recall.gaps.length : 0) + recallEntityCalls(fold).length
+  const blind = visibilityGaps(fold).length
+  const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap')].filter(Boolean).join(' · ')
   const chained = rows.filter((row) => row.chained).length
   return {
     Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
     Evidence: evidence,
-    Checked: fold ? `${money(fold.costUsd)} · ${plural(visibilityGaps(fold).length, 'gap')}` : none,
-    'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : recallRows ? plural(recallRows, 'recall row') : 'Nothing recalled',
+    Checked: fold ? `${money(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
+    'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
 }
@@ -668,11 +670,11 @@ export function CasePage({
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   const pillState = closed ? 'closed' : pill
-  const running = !closed && needsCount === 0
   // Only what exists: the live investigation's status, else the run's outcome.
   const runState = (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
-  const doors = <Doors counts={tabCounts} lines={doorLines(fold, rows, recordPhase)} onOpen={setTab} />
+  const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
+  const running = !closed && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
   const reason =
     tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''

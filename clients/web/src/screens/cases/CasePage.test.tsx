@@ -367,12 +367,13 @@ describe('case page', () => {
     vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
     renderCase('case-slow')
     expect(await screen.findAllByText('Loading the run…')).not.toHaveLength(0)
+    expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('Loading…')).toHaveLength(3)
     cleanup()
 
     vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
     renderCase('case-bad')
     expect(await screen.findAllByText('The run could not be read.')).not.toHaveLength(0)
-    expect(screen.getByRole('region', { name: 'Audit doors' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Audit doors' })).getAllByText('Couldn’t read the run')).toHaveLength(3)
   })
 
   it('shows the door tiles on a closed case, without a Now card', async () => {
