@@ -5566,7 +5566,11 @@ export interface paths {
         put?: never;
         /**
          * Kill Orchestrator
-         * @description Emergency kill: cancel all running agents immediately.
+         * @description Emergency stop: disable the daemon's orchestrator and fail in-flight records.
+         *
+         *     The daemon is a separate process that learns of a stop only through the
+         *     persisted `enabled` flag, so that is written first. A run already executing
+         *     on the agent worker is not cancelled; it stops at its own ceiling (#633).
          */
         post: operations["post_api_orchestrator_kill"];
         delete?: never;
