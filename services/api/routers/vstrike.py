@@ -33,6 +33,7 @@ from core.integrations.vstrike.schemas import (
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 from core.storage.database_data_service import DatabaseDataService
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
 
 
@@ -249,14 +250,14 @@ def ingest_findings(
                         error="create_finding returned None",
                     )
                 )
-        except Exception as e:
+        except Exception:
             failed += 1
             logger.exception("VStrike ingest failed for %s", item.finding_id)
             results.append(
                 VStrikeFindingResult(
                     finding_id=item.finding_id,
                     status="failed",
-                    error=str(e),
+                    error=INTERNAL_ERROR_DETAIL,
                 )
             )
 

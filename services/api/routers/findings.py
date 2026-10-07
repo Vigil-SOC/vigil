@@ -29,6 +29,7 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Finding, User
 from core.time import utcnow
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
 from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
@@ -119,7 +120,7 @@ def bulk_enrich_findings(request: BulkEnrichmentRequest):
 
         except Exception as e:
             results["failed"] += 1
-            results["errors"].append(f"{finding_id}: {str(e)}")
+            results["errors"].append(f"{finding_id}: {INTERNAL_ERROR_DETAIL}")
             logger.error(f"Error enriching finding {finding_id}: {e}")
 
     return {

@@ -21,6 +21,8 @@ ALLOWED = {
     ("core/workflows/workflows_router.py", "verify_workflow_run"),
     ("services/api/routers/cases.py", "get_case_record"),
     ("services/api/routers/storage_status.py", "reconnect_database"),  # admin only
+    # Shared-secret callback for the agent layer, which reads the failure; no session.
+    ("core/agents/tools_router.py", "invoke"),
 }
 _RESPONSE_KEYS = {"error", "message", "detail"}
 _CATCH_ALL = {"Exception", "BaseException"}
@@ -53,9 +55,15 @@ def _embeds_exception(expr: ast.AST, name: str) -> bool:
 def _response_values(handler: ast.ExceptHandler):
     for n in ast.walk(handler):
         if isinstance(n, ast.Call):
-            callee = getattr(n.func, "id", getattr(n.func, "attr", None))
-            if callee == "HTTPException":
-                yield from (k.value for k in n.keywords if k.arg == "detail")
+            # A response model (``Resp(error=...)``) or a collected error list
+            # (``results["errors"].append(...)``) reaches the client like a detail.
+            yield from (k.value for k in n.keywords if k.arg in _RESPONSE_KEYS)
+            if (
+                isinstance(n.func, ast.Attribute)
+                and n.func.attr == "append"
+                and "error" in ast.unparse(n.func.value).lower()
+            ):
+                yield from n.args
         elif isinstance(n, ast.Dict):
             for key, value in zip(n.keys, n.values):
                 if isinstance(key, ast.Constant) and key.value in _RESPONSE_KEYS:

@@ -16,6 +16,7 @@ from core.integrations._base.config import resolve
 from core.integrations.jira.descriptor import JIRA
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, User
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,19 @@ class JiraExportResponse(BaseModel):
     subtasks_created: int = 0
     url: Optional[str] = None
     error: Optional[str] = None
+
+
+def _export_failure(exc: Exception) -> JiraExportResponse:
+    """Answer a failed export with a category; the exception text (Jira URL,
+    upstream body, database detail) stays in the log."""
+    logger.error("JIRA export failed: %s", exc)
+    if isinstance(exc, httpx.HTTPStatusError):
+        error = f"JIRA API error: HTTP {exc.response.status_code}"
+    elif isinstance(exc, (httpx.HTTPError, httpx.InvalidURL)):
+        error = "JIRA API error: could not reach Jira"
+    else:
+        error = INTERNAL_ERROR_DETAIL
+    return JiraExportResponse(success=False, error=error)
 
 
 @router.post("/cases/{case_id}/export/jira", response_model=JiraExportResponse)
@@ -226,12 +240,8 @@ def export_case_to_jira(
 
     except HTTPException:
         raise
-    except (httpx.HTTPError, httpx.InvalidURL) as e:
-        logger.error(f"JIRA API error: {e}")
-        return JiraExportResponse(success=False, error=f"JIRA API error: {str(e)}")
     except Exception as e:
-        logger.error(f"Export error: {e}")
-        return JiraExportResponse(success=False, error=str(e))
+        return _export_failure(e)
 
 
 @router.post("/cases/{case_id}/remediation/jira", response_model=JiraExportResponse)
@@ -359,9 +369,5 @@ def export_remediation_to_jira(
 
     except HTTPException:
         raise
-    except (httpx.HTTPError, httpx.InvalidURL) as e:
-        logger.error(f"JIRA API error: {e}")
-        return JiraExportResponse(success=False, error=f"JIRA API error: {str(e)}")
     except Exception as e:
-        logger.error(f"Export error: {e}")
-        return JiraExportResponse(success=False, error=str(e))
+        return _export_failure(e)
