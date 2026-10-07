@@ -16,6 +16,7 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
 import { WatchRun } from './WatchRun'
+import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag, type Bearing } from './huntParts'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, runStatusColor, useInvestigateReplay, useRunDetail,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -1871,17 +1872,6 @@ function CopyReport({ md }: { md: string }) {
   )
 }
 
-/** A gap the projection reports live. query_intent belongs to the dispatch, which
- *  the finalized report joins in and a live read cannot, so the summary carries it. */
-export function liveGap(one: HuntEvidence): HuntGap {
-  return {
-    evidence_id: one.evidence_id,
-    iteration: one.iteration,
-    summary: one.summary,
-    hypothesis_id: one.bears_on?.[0]?.hypothesis_id ?? null,
-  }
-}
-
 /** The leads waiting to be taken. Pinning is queued like every other directive, so
  *  the row says the ask was sent rather than that the hunt obeyed. */
 function HuntFrontier({ runId, frontier, inFlight }: { runId: string; frontier: HuntQuestion[]; inFlight: boolean }) {
@@ -2602,26 +2592,6 @@ function strengthLine(s: HuntStrength): string {
 }
 
 /** What a hunt has tested and how each belief stands — its equivalent of phase rows. */
-/** How the evidence landed on each belief, counted from the rulings the projection
- *  already carries. Every other field on a standing is written at verdict time, so an
- *  unresolved board reported the coerced status and nothing else — nine rows saying
- *  "inconclusive" over a run that had four records supporting one of them. */
-interface Bearing { supports: number; weakens: number; ruledOut: number }
-
-export function bearings(evidence: readonly HuntEvidence[]): Map<string, Bearing> {
-  const held = new Map<string, Bearing>()
-  for (const record of evidence) {
-    for (const link of record.bears_on ?? []) {
-      const tally = held.get(link.hypothesis_id) ?? { supports: 0, weakens: 0, ruledOut: 0 }
-      if (link.relation === 'supports') tally.supports += 1
-      else if (link.relation === 'weakens') tally.weakens += 1
-      else tally.ruledOut += 1
-      held.set(link.hypothesis_id, tally)
-    }
-  }
-  return held
-}
-
 /** A belief nothing has been ruled against yet reads differently from one every record
  *  was weighed against and set aside: the second is a hunt that looked. */
 function BearingCell({ tally }: { tally?: Bearing }) {
@@ -2636,13 +2606,6 @@ function BearingCell({ tally }: { tally?: Bearing }) {
       <b>{tally.supports}</b> for · <b>{tally.weakens}</b> against
     </span>
   )
-}
-
-/** Which belief the operator put up and which is the base rate to beat; any other source is untagged. */
-export function provenanceTag(provenance?: string): { text: string; title?: string } | null {
-  if (provenance === 'operator') return { text: 'yours' }
-  if (provenance === 'base_rate') return { text: 'the claim to beat', title: 'Seeded on every hunt as the claim to beat, not something you asked for.' }
-  return null
 }
 
 function HuntStandings({ hunt }: { hunt: HuntView }) {
@@ -2694,69 +2657,6 @@ function HuntStandings({ hunt }: { hunt: HuntView }) {
           </table>
         </div>
       )}
-    </div>
-  )
-}
-
-/** The one thing on this panel waiting on a person, and the approve/reject that
- *  answers it. */
-export function OpenCheckpoint({ hunt }: { hunt: HuntView }) {
-  const open = hunt.open_checkpoint
-  const [busy, setBusy] = useState<string | null>(null)
-  const [failed, setFailed] = useState<string | null>(null)
-  // Which question was answered: the projection reports it until the run journals a resolution.
-  const [answered, setAnswered] = useState<{ checkpoint_id: string; kind: string } | null>(null)
-  const [why, setWhy] = useState('')
-  if (!open) return null
-
-  const answer = (kind: 'approve' | 'reject') => {
-    setBusy(kind)
-    setFailed(null)
-    workflowApi
-      .steer(hunt.run_id ?? '', kind, why.trim(), { checkpoint_id: open.checkpoint_id })
-      .then(() => { setAnswered({ checkpoint_id: open.checkpoint_id, kind }); setWhy('') })
-      .catch((e) => setFailed(errMsg(e)))
-      .finally(() => setBusy(null))
-  }
-
-  // Answered and waiting on the run, not on a person; clears when the ledger catches up.
-  if (answered?.checkpoint_id === open.checkpoint_id) {
-    return (
-      <div className="modal-section run-ask" style={{ borderLeftColor: 'var(--ok)', background: 'var(--ok-dim)' }}>
-        <div className="flex items-center gap-2 text-[12.5px]">
-          <span style={{ color: 'var(--ok)', display: 'inline-flex' }}><Icon name="check" size={15} /></span>
-          <span><b>{answered.kind}</b> sent. The run picks it up at its next turn.</span>
-        </div>
-      </div>
-    )
-  }
-
-  const unbound = (open.context?.['unbound_capabilities'] as string[] | undefined) ?? []
-
-  return (
-    <div className="modal-section run-ask">
-      <div className="flex items-center gap-2" style={{ color: 'var(--high)' }}>
-        <Icon name="alert" size={15} />
-        <h4 style={{ color: 'var(--tx)', margin: 0 }}>Waiting on you{open.checkpoint_class ? ` · ${open.checkpoint_class}` : ''}</h4>
-      </div>
-      <div style={{ height: 8 }} />
-      <div className="text-[12.5px] leading-[1.55] mb-2" style={{ whiteSpace: 'pre-wrap' }}>{open.question}</div>
-      {unbound.length > 0 && (
-        <div className="muted text-[11.5px] mb-2">No tool here answers {unbound.join(', ')}.</div>
-      )}
-      <div className="flex gap-2 items-center flex-wrap">
-        <button className="btn primary" disabled={busy !== null} onClick={() => answer('approve')}>approve</button>
-        <button className="btn ghost" disabled={busy !== null} onClick={() => answer('reject')} style={{ color: 'var(--crit)' }}>
-          reject
-        </button>
-        <TextInput
-          className="grow"
-          placeholder="Why — recorded with your answer, and read by the run."
-          value={why}
-          onChange={(e) => setWhy(e.target.value)}
-        />
-      </div>
-      {failed && <div className="text-[11.5px] mt-2" style={{ color: 'var(--crit)' }}>{failed}</div>}
     </div>
   )
 }
@@ -3034,13 +2934,6 @@ function HuntCheckpoints({ checkpoints }: { checkpoints: HuntCheckpoint[] }) {
       </div>
     </div>
   )
-}
-
-export function hypothesisColor(s: string): string {
-  if (s === 'proven' || s === 'handed_off') return 'var(--crit)'
-  if (s === 'disproven') return 'var(--ok)'
-  if (s === 'parked' || s === 'inconclusive') return 'var(--tx-2)'
-  return 'var(--med)' // active
 }
 
 function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void; onSaved: () => void }) {
