@@ -6,9 +6,9 @@ import { Icon } from '../../shared/icons'
 import { Cost } from '../../shared/cost'
 import {
   IN_FLIGHT, callFailure, callLine, fmtDuration, useInvestigateReplay,
-  type CallFailure, type HuntView, type InvestigateDecisionView, type WfRunDetail,
+  type CallFailure, type HuntView, type InvestigateDecisionView, type RootCauseBudgets, type RootCauseEntry, type WfRunDetail,
 } from './runRead'
-import { Heading, HuntPanels, InvestigatePanels, OtherPanels } from './WatchPanels'
+import { Heading, HuntPanels, InvestigatePanels, OtherPanels, RootCausePanels } from './WatchPanels'
 
 /** What each kind of run is reduced to: one row per decision. `calls` is null when
  *  the record cannot say which calls followed (an older agent service). */
@@ -23,10 +23,13 @@ interface Step {
   thoughtMs: number | null
   rationale: string
   calls: CallRow[] | null
+  /** A root-cause entry draws its own body in place of the call trace and the model text. */
+  entry?: RootCauseEntry
 }
 interface CallRow {
   tool: string
   length: number | null
+  rows?: number
   durationMs: number | null
   failure: CallFailure | null
 }
@@ -85,6 +88,25 @@ function investigateSteps(decisions: InvestigateDecisionView[]): Step[] {
         failure: callFailure(call),
       }
     }),
+  }))
+}
+
+/** One step per ledger entry. A failed search carries its failure on its one call, so markOf marks it. */
+function rootCauseSteps(entries: RootCauseEntry[]): Step[] {
+  return entries.map((entry, i) => ({
+    key: String(i),
+    iteration: i,
+    action: entry.kind === 'step' ? 'record' : entry.kind,
+    worker: null,
+    at: entry.recorded_at || null,
+    cost: null,
+    thoughtMs: null,
+    rationale: '',
+    // a failed search with no kind recorded is the store answering with an error row
+    calls: entry.kind === 'search'
+      ? [{ tool: entry.tool, length: null, rows: entry.rows, durationMs: null, failure: entry.failed ? (entry.failure ?? 'backend_error') : null }]
+      : [],
+    entry,
   }))
 }
 
@@ -147,7 +169,8 @@ const FAILURE_TEXT: Record<CallFailure, string> = {
 function CallLine({ call }: { call: CallRow }) {
   // a timeout is a gap in what could be answered, not a defect in the call
   const color = call.failure === null ? 'var(--good)' : call.failure === 'timeout' ? 'var(--fair)' : 'var(--poor)'
-  const meta = [call.length === null ? null : `${call.length.toLocaleString()} chars`, call.durationMs === null ? null : fmtDuration(call.durationMs)]
+  const rows = call.rows === undefined || call.failure !== null ? null : `${call.rows.toLocaleString()} row${call.rows === 1 ? '' : 's'}`
+  const meta = [rows, call.length === null ? null : `${call.length.toLocaleString()} chars`, call.durationMs === null ? null : fmtDuration(call.durationMs)]
   return (
     <span className="flex items-start gap-2 text-[12px] leading-[1.45] text-[var(--tx1)]">
       <span className="inline-flex shrink-0 pt-0.5" style={{ color }}><Icon name={call.failure === null ? 'check' : 'close'} size={12} /></span>
@@ -158,6 +181,34 @@ function CallLine({ call }: { call: CallRow }) {
       </span>
     </span>
   )
+}
+
+/** What a root-cause entry says for itself. Nothing here is a rationale: the trace journals none. */
+function EntryBody({ entry, call, selected }: { entry: RootCauseEntry; call: CallRow | undefined; selected: boolean }) {
+  const clamp = selected ? '' : 'line-clamp-2'
+  switch (entry.kind) {
+    case 'search':
+      return (
+        <>
+          {call && <CallLine call={call} />}
+          {entry.args !== '' && <span className={`font-mono text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${clamp}`} title={entry.args}>{entry.args}</span>}
+        </>
+      )
+    case 'step':
+      return (
+        <>
+          <span className={`text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${clamp}`} title={entry.event}>Recorded {entry.step_id} · {entry.event}</span>
+          {entry.who !== '' && <span className="text-[11px] text-[var(--tx2)] break-words">{entry.who}</span>}
+          {entry.cause_id !== null && <span className="text-[11px] text-[var(--tx2)] break-words">caused by {entry.cause_id}</span>}
+        </>
+      )
+    case 'notice':
+      return <span className={`text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${clamp}`} title={entry.text}>{entry.text}</span>
+    default: {
+      const never: never = entry
+      return never
+    }
+  }
 }
 
 function Trace({ step, open, onToggle }: { step: Step; open: boolean; onToggle: () => void }) {
@@ -212,11 +263,12 @@ function StepCard({ step, i, mark, selected, open, onPick, onToggle, cardRef }: 
             {time && <span className="font-mono">{time}</span>}
           </span>
         </button>
-        {shown && mark === 'running' && step.calls?.length === 0 && (
+        {shown && step.entry && <EntryBody entry={step.entry} call={step.calls?.[0]} selected={selected} />}
+        {shown && !step.entry && mark === 'running' && step.calls?.length === 0 && (
           <span className="text-[12px] font-semibold text-[var(--tx2)]">Working on it…</span>
         )}
-        {shown && <Trace step={step} open={open} onToggle={onToggle} />}
-        {shown && (
+        {shown && !step.entry && <Trace step={step} open={open} onToggle={onToggle} />}
+        {shown && !step.entry && (
           <span
             className={`text-[12px] leading-[1.4] text-[var(--tx1)] ${selected ? '' : 'line-clamp-2'}`}
             title={step.rationale || undefined}
@@ -347,7 +399,7 @@ function InvestigateReplay({ d, live, waiting }: { d: WfRunDetail; live: boolean
   if (read.kind === 'investigate') held.current = read.decisions
   if (read.kind === 'failed' && held.current) return <InvestigateSteps decisions={held.current} live={live} waiting={waiting} d={d} />
   if (read.kind === 'pending') return <OneLine>Loading steps…</OneLine>
-  if (read.kind === 'absent') return <OneLine>{UNSUPPORTED}</OneLine>
+  if (read.kind === 'absent' || read.kind === 'root_cause') return <OneLine>{UNSUPPORTED}</OneLine>
   if (read.kind === 'failed') return <OneLine>Couldn’t read the steps — {read.message}</OneLine>
   return <InvestigateSteps decisions={read.decisions} live={live} waiting={waiting} d={d} />
 }
@@ -356,6 +408,27 @@ function InvestigateSteps({ decisions, live, waiting, d }: { decisions: Investig
   if (decisions.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
   const costs = decisions.map((x) => x.cost_usd)
   return <Replay key={d.run_id} steps={investigateSteps(decisions)} live={live} waiting={waiting} note={null} panels={(at) => <InvestigatePanels d={d} costs={costs} at={at} />} />
+}
+
+function RootCauseReplay({ d, live, waiting }: { d: WfRunDetail; live: boolean; waiting: boolean }) {
+  const read = useInvestigateReplay(d.run_id, live)
+  const held = useRef<Extract<typeof read, { kind: 'root_cause' }> | null>(null)
+  if (read.kind === 'root_cause') held.current = read
+  const shown = read.kind === 'root_cause' ? read : read.kind === 'failed' ? held.current : null
+  if (shown) return <RootCauseSteps entries={shown.entries} budgets={shown.budgets} live={live} waiting={waiting} d={d} />
+  if (read.kind === 'pending') return <OneLine>Loading steps…</OneLine>
+  // an agent service that cannot replay this run still gets the run as it stands
+  return (
+    <>
+      <OneLine>{read.kind === 'failed' ? `Couldn’t read the steps — ${read.message}` : UNSUPPORTED}</OneLine>
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
+    </>
+  )
+}
+
+function RootCauseSteps({ entries, budgets, live, waiting, d }: { entries: RootCauseEntry[]; budgets: RootCauseBudgets; live: boolean; waiting: boolean; d: WfRunDetail }) {
+  if (entries.length === 0) return <OneLine>{live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
+  return <Replay key={d.run_id} steps={rootCauseSteps(entries)} live={live} waiting={waiting} note={null} panels={(at) => <RootCausePanels d={d} entries={entries} budgets={budgets} at={at} />} />
 }
 
 function versionText(d: WfRunDetail): string {
@@ -401,9 +474,10 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
       <Header d={d} replayed={kind !== 'playbook'} onBack={onBack} />
       {kind === 'hunt' && d.hunt && <HuntReplay d={d} hunt={d.hunt} live={live} waiting={waiting} />}
       {kind === 'investigate' && <InvestigateReplay d={d} live={live} waiting={waiting} />}
-      {(kind === 'root_cause' || kind === 'playbook') && (
+      {kind === 'root_cause' && <RootCauseReplay d={d} live={live} waiting={waiting} />}
+      {kind === 'playbook' && (
         <>
-          <OneLine>{kind === 'playbook' ? PLAYBOOK : UNSUPPORTED}</OneLine>
+          <OneLine>{PLAYBOOK}</OneLine>
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3.5 items-start"><OtherPanels d={d} /></div>
         </>
       )}

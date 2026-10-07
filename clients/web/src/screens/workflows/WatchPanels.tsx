@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'
 import { OpenCheckpoint, bearings, hypothesisColor, liveGap, provenanceTag } from './huntParts'
-import type { HuntEvidence, HuntStanding, HuntView, WfRunDetail } from './runRead'
+import type { HuntEvidence, HuntStanding, HuntView, RootCauseBudgets, RootCauseEntry, WfRunDetail } from './runRead'
 
 export function Heading({ children }: { children: ReactNode }) {
   return <span className="text-[12px] font-semibold leading-[1.3] text-[var(--tx2)]">{children}</span>
@@ -31,9 +31,9 @@ function Bar({ pct, color, size }: { pct: number; color: string; size: number })
   )
 }
 
-interface LimitRow { label: string; value: ReactNode; pct?: number; color?: string }
+interface LimitRow { label: string; value: ReactNode; pct?: number; color?: string; note?: string }
 
-function Limit({ label, value, pct, color }: LimitRow) {
+function Limit({ label, value, pct, color, note }: LimitRow) {
   return (
     <div className={`flex flex-col gap-[5px] px-3 py-2.5 ${CARD}`}>
       <span className="flex justify-between gap-3 text-[12px]">
@@ -41,6 +41,7 @@ function Limit({ label, value, pct, color }: LimitRow) {
         <span className={`min-w-0 text-right break-words ${pct === undefined ? 'text-[var(--tx2)]' : 'text-[var(--tx0)]'}`}>{value}</span>
       </span>
       {pct !== undefined && <Bar pct={pct} color={color ?? levelColor(pct)} size={5} />}
+      {note && <span className="text-[11px] leading-[1.4] text-[var(--tx2)]">{note}</span>}
     </div>
   )
 }
@@ -78,8 +79,8 @@ function Spots({ lines, empty, note }: { lines: { main: string; sub: string[] }[
     <>
       {lines.length === 0 ? <NoData>{empty}</NoData> : (
         <Note>
-          {lines.slice(0, SPOTS_SHOWN).map((l) => (
-            <span key={l.main + l.sub.join('|')} className="flex flex-col">
+          {lines.slice(0, SPOTS_SHOWN).map((l, at) => (
+            <span key={`${at}:${l.main}${l.sub.join('|')}`} className="flex flex-col">
               <span className="line-clamp-2 break-words" title={l.main}>{l.main}</span>
               {l.sub.map((s) => <span key={s} className="text-[11px] text-[var(--tx2)] line-clamp-2 break-words" title={s}>{s}</span>)}
             </span>
@@ -312,6 +313,77 @@ export function OtherPanels({ d }: { d: WfRunDetail }) {
     <Columns
       explanations={NO_EXPLANATIONS}
       rows={[budgetRow(num(view.cost_usd), num(view.max_cost_usd)), untracked('Steps'), untracked('Scope')]}
+      reviewer={<NoData>{NO_REVIEWER}</NoData>}
+      blind={<Spots lines={lines} empty="None so far." />}
+    />
+  )
+}
+
+// ── root cause ───────────────────────────────────────────────────────────
+
+type RecordedStep = Extract<RootCauseEntry, { kind: 'step' }>
+const PROOF_COLOR: Record<string, string> = { proven: 'var(--good)', rejected: 'var(--poor)', unproven: 'var(--fair)' }
+
+/** The chain as of the cursor: each step as last written at or before it, in the order first recorded. */
+function chainAt(entries: RootCauseEntry[], at: number): RecordedStep[] {
+  const byId = new Map<string, RecordedStep>()
+  for (const e of entries.slice(0, at + 1)) if (e.kind === 'step') byId.set(e.step_id, e)
+  return [...byId.values()]
+}
+
+/** What a step claims: its link to a cause, and whether it is the origin. A step claiming neither is open. */
+function claimsOf(s: RecordedStep): { word: string; status: string }[] {
+  const claims = [
+    ...(s.cause_id !== null ? [{ word: s.link_status, status: s.link_status }] : []),
+    ...(s.origin ? [{ word: `origin ${s.origin_status}`, status: s.origin_status }] : []),
+  ]
+  return claims.length > 0 ? claims : [{ word: 'nothing claimed', status: 'unproven' }]
+}
+
+function ChainStep({ step }: { step: RecordedStep }) {
+  const claims = claimsOf(step)
+  const proven = claims.filter((c) => c.status === 'proven').length
+  const color = claims.some((c) => c.status === 'rejected') ? PROOF_COLOR.rejected : proven === claims.length ? PROOF_COLOR.proven : PROOF_COLOR.unproven
+  const claim = step.who ? `${step.who}: ${step.event}` : step.event
+  return (
+    <div className="flex flex-col gap-2 px-3.5 py-3 rounded-[12px] bg-[var(--bg2)] border border-[var(--ln0)]">
+      <span className="flex items-start justify-between gap-2.5">
+        <span className="min-w-0 text-[13px] font-[650] leading-[1.35] text-[var(--tx0)] line-clamp-2 break-words" title={claim}>{claim}</span>
+        <span className="flex flex-col items-end text-[12px] font-bold text-right shrink-0">
+          {claims.map((c) => <span key={c.word} style={{ color: PROOF_COLOR[c.status] ?? 'var(--tx2)' }}>{c.word}</span>)}
+        </span>
+      </span>
+      <Bar pct={proven === 0 ? 0 : Math.max(4, share(proven, claims.length))} color={color} size={6} />
+      <span className="text-[11px] text-[var(--tx2)] break-words">
+        {step.step_id}{step.link ? ` · ${step.link}` : ''}{step.cause_id !== null ? ` · caused by ${step.cause_id}` : ''}
+      </span>
+    </div>
+  )
+}
+
+/** A root-cause run at one step: the chain as recorded so far, the searches it has cost, the blind spots it has hit.
+ *  The ledger holds no spend per step, so the budget is the run's total and says so. */
+export function RootCausePanels({ d, entries, budgets, at }: { d: WfRunDetail; entries: RootCauseEntry[]; budgets: RootCauseBudgets; at: number }) {
+  const view = (d.projection ?? {}) as { cost_usd?: unknown; max_cost_usd?: unknown }
+  const chain = chainAt(entries, at)
+  const seen = entries.slice(0, at + 1)
+  const searches = seen.filter((e) => e.kind === 'search').length
+  const noun = `search${searches === 1 ? '' : 'es'} so far`
+  const max = budgets.max_calls
+  const lines = seen.flatMap((e) =>
+    e.kind === 'notice' ? [{ main: e.text, sub: [] as string[] }]
+      : e.kind === 'search' && e.failed ? [{ main: `A search failed: ${e.tool}`, sub: e.args ? [e.args] : [] }]
+      : [])
+  const budget = budgetRow(num(view.cost_usd), num(view.max_cost_usd))
+  return (
+    <Columns
+      explanations={chain.length === 0 ? <NoData>No step recorded yet.</NoData> : chain.map((s) => <ChainStep key={s.step_id} step={s} />)}
+      rows={[
+        budget.value === NOT_TRACKED ? budget : { ...budget, note: 'Spend isn’t recorded per step, so this is the run’s total.' },
+        max === undefined ? { label: 'Steps', value: `${searches} ${noun} · no step limit recorded` }
+          : { label: 'Steps', value: `${searches} ${noun} · limit ${max}`, pct: share(searches, max) },
+        untracked('Scope'),
+      ]}
       reviewer={<NoData>{NO_REVIEWER}</NoData>}
       blind={<Spots lines={lines} empty="None so far." />}
     />
