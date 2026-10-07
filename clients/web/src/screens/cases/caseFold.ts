@@ -77,8 +77,18 @@ export interface RecallView {
   unavailable: string | null
 }
 
+/** What the run row itself says, beside the fold of its ledger. */
+export interface RunMeta {
+  status: string
+  error: string
+  reason: string
+  /** The hunt's own status (`parked`, ...); empty for a run that is not a hunt. */
+  huntStatus: string
+}
+
 export interface HuntFold {
   kind: 'hunt'
+  run: RunMeta
   iteration: number
   doing: string
   worker: string
@@ -95,6 +105,7 @@ export interface HuntFold {
 
 export interface LeadFold {
   kind: 'lead'
+  run: RunMeta
   iterations: number
   doing: string
   worker: string
@@ -223,7 +234,7 @@ function recallOf(raw: unknown): RecallView | null {
   return { keys, gaps, sightings, verdicts, unavailable }
 }
 
-function asHunt(raw: Record<string, unknown>): HuntFold {
+function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
   // The server sends moves newest first.
   const rows = moves.flatMap((item) => {
@@ -275,6 +286,7 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
     : []
   return {
     kind: 'hunt',
+    run,
     iteration: num(raw.iteration) ?? 0,
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
@@ -290,7 +302,7 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
   }
 }
 
-function asLead(raw: Record<string, unknown>): LeadFold {
+function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
   const decisions = Array.isArray(raw.decisions) ? raw.decisions : []
   // Decisions arrive oldest first; keep moves newest first like a hunt's.
   const rows = decisions.flatMap((item) => {
@@ -319,6 +331,7 @@ function asLead(raw: Record<string, unknown>): LeadFold {
     : []
   return {
     kind: 'lead',
+    run,
     iterations: num(raw.iterations) ?? 0,
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
@@ -336,9 +349,35 @@ function asLead(raw: Record<string, unknown>): LeadFold {
 export function readFold(body: unknown): RunFold | null {
   if (!body || typeof body !== 'object') return null
   const row = body as Record<string, unknown>
-  if (row.hunt && typeof row.hunt === 'object') return asHunt(row.hunt as Record<string, unknown>)
-  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>)
+  const hunt = row.hunt && typeof row.hunt === 'object' ? (row.hunt as Record<string, unknown>) : null
+  const run = { status: str(row.status), error: str(row.error), reason: str(row.reason), huntStatus: str(hunt?.status) }
+  if (hunt) return asHunt(hunt, run)
+  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>, run)
   return null
+}
+
+/** A run that is not going on and did not conclude: parked or paused (it can wake), or failed (it cannot). */
+export interface StoppedRun {
+  state: 'paused' | 'stopped'
+  /** One plain sentence: the first of the joined reasons. */
+  line: string
+  /** The reason as the server wrote it; '' when none was recorded. */
+  raw: string
+}
+
+const ENDED = ['failed', 'cancelled', 'canceled']
+
+export function stoppedRun(fold: RunFold | null): StoppedRun | null {
+  if (!fold) return null
+  const { status, error, reason, huntStatus } = fold.run
+  const stopped = ENDED.includes(status)
+  if (!stopped && huntStatus !== 'parked' && status !== 'paused') return null
+  const raw = stopped ? error || fold.reason : fold.reason || reason
+  const first = raw.split(' | ')[0].trim()
+  const line = first
+    ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
+    : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
+  return { state: stopped ? 'stopped' : 'paused', line, raw }
 }
 
 export function recallEntityCalls(fold: RunFold | null): CallRow[] {

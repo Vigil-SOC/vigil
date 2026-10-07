@@ -844,7 +844,7 @@ export function CasesDetail({
   onExpand?: () => void
   pageKey: string
 }) {
-  const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail } =
+  const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail, refresh } =
     useCaseDetail(id)
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
@@ -872,6 +872,7 @@ export function CasesDetail({
         onDelete={() => setAction('delete')}
         canDelete={canDelete}
         onChanged={onChanged}
+        onRefresh={refresh}
       />
 
       <EditCaseDialog

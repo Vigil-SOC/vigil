@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { IN_FLIGHT, useRunDetail } from '../workflows/runRead'
 import { slaLevel } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { SeverityMark } from '../../shared/SeverityMark'
@@ -22,11 +23,13 @@ import {
   readFold,
   recallEntityCalls,
   recordChip,
+  stoppedRun,
   visibilityGaps,
   type CallRow,
   type RecallProvenance,
   type RecordChip,
   type RunFold,
+  type StoppedRun,
 } from './caseFold'
 import './cases.css'
 import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } from './useCases'
@@ -305,7 +308,7 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap')].filter(Boolean).join(' · ')
   const chained = rows.filter((row) => row.chained).length
   return {
-    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
+    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
     Evidence: evidence,
     Checked: fold ? `${money(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
     'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
@@ -339,12 +342,23 @@ function NowCard({ fold, phase, hasRun }: { fold: RunFold | null; phase: Phase; 
         <b>{fold ? `Now · step ${fold.kind === 'hunt' ? fold.iteration : fold.iterations}` : 'Now'}</b>
         {meta && <span className="now-meta">{meta}</span>}
       </div>
-      <p>
+      <p className="clamp2" title={phase === 'ready' ? fold?.doing : undefined}>
         {phase === 'loading' && 'Loading the run…'}
         {phase === 'error' && 'The run could not be read.'}
         {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : hasRun ? 'The run has started and has not reported yet.' : 'No run on this case yet.')}
       </p>
       {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
+    </section>
+  )
+}
+
+/** A run that is not going on: paused or stopped, with the one-line why and the raw text behind the ⓘ. */
+function StoppedCard({ stopped }: { stopped: StoppedRun }) {
+  return (
+    <section className="case-stopped" aria-label="Run state">
+      <b>{display(stopped.state)}</b>
+      <span className="clamp2" title={stopped.raw || stopped.line}>{stopped.line}</span>
+      {stopped.raw && <InfoTip label="What the run reported" text={stopped.raw} align="start" />}
     </section>
   )
 }
@@ -453,6 +467,7 @@ export function CasePage({
   onDelete,
   canDelete,
   onChanged,
+  onRefresh,
 }: {
   id: string
   c: CaseRow | null
@@ -474,16 +489,17 @@ export function CasePage({
   onDelete: () => void
   canDelete: boolean
   onChanged: () => void
+  /** Re-read the case in place, without blanking it. Used while the run is live. */
+  onRefresh?: () => void
 }) {
   const [tab, setTab] = useState<Tab>('Summary')
-  const [fold, setFold] = useState<RunFold | null>(null)
-  const [foldPhase, setFoldPhase] = useState<Phase>('loading')
   const [sla, setSla] = useState<{ due: string; health: string } | null>(null)
   const [workflowNames, setWorkflowNames] = useState<Record<string, string>>({})
   const [rows, setRows] = useState<CaseRecordRow[]>([])
   const [recordPhase, setRecordPhase] = useState<Phase>('loading')
   const [recordError, setRecordError] = useState<string | null>(null)
   const [recordKey, setRecordKey] = useState(0)
+  const quietRecord = useRef(false) // a poll's re-read keeps the rows and tab as they are
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
   const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
@@ -543,33 +559,28 @@ export function CasePage({
   const closed = combinedState === 'closed' || (phase === 'ready' && !combinedState && c?.status === 'closed')
   const pill = combinedState || (phase === 'loading' ? '…' : c?.status || '—')
 
+  // The newest run, re-read on Watch a run's interval while it is in flight.
+  const run = useRunDetail(runId ?? '', runId !== null)
+  const { load: loadRun, setDphase: setRunPhase } = run
   useEffect(() => {
-    if (!runId) {
-      setFold(null)
-      setFoldPhase('ready')
-      return
-    }
-    let cancelled = false
-    setFold(null)
-    setFoldPhase('loading')
-    workflowApi
-      .getRun(runId)
-      .then((res) => {
-        if (!cancelled) {
-          setFold(readFold(res.data))
-          setFoldPhase('ready')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFold(null)
-          setFoldPhase('error')
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [runId])
+    if (!runId) return
+    setRunPhase('loading')
+    void loadRun()
+  }, [runId, loadRun, setRunPhase])
+  const detail = runId && run.detail?.run_id === runId ? run.detail : null
+  const fold = useMemo(() => readFold(detail), [detail])
+  const foldPhase: Phase = !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+
+  // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
+  const seen = useRef<{ runId: string; status: string } | null>(null)
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = detail && runId ? { runId, status: detail.status } : null
+    if (!prev || !detail || prev.runId !== runId || !IN_FLIGHT.includes(prev.status)) return
+    quietRecord.current = true
+    setRecordKey((k) => k + 1)
+    onRefresh?.()
+  }, [detail]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false
@@ -606,8 +617,12 @@ export function CasePage({
 
   useEffect(() => {
     let cancelled = false
-    setRecordPhase('loading')
-    setRecordError(null)
+    const quiet = quietRecord.current
+    quietRecord.current = false
+    if (!quiet) {
+      setRecordPhase('loading')
+      setRecordError(null)
+    }
     casesApi
       .getRecord(id)
       .then((res) => {
@@ -616,7 +631,7 @@ export function CasePage({
         setRecordPhase('ready')
       })
       .catch((e) => {
-        if (cancelled) return
+        if (cancelled || quiet) return
         setRows([])
         setRecordError(detailOf(e, 'Couldn’t load the record'))
         setRecordPhase('error')
@@ -727,12 +742,14 @@ export function CasePage({
   const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
-  const pillState = closed ? 'closed' : pill
+  // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
+  const stopped = closed || needsCount > 0 ? null : stoppedRun(fold)
+  const pillState = closed ? 'closed' : stopped?.state ?? pill
   // Only what exists: the live investigation's status, else the run's outcome.
-  const runState = (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
+  const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
-  const running = !closed && tone !== 'needs'
+  const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
   const reason =
     tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''
@@ -775,7 +792,7 @@ export function CasePage({
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsCount > 0} />
-              {reason && <span className="case-reason">{reason}</span>}
+              {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
               <span>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : 'No workflow'}</span>
@@ -835,6 +852,7 @@ export function CasePage({
               <>
                 {needsBlock}
                 {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} />}
+                {stopped && <StoppedCard stopped={stopped} />}
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
@@ -845,7 +863,7 @@ export function CasePage({
                     <LaterRow title="Planned next" line="What the run intends to do next." />
                   </>
                 )}
-                <AgentsTable fold={fold} phase={foldPhase} live={live.length > 0} state={runState} />
+                <AgentsTable fold={fold} phase={foldPhase} live={live.length > 0 && !stopped} state={runState} />
                 {doors}
               </>
             )
@@ -1174,6 +1192,11 @@ function LaterRow({ title, line }: { title: string; line: string }) {
   )
 }
 
+/** Two lines, then an ellipsis; the full text is on hover. */
+function Clamped({ text }: { text: string }) {
+  return <span className="clamp2" title={text}>{text}</span>
+}
+
 function FindingList({ fold }: { fold: RunFold | null }) {
   if (!fold) return <p className="muted">No findings yet.</p>
   if (fold.kind === 'hunt') {
@@ -1183,7 +1206,7 @@ function FindingList({ fold }: { fold: RunFold | null }) {
       <ul>
         {ranked.slice(0, 6).map((row) => (
           <li key={row.hypothesis_id}>
-            {explanationWord(row.status, row.supports, row.weakens)} — {row.statement || row.hypothesis_id}
+            <Clamped text={`${explanationWord(row.status, row.supports, row.weakens).replace(/_/g, ' ')} — ${row.statement || row.hypothesis_id}`} />
           </li>
         ))}
       </ul>
@@ -1193,7 +1216,7 @@ function FindingList({ fold }: { fold: RunFold | null }) {
   return (
     <ul>
       {fold.findings.slice(0, 6).map((row, i) => (
-        <li key={i}>{row.agent_id}: {row.answer || '—'}</li>
+        <li key={i}><Clamped text={`${row.agent_id}: ${row.answer || '—'}`} /></li>
       ))}
     </ul>
   )
