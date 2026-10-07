@@ -59,10 +59,6 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     sub: 'A model provider and key',
     title: 'Choose where AI runs',
     desc: 'Agents and chat need a language model. Pick where it runs. You can choose a different model for each agent later in Settings.',
-    card: {
-      title: 'Where AI runs',
-      desc: 'A local model keeps data on site. A hosted one sends it out.',
-    },
   },
   workflows: {
     rail: 'Agents and workflows',
@@ -98,14 +94,19 @@ const RAIL = STEPS.slice(0, DONE).map((id) => ({
   sub: STEP_COPY[id].sub,
 }))
 
-function stepPanel(id: StepId, onAdvance: () => void, onChange: (target: SummaryTarget) => void) {
+function stepPanel(
+  id: StepId,
+  onAdvance: () => void,
+  onRoutable: () => void,
+  onChange: (target: SummaryTarget) => void,
+) {
   switch (id) {
     case 'checks':
       return <SystemChecksStep />
     case 'data':
       return <DataSourceDialog onAdvance={onAdvance} />
     case 'ai':
-      return <SetupProviderStep onSaved={onAdvance} />
+      return <SetupProviderStep onRoutable={onRoutable} />
     case 'workflows':
       return <WorkflowsStep />
     case 'limits':
@@ -162,6 +163,11 @@ const SetupWizard = () => {
     setIndex(n)
   }
 
+  // step 3 counts as passed once any provider can route, however the person got there
+  const markRoutable = () => {
+    if (!progress.passed.includes(3)) save({ ...progress, passed: [...progress.passed, 3] })
+  }
+
   const finishLater = () => {
     writeSetupProgress({ ...progress, furthest: Math.max(progress.furthest, index + 1) })
     dismiss()
@@ -180,7 +186,9 @@ const SetupWizard = () => {
     }
   }
 
-  const panel = stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))
+  const panel = stepPanel(step, advance, markRoutable, (target) =>
+    setIndex(STEPS.indexOf(target)),
+  )
 
   if (!hasPermission('settings.write')) {
     return (
