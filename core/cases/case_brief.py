@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, List, Optional
+from typing import Any, List
 
 from core.agents.projections import read_projection
 from core.cases import case_records_service
@@ -19,8 +19,6 @@ from core.storage.unit_of_work import unit_of_work
 from core.workflows import catalog
 
 logger = logging.getLogger(__name__)
-
-data_service = DatabaseDataService()
 
 MAX_ALERTS = 25
 MAX_FINDINGS = 10
@@ -111,6 +109,7 @@ def _lead(view: dict) -> List[str]:
 async def case_brief(case_id: str, workflows: Any) -> str:
     """The brief for ``case_id``, or "" when any read fails."""
     try:
+        data_service = DatabaseDataService()
         case = data_service.get_case(case_id)
         if not case:
             return ""

@@ -48,7 +48,7 @@ def reads(monkeypatch):
     ds.get_findings_by_case.return_value = [
         {"finding_id": "f-1", "description": "access key created"}
     ]
-    monkeypatch.setattr(mod, "data_service", ds)
+    monkeypatch.setattr(mod, "DatabaseDataService", lambda: ds)
     monkeypatch.setattr(mod, "unit_of_work", lambda: MagicMock())
     monkeypatch.setattr(mod, "case_run_refs", lambda *_: state["refs"])
     monkeypatch.setattr(
@@ -61,6 +61,7 @@ def reads(monkeypatch):
         return state["view"]
 
     monkeypatch.setattr(mod, "read_projection", read)
+    state["ds"] = ds
     return state
 
 
@@ -104,8 +105,8 @@ async def test_unavailable_projection_still_gives_the_case_and_a_failed_read_giv
 ):
     reads["view"] = None
     assert "Newest run" not in await mod.case_brief("C", MagicMock())
-    mod.data_service.get_case.side_effect = RuntimeError("db down")
+    reads["ds"].get_case.side_effect = RuntimeError("db down")
     assert await mod.case_brief("C", MagicMock()) == ""
-    mod.data_service.get_case.side_effect = None
-    mod.data_service.get_case.return_value = None
+    reads["ds"].get_case.side_effect = None
+    reads["ds"].get_case.return_value = None
     assert await mod.case_brief("C", MagicMock()) == ""
