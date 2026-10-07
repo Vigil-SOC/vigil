@@ -177,10 +177,30 @@ describe('what each kind of run says where it has nothing', () => {
     expect(screen.getByText('Not tracked for this kind.')).toBeInTheDocument()
     expect(screen.getByText(NO_REVIEWER)).toBeInTheDocument()
     expect(screen.getByText('None so far.')).toBeInTheDocument()
-    expect(screen.getByText('Sources this deployment lacks are not recorded for investigations yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/not recorded for investigations yet/)).not.toBeInTheDocument()
     step(2)
     expect(screen.getByText('2 decisions · no step limit on this kind')).toBeInTheDocument()
     expect(limit('Budget')).toBe('Budget$3.00 of $10.00')
+  })
+
+  it('investigate: a capability this deployment could not bind is a blind spot beside the failed dispatches', async () => {
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({
+      data: { run_kind: 'investigate', decisions: [{ iteration: 1, action: 'stop', rationale: 'a', cost_usd: 1, calls: [] }] },
+    } as never)
+    const d = {
+      run_id: 'run-2b', status: 'completed', workflow_name: 'Alert triage',
+      projection: {
+        run_kind: 'investigate', budgets: { max_cost_usd: 10 }, cost_usd: 1,
+        unbound: [{ capability: 'get_finding', reason: 'no tool in this deployment answers get_finding' }],
+        gaps: [{ agent_id: 'lead', failure_reason: 'the gateway hung up', query_intent: 'who logged in' }],
+      },
+    } as unknown as WfRunDetail
+    render(<WatchRun d={d} onBack={vi.fn()} />)
+
+    expect(await screen.findByText('get_finding')).toBeInTheDocument()
+    expect(screen.getByText('no tool in this deployment answers get_finding')).toBeInTheDocument()
+    expect(screen.getByText('who logged in')).toBeInTheDocument()
+    expect(screen.queryByText('None so far.')).not.toBeInTheDocument()
   })
 
   it('root cause on an agent service with no replay: budget from its ceiling, notices and failed searches as blind spots', async () => {
@@ -211,11 +231,25 @@ describe('what each kind of run says where it has nothing', () => {
     expect(screen.queryByText('None so far.')).not.toBeInTheDocument()
   })
 
-  it('compose: every panel says it is not recorded or not tracked', () => {
-    render(<WatchRun d={{ run_id: 'run-4', status: 'completed', workflow_name: 'Compose', projection: { results: [] } } as unknown as WfRunDetail} onBack={vi.fn()} />)
+  it('compose: a phase tool the deployment lacks is a blind spot; the other panels say not tracked', () => {
+    const d = {
+      run_id: 'run-4', status: 'completed', workflow_name: 'Compose',
+      projection: { run_kind: 'compose', results: [], unbound: [{ capability: 'acme_edr_isolate', reason: 'Contain: no tool in this deployment answers acme_edr_isolate' }] },
+    } as unknown as WfRunDetail
+    render(<WatchRun d={d} onBack={vi.fn()} />)
     expect(screen.getAllByText('Not tracked for this kind.')).toHaveLength(3)
     expect(screen.getByText(NO_EXPLANATIONS)).toBeInTheDocument()
     expect(screen.getByText(NO_REVIEWER)).toBeInTheDocument()
+    expect(screen.getByText('acme_edr_isolate')).toBeInTheDocument()
+    expect(screen.getByText(/Contain: no tool in this deployment/)).toBeInTheDocument()
+  })
+
+  it('compose with every tool bound says none so far; a run from before the kind was recorded still says not recorded', () => {
+    const bound = { run_id: 'run-5', status: 'completed', workflow_name: 'Compose', projection: { run_kind: 'compose', results: [], unbound: [] } } as unknown as WfRunDetail
+    const { unmount } = render(<WatchRun d={bound} onBack={vi.fn()} />)
+    expect(screen.getByText('None so far.')).toBeInTheDocument()
+    unmount()
+    render(<WatchRun d={{ ...bound, projection: { results: [] } } as unknown as WfRunDetail} onBack={vi.fn()} />)
     expect(screen.getByText('Not recorded for this kind of run yet.')).toBeInTheDocument()
   })
 })
