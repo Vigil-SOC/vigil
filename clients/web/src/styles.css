@@ -1657,45 +1657,6 @@
       font-weight: 500;
    }
 
-   .detail-body .case-needs {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-   }
-
-   .detail-body .case-needs h3 {
-      margin: 0;
-      font-size: 15px;
-   }
-
-   .detail-body .case-needs-meta {
-      margin: 6px 0 0;
-      color: var(--tx-3);
-      font-size: 12px;
-   }
-
-   .detail-body .case-needs-reason {
-      margin: 8px 0 0;
-   }
-
-   .detail-body .case-needs-actions,
-   .detail-body .case-needs-reject {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: flex-start;
-   }
-
-   .detail-body .case-needs-actions {
-      margin-top: 12px;
-      align-items: center;
-   }
-
-   .detail-body .case-needs-reject textarea {
-      min-width: 220px;
-      flex: 1;
-   }
-
    .detail-body {
       flex: 1;
       min-height: 0;
@@ -1831,7 +1792,7 @@
       padding: 6px 0;
    }
 
-   .case-doors, .case-actions, .case-chips {
+   .case-actions, .case-chips {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
@@ -3977,6 +3938,67 @@
       border: 1px solid var(--line);
       border-radius: 7px;
       padding: 5px 11px;
+   }
+
+   .tl-date-filter {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+   }
+
+   .tl-date-filter-title {
+      color: var(--tx-3);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+   }
+
+   .tl-date-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--tx-3);
+      font-size: 11px;
+   }
+
+   .tl-date-field input {
+      height: 34px;
+      min-width: 132px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg-2);
+      color: var(--tx);
+      font: 12px var(--mono);
+      outline: none;
+   }
+
+   .tl-date-field input:focus {
+      border-color: var(--accent-line);
+   }
+
+   .tl-date-field input[aria-invalid='true'] {
+      border-color: var(--crit);
+   }
+
+   .tl-date-clear {
+      padding: 5px 8px;
+      border: none;
+      background: none;
+      color: var(--accent-2);
+      font-size: 12px;
+   }
+
+   .tl-date-clear:hover {
+      text-decoration: underline;
+   }
+
+   .tl-date-error {
+      flex-basis: 100%;
+      color: var(--crit);
+      font-size: 11px;
    }
 
    .tl-iconbtn {
