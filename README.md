@@ -420,6 +420,10 @@ sh scripts/vigil-support/vigil-support.sh --mode helm [--release NAME --namespac
 Vigil Desktop shows the exact command for its install under **Support Bundle Command…** in the tray menu.
 
 Re-run with `sudo` to include sources that need elevation (some system logs).
+Run with `sudo`, it examines the same install, State Directory and container
+runtime the invoking user would, and the bundle belongs to the invoking user.
+`sudo` resets `VIGIL_DIR`, so for a non-default State Directory pass
+`--state-dir` (or run `sudo --preserve-env=VIGIL_DIR`).
 
 > DATA NOTICE: this bundle holds information from this machine: its hostname,
 > the full process list with command lines, system logs and disk usage. Known
