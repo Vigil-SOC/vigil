@@ -119,7 +119,29 @@ def _by_id(payload: dict) -> dict[int, dict]:
     return {row["id"]: row for row in payload["rows"]}
 
 
+def _counts() -> dict:
+    return triage_payload(now=NOW, day=DAY)["counts"]
+
+
+def _added(before: dict, after: dict) -> dict:
+    """What a test's own rows added to ``counts``.
+
+    ``counts`` covers the whole intake table, and the database is shared with
+    every other DB-backed suite, so rows they leave behind are in both reads
+    and cancel out here.
+    """
+    added = {"total": after["total"] - before["total"]}
+    for key in ("kind", "source", "state"):
+        added[key] = {
+            name: n - before[key].get(name, 0)
+            for name, n in after[key].items()
+            if n != before[key].get(name, 0)
+        }
+    return added
+
+
 def test_five_state_words_and_an_investigation_id_with_no_door():
+    before = _counts()
     _case("tr-case-1")
     _investigation("tr-inv-ask", "incident-response")
     _finding(
@@ -225,10 +247,12 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
 
     assert all("tr-" not in row["state_label"] for row in payload["rows"])
     counts = payload["counts"]
-    assert counts["total"] == len(payload["rows"])
-    assert counts["state"] == {"queued": 1, "launched": 3, "merged": 2, "expired": 1}
-    assert counts["kind"] == {"detection": 4, "schedule": 2, "human_ask": 1}
-    assert counts["source"] == {"splunk": 4, "Schedule": 2, "Ask": 1}
+    assert counts["total"] == sum(counts["state"].values())
+    added = _added(before, counts)
+    assert added["total"] == 7
+    assert added["state"] == {"queued": 1, "launched": 3, "merged": 2, "expired": 1}
+    assert added["kind"] == {"detection": 4, "schedule": 2, "human_ask": 1}
+    assert added["source"] == {"splunk": 4, "Schedule": 2, "Ask": 1}
 
     filtered = triage_payload(now=NOW, day=DAY, state="queued")
     assert filtered["counts"] == counts
@@ -320,6 +344,7 @@ def test_zero_arrival_day_leaves_the_pickup_share_empty():
 
 def test_source_filter_keeps_an_older_row_the_cap_would_drop():
     """``?source=`` applies before the 200 cap."""
+    before = _counts()
     _finding(
         "tr-kept-f", "low", data_source="tr-kept", created_at=NOW - timedelta(days=2)
     )
@@ -350,10 +375,11 @@ def test_source_filter_keeps_an_older_row_the_cap_would_drop():
     filtered = triage_payload(now=NOW, day=DAY, source="tr-kept")
     assert [row["id"] for row in filtered["rows"]] == [kept]
     # counts see the rows the cap drops, and the filters leave them alone
-    counts = triage_payload(now=NOW, day=DAY)["counts"]
-    assert counts["total"] == ROW_CAP + 1
-    assert counts["source"] == {"tr-kept": 1, "tr-other": ROW_CAP}
-    assert counts["state"] == {"expired": ROW_CAP + 1}
+    counts = _counts()
+    added = _added(before, counts)
+    assert added["total"] == ROW_CAP + 1
+    assert added["source"] == {"tr-kept": 1, "tr-other": ROW_CAP}
+    assert added["state"] == {"expired": ROW_CAP + 1}
     assert filtered["counts"] == counts
     for narrow in ({"kind": "schedule"}, {"state": "queued"}):
         assert triage_payload(now=NOW, day=DAY, **narrow)["counts"] == counts
