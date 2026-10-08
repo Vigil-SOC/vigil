@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
+import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
 import {
   MCP_CATEGORIES,
@@ -40,7 +41,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
   const [busy, setBusy] = useState<string | null>(null)
-  const [builderOpen, setBuilderOpen] = useState(false)
+  // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
+  const [customCount, setCustomCount] = useState<number | null>(null)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
   const { error, reload: reloadMcp, setServerEnabled } = mcp
   const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = int
@@ -51,9 +53,23 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     reloadInt()
   }
 
+  const reloadCustom = useCallback(async () => {
+    try {
+      const r = await fetch(`${basePath}/api/custom-integrations/list`, { credentials: 'include' })
+      const d = r.ok ? await r.json() : null
+      setCustomCount(Array.isArray(d?.integrations) ? d.integrations.length : null)
+    } catch {
+      setCustomCount(null)
+    }
+  }, [])
+
   useEffect(() => {
     setTab(requested)
   }, [requested])
+
+  useEffect(() => {
+    reloadCustom()
+  }, [reloadCustom])
 
   const connected = useMemo(
     () => rows.filter((r) => r.connected).sort((a, b) => categoryRank(a.name) - categoryRank(b.name)),
@@ -66,7 +82,6 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   )
   const entries = useMemo(() => buildCatalog(catalog, rows, connectedIds), [catalog, rows, connectedIds])
   const available = entries.filter((e) => !e.connected).length
-  const customCount = catalog.filter((i) => (i as { is_custom?: boolean }).is_custom).length
   const healthy = connected.filter((r) => r.level === 'good').length
 
   // gate M: MCP server on/off (agent tools)
@@ -97,7 +112,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const tabs: [IntegrationsTab, string, number | null][] = [
     ['connected', 'Connected', ready ? connected.length : null],
     ['add', 'Add integration', ready ? available : null],
-    ['custom', 'Custom', ready ? customCount : null],
+    ['custom', 'Custom', customCount],
     ['surface', 'Vigil MCP server', null],
   ]
   const first = attention[0]
@@ -152,8 +167,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         ))}
       </div>
 
-      {tab !== 'surface' && phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
-      {tab !== 'surface' && phase === 'error' && (
+      {(tab === 'connected' || tab === 'add') && phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
+      {(tab === 'connected' || tab === 'add') && phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
       )}
 
@@ -243,28 +258,19 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         />
       )}
 
-      {tab === 'custom' && ready && (
-        <EmptyState
-          compact
-          icon="plus"
-          title={customCount ? `${customCount} custom integration${customCount === 1 ? '' : 's'} saved` : 'No custom integrations yet'}
-          body="Describe a tool Vigil does not ship with and it becomes an MCP server agents can use."
-          primary={{ label: 'Build custom integration', onClick: () => setBuilderOpen(true), icon: 'plus' }}
-        />
-      )}
-
-      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
-
-      {builderOpen && (
+      {/* mounted on every tab so a draft survives a visit elsewhere */}
+      <div hidden={tab !== 'custom'}>
         <CustomIntegrationBuilder
-          onClose={() => setBuilderOpen(false)}
-          onSave={(id) => {
-            setBuilderOpen(false)
-            notify('ok', `Custom integration "${id}" saved. Restart the MCP servers to load it.`)
+          notify={notify}
+          onWrote={reloadCustom}
+          onSaved={() => {
+            reloadCustom()
             reload()
           }}
         />
-      )}
+      </div>
+
+      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
 
       {wizardFor && (
         <IntegrationWizard
