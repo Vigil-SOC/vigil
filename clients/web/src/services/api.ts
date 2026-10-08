@@ -1196,10 +1196,15 @@ export interface FederationSourceView {
   interval_seconds: number
   max_items: number
   min_severity: string | null
+  cursor: Record<string, unknown> | null
   last_poll_at: string | null
   last_success_at: string | null
   last_error: string | null
   consecutive_errors: number
+  /** Seconds since the last successful poll; null until one has succeeded. Absent on a PATCH response. */
+  lag_seconds?: number | null
+  /** The server's read of "has not kept up with interval_seconds". Absent on a PATCH response. */
+  quiet?: boolean
   is_configured: boolean
   default_interval_seconds: number
 }

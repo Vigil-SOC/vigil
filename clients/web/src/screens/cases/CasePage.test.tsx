@@ -285,6 +285,34 @@ describe('case page', () => {
     expect(screen.getByText('sent to the reviewer')).toBeInTheDocument()
   })
 
+  it('keeps reading the hunt run once a newer root-cause run is on the case, and links to it', async () => {
+    huntCase('case-handoff')
+    const run = (workflow_id: string, run_id: string) => ({ ...investigation('completed', false, run_id), workflow_id })
+    testState.cases[0].investigations = [run('root-cause-analysis', 'run-rca'), run('threat-hunt', 'run-hunt')]
+    testState.runs['run-hunt'] = {
+      hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
+    }
+    renderCase('case-handoff')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim h')).toBeInTheDocument()
+    expect(workflowApi.getRun).not.toHaveBeenCalledWith('run-rca')
+    expect(screen.getByRole('link', { name: 'Open run run-rca' })).toHaveAttribute('href', '/workflows?run=run-rca')
+    expect(screen.getAllByText('Handed off').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/handed_off/)).not.toBeInTheDocument()
+  })
+
+  it('shows the Handed off pill alone while no root-cause run exists', async () => {
+    huntCase('case-no-rca')
+    testState.cases[0].investigations = [{ ...investigation('executing', true, 'run-hunt'), workflow_id: 'threat-hunt' }]
+    testState.runs['run-hunt'] = {
+      hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
+    }
+    renderCase('case-no-rca')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim h')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Open run/ })).not.toBeInTheDocument()
+  })
+
   it('shows an empty, loading and failed Explanations tab', async () => {
     huntCase('case-empty-expl')
     testState.runs['run-case-empty-expl'] = { hunt: { ...HUNT, hypotheses: [] } }
