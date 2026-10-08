@@ -371,6 +371,50 @@ export interface OrchestratorBound {
 
 export type OrchestratorBounds = Partial<Record<keyof OrchestratorConfig, OrchestratorBound>>
 
+/**
+ * GET /config/orchestrator carries profiles, defaults and bounds for the screens.
+ * They are not stored.
+ */
+export function stripOrchestratorProfiles<T>(
+  data: T & { profiles?: unknown; defaults?: unknown; bounds?: unknown },
+): T {
+  const rest = { ...data }
+  delete rest.profiles
+  delete rest.defaults
+  delete rest.bounds
+  return rest
+}
+
+const LIMIT_FIELDS = [
+  'max_cost_per_investigation',
+  'max_iterations_per_agent',
+  'max_runtime_per_investigation',
+  'max_concurrent_agents',
+  'max_total_hourly_cost',
+] as const satisfies readonly (keyof InvestigationProfileValues)[]
+
+export const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
+  LIMIT_FIELDS.some((field) => next[field] > prev[field])
+
+export const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
+  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
+    ([k, v]) => cfg[k] === v,
+  )
+
+/** Setup's fallback before the server answers; Settings shows the served `defaults`. */
+export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
+  enabled: true,
+  dry_run: false,
+  max_concurrent_agents: 3,
+  max_iterations_per_agent: 50,
+  max_runtime_per_investigation: 3600,
+  max_cost_per_investigation: 5.0,
+  max_total_hourly_cost: 20.0,
+  loop_interval: 60,
+  stale_threshold: 300,
+  workdir_base: 'data/investigations',
+}
+
 export interface OrchestratorStatus {
   enabled?: boolean
   active_agents?: number

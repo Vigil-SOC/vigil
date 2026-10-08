@@ -13,6 +13,7 @@ import DataSourceDialog from './DataSourceDialog'
 import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
 import LimitsStep from './LimitsStep'
+import SummaryStep, { type SummaryTarget } from './SummaryStep'
 import { markSetupDismissed } from './setupDismissed'
 
 const STEPS = ['checks', 'data', 'ai', 'workflows', 'limits', 'summary'] as const
@@ -34,11 +35,11 @@ const STEP_COPY: Record<StepId, { title: string; desc: string }> = {
   },
   workflows: {
     title: 'Workflows',
-    desc: 'Playbooks already on this install. Nothing here is turned on or off.',
+    desc: 'Turn off any playbook you do not want. The first switch lets Vigil start them on new alerts.',
   },
   limits: {
     title: 'Limits and autonomy',
-    desc: 'Profiles are the default case limits. Assist or Act is the only setting this step saves.',
+    desc: 'A profile sets the default case limits. Assist or Act sets what may happen without asking.',
   },
   summary: {
     title: 'Summary',
@@ -59,7 +60,7 @@ const Shell = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
-function stepPanel(id: StepId, onAdvance: () => void) {
+function stepPanel(id: StepId, onAdvance: () => void, onChange: (target: SummaryTarget) => void) {
   switch (id) {
     case 'checks':
       return <SystemChecksStep />
@@ -72,11 +73,7 @@ function stepPanel(id: StepId, onAdvance: () => void) {
     case 'limits':
       return <LimitsStep />
     case 'summary':
-      return (
-        <p className="text-tx-2 text-sm">
-          You can use the console without a provider. Setup stays on the account menu.
-        </p>
-      )
+      return <SummaryStep onChange={onChange} />
     default: {
       const _exhaustive: never = id
       return _exhaustive
@@ -139,7 +136,7 @@ const SetupScreen = () => {
         </button>
       </header>
       <SettingsCard title={copy.title} desc={`${copy.desc} · ${index + 1} of ${STEPS.length}`}>
-        {stepPanel(step, advance)}
+        {stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))}
       </SettingsCard>
       <div className="flex justify-end gap-2 mt-5">
         <button className="btn ghost" onClick={advance}>

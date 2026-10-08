@@ -7,6 +7,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { ScrubField } from '../../shared/ScrubField'
 import { ConfirmDialog, Field, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import {
+  matchesProfile,
   useForceManualApproval,
   useOrchestrator,
   type InvestigationProfileValues,
@@ -17,7 +18,8 @@ import type { SectionProps } from './types'
 import { fmtCost } from '../../shared/cost'
 import IntentReportCard from './IntentReportCard'
 
-// Raising any of these needs a confirm; lowering applies at once.
+// Raising any of these needs a confirm; lowering applies at once. Settings also
+// guards stale_threshold, which Setup's profile picker never changes.
 const LIMIT_FIELDS = [
   'max_cost_per_investigation',
   'max_iterations_per_agent',
@@ -27,15 +29,10 @@ const LIMIT_FIELDS = [
   'stale_threshold',
 ] as const satisfies readonly (keyof OrchestratorConfig)[]
 
-type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
-
 const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
   LIMIT_FIELDS.some((field) => next[field] > prev[field])
 
-const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
-  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
-    ([k, v]) => cfg[k] === v,
-  )
+type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {

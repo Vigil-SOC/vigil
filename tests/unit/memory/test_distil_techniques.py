@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from core.memory.distil import Concluded, _conclusion_rows
+from core.memory.recall_contract import EPISODIC_PROSE_CAP
 
 pytestmark = pytest.mark.unit
 
@@ -53,3 +54,17 @@ def test_cited_techniques_land_on_the_verdict_row_only():
 def test_a_payload_without_the_field_yields_an_empty_list():
     verdicts, _ = _rows(_conclusion("h-1"))
     assert verdicts[0]["row"]["techniques"] == []
+
+
+def test_stored_prose_is_stripped_of_control_characters_and_capped():
+    hostile = "ok\x1b[2J\tkeep\nlines" + "x" * (EPISODIC_PROSE_CAP * 3)
+    verdicts, gaps = _rows(
+        _conclusion("h-1", rationale=hostile, statement=hostile),
+        _conclusion("h-2", status="parked", evidence_count=0, rationale=hostile),
+    )
+
+    verdict = verdicts[0]["row"]
+    assert verdict["rationale"].startswith("ok[2J\tkeep\nlines")
+    assert "\x1b" not in verdict["rationale"]
+    assert len(verdict["rationale"]) == len(verdict["statement"]) == EPISODIC_PROSE_CAP
+    assert len(gaps[0]["reason"]) == EPISODIC_PROSE_CAP
