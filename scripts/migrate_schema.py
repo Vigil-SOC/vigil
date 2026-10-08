@@ -489,6 +489,17 @@ def add_federation_dropped_total(conn):
     """))
 
 
+# Machine logins (Medic's gateway): exempt from lockout, Viewer only (D2-17).
+@migration("Add users.service_account")
+def add_users_service_account(conn):
+    if not _table_exists(conn, 'users'):
+        return
+    conn.execute(text("""
+        ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS service_account BOOLEAN NOT NULL DEFAULT FALSE;
+    """))
+
+
 @migration("Set case_templates.usage_count server default to 0")
 def set_case_template_usage_count_default(conn):
     if not _table_exists(conn, 'case_templates'):
