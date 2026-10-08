@@ -25,12 +25,16 @@ import os
 import re
 import subprocess
 import time
+from datetime import datetime, timedelta
 
 import pytest
 
+from core.platform.medic_status import DOWN_AFTER_S
 from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE
 from tests.medic_compose.test_enable_live import INSTALL, OVERRIDE, Stack
 
+# One status sample = `docker exec backend python -c …` (a few seconds) + 3 s.
+SAMPLE_SLACK_S = 10
 PROJECT = os.environ.get("VIGIL_MEDIC_LAST_SEEN_PROJECT", "medic-s9")
 
 pytestmark = [
@@ -123,10 +127,16 @@ def running(stack, off):
 def killed(stack, running):
     stack.compose("stop", "medic", medic=True)
     t_kill = time.monotonic()
+    # Postgres's clock, the one the status rule reads (V2-3), once Medic is gone.
+    stopped_at = _ts(stack.sql("SELECT now()::text"))
     stack.wait(lambda: _status(stack), lambda o: o == "down", timeout=420)
     elapsed = time.monotonic() - t_kill
     _log(stack, f"down after {elapsed:.0f}s")
-    return {"elapsed": elapsed, "row": stack.sql(ROW)}
+    return {"elapsed": elapsed, "stopped_at": stopped_at, "row": stack.sql(ROW)}
+
+
+def _ts(text: str) -> datetime:
+    return datetime.fromisoformat(text.strip())
 
 
 def test_flag_off_reads_off_and_writes_nothing(off) -> None:
@@ -171,7 +181,15 @@ def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
 
 
 def test_killed_medic_reads_down_within_270_s(killed) -> None:
-    assert killed["elapsed"] <= 270, killed
+    # Down begins at the last answer + DOWN_AFTER_S. Measured on Postgres's
+    # clock against the moment Medic was gone, that must be within 270 s.
+    last_seen = _ts(killed["row"].split("|")[0])
+    down_at = last_seen + timedelta(seconds=DOWN_AFTER_S)
+    assert DOWN_AFTER_S == 270
+    assert down_at - killed["stopped_at"] <= timedelta(seconds=270), killed
+    # And the backend really reads Down then: observed on the wall clock, late
+    # by at most one sample (a `docker exec python` start-up plus the 3 s wait).
+    assert killed["elapsed"] <= 270 + SAMPLE_SLACK_S, killed
     _, failed, kind, _ = killed["row"].split("|")
     assert failed != "-" and kind == "refused"
 
