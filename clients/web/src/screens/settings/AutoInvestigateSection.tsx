@@ -11,33 +11,18 @@ import {
   ToggleRow,
 } from '../../shared/ui'
 import {
+  matchesProfile,
   ORCHESTRATOR_DEFAULTS,
+  raisesLimit,
   useForceManualApproval,
   useOrchestrator,
-  type InvestigationProfileValues,
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
 import { fmtCost } from '../../shared/cost'
 import IntentReportCard from './IntentReportCard'
 
-const LIMIT_FIELDS = [
-  'max_cost_per_investigation',
-  'max_iterations_per_agent',
-  'max_runtime_per_investigation',
-  'max_concurrent_agents',
-  'max_total_hourly_cost',
-] as const satisfies readonly (keyof InvestigationProfileValues)[]
-
 type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
-
-const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
-  LIMIT_FIELDS.some((field) => next[field] > prev[field])
-
-const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
-  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
-    ([k, v]) => cfg[k] === v,
-  )
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {

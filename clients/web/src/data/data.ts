@@ -26,7 +26,7 @@ export interface NavGate {
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
   ['home', 'Home', 'home'],
   ['graph', 'Overview', 'overview'],
-  ['clock', 'Triage', 'triage'],
+  ['clock', 'Triage queue', 'triage'],
   ['grid', 'Dashboard', 'dashboard'],
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
@@ -95,7 +95,7 @@ export interface CaseRow {
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   overview: ['Overview', 'What arrived today and where it went'],
-  triage: ['Triage', 'What intake did with what arrived'],
+  triage: ['Triage queue', 'What intake did with what arrived'],
   dashboard: ['Dashboard', 'Security operations overview'],
   home: ['Home', 'What needs a person'],
   cases: ['Cases', 'Manage investigation cases'],

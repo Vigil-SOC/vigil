@@ -195,6 +195,11 @@ def _declare(
     return declared
 
 
+def granted_ids(wanted: Optional[List[str]]) -> List[str]:
+    """Ids of the built-in tools a turn with this tool list will declare."""
+    return [t["id"] for t in _declare(wanted)]
+
+
 # The provider names its own ceiling when it refuses the array, and that number
 # is the only one used: nothing is configured or stored per model, and a
 # provider that has no ceiling, or says it another way, never reaches this.

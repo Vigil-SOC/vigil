@@ -96,9 +96,6 @@ def add_source(
         return {"success": True, "source": source}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error adding source: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/sources/{source_id}")
@@ -149,9 +146,6 @@ async def update_source(
         return {"success": True, "source": source}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error updating source: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/update-all")

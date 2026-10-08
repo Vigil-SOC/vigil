@@ -48,6 +48,7 @@ export interface RootCauseReport {
 const PERMIT_ID = "cp-root-cause-permit";
 const PERMIT_QUESTION = "Permit a root-cause trace of this finding?";
 const NO_TELEMETRY = "No telemetry_search tool is bound, so this run cannot investigate.";
+const NO_TELEMETRY_NOTICE = "This deployment has no telemetry search, so the trace could not look.";
 const UNPROVABLE =
   "A link or an origin cannot be proved on this deployment: the bound telemetry is not splunk_execute on the in-repo server.";
 
@@ -75,9 +76,12 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
   if (parked !== null) return parked;
 
   const telemetry = spec.tools.filter((tool) => tool["provides"] === "telemetry_search");
-  if (telemetry.length === 0) return end(harness, options, "completed", NO_TELEMETRY, NO_TELEMETRY);
+  if (telemetry.length === 0) {
+    await noticeOnce(harness, options, NO_TELEMETRY_NOTICE);
+    return end(harness, options, "completed", NO_TELEMETRY, NO_TELEMETRY);
+  }
 
-  if (!telemetry.some((tool) => tool.id === PROVER_TOOL)) await noticeOnce(harness, options);
+  if (!telemetry.some((tool) => tool.id === PROVER_TOOL)) await noticeOnce(harness, options, UNPROVABLE);
 
   const scoped: Harness<RootCauseKinds> = {
     ...harness,
@@ -219,11 +223,11 @@ async function stopped(harness: Harness<RootCauseKinds>, options: RootCauseOptio
   return end(harness, options, "aborted", reason, deliver(openSummary(steps), steps, noticeText(events)));
 }
 
-async function noticeOnce(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<void> {
+async function noticeOnce(harness: Harness<RootCauseKinds>, options: RootCauseOptions, text: string): Promise<void> {
   const events = await harness.state.read(options.run_id);
   if (events.some((event) => event.kind === "notice")) return;
   await append(harness.state, options.run_id, [
-    { run_id: options.run_id, run_kind: "root_cause", kind: "notice", payload: { text: UNPROVABLE } },
+    { run_id: options.run_id, run_kind: "root_cause", kind: "notice", payload: { text } },
   ]);
 }
 

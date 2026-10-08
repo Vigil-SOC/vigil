@@ -10,7 +10,12 @@ from fastapi.testclient import TestClient
 
 from core.findings.alert_outcomes import terminal_states_today
 from core.findings.arrival_counts import arrivals_today_by_source
-from core.findings.overview import FEED_LIMIT, completion_level, overview_payload
+from core.findings.overview import (
+    FEED_LIMIT,
+    completion_level,
+    overview_alert,
+    overview_payload,
+)
 from core.response.approval_service import pending_approval_case_ids
 from core.storage.models import (
     ApprovalAction,
@@ -496,6 +501,50 @@ def test_feed_source_link_and_case_follow_the_existing_resolvers():
     assert by_id["ov-http"]["case_id"] == "ov-c-link"
     assert by_id["ov-nolink"]["source_link"] is None
     assert by_id["ov-nolink"]["case_id"] is None
+
+
+def test_alert_read_matches_the_feed_item_and_reaches_past_the_feed(client):
+    base = datetime(2999, 3, 1)
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                _case("ov-c-one", "open", base),
+                _finding(
+                    "ov-old",
+                    base - timedelta(days=1),
+                    evidence_links=[{"ref": "https://console.example/old"}],
+                ),
+                _finding("ov-marked-one", base, noise_marked_at=base),
+                _finding("ov-in-feed", base + timedelta(hours=2), description="fresh"),
+            ]
+        )
+        session.add_all(
+            _finding(f"ov-fill-{i:02d}", base + timedelta(minutes=i + 1))
+            for i in range(FEED_LIMIT)
+        )
+        session.flush()
+        _link(session, "ov-c-one", "ov-old")
+    feed = {r["finding_id"]: r for r in overview_payload(day=base.date(), now=base)["feed"]}
+    assert "ov-old" not in feed and "ov-marked-one" not in feed
+    assert all(row["noise_marked"] is False for row in feed.values())
+
+    # in the feed: same item as the feed row
+    body = client.get("/api/overview/alerts/ov-in-feed").json()
+    assert body == feed["ov-in-feed"]
+    # older than the feed cap: still readable, with link and case
+    old = client.get("/api/overview/alerts/ov-old").json()
+    assert old["source_link"] == "https://console.example/old"
+    assert old["case_id"] == "ov-c-one"
+    assert old["noise_marked"] is False
+    # noise-marked: not skipped, and says so
+    assert client.get("/api/overview/alerts/ov-marked-one").json()["noise_marked"] is True
+    assert overview_alert("ov-marked-one")["terminal_state"] == "waiting"
+
+
+def test_alert_read_404_names_the_id(client):
+    response = client.get("/api/overview/alerts/ov-missing")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Alert ov-missing not found."
 
 
 def test_overview_route_marks_unmeasured_nodes(client):
