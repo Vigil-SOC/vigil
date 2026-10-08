@@ -187,7 +187,13 @@ def _get_user(session: Session, user_id: str) -> Optional[User]:
 
 
 def _has_any_user(session: Session) -> bool:
-    return session.query(User.user_id).first() is not None
+    # A service account (Medic's gateway) can't sign anyone in, so it must not
+    # close bootstrap: enabling Medic before the first sign-in would otherwise
+    # leave the install with no way to make an admin.
+    return (
+        session.query(User.user_id).filter(User.service_account.is_(False)).first()
+        is not None
+    )
 
 
 def _user_payload(user: User, session: Session) -> dict:

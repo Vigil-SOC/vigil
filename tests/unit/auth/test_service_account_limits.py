@@ -157,3 +157,16 @@ def test_a_normal_user_can_still_be_promoted(admin):
     users_router._apply_role_change(session, admin, "user-1", "role-analyst")
 
     assert user.role_id == "role-analyst"
+
+
+def test_email_change_is_refused_for_a_service_account(admin):
+    """A changed email is the first step to a password reset (review N5)."""
+    user = _target(service_account=True)
+    session = _session_with(user, "role-viewer")
+    request = users_router.UpdateUserRequest(email="attacker@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        users_router._apply_user_update(session, admin, "user-1", request)
+
+    assert exc.value.status_code == 403
+    assert user.email == "someone@example.com"
