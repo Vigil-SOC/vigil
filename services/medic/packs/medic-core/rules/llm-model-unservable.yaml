@@ -1,6 +1,7 @@
 # L-1.b/c/d/e: the model Vigil sends can't serve chat: no key supports it, it's an
 # embedding model, it's retired, or it was removed. Seen in the worker's error dict
 # text (args[0], so untrusted). I1 live eval cell L-1.c (embedding model assigned).
+# A bare NotFoundError can also be a wrong BIFROST_URL path; the fix text says so.
 apiVersion: medic.rules/v1
 kind: Rule
 id: llm.model-unservable
@@ -28,4 +29,5 @@ advice:
     Open Settings, AI Config. Assign chat_default and triage to a chat-capable
     model that a provider with a working key serves. Then open Settings, LLM
     providers and check each active provider's default model is current and
-    chat-capable (not an embedding model).
+    chat-capable (not an embedding model). If the models look right, check that
+    BIFROST_URL points at Bifrost itself: a wrong path also answers not found.
