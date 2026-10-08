@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { format } from 'date-fns'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
@@ -213,7 +212,7 @@ describe('case page', () => {
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     expect(within(now).getByText('who logged in')).toBeInTheDocument()
-    const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
+    const clock = '09:14' // UTC, whatever the machine's zone
     expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
@@ -525,7 +524,7 @@ describe('case page', () => {
     const table = await screen.findByRole('table', { name: 'Agents' })
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(2)
-    const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
+    const clock = '09:14' // UTC, whatever the machine's zone
     for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'executing']) {
       expect(within(rows[0]).getByText(text)).toBeInTheDocument()
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { format } from 'date-fns'
+import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
 import { FilterChip } from '../../shared/FilterChip'
@@ -71,16 +71,14 @@ function Mark({ text }: { text: string }) {
 /** "Closed <time> by <who>"; a missing or unparseable time is dropped. */
 function closedBy(closure: CaseClosureView | null): string {
   if (!closure) return ''
-  const at = closure.closed_at ? new Date(closure.closed_at) : null
-  const time = at && !Number.isNaN(at.getTime()) ? ` ${format(at, 'MMM d, yyyy · HH:mm')}` : ''
+  const at = utcDayClock(closure.closed_at)
+  const time = at ? ` ${at}` : ''
   const who = closure.closed_by ? ` by ${closure.closed_by}` : ''
   return time || who ? `Closed${time}${who}` : ''
 }
 
 function clock(value: string | null | undefined): string {
-  if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'HH:mm')
+  return utcClock(value) ?? '—'
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -1066,8 +1064,7 @@ const LATER_TIP = 'Coming in a later release'
 
 /** "Hunt h-12 · Jun 15, 2026": the investigation a recalled row concluded in. */
 function provenance(p: RecallProvenance): string {
-  const d = new Date(p.concludedAt)
-  const day = p.concludedAt && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy') : ''
+  const day = utcDay(p.concludedAt) ?? ''
   return [[KIND_LABEL[p.kind] ?? p.kind, p.id].filter(Boolean).join(' '), day].filter(Boolean).join(' · ')
 }
 
