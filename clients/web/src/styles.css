@@ -4712,8 +4712,8 @@
       align-items: center;
       gap: 8px;
       min-width: 0;
-      height: 40px;
-      padding: 0 10px;
+      min-height: 40px;
+      padding: 4px 10px;
       background: var(--bg1);
       border: 1px solid var(--ln1);
       border-radius: 10px;
@@ -4723,7 +4723,7 @@
       text-align: left;
       cursor: pointer;
    }
-   .int-step > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+   .int-step > span:last-child { min-width: 0; line-height: 1.25; overflow-wrap: anywhere; }
    .int-step[aria-selected="true"] { background: var(--ac-bg); border-color: var(--ac); color: var(--tx0); }
    .int-step:disabled { opacity: .5; cursor: default; }
    .int-step-n {
