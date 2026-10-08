@@ -10,6 +10,7 @@ and `run` logs why and exits 0.
 ```
 python -m services.medic run     # the service (below)
 python -m services.medic check   # exit 0 only if the heartbeat is fresh (< 120 s) and says running (or degraded)
+python -m services.medic check --ready  # exit 0 only if the API answers the status op (Helm readiness)
 ```
 
 `run` works in 15 s cycles: the sensors that are due read (`http_ready` on the
@@ -47,9 +48,11 @@ other X2 operations are G3's. A listener that can't start (no key, port taken)
 is logged once and retried every minute; it never stops Medic or fails `check`.
 
 On Helm, `run` first connects to the control (retried for up to a minute while
-it starts), then tries the probe target once. Only "control connected, target
-dropped" proves NetworkPolicy is enforced; anything else, and Medic logs why
-and exits **3** before opening its store (A3-3).
+it starts), then tries the probe target. Only "control connected, target
+dropped or refused" proves NetworkPolicy is enforced (a plugin set to REJECT
+refuses, S7-2); a refusal must hold for three tries 5 s apart, since a Service
+whose endpoints haven't appeared yet is refused too. Anything else, and Medic
+logs why and exits **3** before opening its store (A3-3).
 
 Data directory: `medic.db` (+ `-wal`, `-shm`), `medic.lock`, `instance_id`,
 `run/heartbeat`, `run/engine-state.json`, `run/starts.json` (restarts and the last
