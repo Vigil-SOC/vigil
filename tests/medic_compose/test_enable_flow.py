@@ -382,3 +382,36 @@ def test_a_secrets_only_rotate_is_finished_by_the_next_full_run(run) -> None:
     assert ["up", "-d", "--force-recreate", "medic", "medic-gateway"] in steps[
         last_exec:
     ]
+
+
+# --- V2: the backend polls Medic with api_key --------------------------------
+
+RECREATE_BACKEND = ["up", "-d", "--force-recreate", "backend"]
+
+
+def test_a_new_api_key_recreates_the_backend_before_it_is_used(run) -> None:
+    assert run().returncode == 0
+    steps = [_sub(c) for c in run.compose_calls()]
+    # Before the account step and Medic, so the backend's key file is the new one.
+    assert steps.index(RECREATE_BACKEND) < steps.index(
+        ["up", "-d", "backend", "db-seed"]
+    )
+
+
+def test_a_rerun_with_the_same_key_leaves_the_backend_running(run) -> None:
+    assert run().returncode == 0
+    (run.fake / "calls").unlink()
+    assert run().returncode == 0
+    assert RECREATE_BACKEND not in [_sub(c) for c in run.compose_calls()]
+
+
+@pytest.mark.parametrize("how", ["rotate", "secrets-only-then-full"])
+def test_a_rotated_key_reaches_the_backend(run, how) -> None:
+    assert run().returncode == 0
+    (run.fake / "calls").unlink()
+    if how == "rotate":
+        assert run("--rotate").returncode == 0
+    else:
+        assert run("--secrets-only", "--rotate").returncode == 0
+        assert run().returncode == 0
+    assert RECREATE_BACKEND in [_sub(c) for c in run.compose_calls()]

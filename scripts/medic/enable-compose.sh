@@ -33,8 +33,9 @@
 #                             inside Vigil's ~/.vigil); compose reads the same.
 #   VIGIL_MEDIC_DOCKER_GID    the Docker socket's gid (default: found on Linux,
 #                             0 on Docker Desktop)
-#   VIGIL_MEDIC_COMPOSE_OVERRIDE  one more compose file, last on every command
-#                             (an operator's own override; the live tests' stubs)
+#   VIGIL_MEDIC_COMPOSE_OVERRIDE  more compose files, colon-separated, last on
+#                             every command (an operator's own override; the
+#                             live tests' stubs)
 # Vigil's own settings come from the repo .env, as for `docker compose
 # --env-file .env` (README; VIGIL_MEDIC_DOTENV names another file); variables
 # already in the environment win over it, and Medic's compose.env over both.
@@ -93,6 +94,10 @@ fi
 is_secret() {
     printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'
 }
+# X2's X-Medic-Key: 32 random bytes, base64url, no padding (the gateway's check).
+is_api_key() {
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+}
 is_username() {
     printf '%s' "$1" | grep -Eq '^medic-[a-z0-9]{12}$'
 }
@@ -111,19 +116,24 @@ write_private() {
 # `set -e` off in command substitutions, which would hide a failed write.
 # Plain variables, not an associative array: macOS ships bash 3.2.
 make_secret() {
-    local name="$1" file="$dir/$1" value
+    local name="$1" file="$dir/$1" value check=is_secret
+    [ "$name" = api_key ] && check=is_api_key
     if [ -s "$file" ] && [ "$rotate" = 0 ]; then
         # Unreadable here means it was handed to the container's uid (Linux).
-        if [ -r "$file" ] && ! is_secret "$(cat "$file")"; then
+        if [ -r "$file" ] && ! "$check" "$(cat "$file")"; then
             echo "error: $file isn't a secret this script wrote; re-run with --rotate" >&2
             exit 1
         fi
         made=kept
         return
     fi
-    # 256 bits as 64 hex characters: alphanumeric, so it survives any login form.
-    value="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
-    is_secret "$value" || {
+    if [ "$name" = api_key ]; then
+        value="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"
+    else
+        # 256 bits as 64 hex characters: alphanumeric, so it survives any login form.
+        value="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+    fi
+    "$check" "$value" || {
         echo "error: couldn't read 32 random bytes from /dev/urandom" >&2
         exit 1
     }
@@ -207,7 +217,10 @@ env_files=()
 [ -f "$dotenv" ] && env_files+=(--env-file "$dotenv")
 env_files+=(--env-file "$settings")
 override=()
-[ -n "${VIGIL_MEDIC_COMPOSE_OVERRIDE:-}" ] && override=(-f "$VIGIL_MEDIC_COMPOSE_OVERRIDE")
+IFS=: read -r -a extra_files <<< "${VIGIL_MEDIC_COMPOSE_OVERRIDE:-}"
+for f in ${extra_files[@]+"${extra_files[@]}"}; do
+    [ -n "$f" ] && override+=(-f "$f")
+done
 
 # Every compose call with Medic on: Vigil's .env, Medic's settings, the overlay.
 dcm() {
@@ -287,14 +300,21 @@ if [ "$secrets_only" = 0 ]; then
         exit 1
     fi
     dcm build medic medic-gateway medic-dockerproxy
+    # The backend polls Medic with api_key (V2). Compose bind-mounts the file, so
+    # a new one reaches a running backend only on a recreate.
+    if [ "$api_outcome" = created ] || [ -e "$dir/.recreate" ]; then
+        dcm up -d --force-recreate backend
+    fi
     # db-seed seeds the Viewer role; only a full `up` would start it otherwise.
     dcm up -d backend db-seed
     ensure_account
     if [ "$(uname -s)" = Linux ]; then
-        own="chown 10002:10002 /s/viewer_password && chown 10001:10001 /s/api_key"
+        # api_key: Medic (uid 10001) owns it; the backend (gid 1000) polls with it.
+        own="chown 10002:10002 /s/viewer_password && chown 10001:1000 /s/api_key && chmod 0640 /s/api_key"
         if [ "$(id -u)" = 0 ]; then
             chown 10002:10002 "$dir/viewer_password"
-            chown 10001:10001 "$dir/api_key"
+            chown 10001:1000 "$dir/api_key"
+            chmod 0640 "$dir/api_key"
         else
             # Anyone who can run this can already drive Docker as root; this just
             # avoids asking for sudo. --network none: the container needs nothing.
@@ -334,7 +354,7 @@ EOF
     if [ "$rotate" = 1 ]; then
         cat <<EOF2
 After --rotate the running containers still hold the old files: the full run
-changes the account's password and does
+changes the account's password, recreates the backend and does
   up -d --force-recreate medic medic-gateway
 EOF2
     fi

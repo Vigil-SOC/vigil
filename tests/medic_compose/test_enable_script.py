@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from services.medic_gateway.server import MEDIC_KEY
 from tests.medic_compose.compose import ENABLE, clean_env
 
 pytestmark = pytest.mark.unit
@@ -45,7 +46,12 @@ def test_generates_private_random_secrets(tmp_path) -> None:
         value = path.read_text()
         assert value.endswith("\n") and value.count("\n") == 1
         value = value.strip()
-        assert len(value) >= 40 and value.isalnum(), name
+        assert len(value) >= 40, name
+        if name == "api_key":
+            # X2: 32 random bytes, base64url; the gateway refuses any other shape.
+            assert MEDIC_KEY.fullmatch(value), value
+        else:
+            assert value.isalnum(), name
         values.append(value)
         # Never echoed: not in what the operator sees, not in a log they paste.
         assert value not in done.stdout and value not in done.stderr
@@ -149,3 +155,15 @@ def test_default_dir_is_outside_vigils_state_dir(tmp_path) -> None:
     assert done.returncode == 0, done.stderr
     assert (tmp_path / ".vigil-medic" / "secrets" / "viewer_password").is_file()
     assert not (tmp_path / ".vigil").exists()
+
+
+def test_a_hex_api_key_from_an_earlier_run_is_not_kept(tmp_path) -> None:
+    # V1 minted 64 hex characters, which the gateway rejects (X2 is base64url).
+    secrets = tmp_path / "s"
+    _run(tmp_path, secrets)
+    (secrets / "api_key").write_text("ab" * 32 + "\n")
+    done = _run(tmp_path, secrets)
+    assert done.returncode == 1
+    assert "--rotate" in done.stderr
+    assert _run(tmp_path, secrets, "--rotate").returncode == 0
+    assert MEDIC_KEY.fullmatch((secrets / "api_key").read_text().strip())
