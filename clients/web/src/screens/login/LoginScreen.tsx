@@ -61,7 +61,7 @@ export default function LoginScreen() {
     try {
       await bootstrapApi.create({ username: usernameOrEmail, email, password })
       await login(usernameOrEmail, password)
-      navigate('/dashboard')
+      navigate('/')
     } catch (err: any) {
       setError(requestErrorMessage(err, 'Could not create your account.'))
     } finally {
@@ -75,7 +75,7 @@ export default function LoginScreen() {
     setLoading(true)
     try {
       await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
-      navigate('/dashboard')
+      navigate('/')
     } catch (err: any) {
       if (err?.message === 'MFA_REQUIRED') {
         setShowMfa(true)

@@ -235,6 +235,10 @@
       background: var(--crit-dim);
    }
 
+   .user-pop-count {
+      color: var(--tx-3);
+   }
+
    .user-pop-mfa {
       display: flex;
       align-items: center;
