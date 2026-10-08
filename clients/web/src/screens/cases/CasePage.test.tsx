@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { format } from 'date-fns'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -35,6 +35,7 @@ vi.mock('../../services/api', () => ({
       return Promise.resolve({ data: { rows: testState.recordRows, run_id: null, investigation_id: null } })
     }),
     getComments: vi.fn(() => Promise.resolve({ data: { comments: [] } })),
+    addComment: vi.fn(),
     getTasks: vi.fn(() => Promise.resolve({ data: { tasks: [] } })),
     getEvidence: vi.fn(() => Promise.resolve({ data: { evidence: [] } })),
     getIOCs: vi.fn(() => Promise.resolve({ data: { iocs: [] } })),
@@ -42,7 +43,7 @@ vi.mock('../../services/api', () => ({
   },
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
-    getRun: vi.fn((id: string) => Promise.resolve({ data: testState.runs[id] ?? {} })),
+    getRun: vi.fn((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })),
     verifyRun: vi.fn(),
   },
   orchestratorApi: { exportInvestigation: vi.fn() },
@@ -90,8 +91,8 @@ const HUNT = {
     { query_intent: 'read the proxy log', action: 'QUERY', worker_agent_id: 'network_analyst', iteration: 1, created_at: '2026-06-15T09:05:00Z' },
   ],
   hypotheses: [
-    { hypothesis_id: 'h1', statement: 'The host is owned', status: 'disproven', supports: 0, weakens: 2, resolution_reason: null },
-    { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null },
+    { hypothesis_id: 'h1', statement: 'The host is owned', status: 'disproven', supports: 0, weakens: 2, resolution_reason: 'contradicted by telemetry', provenance: 'operator' },
+    { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null, provenance: '' },
   ],
   evidence: [
     { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
@@ -216,8 +217,16 @@ describe('case page', () => {
     expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
-    expect(await screen.findByText('ruled out')).toBeInTheDocument()
-    expect(screen.getByText('forming')).toBeInTheDocument()
+    expect(await screen.findByText('Ruled out')).toBeInTheDocument()
+    expect(screen.getByText('Forming')).toBeInTheDocument()
+    expect(screen.getByText('contradicted by telemetry')).toBeInTheDocument()
+    expect(screen.getByText('Added by you')).toBeInTheDocument()
+    expect(screen.getAllByText(/^Added by/)).toHaveLength(1)
+    expect(screen.getAllByText('0 for')).toHaveLength(2)
+    expect(screen.getByText('2 against')).toBeInTheDocument()
+    for (const name of ['+ Add an explanation', 'Rule one out']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
 
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('no login')).toBeInTheDocument()
@@ -225,6 +234,79 @@ describe('case page', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
     const latency = await screen.findByRole('columnheader', { name: 'Latency' })
     expect(within(latency.closest('table') as HTMLElement).getByText('—')).toBeInTheDocument()
+  })
+
+  const huntCase = (id: string) => {
+    testState.cases = [{
+      case_id: id,
+      title: 'Explanations case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, `run-${id}`)],
+    }]
+  }
+
+  it('shows every explanation word and provenance on the Explanations tab', async () => {
+    huntCase('case-words')
+    const hyp = (hypothesis_id: string, status: string, supports: number, weakens: number, provenance: string, resolution_reason: string | null = null) =>
+      ({ hypothesis_id, statement: `claim ${hypothesis_id}`, status, supports, weakens, resolution_reason, provenance })
+    testState.runs['run-case-words'] = {
+      hunt: {
+        ...HUNT,
+        hypotheses: [
+          hyp('a', 'proven', 3, 0, 'hunt_spec', 'confirmed by the hash'),
+          hyp('b', 'active', 2, 0, 'operator'),
+          hyp('c', 'active', 0, 0, 'base_rate'),
+          hyp('d', 'active', 1, 1, 'deployment_gap'),
+          hyp('e', 'disproven', 0, 2, 'mystery_token'),
+          hyp('f', 'inconclusive', 0, 0, ''),
+          hyp('g', 'parked', 0, 0, '', 'waiting on logs'),
+          hyp('h', 'handed_off', 0, 0, '', 'sent to the reviewer'),
+        ],
+      },
+    }
+    renderCase('case-words')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim a')).toBeInTheDocument()
+    for (const word of ['Proven', 'Standing', 'Forming', 'Weakened', 'Ruled out', 'Inconclusive', 'Parked', 'Handed off']) {
+      expect(screen.getByText(word)).toBeInTheDocument()
+    }
+    expect(screen.getByText('claim e')).toHaveClass('struck')
+    expect(screen.getByText('claim a')).not.toHaveClass('struck')
+    for (const by of ['the hunt definition', 'you', 'the base rate', 'the deployment-gap check', 'mystery_token']) {
+      expect(screen.getByText(`Added by ${by}`)).toBeInTheDocument()
+    }
+    expect(screen.getAllByText(/^Added by/)).toHaveLength(5)
+    expect(screen.getByText('confirmed by the hash')).toBeInTheDocument()
+    expect(screen.getByText('waiting on logs')).toBeInTheDocument()
+    expect(screen.getByText('sent to the reviewer')).toBeInTheDocument()
+  })
+
+  it('shows an empty, loading and failed Explanations tab', async () => {
+    huntCase('case-empty-expl')
+    testState.runs['run-case-empty-expl'] = { hunt: { ...HUNT, hypotheses: [] } }
+    const view = renderCase('case-empty-expl')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('No explanations yet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rule one out' })).toBeDisabled()
+    view.unmount()
+
+    huntCase('case-loading')
+    vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
+    const loading = renderCase('case-loading')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+    loading.unmount()
+
+    huntCase('case-failed')
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
+    renderCase('case-failed')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect((await screen.findAllByText('The run could not be read.')).length).toBeGreaterThan(0)
   })
 
   it('gives an investigate run the honest line and puts findings in the evidence table', async () => {
@@ -259,6 +341,7 @@ describe('case page', () => {
     expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'About explanations' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
     expect(await screen.findByText('benign traffic')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
@@ -321,6 +404,22 @@ describe('case page', () => {
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
     fireEvent.click(within(doors).getByRole('button', { name: /^Checked/ }))
     expect(await screen.findByRole('columnheader', { name: 'Latency' })).toBeInTheDocument()
+  })
+
+  it('shows a run started on the case with no investigation row, before it has reported', async () => {
+    testState.cases = [{
+      ...openCase('case-run-only'),
+      combined_state: 'executing',
+      investigations: [{ ...investigation('running', true, 'run-only'), investigation_id: null }],
+    }]
+    testState.runs['run-only'] = { hunt: null }
+    renderCase('case-run-only')
+
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(within(now).getByText('The run has started and has not reported yet.')).toBeInTheDocument()
+    expect(screen.queryByText('No run on this case yet.')).not.toBeInTheDocument()
+    expect(workflowApi.getRun).toHaveBeenCalledWith('run-only')
+    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
   })
 
   it('shows a dash for a lead decision time and keeps the honest explanations line', async () => {
@@ -425,7 +524,7 @@ describe('case page', () => {
       combined_state: 'executing',
       investigations: [investigation('executing', true, 'run-links')],
       linked_findings: [
-        { finding_id: 'f1', description: 'console alert', source_link: 'https://example.test/alert/1' },
+        { finding_id: 'f1', title: 'Beacon to rare host', description: 'console alert', source_link: 'https://example.test/alert/1' },
         { finding_id: 'f2', description: 'no door', source_link: null },
       ],
     }]
@@ -437,7 +536,9 @@ describe('case page', () => {
     expect(within(header).queryByText('console alert')).not.toBeInTheDocument()
     const side = screen.getByRole('complementary', { name: 'Case details' })
     expect(within(side).getByText('Alerts (2)')).toBeInTheDocument()
-    expect(within(side).getByText('console alert')).toBeInTheDocument()
+    // The title names the alert; a row without one keeps its description.
+    expect(within(side).getByText('Beacon to rare host')).toBeInTheDocument()
+    expect(within(side).queryByText('console alert')).not.toBeInTheDocument()
     expect(within(side).getByText('no door')).toBeInTheDocument()
     expect(within(side).queryByText('gone')).not.toBeInTheDocument()
     const link = within(side).getByRole('link', { name: 'Open in source' })
@@ -1043,5 +1144,322 @@ describe('case page', () => {
       fireEvent.keyDown(document, { key: 'Escape' })
       expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     })
+  })
+
+  describe('side panel', () => {
+    const base = (over: Record<string, unknown> = {}) => ({
+      case_id: 'case-9',
+      title: 'Frame case',
+      status: 'open',
+      priority: 'high',
+      assignee: 'ada lovelace',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      ...over,
+    })
+    beforeEach(() => {
+      vi.mocked(casesApi.getComments).mockClear()
+      vi.mocked(casesApi.getEscalations).mockClear()
+    })
+    const side = async () => within(await screen.findByRole('complementary', { name: 'Case details' }))
+    const withBudget = (cost: number, max: number, health: string) => ({
+      ...base(),
+      investigations: [{ ...investigation('open', false, 'run-x'), cost_usd: cost, max_cost_usd: max, budget_health: health }],
+    })
+
+    it('writes details, a level-coloured cost meter and the recall cards', async () => {
+      testState.cases = [withBudget(1, 2, 'warning')]
+      testState.runs['run-x'] = {
+        hunt: {
+          ...HUNT,
+          recall: {
+            keys: ['host-1', 'ada'],
+            verdicts: [{ investigation_kind: 'case', investigation_id: 'case-1', concluded_at: '2026-05-02T10:00:00Z', hypothesis_id: 'h1', statement: 'malicious', outcome: 'proven' }],
+            sightings: [{ investigation_kind: 'hunt', investigation_id: 'hunt-1', concluded_at: '2026-05-02T10:00:00Z', entity_key: 'host-1', source_system: 'splunk', hit_count: 2 }],
+            gaps: [{ investigation_kind: 'hunt', investigation_id: 'hunt-2', concluded_at: '2026-05-02T10:00:00Z', hypothesis_id: 'h2', statement: 'no EDR', disposition: 'no_evidence_gathered' }],
+          },
+        },
+      }
+      renderDetail('case-9')
+      const panel = await side()
+      expect(await panel.findByText('Incident response')).toBeInTheDocument()
+      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.0000')
+      expect(await panel.findByText('host-1, ada')).toBeInTheDocument()
+      expect(panel.getByText('$1.0000 of $2.0000')).toBeInTheDocument()
+      expect(panel.getByText('Fair')).toHaveClass('fair')
+      const meter = panel.getByRole('meter')
+      expect(meter).toHaveAttribute('aria-valuenow', '50')
+      expect(meter.firstElementChild).toHaveClass('meter-fill', 'fair')
+      expect(panel.getByText('proven — malicious').nextElementSibling).toHaveTextContent('Verdict')
+      expect(panel.getByText('host-1 · splunk · 2 hits').nextElementSibling).toHaveTextContent('Sighting')
+      expect(panel.getByText('no evidence gathered — no EDR').nextElementSibling).toHaveTextContent('Gap')
+      expect(document.querySelector('.case-side .k')).toBeNull()
+    })
+
+    it('clamps an overspent bar and reads Poor', async () => {
+      testState.cases = [withBudget(3, 2, 'critical')]
+      renderDetail('case-9')
+      const panel = await side()
+      const meter = await panel.findByRole('meter')
+      expect(meter).toHaveAttribute('aria-valuenow', '100')
+      expect(meter.firstElementChild).toHaveStyle({ width: '100%' })
+      expect(panel.getByText('Poor')).toBeInTheDocument()
+    })
+
+    it('shows Not measured, no bar and no Good for no run or a zero limit', async () => {
+      testState.cases = [base()]
+      const { unmount } = renderDetail('case-9')
+      let panel = await side()
+      expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
+      expect(panel.queryByRole('meter')).not.toBeInTheDocument()
+      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('—')
+      unmount()
+
+      testState.cases = [withBudget(0, 0, 'healthy')]
+      renderDetail('case-9')
+      panel = await side()
+      expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
+      expect(panel.queryByRole('meter')).not.toBeInTheDocument()
+      expect(panel.queryByText('Good')).not.toBeInTheDocument()
+    })
+
+    it('keeps the two empty recall copies', async () => {
+      testState.cases = [withBudget(1, 2, 'healthy')]
+      testState.runs['run-x'] = { hunt: HUNT }
+      const { unmount } = renderDetail('case-9')
+      expect(await (await side()).findByText('The run did not journal a recall.')).toBeInTheDocument()
+      unmount()
+
+      testState.runs['run-x'] = { hunt: { ...HUNT, recall: { unavailable: 'memory down' } } }
+      renderDetail('case-9')
+      expect(await (await side()).findByText('Recall did not happen: memory down')).toBeInTheDocument()
+    })
+
+    it('collapses People to the owner while comments load, then counts them once, and expands', async () => {
+      testState.cases = [base()]
+      let resolve: (v: unknown) => void = () => undefined
+      vi.mocked(casesApi.getComments).mockReturnValueOnce(new Promise((r) => { resolve = r }) as never)
+      vi.mocked(casesApi.getTasks).mockResolvedValueOnce({ data: { tasks: [{ task_id: 1, title: 'Isolate host', status: 'pending', priority: 'high' }] } } as never)
+      renderDetail('case-9')
+      const panel = await side()
+      const toggle = await panel.findByRole('button', { name: /^People/ })
+      expect(toggle).toHaveTextContent('People · ada lovelace')
+      expect(toggle).not.toHaveTextContent('comment')
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await act(async () => {
+        resolve({ data: { comments: [
+          { comment_id: 1, author: 'ada', content: 'first', created_at: '2026-06-15T09:00:00Z' },
+          { comment_id: 2, author: 'bob', content: 'reply', created_at: '2026-06-15T09:05:00Z', parent_comment_id: 1 },
+        ] } })
+      })
+      await waitFor(() => expect(toggle).toHaveTextContent('People · ada lovelace, 2 comments'))
+      expect(panel.queryByText('first')).not.toBeInTheDocument()
+
+      fireEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      expect(panel.getByText('AL')).toHaveClass('avatar')
+      expect(await panel.findByText('Comments 2 · Tasks 1 · Tickets 0')).toBeInTheDocument()
+      expect(panel.getByText('first')).toBeInTheDocument()
+      expect(panel.getByText('Isolate host')).toBeInTheDocument()
+      expect(panel.getByText('No linked tickets.')).toBeInTheDocument()
+      // lifted: one fetch each, open or closed
+      expect(casesApi.getEscalations).toHaveBeenCalledTimes(1)
+    })
+
+    it('says comments are unavailable on a failed read, and posting reloads them', async () => {
+      testState.cases = [base({ assignee: null })]
+      vi.mocked(casesApi.getComments).mockRejectedValueOnce(new Error('down'))
+      renderDetail('case-9')
+      const panel = await side()
+      const toggle = await panel.findByRole('button', { name: /^People/ })
+      await waitFor(() => expect(toggle).toHaveTextContent('People · unassigned, comments unavailable'))
+      fireEvent.click(toggle)
+      expect(await panel.findByText('Couldn’t load comments.')).toBeInTheDocument()
+      expect(panel.getByText('Comments — · Tasks 0 · Tickets 0')).toBeInTheDocument()
+
+      vi.mocked(casesApi.addComment).mockResolvedValueOnce({ data: {} } as never)
+      fireEvent.change(panel.getByPlaceholderText('Write a comment…'), { target: { value: 'hello' } })
+      fireEvent.click(panel.getByRole('button', { name: /Post/ }))
+      await waitFor(() => expect(casesApi.getComments).toHaveBeenCalledTimes(2))
+    })
+  })
+})
+
+describe('Memory and blind spots tab', () => {
+  const prov = (kind: string, id: string) => ({ investigation_kind: kind, investigation_id: id, concluded_at: '2026-05-02T10:00:00Z' })
+  const recall = {
+    keys: ['10.0.0.7', 'm.kaur'],
+    sightings: [{ ...prov('hunt', 'hunt-9'), entity_key: '10.0.0.7', source_system: 'splunk', hit_count: 4 }],
+    verdicts: [{ ...prov('case', 'case-4302'), hypothesis_id: 'h9', statement: 'Loader family, finance laptops', outcome: 'proven' }],
+    gaps: [{ ...prov('hunt', 'hunt-3'), hypothesis_id: 'h3', statement: 'MFA push logs never checked', disposition: 'no_evidence_gathered' }],
+  }
+
+  function open(id: string, run: unknown) {
+    testState.cases = [{
+      case_id: id,
+      title: 'Memory case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [investigation('executing', true, `run-${id}`)],
+    }]
+    testState.runs[`run-${id}`] = run
+    renderCase(id)
+  }
+
+  const memoryTab = () => screen.findByRole('tab', { name: /Memory/ })
+
+  it('shows recalled rows with provenance, merged blind spots, and counts the rows', async () => {
+    open('m-hunt', { hunt: { ...HUNT, recall, calls: [...HUNT.calls, { question: 'what is 10.0.0.7', tool: 'recall_entity', result_length: 340, cost_usd: 0 }], evidence: [{ ...HUNT.evidence[0], is_gap: true, gap_detail: 'no proxy logs' }] } })
+    fireEvent.click(await memoryTab())
+    // sighting + verdict + recall_entity call + declared gap + visibility gap
+    expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('5')
+
+    const recalled = within(await screen.findByRole('region', { name: 'Recalled' }))
+    expect(recalled.getByText('Asked about 10.0.0.7, m.kaur')).toBeInTheDocument()
+    expect(recalled.getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
+    expect(recalled.getByText('Hunt hunt-9 · May 2, 2026')).toBeInTheDocument()
+    expect(recalled.getByText('proven — Loader family, finance laptops')).toBeInTheDocument()
+    expect(recalled.getByText('Case case-4302 · May 2, 2026')).toBeInTheDocument()
+    expect(recalled.getByText('recall_entity · what is 10.0.0.7')).toBeInTheDocument()
+    expect(recalled.getByText('340 bytes')).toBeInTheDocument()
+    // declared gaps live in Blind spots, not here
+    expect(recalled.queryByText(/MFA push logs/)).toBeNull()
+
+    const blind = within(screen.getByRole('region', { name: 'Blind spots' }))
+    expect(blind.getByText('Declared')).toBeInTheDocument()
+    expect(blind.getByText('no evidence gathered — MFA push logs never checked')).toBeInTheDocument()
+    expect(blind.getByText('Visibility')).toBeInTheDocument()
+    expect(blind.getByText('no proxy logs')).toBeInTheDocument()
+  })
+
+  it('reads a lead run: recall and visibility gaps', async () => {
+    open('m-lead', {
+      projection: {
+        iterations: 1, decisions: [], findings: [], calls: [], recall,
+        gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
+      },
+    })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('list users — tool down')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Recalled' })).getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
+  })
+
+  it('keeps Withdraw and Record a blind spot disabled as Later', async () => {
+    open('m-later', { hunt: { ...HUNT, recall } })
+    fireEvent.click(await memoryTab())
+    const withdraw = await screen.findByRole('button', { name: 'Withdraw' })
+    const record = screen.getByRole('button', { name: 'Record a blind spot' })
+    for (const button of [withdraw, record]) {
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'Coming in a later release')
+    }
+    expect(within(screen.getByRole('region', { name: 'Recalled' })).getAllByRole('button', { name: 'Withdraw' })).toHaveLength(1)
+  })
+
+  it('tells an unavailable recall from an empty one and from none journaled', async () => {
+    open('m-un', { hunt: { ...HUNT, recall: { unavailable: 'memory store down', keys: ['m.kaur'] } } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('Recall did not happen: memory store down (m.kaur)')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('0')
+  })
+
+  it('says so when the recall found no entities', async () => {
+    open('m-none', { hunt: { ...HUNT, recall: { keys: [], sightings: [], verdicts: [], gaps: [] } } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('No entities recalled.')).toBeInTheDocument()
+    expect(screen.getByText('None recorded.')).toBeInTheDocument()
+  })
+
+  it('says when the run journaled no opening recall but asked mid-run', async () => {
+    open('m-mid', { hunt: { ...HUNT, calls: [{ question: 'who is m.kaur', tool: 'recall_entity', result_length: 9, cost_usd: 0 }] } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('The run did not journal an opening recall.')).toBeInTheDocument()
+    expect(screen.getByText('recall_entity · who is m.kaur')).toBeInTheDocument()
+  })
+
+  it('is empty with no recall and no gaps, and keeps the tab', async () => {
+    open('m-empty', { hunt: { ...HUNT, evidence: [] } })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('No memory recorded')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Memory/ })).toHaveTextContent('0')
+  })
+
+  it('shows loading, then an error when the run cannot be read', async () => {
+    vi.mocked(workflowApi.getRun).mockImplementationOnce(() => new Promise(() => {}))
+    open('m-load', { hunt: HUNT })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+  })
+
+  it('reports an unreadable run', async () => {
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
+    open('m-err', { hunt: HUNT })
+    fireEvent.click(await memoryTab())
+    expect(await screen.findByText('The run could not be read')).toBeInTheDocument()
+  })
+})
+
+describe('following a live run', () => {
+  const live = (over: Record<string, unknown> = {}) => ({ status: 'running', hunt: { ...HUNT, status: 'running' }, ...over })
+  const open = (id: string, run: unknown, state = 'executing') => {
+    testState.cases = [{ ...openCase(id), combined_state: state, investigations: [investigation(state, true, `run-${id}`)] }]
+    testState.runs[`run-${id}`] = run
+    renderCase(id)
+  }
+  const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }))
+  afterEach(() => vi.useRealTimers())
+
+  it('re-reads the run, case and record while live, and stops once it parks', async () => {
+    open('case-live', live())
+    expect(await screen.findByText('Now · step 3')).toBeInTheDocument()
+    const reads = () => vi.mocked(workflowApi.getRun).mock.calls.length
+    const first = reads()
+
+    testState.runs['run-case-live'] = live({ hunt: { ...HUNT, status: 'running', iteration: 4 } })
+    await tick() // the run re-read
+    expect(await screen.findByText('Now · step 4')).toBeInTheDocument()
+    await tick() // the case and record follow the run's change
+    expect(vi.mocked(casesApi.getById).mock.calls.length).toBeGreaterThan(1)
+    expect(vi.mocked(casesApi.getRecord).mock.calls.length).toBeGreaterThan(1)
+
+    // The budget refuses the next iteration: the pill and the line replace the live card.
+    testState.runs['run-case-live'] = live({ hunt: { ...HUNT, status: 'parked', reason: 'the budget refused another iteration: unpriced | extra' } })
+    await tick()
+    expect(await screen.findByRole('region', { name: 'Run state' })).toHaveTextContent('Paused')
+    expect(document.querySelector('.state-pill')).toHaveTextContent('Paused')
+    expect(screen.getByText('The budget refused another iteration: unpriced.')).toBeInTheDocument()
+    expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'What the run reported' })).toBeInTheDocument()
+    expect(within(screen.getByRole('table', { name: 'Agents' })).queryByText('executing')).not.toBeInTheDocument()
+
+    // A paused run can wake, so it keeps being read; a failed one does not.
+    const before = reads()
+    expect(before).toBeGreaterThan(first)
+    testState.runs['run-case-live'] = live({ status: 'failed', error: 'the lead emitted no decision: Connection error. | x | y', hunt: { ...HUNT, status: 'running' } })
+    await tick()
+    await waitFor(() => expect(document.querySelector('.state-pill')).toHaveTextContent('Stopped'))
+    expect(screen.getByText('The lead emitted no decision: Connection error.')).toBeInTheDocument()
+    const ended = reads()
+    await tick()
+    await tick()
+    expect(reads()).toBe(ended)
+  })
+
+  it('lets Needs you win over a stopped run', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ case_id: 'case-need' })] } } as never)
+    open('case-need', live({ status: 'failed', error: 'boom' }), 'waiting_approval')
+    expect((await screen.findAllByText('Needs you'))[0]).toBeInTheDocument()
+    expect(document.querySelector('.state-pill')).toHaveTextContent('Needs you')
+    expect(screen.queryByRole('region', { name: 'Run state' })).not.toBeInTheDocument()
+  })
+
+  it('says handed off in Findings so far', async () => {
+    open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
+    expect(await screen.findByText('handed off — Still forming')).toBeInTheDocument()
   })
 })

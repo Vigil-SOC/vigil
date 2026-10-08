@@ -14,7 +14,7 @@ digest:
 
 roles:
   lead:
-    tools: [case_records, get_finding]
+    needs: [case_records, get_finding, telemetry_search, findings_search, indicator_lookup]
     prompt: |
       You are the analyst on a single open case. You work the case yourself:
       there is no one to dispatch to, and no one to check your reasoning.
@@ -36,7 +36,9 @@ roles:
       Do not CONCLUDE while a question you have already asked is unanswered and
       the budget still allows the query that would answer it. A case closed over
       a gap reads exactly like a case closed over an answer, which is why the
-      gap has to be named in the rationale rather than left out of it.
+      gap has to be named in the rationale rather than left out of it. A question
+      none of your tools can answer is a gap to name in CONCLUDE, not a reason to
+      EXAMINE again.
     output_schema:
       type: object
       additionalProperties: false

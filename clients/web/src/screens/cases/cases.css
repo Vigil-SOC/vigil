@@ -40,6 +40,8 @@
   font-size: 12px;
   color: var(--tx2);
   overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .case-page .dh-meta {
@@ -211,6 +213,97 @@
 
 .case-needs-strip button:hover { filter: brightness(1.1); }
 
+/* Side panel: Details, Cost, Known, People (boards/CaseComments.dc.html). */
+.case-side {
+  flex: 0 0 280px;
+  width: 280px;
+  box-sizing: border-box;
+  border-left: 1px solid var(--ln0);
+  background: var(--bg1);
+  overflow-y: auto;
+  padding: 16px 18px 72px; /* clear of the floating Ask Vigil button */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.case-side > * { flex-shrink: 0; min-width: 0; }
+
+.side-block { display: flex; flex-direction: column; gap: 8px; }
+.case-side .muted { margin: 0; color: var(--tx2); }
+
+.side-title,
+.side-sec-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+}
+
+.side-kv {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.side-kv dt { color: var(--tx2); }
+.side-kv dd { margin: 0; overflow-wrap: anywhere; }
+.side-kv .case-sla { white-space: nowrap; }
+
+.side-cost { display: flex; justify-content: space-between; gap: 8px; }
+.side-level { font-weight: 650; }
+.side-level.good { color: var(--good); }
+.side-level.fair { color: var(--fair); }
+.side-level.poor { color: var(--poor); }
+
+.side-cards { display: grid; gap: 6px; font-size: 12.5px; line-height: 1.45; }
+
+.side-card {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--ln0);
+  overflow-wrap: anywhere;
+}
+
+.side-meta { color: var(--tx3); font-size: 11.5px; }
+.side-card .side-meta { margin-top: 2px; }
+.side-people > .side-meta { color: var(--tx2); font-size: 12px; }
+
+.side-people-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-people-toggle:hover { color: var(--tx0); }
+.side-chev { flex-shrink: 0; transition: transform .15s; }
+.side-chev.open { transform: rotate(180deg); }
+
+.side-people { display: grid; gap: 12px; }
+.side-owner { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+
+.side-sec { display: flex; flex-direction: column; }
+.side-sec-head { display: flex; align-items: center; gap: 8px; }
+.side-sec-head > span { font-size: 12px; color: var(--tx3); }
+.side-sec-head .grow { flex: 1; }
+.side-list p { margin: 0; overflow-wrap: anywhere; }
+.side-list { display: grid; gap: 6px; padding-top: 8px; }
+
 .case-side .case-linked {
   list-style: none;
   margin: 6px 0 0;
@@ -229,9 +322,92 @@
   overflow-wrap: anywhere;
 }
 
+/* Memory tab: cards on the card.md / row-stack.md tokens. */
+.case-page .case-mem-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+
+.case-page .case-mem-card p { margin: 0; font-size: 12px; line-height: 1.45; }
+
+.case-page .case-mem-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.case-page .case-mem-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.case-page .case-mem-head .btn,
+.case-page .case-mem-meta .btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* Keep a row with a button as tall as one without. */
+.case-page .case-mem-meta .btn { margin: -3px 0; }
+
+.case-page .case-mem-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-page .case-mem-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 9px 12px;
+  background: var(--stack-row-bg);
+  color: var(--tx0);
+  font-size: 13px;
+}
+
+.case-page .case-mem-row.poor { color: var(--poor); }
+
+.case-page .case-mem-text {
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-mem-text .tag { margin-right: 8px; }
+
+.case-page .case-mem-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .case-needs-strip .strip-dot,
   .case-needs .needs-dot { animation: none; }
+  .side-chev { transition: none; }
 }
 
 /* Summary: Now card, Later frames, agents table, door tiles. */
@@ -276,6 +452,29 @@
   color: var(--tx2);
   overflow-wrap: anywhere;
 }
+
+.case-page .clamp2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Paused or stopped: the Now card's place, without its accent or breathing dot. */
+.case-page .case-stopped {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.case-page .case-stopped b { flex-shrink: 0; font-weight: 700; color: var(--tx1); }
+.case-page .case-stopped .clamp2 { min-width: 0; color: var(--tx2); overflow-wrap: anywhere; }
 
 .case-page .case-later {
   align-items: center;
@@ -401,6 +600,90 @@
 @media (prefers-reduced-motion: reduce) {
   .case-page .case-now .now-dot { animation: none; }
 }
+
+/* Explanations tab: card, row stack and word pill of the CaseDetail board (components/card.md, row-stack.md). */
+.case-page .case-expl-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+
+.case-page .case-expl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.case-page .case-expl-title { font-size: 13px; font-weight: 650; }
+.case-page .case-expl-sub { margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--tx2); }
+.case-page .case-expl-actions { display: flex; gap: 6px; }
+
+.case-page .case-expl-actions button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ln2);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.case-page .case-expl-actions button:last-child { border-color: transparent; }
+.case-page .case-expl-actions button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.case-page .case-expl-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-page .case-expl-rows li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 12px;
+  background: var(--stack-row-bg);
+}
+
+.case-page .case-expl-line { display: flex; align-items: center; gap: 8px; }
+.case-page .case-expl-text { min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.case-page .case-expl-text.struck { text-decoration: line-through; }
+.case-page .case-expl-note { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--tx2); overflow-wrap: anywhere; }
+
+.case-page .case-expl-pill {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.case-page .case-expl-pill.good { color: var(--good); background: var(--good-bg); }
+.case-page .case-expl-pill.ac { color: var(--ac); background: var(--ac-bg); }
+.case-page .case-expl-pill.poor { color: var(--poor); background: var(--poor-bg); }
+.case-page .case-expl-pill.muted,
+.case-page .case-expl-pill.neutral { color: var(--tx2); background: var(--bg3); }
+
+.case-page .case-expl-side { text-align: right; font-size: 12px; color: var(--tx2); white-space: nowrap; }
+.case-page .case-expl-side .for { color: var(--good); font-weight: 650; }
+.case-page .case-expl-side .against { color: var(--poor); font-weight: 650; }
+.case-page .case-expl-by { margin-top: 4px; }
 
 /* Record tab (CaseInvestigation board): chip row with the actions at the right, then a typed row stack. */
 .case-page .rec-card {
