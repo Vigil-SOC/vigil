@@ -24,7 +24,9 @@ services:
     image: python:3.12-slim
     build: !reset null
     container_name: !reset null
-    ports: !reset []
+    # Published on 0.0.0.0 like the real backend's 6987, on a random host port,
+    # so check 7 can prove Medic can't reach it via its bridge's host address.
+    ports: !override ["6987"]
     depends_on: !reset {}
     extra_hosts: !reset []
     entrypoint: !reset null
