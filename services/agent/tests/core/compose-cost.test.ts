@@ -70,6 +70,7 @@ function recordingMirror(): Mirror & { terminals: TerminalResult[] } {
     terminal: async (_runId, result) => void terminals.push(result),
     status: async () => true,
     handoff: async () => true,
+    findings: async () => true,
     decisions: async () => [],
   };
 }

@@ -125,6 +125,13 @@ function handoffFor(): (runId: string, handoff: TerminalHandoff) => Promise<bool
   return (runId, handoff) => mirror.handoff(runId, handoff);
 }
 
+// Where the alerts a hunt's evidence cites go: the case the hunt was started on links
+// them. Same channel and same fail-open answer as the handoff.
+function findingsFor(): (runId: string, findingIds: readonly string[]) => Promise<boolean> {
+  const mirror = mirrorFor();
+  return (runId, findingIds) => mirror.findings(runId, findingIds);
+}
+
 // What the console was last told of each open run, so a sweep that finds a hunt
 // still parked, or an iteration that cost nothing, writes nothing. Per process: a
 // restart repeats one write, which the backend takes as the no-op it is.
@@ -194,7 +201,7 @@ async function drive(
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
-    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), onCost, signal });
+    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, signal });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {
