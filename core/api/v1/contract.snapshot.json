@@ -258,6 +258,17 @@
       "CaseClosureView": {
         "description": "What the closed summary shows. ``verdict`` is the stated reason.",
         "properties": {
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
           "closed_by": {
             "title": "Closed By",
             "type": "string"
