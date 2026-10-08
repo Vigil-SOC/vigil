@@ -4659,6 +4659,94 @@
       border-bottom-color: var(--ln0);
    }
 
+   /* SLA policies: severity dot, inline editor (SettingsSLA board) */
+   .sla-name {
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 600;
+      color: var(--tx0);
+   }
+
+   .sla-flag {
+      margin-left: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--tx3);
+   }
+
+   .sla-sev {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .sla-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      flex: 0 0 auto;
+   }
+
+   /* room under it for the floating Ask Vigil button */
+   .sla-edit {
+      border-color: var(--ac-ln);
+      scroll-margin-bottom: 96px;
+      margin-bottom: 72px;
+   }
+
+   .sla-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr 1fr; /* the Hours label is long */
+      gap: 14px 18px;
+      align-items: start;
+   }
+
+   .sla-grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+   }
+
+   .sla-readonly {
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      font-size: 13px;
+      color: var(--tx2);
+   }
+
+   .sla-edit .field-label .info-tip {
+      margin: -3px 0; /* the ⓘ is taller than the label line */
+   }
+
+   .sla-later {
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--bg3);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .sla-escalation {
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px dashed var(--ln1);
+      font-size: 12.5px;
+      color: var(--tx3);
+      opacity: 0.8;
+   }
+
+   .sla-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+   }
+
+   .sla-actions .grow {
+      flex: 1;
+   }
+
    .settings-grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;

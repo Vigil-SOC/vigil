@@ -6253,6 +6253,7 @@ export interface paths {
          *
          *     Args:
          *         policy_id: The policy ID
+         *         since: Count only cases whose SLA was created at or after this time
          *
          *     Returns:
          *         Usage statistics
@@ -23622,7 +23623,9 @@ export interface operations {
     };
     "get_api_sla-policies_policy_id_usage": {
         parameters: {
-            query?: never;
+            query?: {
+                since?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };
