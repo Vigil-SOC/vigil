@@ -24,6 +24,7 @@ advice:
   summary: The database refused to store some new findings, so they were dropped and won't be retried.
   fix: >-
     Check Postgres: free disk space, the connection limit, and its log for
-    rejected writes. If Postgres is healthy, a source may be sending findings it
-    can't store; send this incident to DeepTempo Support. Once it accepts writes, new findings are stored again; the
-    dropped ones need to be re-sent from their source.
+    rejected writes. Once it accepts writes, new findings are stored again; the
+    dropped ones need to be re-sent from their source. If Postgres is healthy, a
+    source may be sending findings Vigil can't store: send this incident to
+    DeepTempo Support.
