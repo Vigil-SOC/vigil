@@ -56,13 +56,12 @@ class Engine:
             for r in self.rules
             if r.skipped is None and install_shape in r.rule.get("shapes", SHAPES)
         ]
-        state = (
-            copy.deepcopy(state) if state else {"v": 1, "machines": {}, "latches": {}}
-        )
+        state = copy.deepcopy(state) if state else {"v": 1, "machines": {}}
         if state.get("v") != 1:
             raise ValueError("unknown engine state version")
         self.machines: dict[str, dict[str, dict]] = state["machines"]
-        self.history = History(state["latches"])
+        self.last_tick: float | None = state.get("last_tick")
+        self.history = History(state.get("latches", {}))
         self.pending: list[dict] = []
         self._status: list[dict] = []
         self._horizon = max(
@@ -75,6 +74,7 @@ class Engine:
     def state(self) -> dict:
         return copy.deepcopy(
             {"v": 1, "machines": self.machines, "latches": self.history.latches}
+            | {"last_tick": self.last_tick}
         )
 
     def observe(self, observation: dict) -> None:
@@ -86,35 +86,57 @@ class Engine:
         return copy.deepcopy(self._status)
 
     def tick(self, at: datetime) -> list[dict]:
+        if at.tzinfo is None:
+            raise ValueError("tick time must be timezone-aware UTC")
         now = at.timestamp()
-        if now % TICK_S:
-            raise ValueError(f"tick {at} is not on the {TICK_S} s grid")
+        if now % TICK_S or (self.last_tick is not None and now <= self.last_tick):
+            raise ValueError(
+                f"tick {at} is off the {TICK_S} s grid or not after the last"
+            )
+        self.last_tick = now
         ready = [o for o in self.pending if ev.ts(o["observed_at"]) <= now]
         self.pending = [o for o in self.pending if ev.ts(o["observed_at"]) > now]
         for obs in ready:
             self._ingest(obs)
-        records, status = [], []
+        records, status = self._retire_removed_rules(now), []
         for rule_id in sorted({r.id for r in self.active} | {BLIND}):
             rule = next((r for r in self.active if r.id == rule_id), None)
             for key, m in sorted(self.machines.get(rule_id, {}).items()):
                 group = dict(json.loads(key))
-                value, evidence = self._evaluate(rule, group, now)
+                value, evidence, untrusted = self._evaluate(rule, group, now)
                 records += self._step(rule, group, m, value, evidence, now)
                 status.append(
                     {"rule": rule_id, "group": group, "eval": EVAL[value]}
                     | {"state": m["state"], "incident_id": m.get("incident_id")}
+                    | {"runtime_untrusted": untrusted}
                 )
-        for r in self.rules:
+        for r in self.rules:  # never shown healthy: H2 "can't evaluate"
+            why = None
             if r not in self.active:
                 why = "needs_engine_minor" if r.skipped else "shape"
+            elif not self.machines.get(r.id):
+                why = "no_groups"
+            if why:
                 status.append(
                     {"rule": r.id, "group": {}, "eval": "unknown", "state": "inactive"}
-                    | {"incident_id": None, "not_evaluated": why}
+                    | {"incident_id": None, "runtime_untrusted": False}
+                    | {"not_evaluated": why}
                 )
         self._status = status
         reach = self._horizon + 2 * max(self.history.interval.values(), default=0)
         self.history.prune(now - reach - TICK_S)
         return records
+
+    def _retire_removed_rules(self, now: float) -> list[dict]:
+        """A rule gone from the rule set ends its open incidents at once (§4)."""
+        known = {r.id for r in self.rules} | {BLIND}
+        out = []
+        for rule_id in sorted(set(self.machines) - known):
+            for _, m in sorted(self.machines.pop(rule_id).items()):
+                if m.get("incident_id"):
+                    out.append(_record("incident_resolved", now, m, how="rule_retired"))
+            self.history.latches.pop(rule_id, None)
+        return out
 
     # Ingest: index the observation, discover groups, advance latches.
 
@@ -156,11 +178,14 @@ class Engine:
 
     def _evaluate(self, rule: LoadedRule | None, group: dict, now: float):
         if rule is None:  # built-in sensor-blind: the sensor's newest heartbeat (§2)
-            beats = [b for b in self.history.beats[group["sensor"]] if b[0] <= now]
-            state = beats[-1][1]["health"]["state"]
-            return state in ("blind", "stopped"), {"sensor_health": (*beats[-1], None)}
+            beats = self.history.beats.get(group["sensor"], [])
+            beats = [b for b in beats if b[0] <= now]
+            if not beats:  # e.g. restored state, raw history gone: can't tell
+                return None, {}, False
+            blind = beats[-1][1]["health"]["state"] in ("blind", "stopped")
+            return blind, {"sensor_health": (*beats[-1], None)}, False
         ctx = ev.Context(rule, group, now, self.history)
-        return ev.evaluate(rule.rule["when"], ctx), ctx.evidence
+        return ev.evaluate(rule.rule["when"], ctx), ctx.evidence, ctx.untrusted
 
     def _step(self, rule, group, m, value, evidence, now) -> list[dict]:
         hold = rule.seconds("for", DEFAULT_FOR_S) if rule else 120
