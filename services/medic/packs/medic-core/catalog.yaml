@@ -66,3 +66,5 @@ entries:
   - {logger: core.agents.projections, template: '%s for %s answered %s'}
   - {logger: core.agents.projections, template: 'agent service reads recovered'}
   # services/daemon/main.py:63 'SOC Daemon initialized' (__main__): listed under llm (F7b)
+  # services/daemon/metrics.py:167 (constant text, logger.exception)
+  - {logger: services.daemon.metrics, template: 'Health/Prometheus server failed'}

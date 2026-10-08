@@ -1,0 +1,39 @@
+# P-2.c · every orchestrator slot is held (parked runs waiting for an answer can
+# hold one for up to 7 days, by design: #1550) while intake work queues. The
+# orchestrator logs nothing when it's at capacity (orchestrator.py:638,1067), and
+# the rule language can't compare two signals, so: work queued, runs in flight,
+# and none created or completed for 2 h. requires: D6 orchestrator_status
+# {enabled, queued}, daemon_status.orchestrator {active_agents,
+# investigations_created, investigations_completed}.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.orchestrator-slots-held
+title: New investigations are waiting while every run slot is held
+revision: 1
+fault: {class: pipeline, mode: P-2, causes: [P-2.c]}
+lane: 2
+detection: absence
+signals:
+  enabled:   {sample: {signal: orchestrator_status, key: enabled}}
+  queued:    {sample: {signal: orchestrator_status, key: queued}}
+  in_flight: {sample: {signal: daemon_status.orchestrator, key: active_agents}}
+  created:   {sample: {signal: daemon_status.orchestrator, key: investigations_created}}
+  completed: {sample: {signal: daemon_status.orchestrator, key: investigations_completed}}
+when:
+  all:
+    - {fn: latest, signal: enabled, op: "==", value: true}
+    - {fn: latest, signal: queued, op: ">", value: 0}
+    - {fn: latest, signal: in_flight, op: ">", value: 0}
+    - {fn: increase, signal: created, window: {param: stalled_for}, op: "==", value: 0}
+    - {fn: increase, signal: completed, window: {param: stalled_for}, op: "==", value: 0}
+for: 15m
+keep_firing_for: 15m
+params:
+  stalled_for: {type: duration, default: 2h, min: 30m, max: 24h}
+advice:
+  summary: Work is queued for investigation, but every run slot has been held for 2 hours and nothing new has started or finished.
+  fix: >-
+    Open the investigations waiting for an answer or approval in the console and
+    answer or cancel them to free their slots. If nothing is waiting on you,
+    raise the maximum concurrent agents in the orchestrator settings or send this
+    incident to DeepTempo Support.

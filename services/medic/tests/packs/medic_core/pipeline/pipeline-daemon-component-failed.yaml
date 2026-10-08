@@ -1,0 +1,39 @@
+rule: pipeline.daemon-component-failed
+defaults:
+  sensors:
+    - {id: http.daemon-health, covers: [daemon_health], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_health: {components.processor: enum, components.scheduler: enum, components.orchestrator: enum, components.responder: enum, components.poller: enum}
+cases:
+  - kind: fires
+    id: v01-fires-when-the-scheduler-task-dies
+    title: The scheduler raises at start-up; soc-daemon is restarted at +10m
+    end: +20m
+    series:
+      - {signal: daemon_health, key: components.processor, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.scheduler, steps: [[+0s, running], [+1m, failed], [+10m, running]]}
+      - {signal: daemon_health, key: components.orchestrator, steps: [[+0s, disabled]]}
+      - {signal: daemon_health, key: components.responder, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.poller, steps: [[+0s, running]]}
+    expect:
+      - {at: +1m, rule: pipeline.daemon-component-failed, eval: true, state: pending}
+      - {at: +3m, rule: pipeline.daemon-component-failed, eval: true, state: firing, incident: A}
+      - {at: +10m, rule: pipeline.daemon-component-failed, eval: false, state: resolving, incident: A}
+      - {at: +15m, rule: pipeline.daemon-component-failed, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.daemon-component-failed, active_since: +1m, opened_at: +3m, resolving_since: +10m,
+          resolved_at: +15m, reason: cleared, routed_at: +3m}
+  - kind: silent
+    id: v02-silent-on-disabled-and-unconfigured-components
+    title: The orchestrator is off and Kafka was never configured; neither has stopped
+    end: +10m
+    series:
+      - {signal: daemon_health, key: components.processor, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.scheduler, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.orchestrator, steps: [[+0s, disabled]]}
+      - {signal: daemon_health, key: components.responder, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.poller, steps: [[+0s, not_initialized]]}
+    expect:
+      - {at: +1m, rule: pipeline.daemon-component-failed, eval: false, state: inactive}
+      - {at: +10m, rule: pipeline.daemon-component-failed, eval: false, state: inactive}
+    incidents: {}

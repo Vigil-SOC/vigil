@@ -1,0 +1,48 @@
+rule: pipeline.runs-stale
+defaults:
+  sensors:
+    - {id: sql.investigations-stale, covers: [sql_investigations_stale], interval: 60s, service: postgres, states: [[+0s, ok]]}
+  types:
+    sql_investigations_stale: {stale_executing: gauge, oldest_last_activity_at: timestamp, oldest_never_active_since: timestamp}
+cases:
+  - kind: fires
+    id: v01-fires-on-a-run-never-picked-up
+    title: A run started 10 min before Medic's first read was never picked up (last_activity_at NULL)
+    end: +45m
+    series:
+      - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1]]}
+      - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, null]]}
+      - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, '2026-10-07T23:50:00Z']]}
+    expect:
+      - {at: +20m, rule: pipeline.runs-stale, eval: false, state: inactive, note: age 1800 is not > 1800}
+      - {at: +20m15s, rule: pipeline.runs-stale, eval: true, state: pending}
+      - {at: +30m15s, rule: pipeline.runs-stale, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.runs-stale, active_since: +20m15s, opened_at: +30m15s, resolving_since: null, resolved_at: null, routed_at: +35m15s}
+  - kind: fires
+    id: v02-fires-on-a-run-that-stopped-moving
+    title: A run last moved 40 min ago, until it is cancelled
+    end: +50m
+    series:
+      - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1], [+15m, 0]]}
+      - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, '2026-10-07T23:20:00Z'], [+15m, null]]}
+      - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, null]]}
+    expect:
+      - {at: +0s, rule: pipeline.runs-stale, eval: true, state: pending}
+      - {at: +10m, rule: pipeline.runs-stale, eval: true, state: firing, incident: A}
+      - {at: +15m, rule: pipeline.runs-stale, eval: false, state: resolving, incident: A}
+      - {at: +45m, rule: pipeline.runs-stale, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.runs-stale, active_since: +0s, opened_at: +10m, resolving_since: +15m, resolved_at: +45m, reason: cleared, routed_at: +15m}
+  - kind: silent
+    id: v03-silent-while-runs-make-progress
+    title: Runs are briefly idle (over 5 min, under 30) and none is waiting to be picked up
+    end: +45m
+    series:
+      - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1]]}
+      - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, '2026-10-07T23:50:00Z'], [+15m, '2026-10-08T00:10:00Z'], [+30m, '2026-10-08T00:25:00Z']]}
+      - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, null]]}
+    expect:
+      - {at: +10m, rule: pipeline.runs-stale, eval: false, state: inactive}
+      - {at: +45m, rule: pipeline.runs-stale, eval: false, state: inactive}
+    incidents: {}
