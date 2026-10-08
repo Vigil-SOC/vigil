@@ -16,7 +16,7 @@ const api = axios.create({
 
 // LLM-backed calls can legitimately run for minutes. Streaming endpoints pass
 // 0 to disable the timeout for the life of the SSE connection.
-const LLM_TIMEOUT = 180_000
+export const LLM_TIMEOUT = 180_000
 
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
