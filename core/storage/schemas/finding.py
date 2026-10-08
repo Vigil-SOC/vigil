@@ -19,6 +19,7 @@ class FindingSchema(ORMSchema):
     """A security finding."""
 
     finding_id: Optional[str] = None
+    title: Optional[str] = None
     description: Optional[str] = None
     mitre_predictions: Optional[Any] = None
     anomaly_score: Optional[float] = None

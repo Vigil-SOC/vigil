@@ -56,6 +56,7 @@ from core.memory.recall_contract import (
     Trust,
     VerdictOutcome,
     WindowSource,
+    bounded_prose,
 )
 from core.memory.source_tier import InvestigationKind as TierKind
 from core.memory.source_tier import SourceTier, resolve_source_tier
@@ -452,9 +453,9 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
             investigation_id=case_id,
             # A Case is its own Hypothesis, so the two ids are the same string.
             hypothesis_id=case_id,
-            statement=closed.case.title or "",
+            statement=bounded_prose(closed.case.title or ""),
             outcome=outcome.value,
-            rationale=_rationale(closed.closure),
+            rationale=bounded_prose(_rationale(closed.closure)),
             subject_entities=_subjects(session, case_id),
             # A Case's evidence is its Findings, which are our own telemetry,
             # and a Case with none stands on an analyst's assertion. Neither is

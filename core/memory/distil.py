@@ -57,6 +57,7 @@ from core.memory.recall_contract import (
     Trust,
     VerdictOutcome,
     WindowSource,
+    bounded_prose,
 )
 from core.memory.source_tier import InvestigationKind as TierKind
 from core.memory.source_tier import SourceTier, resolve_source_tier
@@ -441,8 +442,8 @@ def _conclusion_rows(
             investigation_id,
             hypothesis_id,
         )
-        statement = str(conclusion.get("statement", ""))
-        rationale = str(conclusion.get("rationale", ""))
+        statement = bounded_prose(conclusion.get("statement", ""))
+        rationale = bounded_prose(conclusion.get("rationale", ""))
         outcome = _outcome_of(status)
         gathered = int(conclusion.get("evidence_count") or 0) > 0
 

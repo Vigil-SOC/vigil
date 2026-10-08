@@ -32,6 +32,10 @@ uvicorn[standard]>=0.53.0
 python-multipart>=0.0.32
 email-validator>=2.0.0
 
+# Reads an attached PDF, image or Office file on this machine (Apache-2.0,
+# bundled OCR, no network call). Office types also need LibreOffice installed.
+liteparse>=2.15.1
+
 # Database
 sqlalchemy>=2.1.0
 psycopg2-binary>=2.9.12
