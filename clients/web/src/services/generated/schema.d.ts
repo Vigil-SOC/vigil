@@ -1962,6 +1962,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach Case Document
+         * @description Keep the original of a document attached to a hunt, as ``document`` evidence.
+         *
+         *     Extraction already happened, at ``/workflows/threat-hunt/document``, so this
+         *     stores the file and says nothing about its text.
+         */
+        post: operations["post_api_cases_case_id_attachments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/close": {
         parameters: {
             query?: never;
@@ -7939,6 +7962,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Hunt Document
+         * @description Read an attached document for a hunt. Stateless: nothing is stored here, and
+         *     the text is what the caller sends as ``document`` on execute.
+         *
+         *     Over the document cap the text is condensed on the summarization model, and
+         *     its first line says so.
+         */
+        post: operations["post_api_workflows_threat-hunt_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/threat-hunt/feed-proposals": {
         parameters: {
             query?: never;
@@ -8470,6 +8517,18 @@ export interface components {
             /** Services */
             services: string[];
         };
+        /** Body_attach_case_document_api_cases__case_id__attachments_post */
+        Body_attach_case_document_api_cases__case_id__attachments_post: {
+            /** File */
+            file: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Pages
+             * @default 1
+             */
+            pages: number;
+        };
         /** Body_generate_from_file_api_custom_integrations_generate_upload_post */
         Body_generate_from_file_api_custom_integrations_generate_upload_post: {
             /**
@@ -8496,6 +8555,11 @@ export interface components {
              * @default json
              */
             format: string;
+        };
+        /** Body_read_hunt_document_api_workflows_threat_hunt_document_post */
+        Body_read_hunt_document_api_workflows_threat_hunt_document_post: {
+            /** File */
+            file: string;
         };
         /** Body_upload_and_ingest_file_api_ingest_upload_post */
         Body_upload_and_ingest_file_api_ingest_upload_post: {
@@ -12475,6 +12539,8 @@ export interface components {
             case_id?: string | null;
             /** Context */
             context?: string | null;
+            /** Document */
+            document?: string | null;
             /** Finding Id */
             finding_id?: string | null;
             /** Hypothesis */
@@ -15765,6 +15831,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_cases_case_id_attachments: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_attach_case_document_api_cases__case_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseEvidenceSchema"];
                 };
             };
             /** @description Validation Error */
@@ -26155,6 +26258,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["HuntCoverageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_workflows_threat-hunt_document": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_read_hunt_document_api_workflows_threat_hunt_document_post"];
             };
         };
         responses: {
