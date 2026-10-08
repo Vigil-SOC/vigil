@@ -538,7 +538,7 @@ export function ToggleRow({
         <span className="toggle-row-label">{label}</span>
         {hint && <span className="toggle-row-hint">{hint}</span>}
       </div>
-      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} label={typeof label === 'string' ? label : undefined} />
     </div>
   )
 }

@@ -67,7 +67,7 @@ export default function AiModelsOverview({ notify }: SectionProps) {
         <EmptyState error compact icon="alert" title="Couldn’t reach the Bifrost gateway" body={bf.error} primary={{ label: 'Retry', onClick: bf.reload, icon: 'refresh' }} />
       )}
       {bf.phase === 'ready' && names.length === 0 && (
-        <EmptyState compact icon="sparkle" title="No providers yet" body="Add a provider under Providers & Keys below, then pick the models Vigil uses." />
+        <EmptyState compact icon="sparkle" title="No providers yet" body="Add a provider under Keys below, then pick the models Vigil uses." />
       )}
       {bf.phase === 'ready' && names.length > 0 && (
         <>
