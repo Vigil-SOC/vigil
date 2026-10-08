@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
@@ -24,11 +24,20 @@ export interface CaseClosureView {
   closure_category: string
   closed_by: string
   closed_by_kind: string
+  closed_at: string | null
   verdict: string
 }
 
+export const CLOSURE_CATEGORIES = [
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'false_positive', label: 'False positive' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'unable_to_resolve', label: 'Unable to resolve' },
+] as const
+
 export interface CaseLinkedFinding {
   finding_id: string
+  title: string | null
   description: string | null
   source_link: string | null
 }
@@ -39,6 +48,8 @@ export const CASE_PAGE_LIMIT = 100
 export interface CaseFilters {
   query: string
   state: string
+  needsYou: boolean
+  kind: string
   priority: string
   sla: '' | 'risk'
   assignee: string
@@ -51,6 +62,8 @@ export interface CaseFilters {
 export const INITIAL_CASE_FILTERS: CaseFilters = {
   query: '',
   state: '',
+  needsYou: false,
+  kind: '',
   priority: 'any',
   sla: '',
   assignee: '',
@@ -65,6 +78,7 @@ export interface CaseStrip {
   sla_at_risk: number
   closed_today: number
   agent_closure_share: number
+  needs_you: number
 }
 
 export const EMPTY_STRIP: CaseStrip = {
@@ -72,6 +86,7 @@ export const EMPTY_STRIP: CaseStrip = {
   sla_at_risk: 0,
   closed_today: 0,
   agent_closure_share: 0,
+  needs_you: 0,
 }
 
 function toParams(f: CaseFilters) {
@@ -81,6 +96,8 @@ function toParams(f: CaseFilters) {
   }
   if (f.state === 'closed') params.closed = true
   else if (f.state) params.state = f.state
+  if (f.needsYou) params.needs_you = true
+  if (f.kind) params.kind = f.kind
   if (f.priority && f.priority !== 'any') params.priority = f.priority
   if (f.sla === 'risk') params.sla_at_risk = true
   if (f.assignee.trim()) params.assignee = f.assignee.trim()
@@ -169,6 +186,7 @@ function asLinkedFindings(raw: unknown): CaseLinkedFinding[] {
     if (typeof o.finding_id !== 'string' || !o.finding_id) return []
     return [{
       finding_id: o.finding_id,
+      title: typeof o.title === 'string' ? o.title : null,
       description: typeof o.description === 'string' ? o.description : null,
       source_link: typeof o.source_link === 'string' && o.source_link ? o.source_link : null,
     }]
@@ -183,8 +201,16 @@ function asClosure(raw: unknown): CaseClosureView | null {
     closure_category: o.closure_category,
     closed_by: typeof o.closed_by === 'string' ? o.closed_by : '',
     closed_by_kind: typeof o.closed_by_kind === 'string' ? o.closed_by_kind : '',
+    closed_at: typeof o.closed_at === 'string' && o.closed_at ? o.closed_at : null,
     verdict: typeof o.verdict === 'string' ? o.verdict : '',
   }
+}
+
+type CaseDetailBody = Parameters<typeof mapApiCase>[0] & {
+  combined_state?: unknown
+  investigations?: unknown
+  closure?: unknown
+  linked_findings?: unknown
 }
 
 export function useCaseDetail(id: string | null) {
@@ -199,9 +225,22 @@ export function useCaseDetail(id: string | null) {
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
+  const ticket = useRef(0) // one per load; a refresh made before it is stale
+  const quiet = useRef(0)
+
+  const apply = useCallback((data: CaseDetailBody) => {
+    setRow(mapApiCase(data))
+    setCombinedState(typeof data.combined_state === 'string' ? data.combined_state : '')
+    setInvestigations(asInvestigations(data.investigations))
+    setClosure(asClosure(data.closure))
+    setLinkedFindings(asLinkedFindings(data.linked_findings))
+    const d = data.created_at ? new Date(data.created_at) : null
+    setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
+  }, [])
+
   useEffect(() => {
     if (!id) return
-    let cancelled = false
+    const mine = ++ticket.current
     setPhase('loading')
     setError(null)
     setRow(null)
@@ -212,31 +251,29 @@ export function useCaseDetail(id: string | null) {
     casesApi
       .getById(id)
       .then((res) => {
-        if (cancelled) return
-        const data = res.data as typeof res.data & {
-          combined_state?: unknown
-          investigations?: unknown
-          closure?: unknown
-          linked_findings?: unknown
-        }
-        setRow(mapApiCase(data))
-        setCombinedState(typeof data.combined_state === 'string' ? data.combined_state : '')
-        setInvestigations(asInvestigations(data.investigations))
-        setClosure(asClosure(data.closure))
-        setLinkedFindings(asLinkedFindings(data.linked_findings))
-        const d = data.created_at ? new Date(data.created_at) : null
-        setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
+        if (mine !== ticket.current) return
+        apply(res.data as CaseDetailBody)
         setPhase('ready')
       })
       .catch((e) => {
-        if (cancelled) return
+        if (mine !== ticket.current) return
         setError((e as { message?: string })?.message || 'Failed to load case')
         setPhase('error')
       })
-    return () => {
-      cancelled = true
-    }
-  }, [id, reloadKey])
+  }, [id, reloadKey, apply])
 
-  return { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload }
+  /** Re-read the case in place: the old data stays until the new arrives, and a failed read changes nothing. */
+  const refresh = useCallback(() => {
+    if (!id) return
+    const base = ticket.current
+    const mine = ++quiet.current
+    casesApi
+      .getById(id)
+      .then((res) => {
+        if (base === ticket.current && mine === quiet.current) apply(res.data as CaseDetailBody)
+      })
+      .catch(() => undefined)
+  }, [id, apply])
+
+  return { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload, refresh }
 }

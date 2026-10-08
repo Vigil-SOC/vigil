@@ -227,6 +227,7 @@ class TestRefusals:
     def test_resolves_a_definition_that_ships_no_belief(self):
         class _Empty:
             metadata: dict = {}
+            phases: list = []
             name = "x"
             description = ""
             use_case = ""
@@ -336,10 +337,13 @@ def test_an_investigate_definition_resolves_with_no_phases():
     assert loaded["objectives"]
     assert "blast radius" in loaded["narrative"].lower()
     config = yaml.safe_load(config_text)
-    assert [tool["id"] for tool in config["tools"]] == ["case_records", "get_finding"]
+    ids = [tool["id"] for tool in config["tools"]]
+    assert ids[:2] == ["case_records", "get_finding"]
+    assert {"search_findings", "lookup_indicators"} <= set(ids)
     assert config["budgets"]["max_cost_usd"] == 5.0
     assert config["budgets"]["max_wall_ms"] == 1_800_000
-    assert config["budgets"]["max_calls"] >= 1
+    # HUNT_ITERATIONS decisions, each a full tool loop plus the emission retries.
+    assert config["budgets"]["max_calls"] == 80
     assert config["approvals"] == []
 
 
@@ -369,6 +373,32 @@ def test_the_investigate_lead_tools_are_bound_capabilities():
     assert tools["get_finding"]["provides"] == "get_finding"
 
 
+# Every need binds when the catalogue has a tool for it, and telemetry_search is
+# the one a deployment with no SIEM server lacks.
+def test_the_investigate_lead_binds_all_five_needs_given_a_siem():
+    from core.workflows.playbook_resolver import (
+        INVESTIGATE_CAPABILITIES,
+        _bound_capabilities,
+        _tool_catalogue,
+    )
+
+    catalogue = _tool_catalogue(None)
+    catalogue["splunk-selfhosted_splunk_execute"] = {
+        "name": "splunk-selfhosted_splunk_execute",
+        "description": "run a search",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+    bound = _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
+    assert [tool["provides"] for tool in bound] == list(INVESTIGATE_CAPABILITIES)
+
+
+def test_the_investigate_lead_lacks_telemetry_search_without_a_siem_tool():
+    _, config_text = resolve("incident-response")
+    provided = {tool.get("provides") for tool in yaml.safe_load(config_text)["tools"]}
+    assert "telemetry_search" not in provided
+    assert {"findings_search", "indicator_lookup"} <= provided
+
+
 # A catalogue without get_finding binds only case_records, so the lead's config
 # declares one provider and the run journals the other as unbound.
 def test_an_investigate_capability_the_catalogue_lacks_binds_nothing():
@@ -381,7 +411,8 @@ def test_an_investigate_capability_the_catalogue_lacks_binds_nothing():
     catalogue = _tool_catalogue(None)
     catalogue.pop("get_finding")
     bound = _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
-    assert [tool["provides"] for tool in bound] == ["case_records"]
+    assert "get_finding" not in [tool["provides"] for tool in bound]
+    assert "case_records" in [tool["provides"] for tool in bound]
 
 
 def _compose_with(*tool_names):
@@ -578,3 +609,30 @@ class TestTheCapabilityReport:
         # A fresh registry knows nothing of the server; refresh_from_client fills it.
         registry = MCPRegistry()
         assert "telemetry_search" in capability_report(registry)["bound"]
+
+
+class TestATurnedOffPhaseAgent:
+    # Compose refuses a turned-off phase agent, so a hunt that names one must too:
+    # "turned off" means one thing across workflow kinds.
+    @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
+    def test_refuses_the_run_and_says_which_agent(self, monkeypatch, workflow_id):
+        monkeypatch.setattr(
+            "core.workflows.playbook_resolver.disabled_agent_ids",
+            lambda: {"threat_hunter"},
+        )
+        with pytest.raises(UnknownPlaybook, match="threat_hunter is turned off"):
+            resolve_hunt(workflow_id)
+
+    @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
+    def test_resolves_with_nothing_turned_off(self, monkeypatch, workflow_id):
+        monkeypatch.setattr(
+            "core.workflows.playbook_resolver.disabled_agent_ids", lambda: set()
+        )
+        assert resolve_hunt(workflow_id)
+
+    def test_ignores_an_agent_turned_off_that_no_phase_names(self, monkeypatch):
+        monkeypatch.setattr(
+            "core.workflows.playbook_resolver.disabled_agent_ids",
+            lambda: {"reporter"},
+        )
+        assert resolve_hunt("threat-hunt")

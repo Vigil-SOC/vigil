@@ -12,11 +12,18 @@ off the frozen catalog read. Every shape is read from the engine's own constants
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.agents.enablement import disabled_message
 from core.llm.chat_layers import changes_for_tool
+from core.workflows.playbook_resolver import (
+    INVESTIGATE_CAPABILITIES,
+    UnknownPlaybook,
+    disabled_phase_agents,
+)
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
     COMPOSE_RUN_KIND,
     HUNT_RUN_KIND,
+    INVESTIGATE_RUN_KIND,
     ROOT_CAUSE_RUN_KIND,
     WorkflowDefinition,
     WorkflowsService,
@@ -40,11 +47,13 @@ def hunt_defaults() -> Tuple[int, float, int]:
 
 # Best effort: a registry that cannot be read reports nothing missing rather
 # than blocking the modal.
-def capabilities(registry: Any) -> Dict[str, Any]:
-    from core.workflows.playbook_resolver import capability_report
+def capabilities(
+    registry: Any, needs: Optional[Tuple[str, ...]] = None
+) -> Dict[str, Any]:
+    from core.workflows.playbook_resolver import HUNT_CAPABILITIES, capability_report
 
     try:
-        return capability_report(registry)
+        return capability_report(registry, needs or HUNT_CAPABILITIES)
     except Exception as exc:  # noqa: BLE001
         logger.debug("could not read bound capabilities: %s", exc)
         return {"bound": [], "unbound": []}
@@ -96,18 +105,18 @@ def _helper(phase: Dict[str, Any], tools: Optional[List[str]] = None) -> Dict[st
 
 def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str]]:
     """``{lead, helpers, reviewer}`` for this kind, and a note when it is empty."""
-    from core.workflows.playbook_resolver import (
-        INVESTIGATE_CAPABILITIES,
-        UnknownPlaybook,
-    )
-
     kind = definition.run_kind
     if is_hunt_like(kind):
-        return {
+        roles = {
             "lead": {"name": LEAD_NAMES[kind], "tools": list(LEAD_TOOLS[kind])},
             "helpers": [_helper(p or {}) for p in definition.phases],
             "reviewer": {"name": "Critic", "tools": []},
-        }, None
+        }
+        off = disabled_phase_agents(definition)
+        if off:
+            note = f"Its phases cannot run as written: phase names {disabled_message(off[0])}"
+            return roles, note
+        return roles, None
     if kind == ROOT_CAUSE_RUN_KIND:
         lead = {"name": SINGLE_LEAD, "tools": list(LEAD_TOOLS[kind])}
         return {"lead": lead, "helpers": [], "reviewer": None}, None
@@ -203,6 +212,8 @@ def _budgets(definition: WorkflowDefinition) -> Dict[str, Any]:
             "max_cost_usd": resolver.HUNT_BUDGETS["max_cost_usd"],
             "max_wall_ms": resolver.HUNT_BUDGETS["max_wall_ms"],
         }
+    if kind == INVESTIGATE_RUN_KIND:
+        return dict(resolver.INVESTIGATE_BUDGETS)
     # Only the count of phases sizes a budget, so a compose whose phases do not
     # resolve is still told its ceiling.
     return resolver._budgets(definition.phases)
@@ -244,20 +255,27 @@ def preflight(
     Every kind answers ``roles``, ``model``, ``model_source``, ``skills``,
     ``permissions``, ``budgets`` and ``checkpoints``; an empty one carries its
     ``*_note``. A hunt-like kind also answers ``capabilities`` and ``pricing``,
-    which the Run modal gates on.
+    which the Run modal gates on; an investigation answers ``capabilities`` alone.
     """
     definition = service.get_workflow(workflow_id)
     if definition is None:
         return None
     hunt_like = is_hunt_like(definition.run_kind)
-    report = capabilities(registry) if hunt_like else {"bound": [], "unbound": []}
+    investigate = definition.run_kind == INVESTIGATE_RUN_KIND
+    if hunt_like:
+        report = capabilities(registry)
+    elif investigate:
+        report = capabilities(registry, INVESTIGATE_CAPABILITIES)
+    else:
+        report = {"bound": [], "unbound": []}
     roles, roles_note = _roles(definition)
     model, model_source = _model()
     skills, skills_note = _skills(roles)
     permissions = _permissions(roles, definition.run_kind, report)
     checkpoints, checkpoints_note = _checkpoints(definition)
     return {
-        **({"capabilities": report, "pricing": pricing()} if hunt_like else {}),
+        **({"capabilities": report} if hunt_like or investigate else {}),
+        **({"pricing": pricing()} if hunt_like else {}),
         "roles": roles,
         "roles_note": roles_note,
         "model": model,

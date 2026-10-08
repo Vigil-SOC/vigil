@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.defaults import DEFAULT_MODEL
 from core.skills.skill_library import READ_SKILL_TOOL
@@ -35,10 +36,16 @@ EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
 
-# What the investigate arch's lead asks for. Both are native tools, so a deployment
-# always binds them; naming them as capabilities is what lets a missing one reach
-# the run as a blind spot rather than a log line.
-INVESTIGATE_CAPABILITIES = ("case_records", "get_finding")
+# What the investigate arch's lead asks for. Only telemetry_search needs an
+# integration; the rest are native tools. Naming them as capabilities is what lets
+# a missing one reach the run as a blind spot rather than a log line.
+INVESTIGATE_CAPABILITIES = (
+    "case_records",
+    "get_finding",
+    "telemetry_search",
+    "findings_search",
+    "indicator_lookup",
+)
 
 
 def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, Any]]:
@@ -188,7 +195,6 @@ def _candidate_names(capability: str) -> Tuple[str, ...]:
 # An agent's prompt is rendered now rather than read from a file: the memory block
 # depends on the agent's own grant, so a stored copy would describe another agent.
 def _profile_for(agent_id: str) -> Any:
-    from core.agents.enablement import disabled_agent_ids, disabled_message
     from core.agents.manager import (
         CUSTOM_AGENT_ID_PREFIX,
         AgentManager,
@@ -206,6 +212,17 @@ def _profile_for(agent_id: str) -> Any:
     if agent_id in disabled_agent_ids():
         raise UnknownPlaybook(f"phase names {disabled_message(agent_id)}")
     return profile
+
+
+# Phase agents that are turned off, in phase order. One read of the switch for the
+# whole definition; hunt-like kinds name agents here without resolving profiles.
+def disabled_phase_agents(definition: Any) -> List[str]:
+    disabled = disabled_agent_ids()
+    named = (
+        (phase or {}).get("agent") or (phase or {}).get("agent_id")
+        for phase in definition.phases
+    )
+    return [agent for agent in dict.fromkeys(named) if agent in disabled]
 
 
 def _prompt_for(agent_id: str) -> str:
@@ -375,7 +392,11 @@ def resolve(
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
-        "budgets": _budgets(phases),
+        "budgets": (
+            dict(INVESTIGATE_BUDGETS)
+            if definition.run_kind == "investigate"
+            else _budgets(phases)
+        ),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
         # ART execute parks until a human approves. Other grants, and a compose
@@ -426,21 +447,29 @@ ROOT_CAUSE_MAX_CALLS = 1024
 # keys, and a turn is the hunt's unit rather than the harness's.
 HUNT_THRESHOLDS = {"max_iterations": HUNT_ITERATIONS}
 
+# An investigation has no phases to count: its lead decides until it concludes, so
+# it gets as many decisions as a hunt gets iterations, each with a full tool loop.
+INVESTIGATE_BUDGETS = {
+    "max_calls": HUNT_ITERATIONS * (int(DEFAULT_RUNTIME["max_turns"]) + EMIT_ATTEMPTS),
+    **DEFAULT_SPEND,
+}
+
 
 # What this deployment can and cannot answer, without resolving a whole playbook. The
 # console asks before a run starts, so the deployment gap is told before the spend.
 def capability_report(
     registry: Optional["MCPRegistry"] = None,
+    needs: Tuple[str, ...] = HUNT_CAPABILITIES,
 ) -> Dict[str, List[str]]:
     catalogue = _tool_catalogue(registry)
     bound = {
         tool["provides"]
-        for tool in _bound_capabilities(list(HUNT_CAPABILITIES), catalogue)
+        for tool in _bound_capabilities(list(needs), catalogue)
         if tool.get("provides")
     }
     return {
-        "bound": [name for name in HUNT_CAPABILITIES if name in bound],
-        "unbound": [name for name in HUNT_CAPABILITIES if name not in bound],
+        "bound": [name for name in needs if name in bound],
+        "unbound": [name for name in needs if name not in bound],
     }
 
 
@@ -470,6 +499,9 @@ def resolve_hunt(
     definition = (workflows or WorkflowsService()).get_workflow(workflow_id)
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
+
+    if off := disabled_phase_agents(definition):
+        raise UnknownPlaybook(f"phase names {disabled_message(off[0])}")
 
     # Empty is the shipped case, not an error: what a hunt tests belongs to the caller.
     # A run with none from either source is refused in execute_workflow.

@@ -86,6 +86,7 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
         "closure_category": closure.closure_category,
         "closed_by": closure.closed_by,
         "closed_by_kind": closure.closed_by_kind or "agent",
+        "closed_at": closure.closed_at.isoformat() if closure.closed_at else None,
         "verdict": _verdict(closure),
     }
 

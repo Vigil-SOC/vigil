@@ -1,19 +1,24 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
 import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { FilterChip } from '../../shared/FilterChip'
+import { InfoTip } from '../../shared/InfoTip'
+import { IN_FLIGHT, useRunDetail } from '../workflows/runRead'
 import { slaLevel } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
-import { InfoTip } from '../../shared/InfoTip'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
-import { CommentsCard, EvidenceCard, IOCsCard, TasksCard } from './CaseSections'
+import { EvidenceTrail } from './EvidenceTrail'
+import { EvidenceCard, IOCsCard } from './CaseSections'
+import { CaseSide } from './CaseSide'
+import { money, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -23,21 +28,25 @@ import {
   readFold,
   recallEntityCalls,
   recordChip,
+  stoppedRun,
+  strongestRows,
   visibilityGaps,
+  wordDisplay,
   type CallRow,
   type RecallProvenance,
   type RecordChip,
   type RunFold,
+  type StoppedRun,
 } from './caseFold'
 import './cases.css'
-import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } from './useCases'
+import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
 const NEEDS_POLL_MS = 20_000
 
 const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
-const CHAINED = 'Only the run’s rows are hash-chained. Case audit rows are not.'
+const RECORD_CHIPS = ['agent', 'human', 'memory', 'system'] as const
 
 /** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
 const EXPL_TONE: Record<string, string> = {
@@ -51,12 +60,6 @@ const EXPL_TONE: Record<string, string> = {
 const HUNT_WORKFLOW = 'threat-hunt'
 const ROOT_CAUSE_WORKFLOW = 'root-cause-analysis'
 
-/** "handed_off" → "Handed off". */
-function display(word: string): string {
-  const text = word.replace(/_/g, ' ')
-  return text.charAt(0).toUpperCase() + text.slice(1)
-}
-
 function Mark({ text }: { text: string }) {
   return (
     <span className="case-mark" title={text} aria-label={text}>
@@ -65,15 +68,13 @@ function Mark({ text }: { text: string }) {
   )
 }
 
-function when(value?: string | null): string {
-  if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? value : format(d, 'MMM d, yyyy · HH:mm')
-}
-
-function money(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `$${value.toFixed(4)}`
+/** "Closed <time> by <who>"; a missing or unparseable time is dropped. */
+function closedBy(closure: CaseClosureView | null): string {
+  if (!closure) return ''
+  const at = closure.closed_at ? new Date(closure.closed_at) : null
+  const time = at && !Number.isNaN(at.getTime()) ? ` ${format(at, 'MMM d, yyyy · HH:mm')}` : ''
+  const who = closure.closed_by ? ` by ${closure.closed_by}` : ''
+  return time || who ? `Closed${time}${who}` : ''
 }
 
 function clock(value: string | null | undefined): string {
@@ -96,15 +97,6 @@ function detailOf(error: unknown, fallback: string): string {
   return (error as { message?: string })?.message || fallback
 }
 
-/** Resolve-by clock: "7 h left", or "2 d over" once past due. */
-function timeLeft(due: string): string {
-  const ms = new Date(due).getTime() - Date.now()
-  if (Number.isNaN(ms)) return ''
-  const min = Math.round(Math.abs(ms) / 60_000)
-  const span = min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
-  return `${span} ${ms < 0 ? 'over' : 'left'}`
-}
-
 /** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
 function waiting(since: string): string {
   const ms = Date.now() - new Date(since).getTime()
@@ -121,7 +113,7 @@ function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
       <ul className="case-linked">
         {items.map((item) => (
           <li key={item.finding_id}>
-            <span>{item.description || item.finding_id}</span>
+            <span>{item.title || item.description || item.finding_id}</span>
             {item.source_link && (
               <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>
             )}
@@ -309,7 +301,7 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   const memory = [recallRows && plural(recallRows, 'recall row'), blind && plural(blind, 'gap')].filter(Boolean).join(' · ')
   const chained = rows.filter((row) => row.chained).length
   return {
-    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
+    Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
     Evidence: evidence,
     Checked: fold ? `${money(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
     'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
@@ -343,12 +335,23 @@ function NowCard({ fold, phase, hasRun }: { fold: RunFold | null; phase: Phase; 
         <b>{fold ? `Now · step ${fold.kind === 'hunt' ? fold.iteration : fold.iterations}` : 'Now'}</b>
         {meta && <span className="now-meta">{meta}</span>}
       </div>
-      <p>
+      <p className="clamp2" title={phase === 'ready' ? fold?.doing : undefined}>
         {phase === 'loading' && 'Loading the run…'}
         {phase === 'error' && 'The run could not be read.'}
         {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : hasRun ? 'The run has started and has not reported yet.' : 'No run on this case yet.')}
       </p>
       {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
+    </section>
+  )
+}
+
+/** A run that is not going on: paused or stopped, with the one-line why and the raw text behind the ⓘ. */
+function StoppedCard({ stopped }: { stopped: StoppedRun }) {
+  return (
+    <section className="case-stopped" aria-label="Run state">
+      <b>{wordDisplay(stopped.state)}</b>
+      <span className="clamp2" title={stopped.raw || stopped.line}>{stopped.line}</span>
+      {stopped.raw && <InfoTip label="What the run reported" text={stopped.raw} align="start" />}
     </section>
   )
 }
@@ -450,6 +453,8 @@ export function CasePage({
   phase,
   error,
   pageKey,
+  seed,
+  onSeedConsumed,
   onBack,
   onExpand,
   onEdit,
@@ -457,6 +462,7 @@ export function CasePage({
   onDelete,
   canDelete,
   onChanged,
+  onRefresh,
 }: {
   id: string
   c: CaseRow | null
@@ -469,6 +475,9 @@ export function CasePage({
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
   pageKey: string
+  /** Text typed in the command bar; handed to the composer, then cleared. */
+  seed?: string | null
+  onSeedConsumed?: () => void
   /** The "Cases" crumb; in the drawer it also backs the Close icon. */
   onBack: () => void
   /** Set only in the drawer: shows the Expand and Close icons. */
@@ -478,16 +487,19 @@ export function CasePage({
   onDelete: () => void
   canDelete: boolean
   onChanged: () => void
+  /** Re-read the case in place, without blanking it. Used while the run is live. */
+  onRefresh?: () => void
 }) {
   const [tab, setTab] = useState<Tab>('Summary')
-  const [fold, setFold] = useState<RunFold | null>(null)
-  const [foldPhase, setFoldPhase] = useState<Phase>('loading')
   const [sla, setSla] = useState<{ due: string; health: string } | null>(null)
   const [workflowNames, setWorkflowNames] = useState<Record<string, string>>({})
   const [rows, setRows] = useState<CaseRecordRow[]>([])
   const [recordPhase, setRecordPhase] = useState<Phase>('loading')
   const [recordError, setRecordError] = useState<string | null>(null)
   const [recordKey, setRecordKey] = useState(0)
+  const quietRecord = useRef(false) // a poll's re-read keeps the rows and tab as they are
+  const recordReady = useRef(false)
+  recordReady.current = recordPhase === 'ready'
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
   const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
@@ -539,6 +551,13 @@ export function CasePage({
     setChip('all')
   }, [id])
 
+  // the command bar's text rides the composer's own seed path
+  useEffect(() => {
+    if (!seed) return
+    setAskSeed({ id, text: seed })
+    onSeedConsumed?.()
+  }, [seed, id, onSeedConsumed])
+
   const latest = investigations[0] ?? null
   // A hunt's handoff queues a root-cause run onto the same case; the hunt's own
   // explanations, evidence and checked data stay read from the hunt run.
@@ -550,33 +569,33 @@ export function CasePage({
   const closed = combinedState === 'closed' || (phase === 'ready' && !combinedState && c?.status === 'closed')
   const pill = combinedState || (phase === 'loading' ? '…' : c?.status || '—')
 
+  // The newest run, re-read on Watch a run's interval while it is in flight.
+  const run = useRunDetail(runId ?? '', runId !== null)
+  const { load: loadRun, setDphase: setRunPhase } = run
   useEffect(() => {
-    if (!runId) {
-      setFold(null)
-      setFoldPhase('ready')
-      return
-    }
-    let cancelled = false
-    setFold(null)
-    setFoldPhase('loading')
-    workflowApi
-      .getRun(runId)
-      .then((res) => {
-        if (!cancelled) {
-          setFold(readFold(res.data))
-          setFoldPhase('ready')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFold(null)
-          setFoldPhase('error')
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [runId])
+    if (!runId) return
+    setRunPhase('loading')
+    void loadRun()
+  }, [runId, loadRun, setRunPhase])
+  const detail = runId && run.detail?.run_id === runId ? run.detail : null
+  const fold = useMemo(() => readFold(detail), [detail])
+  const foldPhase: Phase = !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+
+  // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
+  const seen = useRef<{ runId: string; status: string } | null>(null)
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = detail && runId ? { runId, status: detail.status } : null
+    if (!prev || !detail || prev.runId !== runId || !IN_FLIGHT.includes(prev.status)) return
+    quietRecord.current = true
+    setRecordKey((k) => k + 1)
+    onRefresh?.()
+  }, [detail]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A live run may have added evidence the answer just cited; re-read without blanking the page.
+  const refreshFold = useCallback(() => {
+    void loadRun() // a failed read keeps what is shown
+  }, [loadRun])
 
   useEffect(() => {
     let cancelled = false
@@ -613,8 +632,12 @@ export function CasePage({
 
   useEffect(() => {
     let cancelled = false
-    setRecordPhase('loading')
-    setRecordError(null)
+    const quiet = quietRecord.current && recordReady.current // only a record on screen is re-read in place
+    quietRecord.current = false
+    if (!quiet) {
+      setRecordPhase('loading')
+      setRecordError(null)
+    }
     casesApi
       .getRecord(id)
       .then((res) => {
@@ -623,7 +646,7 @@ export function CasePage({
         setRecordPhase('ready')
       })
       .catch((e) => {
-        if (cancelled) return
+        if (cancelled || quiet) return
         setRows([])
         setRecordError(detailOf(e, 'Couldn’t load the record'))
         setRecordPhase('error')
@@ -643,22 +666,6 @@ export function CasePage({
       ? `Investigate case ${c.id}: "${c.title}" — ${c.prio} priority, status ${pill}, ${c.findings} linked findings.`
       : `Investigate case ${id}.`
     return text ? `${base}\n\nWhy?\n${text}` : base
-  }
-
-  const replay = async () => {
-    if (!runId) return
-    setBusy(true)
-    setNote('')
-    try {
-      const res = await workflowApi.replayRun(runId)
-      const data = res.data as { decisions?: unknown[] }
-      const n = Array.isArray(data.decisions) ? data.decisions.length : 0
-      setNote(n ? `Replay returned ${n} decision${n === 1 ? '' : 's'}.` : 'Replay returned.')
-    } catch (e) {
-      setNote(detailOf(e, 'Replay failed'))
-    } finally {
-      setBusy(false)
-    }
   }
 
   const verify = async () => {
@@ -731,18 +738,19 @@ export function CasePage({
     }
   }
 
-  const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
-  const pillState = closed ? 'closed' : pill
+  // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
+  const stopped = closed || needsCount > 0 ? null : stoppedRun(fold)
+  const pillState = closed ? 'closed' : stopped?.state ?? pill
   // Only what exists: the live investigation's status, else the run's outcome.
-  const runState = (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
+  const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
-  const running = !closed && tone !== 'needs'
+  const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
   const reason =
-    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''
+    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed ? closedBy(closure) : ''
   const needsBlock = (
     <CaseNeeds
       items={needsItems}
@@ -782,7 +790,7 @@ export function CasePage({
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsCount > 0} />
-              {reason && <span className="case-reason">{reason}</span>}
+              {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
               <span>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : 'No workflow'}</span>
@@ -819,29 +827,31 @@ export function CasePage({
             closed ? (
               <>
                 {needsBlock}
-                <section>
-                  <h3>Verdict</h3>
-                  <p>{closure?.verdict || '—'}</p>
-                  <p className="muted">
-                    {closure?.closure_category || '—'}
-                    {closure?.closed_by ? ` · closed by ${closure.closed_by}` : ''}
-                    {closure?.closed_by_kind ? ` (${closure.closed_by_kind})` : ''}
-                  </p>
-                </section>
-                <section>
-                  <h3>Strongest findings</h3>
-                  <FindingList fold={fold} />
+                <section className="case-closed" aria-label="Closed summary">
+                  <span className="case-closed-line">
+                    {[closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                  <h3>{closure?.verdict || '—'}</h3>
+                  <ClosedRows fold={fold} phase={foldPhase} />
+                  <div className="case-assess">
+                    <span>Your assessment</span>
+                    <button type="button" className="btn" disabled title={LATER}>Agree</button>
+                    <button type="button" className="btn" disabled title={LATER}>Disagree</button>
+                    <span className="case-assess-later">Coming in a later release</span>
+                    <div className="case-actions">
+                      <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
+                    </div>
+                  </div>
                 </section>
                 {doors}
-                <div className="case-actions">
-                  {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
-                  <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
-                </div>
               </>
             ) : (
               <>
                 {needsBlock}
                 {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} />}
+                {stopped && <StoppedCard stopped={stopped} />}
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
@@ -852,7 +862,7 @@ export function CasePage({
                     <LaterRow title="Planned next" line="What the run intends to do next." />
                   </>
                 )}
-                <AgentsTable fold={fold} phase={foldPhase} live={live.length > 0} state={runState} />
+                <AgentsTable fold={fold} phase={foldPhase} live={live.length > 0 && !stopped} state={runState} />
                 {doors}
               </>
             )
@@ -886,7 +896,7 @@ export function CasePage({
                         <li key={row.hypothesis_id}>
                           <div className="case-expl-main">
                             <div className="case-expl-line">
-                              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{display(word)}</span>
+                              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
                               <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`}>{row.statement || row.hypothesis_id}</span>
                             </div>
                             {row.resolution_reason && <div className="case-expl-note">{row.resolution_reason}</div>}
@@ -918,36 +928,7 @@ export function CasePage({
             )
           )}
 
-          {tab === 'Evidence' && (
-            fold?.kind === 'hunt' ? (
-              fold.evidence.length === 0 ? (
-                <EmptyState compact icon="shield" title="No evidence yet" />
-              ) : (
-                <EvidenceTable
-                  focusId={focusEvidence}
-                  rows={fold.evidence.map((row) => ({
-                    id: row.evidence_id,
-                    step: String(row.iteration),
-                    observation: row.is_gap ? `${row.summary} (gap)` : row.summary,
-                    source: row.source_system,
-                    bears: row.bears_on.map((link) => `${link.relation} ${link.hypothesis_id}`).join(', ') || '—',
-                  }))}
-                />
-              )
-            ) : findings.length === 0 ? (
-              <EmptyState compact icon="shield" title="No evidence yet" />
-            ) : (
-              <EvidenceTable
-                rows={findings.map((row, i) => ({
-                  id: `${row.agent_id}-${i}`,
-                  step: String(i + 1),
-                  observation: row.answer || '—',
-                  source: row.agent_id,
-                  bears: '—',
-                }))}
-              />
-            )
-          )}
+          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
 
           {tab === 'Checked' && (
             !fold || fold.calls.length === 0 ? (
@@ -985,17 +966,30 @@ export function CasePage({
           )}
 
           {tab === 'Record' && (
-            <>
-              <p>
-                Newest first.
-                <Mark text={CHAINED} />
-              </p>
-              <div className="case-chips" role="group" aria-label="Record source">
-                {(['all', 'agent', 'human', 'memory', 'system'] as const).map((name) => (
-                  <button key={name} className={`btn ghost${chip === name ? ' active' : ''}`} onClick={() => setChip(name)}>
-                    {name}
-                  </button>
-                ))}
+            <section className="rec-card">
+              <div className="rec-bar">
+                <div className="rec-chips" role="group" aria-label="Record source">
+                  <FilterChip label={`All ${rows.length}`} active={chip === 'all'} onClick={() => setChip('all')} />
+                  {RECORD_CHIPS.map((name) => (
+                    <FilterChip key={name} label={name[0].toUpperCase() + name.slice(1)} active={chip === name} onClick={() => setChip(name)} />
+                  ))}
+                  <InfoTip
+                    label="About the record"
+                    align="start"
+                    source="The run’s journal and the case audit log, newest first."
+                    calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
+                    limit="Only the run’s rows are hash-chained. Case audit rows are not."
+                  />
+                </div>
+                <div className="rec-actions">
+                  {runId && (
+                    <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
+                      Replay
+                    </Link>
+                  )}
+                  {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
+                  {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
+                </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}
               {recordPhase === 'error' && (
@@ -1011,61 +1005,32 @@ export function CasePage({
               {recordPhase === 'ready' && shown.length === 0 && (
                 <EmptyState compact icon="clock" title="No record yet" />
               )}
-              {recordPhase === 'ready' && shown.map((row) => (
-                <div key={row.id} className="case-record">
-                  <span className="tag">{recordChip(row.kind)}</span>
-                  <div>
-                    <div>{row.text || row.kind}</div>
-                    <div className="muted">{when(row.at)}{row.chained ? ' · chained' : ''}</div>
-                  </div>
-                  <button type="button" className="btn ghost" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+              {recordPhase === 'ready' && shown.length > 0 && (
+                <div className="rec-rows">
+                  {shown.map((row) => {
+                    const type = recordChip(row.kind)
+                    return (
+                      <div key={row.id} className="rec-row">
+                        <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
+                        <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
+                        <span className="rec-text" title={row.text}>
+                          {row.text || row.kind}
+                          {row.chained && <span className="rec-chained">chained</span>}
+                        </span>
+                        <button type="button" className="rec-why" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-              <div className="case-actions">
-                {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
-                {runId && <button className="btn" onClick={verify} disabled={busy}>Verify</button>}
-                {latest?.investigation_id && <button className="btn" onClick={download} disabled={busy}>Export</button>}
-              </div>
-            </>
+              )}
+            </section>
           )}
           {note && <p className="muted">{note}</p>}
         </div>
 
         <aside className="case-side" aria-label="Case details">
           <LinkedFindings items={linkedFindings} />
-          <div><span className="k">Workflow</span><div>{latest?.workflow_id || '—'}</div></div>
-          <div>
-            <span className="k">Budget</span>
-            <div>
-              {latest ? `${money(latest.cost_usd)} / ${money(latest.max_cost_usd)} · ${latest.budget_health}` : '—'}
-            </div>
-          </div>
-          <div>
-            <span className="k">Resolve by</span>
-            <div>{sla ? `${when(sla.due)}${sla.health ? ` · ${sla.health}` : ''}` : '—'}</div>
-          </div>
-          <div>
-            <span className="k">Entities</span>
-            <div>{fold?.recall && !fold.recall.unavailable && fold.recall.keys.length ? fold.recall.keys.join(', ') : '—'}</div>
-          </div>
-          <div><span className="k">Cost</span><div>{money(fold?.costUsd ?? latest?.cost_usd)}</div></div>
-          <details className="case-fold">
-            <summary>People</summary>
-            <p>Owner {c?.ownerName || '—'}</p>
-            <CommentsCard caseId={id} />
-            <TasksCard caseId={id} />
-            <Tickets caseId={id} />
-          </details>
-          <details className="case-fold">
-            <summary>Known about these entities</summary>
-            <p className="muted">
-              {fold?.recall
-                ? fold.recall.unavailable
-                  ? `Recall did not happen: ${fold.recall.unavailable}`
-                  : `${fold.recall.keys.join(', ') || 'No entities'}${fold.recall.verdicts.length ? `. Verdicts: ${fold.recall.verdicts.map((v) => [v.outcome, v.statement].filter(Boolean).join(' — ')).join('; ')}` : ''}${fold.recall.gaps.length ? `. Gaps: ${fold.recall.gaps.map((g) => g.statement).join('; ')}` : ''}`
-                : 'The run did not journal a recall.'}
-            </p>
-          </details>
+          <CaseSide key={id} caseId={id} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />
@@ -1085,6 +1050,7 @@ export function CasePage({
         lockedCaseId={id}
         seed={askSeed?.id === id ? askSeed.text : null}
         onSeedConsumed={() => setAskSeed(null)}
+        onTurnDone={refreshFold}
         evidenceIds={fold?.kind === 'hunt' ? fold.evidence.map((row) => row.evidence_id) : []}
         onCite={(evidenceId) => {
           setTab('Evidence')
@@ -1188,6 +1154,29 @@ function LaterRow({ title, line }: { title: string; line: string }) {
   )
 }
 
+function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+  if (phase === 'loading') return <p className="muted">Loading the run…</p>
+  if (phase === 'error') return <p className="muted">The run could not be read.</p>
+  const rows = strongestRows(fold)
+  if (rows.length === 0) return <p className="muted">No findings yet.</p>
+  return (
+    <ul className="case-closed-rows">
+      {rows.map((row, i) => (
+        <li key={i}>
+          <span className="mono">{row.step === '—' ? '—' : `Step ${row.step}`}</span>
+          <span title={row.text}>{row.text}</span>
+          <b className={row.stance === 'For' ? 'good' : row.stance === 'Against' ? 'poor' : undefined}>{row.stance ?? '—'}</b>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Two lines, then an ellipsis; the full text is on hover. */
+function Clamped({ text }: { text: string }) {
+  return <span className="clamp2" title={text}>{text}</span>
+}
+
 function FindingList({ fold }: { fold: RunFold | null }) {
   if (!fold) return <p className="muted">No findings yet.</p>
   if (fold.kind === 'hunt') {
@@ -1197,7 +1186,7 @@ function FindingList({ fold }: { fold: RunFold | null }) {
       <ul>
         {ranked.slice(0, 6).map((row) => (
           <li key={row.hypothesis_id}>
-            {display(explanationWord(row.status, row.supports, row.weakens))} — {row.statement || row.hypothesis_id}
+            <Clamped text={`${explanationWord(row.status, row.supports, row.weakens).replace(/_/g, ' ')} — ${row.statement || row.hypothesis_id}`} />
           </li>
         ))}
       </ul>
@@ -1207,79 +1196,8 @@ function FindingList({ fold }: { fold: RunFold | null }) {
   return (
     <ul>
       {fold.findings.slice(0, 6).map((row, i) => (
-        <li key={i}>{row.agent_id}: {row.answer || '—'}</li>
+        <li key={i}><Clamped text={`${row.agent_id}: ${row.answer || '—'}`} /></li>
       ))}
     </ul>
-  )
-}
-
-function EvidenceTable({
-  rows,
-  focusId,
-}: {
-  rows: { id: string; step: string; observation: string; source: string; bears: string }[]
-  focusId?: string | null
-}) {
-  const focusRef = useRef<HTMLTableRowElement>(null)
-  useEffect(() => {
-    const node = focusRef.current
-    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
-  }, [focusId, rows])
-  return (
-    <div className="table-wrap">
-      <table className="tbl">
-        <thead><tr><th>Step</th><th>Observation</th><th>Source</th><th>Bears on</th></tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              ref={row.id === focusId ? focusRef : undefined}
-              className={row.id === focusId ? 'cite-target' : undefined}
-              data-evidence-id={row.id}
-            >
-              <td>{row.step}</td>
-              <td>{row.observation || '—'}</td>
-              <td>{row.source || '—'}</td>
-              <td>{row.bears}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function Tickets({ caseId }: { caseId: string }) {
-  const [rows, setRows] = useState<{ id: string; label: string }[]>([])
-  const [phase, setPhase] = useState<Phase>('loading')
-
-  useEffect(() => {
-    let cancelled = false
-    casesApi
-      .getEscalations(caseId)
-      .then((res) => {
-        if (cancelled) return
-        setRows((res.data.escalations || []).map((row) => ({
-          id: String(row.escalation_id ?? row.escalated_to),
-          label: [row.escalated_to, row.reason].filter(Boolean).join(' — ') || 'Ticket',
-        })))
-        setPhase('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setPhase('error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [caseId])
-
-  return (
-    <section>
-      <h3>Linked tickets</h3>
-      {phase === 'loading' && <p className="muted">Loading tickets…</p>}
-      {phase === 'error' && <p className="muted">Couldn’t load tickets.</p>}
-      {phase === 'ready' && rows.length === 0 && <p className="muted">No linked tickets.</p>}
-      {rows.map((row) => <p key={row.id}>{row.label}</p>)}
-    </section>
   )
 }

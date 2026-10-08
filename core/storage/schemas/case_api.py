@@ -63,6 +63,7 @@ class CaseQueueStrip(BaseModel):
     sla_at_risk: int
     closed_today: int
     agent_closure_share: float
+    needs_you: int
 
 
 class CaseListResponse(BaseModel):
@@ -96,6 +97,7 @@ class CaseClosureView(BaseModel):
     closure_category: str
     closed_by: str
     closed_by_kind: str
+    closed_at: Optional[str] = None
     verdict: str = ""
 
 
@@ -103,6 +105,7 @@ class CaseLinkedFinding(BaseModel):
     """One finding the case already links, and the source door when one exists."""
 
     finding_id: str
+    title: Optional[str] = None
     description: Optional[str] = None
     source_link: Optional[str] = None
 

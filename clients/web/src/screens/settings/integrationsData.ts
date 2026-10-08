@@ -95,3 +95,12 @@ export function prettyServerName(name: string): string {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
 }
+
+export type IntegrationsTab = 'connected' | 'add' | 'custom' | 'surface'
+
+/** `?tab=`: `servers` is the old name of Connected; anything unknown lands there. */
+export function tabFromQuery(value: string | null): IntegrationsTab {
+  if (value === 'servers') return 'connected'
+  if (value === 'connected' || value === 'add' || value === 'custom' || value === 'surface') return value
+  return 'connected'
+}

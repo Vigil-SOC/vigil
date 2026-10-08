@@ -66,7 +66,7 @@ describe('a hunt, as of the selected step', () => {
     render(<WatchRun d={hunt()} onBack={vi.fn()} />)
 
     // step 1: one belief on the board, one record for it, nothing asked, nothing missed
-    expect(await screen.findByText('active')).toBeInTheDocument()
+    expect(await screen.findByText('Standing')).toBeInTheDocument()
     expect(screen.getByText('1 for · 0 against')).toBeInTheDocument()
     expect(screen.queryByText('A vendor scanner')).not.toBeInTheDocument()
     expect(limit('Budget')).toBe('Budget$1.00 of $15.00')
@@ -75,7 +75,7 @@ describe('a hunt, as of the selected step', () => {
 
     // step 2: a second record, the status moved with the digest, the critic has spoken
     step(2)
-    expect(await screen.findByText('inconclusive')).toBeInTheDocument()
+    expect(await screen.findByText('Inconclusive')).toBeInTheDocument()
     expect(screen.getByText('2 for · 0 against')).toBeInTheDocument()
     expect(screen.queryByText('Not asked yet.')).not.toBeInTheDocument()
     expect(screen.getByText(/A nightly backup job/)).toBeInTheDocument()
@@ -85,9 +85,10 @@ describe('a hunt, as of the selected step', () => {
 
     // the last step: the projection's totals, both beliefs, their provenance, and the gap that came at step 3
     step(3)
-    expect(await screen.findByText('proven')).toBeInTheDocument()
+    expect(await screen.findByText('Proven')).toBeInTheDocument()
     expect(screen.getByText('2 for · 1 against')).toBeInTheDocument()
     expect(screen.getByText('0 for · 2 against')).toBeInTheDocument()
+    expect(screen.getByText('Ruled out')).toBeInTheDocument()
     expect(screen.getByText('yours')).toBeInTheDocument()
     expect(screen.getByText('the claim to beat')).toBeInTheDocument()
     expect(screen.getByText('found 3')).toBeInTheDocument()
