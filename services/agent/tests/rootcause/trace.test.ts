@@ -502,11 +502,18 @@ describe("the trace", () => {
 
   it("completes before a model call when telemetry is unbound", async () => {
     const spec = specOf();
-    const harness = harnessOf([], spec);
+    const state = new InProcessState<RootCauseKinds>();
+    const harness = harnessOf([], spec, state);
     const report = await runRootCause(harness, { run_id: RUN, spec });
     expect(report.status).toBe("completed");
     expect(report.reason).toMatch(/No telemetry_search/);
     expect(harness.provider.requests).toHaveLength(0);
+    const events = await state.read(RUN);
+    const notices = events.filter((event) => event.kind === "notice");
+    expect(notices.map((event) => event.payload)).toEqual([
+      { text: "This deployment has no telemetry search, so the trace could not look." },
+    ]);
+    expect(notices[0]!.seq).toBeLessThan(events.find((event) => event.kind === "terminal")!.seq);
   });
 
   it("says once that a non-splunk source cannot prove a link", async () => {

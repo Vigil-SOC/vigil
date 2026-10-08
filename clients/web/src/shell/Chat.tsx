@@ -265,6 +265,7 @@ export default function Chat({
   lockedCaseId,
   evidenceIds = [],
   onCite,
+  onTurnDone,
 }: {
   open: boolean
   onClose: () => void
@@ -280,6 +281,8 @@ export default function Chat({
   /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
   evidenceIds?: readonly string[]
   onCite?: (id: string) => void
+  /** Called when a turn ends, so a page can re-read what the answer may cite. */
+  onTurnDone?: () => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
@@ -521,8 +524,6 @@ export default function Chat({
               type?: string
               content?: string
               error?: string
-              windowed_messages?: number
-              remaining_messages?: number
             }
             try {
               ev = JSON.parse(data)
@@ -535,11 +536,7 @@ export default function Chat({
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
             } else if (ev.type === 'context_windowed') {
-              curText +=
-                `_[Context compressed: ${ev.windowed_messages ?? 0} older ` +
-                `messages condensed to stay within the model's limits; recent ` +
-                `messages and key details are preserved.]_\n\n`
-              setStreamText(curText)
+              // an engine detail: not part of the answer, so it is not written into it
             } else if (ev.type === 'text') {
               setIsProcessingTools(false)
               curText += ev.content || ''
@@ -594,6 +591,7 @@ export default function Chat({
         setStreamText('')
         setIsProcessingTools(false)
         abortRef.current = null
+        if (accepted) onTurnDone?.()
       }
     }
   }
@@ -932,22 +930,21 @@ export default function Chat({
         <textarea
           ref={taRef}
           rows={1}
-          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil, / for commands, @ for context'}
+          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil · @ to attach a case'}
           aria-label={lockedCaseId ? 'Ask about this case' : 'Ask Vigil'}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <div className="ci-row">
-          {caseId ? (
+          {caseId && !lockedCaseId ? (
             <span className="chat-case" data-testid="attached-case">
               <span>{caseId}</span>
-              {lockedCaseId ? null : (
-                <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
-              )}
+              <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
             </span>
           ) : null}
           <div className="ci-grow" />
+          {pinned && <span className="composer-note">Private to you · Ask only</span>}
           {loading ? (
             <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
           ) : (
@@ -962,21 +959,21 @@ export default function Chat({
     <>
     {pinned ? (
       <section className="case-composer" aria-label="Ask Vigil">
-        <div className="composer-modes" role="group" aria-label="Composer mode">
-          <button type="button" className="on" aria-pressed="true">Ask</button>
-          <button type="button" disabled title="Coming in a later release">Tell</button>
-          <button type="button" disabled title="Coming in a later release">Do</button>
-        </div>
-        <div className="chat-note">
-          <span>Private to you · Ask only</span>
-        </div>
         {messages.length > 0 && (
-          <button type="button" className="composer-fold" onClick={() => setThreadOpen((openThread) => !openThread)}>
+          <button type="button" className="composer-fold" aria-expanded={threadOpen} onClick={() => setThreadOpen((openThread) => !openThread)}>
+            <span className="composer-chev" aria-hidden="true">▾</span>
             {messages.length} message{messages.length === 1 ? '' : 's'} · {threadOpen ? 'hide' : 'show'}
           </button>
         )}
         {threadOpen && transcript}
-        {foot}
+        <div className="composer-box">
+          <div className="composer-modes" role="group" aria-label="Composer mode">
+            <button type="button" className="on" aria-pressed="true">Ask</button>
+            <button type="button" disabled title="Coming in a later release">Tell</button>
+            <button type="button" disabled title="Coming in a later release">Do</button>
+          </div>
+          {foot}
+        </div>
       </section>
     ) : (
     <aside

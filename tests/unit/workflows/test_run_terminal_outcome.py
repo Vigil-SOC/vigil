@@ -11,7 +11,12 @@ from unittest.mock import patch
 
 import pytest
 
-from core.workflows.run_bridge_router import TerminalUpdate, record_terminal
+from core.workflows.run_bridge_router import (
+    StatusUpdate,
+    TerminalUpdate,
+    record_status,
+    record_terminal,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -28,12 +33,19 @@ CASES = [
 class _Runs:
     def __init__(self) -> None:
         self.finalized: Dict[str, Any] = {}
+        self.row: Dict[str, Any] = {"status": "running", "reason": None, "cost": 0}
 
     def get_run(self, run_id: str) -> Dict[str, Any]:
         return {"run_id": run_id, "trigger_context": {}}
 
     def finalize_run(self, run_id: str, **kwargs: Any) -> bool:
         self.finalized = kwargs
+        self.row.update(status=kwargs["status"], reason=kwargs.get("reason"))
+        return True
+
+    def set_status(self, run_id: str, status: str, **kwargs: Any) -> bool:
+        self.row.update(status=status, reason=kwargs.get("reason"))
+        self.row["cost"] = kwargs.get("cost_usd")
         return True
 
 
@@ -61,3 +73,31 @@ def test_each_outcome_is_stored_beside_the_folded_status(
         assert runs.finalized["error"] == reason
     else:
         assert runs.finalized["error"] is None
+
+
+def test_a_parked_hunt_is_paused_with_its_reason_and_spend_then_finalized() -> None:
+    runs = _Runs()
+    reason = "ran out of turns: iteration 8 of 8, having spent $1.3744 of $5.00"
+    with patch("core.workflows.run_bridge_router.withdraw_for_run"), patch(
+        "core.workflows.run_bridge_router.authorise"
+    ):
+        record_status(
+            "run-1",
+            StatusUpdate(status="paused", reason=reason, cost_usd=1.3744),
+            "Bearer x",
+            runs,
+        )
+        assert runs.row == {"status": "paused", "reason": reason, "cost": 1.3744}
+        # Not a terminal: nothing was finalized by the pause.
+        assert runs.finalized == {}
+
+        record_terminal(
+            "run-1",
+            TerminalUpdate(outcome="completed", reason="done", cost_usd=1.5),
+            "Bearer x",
+            runs,
+            None,
+        )
+
+    assert runs.row["status"] == "completed"
+    assert runs.finalized["cost_usd"] == 1.5

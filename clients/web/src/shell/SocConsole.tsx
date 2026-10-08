@@ -17,6 +17,7 @@ import Chat from './Chat'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
+import { HOME_PERM, landingScreen } from './landing'
 import ConsoleTour, { type TourStopId } from './ConsoleTour'
 import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
@@ -47,8 +48,8 @@ import {
   type StatusFold,
 } from './statusLine'
 
-const PRIMARY_KEYS = ['home', 'cases', 'workflows', 'settings']
-const MORE_KEYS = ['overview', 'triage', 'dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
+const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
 const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
@@ -73,7 +74,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
 const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
   decisions: 'ai_decisions.approve',
-  home: 'ai_decisions.approve',
+  home: HOME_PERM,
   settings: 'settings.read',
 }
 
@@ -127,7 +128,9 @@ function SocConsoleInner() {
   // while manifests load, a deep-linked extension tab shows loading rather than
   // flashing 404
   const valid = screen !== undefined && screen in screens
-  const current: string = valid ? (screen as string) : 'dashboard'
+  const landing = landingScreen(hasPermission)
+  const landingLabel = landing === 'home' ? 'Home' : 'Overview'
+  const current: string = valid ? (screen as string) : landing
   const resolvingExtension = !valid && screen !== undefined && extLoading
   const currentPerm = valid ? screenPerms[current] : undefined
   const allowed = !currentPerm || hasPermission(currentPerm)
@@ -142,6 +145,7 @@ function SocConsoleInner() {
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
   const [chatSeed, setChatSeed] = useState<string | null>(null)
+  const [caseSeed, setCaseSeed] = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
   const [wallMode, setWallMode] = useState(false)
@@ -171,6 +175,15 @@ function SocConsoleInner() {
     if (prompt) setChatSeed(prompt)
   }, [])
   const closeChat = useCallback(() => setChatOpen(false), [])
+  // the open case: the drawer wins over the full page's ?case= param
+  const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
+  const openCaseId = drawerCase ?? pageCase
+  // with a case open the text goes to its own composer, not the dock
+  const askVigil = useCallback((text?: string) => {
+    if (openCaseId && text) setCaseSeed(text)
+    else openChat(text)
+  }, [openCaseId, openChat])
+  const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -302,19 +315,29 @@ function SocConsoleInner() {
 
   useEffect(() => {
     let live = true
+    let inFlight = false
     const settled = <T,>(p: Promise<T>): Promise<T | null> => p.then((v) => v).catch(() => null)
-    Promise.all([
-      settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
-      settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
-      settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
-      canReadRoutability
-        ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
-        : Promise.resolve(null),
-    ]).then(([health, federation, mcp, routability]) => {
-      if (live) setStatus(foldStatus({ health, federation, mcp, routability }))
-    })
+    // the last fold stays up while a round runs; a failed read folds as null
+    const pollStatus = () => {
+      if (inFlight) return
+      inFlight = true
+      Promise.all([
+        settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
+        settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
+        settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
+        canReadRoutability
+          ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
+          : Promise.resolve(null),
+      ]).then(([health, federation, mcp, routability]) => {
+        inFlight = false
+        if (live) setStatus(foldStatus({ health, federation, mcp, routability }))
+      })
+    }
+    pollStatus()
+    const id = setInterval(pollStatus, 30_000)
     return () => {
       live = false
+      clearInterval(id)
     }
   }, [canReadRoutability])
 
@@ -387,7 +410,7 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || current === 'overview')
+  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || current === 'overview' || (current === 'cases' && !viewFull))
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -410,9 +433,13 @@ function SocConsoleInner() {
               const key = item[2] as string
               return { key, label: item[1] }
             })}
-            onOpenChat={openChat}
+            onOpenChat={askVigil}
+            caseOpen={openCaseId !== null}
             onOpenCase={setDrawerCase}
-            onGo={(next) => go(next)}
+            onGo={(next, options) => {
+              setDrawerCase(null) // the drawer would sit over the next screen
+              go(next, options)
+            }}
           />
           <div className="vg-header-end">
             {assist !== null && (
@@ -470,7 +497,7 @@ function SocConsoleInner() {
 
         {/* main */}
         <div className={mainClass}>
-          {/* Overview, Agents & workflows and Settings draw their own headings */}
+          {/* Overview, Agents & workflows, Settings and the Cases list draw their own headings */}
           {!wallMode && !ownsHeading && (
             <header className="topbar">
               <div className="title">
@@ -495,17 +522,17 @@ function SocConsoleInner() {
                       <p>Loading…</p>
                     </div>
                   ) : (
-                    <NotFoundScreen path={screen} onHome={() => go('dashboard')} />
+                    <NotFoundScreen path={screen} homeLabel={landingLabel} onHome={() => go(landing)} />
                   )
                 ) : !allowed ? (
                   <div className="access-denied">
                     <Icon name="lock" size={26} />
                     <h2>Access denied</h2>
                     <p>You don’t have permission to view this page{currentPerm ? ` (requires ${currentPerm})` : ''}.</p>
-                    <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
+                    <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} />
                 )}
               </ErrorBoundary>
             </div>
@@ -526,6 +553,8 @@ function SocConsoleInner() {
             caseId={drawerCase}
             onClose={() => setDrawerCase(null)}
             pageKey={current}
+            seed={caseSeed}
+            onSeedConsumed={clearCaseSeed}
           />
         )}
       </div>

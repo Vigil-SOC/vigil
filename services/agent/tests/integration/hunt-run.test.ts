@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { LedgerRepository } from "../../ledger/repository.js";
 import { LeaseRepository } from "../../ledger/leases.js";
-import { advance, resolveSpec } from "../../worker.js";
+import { advance, resolveSpec, spentOn } from "../../worker.js";
 import { runHunt } from "../../workflows/hunt/workflow.js";
+import { steer } from "../../workflows/hunt/inbox.js";
 import { archFor } from "../../arch/registry.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import type { RunJob } from "../../contracts/job.js";
@@ -206,5 +207,96 @@ describe("a hunt started through the queue", () => {
     await advance(ledger, leases, startJob(runId), refusing, new InProcessDirectiveQueue());
 
     expect(await ledger.read(runId)).toHaveLength(settled);
+  });
+});
+
+// A hunt that parks has stopped, but its workflow_runs row read running with no end
+// and no cost, so the console showed a live run forever. The status posts are what
+// the row is written from.
+describe("a hunt that parks, as the console's run row sees it", () => {
+  // INVESTIGATE every turn, so only the turn limit stops it.
+  function investigating(): HarnessFactory {
+    const provider = respondingProvider({
+      emit: (schema) =>
+        isLead(schema) ? { action: "INVESTIGATE", rationale: "look", query_intent: "baseline", evidence_citations: [] } : { results: [] },
+      ticks: 0,
+    });
+    const base = huntHarness();
+    return (kind, spec, state, memory, seed) => ({ ...base(kind, spec, state, memory, seed), provider });
+  }
+
+  async function posting<T>(body: () => Promise<T>): Promise<{ status: Record<string, unknown>[]; terminal: number }> {
+    const status: Record<string, unknown>[] = [];
+    let terminal = 0;
+    const real = globalThis.fetch;
+    process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith(`${runId}/status`)) status.push(JSON.parse(String(init?.body)));
+      if (String(url).endsWith(`${runId}/terminal`)) terminal += 1;
+      return { ok: true, status: 200, json: async () => ({ decisions: [] }) } as Response;
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await body();
+    } finally {
+      globalThis.fetch = real;
+      delete process.env["VIGIL_RUNS_URL"];
+    }
+    return { status, terminal };
+  }
+
+  // Held to one turn, on a hypothesis that stays open, so only the turn limit stops it.
+  const capped = (): RunJob => {
+    const job = startJob(runId) as Extract<RunJob, { reason: "start" }>;
+    return { ...job, request: { ...job.request, iterations: 1, hypotheses: ["the key was used from a new host"] } };
+  };
+
+  const resumeJob = (): RunJob => ({ ...startJob(runId), reason: "resume" }) as unknown as RunJob;
+
+  it("is paused with the reason and the spend, not left running", async () => {
+    const queue = new InProcessDirectiveQueue();
+    const sent = await posting(() =>
+      advance(ledger, leases, capped(), investigating(), queue),
+    );
+
+    expect(await ledger.terminal(runId)).toBeNull();
+    expect(sent.terminal).toBe(0);
+    // One write, and it is the pause: the iteration that parked it reports nothing as running.
+    expect(sent.status).toEqual([
+      { status: "paused", reason: expect.stringMatching(/^ran out of turns: iteration 1 of 1/), cost_usd: await spentOn(ledger, runId) },
+    ]);
+  });
+
+  it("is paused with the refusal when the budget refuses another iteration", async () => {
+    const base = investigating();
+    const refusing: HarnessFactory = (kind, spec, state, memory, seed) => ({
+      ...base(kind, spec, state, memory, seed),
+      budget: budgetOf({ ...spec.budgets, max_calls: 0 }, unmeteredQuota),
+    });
+    const sent = await posting(() => advance(ledger, leases, capped(), refusing, new InProcessDirectiveQueue()));
+
+    expect(await ledger.terminal(runId)).toBeNull();
+    expect(sent.status).toEqual([{ status: "paused", reason: expect.stringMatching(/^the budget refused another iteration/), cost_usd: 0 }]);
+  });
+
+  it("flips to running once when an extension wakes it, and not while it stays parked", async () => {
+    const queue = new InProcessDirectiveQueue();
+    await posting(() =>
+      advance(ledger, leases, capped(), investigating(), queue),
+    );
+
+    // Sweeps that find it still parked write nothing at all.
+    const sweeps = await posting(async () => {
+      await advance(ledger, leases, resumeJob(), investigating(), queue);
+      await advance(ledger, leases, resumeJob(), investigating(), queue);
+    });
+    expect(sweeps.status).toEqual([]);
+
+    await steer(queue, runId, "extend", "", { grant: { iterations: 2, cost_usd: 0, wall_ms: 0 } });
+    const woken = await posting(() => advance(ledger, leases, resumeJob(), investigating(), queue));
+
+    // The first turn it bought runs, then the second parks it again on the new limit.
+    expect(woken.status.map((update) => update["status"])).toEqual(["running", "paused"]);
+    expect(woken.status[0]).toMatchObject({ reason: "", cost_usd: expect.any(Number) });
+    expect(woken.status[1]).toMatchObject({ reason: expect.stringMatching(/iteration 3 of 3/) });
   });
 });

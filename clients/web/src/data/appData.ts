@@ -24,12 +24,14 @@ export interface Workflow {
   /** What starts it: "alerts", "schedule", "shadow". Empty means a person does;
    *  absent means the backend did not say. */
   triggers?: string[]
-  /** False only when switched off. */
-  enabled: boolean
   /** Mean cost of those 7 days' finished runs. Null when none have finished. */
   meanCostUsd: number | null
   /** Custom workflows only; file workflows omit it. */
   updatedAt?: string
+  /** Whether the workflow is on. Off means nothing starts it, not even a person. */
+  enabled: boolean
+  /** False for the workflow alerts fall back to: it cannot be turned off. */
+  canDisable: boolean
 }
 
 // AGENT_META was mirrored here until #482 moved it to GET /agents, so built-in
@@ -61,6 +63,8 @@ export interface Decision {
   evidence: string[]
 }
 
+export type ToolChange = 'read_only' | 'asks_first' | 'on_its_own'
+
 export interface AgentTemplate {
   name: string
   handle: string
@@ -75,6 +79,8 @@ export interface AgentTemplate {
   category: string | null
   skills: number
   changes: 'read_only' | 'asks_first' | 'on_its_own' | null
+  /** the mark of each tool the agent holds */
+  toolChanges: Record<string, ToolChange>
   /** null when the stats query failed server-side */
   runs7d: number | null
   /** percent 0..100, null with no runs or a failed stats query */

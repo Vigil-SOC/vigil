@@ -1824,6 +1824,10 @@
       "data_type": "timestamp without time zone",
       "nullable": true
     },
+    "title": {
+      "data_type": "text",
+      "nullable": true
+    },
     "updated_at": {
       "data_type": "timestamp without time zone",
       "nullable": false
