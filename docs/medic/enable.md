@@ -32,6 +32,8 @@ The script is the whole enable, and it is safe to re-run. It:
 
 It never prints a secret. It refuses to run if recreating the backend would leave it without a `JWT_SECRET_KEY`.
 
+On Linux the script also hands each file to whoever reads it, since Compose bind-mounts secret files as they are: the password to the gateway (uid 10002), and the API key to `root:10010`, mode `0640`. Group 10010 belongs to Medic and the backend only (`group_add`), so the key isn't readable through gid 1000, which on Linux is often a person's own group. The gateway passes the key through without reading the file.
+
 After the script, `./start.sh` (through `scripts/lib.sh`'s `dc`) and the console's service controls add Medic's overlay and settings themselves whenever `compose.env` exists, so a restart through them keeps Medic on its network. A `docker compose` command you type yourself needs them too. The script prints the exact command:
 
 ```bash
@@ -48,7 +50,9 @@ To turn Medic off, delete `compose.env` (that file is what makes `start.sh` and 
 
 ## Helm (PROVISIONAL)
 
-These steps need the chart's Medic templates (the Medic and gateway Deployments, step S7). Without them, `medic.enabled=true` only sets the backend's switch, and there is no gateway yet to use the account.
+The chart needs a cluster whose network plugin **enforces NetworkPolicy** (Calico, Cilium, kind's default kindnet, or a managed cluster with enforcement on). Medic checks at start and refuses to run (exit 3) where nothing enforces it, e.g. flannel. Plugins set to reject denied traffic rather than drop it are fine.
+
+The chart mints Medic's API key at install into the Secret `<release>-medic-api-key` and keeps it across upgrades; Medic and the backend mount it as a file. The backend polls `http://<release>-medic-gateway-in:8470` once a minute and shows **Down** after 270 seconds without an answer. Where Helm can't read the cluster when it renders (`helm template`, Argo CD, Flux), create the Secret yourself (key `api_key`, 32 random bytes base64url) and set `medic.apiKey.existingSecret`; otherwise every render mints a new key.
 
 1. Before you install or upgrade, create the gateway's password Secret and choose the name. The password is written to a file and never appears on a command line.
 
