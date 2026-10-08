@@ -16,6 +16,7 @@ available.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, Mapping, Tuple
 
@@ -278,6 +279,19 @@ ENTITY_KEY_TYPES: Tuple[str, ...] = (
 # here. Reached rather than assumed: the writer logs what it dropped, because a
 # silently truncated subject list reads as a Verdict that named fewer entities.
 VERDICT_SUBJECT_CAP = 12
+
+# Longest prose a Verdict or Gap stores (statement, rationale, reason). The text
+# is model- or analyst-written and is replayed into the next hunt's opening turn,
+# so it is bounded where it is written as well as where it is read.
+EPISODIC_PROSE_CAP = 2000
+
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0B-\x1F\x7F]")
+
+
+def bounded_prose(value: object, cap: int = EPISODIC_PROSE_CAP) -> str:
+    """Prose as stored: control characters (tab and newline aside) dropped, then capped."""
+    return _CONTROL_CHARS.sub("", str(value))[:cap]
+
 
 # A LIMIT over a partial order lets Postgres return a different set on identical
 # data, so ties break on the primary key.

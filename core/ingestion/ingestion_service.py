@@ -96,6 +96,72 @@ def _optional_float(value: Any) -> Optional[float]:
     return parsed
 
 
+def _blank(value: Any) -> bool:
+    return value is None or value == "" or value == {}
+
+
+def _json_object(value: Any) -> Any:
+    """A JSON-encoded object/array string is parsed; anything else is returned as-is."""
+    if isinstance(value, str) and value.lstrip()[:1] in ("{", "["):
+        try:
+            return json.loads(value)
+        except ValueError:
+            pass
+    return value
+
+
+def to_internal_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
+    """Map the common alert keys onto Vigil's internal finding shape.
+
+    id -> finding_id, source -> data_source, iocs -> entity_context,
+    raw_data -> entity_context.source_evidence, mitre_techniques ->
+    mitre_predictions. A key already present under its internal name wins.
+    Returns a new dict; the caller's is not mutated.
+    """
+    out = dict(finding)
+    for common, internal in (("id", "finding_id"), ("source", "data_source")):
+        if common in out:
+            value = out.pop(common)
+            if _blank(out.get(internal)) and not _blank(value):
+                out[internal] = value
+    if "data_source" in out and out["data_source"] is not None:
+        out["data_source"] = str(out["data_source"])[:50]  # String(50) column
+
+    context = _json_object(out.get("entity_context"))
+    context = dict(context) if isinstance(context, dict) else {}
+    iocs = _json_object(out.pop("iocs", None))
+    if not _blank(iocs):
+        iocs = iocs if isinstance(iocs, dict) else {"iocs": iocs}
+        context = {**iocs, **context}
+
+    raw = _json_object(out.pop("raw_data", None))
+    if not _blank(raw) and "source_evidence" not in context:
+        evidence = {
+            "version": 1,
+            "telemetry_kind": "generic_log",
+            "status": "available",
+            "provenance": "embedded",
+        }
+        if isinstance(raw, dict):
+            evidence["records"] = [raw]
+        else:
+            evidence["raw_text"] = raw if isinstance(raw, str) else json.dumps(raw)
+        context["source_evidence"] = evidence
+    if context:
+        out["entity_context"] = context
+
+    techniques = _json_object(out.pop("mitre_techniques", None))
+    if not _blank(techniques) and not out.get("mitre_predictions"):
+        if isinstance(techniques, str):
+            techniques = [t.strip() for t in techniques.split(",")]
+        if isinstance(techniques, (list, tuple)):
+            # The file asserts the technique, so it carries full confidence.
+            techniques = {str(t): 1.0 for t in techniques if t}
+        if isinstance(techniques, dict):
+            out["mitre_predictions"] = techniques
+    return out
+
+
 def _content_finding_id(unique_key: str, event_ts: Optional[datetime] = None) -> str:
     """Stable f-prefixed id. Omit the date segment when source time is absent
     so a later reimport does not mint a new id from the ingest clock."""
@@ -154,6 +220,12 @@ class IngestionService:
             "cases_errors": 0,
         }
         self._identity_warned: set = set()
+        # Reason the first row failed; a str, so it stays out of the int-only stats.
+        self.first_error: Optional[str] = None
+
+    def _record_error(self, message: str) -> None:
+        if self.first_error is None:
+            self.first_error = message
 
     def _identity_fallback(
         self, row: Dict[str, Any], columns: tuple, missing_column: str
@@ -173,6 +245,7 @@ class IngestionService:
         """Reset ingestion statistics."""
         for key in self.stats:
             self.stats[key] = 0
+        self.first_error = None
 
     def parse_timestamp(self, timestamp_value: Any) -> Optional[datetime]:
         """
@@ -246,9 +319,11 @@ class IngestionService:
         Returns:
             True if successful, False otherwise
         """
+        finding_data = to_internal_finding(finding_data)
         finding_id = finding_data.get("finding_id")
         if not finding_id:
             logger.error("Finding missing finding_id")
+            self._record_error("Finding missing id/finding_id")
             self.stats["findings_errors"] += 1
             return False
 
@@ -273,6 +348,7 @@ class IngestionService:
                     timestamp=timestamp,
                     data_source=finding_data.get("data_source", "imported"),
                     external_id=finding_data.get("external_id"),
+                    title=finding_data.get("title"),
                     description=finding_data.get("description"),
                     entity_context=finding_data.get("entity_context"),
                     evidence_links=finding_data.get("evidence_links"),
@@ -286,14 +362,17 @@ class IngestionService:
                     logger.debug(f"Imported finding: {finding_id}")
                     return True
                 else:
+                    self._record_error(f"Failed to create finding {finding_id}")
                     self.stats["findings_errors"] += 1
                     logger.error(f"Failed to create finding: {finding_id}")
                     return False
+            self._record_error("Database unavailable")
             self.stats["findings_errors"] += 1
             logger.error("Database unavailable, cannot ingest finding %s", finding_id)
             return False
 
         except Exception as e:
+            self._record_error(f"Finding {finding_id}: {e}")
             self.stats["findings_errors"] += 1
             logger.error(f"Error ingesting finding {finding_id}: {e}")
             return False
@@ -304,13 +383,16 @@ class IngestionService:
             return
 
         if not self.use_database or not self.db_service:
+            self._record_error("Database unavailable")
             self.stats["findings_errors"] += len(finding_dicts)
             return
 
         valid = []
         for finding_data in finding_dicts:
+            finding_data = to_internal_finding(finding_data)
             if not finding_data.get("finding_id"):
                 logger.error("Finding missing finding_id")
+                self._record_error("Finding missing id/finding_id")
                 self.stats["findings_errors"] += 1
                 continue
             try:
@@ -325,6 +407,7 @@ class IngestionService:
                 logger.error(
                     f"Error preparing finding {finding_data.get('finding_id')}: {e}"
                 )
+                self._record_error(f"Finding {finding_data.get('finding_id')}: {e}")
                 self.stats["findings_errors"] += 1
                 continue
             valid.append(finding_data)
@@ -337,8 +420,11 @@ class IngestionService:
             self.stats["findings_imported"] += result["imported"]
             self.stats["findings_skipped"] += result["skipped"]
             self.stats["findings_errors"] += result.get("errors", 0)
+            if result.get("first_error"):
+                self._record_error(result["first_error"])
         except Exception as e:
             logger.error(f"Error bulk ingesting findings: {e}")
+            self._record_error(f"Error bulk ingesting findings: {e}")
             self.stats["findings_errors"] += len(valid)
 
     def _ingest_findings_batched(self, findings, batch_size: int = 1000) -> None:
@@ -506,6 +592,8 @@ class IngestionService:
                 findings = data
             elif data and "case_id" in data[0]:
                 cases = data
+            elif data and "id" in data[0]:
+                findings = data
 
         self.stats["findings_total"] = len(findings)
         self.stats["cases_total"] = len(cases)

@@ -131,8 +131,11 @@ def get_job_registry() -> IngestionJobRegistry:
     return _registry
 
 
-def summarize_stats(stats: Dict[str, int]) -> tuple:
-    """Reduce ingestion stats to a (success, human message) pair."""
+def summarize_stats(stats: Dict[str, int], first_error: Optional[str] = None) -> tuple:
+    """Reduce ingestion stats to a (success, human message) pair.
+
+    ``first_error`` is the reason the first row failed; it follows the counts.
+    """
     imported = stats.get("findings_imported", 0) + stats.get("cases_imported", 0)
     skipped = stats.get("findings_skipped", 0) + stats.get("cases_skipped", 0)
     errors = stats.get("findings_errors", 0) + stats.get("cases_errors", 0)
@@ -151,6 +154,8 @@ def summarize_stats(stats: Dict[str, int]) -> tuple:
         messages.append(f"{stats['findings_errors']} finding errors")
     if stats.get("cases_errors", 0) > 0:
         messages.append(f"{stats['cases_errors']} case errors")
+    if errors and first_error:
+        messages.append(f"First error: {first_error}")
 
     return success, ". ".join(messages) if messages else "No data imported"
 
@@ -165,7 +170,7 @@ def run_job(job: IngestionJob, source_path: Path) -> None:
         stats = service._ingest_file_by_format(
             source_path, job.format, data_type=job.data_type
         )
-        success, message = summarize_stats(stats or {})
+        success, message = summarize_stats(stats or {}, service.first_error)
         if success:
             job.finish(message)
         else:

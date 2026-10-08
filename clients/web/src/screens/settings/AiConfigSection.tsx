@@ -8,6 +8,7 @@
    and lives in the overview; Operations are Vigil runtime knobs.
    ============================================================ */
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { Field, NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
 import AiProvidersPanel from './AiProvidersPanel'
@@ -29,8 +30,18 @@ const TABS: [AiTab, string][] = [
   ['operations', 'Operations'],
 ]
 
+function tabFromQuery(value: string | null): AiTab {
+  return TABS.find(([k]) => k === value)?.[0] ?? 'providers'
+}
+
 export default function AiConfigSection({ notify }: SectionProps) {
-  const [tab, setTab] = useState<AiTab>('providers')
+  const [searchParams] = useSearchParams()
+  const requested = tabFromQuery(searchParams.get('tab'))
+  const [tab, setTab] = useState<AiTab>(requested)
+
+  useEffect(() => {
+    setTab(requested)
+  }, [requested])
   return (
     <>
       <AiModelsOverview notify={notify} />

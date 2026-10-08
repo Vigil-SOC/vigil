@@ -1,43 +1,38 @@
 // Changes save automatically, and take ~60s to apply (runtime-config TTL).
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { DurationPicker } from '../../shared/DurationPicker'
+import { formatDuration } from '../../shared/duration'
 import { Icon } from '../../shared/icons'
+import { InfoTip } from '../../shared/InfoTip'
+import { ScrubField } from '../../shared/ScrubField'
+import { ConfirmDialog, Field, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import {
-  ConfirmDialog,
-  Field,
-  NumberInput,
-  SettingsCard,
-  TextInput,
-  Toggle,
-  ToggleRow,
-} from '../../shared/ui'
-import {
-  ORCHESTRATOR_DEFAULTS,
+  matchesProfile,
   useForceManualApproval,
   useOrchestrator,
   type InvestigationProfileValues,
+  type OrchestratorBound,
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
 import { fmtCost } from '../../shared/cost'
 import IntentReportCard from './IntentReportCard'
 
+// Raising any of these needs a confirm; lowering applies at once. Settings also
+// guards stale_threshold, which Setup's profile picker never changes.
 const LIMIT_FIELDS = [
   'max_cost_per_investigation',
   'max_iterations_per_agent',
   'max_runtime_per_investigation',
   'max_concurrent_agents',
   'max_total_hourly_cost',
-] as const satisfies readonly (keyof InvestigationProfileValues)[]
-
-type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
+  'stale_threshold',
+] as const satisfies readonly (keyof OrchestratorConfig)[]
 
 const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
   LIMIT_FIELDS.some((field) => next[field] > prev[field])
 
-const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
-  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
-    ([k, v]) => cfg[k] === v,
-  )
+type PendingSave = { kind: 'config'; next: OrchestratorConfig } | { kind: 'act' }
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {
@@ -48,8 +43,8 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
       }
     case 'act':
       return {
-        title: 'Switch to Act?',
-        body: 'Act stops forcing manual approval, so autonomous response can proceed on its own.',
+        title: 'Let tools act on their own?',
+        body: 'Tools that change something will stop waiting for a person when the agent is confident enough.',
       }
     default: {
       const _exhaustive: never = pending
@@ -66,53 +61,123 @@ function errorText(err: unknown, fallback: string): string {
   return fallback
 }
 
-interface NumOpts {
-  min?: number
-  max?: number
-  unit?: string
-  hint?: string
-  allowUnlimited?: boolean
+const ACT_TIP =
+  'A tool that can be undone runs on its own when the agent’s confidence is at or above the response confidence threshold, and waits for a person below it. Ask first makes every one of them wait.'
+
+const money = (v: number) => `$${v}`
+
+interface LimitRow {
+  field: keyof OrchestratorConfig & keyof InvestigationProfileValues
+  title: string
+  hint: string
+  label: string
+  prefix?: string
+  unit: string
 }
 
+// The board's rows; bounds, step and defaults come from the server
+const SCRUB_ROWS: LimitRow[] = [
+  { field: 'max_cost_per_investigation', title: 'Budget per case', hint: 'What a new case may spend without asking', label: 'Budget', prefix: '$', unit: 'per case' },
+  { field: 'max_iterations_per_agent', title: 'Steps per case', hint: 'Steps before the case stops and asks', label: 'Steps', unit: 'per case' },
+]
+const FLEET_ROWS: LimitRow[] = [
+  { field: 'max_concurrent_agents', title: 'Cases running at once, whole fleet', hint: 'More at once is faster but costs more per hour', label: 'Fleet', unit: 'at once' },
+  { field: 'max_total_hourly_cost', title: 'Spend per hour, whole fleet', hint: 'Intake pauses when the last hour reaches this', label: 'Hourly cap', prefix: '$', unit: 'per hour' },
+]
+
 export default function AutoInvestigateSection({ notify }: SectionProps) {
-  const { config, setConfig, profiles, status, phase, save } = useOrchestrator()
+  const { config, setConfig, defaults, bounds, profiles, status, phase, reload, save } = useOrchestrator()
   const approval = useForceManualApproval()
-  const lastSaved = useRef<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
+  const lastSaved = useRef<OrchestratorConfig | null>(null)
+  const configRef = useRef<OrchestratorConfig | null>(null)
+  const idleTimer = useRef<ReturnType<typeof setTimeout>>()
   const [advanced, setAdvanced] = useState(false)
   const [intentRevision, setIntentRevision] = useState(0)
   const [pending, setPending] = useState<PendingSave | null>(null)
 
+  configRef.current = config
   useEffect(() => {
     if (phase === 'ready') lastSaved.current = config
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
+  // leaving the page inside the debounce still saves the pending duration
+  const commitRef = useRef<(cfg: OrchestratorConfig) => void>()
+  useEffect(
+    () => () => {
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current)
+        commitRef.current?.(configRef.current!)
+      }
+    },
+    [],
+  )
 
   if (phase === 'loading' || approval.phase === 'loading') {
-    return <div className="text-sm text-tx-3 py-16 text-center">Loading Auto Investigate config…</div>
+    return <div className="text-sm text-tx-3 py-16 text-center">Loading limits and autonomy…</div>
+  }
+  if (phase === 'error' || !config) {
+    return (
+      <div className="py-16 text-center flex flex-col items-center gap-2.5">
+        <span className="text-sm text-tx-3">Couldn’t load the limits. Nothing has been changed.</span>
+        <button className="btn ghost" onClick={reload}>Retry</button>
+      </div>
+    )
+  }
+
+  const bound = (field: keyof OrchestratorConfig): OrchestratorBound | undefined => bounds[field]
+  const isOutside = (field: keyof OrchestratorConfig) => {
+    const b = bound(field)
+    const v = config[field] as number
+    return b !== undefined && (v < b.min || v > b.max)
+  }
+  // A config saved before the bounds existed (0 used to mean "unlimited") loads as it is,
+  // and is corrected into range the next time anything is saved.
+  const outside = (Object.keys(bounds) as (keyof OrchestratorConfig)[]).filter(isOutside)
+  const intoRange = (cfg: OrchestratorConfig): OrchestratorConfig => {
+    const next = { ...cfg }
+    for (const field of outside) {
+      const b = bound(field)!
+      Object.assign(next, { [field]: Math.min(Math.max(cfg[field] as number, b.min), b.max) })
+    }
+    return next
   }
 
   const persist = async (next: OrchestratorConfig) => {
     try {
       await save(next)
       lastSaved.current = next
-      notify('ok', 'Auto Investigate settings saved.')
+      notify('ok', 'Limits saved.')
       setIntentRevision((n) => n + 1)
-    } catch {
-      notify('err', 'Failed to save Auto Investigate settings.')
+    } catch (err) {
+      setConfig(lastSaved.current)
+      notify('err', errorText(err, 'Failed to save limits.'))
     }
   }
 
-  const commitConfig = (next: OrchestratorConfig) => {
+  const commitConfig = (raw: OrchestratorConfig) => {
+    clearTimeout(idleTimer.current) // this save already carries any pending duration
+    idleTimer.current = undefined
+    const next = intoRange(raw)
     setConfig(next)
-    if (raisesLimit(lastSaved.current, next)) {
+    if (lastSaved.current && raisesLimit(lastSaved.current, next)) {
       setPending({ kind: 'config', next })
       return
     }
     persist(next)
   }
 
-  const applyAndSave = (patch: Partial<OrchestratorConfig>) => {
-    commitConfig({ ...config, ...patch })
+  commitRef.current = commitConfig
+
+  const applyAndSave = (patch: Partial<OrchestratorConfig>) => commitConfig({ ...config, ...patch })
+
+  // The picker reports every digit typed; wait for a pause before saving, so a loosening
+  // does not open the confirm half-way through "12".
+  const setDuration = (field: 'stale_threshold' | 'max_runtime_per_investigation', hours: number) => {
+    const next = { ...configRef.current!, [field]: Math.round(hours * 3600) }
+    configRef.current = next
+    setConfig(next)
+    clearTimeout(idleTimer.current)
+    idleTimer.current = setTimeout(() => commitConfig(configRef.current!), 600)
   }
 
   const persistIfChanged = () => {
@@ -122,13 +187,13 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const saveApproval = async (enabled: boolean) => {
     try {
       await approval.save(enabled)
-      notify('ok', 'Auto Investigate settings saved.')
+      notify('ok', 'Limits saved.')
     } catch (err) {
-      notify('err', errorText(err, 'Failed to save Auto Investigate settings.'))
+      notify('err', errorText(err, 'Failed to save limits.'))
     }
   }
 
-  const selectAssist = () => {
+  const selectAsk = () => {
     if (approval.enabled) return
     saveApproval(true)
   }
@@ -161,7 +226,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   }
 
   const dismissPending = () => {
-    if (pending?.kind === 'config') setConfig(lastSaved.current)
+    if (pending?.kind === 'config' && lastSaved.current) setConfig(lastSaved.current)
     setPending(null)
   }
 
@@ -172,50 +237,62 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       break
     }
   }
-  const assistOn = approval.enabled || approval.environment_wins
+  const askFirst = approval.enabled || approval.environment_wins
   const dialog = pending ? pendingCopy(pending) : null
 
-  const numField = (label: string, field: keyof OrchestratorConfig, opts: NumOpts = {}) => {
-    const unlimited = Boolean(opts.allowUnlimited) && (config[field] as number) === 0
+  const tag = (field: keyof OrchestratorConfig) => {
+    if (isOutside(field)) return { text: 'Outside the allowed range', fair: true }
+    const d = defaults?.[field] as number | undefined
+    if (d === undefined || d === config[field]) return { text: 'Default', fair: false }
+    const was = field.includes('cost') ? money(d) : field.endsWith('threshold') ? formatDuration(d / 3600) : d
+    return { text: `Changed · default ${was}`, fair: false }
+  }
+
+  const row = (title: string, hint: string, field: keyof OrchestratorConfig, control: ReactNode) => {
+    const t = tag(field)
     return (
-      <Field label={opts.unit ? `${label} (${opts.unit})` : label} hint={opts.hint}>
-        <NumberInput
-          value={unlimited ? '' : (config[field] as number)}
-          placeholder={unlimited ? 'Unlimited' : undefined}
-          disabled={unlimited}
-          min={opts.min}
-          max={opts.max}
-          onChange={(e) => {
-            let v = Number(e.target.value)
-            if (opts.min !== undefined && v < opts.min) v = opts.min
-            if (opts.max !== undefined && v > opts.max) v = opts.max
-            setConfig((prev) => ({ ...prev, [field]: v }))
-          }}
-          onBlur={persistIfChanged}
-        />
-        {opts.allowUnlimited && (
-          <span className="flex items-center gap-2 text-xs text-tx-3 mt-0.5">
-            <Toggle
-              checked={unlimited}
-              onChange={(on) =>
-                applyAndSave({ [field]: on ? 0 : (ORCHESTRATOR_DEFAULTS[field] as number) })
-              }
-            />
-            Unlimited
-          </span>
-        )}
-      </Field>
+      <div className="lim-row" key={field}>
+        <span className="lim-row-title">
+          {title}
+          <span>{hint}</span>
+        </span>
+        <span className={`lim-row-tag${t.fair ? ' fair' : ''}`}>{t.text}</span>
+        <span className="lim-row-ctl">{control}</span>
+      </div>
     )
   }
+
+  const scrub = (r: LimitRow) => {
+    const b = bound(r.field)
+    if (!b) return null
+    return (
+      <ScrubField
+        name={r.title}
+        label={r.label}
+        prefix={r.prefix}
+        unit={r.unit}
+        value={config[r.field]}
+        min={b.min}
+        max={b.max}
+        step={b.step}
+        onCommit={(v) => applyAndSave({ [r.field]: v })}
+      />
+    )
+  }
+
+  const idle = bound('stale_threshold')
+  const runtime = bound('max_runtime_per_investigation')
+  const loop = bound('loop_interval')
 
   return (
     <>
       <SettingsCard
-        title="Auto Investigate"
-        desc="Runtime toggles for the autonomous investigation orchestrator. Changes save automatically and take effect across backend / daemon / llm-worker within ~60 seconds."
+        wide
+        title="Automatic investigation"
+        desc="The fastest way to cap cost: turn it off, run it dry, or pick a smaller profile."
       >
         {status && (
-          <div className={`settings-banner ${status.enabled ? 'ok' : 'info'} mb-4`}>
+          <div className={`settings-banner ${status.enabled ? 'ok' : 'info'} mb-3`}>
             <Icon name="info" size={14} />
             <span>
               Orchestrator is <strong>{status.enabled ? 'ENABLED' : 'DISABLED'}</strong>
@@ -227,94 +304,49 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             </span>
           </div>
         )}
-
-        <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-1">
-          Master controls
-        </h4>
-        <ToggleRow
-          label="Enable autonomous investigations"
-          checked={config.enabled}
-          onChange={(v) => applyAndSave({ enabled: v })}
-        />
-        <ToggleRow
-          label="Dry run mode"
-          hint="Agents gather data but skip write actions."
-          checked={config.dry_run}
-          onChange={(v) => applyAndSave({ dry_run: v })}
-        />
-      </SettingsCard>
-
-      <SettingsCard
-        title="Response mode"
-        desc="Assist forces a person to approve each response. Act does not. Act is the default."
-      >
-        {approval.phase === 'error' ? (
-          <div className="settings-banner err">
-            <Icon name="alert" size={14} />
-            <span>Could not load the response mode. Reload to try again.</span>
+        <div className="lim-switch">
+          <div className="toggle-row-text">
+            <span className="toggle-row-label">Investigate new alerts automatically</span>
+            <span className="toggle-row-hint">
+              When off, alerts still arrive and are grouped into cases, but no agent starts until someone asks.
+            </span>
           </div>
-        ) : (
-          <>
-            {approval.environment_wins && (
-              <div className="settings-banner info mb-3">
-                <Icon name="info" size={14} />
-                <span>The environment wins. Act cannot be saved.</span>
-              </div>
-            )}
-            <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-              <button
-                onClick={selectAssist}
-                className={`card card-sq text-left p-3.5 transition-colors ${
-                  assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
-                }`}
-                style={assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[13px] font-semibold text-tx">Assist</span>
-                  {assistOn && <span className="chip sel">Active</span>}
-                </div>
-                <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
-              </button>
-              <button
-                onClick={selectAct}
-                className={`card card-sq text-left p-3.5 transition-colors ${
-                  !assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
-                }`}
-                style={!assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[13px] font-semibold text-tx">Act</span>
-                  <span className="chip">Recommended</span>
-                  {!assistOn && <span className="chip sel">Active</span>}
-                </div>
-                <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
-              </button>
-            </div>
-          </>
-        )}
-      </SettingsCard>
+          <Toggle
+            label="Investigate new alerts automatically"
+            checked={config.enabled}
+            onChange={(v) => applyAndSave({ enabled: v })}
+          />
+        </div>
+        <div className="lim-switch">
+          <div className="toggle-row-text">
+            <span className="toggle-row-label">Dry run</span>
+            <span className="toggle-row-hint">Agents gather evidence but skip every change, even ones you would approve.</span>
+          </div>
+          <Toggle label="Dry run" checked={config.dry_run} onChange={(v) => applyAndSave({ dry_run: v })} />
+        </div>
 
-      <SettingsCard
-        title="Investigation profile"
-        desc="Pick a profile to set agent concurrency, runtime, and cost limits in one click. Fine-tune any value under Advanced."
-      >
-        <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <div className="lim-profiles">
           {Object.entries(profiles).map(([key, profile]) => {
-            const selected = activeProfile === key
+            const v = profile.values
             return (
               <button
                 key={key}
+                type="button"
+                aria-pressed={activeProfile === key}
                 onClick={() => applyAndSave(profile.values)}
-                className={`card card-sq text-left p-3.5 transition-colors ${
-                  selected ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
-                }`}
-                style={selected ? { borderColor: 'var(--accent-line)' } : undefined}
+                className={`lim-profile${activeProfile === key ? ' on' : ''}`}
               >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[13px] font-semibold text-tx">{profile.label}</span>
-                  {profile.recommended && <span className="chip">Recommended</span>}
-                  {selected && <span className="chip sel">Active</span>}
-                </div>
+                <span className="lim-profile-head">
+                  {profile.label}
+                  {profile.recommended && <span className="lim-profile-flag">Recommended</span>}
+                </span>
+                <span className="lim-profile-vals">
+                  {v.max_concurrent_agents} agents at once · {money(v.max_cost_per_investigation)} per investigation ·{' '}
+                  {money(v.max_total_hourly_cost)} per hour
+                </span>
+                <span className="lim-profile-vals muted">
+                  {v.max_iterations_per_agent} steps · {formatDuration(v.max_runtime_per_investigation / 3600)} longest run
+                </span>
               </button>
             )
           })}
@@ -322,95 +354,143 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         {activeProfile === 'custom' && (
           <div className="settings-banner info mt-3">
             <Icon name="info" size={14} />
-            <span>
-              Custom limits in effect — your values don’t match any profile. Pick one above or expand
-              Advanced to review.
-            </span>
+            <span>Custom limits in effect — your values don’t match any profile. Pick one above or adjust the limits below.</span>
           </div>
         )}
       </SettingsCard>
 
       <SettingsCard
+        wide
+        title="Default limits for new cases"
+        desc="Existing cases keep theirs. Drag a value left or right, or click it to type. Tightening applies when you let go; loosening asks you to confirm."
+      >
+        {outside.length > 0 && (
+          <div className="settings-banner err mb-2">
+            <Icon name="alert" size={14} />
+            <span>
+              Saved {outside.map((f) => `${f.replace(/_/g, ' ')} (${config[f] as number})`).join(', ')} outside the
+              allowed range. The next save moves {outside.length === 1 ? 'it' : 'them'} to the nearest allowed value.
+            </span>
+          </div>
+        )}
+        {SCRUB_ROWS.map((r) => row(r.title, r.hint, r.field, scrub(r)))}
+        {idle &&
+          row(
+            'Idle cut-off',
+            'Time without progress before an agent is stopped',
+            'stale_threshold',
+            <DurationPicker
+              label="Idle cut-off"
+              value={config.stale_threshold / 3600}
+              minMinutes={idle.min / 60}
+              maxMinutes={idle.max / 60}
+              onChange={(h) => setDuration('stale_threshold', h)}
+            />,
+          )}
+        {FLEET_ROWS.map((r) => row(r.title, r.hint, r.field, scrub(r)))}
+      </SettingsCard>
+
+      <SettingsCard
+        wide
+        title="What tools may do on their own"
+        desc="Applies to new cases. Individual tools can be changed in Agents & workflows › Tool permissions."
+      >
+        {approval.phase === 'error' ? (
+          <div className="settings-banner err">
+            <Icon name="alert" size={14} />
+            <span>Could not load the tool setting. Reload to try again.</span>
+          </div>
+        ) : (
+          <>
+            {approval.environment_wins && (
+              <div className="settings-banner info mb-3">
+                <Icon name="info" size={14} />
+                <span>The environment wins. On their own cannot be saved.</span>
+              </div>
+            )}
+            <div className="lim-classes">
+              <div className="lim-class good">
+                <h4>Read-only tools</h4>
+                <span>Look things up</span>
+                <span className="lim-class-note">Never need approval</span>
+              </div>
+              <div className="lim-class fair">
+                <h4>
+                  Tools that change something <InfoTip label="About tools that change something" text={ACT_TIP} align="start" />
+                </h4>
+                <span>Reversible, such as revoking a session</span>
+                <div className="lim-seg" role="group" aria-label="Tools that change something">
+                  <button type="button" aria-pressed={!askFirst} onClick={selectAct}>On their own</button>
+                  <button type="button" aria-pressed={askFirst} onClick={selectAsk}>Ask first</button>
+                </div>
+              </div>
+              <div className="lim-class poor">
+                <h4>Tools that cannot be undone</h4>
+                <span>Such as isolating a host</span>
+                <span className="lim-class-note">
+                  <Icon name="lock" size={13} /> Always a person. This cannot be changed.
+                </span>
+              </div>
+            </div>
+          </>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        wide
         title="Advanced"
-        desc="Fine-tune limits, timing, and storage."
+        desc="Timing, the longest a case may run, and where investigation files go."
         actions={
-          <button className="btn ghost" onClick={() => setAdvanced((a) => !a)}>
+          <button className="btn ghost" aria-expanded={advanced} onClick={() => setAdvanced((a) => !a)}>
             <Icon name={advanced ? 'chevD' : 'chevR'} /> {advanced ? 'Hide' : 'Show'}
           </button>
         }
       >
         {advanced ? (
-          <div className="flex flex-col gap-5">
-            <div>
-              <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2">
-                Agent limits
-              </h4>
-              <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                {numField('Max concurrent agents', 'max_concurrent_agents', {
-                  min: 1, max: 10, hint: '1–10 simultaneous agents', allowUnlimited: true,
-                })}
-                {numField('Max iterations per agent', 'max_iterations_per_agent', {
-                  min: 1, max: 500, hint: 'Claude calls per investigation', allowUnlimited: true,
-                })}
-                {numField('Max runtime', 'max_runtime_per_investigation', {
-                  min: 60, max: 86400, unit: 's',
-                  hint: `${Math.round(config.max_runtime_per_investigation / 60)} minutes`,
-                  allowUnlimited: true,
-                })}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2">
-                Cost guardrails
-              </h4>
-              <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                {numField('Per investigation limit', 'max_cost_per_investigation', {
-                  min: 0.5, max: 100, unit: '$', hint: 'Max spend per investigation', allowUnlimited: true,
-                })}
-                {numField('Hourly cost limit', 'max_total_hourly_cost', {
-                  min: 1, max: 500, unit: '$', hint: 'Pause intake if exceeded', allowUnlimited: true,
-                })}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2">
-                Timing
-              </h4>
-              <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                {numField('Loop interval', 'loop_interval', { min: 10, max: 600, unit: 's', hint: 'Orchestrator check interval' })}
-                {numField('Stale threshold', 'stale_threshold', { min: 60, max: 3600, unit: 's', hint: 'Kill idle agents after this' })}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2">
-                Storage
-              </h4>
-              <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                <Field label="Working directory" hint="Base path for investigation files">
-                  <TextInput
-                    value={config.workdir_base}
-                    onChange={(e) => setConfig((prev) => ({ ...prev, workdir_base: e.target.value }))}
-                    onBlur={persistIfChanged}
-                  />
-                </Field>
-              </div>
-            </div>
-
-            <div>
-              <button className="btn ghost" onClick={() => applyAndSave(ORCHESTRATOR_DEFAULTS)}>
-                <Icon name="refresh" /> Reset to defaults
-              </button>
-            </div>
+          <div className="flex flex-col gap-4">
+            {row(
+              'Longest a case may run',
+              'A case is stopped after this long',
+              'max_runtime_per_investigation',
+              runtime && (
+                <DurationPicker
+                  label="Longest a case may run"
+                  value={config.max_runtime_per_investigation / 3600}
+                  minMinutes={runtime.min / 60}
+                  maxMinutes={runtime.max / 60}
+                  onChange={(h) => setDuration('max_runtime_per_investigation', h)}
+                />
+              ),
+            )}
+            {loop &&
+              row(
+                'Loop interval',
+                'How often the orchestrator checks for work',
+                'loop_interval',
+                <ScrubField
+                  name="Loop interval"
+                  label="Every"
+                  unit="seconds"
+                  value={config.loop_interval}
+                  min={loop.min}
+                  max={loop.max}
+                  step={loop.step}
+                  onCommit={(v) => applyAndSave({ loop_interval: v })}
+                />,
+              )}
+            <Field label="Working directory" hint="Base path for investigation files">
+              <TextInput
+                value={config.workdir_base}
+                onChange={(e) => setConfig((prev) => (prev ? { ...prev, workdir_base: e.target.value } : prev))}
+                onBlur={persistIfChanged}
+              />
+            </Field>
+            <IntentReportCard reloadKey={intentRevision} />
           </div>
         ) : (
-          <span className="text-xs text-tx-3">Hidden — click Show to fine-tune limits.</span>
+          <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage and the intent report.</span>
         )}
       </SettingsCard>
-
-      <IntentReportCard reloadKey={intentRevision} />
 
       <ConfirmDialog
         open={dialog != null}
