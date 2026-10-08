@@ -1,0 +1,11 @@
+apiVersion: medic.runbooks/v1
+kind: Runbook
+id: restart-soc-daemon
+title: Restart the soc-daemon container
+applies_to: [pipeline.daemon-processor-restart]
+action: {type: restart_service, target: soc-daemon}
+verify_after_s: 900
+description: >-
+  Restart soc-daemon so its processor task starts again. Verify that the
+  processed counter moves within 15 minutes. Phase 0 records this as
+  "would have"; nothing is executed.

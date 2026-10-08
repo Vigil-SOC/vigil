@@ -1,0 +1,46 @@
+{
+  "v": 1,
+  "id": "sql.findings_arrivals:01JA8Z3K4M:5",
+  "kind": "sample",
+  "signal": "sql_findings_arrivals",
+  "sensor": {
+    "id": "sql.findings_arrivals",
+    "run": "01JA8Z3K4M",
+    "seq": 5
+  },
+  "target": {
+    "service": "postgres",
+    "instance": "deeptempo-postgres",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:01:00Z",
+  "observed_at": "2026-10-07T10:01:00Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "values": [
+    {
+      "key": "arrivals_10m",
+      "type": "gauge",
+      "state": "present",
+      "value": 7,
+      "trust": "trusted",
+      "labels": {
+        "data_source": "crowdstrike"
+      }
+    },
+    {
+      "key": "arrivals_10m",
+      "type": "gauge",
+      "state": "present",
+      "value": 0,
+      "trust": "trusted",
+      "labels": {
+        "data_source": "sentinel"
+      }
+    }
+  ]
+}

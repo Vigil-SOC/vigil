@@ -1,0 +1,122 @@
+id: v09-errors-are-not-absence
+title: absent_for needs successful reads; a poller outage is unknown
+covers:
+- §2 absent_for
+- §2 lower bound
+start: '2026-10-07T10:00:00Z'
+end: +86m
+rules:
+- ref: ingest-source-never-polled.yaml
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+  - - +35m
+    - error
+  - - +50m
+    - ok
+types:
+  daemon_status.poller:
+    polls: counter
+series:
+- signal: daemon_status.poller
+  key: polls
+  labels: &id001
+    source: elastic
+  steps:
+  - - +0m
+    - 0
+  - - +5m
+    - 10
+  - - +10m
+    - 20
+  - - +15m
+    - 30
+  - - +20m
+    - 40
+  - - +25m
+    - 50
+  - - +30m
+    - 60
+  - - +35m
+    - null
+expect:
+- at: +2m
+  rule: ingest.source-never-polled
+  eval: unknown
+  state: inactive
+  group: *id001
+- at: +30m
+  rule: ingest.source-never-polled
+  eval: false
+  state: inactive
+  group: *id001
+- at: +40m
+  rule: ingest.source-never-polled
+  eval: unknown
+  state: inactive
+  group: *id001
+  note: stale; and present values in window make absent_for false
+- at: +65m
+  rule: ingest.source-never-polled
+  eval: unknown
+  state: inactive
+  group: *id001
+  note: 'gap 35..50: changes==0 is only a lower bound'
+- at: +79m15s
+  rule: ingest.source-never-polled
+  eval: unknown
+  state: inactive
+  group: *id001
+- at: +79m30s
+  rule: ingest.source-never-polled
+  eval: true
+  state: pending
+  group: *id001
+  note: 30m of successful reads, all absent
+- at: +84m30s
+  rule: ingest.source-never-polled
+  eval: true
+  state: firing
+  group: *id001
+  incident: A
+- at: +37m30s
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.daemon
+  incident: SB
+- at: +50m
+  rule: watcher.sensor-blind
+  eval: false
+  state: inactive
+  group:
+    sensor: http.daemon
+incidents:
+  A:
+    rule: ingest.source-never-polled
+    active_since: +79m30s
+    opened_at: +84m30s
+    resolving_since: null
+    resolved_at: null
+    group: *id001
+    routed_at: +84m30s
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +35m30s
+    opened_at: +37m30s
+    resolving_since: +50m
+    resolved_at: +50m
+    reason: cleared
+    group:
+      sensor: http.daemon
+    routed_at: +37m30s
