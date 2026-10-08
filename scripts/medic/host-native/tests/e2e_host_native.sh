@@ -7,8 +7,10 @@
 #   scripts/medic/host-native/tests/e2e_host_native.sh     (from the repo root)
 #
 # Covers privilege-model checks 8 and 12 and the host-native half of 9 (C3 §7),
-# plus: Medic runs as vigil-medic from its own venv, `check` goes green, a kill -9
-# is restarted after the backoff, and a TERM to the pidfile stops it all.
+# plus: DEV_MODE is refused (K1 T-37), Medic runs as vigil-medic from its own
+# venv, reports install shape start_sh and reads the agent worker's /readyz on
+# loopback (L49), `check` goes green, a kill -9 is restarted after the backoff,
+# and a TERM to the pidfile stops it all.
 set -uo pipefail
 
 cd "$(dirname "$0")/../../../.." || exit 1
@@ -64,9 +66,38 @@ pass "printed setup commands run as-is"
 # Check 8: a secret Medic's user can read → refuses to start.
 chmod 0755 "$STATE"; chmod 0644 "$STATE/master.key"
 out=$(medic_host_start 2>&1) && fail "started although vigil-medic can read master.key"
-grep -q "$STATE/master.key" <<<"$out" || fail "didn't name the readable secret: $out"
+grep -qxF "  chmod 0600 $STATE/master.key" <<<"$out" || fail "no exact chmod fix for the secret: $out"
 chmod 0700 "$STATE"; chmod 0600 "$STATE/master.key"
 pass "readable secret refused (check 8)"
+
+# K1 T-37: DEV_MODE is refused, not warned (S8-7).
+out=$(DEV_MODE=true medic_host_start 2>&1) && fail "started under DEV_MODE"
+grep -q "DEV_MODE is on" <<<"$out" || fail "no DEV_MODE refusal: $out"
+[ -e logs/medic.pid ] && fail "DEV_MODE refusal left a pidfile"
+pass "DEV_MODE refused (T-37)"
+
+# A stand-in agent worker /readyz on a free loopback port, handed over the way
+# start.sh does (AGENT_HEALTH_PORT); it records each path it serves.
+READY_LOG="$STATE/readyz.hits"
+python3 - "$READY_LOG" > "$STATE/readyz.port" 2>/dev/null <<'PY' &
+import http.server, sys
+hits = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        open(hits, "a").write(self.path + "\n")
+        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers()
+        self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+PY
+READY_PID=$!
+trap 'kill "$READY_PID" 2>/dev/null' EXIT
+port_known() { [ -s "$STATE/readyz.port" ]; }
+wait_for 10 port_known || fail "the /readyz stand-in didn't start"
+export AGENT_HEALTH_PORT
+AGENT_HEALTH_PORT=$(cat "$STATE/readyz.port")
 
 # Start for real.
 medic_host_start || fail "medic_host_start failed"
@@ -80,6 +111,12 @@ case "$exe" in "$RT/venv/bin/python"*) ;; *) fail "Medic isn't on its own venv: 
 pass "runs as vigil-medic from $RT/venv"
 [ "$(_medic_stat "$DATA")" = "$(id -u vigil-medic) 700" ] || fail "$DATA isn't vigil-medic 0700"
 pass "data dir $DATA is vigil-medic 0700"
+
+# L49: install shape start_sh, and the worker reached on loopback.
+read_ready() { grep -qx /readyz "$READY_LOG" 2>/dev/null; }
+wait_for 60 read_ready || fail "Medic never read the agent worker's /readyz on 127.0.0.1:$AGENT_HEALTH_PORT"
+grep -q "shape start_sh" logs/medic.log || fail "Medic didn't report install shape start_sh"
+pass "reports start_sh and reads /readyz on 127.0.0.1:$AGENT_HEALTH_PORT (L49)"
 
 # Check 8, as the running user.
 for f in master.key secrets.enc jwt_secret; do

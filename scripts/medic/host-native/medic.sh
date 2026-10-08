@@ -52,7 +52,7 @@ _medic_sudo() { (cd / && exec sudo -n -u "$_MEDIC_USER" -- "$@"); }
 # "<uid> <mode>": GNU stat, else BSD.
 _medic_stat() { stat -c '%u %a' "$1" 2>/dev/null || stat -f '%u %Lp' "$1" 2>/dev/null; }
 
-# K1 T-14 (and T-37 under DEV_MODE). Shown every time Medic is opted in.
+# K1 T-14. Shown every time Medic is opted in.
 _medic_warning() {
     cat >&2 <<EOF
 WARNING: Medic (System Watcher) is on for this host-native install. Here it
@@ -62,10 +62,16 @@ that can change Vigil's state (K1 T-14). Its own OS user keeps it away from
 Vigil's secret files, not from those services. For an isolated Medic, use
 Compose (--profile medic) or Helm.
 EOF
-    if [ "${DEV_MODE:-}" = "true" ]; then
-        echo "WARNING: DEV_MODE is on, so every backend request is an admin with no" \
-            "login. Don't run Medic on this install (K1 T-37)." >&2
-    fi
+}
+
+# DEV_MODE as the backend reads it (a pydantic bool). Anything that isn't clearly
+# off counts as on: fail closed.
+_medic_dev_mode() {
+    local v
+    v=$(printf '%s' "${DEV_MODE:-}" | tr '[:upper:]' '[:lower:]' \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    case "$v" in ''|false|0|no|off|f|n) return 1 ;; esac
+    return 0
 }
 
 # A UID/GID below 500 (hidden on macOS) that no user or group has yet.
@@ -117,6 +123,14 @@ _medic_setup() {
 medic_host_start() {
     medic_host_enabled || return 0
     _medic_warning
+    # S8-7, K1 T-37: under DEV_MODE every backend request is an admin with no
+    # login, and Medic shares this machine's loopback.
+    if _medic_dev_mode; then
+        echo "Medic not started: DEV_MODE is on, so every request to the backend is" \
+            "an admin with no login, and Medic shares this machine's network (K1 T-37)." \
+            "Turn DEV_MODE off in .env, or leave VIGIL_MEDIC_ENABLED unset." >&2
+        return 1
+    fi
 
     local pidfile="$REPO_ROOT/logs/medic.pid" log="$REPO_ROOT/logs/medic.log"
     # The args check: a stale pidfile's PID may now be someone else's.
@@ -176,11 +190,14 @@ medic_host_start() {
         {
             echo "Medic not started: $_MEDIC_USER can read Vigil secrets (privilege-model check 8):"
             printf '%s\n' "$readable" | sed 's/^/  /'
-            echo "Make each readable by its owner only, e.g.:"
+            echo "Make each readable by its owner only, then ./start.sh -d again:"
             printf '%s\n' "$readable" | while IFS= read -r f; do
                 printf '  chmod 0600 %q\n' "$f"
             done
-            printf '  chmod 0700 %q\n' "$state"
+            # The State Directory too, when one of its own files was readable.
+            if printf '%s\n' "$readable" | grep -qF "$state/"; then
+                printf '  chmod 0700 %q\n' "$state"
+            fi
         } >&2
         return 1
     fi
@@ -216,8 +233,10 @@ medic_host_start() {
     fi
 
     rotate_log "$log"
+    # L49: the worker's /readyz on loopback, at the port Vigil gave it.
     (cd / && exec nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
-        --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data") \
+        --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data" \
+        --agent-worker "127.0.0.1:${AGENT_HEALTH_PORT:-6990}") \
         < /dev/null > "$log" 2>&1 &
     echo $! > "$pidfile"
     echo "Medic: started as $_MEDIC_USER (log: logs/medic.log). Health:"
