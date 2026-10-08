@@ -31,14 +31,30 @@ entries:
   - {logger: services.daemon.processor, template: 'Dropped finding %s: database store failed'}
   # --- llm (F7b) ---
   # services/daemon/processor.py:645-700 via core/llm/outage.py:19-41 (#1689)
+  - {logger: services.daemon.processor, template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'}
   - {logger: services.daemon.processor, template: 'No LLM provider configured, AI triage is skipped until one is set up'}
   - {logger: services.daemon.processor, template: '%s; recovered after %d failures'}
   - {logger: services.daemon.processor, template: '%s (still failing, %d failures)'}
+  - {logger: services.daemon.processor, template: 'LLM gateway connected for AI triage'}
   # services/daemon/main.py:63 (the daemon runs as a script: CMD python services/daemon/main.py)
   - {logger: __main__, template: 'SOC Daemon initialized'}
-  # services/worker/jobs.py:103,135
+  # services/api/main.py:337,494; core/llm/gateway/gateway.py:143
+  - {logger: services.api.main, template: 'Starting Vigil SOC Backend'}
+  - {logger: services.api.main, template: 'LLM Gateway not available, LLM calls will fail until Redis and the ARQ worker are up: %s'}
+  - {logger: core.llm.gateway.gateway, template: 'LLMGateway initialized (connected to Redis)'}
+  # core/llm/bifrost/mirror.py:268-275 via core/llm/outage.py (#1689)
+  - {logger: core.llm.bifrost.mirror, template: 'Mirror reconcile skipped — Bifrost unreachable: %s'}
+  - {logger: core.llm.bifrost.mirror, template: '%s; recovered after %d failures'}
+  - {logger: core.llm.bifrost.mirror, template: '%s (still failing, %d failures)'}
+  # core/llm/bifrost/admin.py:147,202
+  - {logger: core.llm.bifrost.admin, template: 'Bifrost: provider %s key stored but reports status=%s (%s)'}
+  - {logger: core.llm.bifrost.admin, template: 'Bifrost: %s %s returned %s: %s'}
+  # services/worker/jobs.py:81,103,135
   - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): %s'}
+  - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): Empty response (model=%s; ClaudeService returned None - is an API key configured?)'}
   - {logger: services.worker.jobs, template: 'Provider %s not found; falling back to ClaudeService'}
   # core/llm/target.py:53,64
   - {logger: core.llm.target, template: "Provider %s cannot serve its own default_model %s — sending it anyway; the gateway's error is the only signal left"}
   - {logger: core.llm.target, template: 'Provider %s cannot serve %s — falling back to %s'}
+  # core/llm/gateway_retry.py:107
+  - {logger: core.llm.gateway_retry, template: 'gateway retries exhausted: last status %s after %d attempts'}
