@@ -181,6 +181,16 @@ VIGIL_MEDIC_SECRETS_DIR=$dir
 VIGIL_MEDIC_DOCKER_GID=$docker_gid
 VIGIL_MEDIC_VIEWER_USER=$viewer_user"
 
+# Recreating the backend re-renders its whole environment, and shell env beats
+# --env-file, so load Vigil's .env into the shell as start.sh does (without
+# start.sh's copy of env.example when there is none). Otherwise lib.sh's dc()
+# would hand the backend the default OLLAMA_URL over the one in .env.
+if [ -f "$REPO_ROOT/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/.env"
+    set +a
+fi
 env_files=()
 [ -f "$REPO_ROOT/.env" ] && env_files+=(--env-file "$REPO_ROOT/.env")
 env_files+=(--env-file "$settings")
@@ -211,11 +221,26 @@ backend_renders() {
     dcm config backend | grep -E "$1" > /dev/null
 }
 
+backend_running() {
+    local running
+    running="$(dcm ps --status running --services)"
+    printf '%s\n' "$running" | grep -Fx backend > /dev/null
+}
+
 ensure_account() {
     local err rc _
+    for _ in $(seq 1 60); do
+        backend_running && break
+        sleep 3
+    done
+    if ! backend_running; then
+        echo "error: the backend container isn't running; see: docker compose logs backend" >&2
+        exit 1
+    fi
     err="$(mktemp)"
-    # 64 usage and 77 refused are final; anything else (75: schema or Viewer
-    # role not seeded yet, or the container still starting) is retried.
+    # Only 75 (schema or Viewer role not there yet: db-seed still running) is
+    # retried. Anything else is final: 64 usage, 70 database error, 77 refused,
+    # 1 an image without this code (rebuild the backend).
     for _ in $(seq 1 60); do
         rc=0
         read_secret viewer_password \
@@ -223,7 +248,8 @@ ensure_account() {
             2> "$err" || rc=$?
         case "$rc" in
             0) rm -f "$err"; return 0 ;;
-            64 | 77) break ;;
+            75) ;;
+            *) break ;;
         esac
         sleep 3
     done
@@ -236,13 +262,16 @@ ensure_account() {
 if [ "$secrets_only" = 0 ]; then
     # Recreating the backend re-renders its environment. Refuse if this shell
     # would hand it no JWT secret, which it won't start without (README).
+    # Fails the run (set -e) if compose can't render at all.
+    dcm config backend > /dev/null
     if backend_renders '^ *JWT_SECRET_KEY: ("")?$' \
         && ! backend_renders '^ *DEV_MODE: "?true"?$'; then
         echo "error: the backend would get an empty JWT_SECRET_KEY. Run this from the shell, or with the $REPO_ROOT/.env, you start Vigil with." >&2
         exit 1
     fi
     dcm build medic medic-gateway medic-dockerproxy
-    dcm up -d backend
+    # db-seed seeds the Viewer role; only a full `up` would start it otherwise.
+    dcm up -d backend db-seed
     ensure_account
     if [ "$(uname -s)" = Linux ]; then
         own="chown 10002:10002 /s/viewer_password && chown 10001:10001 /s/api_key"
@@ -256,18 +285,21 @@ if [ "$secrets_only" = 0 ]; then
                 --entrypoint sh vigil-medic-gateway:local -c "$own"
         fi
     fi
+    if [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ]; then
+        # A new file (--rotate, or one deleted and re-minted): Compose
+        # bind-mounts the old inode, so only a recreate sees it. Straight after
+        # the password changed, since the gateway stops after two refusals.
+        dcm up -d --force-recreate medic medic-gateway
+    fi
     # Only the medic-net members already running: enabling Medic starts nothing
     # else of Vigil's. Docker drops them off medic-net unless recreated with
-    # the overlay.
+    # the overlay. An assignment, so a failed `ps` stops the run (set -e).
+    running="$(dcm ps --status running --services)"
     members=()
-    for svc in $(dcm ps --status running --services); do
+    for svc in $running; do
         case "$svc" in soc-daemon | agent-worker | agent-serve) members+=("$svc") ;; esac
     done
     dcm up -d medic medic-gateway medic-dockerproxy ${members[@]+"${members[@]}"}
-    if [ "$rotate" = 1 ]; then
-        # Compose bind-mounts the old inode: only a recreate sees the new files.
-        dcm up -d --force-recreate medic medic-gateway
-    fi
 fi
 
 echo "Medic secrets in $dir:"

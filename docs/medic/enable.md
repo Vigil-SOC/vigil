@@ -44,6 +44,8 @@ To turn Medic off, run `up` without Medic's files. The backend then reads the sw
 
 ## Helm (PROVISIONAL)
 
+These steps need the chart's Medic templates (the Medic and gateway Deployments, step S7). Without them, `medic.enabled=true` only sets the backend's switch, and there is no gateway yet to use the account.
+
 1. Before you install or upgrade, create the gateway's password Secret and choose the name. The password is written to a file and never appears on a command line.
 
    ```bash

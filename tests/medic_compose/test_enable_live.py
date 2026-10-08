@@ -317,3 +317,13 @@ def test_canary_no_secret_in_output_config_or_logs(stack, enabled) -> None:
             ("compose.env", settings),
         ]:
             assert value not in text, where
+
+
+def test_first_admin_bootstrap_is_still_open(stack, enabled) -> None:
+    """The service account isn't a person: the install can still be claimed."""
+    code = (
+        "import json, urllib.request; "
+        "print(urllib.request.urlopen("
+        "'http://localhost:6987/api/auth/bootstrap', timeout=20).read().decode())"
+    )
+    assert json.loads(stack.py("backend", code)) == {"required": True}
