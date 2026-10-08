@@ -155,8 +155,9 @@ def run(
             config.api_bind_peer(env),
         )
     except config.ConfigError as exc:
-        log.error("Medic can't start: %s", exc)
-        return 1
+        # The API is never a reason for Medic to stop (C5): watch without it.
+        log.error("Medic's API is off: %s. Medic keeps watching.", exc)
+        api = None
 
     # C4 §6.1: everything Medic creates is private to its own uid. Restored on
     # return, which only matters when run() is called in-process (tests).
@@ -448,16 +449,18 @@ class _Status:
                 monotonic=clock.monotonic,
                 bind_peer=api.bind_peer,
             )
-        self._failing = False
+        self._failing = self._api_failed = False
 
     def publish(self, *, cycle: int) -> None:
         now = self.clock.wall()
         try:
+            # The last beat actually written, not this cycle's attempt.
+            beat = read_heartbeat(self.data_dir)
             snapshot = build_status(
                 instance_id=self.medic.writer.instance_id,
                 now=now,
                 started_at=self.started_at,
-                heartbeat_at=now,
+                heartbeat_at=beat["ts"] if beat else self.started_at,
                 cycle=cycle,
                 history=self.history,
                 scheduler=self.medic.scheduler.status(),
@@ -473,7 +476,12 @@ class _Status:
             self._failing = False
             self.board.publish(snapshot, started_at=self.started_at, taken_at=now)
         if self.api is not None:
-            self.api.ensure()
+            try:
+                self.api.ensure()
+            except Exception as exc:  # noqa: BLE001 (never the loop's problem)
+                if not self._api_failed:
+                    log.error("Medic's API failed: %s", type(exc).__name__)
+                self._api_failed = True
 
     def stop(self) -> None:
         if self.api is not None:

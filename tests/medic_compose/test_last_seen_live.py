@@ -136,9 +136,12 @@ def test_flag_off_reads_off_and_writes_nothing(off) -> None:
 def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
     _, failed, kind, state = stack.sql(ROW).split("|")
     assert (failed, kind) == ("-", "-")
-    # The real Medic's own view, typed by the backend (V2-9).
-    assert state in MEDIC_STATES
+    # The real Medic's own view, typed by the backend (V2-9): inside its 300 s
+    # start-up grace or past it, and its agent-worker sensor reading (the stub
+    # answers /readyz), so never blind, degraded or crash-looping here.
+    assert state in MEDIC_STATES and state in ("starting", "running")
     snap = json.loads(stack.sql(SNAPSHOT))
+    assert snap["sensors"]["cant_see"] == 0 and snap["sensors"]["reporting"] >= 1
     assert re.fullmatch(r"mi_[0-9a-f]{16}", snap["instance_id"])
     assert snap["api_version"] == "1.0" and snap["cycle"] >= 0
     # S9-1: Medic listens only on medic-private, the gateway's network, never on

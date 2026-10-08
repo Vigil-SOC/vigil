@@ -99,3 +99,9 @@ def test_an_unwritable_dir_never_raises(tmp_path) -> None:
     h = record_start(blocker, now=T0, previous_beat=None)
     assert h.restarts == ()
     record_exit(blocker, now=T0, code=0)  # no exception
+
+
+@pytest.mark.parametrize("ts", [1e20, -1e20])
+def test_an_absurd_beat_time_is_dated_now(tmp_path, ts) -> None:
+    h = record_start(tmp_path, now=T0, previous_beat=_beat("running", ts))
+    assert h.last_exit == {"reason": "unknown", "at": "2027-01-15T08:00:00Z"}

@@ -195,3 +195,60 @@ def test_bind_peer_per_shape() -> None:
     with pytest.raises(config.ConfigError) as err:
         config.api_bind_peer({config.API_BIND_PEER_VAR: "a b/SECRET"})
     assert "SECRET" not in str(err.value)
+
+
+def test_a_bad_api_setting_leaves_the_api_off_not_medic(tmp_path, caplog) -> None:
+    clock = FakeClock()
+    env = _env(tmp_path, _free_port())
+    env[config.API_PORT_VAR] = "99999"
+    healthy = []
+
+    async def sleep_and_check(seconds: float) -> None:
+        healthy.append(check_heartbeat(tmp_path / "data", now=clock.wall())[0])
+        await clock.sleep(seconds)
+
+    with caplog.at_level(logging.ERROR, logger="services.medic"):
+        code = main(["run"], env=env, clock=clock, sleep=sleep_and_check, max_cycles=2)
+    assert code == 0 and healthy == [True, True]
+    assert "Medic's API is off" in caplog.text and "99999" not in caplog.text
+
+
+def test_an_api_that_raises_never_stops_the_loop(tmp_path, monkeypatch, caplog) -> None:
+    from services.medic.api import server
+
+    def boom(self):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(server.Api, "_try_start", boom)
+    clock = FakeClock()
+    env = _env(tmp_path, _free_port())
+    with caplog.at_level(logging.ERROR, logger="services.medic"):
+        code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=3)
+    assert code == 0
+    assert caplog.text.count("Medic's API failed") == 1
+
+
+def test_heartbeat_at_is_the_last_beat_written(tmp_path, monkeypatch) -> None:
+    from services.medic.app import cli
+
+    clock, port = FakeClock(), _free_port()
+    seen = []
+    real = cli.write_heartbeat
+
+    def failing_after_start(data_dir, **kw):
+        if kw.get("cycle", 0) >= 2 and kw.get("state", "running") == "running":
+            raise OSError("disk full")
+        return real(data_dir, **kw)
+
+    monkeypatch.setattr(cli, "write_heartbeat", failing_after_start)
+
+    async def look(seconds: float) -> None:
+        seen.append(_get(port)[1])
+        await clock.sleep(seconds)
+
+    env = _env(tmp_path, port)
+    assert main(["run"], env=env, clock=clock, sleep=look, max_cycles=3) == 0
+    beats = [d["heartbeat_at"] for d in seen]
+    # Cycle 1's beat was the last one written; cycles 2 and 3 failed to write.
+    assert beats[1] == beats[0] and beats[2] == beats[0]
+    assert seen[2]["now"] > beats[0]

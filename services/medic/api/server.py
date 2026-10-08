@@ -29,19 +29,24 @@ from typing import Any
 
 from services.medic.api.status import API_VERSION, serve_view
 from services.medic.app.config import API_KEY_FILE_VAR
-from services.medic.app.wiring import TICK_S
 
 log = logging.getLogger("services.medic")
 
 STATUS_PATH = "/v1/status"
-# The loop publishes every 15 s tick. Two missed ticks and the data is stale:
-# answer `busy` rather than serve it (the watchdog ends a hung loop at 180 s).
-SNAPSHOT_MAX_AGE_S = 2 * TICK_S
+# The main loop's tick (wiring.TICK_S, semantics.md §1; a test pins the two).
+# Not imported: the listener stays light enough for the backend's own tests.
+TICK_S = 15
+# X2: "a snapshot no older than 15 s". The loop publishes every 15 s tick, at
+# the end of a cycle, so a cycle's own run time is allowed on top; older than
+# that and the loop is late: answer `busy` rather than serve stale data (the
+# watchdog ends a hung loop at 180 s).
+SNAPSHOT_MAX_AGE_S = TICK_S + 5
 RETRY_AFTER_S = TICK_S
 KEY_RE = re.compile(rb"[A-Za-z0-9_-]{43}")  # 32 random bytes, base64url (X2)
 REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 CLIENT_TIMEOUT_S = 10.0
 MAX_CONNECTIONS = 16  # one caller (the backend or the gateway), ≤ 20 req/min (C7)
+MAX_IN_FLIGHT = 4  # X2 Busy: more than this and the answer is 503 busy
 RETRY_FIRST_S = 5.0  # then doubling: the gateway may still be starting
 RETRY_MAX_S = 60.0
 
@@ -169,6 +174,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._problem(404, "not_found")
         if self.command != "GET":
             return self._problem(405, "method_not_allowed")
+        if not self.server.in_flight.acquire(blocking=False):
+            return self._problem(503, "busy", retry_after_s=1)
+        try:
+            self._status()
+        finally:
+            self.server.in_flight.release()
+
+    def _status(self) -> None:
         current = self.board.read()
         now = self.wall()
         if current is None or now - current[2] > SNAPSHOT_MAX_AGE_S:
@@ -189,6 +202,7 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self.conn_slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        self.in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 
     def process_request(self, request, client_address) -> None:
         if not self.conn_slots.acquire(blocking=False):  # over the cap: close at once
@@ -288,7 +302,8 @@ class Api:
         if self.bind_peer is not None:
             try:
                 host = local_address_toward(self.bind_peer)
-            except OSError as exc:
+            # UnicodeError (a ValueError): a name the IDNA codec can't encode.
+            except (OSError, ValueError) as exc:
                 self._say_once(
                     "peer",
                     "Medic's API isn't listening yet: it listens only on the "
