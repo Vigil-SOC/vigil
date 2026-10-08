@@ -1,0 +1,84 @@
+# Test-only override for tests/medic_compose/test_enable_live.py. Never for installs.
+#
+# Unlike compose.test.yml (S6), the backend, Postgres, db-seed and Redis are the
+# real ones: the subject is the enable flow creating a real service account that
+# the real gateway logs in with. Bifrost, the pre-upgrade backup and the agents
+# are stubs (stub.py), so only the backend image has to be built. Names and host
+# ports are reset so it runs beside a developer's deeptempo-* stack, under its
+# own project (medic-v1). Written out per service: merge keys drop !reset.
+services:
+  medic:
+    container_name: !reset null
+  medic-gateway:
+    container_name: !reset null
+  medic-dockerproxy:
+    container_name: !reset null
+
+  backend:
+    container_name: !reset null
+    ports: !reset []
+    restart: "no"
+  postgres:
+    container_name: !reset null
+    ports: !reset []
+  db-seed:
+    container_name: !reset null
+  redis:
+    container_name: !reset null
+    ports: !reset []
+
+  backup-pre-upgrade:
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    entrypoint: !override ["true"]
+    command: !reset null
+    volumes: !reset []
+    environment: !reset {}
+    depends_on: !reset {}
+
+  bifrost:
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_V1_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment: !override
+      STUB_ROLE: bifrost
+
+  agent-worker:
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_V1_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment: !override
+      STUB_ROLE: agent-worker
+      STUB_CANARY: none
+
+  agent-serve:
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_V1_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment: !override
+      STUB_ROLE: agent-serve
