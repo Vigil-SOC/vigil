@@ -3,6 +3,7 @@
 # retried. Usually Redis (a blip or an outage); also a missing workflow or an
 # unknown run_kind. Lane 2 by ownership of Redis (as F7a-3 for the database): the
 # fix text sends a Vigil-side cause to Support.
+# Outsider: no (needs Redis or the workflow config to fail).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.run-enqueue-failed

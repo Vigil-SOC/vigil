@@ -4,7 +4,11 @@
 # helper logs ERROR once when reads start failing and INFO when they recover, per
 # process (core/agents/projections.py:44-75). A restarted daemon never logs the
 # recovery line, so its start line clears the latch too (as F7b-4); if the fault
-# persists the new process logs the ERROR again.
+# persists the new process logs the ERROR again. Reads only happen while runs
+# are executing, so after a fix without a restart the recovery line may never
+# come (and at DAEMON_LOG_LEVEL WARNING neither clear line is logged): the latch
+# counts only while executing runs are stale (no recorded activity > 5 min).
+# Outsider: no (soc-daemon's own config and agent-serve's token).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.agent-reads-failing
@@ -26,7 +30,11 @@ signals:
       logger: {re2: '^(core\.agents\.projections|__main__)$'}
       level: [INFO]
       template: {re2: '^(agent service reads recovered|SOC Daemon initialized)$'}
-when: {fn: latch, set: failing, clear: recovered}
+  stale: {sample: {signal: sql_investigations_stale, key: stale_executing}}
+when:
+  all:
+    - {fn: latch, set: failing, clear: recovered}
+    - {fn: latest, signal: stale, op: ">", value: 0}
 for: 2m
 keep_firing_for: 5m
 advice:
