@@ -140,8 +140,14 @@ def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
     # start-up grace or past it, and its agent-worker sensor reading (the stub
     # answers /readyz), so never blind, degraded or crash-looping here.
     assert state in MEDIC_STATES and state in ("starting", "running")
-    snap = json.loads(stack.sql(SNAPSHOT))
-    assert snap["sensors"]["cant_see"] == 0 and snap["sensors"]["reporting"] >= 1
+    # The agent sensor reads once the enable script has put the agents on
+    # medic-net; the first poll can land while they are being recreated
+    # (measured: can't see at +30 s, reporting from the next poll on).
+    snap = stack.wait(
+        lambda: json.loads(stack.sql(SNAPSHOT)),
+        lambda s: s["sensors"]["cant_see"] == 0 and s["sensors"]["reporting"] >= 1,
+        timeout=180,
+    )
     assert re.fullmatch(r"mi_[0-9a-f]{16}", snap["instance_id"])
     assert snap["api_version"] == "1.0" and snap["cycle"] >= 0
     # S9-1: Medic listens only on medic-private, the gateway's network, never on
