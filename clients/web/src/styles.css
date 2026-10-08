@@ -2574,6 +2574,47 @@
       color: var(--tx);
    }
 
+   /* undo fuse (components/undo-fuse.md): outlined Undo + 2px accent bar that runs out in 8 s */
+   .toast.fused {
+      position: relative;
+      align-items: center;
+      padding-bottom: 14px;
+   }
+
+   .toast-undo {
+      flex: 0 0 auto;
+      height: 26px;
+      padding: 0 11px;
+      border-radius: 999px;
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      color: var(--tx);
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+   }
+
+   .toast-undo:hover {
+      background: var(--hover);
+   }
+
+   .toast-fuse {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 5px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--accent);
+      transform-origin: left center;
+      animation: vg-fuse 8s linear forwards;
+   }
+
+   @keyframes vg-fuse {
+      from { transform: scaleX(1); }
+      to { transform: scaleX(0); }
+   }
+
    @keyframes toast-in {
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: none; }
@@ -2581,6 +2622,7 @@
 
    @media (prefers-reduced-motion: reduce) {
       .toast { animation: none; }
+      .toast-fuse { animation: none; }
    }
 
    .md> :first-child {
