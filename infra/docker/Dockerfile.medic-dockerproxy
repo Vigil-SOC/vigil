@@ -1,0 +1,51 @@
+# infra/docker/Dockerfile.medic-dockerproxy
+# =============================================================================
+# Medic Docker proxy: Medic's only path to the Docker Engine API (C3 §4.3, SP2)
+#
+# Final image runs:  python -m services.medic_dockerproxy run
+# Health check:      python -m services.medic_dockerproxy check
+#                    (GET /_ping through the proxy: green only if Docker answers)
+# Listens on:        VIGIL_MEDIC_DOCKERPROXY_BIND, e.g. medic-dockerproxy:8472,
+#                    bound to that one address, never 0.0.0.0
+# Talks to:          VIGIL_MEDIC_DOCKERPROXY_SOCKET (default /var/run/docker.sock)
+#
+# Allows exactly five GET routes, projects inspect/list replies to a field
+# allowlist (no Env, Cmd, Args, Entrypoint, Path, Health.Log) and pipes log and
+# event streams. stdlib only: no venv, no third-party package, no core, no Medic
+# code. Runs as uid/gid 10003 (Medic is 10001, the gateway 10002). Read-only root
+# filesystem: it writes nothing.
+#
+# The socket: mount it read-only (`:ro` stops the file being replaced; it does
+# not limit the API, the allowlist does). The process needs the socket's group,
+# which is host-specific (the `docker` group on Linux, 0 on Docker Desktop), so
+# Compose adds it with `group_add` (S6) rather than baking a gid in here.
+# =============================================================================
+
+# PYTHON_VERSION as in the other images: .python-version is the repo's pin.
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ARG VIGIL_VERSION=
+LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
+
+RUN groupadd -g 10003 medicdp \
+    && useradd -u 10003 -g 10003 -M -d /nonexistent -s /usr/sbin/nologin medicdp
+
+# Code stays root-owned. Only the modules: the tests stay out of the image.
+WORKDIR /app
+COPY services/medic_dockerproxy/*.py ./services/medic_dockerproxy/
+COPY VERSION ./VERSION
+# Compiled now, because a read-only root filesystem can't take __pycache__ later.
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi \
+    && python -m compileall -q /app/services/medic_dockerproxy
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER 10003:10003
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-m", "services.medic_dockerproxy", "check"]
+
+CMD ["python", "-m", "services.medic_dockerproxy", "run"]
