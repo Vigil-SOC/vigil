@@ -262,8 +262,7 @@ def test_a_late_version_read_doesnt_flip_the_version() -> None:
 
 
 def test_a_blind_period_restarts_the_24_hours() -> None:
-    """v26's own incident, checked while v26 waits on ⚑ S4b2-1 (it omits the
-    sensor-blind incident of the blind period, which §2 requires)."""
+    """v26's two incidents, as a plain list (the vector pins them too)."""
     result = run(load(VECTORS / "v26-blind-restarts-retirement.yaml"))
     got = sorted(
         (i["rule"], i["opened_at"], i["resolved_at"], i["reason"])
