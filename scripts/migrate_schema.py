@@ -500,6 +500,26 @@ def add_users_service_account(conn):
     """))
 
 
+# When the backend last reached Medic: one row, written by its poller (D2-18).
+# The same statement as infra/database/init/41_medic_last_seen.sql.
+@migration("Add medic_last_seen")
+def add_medic_last_seen(conn):
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS medic_last_seen (
+            id SMALLINT PRIMARY KEY DEFAULT 1
+                CONSTRAINT medic_last_seen_one_row CHECK (id = 1),
+            last_seen_at TIMESTAMP,
+            first_failed_at TIMESTAMP,
+            failure_kind VARCHAR(8) CONSTRAINT medic_last_seen_failure_kind
+                CHECK (failure_kind IN ('refused', 'timeout', '401', '5xx')),
+            status_snapshot JSONB CONSTRAINT medic_last_seen_snapshot_typed
+                CHECK (jsonb_typeof(status_snapshot) = 'object'
+                       AND octet_length(status_snapshot::text) <= 4096),
+            updated_at TIMESTAMP NOT NULL
+        );
+    """))
+
+
 @migration("Set case_templates.usage_count server default to 0")
 def set_case_template_usage_count_default(conn):
     if not _table_exists(conn, 'case_templates'):
