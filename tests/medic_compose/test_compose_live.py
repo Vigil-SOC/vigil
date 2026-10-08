@@ -28,6 +28,8 @@ from tests.medic_compose.compose import (
     ENABLE,
     HAVE_COMPOSE,
     MEDIC_NET_MEMBERS,
+    MEDIC_NETWORKS,
+    MEDIC_PRIVATE_MEMBERS,
     clean_env,
     compose_cmd,
 )
@@ -170,7 +172,22 @@ def probe(healthy):
             if net.endswith("deeptempo-network"):
                 ips[name] = info["IPAddress"]
     assert set(ips) == {"backend", "redis", "bifrost", "postgres"}
+    gateways = [
+        cfg["Gateway"]
+        for net in MEDIC_NETWORKS
+        for cfg in json.loads(
+            s.docker("network", "inspect", f"{PROJECT}_{net}").stdout
+        )[0]["IPAM"]["Config"]
+        if cfg.get("Gateway")
+    ]
+    # compose.test.yml publishes the backend stub on 0.0.0.0, a random port, as
+    # the real backend publishes 6987.
+    published = int(
+        s.compose("port", "backend", "6987").stdout.strip().rsplit(":", 1)[1]
+    )
     args = {
+        "gateways": gateways,
+        "host_ports": [published, 6987, 8081, 9090, 11434, 22],
         "deeptempo_ips": ips,
         "ports": [6987, 6379, 8080, 5432, 22, 80, 443],
         "canary": s.canary,
@@ -212,17 +229,47 @@ def test_medic_healthy_within_two_minutes(healthy) -> None:
     assert healthy.medic_healthy_after <= 120
 
 
-def test_medic_net_is_internal_and_holds_the_members(healthy) -> None:
+@pytest.mark.parametrize(
+    "net, expected",
+    [("medic-net", MEDIC_NET_MEMBERS), ("medic-private", MEDIC_PRIVATE_MEMBERS)],
+)
+def test_medic_networks_are_internal_and_hold_the_members(healthy, net, expected):
     s = healthy
-    net = json.loads(s.docker("network", "inspect", f"{PROJECT}_medic-net").stdout)[0]
-    assert net["Internal"] is True
+    info = json.loads(s.docker("network", "inspect", f"{PROJECT}_{net}").stdout)[0]
+    assert info["Internal"] is True
     members = {
         json.loads(s.docker("inspect", cid).stdout)[0]["Config"]["Labels"][
             "com.docker.compose.service"
         ]
-        for cid in net["Containers"]
+        for cid in info["Containers"]
     }
-    assert members == MEDIC_NET_MEMBERS
+    assert members == expected
+
+
+_FROM_AGENT = """
+import json, socket
+out = {}
+for h, p in [("medic-dockerproxy", 8472), ("medic-gateway", 8471), ("medic-gateway", 8470)]:
+    try:
+        socket.create_connection((h, p), timeout=3).close()
+        out[f"{h}:{p}"] = "connected"
+    except socket.gaierror:
+        out[f"{h}:{p}"] = "dns"
+    except OSError as e:
+        out[f"{h}:{p}"] = type(e).__name__
+print(json.dumps(out))
+"""
+
+
+@pytest.mark.parametrize("member", ["agent-worker", "agent-serve", "soc-daemon"])
+def test_agents_cant_use_medics_proxy_or_gateway(healthy, member) -> None:
+    # S6-9: the agents handle attacker-influenced content; Medic's Docker proxy
+    # and its Viewer session are on medic-private, which they aren't on.
+    s = healthy
+    out = json.loads(
+        s.docker("exec", "-i", s.cid(member), "python", "-", input=_FROM_AGENT).stdout
+    )
+    assert all(v != "connected" for v in out.values()), out
 
 
 def test_medic_runs_as_10001_read_only(healthy) -> None:
@@ -245,7 +292,14 @@ def test_check7_no_route_to_backend_redis_bifrost_postgres(probe) -> None:
 
 
 def test_check7_no_internet(probe) -> None:
+    # Internal networks must not forward external DNS either (an exfil channel).
+    assert probe["internet_dns"] == "failed"
     assert all(v != "connected" for v in probe["internet"].values()), probe["internet"]
+
+
+def test_check7_no_route_to_the_host_through_the_bridge(probe) -> None:
+    reached = {k: v for k, v in probe["host_gateway"].items() if v == "connected"}
+    assert probe["host_gateway"] and not reached, reached
 
 
 def test_medic_reaches_its_members(probe) -> None:

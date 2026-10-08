@@ -17,10 +17,13 @@ on:
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
+      - "infra/docker/docker-compose.yml"
+      - "infra/docker/medic/**"
       - "scripts/medic/**"
+      - "scripts/lib.sh"
+      - "tests/medic_compose/**"
       - "start.sh"
       - "shutdown_all.sh"
-      - "scripts/lib.sh"
   pull_request:
     paths:
       - "services/medic/**"
@@ -32,10 +35,13 @@ on:
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
+      - "infra/docker/docker-compose.yml"
+      - "infra/docker/medic/**"
       - "scripts/medic/**"
+      - "scripts/lib.sh"
+      - "tests/medic_compose/**"
       - "start.sh"
       - "shutdown_all.sh"
-      - "scripts/lib.sh"
   workflow_dispatch:
 
 permissions:
@@ -313,6 +319,39 @@ jobs:
           done
           docker logs dp
           exit 1
+
+  # Medic on Compose (S6): C3 §7 checks 1 and 13 on the rendered config, the
+  # profile-off render (C8), and the enable script. Needs only the Docker CLI;
+  # --noconftest because tests/conftest.py imports the backend's settings.
+  # The live suite (checks 4, 7, 10, 11, the /readyz incident; ~6 min, three
+  # image builds) runs on a manual dispatch.
+  medic-compose:
+    name: Medic on Compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Rendered config and enable script
+        run: |
+          uv run --no-project --python 3.12 --with pytest --with pyyaml \
+            python -m pytest --noconftest -o addopts= -p no:cacheprovider -rs tests/medic_compose
+          # Must have run, not skipped for want of Compose.
+          uv run --no-project --python 3.12 --with pytest --with pyyaml \
+            python -m pytest --noconftest -o addopts= -p no:cacheprovider -q \
+            tests/medic_compose/test_compose_static.py | grep -E "^[0-9]+ passed" | grep -v skipped
+
+      - name: Live stack (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VIGIL_MEDIC_COMPOSE_LIVE: "1"
+        run: |
+          uv run --no-project --python 3.12 --with pytest --with pyyaml \
+            python -m pytest --noconftest -o addopts= -p no:cacheprovider -rs tests/medic_compose/test_compose_live.py
 
   # Host-native opt-in (S8; C3 §4.7, C5 ENG #3): `start.sh -d` runs Medic as its
   # own OS user under a restart loop. The unit tests stub sudo; the e2e script
