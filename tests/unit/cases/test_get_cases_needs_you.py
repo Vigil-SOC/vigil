@@ -64,7 +64,7 @@ def test_get_cases_passes_one_needs_you_read_into_the_page(monkeypatch):
             seen["offset"] = kwargs["offset"]
             return [_row("waiting"), _row("closer")], 3
 
-        def strip(self, now=None):
+        def strip(self, now=None, needs_you_ids=None):
             return CaseQueueStrip(
                 by_state={},
                 sla_at_risk=0,
@@ -88,3 +88,77 @@ def test_get_cases_passes_one_needs_you_read_into_the_page(monkeypatch):
     assert seen["offset"] == 1
     assert [row["case_id"] for row in body["cases"]] == ["waiting", "closer"]
     assert [row["needs_you"] for row in body["cases"]] == [True, False]
+
+
+def _get(**kwargs):
+    """``get_cases`` called directly: Query defaults are not resolved, so give them."""
+    kwargs.setdefault("needs_you_only", False)
+    return cases_router.get_cases(limit=10, offset=0, workflows=_Workflows(), **kwargs)
+
+
+def _patched(monkeypatch, seen, needs_you_ids=()):
+    class Repo:
+        def __init__(self, session):
+            pass
+
+        def queue(self, **kwargs):
+            seen["queue"] = kwargs
+            return [], 0
+
+        def strip(self, now=None, needs_you_ids=None):
+            seen["strip_ids"] = needs_you_ids
+            return CaseQueueStrip(
+                by_state={},
+                sla_at_risk=0,
+                closed_today=0,
+                agent_closure_share=0.0,
+                needs_you=len(needs_you_ids or ()),
+            )
+
+    @contextmanager
+    def uow():
+        yield object()
+
+    monkeypatch.setattr(cases_router.data_service, "is_using_database", lambda: True)
+    monkeypatch.setattr(
+        cases_router,
+        "needs_you",
+        lambda case_id=None: {"items": [{"case_id": c} for c in needs_you_ids]},
+    )
+    monkeypatch.setattr(cases_router, "CaseRepository", Repo)
+    monkeypatch.setattr(cases_router, "unit_of_work", uow)
+
+
+class _Workflows:
+    def list_workflows(self):
+        return [
+            {"id": "hunt-a", "run_kind": "hunt"},
+            {"id": "hunt-b", "run_kind": "hunt"},
+            {"id": "triage", "run_kind": "investigate"},
+        ]
+
+
+def test_kind_resolves_to_the_workflow_ids_with_that_run_kind(monkeypatch):
+    seen = {}
+    _patched(monkeypatch, seen)
+
+    _get(kind="hunt")
+    assert seen["queue"]["workflow_ids"] == {"hunt-a", "hunt-b"}
+
+    _get(kind="nope")
+    assert seen["queue"]["workflow_ids"] == set()
+
+    _get(kind=" ")
+    assert seen["queue"]["workflow_ids"] is None
+
+
+def test_needs_you_param_and_strip_share_the_one_read(monkeypatch):
+    seen = {}
+    _patched(monkeypatch, seen, needs_you_ids=("a", "b"))
+
+    body = _get(needs_you_only=True)
+
+    assert seen["queue"]["needs_you_only"] is True
+    assert seen["queue"]["needs_you_ids"] == {"a", "b"}
+    assert seen["strip_ids"] == {"a", "b"}
+    assert body["strip"]["needs_you"] == 2

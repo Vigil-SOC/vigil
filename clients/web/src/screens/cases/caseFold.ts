@@ -7,6 +7,15 @@ export interface CallRow {
   result_length: number
   cost_usd: number
   duration_ms?: number
+  iteration?: number
+}
+
+/** One lead move, newest first in `moves`. Lead decisions carry no time or iteration. */
+export interface MoveRow {
+  doing: string
+  worker: string
+  at: string | null
+  iteration: number | null
 }
 
 export interface HypothesisRow {
@@ -16,6 +25,7 @@ export interface HypothesisRow {
   supports: number
   weakens: number
   resolution_reason: string | null
+  provenance: string
 }
 
 export interface EvidenceRow {
@@ -35,19 +45,54 @@ export interface LeadGapRow {
   query_intent?: string
 }
 
+/** Where a recalled row came from: the investigation that concluded it. */
+export interface RecallProvenance {
+  kind: string
+  id: string
+  concludedAt: string
+}
+
+export interface RecalledSighting extends RecallProvenance {
+  entity: string
+  source: string
+  hits: number | null
+}
+
+export interface RecalledVerdict extends RecallProvenance {
+  outcome: string
+  statement: string
+}
+
+/** A Declared Gap from a prior investigation, not this run's Visibility Gap. */
+export interface RecalledGap extends RecallProvenance {
+  disposition: string
+  statement: string
+}
+
 export interface RecallView {
   keys: string[]
-  gaps: string[]
-  sightings: string[]
-  verdicts: string[]
+  gaps: RecalledGap[]
+  sightings: RecalledSighting[]
+  verdicts: RecalledVerdict[]
   unavailable: string | null
+}
+
+/** What the run row itself says, beside the fold of its ledger. */
+export interface RunMeta {
+  status: string
+  error: string
+  reason: string
+  /** The hunt's own status (`parked`, ...); empty for a run that is not a hunt. */
+  huntStatus: string
 }
 
 export interface HuntFold {
   kind: 'hunt'
+  run: RunMeta
   iteration: number
   doing: string
   worker: string
+  moves: MoveRow[]
   hypotheses: HypothesisRow[]
   evidence: EvidenceRow[]
   evidenceCount: number
@@ -60,9 +105,11 @@ export interface HuntFold {
 
 export interface LeadFold {
   kind: 'lead'
+  run: RunMeta
   iterations: number
   doing: string
   worker: string
+  moves: MoveRow[]
   findings: { agent_id: string; answer: string }[]
   calls: CallRow[]
   gaps: LeadGapRow[]
@@ -92,6 +139,24 @@ export function explanationWord(status: string, supports: number, weakens: numbe
   }
   if (status === 'inconclusive' || status === 'parked' || status === 'handed_off') return status
   return status
+}
+
+/** "handed_off" → "Handed off". */
+export function wordDisplay(word: string): string {
+  const text = word.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const ADDED_BY: Record<string, string> = {
+  hunt_spec: 'the hunt definition',
+  operator: 'you',
+  base_rate: 'the base rate',
+  deployment_gap: 'the deployment-gap check',
+}
+
+/** "Added by" words for a hypothesis provenance; the raw token when unknown, '' when absent. */
+export function addedBy(provenance: string): string {
+  return ADDED_BY[provenance] ?? provenance
 }
 
 export function recordChip(kind: string): RecordChip {
@@ -140,42 +205,54 @@ function callsOf(raw: unknown): CallRow[] {
       result_length: num(o.result_length) ?? 0,
       cost_usd: num(o.cost_usd) ?? 0,
       ...(typeof o.duration_ms === 'number' ? { duration_ms: o.duration_ms } : {}),
+      ...(typeof o.iteration === 'number' ? { iteration: o.iteration } : {}),
     }]
   })
 }
 
-function lineOf(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (!value || typeof value !== 'object') return ''
-  const o = value as Record<string, unknown>
-  if (typeof o.statement === 'string') {
-    return [typeof o.outcome === 'string' ? o.outcome : o.disposition, o.statement].filter(Boolean).join(' — ')
-  }
-  if (typeof o.entity_key === 'string') {
-    const hits = typeof o.hit_count === 'number' ? ` · ${o.hit_count}` : ''
-    return `${o.entity_key}${typeof o.source_system === 'string' ? ` · ${o.source_system}` : ''}${hits}`
-  }
-  return JSON.stringify(value)
+function provenanceOf(o: Record<string, unknown>): RecallProvenance {
+  return { kind: str(o.investigation_kind), id: str(o.investigation_id), concludedAt: str(o.concluded_at) }
+}
+
+/** Rows of one recalled kind; a bare string is a statement with no provenance. */
+function rowsOf<T>(raw: unknown, read: (o: Record<string, unknown>) => T | null): T[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item) => {
+    const o = typeof item === 'string' ? { statement: item } : item
+    if (!o || typeof o !== 'object') return []
+    const row = read(o as Record<string, unknown>)
+    return row ? [row] : []
+  })
 }
 
 function recallOf(raw: unknown): RecallView | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const keys = Array.isArray(o.keys) ? o.keys.flatMap((key) => (typeof key === 'string' ? [key] : [])) : []
-  const gaps = Array.isArray(o.gaps) ? o.gaps.map(lineOf).filter(Boolean) : []
-  const sightings = Array.isArray(o.sightings) ? o.sightings.map(lineOf).filter(Boolean) : []
-  const verdicts = Array.isArray(o.verdicts) ? o.verdicts.map(lineOf).filter(Boolean) : []
+  const gaps = rowsOf(o.gaps, (r) => (str(r.statement) ? { ...provenanceOf(r), disposition: str(r.disposition), statement: str(r.statement) } : null))
+  const sightings = rowsOf(o.sightings, (r) =>
+    str(r.entity_key) ? { ...provenanceOf(r), entity: str(r.entity_key), source: str(r.source_system), hits: num(r.hit_count) } : null,
+  )
+  const verdicts = rowsOf(o.verdicts, (r) => (str(r.statement) ? { ...provenanceOf(r), outcome: str(r.outcome), statement: str(r.statement) } : null))
   const unavailable = typeof o.unavailable === 'string' ? o.unavailable : null
   // A journaled empty result is known-to-be-none. An absent payload is not a recall.
   if (unavailable === null && !Array.isArray(o.keys)) return null
   return { keys, gaps, sightings, verdicts, unavailable }
 }
 
-function asHunt(raw: Record<string, unknown>): HuntFold {
+function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
-  const latest = moves[0] && typeof moves[0] === 'object' ? (moves[0] as Record<string, unknown>) : null
-  const intent = latest ? str(latest.query_intent) : ''
-  const action = latest ? str(latest.action) : ''
+  // The server sends moves newest first.
+  const rows = moves.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{
+      doing: str(o.query_intent) || str(o.action),
+      worker: str(o.worker_agent_id),
+      at: typeof o.created_at === 'string' ? o.created_at : null,
+      iteration: num(o.iteration),
+    }]
+  })
   const hypotheses = Array.isArray(raw.hypotheses)
     ? raw.hypotheses.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
@@ -187,6 +264,7 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
           supports: num(o.supports) ?? 0,
           weakens: num(o.weakens) ?? 0,
           resolution_reason: typeof o.resolution_reason === 'string' ? o.resolution_reason : null,
+          provenance: str(o.provenance),
         }]
       })
     : []
@@ -214,9 +292,11 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
     : []
   return {
     kind: 'hunt',
+    run,
     iteration: num(raw.iteration) ?? 0,
-    doing: intent || action,
-    worker: latest ? str(latest.worker_agent_id) : '',
+    doing: rows[0]?.doing ?? '',
+    worker: rows[0]?.worker ?? '',
+    moves: rows,
     hypotheses,
     evidence,
     evidenceCount: num(raw.evidence_count) ?? evidence.length,
@@ -228,11 +308,14 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
   }
 }
 
-function asLead(raw: Record<string, unknown>): LeadFold {
+function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
   const decisions = Array.isArray(raw.decisions) ? raw.decisions : []
-  const latest = decisions.length > 0 && decisions[decisions.length - 1] && typeof decisions[decisions.length - 1] === 'object'
-    ? (decisions[decisions.length - 1] as Record<string, unknown>)
-    : null
+  // Decisions arrive oldest first; keep moves newest first like a hunt's.
+  const rows = decisions.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const o = item as Record<string, unknown>
+    return [{ doing: str(o.action), worker: str(o.worker), at: null, iteration: null }]
+  }).reverse()
   const findings = Array.isArray(raw.findings)
     ? raw.findings.flatMap((item) => {
         if (!item || typeof item !== 'object') return []
@@ -254,9 +337,11 @@ function asLead(raw: Record<string, unknown>): LeadFold {
     : []
   return {
     kind: 'lead',
+    run,
     iterations: num(raw.iterations) ?? 0,
-    doing: latest ? str(latest.action) : '',
-    worker: latest ? str(latest.worker) : '',
+    doing: rows[0]?.doing ?? '',
+    worker: rows[0]?.worker ?? '',
+    moves: rows,
     findings,
     calls: callsOf(raw.calls),
     gaps,
@@ -270,9 +355,35 @@ function asLead(raw: Record<string, unknown>): LeadFold {
 export function readFold(body: unknown): RunFold | null {
   if (!body || typeof body !== 'object') return null
   const row = body as Record<string, unknown>
-  if (row.hunt && typeof row.hunt === 'object') return asHunt(row.hunt as Record<string, unknown>)
-  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>)
+  const hunt = row.hunt && typeof row.hunt === 'object' ? (row.hunt as Record<string, unknown>) : null
+  const run = { status: str(row.status), error: str(row.error), reason: str(row.reason), huntStatus: str(hunt?.status) }
+  if (hunt) return asHunt(hunt, run)
+  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>, run)
   return null
+}
+
+/** A run that is not going on and did not conclude: parked or paused (it can wake), or failed (it cannot). */
+export interface StoppedRun {
+  state: 'paused' | 'stopped'
+  /** One plain sentence: the first of the joined reasons. */
+  line: string
+  /** The reason as the server wrote it; '' when none was recorded. */
+  raw: string
+}
+
+const ENDED = ['failed', 'cancelled', 'canceled']
+
+export function stoppedRun(fold: RunFold | null): StoppedRun | null {
+  if (!fold) return null
+  const { status, error, reason, huntStatus } = fold.run
+  const stopped = ENDED.includes(status)
+  if (!stopped && huntStatus !== 'parked' && status !== 'paused') return null
+  const raw = stopped ? error || fold.reason : fold.reason || reason
+  const first = raw.split(' | ')[0].trim()
+  const line = first
+    ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
+    : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
+  return { state: stopped ? 'stopped' : 'paused', line, raw }
 }
 
 export function recallEntityCalls(fold: RunFold | null): CallRow[] {
@@ -291,4 +402,28 @@ export function visibilityGaps(fold: RunFold | null): { id: string; text: string
     id: gap.dispatch_id,
     text: [gap.query_intent || gap.agent_id, gap.failure_reason].filter(Boolean).join(' — ') || 'Dispatch failed',
   }))
+}
+
+export interface AgentRow {
+  who: string
+  doing: string
+  tool: string
+  at: string | null
+}
+
+/** The tool of the call that ran for this move; none when no call carries its iteration. */
+export function moveTool(fold: RunFold, move: MoveRow | undefined): string {
+  if (!move || move.iteration === null) return ''
+  return fold.calls.find((call) => call.iteration === move.iteration)?.tool ?? ''
+}
+
+/** One row per distinct worker, latest action first. Moves with no worker are not attributed. */
+export function agentRows(fold: RunFold | null): AgentRow[] {
+  if (!fold) return []
+  const seen = new Set<string>()
+  return fold.moves.flatMap((move) => {
+    if (!move.worker || seen.has(move.worker)) return []
+    seen.add(move.worker)
+    return [{ who: move.worker, doing: move.doing, tool: moveTool(fold, move), at: move.at }]
+  })
 }

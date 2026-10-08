@@ -218,5 +218,14 @@ RUN echo "ubuntu:ubuntu" | chpasswd
 
 USER ubuntu
 
+# CI's DB-backed unit job (`pytest tests/unit -m external_service`) gets its
+# POSTGRES_* from job env. tests/conftest.py turns .env loading off, as CI
+# does, so a bare shell hits MissingPostgresPasswordError and the throwaway-
+# database fixture errors. The password alone is enough: host, port and user
+# default to the compose Postgres that `start` brings up, and the fixture only
+# uses it to CREATE/DROP its own vigil_test_* database. It is the published
+# compose default, the same value `start` and .env already use.
+ENV POSTGRES_PASSWORD=deeptempo_secure_password_change_me
+
 # Chrome for Testing, into /home/ubuntu/.agent-browser (system libraries are already in place).
 RUN agent-browser install

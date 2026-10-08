@@ -41,6 +41,7 @@ def _stats(**overrides):
 class _FakeService:
     def __init__(self, result=None, raises=None, on_ingest=None):
         self.stats = _stats()
+        self.first_error = None
         self._result = result
         self._raises = raises
         self._on_ingest = on_ingest
@@ -134,6 +135,19 @@ def test_a_row_error_marks_the_job_failed(monkeypatch, spooled):
 
     assert job.status == FAILED
     assert "2 finding errors" in job.message
+
+
+def test_a_failed_job_names_the_first_error(monkeypatch, spooled):
+    service = _FakeService(result={"findings_errors": 8})
+    service.first_error = "Finding missing id/finding_id"
+    _patch_service(monkeypatch, service)
+    job = IngestionJob("alerts.json", "json", "finding")
+
+    run_job(job, spooled)
+
+    assert job.status == FAILED
+    assert "8 finding errors" in job.message
+    assert "First error: Finding missing id/finding_id" in job.message
 
 
 def test_run_job_forwards_the_declared_data_type(monkeypatch, spooled):

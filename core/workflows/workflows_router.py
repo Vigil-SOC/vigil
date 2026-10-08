@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_projection, read_replay, read_verify
@@ -17,6 +17,8 @@ from core.deps import (
     provide_workflow_runs,
     provide_workflows,
 )
+from core.documents.condense import condense
+from core.documents.extract import MAX_DOCUMENT_CHARS, DocumentRefused, extract_upload
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -73,6 +75,10 @@ class WorkflowExecuteRequest(BaseModel):
     # Whether the hunt stops and asks before it spends. The policy defaults to auto,
     # so a headless run advances with nobody at a terminal.
     approve_hypotheses: Optional[bool] = None
+    # Text a person attached, read by the run as material and never as the brief.
+    # Longer text is condensed by POST /workflows/threat-hunt/document first. It
+    # is no target: a hunt still needs a hypothesis.
+    document: Optional[str] = Field(default=None, max_length=MAX_DOCUMENT_CHARS)
 
 
 class HuntCoverageRequest(BaseModel):
@@ -246,7 +252,7 @@ async def update_custom_workflow(
     payload: CustomWorkflowUpdate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
 ):
-    """Update an existing custom workflow. Increments version."""
+    """Update an existing custom workflow. Increments version only when its definition changes."""
     try:
         updates = {k: v for k, v in payload.model_dump().items() if v is not None}
         updated = service.update(workflow_id, updates)
@@ -325,6 +331,28 @@ async def check_hunt_coverage(payload: HuntCoverageRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.post(
+    "/workflows/threat-hunt/document",
+    dependencies=[permission_gate("ai_chat.use")],
+)
+async def read_hunt_document(file: UploadFile = File(...)):
+    """Read an attached document for a hunt. Stateless: nothing is stored here, and
+    the text is what the caller sends as ``document`` on execute.
+
+    Over the document cap the text is condensed on the summarization model, and
+    its first line says so.
+    """
+    try:
+        extracted = await extract_upload(file)
+        text = extracted.text.strip()
+        condensed = len(text) > MAX_DOCUMENT_CHARS
+        if condensed:
+            text = await condense(text, extracted.pages)
+    except DocumentRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.reason) from None
+    return {"text": text, "pages": extracted.pages, "condensed": condensed}
 
 
 @router.get("/workflows/threat-hunt/feed-proposals")
