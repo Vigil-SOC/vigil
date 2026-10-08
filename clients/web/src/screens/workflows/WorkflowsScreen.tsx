@@ -3001,9 +3001,7 @@ function SkillUsage() {
   return (
     <span className="sk-usage">
       Used by · Not measured yet
-      <button type="button" className="btn ghost icon" aria-label={SKILL_USAGE_INFO} title={SKILL_USAGE_INFO}>
-        <Icon name="info" size={14} />
-      </button>
+      <InfoTip label={SKILL_USAGE_INFO} text={SKILL_USAGE_INFO} align="start" />
     </span>
   )
 }
@@ -3025,9 +3023,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
           <span className="sk-offered" title={`Offered to ${offeredText}`}>
             Offered to
-            <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
-              <Icon name="info" size={14} />
-            </button>
+            <InfoTip label={SKILL_GRANT_INFO} text={SKILL_GRANT_INFO} align="start" />
             <span className="sk-offered-list">{offeredText}</span>
           </span>
         </div>

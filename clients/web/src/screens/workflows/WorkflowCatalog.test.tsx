@@ -267,6 +267,17 @@ describe('workflow catalog cards', () => {
     // usage is not recorded yet: a placeholder per card, with its explanation
     expect(screen.getAllByText('Used by · Not measured yet')).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: 'Skill reads are not recorded yet.' })).toHaveLength(2)
+    // each Skills ⓘ is an InfoTip: opening it shows its text in a tooltip popover
+    const grantButton = screen.getByRole('button', { name: 'The grant offers the whole library.' })
+    fireEvent.click(grantButton)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('The grant offers the whole library.')
+    fireEvent.keyDown(grantButton, { key: 'Escape' })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    const usageButton = screen.getAllByRole('button', { name: 'Skill reads are not recorded yet.' })[0]
+    fireEvent.click(usageButton)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Skill reads are not recorded yet.')
+    fireEvent.keyDown(usageButton, { key: 'Escape' })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     expect(screen.getByText('Read-only')).toBeInTheDocument()
     expect(screen.queryByText('skills/executive-summary')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()

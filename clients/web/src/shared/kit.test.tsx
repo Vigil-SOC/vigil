@@ -52,6 +52,31 @@ describe('InfoTip', () => {
     fireEvent.mouseDown(document.body)
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
+
+  it('opens on hover, closes on mouse leave', () => {
+    render(tip)
+    const button = screen.getByRole('button', { name: 'How it works' })
+    const root = button.closest('.info-tip') as HTMLElement
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.mouseEnter(root)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Source Events')
+    fireEvent.mouseLeave(root)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('opens on focus, and a click after hover does not close it', () => {
+    render(tip)
+    const button = screen.getByRole('button', { name: 'How it works' })
+    const root = button.closest('.info-tip') as HTMLElement
+    fireEvent.focus(button)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    fireEvent.blur(button)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.mouseEnter(root)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    fireEvent.click(button)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+  })
 })
 
 describe('NotMeasured', () => {
