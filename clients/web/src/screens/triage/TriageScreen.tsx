@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } f
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { useSourceBadge } from '../../shared/SourceChip'
 import { EmptyState } from '../../shared/ui'
+import { utcClock } from '../../shared/utc'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
@@ -60,9 +62,8 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 function fmtArrived(createdAt: string | null): string {
   if (!createdAt) return BLANK
   const date = new Date(`${createdAt}Z`)
-  if (Number.isNaN(date.getTime())) return BLANK
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const time = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`
+  const time = utcClock(`${createdAt}Z`)
+  if (!time) return BLANK
   if (date.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10)) return time
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${time}`
 }
@@ -136,25 +137,6 @@ function Tiles({ data }: { data: TriagePayload }) {
   )
 }
 
-interface ChipProps {
-  label: string
-  count: number
-  on: boolean
-  onClick: () => void
-  dot?: string // a colour token; none keeps the dot's space, transparent
-  title?: string
-}
-
-function Chip({ label, count, on, onClick, dot, title }: ChipProps) {
-  return (
-    <button type="button" className="tq-chip" aria-pressed={on} title={title} onClick={onClick}>
-      <span className="tq-dot" style={dot ? { background: `var(--${dot})` } : undefined} />
-      {label}
-      <span className="tq-chip-n">{count}</span>
-    </button>
-  )
-}
-
 function Filters({
   data, kind, source, state, setFilter, clear,
 }: {
@@ -177,14 +159,15 @@ function Filters({
     <>
       <span className="tq-group-label">{label}</span>
       {info}
-      <Chip label="All" count={counts.total} on={!current} dot="tx2" onClick={() => setFilter(key, '')} />
+      <FilterChip list label="All" count={counts.total} active={!current} dot="var(--tx2)" onClick={() => setFilter(key, '')} />
       {options.map((option) => (
-        <Chip
+        <FilterChip
           key={option.value}
+          list
           label={option.label}
           count={counts[key][option.value] ?? 0}
-          on={current === option.value}
-          dot={option.dot}
+          active={current === option.value}
+          dot={option.dot && `var(--${option.dot})`}
           title={option.title}
           onClick={() => setFilter(key, option.value)}
         />
@@ -225,7 +208,8 @@ function Filters({
 }
 
 function SourceName({ source }: { source: string }) {
-  return <>{useSourceBadge(source).label}</>
+  const { label } = useSourceBadge(source)
+  return <span className="tq-source" title={label}>{label}</span>
 }
 
 function BreakdownRow({ label, children }: { label: string; children: ReactNode }) {

@@ -6909,43 +6909,6 @@
       background: var(--ln1);
    }
 
-   .tq-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      height: 30px;
-      padding: 0 11px;
-      border: 1px solid var(--ln1);
-      border-radius: 999px;
-      background: transparent;
-      color: var(--tx1);
-      font-size: 12px;
-      font-weight: 600;
-      white-space: nowrap;
-      cursor: pointer;
-   }
-
-   .tq-chip:hover {
-      background: var(--bg3);
-   }
-
-   .tq-chip[aria-pressed="true"] {
-      background: var(--ac-bg);
-      border-color: var(--ac-ln);
-      color: var(--tx0);
-   }
-
-   .tq-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: transparent;
-   }
-
-   .tq-chip-n {
-      color: var(--tx2);
-   }
-
    .tq-summary {
       margin-left: auto;
       font-size: 12px;
@@ -7004,6 +6967,10 @@
 
    .tq-table tbody tr:hover {
       background: var(--bg3);
+   }
+
+   .tq-source {
+      overflow-wrap: anywhere;
    }
 
    .tq-table thead th:nth-child(1) { width: 100px; }
@@ -7089,22 +7056,13 @@
    }
 
    .tbl tbody tr.row-expanded>td {
-      padding: 0 16px 12px;
-      white-space: normal;
-      overflow-wrap: anywhere;
-   }
-
-   .tbl tbody tr.row-expanded:hover {
-      background: none;
-   }
-
-   .tbl tbody tr.row-expanded>td {
       padding: 0 22px 12px;
       white-space: normal;
       overflow-wrap: anywhere;
    }
 
    .tq-panel {
+      width: min(560px, 100%);
       padding: 10px 12px;
       border-radius: 10px;
       background: var(--bg-2);
