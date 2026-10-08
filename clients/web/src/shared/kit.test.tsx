@@ -42,6 +42,22 @@ describe('InfoTip', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
+  it('opens on hover and focus, closes on leave and blur, and a click after hover keeps it open', () => {
+    const { container } = render(tip)
+    const root = container.querySelector('.info-tip')!
+    const button = screen.getByRole('button', { name: 'How it works' })
+    fireEvent.mouseEnter(root)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    fireEvent.click(button)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    fireEvent.mouseLeave(root)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.focus(button)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    fireEvent.blur(button)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('closes on blur and on a click elsewhere', () => {
     render(tip)
     const button = screen.getByRole('button', { name: 'How it works' })
