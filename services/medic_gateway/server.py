@@ -24,8 +24,9 @@ from services.medic_gateway.session import AuthUnavailable, ViewerSession
 UA = "vigil-medic-gateway/1"  # fixed: Vigil binds access tokens to the User-Agent
 UPSTREAM_TIMEOUT = 10.0  # total, per request, connect to last byte
 CLIENT_TIMEOUT = 10.0
-MAX_INFLIGHT = 8
-REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+MAX_INFLIGHT = 8  # upstream calls in flight, per listener
+MAX_CONNECTIONS = 32  # open client connections (threads), per listener
+REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")  # X2's RequestId
 MEDIC_KEY = re.compile(r"[A-Za-z0-9_-]{43}")  # 32 random bytes, base64url (X2)
 MEDIC_ADMIN = re.compile(r"user:[A-Za-z0-9_.:/@+-]{1,123}")  # G2 id, <= 128
 JSON_TYPES = ("application/json", "application/problem+json")
@@ -52,12 +53,11 @@ class Upstream:
     def request(self, method: str, target: str, headers: dict, body: bytes = b""):
         deadline = time.monotonic() + self.timeout
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout)
-        timer = None
+        # The total deadline: a socket timeout alone resets on every byte.
+        timer = threading.Timer(self.timeout, lambda: conn.sock and _cut(conn.sock))
+        timer.start()
         try:
             conn.connect()
-            # The total deadline: a socket timeout alone resets on every byte.
-            timer = threading.Timer(self.timeout, _cut, (conn.sock,))
-            timer.start()
             conn.putrequest(
                 method, self.prefix + target, skip_host=True, skip_accept_encoding=True
             )
@@ -88,8 +88,7 @@ class Upstream:
                 raise TimeoutError from None
             raise
         finally:
-            if timer:
-                timer.cancel()
+            timer.cancel()
             conn.close()
 
 
@@ -111,6 +110,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *args):  # the stdlib access log would print raw targets
         pass
+
+    def setup(self) -> None:
+        super().setup()
+        # An absolute deadline for reading the request (review #3): one byte every
+        # few seconds never trips the per-read `timeout`. Cancelled once it is read.
+        self.reading = threading.Timer(self.timeout, _cut, (self.connection,))
+        self.reading.start()
+
+    def finish(self) -> None:
+        self.reading.cancel()
+        super().finish()
 
     def _send(self, status: int, body: bytes, headers: dict | None = None) -> None:
         self.send_response(status)
@@ -156,12 +166,12 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_any(self) -> None:
-        t0, route = time.monotonic(), None
+        t0, self.route = time.monotonic(), None
         if not self.slots.acquire(blocking=False):
             self._problem(503, "busy")
             return self._log(503, "busy", None, t0)
         try:
-            route, status, code = self._dispatch()
+            status, code = self._dispatch()
         except Reject as r:
             status, code = r.status, r.code
         except TimeoutError:
@@ -172,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
             status, code = 500, "internal_" + type(e).__name__
         finally:
             self.slots.release()
-        self._log(status, code, route, t0)
+        self._log(status, code, self.route, t0)
         if code != "relayed":
             self._problem(status, code)
 
@@ -181,22 +191,24 @@ class Handler(BaseHTTPRequestHandler):
         if status_read and self.direction == "outbound" and self.session:
             body = json.dumps(self.session.status()).encode()
             self._send(200, body, {"content-type": "application/json"})
-            return None, 200, "relayed"
+            return 200, "relayed"
         route, target = policy.check_target(
             self.raw_method, self.raw_target, self.routes
         )
+        self.route = route
         policy.check_headers(self.raw_method, self.headers)
         fwd = self._forward_headers()
         body = b""
         if self.raw_method == "POST":
             body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.reading.cancel()
         if self.direction == "outbound" and route.auth:
             status, headers, data = self._authed(route.method, target, fwd)
         else:
             status, headers, data = self.upstream.request(
                 route.method, target, fwd, body
             )
-        return route, *self._relay(status, headers, data)
+        return self._relay(status, headers, data)
 
     def _forward_headers(self) -> dict:
         """An allowlist: caller Authorization, Cookie, X-Forwarded-*, Forwarded,
@@ -227,6 +239,8 @@ class Handler(BaseHTTPRequestHandler):
                 tok = self.session.token()
                 hdrs = {**fwd, "Authorization": f"Bearer {tok}"}
                 status, headers, data = self.upstream.request(method, target, hdrs)
+                if status == 401 and attempt == 2:
+                    self.session.gave_up(tok)
                 if status != 401 or attempt == 2 or not self.session.rejected(tok):
                     return status, headers, data
         except AuthUnavailable as e:
@@ -243,9 +257,6 @@ class Handler(BaseHTTPRequestHandler):
         keep = {k: headers[k] for k in PASS_BACK[self.direction] if k in headers}
         self._send(status, data, keep)
         return status, "relayed"
-
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_any
-    do_OPTIONS = do_CONNECT = do_TRACE = do_any
 
     def __getattr__(self, name):  # any other method token, e.g. lowercase "get"
         if name.startswith("do_"):
@@ -272,6 +283,21 @@ def make_server(
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.conn_slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address) -> None:
+        if not self.conn_slots.acquire(blocking=False):  # over the cap: close at once
+            return self.shutdown_request(request)
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.conn_slots.release()
 
     def handle_error(self, request, client_address) -> None:  # no traceback on stderr
         logs.event("connection_error")

@@ -162,6 +162,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       # A credential in env: refuses to start (exit 2) and names it, not its value.
+      # (`if …; then exit 1` rather than `!`: set -e ignores a negated command.)
       - name: Smoke test, credential in env
         run: |
           set +e
@@ -172,7 +173,7 @@ jobs:
           echo "$out"
           test "$code" -eq 2
           grep -q AGENT_INTERNAL_TOKEN <<<"$out"
-          ! grep -q leak-me <<<"$out"
+          if grep -q leak-me <<<"$out"; then exit 1; fi
 
       # As it will run: read-only root, no capabilities, password as a file. No
       # backend: the image's own HEALTHCHECK command must still go green.
@@ -191,7 +192,8 @@ jobs:
           for _ in $(seq 1 20); do
             if docker exec gw python -m services.medic_gateway check; then
               docker exec gw id -u | grep -qx 10002
-              ! docker exec gw sh -c 'touch /app/x' 2>/dev/null
+              # /tmp, not /app: uid 10002 can't write /app on any filesystem.
+              if docker exec gw touch /tmp/x; then exit 1; fi
               exit 0
             fi
             sleep 1
