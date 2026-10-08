@@ -3,6 +3,8 @@
 # window, not latched: the INFO "complete" line only comes from the daemon process
 # that saw the gap (module memory), so it never comes if the admin turns the
 # integration off or soc-daemon restarts first, and a set latch never retires.
+# The 6 h window covers poll intervals up to 6 min; a site with a longer interval
+# should raise reminder_window, or the incident reopens on each reminder.
 # Grouping on args[0] makes the rule untrusted.
 apiVersion: medic.rules/v1
 kind: Rule
