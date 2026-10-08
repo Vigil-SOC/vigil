@@ -9,22 +9,9 @@
 #     listens on their real ports, so no Vigil image has to be built. The networks
 #     come from the real files untouched: that topology is what's under test.
 # The three Medic services are the real images, unchanged.
-x-stub: &stub
-  image: python:3.12-slim
-  build: !reset null
-  container_name: !reset null
-  ports: !reset []
-  depends_on: !reset {}
-  extra_hosts: !reset []
-  entrypoint: !reset null
-  command: !override ["python", "/stub/stub.py"]
-  volumes: !override
-    - ${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro
-  healthcheck: !override
-    test: ["CMD", "python", "-c", "0"]
-    interval: 5s
-  restart: !reset "no"
-
+#
+# Written out per service: YAML merge keys (<<: *anchor) drop Compose's !reset
+# and !override tags, so an anchor would silently keep the real ports and names.
 services:
   medic:
     container_name: !reset null
@@ -34,31 +21,110 @@ services:
     container_name: !reset null
 
   backend:
-    <<: *stub
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
     environment: !override
       STUB_ROLE: backend
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?}
     secrets: [medic_viewer_password]
+
   agent-worker:
-    <<: *stub
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
     environment:
       STUB_ROLE: agent-worker
       STUB_CANARY: ${MEDIC_S6_CANARY:?}
+
   agent-serve:
-    <<: *stub
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
     environment:
       STUB_ROLE: agent-serve
+
   soc-daemon:
-    <<: *stub
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
     environment: !override
       STUB_ROLE: soc-daemon
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?}
+
   redis:
-    <<: *stub
-    environment: {STUB_ROLE: redis}
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment:
+      STUB_ROLE: redis
+
   postgres:
-    <<: *stub
-    environment: !override {STUB_ROLE: postgres}
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment: !override
+      STUB_ROLE: postgres
+
   bifrost:
-    <<: *stub
-    environment: !override {STUB_ROLE: bifrost}
+    image: python:3.12-slim
+    build: !reset null
+    container_name: !reset null
+    ports: !reset []
+    depends_on: !reset {}
+    extra_hosts: !reset []
+    entrypoint: !reset null
+    command: !override ["python", "/stub/stub.py"]
+    volumes: !override ["${MEDIC_S6_STUB_DIR:?}/stub.py:/stub/stub.py:ro"]
+    healthcheck: !override {test: ["CMD", "python", "-c", "0"], interval: 5s}
+    restart: "no"
+    environment: !override
+      STUB_ROLE: bifrost
