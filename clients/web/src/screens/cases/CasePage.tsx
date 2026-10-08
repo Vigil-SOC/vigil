@@ -324,8 +324,18 @@ function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; line
   )
 }
 
+/** The way into Watch a run for the run this card describes; the drawer closes on follow, as Replay's does. */
+function WatchLink({ runId, onFollow }: { runId: string | null; onFollow: () => void }) {
+  if (!runId) return null
+  return (
+    <Link className="rec-btn watch-link" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={onFollow}>
+      Watch it run
+    </Link>
+  )
+}
+
 /** Now · step N: the latest move, who has it, with which tool, since when. */
-function NowCard({ fold, phase, hasRun }: { fold: RunFold | null; phase: Phase; hasRun: boolean }) {
+function NowCard({ fold, phase, hasRun, watch }: { fold: RunFold | null; phase: Phase; hasRun: boolean; watch: ReactNode }) {
   const move = fold?.moves[0]
   const meta = fold ? [fold.worker, moveTool(fold, move), `since ${clock(move?.at)}`].filter(Boolean).join(' · ') : ''
   return (
@@ -341,29 +351,34 @@ function NowCard({ fold, phase, hasRun }: { fold: RunFold | null; phase: Phase; 
         {phase === 'ready' && (fold ? fold.doing || 'Nothing decided yet' : hasRun ? 'The run has started and has not reported yet.' : 'No run on this case yet.')}
       </p>
       {fold?.outcome && <p className="muted">Run outcome {fold.outcome}{fold.reason ? ` — ${fold.reason}` : ''}</p>}
+      {watch}
     </section>
   )
 }
 
 /** A run that is not going on: paused or stopped, with the one-line why and the raw text behind the ⓘ. */
-function StoppedCard({ stopped }: { stopped: StoppedRun }) {
+function StoppedCard({ stopped, watch }: { stopped: StoppedRun; watch: ReactNode }) {
   return (
     <section className="case-stopped" aria-label="Run state">
       <b>{wordDisplay(stopped.state)}</b>
       <span className="clamp2" title={stopped.raw || stopped.line}>{stopped.line}</span>
       {stopped.raw && <InfoTip label="What the run reported" text={stopped.raw} align="start" />}
+      {watch}
     </section>
   )
 }
 
-function AgentsTable({ fold, phase, live, state }: { fold: RunFold | null; phase: Phase; live: boolean; state: string }) {
-  const rows = agentRows(fold)
+function AgentsTable({ fold, phase, state }: { fold: RunFold | null; phase: Phase; state: string }) {
+  // A paused or stopped run is already said by the card above; its rows would be stale.
+  if (stoppedRun(fold)) return null
+  const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
+  const rows = inFlight ? agentRows(fold) : []
   return (
     <section className="case-agents" aria-label="Agents on this case">
       <h3>Agents on this case, right now</h3>
       {phase === 'loading' && <p className="muted">Loading the run…</p>}
       {phase === 'error' && <p className="muted">The run could not be read.</p>}
-      {phase === 'ready' && rows.length === 0 && <p className="muted">{live ? 'No agent has acted yet.' : 'No live investigation.'}</p>}
+      {phase === 'ready' && rows.length === 0 && <p className="muted">{inFlight ? 'No agent has acted yet.' : 'No live investigation.'}</p>}
       {rows.length > 0 && (
         <div className="agent-rows" role="table" aria-label="Agents">
           {rows.map((row, i) => (
@@ -372,8 +387,8 @@ function AgentsTable({ fold, phase, live, state }: { fold: RunFold | null; phase
               <span className="agent-doing" role="cell" title={row.doing}>{row.doing || '—'}</span>
               <span className="agent-tool" role="cell" title={row.tool}>{row.tool || '—'}</span>
               <span className="agent-since" role="cell">{clock(row.at)}</span>
-              {/* The run's state belongs to the agent holding the latest move. */}
-              <span className={`agent-state${live ? ' live' : ''}`} role="cell">{i === 0 && state && (<><span className="state-dot" aria-hidden="true" />{state}</>)}</span>
+              {/* The run's state belongs to the agent holding the latest move; the others are between moves. */}
+              <span className={`agent-state${i === 0 ? ' live' : ''}`} role="cell"><span className="state-dot" aria-hidden="true" />{i === 0 ? state : 'Idle'}</span>
             </div>
           ))}
         </div>
@@ -744,7 +759,8 @@ export function CasePage({
   const stopped = closed || needsCount > 0 ? null : stoppedRun(fold)
   const pillState = closed ? 'closed' : stopped?.state ?? pill
   // Only what exists: the live investigation's status, else the run's outcome.
-  const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || '').replace(/_/g, ' ')
+  const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
+  const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
   const running = !closed && !stopped && tone !== 'needs'
@@ -850,8 +866,8 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
-                {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} />}
-                {stopped && <StoppedCard stopped={stopped} />}
+                {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} watch={watch} />}
+                {stopped && <StoppedCard stopped={stopped} watch={watch} />}
                 <section>
                   <h3>Findings so far</h3>
                   <FindingList fold={fold} />
@@ -862,7 +878,7 @@ export function CasePage({
                     <LaterRow title="Planned next" line="What the run intends to do next." />
                   </>
                 )}
-                <AgentsTable fold={fold} phase={foldPhase} live={live.length > 0 && !stopped} state={runState} />
+                <AgentsTable fold={fold} phase={foldPhase} state={runState} />
                 {doors}
               </>
             )
@@ -1030,7 +1046,7 @@ export function CasePage({
 
         <aside className="case-side" aria-label="Case details">
           <LinkedFindings items={linkedFindings} />
-          <CaseSide key={id} caseId={id} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
+          <CaseSide key={id} caseId={id} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} latestFold={runId === latest?.run_id ? fold : null} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />
