@@ -1,20 +1,25 @@
 # I-2 · every poll of a source fails (credential, network, rate limit). The
 # federation runner keeps the cursor and counts consecutive failures per source.
-# I-1.a lands here too since #1605 (a CrowdStrike client that can't be built raises).
+# I-1.a lands here too since #1605 (a CrowdStrike client that can't be built raises),
+# and I-1.g (a failed Splunk query fails the tick). With federation switched off
+# globally the runner idles and the error count freezes, so the rule needs the
+# global switch from the federation sensor (requires: D6 global.enabled).
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.source-polls-failing
 title: Enabled source fails on every poll
 revision: 1
-fault: {class: ingest, mode: I-2, causes: [I-1.a, I-2.a, I-2.b, I-2.c, I-2.d]}
+fault: {class: ingest, mode: I-2, causes: [I-1.a, I-1.g, I-2.a, I-2.b, I-2.c, I-2.d]}
 lane: 2
 detection: event
 signals:
+  federation: {sample: {signal: federation_sources, key: global.enabled}}
   enabled: {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
   errors:  {sample: {signal: federation_sources, key: sources.consecutive_errors, by: [source]}}
 group_by: [source]
 when:
   all:
+    - {fn: latest, signal: federation, op: "==", value: true}
     - {fn: latest, signal: enabled, op: "==", value: true}
     - {fn: latest, signal: errors, op: ">=", value: {param: min_errors}}
 for: 10m
@@ -25,7 +30,8 @@ advice:
   summary: Every recent poll of this source has failed, so no alerts are arriving from it. Vigil keeps its place and catches up once polls succeed.
   fix: >-
     Open Settings, Integrations for this source and run Test Connection. If it
-    reports an authentication error, replace the credential. If the host can't
+    reports an authentication error, replace the credential. For Splunk, also
+    check the account can search index=notable. If the host can't
     be reached, check the URL, DNS, firewall, proxy and CA bundle from the Vigil
     host. If the vendor reports a rate limit (429), lengthen the poll interval
     or raise the vendor quota. After changing a credential, restart soc-daemon:
