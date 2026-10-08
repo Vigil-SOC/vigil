@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import secrets
 import threading
@@ -31,11 +32,19 @@ def refresh_margin(ttl: float) -> float:
     return min(120, ttl / 4)
 
 
-def _exp(token: str) -> float:
-    body = token.split(".")[1]
-    return float(
-        json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))["exp"]
-    )
+def _parse(body: bytes, now: float) -> tuple[str, str, float]:
+    """(access, refresh, life in seconds) from a login or refresh reply, or raise.
+
+    The life is the token's own exp - iat, so a backend clock that differs from
+    ours doesn't make every token look expired (review #8)."""
+    reply = json.loads(body)
+    access, refresh = reply["access_token"], reply["refresh_token"]
+    if not (isinstance(access, str) and isinstance(refresh, str)):
+        raise TypeError("token is not a string")
+    part = access.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    life = float(claims["exp"]) - float(claims.get("iat", now))
+    return access, refresh, life if life > 0 else 60.0
 
 
 class ViewerSession:
@@ -55,17 +64,18 @@ class ViewerSession:
     def _set(self, state: str, retry_in: float = 0.0) -> None:
         self.next_login_at = self.clock() + retry_in
         if state != self.state:
-            logs.event("auth_state", state=state, previous=self.state)
+            level = logging.INFO if state == "ok" else logging.WARNING
+            logs.event("auth_state", level, state=state, previous=self.state)
             self.state, self.since = state, self.clock()
 
-    def _store(self, body: dict) -> None:
+    def _store(self, access: str, refresh: str, life: float) -> None:
         for t in (self.access, self.refresh_tok):
             logs.forget(t)
-        self.access, self.refresh_tok = body["access_token"], body["refresh_token"]
-        logs.remember(self.access, self.refresh_tok)
+        self.access, self.refresh_tok = access, refresh
+        logs.remember(access, refresh)
         self.minted_at = self.clock()
-        self.access_exp = _exp(self.access)
-        self.margin = refresh_margin(self.access_exp - self.minted_at)
+        self.access_exp = self.minted_at + life  # on our clock
+        self.margin = refresh_margin(life)
         self.bad_pw = 0
         self._set("ok")
 
@@ -103,11 +113,14 @@ class ViewerSession:
         try:
             payload = {"username_or_email": self.user, "password": password}
             status, headers, body = self._post("/api/auth/login", payload)
+            if status == 200:
+                return self._store(*_parse(body, self.clock()))
         except OSError:
             self._set("backend_unreachable", BACKOFF["backend_unreachable"])
             raise AuthUnavailable(self.state) from None
-        if status == 200:
-            return self._store(json.loads(body))
+        except Exception:  # noqa: BLE001 - any reply we can't use: back off (review #2)
+            self._set("login_error", BACKOFF["login_error"])
+            raise AuthUnavailable(self.state) from None
         retry_after = headers.get("retry-after", "")
         wait = int(retry_after) if retry_after.isdigit() else 60
         if status == 401:
@@ -126,12 +139,12 @@ class ViewerSession:
         token, self.refresh_tok = self.refresh_tok, None  # single use either way
         try:
             status, _, body = self._post("/api/auth/refresh", {"refresh_token": token})
-        except OSError:
+            if status == 200:
+                self._store(*_parse(body, self.clock()))
+                return True
+        except Exception:  # noqa: BLE001 - a failed refresh falls back to one login
             return False
-        if status != 200:
-            return False
-        self._store(json.loads(body))
-        return True
+        return False
 
     def token(self) -> str:
         with self.lock:
@@ -157,6 +170,13 @@ class ViewerSession:
                 self._set("rejected_after_login", 60)
                 return False
             return True
+
+    def gave_up(self, token: str) -> None:
+        """A fresh token, fetched after a 401, was refused too: back off (review #1)."""
+        with self.lock:
+            if token == self.access:
+                self.access, self.access_exp = None, 0.0
+            self._set("rejected_after_login", 60)
 
     def status(self) -> dict:
         return {"state": self.state, "since": int(self.since)}
