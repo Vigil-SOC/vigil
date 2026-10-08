@@ -2828,6 +2828,8 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
 
   const builtins = rows.filter((a) => !a.custom)
   const ordered = [...builtins, ...rows.filter((a) => a.custom)]
+  // by id, not by row: a fresh copy is open before the reloaded list has it
+  const builtinOpen = !!editId && !editId.startsWith('custom-')
 
   const fork = (handle: string) => {
     setBusy(handle)
@@ -2870,7 +2872,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
         <>
           <AgentTable
             agents={ordered.map((a) => ({ ...a, enabled: enabledNow[a.handle] ?? a.enabled }))}
-            onOpen={(a) => (a.custom ? setEditId(a.handle) : fork(a.handle))}
+            onOpen={(a) => setEditId(a.handle)}
             onToggle={setEnabled}
             renderActions={(a) => a.custom ? (
               <span className="row-act">
@@ -2880,7 +2882,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
               </span>
             ) : (
               <span className="row-act">
-                <button title="Fork to editable copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
+                <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
           />
@@ -2890,12 +2892,18 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
 
       {(creating || editId) && (
         <AgentDrawer
+          key={editId ?? 'new'} // a saved copy reopens as a fresh drawer
           agentId={editId}
+          builtIn={builtinOpen}
           describe={creating === 'describe'}
           toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
           skillCount={skillCount}
           onClose={() => { setEditId(null); setCreating(false) }}
-          onSaved={() => { setEditId(null); setCreating(false); reload() }}
+          onSaved={(saved) => {
+            // a built-in's Save made a copy: reopen on it, in custom mode once the list has it
+            const copy = builtinOpen && saved.id ? saved.id : null
+            setEditId(copy); setCreating(false); reload()
+          }}
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
@@ -2929,7 +2937,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
                   <div className="ag-agent">
-                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
+                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Open ${a.name}`}>
                       <span className="ag-ini">{a.ini}</span>
                       <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
                     </button>

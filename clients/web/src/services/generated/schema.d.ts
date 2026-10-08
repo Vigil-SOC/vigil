@@ -10410,11 +10410,41 @@ export interface components {
         /**
          * ForkAgentRequest
          * @description Optional payload when forking. `new_name` lets the UI set the copy's
-         *     name up front instead of taking the default "<source> (copy)".
+         *     name up front instead of taking the default "<source> (copy)". Any
+         *     editable field that is sent (even as null) replaces the source's value
+         *     in the same insert.
          */
         ForkAgentRequest: {
+            /** Color */
+            color?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Enable Thinking */
+            enable_thinking?: boolean | null;
+            /** Extra Principles */
+            extra_principles?: string | null;
+            /** Fallback Model */
+            fallback_model?: string | null;
+            /** Icon */
+            icon?: string | null;
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Methodology */
+            methodology?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name?: string | null;
             /** New Name */
             new_name?: string | null;
+            /** Recommended Tools */
+            recommended_tools?: string[] | null;
+            /** Role */
+            role?: string | null;
+            /** Specialization */
+            specialization?: string | null;
+            /** System Prompt Override */
+            system_prompt_override?: string | null;
         };
         /**
          * GeneralConfig

@@ -22,6 +22,8 @@ interface CustomAgentDetail {
   fallback_model?: string | null
   effective_prompt?: string
   forked_from?: string | null
+  /** a built-in's whole prompt; it has no role, principles or method parts */
+  system_prompt?: string | null
 }
 
 interface AgentForm {
@@ -69,9 +71,11 @@ function ToolMark({ change }: { change: ToolChange | null | undefined }) {
   )
 }
 
-/** The drawer over the Agents tab. `agentId` null builds a new agent; `describe` opens it with the describe box. */
+/** The drawer over the Agents tab. `agentId` null builds a new agent; `describe` opens it with the describe box.
+ *  `builtIn` shows a built-in's values: nothing exists until Save, which makes one copy. */
 export function AgentDrawer({
   agentId,
+  builtIn = false,
   describe = false,
   toolChanges = {},
   skillCount = null,
@@ -79,13 +83,15 @@ export function AgentDrawer({
   onSaved,
 }: {
   agentId: string | null
+  builtIn?: boolean
   describe?: boolean
   /** marks from the agent's list row, shown until the connected-tools list arrives */
   toolChanges?: Record<string, ToolChange>
   /** size of the skill library; null while it is not known */
   skillCount?: number | null
   onClose: () => void
-  onSaved: () => void
+  /** gets the saved agent, so the screen can reopen on a new copy */
+  onSaved: (saved: { id?: string }) => void
 }) {
   const isCreate = agentId === null
   const [agent, setAgent] = useState<CustomAgentDetail | null>(null)
@@ -126,11 +132,13 @@ export function AgentDrawer({
   useEffect(() => {
     if (agentId === null) return
     let cancelled = false
-    agentsApi
-      .getCustom(agentId)
+    ;(builtIn ? agentsApi.getAgent(agentId) : agentsApi.getCustom(agentId))
       .then((res) => {
         if (cancelled) return
         const a = res.data as CustomAgentDetail
+        // a built-in's prompt is its whole prompt, shown in the Advanced box
+        if (builtIn) a.system_prompt_override = a.system_prompt || ''
+        if (builtIn) a.recommended_tools = a.recommended_tools || []
         setAgent(a)
         setForm({
           name: a.name || '',
@@ -153,7 +161,7 @@ export function AgentDrawer({
       })
       .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
     return () => { cancelled = true }
-  }, [agentId])
+  }, [agentId, builtIn])
 
   // A tool is connected when the list knows it. Before the list arrives, or if it fails, the row's marks
   // stand in, and a tool with none is unknown (null) rather than not connected.
@@ -212,16 +220,24 @@ export function AgentDrawer({
       .finally(() => setAiBusy(false))
   }
 
-  const canSave = !busy && phase === 'ready' && !!form.name.trim() && !!form.role.trim()
+  const canSave = !busy && phase === 'ready' && !!form.name.trim() && (builtIn ? !!form.system_prompt_override.trim() : !!form.role.trim())
 
   const save = () => {
     if (!canSave) return
     setBusy(true)
     setError(null)
-    const payload = {
+    const shown = {
       name: form.name.trim(),
       specialization: form.specialization.trim(),
       description: form.description.trim(),
+      recommended_tools: form.tools,
+      max_tokens: form.max_tokens,
+      enable_thinking: form.enable_thinking,
+      model: form.model || null,
+      fallback_model: form.fallback_model || null,
+    }
+    const payload = {
+      ...shown,
       icon: form.icon.trim() || null,
       color: form.color || null,
       role: form.role.trim(),
@@ -229,14 +245,12 @@ export function AgentDrawer({
       methodology: form.methodology.trim(),
       // Advanced override replaces the base template; clear it when closed.
       system_prompt_override: advanced ? form.system_prompt_override.trim() || null : null,
-      recommended_tools: form.tools,
-      max_tokens: form.max_tokens,
-      enable_thinking: form.enable_thinking,
-      model: form.model || null,
-      fallback_model: form.fallback_model || null,
     }
-    const req = isCreate ? agentsApi.createCustom(payload) : agentsApi.updateCustom(agentId, payload)
-    req.then(onSaved).catch((e) => { setError(errMsg(e)); setBusy(false) })
+    // A copy of a built-in sends only what the drawer shows; the server fills in the rest from the built-in.
+    const req = builtIn
+      ? agentsApi.forkAgent(agentId!, { ...shown, system_prompt_override: form.system_prompt_override.trim() })
+      : isCreate ? agentsApi.createCustom(payload) : agentsApi.updateCustom(agentId!, payload)
+    req.then((res) => onSaved((res?.data ?? {}) as { id?: string })).catch((e) => { setError(errMsg(e)); setBusy(false) })
   }
 
   const title = isCreate ? 'New agent' : `Edit agent · ${agent?.name || agentId}`
@@ -253,7 +267,9 @@ export function AgentDrawer({
         <div className="flex items-start gap-3">
           <span className="flex flex-col gap-[3px] grow min-w-0">
             <span className="text-[20px] font-bold leading-[1.25] tracking-[-0.2px] text-tx break-words">{title}</span>
-            {agent?.forked_from && <span className="vg-side-hint">Forked from <span className="mono">{agent.forked_from}</span></span>}
+            {builtIn
+              ? <span className="vg-side-hint">Built in. Saving creates your own editable copy; the original stays available.</span>
+              : agent?.forked_from && <span className="vg-side-hint">Forked from <span className="mono">{agent.forked_from}</span></span>}
           </span>
           <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -299,7 +315,7 @@ export function AgentDrawer({
                   </div>
                 )}
               </div>
-            ) : !isCreate && (
+            ) : !isCreate && !builtIn && (
               <div>
                 <div className="vg-side-assist">
                   <Icon name="sparkle" size={16} />
@@ -335,34 +351,43 @@ export function AgentDrawer({
 
             <div className="flex flex-col gap-3">
               <span className="vg-side-title">Instructions</span>
-              <div className="vg-side-field">
-                <label htmlFor="vg-a-role" className="vg-side-label">Role</label>
-                <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
-              </div>
-              <div className="vg-side-field">
-                <label htmlFor="vg-a-principles" className="vg-side-label">Principles</label>
-                <textarea id="vg-a-principles" className="vg-side-input" rows={3} value={form.extra_principles} onChange={(e) => set('extra_principles', e.target.value)} />
-              </div>
-              <div className="vg-side-field">
-                <label htmlFor="vg-a-method" className="vg-side-label">Method</label>
-                <textarea id="vg-a-method" className="vg-side-input" rows={3} value={form.methodology} onChange={(e) => set('methodology', e.target.value)} />
-                <span className="vg-side-hint">
-                  Role, principles and method.{' '}
-                  {advanced ? 'Advanced: replacing the whole prompt.' : (
-                    <>
-                      <button type="button" className="vg-side-link" onClick={() => setAdvanced(true)}>Advanced</button>: replace the whole prompt.
-                    </>
-                  )}
-                </span>
-              </div>
-              {advanced && (
+              {builtIn ? (
+                <div className="vg-side-field">
+                  <label htmlFor="vg-a-override" className="vg-side-label">Prompt</label>
+                  <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
+                </div>
+              ) : (
+                <>
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-role" className="vg-side-label">Role</label>
+                    <input id="vg-a-role" className="vg-side-input" value={form.role} autoComplete="off" placeholder="e.g. investigator" onChange={(e) => set('role', e.target.value)} />
+                  </div>
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-principles" className="vg-side-label">Principles</label>
+                    <textarea id="vg-a-principles" className="vg-side-input" rows={3} value={form.extra_principles} onChange={(e) => set('extra_principles', e.target.value)} />
+                  </div>
+                  <div className="vg-side-field">
+                    <label htmlFor="vg-a-method" className="vg-side-label">Method</label>
+                    <textarea id="vg-a-method" className="vg-side-input" rows={3} value={form.methodology} onChange={(e) => set('methodology', e.target.value)} />
+                    <span className="vg-side-hint">
+                      Role, principles and method.{' '}
+                      {advanced ? 'Advanced: replacing the whole prompt.' : (
+                        <>
+                          <button type="button" className="vg-side-link" onClick={() => setAdvanced(true)}>Advanced</button>: replace the whole prompt.
+                        </>
+                      )}
+                    </span>
+                  </div>
+                </>
+              )}
+              {!builtIn && advanced && (
                 <div className="vg-side-field">
                   <label htmlFor="vg-a-override" className="vg-side-label">Whole prompt (replaces the three parts above)</label>
                   <textarea id="vg-a-override" className="vg-side-input mono" rows={10} value={form.system_prompt_override} onChange={(e) => set('system_prompt_override', e.target.value)} />
                   <button type="button" className="vg-side-link self-start text-[12px]" onClick={() => setAdvanced(false)}>Use the three parts instead</button>
                 </div>
               )}
-              {advanced && agent?.effective_prompt && (
+              {!builtIn && advanced && agent?.effective_prompt && (
                 <div className="vg-side-field">
                   <button type="button" className="vg-side-fold" aria-expanded={showPreview} onClick={() => setShowPreview((v) => !v)}>
                     <span style={{ transform: showPreview ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
@@ -451,7 +476,7 @@ export function AgentDrawer({
             <div className="vg-side-foot">
               <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
               <button type="button" className="vg-side-btn primary" disabled={!canSave} onClick={save}>
-                {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : 'Save'}
+                {busy ? (isCreate ? 'Creating…' : 'Saving…') : isCreate ? 'Create agent' : builtIn ? 'Save my copy' : 'Save'}
               </button>
             </div>
           </>
