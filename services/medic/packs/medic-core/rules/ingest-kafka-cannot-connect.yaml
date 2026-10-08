@@ -1,0 +1,31 @@
+# I-2.g · the consumer can't start (broker list, SASL, CA, ACL) and retries.
+# connected is false whenever Kafka is off too, so the retry line corroborates.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.kafka-cannot-connect
+title: Kafka consumer can't connect to the broker
+revision: 1
+fault: {class: ingest, mode: I-2, causes: [I-2.g]}
+lane: 2
+detection: event
+signals:
+  connected: {sample: {signal: daemon_status.kafka, key: connected}}
+  start_failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: core.ingestion.kafka_consumer_service}
+      level: [ERROR]
+      template: {eq: 'Kafka consumer failed to start: %s'}
+when:
+  all:
+    - {fn: latest, signal: connected, op: "==", value: false}
+    - {fn: count, signal: start_failed, window: 15m, op: ">=", value: 3}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: The Kafka consumer keeps failing to connect, so no alerts arrive from Kafka.
+  fix: >-
+    Check the Kafka settings in Settings, Integrations, Kafka: the broker list,
+    SASL user and password, CA file, and that the user may read the topic and
+    consumer group. Confirm the Vigil host can reach the brokers. If you changed
+    the settings in the console, restart soc-daemon so it uses them.

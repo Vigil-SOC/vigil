@@ -1,0 +1,33 @@
+rule: ingest.kafka-cannot-connect
+defaults:
+  sensors:
+    - {id: http.daemon-status, covers: [daemon_status.kafka], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_status.kafka: {connected: bool}
+cases:
+  - kind: fires
+    id: v01-fires-while-the-consumer-retries
+    title: The broker refuses SASL; the consumer retries every minute
+    end: +12m
+    series:
+      - {signal: daemon_status.kafka, key: connected, steps: [[+0s, false]]}
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: core.ingestion.kafka_consumer_service,
+         template: 'Kafka consumer failed to start: %s', message: 'Kafka consumer failed to start: KafkaError: SASL authentication failed',
+         repeat: {every: 1m, until: +12m}}
+    expect:
+      - {at: +3m, rule: ingest.kafka-cannot-connect, eval: true, state: pending}
+      - {at: +8m, rule: ingest.kafka-cannot-connect, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.kafka-cannot-connect, active_since: +3m, opened_at: +8m, resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-when-kafka-is-not-used
+    title: Kafka off reads connected=false too, but nothing retries
+    end: +20m
+    series:
+      - {signal: daemon_status.kafka, key: connected, steps: [[+0s, false]]}
+    expect:
+      - {at: +10m, rule: ingest.kafka-cannot-connect, eval: unknown, state: inactive, note: no retry lines in 10 of 15 minutes decides nothing}
+      - {at: +20m, rule: ingest.kafka-cannot-connect, eval: false, state: inactive}
+    incidents: {}

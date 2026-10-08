@@ -1,0 +1,27 @@
+# I-1.e · the Security Hub / Sentinel fetch can't import its SDK. Since main made
+# these raise, the line repeats every poll; constant text, so catalog-trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.optional-sdk-missing
+title: A SIEM integration's Python SDK is not installed
+revision: 1
+fault: {class: ingest, mode: I-1, causes: [I-1.e]}
+lane: 3
+detection: event
+signals:
+  missing:
+    log:
+      signal: log_soc_daemon
+      logger: {re2: '^core\.integrations\.(aws_security_hub|azure_sentinel)\.ingestion$'}
+      level: [ERROR]
+      template: {re2: '^(boto3|Azure SDK) not installed\. Install: pip install '}
+when: {fn: count, signal: missing, window: 1h, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: Polls for AWS Security Hub or Azure Sentinel fail because the SDK they need is missing from this install.
+  fix: >-
+    Send this incident to DeepTempo Support: the Vigil package is missing a
+    dependency. On a host-native install you can work around it by installing
+    the package the soc-daemon log names (boto3, or azure-mgmt-securityinsight
+    and azure-identity) into Vigil's environment and restarting soc-daemon.
