@@ -1,0 +1,119 @@
+name: Medic Helm
+
+# Medic's Helm isolation (C3 §7 checks 2, 3, 14, 15; A3-3), in its own file
+# (skeleton decision #7). Two halves: a render test that needs only helm, and a
+# live run on kind, once with Calico (enforces NetworkPolicy: Medic must run,
+# isolated, and record the /readyz fault) and once with kind's default kindnet
+# (ignores NetworkPolicy: Medic must refuse to start). No repository condition:
+# nothing here needs a secret, so it runs on forks as well.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/helm/vigil/**"
+      - "services/medic/**"
+      - "services/medic_gateway/**"
+      - "infra/docker/Dockerfile.medic"
+      - "infra/docker/Dockerfile.medic-gateway"
+      - ".github/workflows/medic-helm.yml"
+  pull_request:
+    paths:
+      - "infra/helm/vigil/**"
+      - "services/medic/**"
+      - "services/medic_gateway/**"
+      - "infra/docker/Dockerfile.medic"
+      - "infra/docker/Dockerfile.medic-gateway"
+      - ".github/workflows/medic-helm.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_PROJECT_ENVIRONMENT: ../../.venv
+  # The chart with Medic on, and the least it needs. kubeApi.cidrs is set because
+  # `helm template` can't look it up (check 15).
+  MEDIC_ON: >-
+    --set medic.enabled=true
+    --set medic.kubeApi.cidrs[0]=10.0.0.1/32
+    --set medic.gateway.viewer.username=medic-viewer
+    --set medic.gateway.viewer.passwordSecret.name=medic-viewer
+
+jobs:
+  medic-helm-render:
+    name: Medic Helm render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      # Every subchart is off by default and Medic uses none, so a copy without
+      # them lints and renders without fetching them (as ci-cd.yml's db-init job).
+      - name: Chart copy without subcharts
+        run: |
+          cp -R infra/helm/vigil "$RUNNER_TEMP/vigil"
+          yq -i 'del(.dependencies)' "$RUNNER_TEMP/vigil/Chart.yaml"
+          rm -f "$RUNNER_TEMP/vigil/Chart.lock"
+
+      - name: helm lint (Medic off, Medic on)
+        run: |
+          helm lint "$RUNNER_TEMP/vigil"
+          helm lint "$RUNNER_TEMP/vigil" $MEDIC_ON
+          helm lint "$RUNNER_TEMP/vigil" -f infra/helm/vigil/values-dev.yaml $MEDIC_ON
+
+      - name: helm template (off renders no Medic object; on is schema-valid)
+        run: |
+          helm template rc "$RUNNER_TEMP/vigil" > off.yaml
+          if grep -n -- '-medic' off.yaml; then echo "Medic objects rendered while off"; exit 1; fi
+          helm template rc "$RUNNER_TEMP/vigil" $MEDIC_ON --set networkPolicies.enabled=true > on.yaml
+          echo "Rendered $(grep -c '^kind:' on.yaml) resources with Medic on."
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz
+          ./kubeconform -strict -ignore-missing-schemas -summary on.yaml
+
+      - name: Render tests (check 2, check 15 template half)
+        run: |
+          uv sync --project services/medic --frozen
+          uv run --project services/medic --frozen pytest infra/helm/vigil/medic-tests
+
+  medic-helm-kind:
+    name: Medic on kind (${{ matrix.cni }})
+    needs: medic-helm-render
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cni: [calico, kindnet]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Build the Medic and gateway images
+        run: |
+          docker build -f infra/docker/Dockerfile.medic -t vigil-medic:kind .
+          docker build -f infra/docker/Dockerfile.medic-gateway -t vigil-medic-gateway:kind .
+
+      # calico: checks 3, 14 (runs), 15 live, S2-6 (a)+(b), the /readyz incident.
+      # kindnet: check 14, refuse variant (exit 3 with the message).
+      - name: e2e (${{ matrix.cni }})
+        run: infra/helm/vigil/medic-tests/kind/e2e.sh ${{ matrix.cni }}
