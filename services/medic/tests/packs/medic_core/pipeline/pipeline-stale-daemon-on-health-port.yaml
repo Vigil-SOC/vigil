@@ -1,0 +1,38 @@
+rule: pipeline.stale-daemon-on-health-port
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, shape: start_sh, states: [[+0s, ok]]}
+    - {id: http.daemon-health, covers: [daemon_health], interval: 30s, service: soc-daemon, shape: start_sh, states: [[+0s, ok]]}
+  types:
+    daemon_health: {uptime_seconds: gauge}
+cases:
+  - kind: fires
+    id: v01-fires-when-an-old-daemon-answers-health
+    title: start.sh starts a new soc-daemon while the old one (up 2.5 h) still holds :9091
+    end: +40m
+    series:
+      - {signal: daemon_health, key: uptime_seconds, steps: [[+0s, 9000], [+10m, 9600], [+20m, 10200], [+30m, 10800], [+40m, 11400]]}
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.metrics,
+         template: Health/Prometheus server failed, message: Health/Prometheus server failed}
+    expect:
+      - {at: +1m, rule: pipeline.stale-daemon-on-health-port, eval: true, state: pending}
+      - {at: +3m, rule: pipeline.stale-daemon-on-health-port, eval: true, state: firing, incident: A}
+      - {at: +31m, rule: pipeline.stale-daemon-on-health-port, eval: false, state: resolving, incident: A}
+      - {at: +36m, rule: pipeline.stale-daemon-on-health-port, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.stale-daemon-on-health-port, active_since: +1m, opened_at: +3m, resolving_since: +31m,
+          resolved_at: +36m, reason: cleared, routed_at: +3m}
+  - kind: silent
+    id: v02-silent-when-the-new-daemon-answers
+    title: Only the Prometheus port was taken; the new daemon (up 1 min) answers /health
+    end: +40m
+    series:
+      - {signal: daemon_health, key: uptime_seconds, steps: [[+0s, 60], [+10m, 660], [+20m, 1260], [+30m, 1860], [+40m, 2460]]}
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.metrics,
+         template: Health/Prometheus server failed, message: Health/Prometheus server failed}
+    expect:
+      - {at: +2m, rule: pipeline.stale-daemon-on-health-port, eval: false, state: inactive}
+      - {at: +40m, rule: pipeline.stale-daemon-on-health-port, eval: false, state: inactive}
+    incidents: {}

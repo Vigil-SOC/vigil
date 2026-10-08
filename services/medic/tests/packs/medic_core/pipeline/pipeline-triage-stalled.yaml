@@ -1,0 +1,31 @@
+rule: pipeline.triage-stalled
+defaults:
+  sensors:
+    - {id: http.daemon-status, covers: [daemon_status.processor], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_status.processor: {processed: counter, triaged: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-nothing-is-triaged
+    title: Findings are processed every 2 min; triage completes none
+    end: +50m
+    series:
+      - {signal: daemon_status.processor, key: processed, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+      - {signal: daemon_status.processor, key: triaged, steps: [[+0s, 80]]}
+    expect:
+      - {at: +20m, rule: pipeline.triage-stalled, eval: unknown, state: inactive, note: 30 min not watched yet}
+      - {at: +30m, rule: pipeline.triage-stalled, eval: true, state: pending}
+      - {at: +40m, rule: pipeline.triage-stalled, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.triage-stalled, active_since: +30m, opened_at: +40m, resolving_since: null, resolved_at: null, routed_at: +45m}
+  - kind: silent
+    id: v02-silent-while-triage-keeps-up
+    title: Each processed finding is triaged
+    end: +50m
+    series:
+      - {signal: daemon_status.processor, key: processed, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+      - {signal: daemon_status.processor, key: triaged, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+    expect:
+      - {at: +30m, rule: pipeline.triage-stalled, eval: false, state: inactive}
+      - {at: +50m, rule: pipeline.triage-stalled, eval: false, state: inactive}
+    incidents: {}

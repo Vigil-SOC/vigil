@@ -1,0 +1,27 @@
+# P-4.a/b/c · findings are processed but none is triaged (E2 fixture). The LLM
+# path is the usual cause (P-4.a): suppression.yaml makes this a child of any
+# class-2 incident, so the LLM fault shows instead.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.triage-stalled
+title: Findings are processed but none are triaged
+revision: 1
+fault: {class: pipeline, mode: P-4, causes: [P-4.a, P-4.b, P-4.c]}
+lane: 3
+detection: absence
+signals:
+  processed: {sample: {signal: daemon_status.processor, key: processed}}
+  triaged:   {sample: {signal: daemon_status.processor, key: triaged}}
+when:
+  all:
+    - {fn: increase, signal: processed, window: 30m, op: ">=", value: {param: min_processed}}
+    - {fn: increase, signal: triaged, window: 30m, op: "==", value: 0}
+for: 10m
+keep_firing_for: 30m
+params:
+  min_processed: {type: number, default: 5, min: 1, max: 1000}
+advice:
+  summary: Findings are being stored, but AI triage has completed none in 30 minutes.
+  fix: >-
+    Check the LLM path (Settings, LLM providers and the Bifrost gateway). If the
+    LLM path is healthy, send this incident to DeepTempo Support.

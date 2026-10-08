@@ -1,0 +1,28 @@
+rule: pipeline.processor-errors
+defaults:
+  sensors:
+    - {id: http.daemon-status, covers: [daemon_status.processor], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_status.processor: {errors: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-findings-keep-failing
+    title: Triage results can't be persisted; one error a minute
+    end: +30m
+    series:
+      - {signal: daemon_status.processor, key: errors, steps: [[+0s, 0], [+1m, 1], [+2m, 2], [+3m, 3], [+4m, 4], [+5m, 5], [+6m, 6], [+7m, 7], [+8m, 8], [+9m, 9], [+10m, 10], [+11m, 11], [+12m, 12], [+13m, 13], [+14m, 14], [+15m, 15], [+16m, 16], [+17m, 17], [+18m, 18], [+19m, 19], [+20m, 20], [+21m, 21], [+22m, 22], [+23m, 23], [+24m, 24], [+25m, 25]]}
+    expect:
+      - {at: +10m, rule: pipeline.processor-errors, eval: true, state: pending}
+      - {at: +20m, rule: pipeline.processor-errors, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.processor-errors, active_since: +10m, opened_at: +20m, resolving_since: null, resolved_at: null, routed_at: +25m}
+  - kind: silent
+    id: v02-silent-on-a-few-errors
+    title: Three malformed findings fail in an hour
+    end: +30m
+    series:
+      - {signal: daemon_status.processor, key: errors, steps: [[+0s, 0], [+5m, 1], [+10m, 2], [+20m, 3]]}
+    expect:
+      - {at: +15m, rule: pipeline.processor-errors, eval: false, state: inactive}
+      - {at: +30m, rule: pipeline.processor-errors, eval: false, state: inactive}
+    incidents: {}

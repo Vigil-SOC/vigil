@@ -1,0 +1,59 @@
+rule: pipeline.daemon-component-hung
+defaults:
+  sensors:
+    - {id: http.daemon-health, covers: [daemon_health], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+    - {id: http.daemon-status, covers: [daemon_status.processor, daemon_status.poller, daemon_status.scheduler], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_health: {components.processor: enum, components.scheduler: enum, uptime_seconds: gauge}
+    daemon_status.processor: {processed: counter}
+    daemon_status.poller: {webhook_findings: counter}
+    daemon_status.scheduler: {tasks_run: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-the-processor-stops-while-findings-arrive
+    title: Findings keep arriving; the processor reads running but processes none
+    end: +30m
+    series:
+      - {signal: daemon_health, key: uptime_seconds, steps: [[+0s, 5000], [+5m, 5300], [+10m, 5600], [+15m, 5900], [+20m, 6200], [+25m, 6500], [+30m, 6800]]}
+      - {signal: daemon_health, key: components.processor, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.scheduler, steps: [[+0s, running]]}
+      - {signal: daemon_status.processor, key: processed, steps: [[+0s, 40]]}
+      - {signal: daemon_status.poller, key: webhook_findings, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+      - {signal: daemon_status.scheduler, key: tasks_run, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+    expect:
+      - {at: +10m, rule: pipeline.daemon-component-hung, eval: unknown, state: inactive, note: 15 min not watched yet}
+      - {at: +15m, rule: pipeline.daemon-component-hung, eval: true, state: pending}
+      - {at: +20m, rule: pipeline.daemon-component-hung, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.daemon-component-hung, active_since: +15m, opened_at: +20m, resolving_since: null, resolved_at: null, routed_at: +20m}
+  - kind: fires
+    id: v02-fires-when-the-scheduler-runs-nothing
+    title: One scheduled task hangs; health_check (every 300 s) never runs again
+    end: +30m
+    series:
+      - {signal: daemon_health, key: uptime_seconds, steps: [[+0s, 5000], [+5m, 5300], [+10m, 5600], [+15m, 5900], [+20m, 6200], [+25m, 6500], [+30m, 6800]]}
+      - {signal: daemon_health, key: components.processor, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.scheduler, steps: [[+0s, running]]}
+      - {signal: daemon_status.processor, key: processed, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+      - {signal: daemon_status.poller, key: webhook_findings, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+      - {signal: daemon_status.scheduler, key: tasks_run, steps: [[+0s, 57]]}
+    expect:
+      - {at: +20m, rule: pipeline.daemon-component-hung, eval: true, state: pending}
+      - {at: +25m, rule: pipeline.daemon-component-hung, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: pipeline.daemon-component-hung, active_since: +20m, opened_at: +25m, resolving_since: null, resolved_at: null, routed_at: +25m}
+  - kind: silent
+    id: v03-silent-while-both-do-work-or-nothing-arrives
+    title: Both components work; later no findings arrive, so a flat processor is expected
+    end: +30m
+    series:
+      - {signal: daemon_health, key: uptime_seconds, steps: [[+0s, 5000], [+5m, 5300], [+10m, 5600], [+15m, 5900], [+20m, 6200], [+25m, 6500], [+30m, 6800]]}
+      - {signal: daemon_health, key: components.processor, steps: [[+0s, running]]}
+      - {signal: daemon_health, key: components.scheduler, steps: [[+0s, running]]}
+      - {signal: daemon_status.processor, key: processed, steps: [[+0s, 1], [+5m, 2], [+10m, 3]]}
+      - {signal: daemon_status.poller, key: webhook_findings, steps: [[+0s, 1], [+5m, 2], [+10m, 3]]}
+      - {signal: daemon_status.scheduler, key: tasks_run, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+    expect:
+      - {at: +15m, rule: pipeline.daemon-component-hung, eval: false, state: inactive}
+      - {at: +30m, rule: pipeline.daemon-component-hung, eval: false, state: inactive}
+    incidents: {}

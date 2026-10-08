@@ -43,3 +43,24 @@ entries:
   - parent: {rule: pipeline.agent-serve-not-ready}
     children: {rule: pipeline.agent-reads-failing}
     why: With agent-serve down every projection read fails; show agent-serve.
+  - parent: {mode: L-5}
+    children: {rule: pipeline.orchestrator-slots-held}
+    why: A spend cap or exhausted budget holds new runs too; show the budget fault.
+  - parent: {rule: pipeline.agent-serve-not-ready}
+    children: {rule: pipeline.runs-stale}
+    why: Run progress comes from agent-serve's projections; with it down every run looks stale.
+  - parent: {rule: pipeline.agent-worker-not-ready}
+    children: {rule: pipeline.runs-stale}
+    why: Runs queued while the worker isn't ready are never picked up; show the worker.
+  - parent: {rule: pipeline.agent-reads-failing}
+    children: {rule: pipeline.runs-stale}
+    why: Runs whose progress can't be read never record activity; show the read fault.
+  - parent: {rule: pipeline.supervision-loop-failing}
+    children: {rule: pipeline.runs-stale}
+    why: A failing supervisor stops reconciling run progress; show the supervisor.
+  - parent: {rule: ingest.processor-without-database}
+    children: {rule: pipeline.daemon-component-hung}
+    why: With no database nothing is processed while findings still arrive; show the database fault, not a hung processor.
+  - parent: {rule: ingest.processor-store-dropped}
+    children: {rule: pipeline.daemon-component-hung}
+    why: Findings that fail to store aren't processed; show the store fault, not a hung processor.

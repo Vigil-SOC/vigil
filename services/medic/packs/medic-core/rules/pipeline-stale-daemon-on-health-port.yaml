@@ -1,0 +1,35 @@
+# P-3.c · host-native: a soc-daemon from an earlier start still holds :9091, so the
+# new daemon's health server fails to bind (metrics.py:167, constant text) while
+# /health keeps answering for the old process. Corroborated: a bind failure in
+# the last 30 min, yet the process answering /health has been up for over 40 min
+# (uptime_seconds is the answering process's age). Trusted, 2 signals, one a
+# sample: passes the lane-1 gate (ENGINE_API §5). runbook: none (G4).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.stale-daemon-on-health-port
+title: An old soc-daemon still answers on the health port
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.c]}
+lane: 1
+detection: event
+shapes: [start_sh]
+signals:
+  bind_failed:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.metrics}
+      level: [ERROR]
+      template: {eq: Health/Prometheus server failed}
+  uptime: {sample: {signal: daemon_health, key: uptime_seconds}}
+when:
+  all:
+    - {fn: count, signal: bind_failed, window: 30m, op: ">=", value: 1}
+    - {fn: latest, signal: uptime, op: ">", value: 2400}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: A new soc-daemon couldn't open its health port because an older soc-daemon still holds it; the old one answers health checks.
+  fix: >-
+    Stop Vigil with shutdown_all.sh, check that no soc-daemon process is left
+    (ps, or lsof -i :9091) and stop any that is, then start Vigil again with
+    start.sh.
