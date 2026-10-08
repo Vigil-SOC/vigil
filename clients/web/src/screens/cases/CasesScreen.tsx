@@ -188,7 +188,7 @@ function CasesTable({
         <PageHead
           title="Cases"
           level="h1"
-          description="Every open case, who owns it and what it is waiting on. Cases that need you come first, then the ones closest to their SLA."
+          description="Every open case, who owns it and what it is waiting on."
           actions={
             <>
               <div className="search">

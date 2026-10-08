@@ -155,7 +155,7 @@ export default function UserMenu({
         aria-expanded={open}
         aria-label="Account menu"
       >
-        <span className="avatar">{initials}</span>
+        <span>{initials}</span>
       </button>
       {menu && (root ? createPortal(menu, root) : menu)}
     </div>

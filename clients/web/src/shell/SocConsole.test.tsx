@@ -523,7 +523,7 @@ describe('SocConsole', () => {
     clickScreen('Cases')
     // the Cases list draws its own page head, with the same copy
     expect(title()).toBe('Cases')
-    expect(screen.getByText(/^Every open case, who owns it and what it is waiting on\./)).toBeInTheDocument()
+    expect(screen.getByText('Every open case, who owns it and what it is waiting on.')).toBeInTheDocument()
     clickScreen('Triage queue')
     expect(screen.getByText('Every incoming alert and what triage did with it.')).toBeInTheDocument()
   })
