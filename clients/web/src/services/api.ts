@@ -278,6 +278,8 @@ export const casesApi = {
     assignee?: string
     closed?: boolean
     query?: string
+    needs_you?: boolean
+    kind?: string
     limit?: number
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
@@ -330,6 +332,17 @@ export const casesApi = {
   updateTags: (id: string, tags: string[]) =>
     api.put(`/cases/${id}/tags`, { tags }),
 
+  /** Keeps the original of a hunt's attached document on the case, as one `document` evidence row. */
+  attachDocument: (id: string, file: File, opts: { name?: string; pages: number }) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (opts.name) form.append('name', opts.name)
+    form.append('pages', String(opts.pages))
+    return api.post<Schema<'CaseEvidenceSchema'>>(`/cases/${id}/attachments`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+    })
+  },
   getEvidence: (id: string) =>
     api.get<Schema<'CaseEvidenceListResponse'>>(`/cases/${id}/evidence`),
   addEvidence: (id: string, data: Schema<'EvidenceAdd'>) =>
@@ -1026,19 +1039,39 @@ export interface ReplayReport {
   recalled: string[]
 }
 
+export interface HuntDocument {
+  text: string
+  pages: number
+  condensed: boolean
+}
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
-  /** Hunt cost ceiling, bound/unbound capabilities and pricing confidence; `{}` for a non-hunt. */
+  /** Who runs it, its model, what it may do, where it stops and pauses; a hunt kind adds capabilities and pricing. */
   preflight: (id: string) => api.get(`/workflows/${id}/preflight`),
+  /** Turns a workflow on or off. A 409 carries the reason it cannot be turned off. */
+  setEnabled: (id: string, enabled: boolean) => api.put(`/workflows/${id}/enabled`, { enabled }),
   execute: (id: string, params: {
     finding_id?: string
     case_id?: string
     context?: string
     hypothesis?: string
+    /** Text a person attached (at most 64 KB), read by the run as material. */
+    document?: string
+    hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
+  readHuntDocument: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<HuntDocument>('/workflows/threat-hunt/document', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: LLM_TIMEOUT,
+    })
+  },
   // Read-only: is this report already hunted? Answers running | concluded | uncovered,
   // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
@@ -1337,6 +1370,7 @@ export interface OverviewFeedItem {
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
+  noise_marked: boolean
 }
 
 export interface OverviewPayload {
@@ -1356,6 +1390,8 @@ export interface OverviewPayload {
 
 export const overviewApi = {
   get: () => api.get<OverviewPayload>('/overview'),
+  alert: (findingId: string) =>
+    api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
 export interface TriageRow {

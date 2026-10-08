@@ -269,7 +269,18 @@ async function open(harness: Harness<ComposeKinds>, options: ComposeOptions): Pr
       started_by: options.started_by ?? "compose",
     },
   };
-  await harness.state.append(options.run_id, [event]);
+  // Journalled with the opening, so a resume (which skips open) cannot declare them twice.
+  const unbound = options.spec.phases.flatMap((phase) =>
+    (phase.unavailable ?? []).map(
+      ({ tool, reason }): Event => ({
+        run_id: options.run_id,
+        run_kind: "compose",
+        kind: "unbound",
+        payload: { capability: tool, reason: `${phase.name}: ${reason}`, phase_id: phase.id },
+      }),
+    ),
+  );
+  await harness.state.append(options.run_id, [event, ...unbound]);
 }
 
 async function end(

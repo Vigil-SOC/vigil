@@ -62,7 +62,7 @@ const doneSteps = [
   { id: 'connect_tools', title: 'Connect more tools', state_line: '1 of 2 integrations connected', done: true, href: '/settings?section=integrations' },
   { id: 'notify', title: 'Where Vigil pings you', state_line: 'Slack or PagerDuty route is set', done: true, href: '/settings?section=integrations' },
   { id: 'rules', title: 'Link detection rules', state_line: 'Detection rules are on disk', done: true, href: '/settings?section=data&tab=detection' },
-  { id: 'per_agent', title: 'Pick a model per agent', state_line: 'Agents use more than one model', done: true, href: '/settings?section=ai-config' },
+  { id: 'per_agent', title: 'Pick a model per agent', state_line: 'Agents use more than one model', done: true, href: '/settings?section=ai-config&tab=assignment' },
 ]
 
 beforeEach(() => {

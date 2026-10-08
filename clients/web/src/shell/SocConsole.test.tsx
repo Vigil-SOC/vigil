@@ -5,7 +5,7 @@ import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi } from '../services/api'
+import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
 
 const authState = vi.hoisted(() => ({
   allow: (_permission: string): boolean => true,
@@ -166,10 +166,17 @@ vi.mock('../services/api', () => ({
     getFindingsByTechnique: () => Promise.resolve({ data: { findings: [] } }),
   },
   timelineApi: {
-    getTimelineRange: () =>
-      Promise.resolve({
-        data: { events: [{ id: 'finding-f-1', start: '2026-06-12T11:36:33Z', type: 'finding', severity: 'medium', metadata: { finding_id: 'f-1' } }] },
-      }),
+    getTimelineRange: vi.fn((params: { start?: string; end?: string } = {}) => {
+      const events = [
+        { id: 'finding-f-1', start: '2026-06-12T11:36:33Z', type: 'finding', severity: 'medium', metadata: { finding_id: 'f-1' } },
+        { id: 'finding-f-2', start: '2026-06-13T11:36:33Z', type: 'finding', severity: 'high', metadata: { finding_id: 'f-2' } },
+      ]
+      const start = params.start ? Date.parse(params.start) : Number.NEGATIVE_INFINITY
+      const end = params.end ? Date.parse(params.end) : Number.POSITIVE_INFINITY
+      return Promise.resolve({
+        data: { events: events.filter((event) => Date.parse(event.start) >= start && Date.parse(event.start) <= end) },
+      })
+    }),
   },
   aiDecisionsApi: {
     getPendingFeedback: () =>
@@ -428,11 +435,11 @@ describe('SocConsole', () => {
     renderConsole('/overview')
     expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
-    fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument()
     expect(document.querySelector('[data-command-slot]')).toBeNull()
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Exit wall' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }))
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
@@ -534,13 +541,13 @@ describe('SocConsole', () => {
     // a row opens the drawer, which holds the case page alone
     const drawer = await screen.findByRole('dialog', { name: 'Case' })
     expect(within(drawer).getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New case' })).toBeInTheDocument()
     fireEvent.click(within(drawer).getByRole('button', { name: 'Expand' }))
     expect(screen.queryByRole('dialog', { name: 'Case' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'New Case' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New case' })).not.toBeInTheDocument()
     expect(await screen.findByRole('tab', { name: /Summary/ })).toBeInTheDocument()
     fireEvent.click(screen.getByText('Cases', { selector: '.dh-crumb .back' }))
-    expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New case' })).toBeInTheDocument()
   })
 
   it('opens the AI Decisions review queue', async () => {
@@ -756,6 +763,58 @@ describe('SocConsole', () => {
     clickSpy.mockRestore()
   })
 
+  describe('Timeline date range', () => {
+    const range = vi.mocked(timelineApi.getTimelineRange)
+    const openTimeline = async () => {
+      renderConsole()
+      fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
+      await screen.findByText('2 events')
+      range.mockClear()
+    }
+    const setDate = (name: string, value: string) =>
+      fireEvent.change(screen.getByLabelText(name), { target: { value } })
+
+    it('sends the selected calendar days as inclusive start and end, and Clear drops them', async () => {
+      await openTimeline()
+      setDate('Timeline start date', '2026-06-12')
+      setDate('Timeline end date', '2026-06-12')
+
+      expect(await screen.findByText('1 event')).toBeInTheDocument()
+      expect(range).toHaveBeenLastCalledWith({
+        limit: 200,
+        start: new Date('2026-06-12T00:00:00').toISOString(),
+        end: new Date('2026-06-12T23:59:59.999').toISOString(),
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+      expect(await screen.findByText('2 events')).toBeInTheDocument()
+      expect(range).toHaveBeenLastCalledWith({ limit: 200, start: undefined, end: undefined })
+    })
+
+    it('offers Retry when a reload fails instead of leaving the timeline blank', async () => {
+      await openTimeline()
+      range.mockRejectedValueOnce(new Error('boom'))
+      setDate('Timeline start date', '2026-06-10')
+
+      expect(await screen.findByText('Couldn’t load the timeline')).toBeInTheDocument()
+      expect(screen.getByText('Couldn’t load')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      expect(await screen.findByText('2 events')).toBeInTheDocument()
+    })
+
+    it('flags an inverted range and sends no request for it', async () => {
+      await openTimeline()
+      setDate('Timeline start date', '2026-06-13')
+      setDate('Timeline end date', '2026-06-12')
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Start date must be on or before end date.')
+      expect(screen.getByLabelText('Timeline start date')).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText('Invalid date range')).toBeInTheDocument()
+      expect(range).not.toHaveBeenCalledWith(expect.objectContaining({ start: new Date('2026-06-13T00:00:00').toISOString(), end: new Date('2026-06-12T23:59:59.999').toISOString() }))
+    })
+  })
+
   it('shows Act, and Assist when force-manual is set or auto-response is off', async () => {
     const { unmount } = renderConsole()
     expect(await screen.findByText('Autonomy · Act · reversible changes on its own')).toBeInTheDocument()
@@ -859,6 +918,9 @@ describe('SocConsole', () => {
   })
 
   describe('console tour', () => {
+    const NAV_TITLE = 'Pages are grouped by what you are doing'
+    const ATTENTION_TITLE = 'Decisions wait here'
+    const ASK_TITLE = 'Ask Vigil anywhere'
     let rectSpy: { mockRestore: () => void }
 
     beforeEach(() => {
@@ -879,12 +941,14 @@ describe('SocConsole', () => {
     it('points at the primary nav until Skip, then stays hidden on reload', () => {
       const first = renderConsole()
       const ring = document.querySelector('.console-tour-ring')
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toHaveTextContent('primary nav')
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toHaveTextContent('Watch intake (Overview, Triage)')
       expect(ring).toHaveAttribute('data-stop', 'nav')
+      expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 1 of 3')
+      expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
       expect(ring).toHaveStyle({ top: '34px', left: '4px', width: '512px', height: '58px' })
       expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
 
@@ -897,13 +961,16 @@ describe('SocConsole', () => {
       renderConsole('/cases')
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/home')
-      expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: ATTENTION_TITLE })).toBeInTheDocument()
       const attention = document.querySelector('.console-tour-ring')
       expect(attention).toHaveAttribute('data-stop', 'attention')
       expect(attention).toHaveStyle({ top: '194px', left: '18px' })
+      expect(screen.getByRole('dialog', { name: ATTENTION_TITLE })).toHaveTextContent('Approve or reject here, or open the case.')
+      expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 2 of 3')
+      expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toHaveTextContent('Ask Vigil')
+      expect(screen.getByRole('dialog', { name: ASK_TITLE })).toHaveTextContent('Conversations are private to you and kept in your history.')
       const ask = document.querySelector('.console-tour-ring')
       expect(ask).toHaveAttribute('data-stop', 'ask')
       expect(ask).toHaveStyle({ top: '614px', left: '794px' })
@@ -916,13 +983,13 @@ describe('SocConsole', () => {
 
     it('closes the dock and leaves wall mode so the stop target is mounted', async () => {
       renderConsole('/overview')
-      await screen.findByRole('button', { name: 'Wall' })
+      await screen.findByRole('button', { name: 'Full screen' })
       fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
       expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-      expect(await screen.findByRole('dialog', { name: 'Needs your attention' })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: ATTENTION_TITLE })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Ask Vigil chat assistant' })).toBeInTheDocument()
@@ -932,12 +999,13 @@ describe('SocConsole', () => {
     it('skips Home for an operator who cannot open it', () => {
       authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
       renderConsole('/dashboard')
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: ASK_TITLE })).toBeInTheDocument()
+      expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 2 of 2')
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-path', '/dashboard')
       expect(screen.queryByText(/Access denied/)).not.toBeInTheDocument()
-      expect(screen.queryByRole('dialog', { name: 'Needs your attention' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: ATTENTION_TITLE })).not.toBeInTheDocument()
     })
 
     it('starts again at the primary nav from the account menu', () => {
@@ -946,9 +1014,9 @@ describe('SocConsole', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Console tour' }))
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
       expect(screen.queryByRole('menu', { name: 'Account' })).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(localStorage.getItem(CONSOLE_TOUR_SEEN_KEY)).toBe('1')
     })
