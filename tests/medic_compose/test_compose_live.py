@@ -249,7 +249,7 @@ def test_medic_networks_are_internal_and_hold_the_members(healthy, net, expected
 _FROM_AGENT = """
 import json, socket
 out = {}
-for h, p in [("medic-dockerproxy", 8472), ("medic-gateway", 8471), ("medic-gateway", 8470)]:
+for h, p in [("medic-dockerproxy", 8472), ("medic-gateway", 8471)]:
     try:
         socket.create_connection((h, p), timeout=3).close()
         out[f"{h}:{p}"] = "connected"
@@ -264,7 +264,10 @@ print(json.dumps(out))
 @pytest.mark.parametrize("member", ["agent-worker", "agent-serve", "soc-daemon"])
 def test_agents_cant_use_medics_proxy_or_gateway(healthy, member) -> None:
     # S6-9: the agents handle attacker-influenced content; Medic's Docker proxy
-    # and its Viewer session are on medic-private, which they aren't on.
+    # and its Viewer session (outbound :8471) are on medic-private, which they
+    # aren't on. The gateway's inbound :8470 is on deeptempo-network for the
+    # backend by design (S5-3), so every Vigil container reaches it; X2's
+    # X-Medic-Key guards it.
     s = healthy
     out = json.loads(
         s.docker("exec", "-i", s.cid(member), "python", "-", input=_FROM_AGENT).stdout
