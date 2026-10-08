@@ -1,0 +1,22 @@
+# L-5.d: the orchestrator's hourly cost cap paused intake. Policy, not a fault (B5).
+# The cap fails closed: hourly_paused is also true when the spend read fails (D1).
+# requires: D6-6 orchestrator_status cost.hourly_paused (bool), read every 300 s.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.cost-cap-paused
+title: The hourly LLM cost cap has paused new investigations
+revision: 1
+fault: {class: llm, mode: L-5, causes: [L-5.d]}
+lane: 2
+detection: event
+signals:
+  paused: {sample: {signal: orchestrator_status, key: cost.hourly_paused}}
+when: {fn: latest, signal: paused, op: "==", value: true}
+for: 5m
+keep_firing_for: 5m
+advice:
+  summary: The orchestrator has paused new investigations because the hourly LLM cost cap was reached. This is a policy setting, not a fault.
+  fix: >-
+    Raise max_total_hourly_cost in the orchestrator settings, or wait for the next
+    hour. If spend is clearly below the cap, the spend read itself is failing (the
+    cap pauses when it can't read spend): check that Postgres is up.
