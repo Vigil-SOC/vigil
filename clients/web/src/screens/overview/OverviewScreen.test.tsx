@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
-import api, { configApi, findingsApi, overviewApi, type OverviewPayload } from '../../services/api'
+import api, { configApi, findingsApi, overviewApi, type OverviewFeedItem, type OverviewPayload } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   default: { post: vi.fn() },
-  overviewApi: { get: vi.fn() },
+  overviewApi: { get: vi.fn(), alert: vi.fn() },
   findingsApi: {
     markNoise: vi.fn(),
     clearNoise: vi.fn(),
@@ -77,6 +77,7 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
       evidence_links: [{ ref: 'https://example.test/alert/1' }],
       source_link: 'https://example.test/alert/1',
       case_id: null,
+      noise_marked: false,
       source_evidence: {
         version: 1,
         telemetry_kind: 'dns',
@@ -90,25 +91,48 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
   }
 }
 
-function renderScreen() {
-  const goSettings = vi.fn()
-  const setWallMode = vi.fn()
-  render(
-    <MemoryRouter>
-      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={vi.fn()} setViewFull={vi.fn()} setWallMode={setWallMode} />
-    </MemoryRouter>,
-  )
-  return { goSettings, setWallMode }
+function Where() {
+  return <output data-testid="where">{useLocation().search}</output>
 }
 
+function renderScreen(url = '/overview') {
+  const goSettings = vi.fn()
+  const setWallMode = vi.fn()
+  const openCase = vi.fn()
+  const { unmount } = render(
+    <MemoryRouter initialEntries={[url]}>
+      <OverviewScreen openChat={vi.fn()} go={vi.fn()} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} setWallMode={setWallMode} />
+      <Where />
+    </MemoryRouter>,
+  )
+  return { setWallMode, openCase, unmount }
+}
+
+const where = () => screen.getByTestId('where').textContent
+
 describe('OverviewScreen', () => {
-  it('prompts for Settings when nothing is enabled and nothing arrived', async () => {
-    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], outcomes: [] }) } as never)
-    const { goSettings } = renderScreen()
-    expect(await screen.findByText('No sources enabled')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(goSettings).toHaveBeenCalledWith('federation')
-    expect(screen.queryByLabelText("Today's flow")).not.toBeInTheDocument()
+  it('keeps every card when nothing is connected, with the empty copy in place', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
+    renderScreen()
+    const flow = await screen.findByLabelText("Today's flow")
+    expect(within(flow).getByText(/Nothing is connected yet/)).toBeInTheDocument()
+    expect(within(flow).getByLabelText('Engine')).toBeInTheDocument()
+    expect(within(flow).getByLabelText('Needs you')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+    expect(screen.getByText('Incident Response')).toBeInTheDocument()
+    expect(screen.getByText(/No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline/)).toBeInTheDocument()
+    const links = screen.getAllByRole('link', { name: 'Connect data' })
+    expect(links).toHaveLength(2)
+    links.forEach((link) => expect(link).toHaveAttribute('href', '/settings?section=data'))
+  })
+
+  it('shows arrival nodes and no connect copy when something is connected', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [] }) } as never)
+    renderScreen()
+    expect(within(await screen.findByLabelText("Today's flow")).getByLabelText('splunk')).toBeInTheDocument()
+    expect(screen.getByText('No alerts.')).toBeInTheDocument()
+    expect(screen.queryByText(/Nothing is connected yet/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
   })
 
   it('shows arrival counts, an engineless number, and the feed', async () => {
@@ -120,7 +144,7 @@ describe('OverviewScreen', () => {
     expect(within(flow).getByLabelText('Not in a case').querySelector('a')).toBeNull()
     const engine = within(flow).getByLabelText('Engine')
     expect(engine.textContent).not.toMatch(/\d/)
-    fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(setWallMode).toHaveBeenCalledWith(true)
     fireEvent.click(await screen.findByText('f-1'))
     expect(await screen.findByRole('link', { name: 'Open in source' })).toHaveAttribute('href', 'https://example.test/alert/1')
@@ -164,13 +188,123 @@ describe('OverviewScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear noise' }))
     expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
     expect(findingsApi.clearNoise).toHaveBeenCalledWith('f-1')
-    fireEvent.click(screen.getByRole('button', { name: 'Launch' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Launch' }))
-    expect(await screen.findByText('This finding is already queued.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByRole('link', { name: 'Waiting in the Triage queue' })).toHaveAttribute('href', '/triage')
+    fireEvent.click(screen.getByRole('button', { name: 'Send to triage' }))
+    expect(await screen.findByRole('link', { name: 'Already waiting in the Triage queue.' })).toHaveAttribute('href', '/triage')
     await waitFor(() => expect(configApi.getIntegrations).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: 'Create ticket' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('JIRA not configured')
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/cases/case-1/export/jira', { project_key: 'SOC' }))
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
+  })
+
+  it('full screen hides Agents, keeps the flow and feed, and Escape leaves it', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    const { setWallMode } = renderScreen()
+    await screen.findByLabelText("Today's flow")
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
+    expect(setWallMode).toHaveBeenLastCalledWith(true)
+    expect(screen.getByRole('button', { name: 'Exit full screen' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Today's flow")).toBeInTheDocument()
+    expect(screen.getByText('f-1')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(setWallMode).toHaveBeenLastCalledWith(false)
+    expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument()
+  })
+
+  it('Escape with an alert open closes only the popup, not full screen', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    const { setWallMode } = renderScreen()
+    await screen.findByLabelText("Today's flow")
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
+    fireEvent.click(screen.getByText('f-1'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeInTheDocument()
+    expect(setWallMode).not.toHaveBeenCalledWith(false)
+  })
+
+  it('renders the toolbar and full screen button while loading, on error and when empty, with no Agents while loading or on error', async () => {
+    vi.mocked(overviewApi.get).mockReturnValueOnce(new Promise(() => {}) as never)
+    const first = renderScreen()
+    expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+    first.unmount()
+    vi.mocked(overviewApi.get).mockRejectedValueOnce(new Error('boom'))
+    const second = renderScreen()
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+    second.unmount()
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [] }) } as never)
+    renderScreen()
+    expect(await screen.findByText(/Nothing is connected yet/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Full screen' })).toBeInTheDocument()
+  })
+
+  it('opens an alert from ?alert= with the feed row, and closing removes only that param', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    vi.mocked(overviewApi.alert).mockClear()
+    renderScreen('/overview?alert=f-1&keep=1')
+    expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
+    expect(screen.getByText('Odd login', { selector: 'p' })).toBeInTheDocument()
+    expect(overviewApi.alert).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(where()).toBe('?keep=1'))
+    fireEvent.click(await screen.findByText('f-1'))
+    expect(where()).toBe('?keep=1&alert=f-1')
+  })
+
+  it('reads an alert outside the feed, starting from its noise mark', async () => {
+    const old: OverviewFeedItem = { ...payload().feed[0], finding_id: 'f-old', description: 'Old one', noise_marked: true }
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    vi.mocked(overviewApi.alert).mockResolvedValue({ data: old } as never)
+    renderScreen('/overview?alert=f-old')
+    expect(screen.getByText('Loading alert…')).toBeInTheDocument()
+    expect(await screen.findByText('Old one', { selector: 'p' })).toBeInTheDocument()
+    expect(overviewApi.alert).toHaveBeenCalledWith('f-old')
+    expect(screen.getByRole('button', { name: 'Clear noise' })).toBeInTheDocument()
+  })
+
+  it('says an unknown alert is not found, and a failed read can be retried', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    vi.mocked(overviewApi.alert).mockRejectedValueOnce({ response: { status: 404 } })
+    const { unmount } = renderScreen('/overview?alert=nope')
+    expect(await screen.findByText('Alert nope not found.')).toBeInTheDocument()
+    unmount()
+    vi.mocked(overviewApi.alert)
+      .mockRejectedValueOnce({ response: { status: 500 } })
+      .mockResolvedValueOnce({ data: { ...payload().feed[0], finding_id: 'f-9', description: 'Back' } } as never)
+    renderScreen('/overview?alert=f-9')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t load alert f-9.')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Back', { selector: 'p' })).toBeInTheDocument()
+  })
+
+  it('opens the case from the popup and from the Case column, without stacking overlays', async () => {
+    const item = { ...payload().feed[0], case_id: 'case-7' }
+    const other = { ...payload().feed[0], finding_id: 'f-2', case_id: null }
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item, other] }) } as never)
+    const { openCase } = renderScreen()
+    const column = await screen.findByRole('button', { name: 'Case case-7' })
+    expect(screen.getAllByRole('button', { name: /^Case / })).toHaveLength(1)
+    fireEvent.click(column)
+    expect(openCase).toHaveBeenCalledWith('case-7')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(where()).toBe('')
+
+    fireEvent.click(screen.getByText('f-2'))
+    expect(screen.queryByRole('button', { name: 'Open case' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByText('f-1'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open case' }))
+    expect(openCase).toHaveBeenLastCalledWith('case-7')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(where()).toBe('')
   })
 })

@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import { FilterChip } from './FilterChip'
 import { HoldButton } from './HoldButton'
 import { InfoTip } from './InfoTip'
-import { LevelBadge } from './LevelBadge'
+import { LevelBadge, slaLevel } from './LevelBadge'
 import { NotMeasured } from './NotMeasured'
+import { PageHead } from './PageHead'
+import { SeverityMark } from './SeverityMark'
+import { StatePill, statePill } from './StatePill'
+import { TabStrip } from './TabStrip'
 
 describe('LevelBadge', () => {
   it('writes the server level as a word, and a dash when unmeasured', () => {
@@ -91,5 +96,91 @@ describe('HoldButton', () => {
     act(() => void vi.advanceTimersByTime(1600))
     expect(onConfirm).not.toHaveBeenCalled()
     vi.useRealTimers()
+  })
+})
+
+describe('slaLevel', () => {
+  it('maps the server health word to a level and leaves the rest unmeasured', () => {
+    expect(slaLevel('healthy')).toBe('good')
+    expect(slaLevel('warning')).toBe('fair')
+    expect(slaLevel('critical')).toBe('poor')
+    expect(slaLevel('breached')).toBe('poor')
+    expect(slaLevel('paused')).toBeNull()
+    expect(slaLevel('')).toBeNull()
+    expect(slaLevel(undefined)).toBeNull()
+  })
+})
+
+describe('StatePill', () => {
+  it('maps each state to its tone and never says Acting', () => {
+    expect(statePill('new')).toEqual({ tone: 'idle', label: 'New' })
+    expect(statePill('open')).toEqual({ tone: 'idle', label: 'Open' })
+    expect(statePill('assigned').tone).toBe('live')
+    expect(statePill('executing').tone).toBe('live')
+    expect(statePill('review_submitted')).toEqual({ tone: 'live', label: 'Review submitted' })
+    expect(statePill('waiting_approval')).toEqual({ tone: 'needs', label: 'Needs you' })
+    expect(statePill('closed')).toEqual({ tone: 'closed', label: 'Closed' })
+  })
+
+  it('shows Needs you over any state while a decision is pending', () => {
+    expect(statePill('executing', true)).toEqual({ tone: 'needs', label: 'Needs you' })
+    expect(statePill('closed', true).tone).toBe('needs')
+    render(<StatePill state="executing" needs />)
+    expect(screen.getByText('Needs you')).toHaveClass('state-pill', 'needs')
+  })
+})
+
+describe('SeverityMark', () => {
+  it('writes the priority word and falls back to Unknown', () => {
+    const { rerender } = render(<SeverityMark level="high" />)
+    expect(screen.getByText('High')).toHaveClass('sev-mark', 'high')
+    rerender(<SeverityMark level="whatever" />)
+    expect(screen.getByText('Unknown')).toHaveClass('unknown')
+  })
+})
+
+describe('TabStrip', () => {
+  it('marks the active tab, shows counts, and reports a pick', () => {
+    const onChange = vi.fn()
+    render(<TabStrip label="Sections" tabs={[{ id: 'a', label: 'Alpha', count: 3 }, { id: 'b', label: 'Beta' }]} active="a" onChange={onChange} />)
+    expect(screen.getByRole('tablist', { name: 'Sections' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Alpha 3' })).toHaveAttribute('aria-selected', 'true')
+    const beta = screen.getByRole('tab', { name: 'Beta' })
+    expect(beta).toHaveAttribute('aria-selected', 'false')
+    fireEvent.click(beta)
+    expect(onChange).toHaveBeenCalledWith('b')
+  })
+})
+
+describe('FilterChip', () => {
+  it('reports its pressed state and clicks', () => {
+    const onClick = vi.fn()
+    const { rerender } = render(<FilterChip label="Agent" active={false} onClick={onClick} />)
+    const chip = screen.getByRole('button', { name: 'Agent' })
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(chip)
+    expect(onClick).toHaveBeenCalledTimes(1)
+    rerender(<FilterChip label="Agent" active onClick={onClick} />)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+    expect(chip).toHaveClass('active')
+  })
+
+  it('list size draws the dot and count beside the label', () => {
+    render(<FilterChip list label="Needs you" dot="var(--poor)" count={3} active={false} onClick={vi.fn()} />)
+    const chip = screen.getByRole('button', { name: 'Needs you 3' })
+    expect(chip).toHaveClass('list')
+    expect(chip.querySelector('.chip-dot')).toHaveStyle({ background: 'var(--poor)' })
+    expect(screen.getByText('3')).toHaveClass('chip-count')
+  })
+})
+
+describe('PageHead', () => {
+  it('renders the Settings markup unchanged without actions, and the slot beside the text with them', () => {
+    const { container, rerender } = render(<PageHead title="Cases" description="Every case." />)
+    expect(container.querySelector('header.page-head > h2')).toHaveTextContent('Cases')
+    expect(container.querySelector('.page-head-actions')).toBeNull()
+    rerender(<PageHead title="Cases" description="Every case." actions={<button>Go</button>} />)
+    expect(container.querySelector('.page-head-actions')).toContainElement(screen.getByRole('button', { name: 'Go' }))
+    expect(container.querySelector('.page-head-text > h2')).toHaveTextContent('Cases')
   })
 })

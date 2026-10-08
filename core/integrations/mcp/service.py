@@ -18,6 +18,9 @@ from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
+# Stands in for "$" inside an already-substituted value (see _substitute_env_vars).
+_LITERAL_DOLLAR = "\x00"
+
 
 # Matches ${VAR_NAME} placeholders in mcp-config.json values/args. Anchored
 # to uppercase+underscore+digits so we don't pick up things like
@@ -194,9 +197,11 @@ class MCPService:
         Resolves against ``env`` — the environment the child is actually spawned
         with — so anything the spawn site pinned there is seen rather than
         collapsed to an empty string.
-        """
-        import re
 
+        Only the template is expanded. A resolved value is spliced in as plain
+        text, so a stored value that itself contains ``${...}`` (a saved
+        connector URL, say) cannot name another variable or secret to read.
+        """
         source: Mapping[str, str] = os.environ if env is None else env  # noqa: ENV001
         pattern = r"\$\{([^}:]+)(?::-((?:\$\{[^}]+\}|[^{}])*))?\}"
 
@@ -207,17 +212,21 @@ class MCPService:
             # and everywhere else credentials resolve.
             env_val = source.get(var_name) or get_secret(var_name)
             if env_val:
-                return env_val
+                return env_val.replace("$", _LITERAL_DOLLAR)
             if default is not None:
-                return self._substitute_env_vars(default, env)
+                return self._substitute_env_vars(default, env).replace(
+                    "$", _LITERAL_DOLLAR
+                )
             return ""
 
+        # Repeat only to unwind nested defaults; resolved values carry no "$"
+        # until the end, so they are never matched again.
         prev = None
         while prev != value:
             prev = value
             value = re.sub(pattern, replace_var, value)
 
-        return value
+        return value.replace(_LITERAL_DOLLAR, "$")
 
     def reload_server_configs(self) -> None:
         """Rebuild server configs so a connectorUrl saved after startup is

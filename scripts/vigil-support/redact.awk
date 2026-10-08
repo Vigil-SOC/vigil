@@ -130,9 +130,31 @@ function is_blank_value(b) {
         b ~ /^\[REDACTED\]/ || b ~ /\[REDACTED\]$/
 }
 
+# A body that is only a variable reference ($NAME, ${NAME}, ${NAME:-}, ${NAME-},
+# ${NAME:+...}, ${NAME:?...}) is not a secret: returns it as is. A non-empty
+# default (${NAME:-x}, ${NAME-x}) is the secret: returns ${NAME:-[REDACTED]}, counted
+# and, for a credential-class key, learned. "" means "not a reference, redact it".
+function ref_body(b, cls,   inner, name, rest, op, def) {
+    if (b ~ /^\$[A-Za-z_][A-Za-z0-9_]*$/) return b
+    if (b !~ /^\$\{[A-Za-z_][A-Za-z0-9_]*(:-|-|:\+|:\?)?.*\}$/) return ""
+    inner = substr(b, 3, length(b) - 3)
+    match(inner, /^[A-Za-z_][A-Za-z0-9_]*/)
+    name = substr(inner, 1, RLENGTH)
+    rest = substr(inner, RLENGTH + 1)
+    if (rest == "" || rest ~ /^:[+?]/) return b
+    if (rest !~ /^:?-/) return ""
+    op = substr(rest, 1, 1) == ":" ? ":-" : "-"
+    def = substr(rest, length(op) + 1)
+    if (def == "" || def == "[REDACTED]") return b
+    if (index(def, "${") || index(def, "$(")) return ""
+    n++
+    if (cls) learned(def)
+    return "${" name op "[REDACTED]}"
+}
+
 # KEY=value, "key": "value", key: value. Walks the line key by key so a
 # non-secret key never hides a secret one after it.
-function redact_keys(s,   out, tok, key, sk, cls, atstart, mode, p) {
+function redact_keys(s,   out, tok, key, sk, cls, atstart, mode, p, ref) {
     if (index(s, ":") == 0 && index(s, "=") == 0) return s
     out = ""
     while (match(s, KEYRE)) {
@@ -142,6 +164,7 @@ function redact_keys(s,   out, tok, key, sk, cls, atstart, mode, p) {
         match(tok, /^[A-Za-z0-9_.-]+/)
         key = substr(tok, 1, RLENGTH)
         out = p tok
+        if (substr(p, length(p), 1) == "/") continue    # path component, not a key
         sk = secret_key(key)
         if (snake(key) == "name") {
             take(s, 0)
@@ -158,6 +181,11 @@ function redact_keys(s,   out, tok, key, sk, cls, atstart, mode, p) {
         take(s, mode)
         if (is_blank_value(V_BODY) || V_BODY ~ /^[[{]$/ || V_BODY ~ /^\{\{/) continue
         if (substr(s, 1, 2) == "//") continue
+        if (V_BODY ~ /^\$/ && (ref = ref_body(V_BODY, cls)) != "") {
+            out = out V_PRE ref V_POST
+            s = V_REST
+            continue
+        }
         if (V_PRE !~ /["']$/ && V_BODY ~ /^[|>][-+0-9]*$/) {
             # YAML block scalar: the indented lines that follow are the value.
             match(p, /^[ \t]*(-[ \t]+)*/)
@@ -176,7 +204,7 @@ function redact_keys(s,   out, tok, key, sk, cls, atstart, mode, p) {
 
 # --name=value and --name value, for a name secret_key() accepts. Only long
 # flags: "-p value" is too ambiguous. A value that is itself a flag is left alone.
-function redact_flags(s,   out, m, c, sep, ctx, prev) {
+function redact_flags(s,   out, m, c, sep, ctx, prev, ref) {
     if (index(s, "--") == 0) return s
     out = ""
     while (match(s, FLAGRE)) {
@@ -191,6 +219,11 @@ function redact_flags(s,   out, m, c, sep, ctx, prev) {
         sep = c == "=" ? "=" : ""
         take(substr(s, length(sep) + 1), 0)
         if (is_blank_value(V_BODY) || (sep == "" && V_BODY ~ /^-/)) continue
+        if (V_BODY ~ /^\$/ && (ref = ref_body(V_BODY, cred_class(substr(m, 3)))) != "") {
+            out = out sep V_PRE ref V_POST
+            s = V_REST
+            continue
+        }
         out = out sep V_PRE "[REDACTED]" V_POST
         n++
         if (cred_class(substr(m, 3))) learned(V_BODY)

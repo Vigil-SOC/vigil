@@ -115,6 +115,12 @@ def add_findings_description(conn):
         ALTER TABLE findings ADD COLUMN IF NOT EXISTS description TEXT;
     """))
 
+@migration("Add title column to findings")
+def add_findings_title(conn):
+    conn.execute(text("""
+        ALTER TABLE findings ADD COLUMN IF NOT EXISTS title TEXT;
+    """))
+
 @migration("Add noise mark columns to findings")
 def add_findings_noise_mark(conn):
     conn.execute(text("""

@@ -103,3 +103,63 @@ class TestAgentRunPath:
             raise RuntimeError("no db")
 
         assert self._begin("workflow:x", versions=boom)["workflow_version"] is None
+
+
+@pytest.mark.database
+@pytest.mark.external_service
+@pytest.mark.usefixtures("throwaway_database")
+class TestUpdateVersion:
+    """``update`` bumps the version once, and only for a definition change."""
+
+    PHASE = {"order": 1, "name": "Look", "agent_id": "triage"}  # no schema defaults
+
+    @pytest.fixture
+    def service(self):
+        from core.workflows.custom_workflow_service import CustomWorkflowService
+
+        with patch("core.workflows.custom_workflow_service._validate_agent_ids"):
+            yield CustomWorkflowService()
+
+    @pytest.fixture
+    def wf_id(self, service):
+        return service.create(
+            {"name": "Ransom", "description": "Contain it", "phases": [self.PHASE]}
+        )["workflow_id"]
+
+    def test_identical_save_keeps_version(self, service, wf_id):
+        # The router sends model_dump(): every schema default filled in.
+        from core.workflows.workflows_router import (
+            CustomWorkflowUpdate,
+            WorkflowPhaseSchema,
+        )
+
+        body = CustomWorkflowUpdate(
+            name="Ransom",
+            description="Contain it",
+            use_case="",
+            trigger_examples=[],
+            phases=[WorkflowPhaseSchema(**self.PHASE)],
+        ).model_dump()
+        before = service.get(wf_id)["updated_at"]
+        out = service.update(wf_id, {k: v for k, v in body.items() if v is not None})
+        assert out["version"] == 1
+        assert out["updated_at"] > before
+
+    def test_is_active_only_keeps_version_and_is_saved(self, service, wf_id):
+        out = service.update(wf_id, {"is_active": False})
+        assert out["version"] == 1
+        assert out["is_active"] is False
+
+    def test_changed_description_bumps_once(self, service, wf_id):
+        assert service.update(wf_id, {"description": "New"})["version"] == 2
+
+    def test_changed_phases_bump_once(self, service, wf_id):
+        phases = [self.PHASE, {"order": 2, "name": "Act", "agent_id": "response"}]
+        assert service.update(wf_id, {"phases": phases})["version"] == 2
+
+    def test_several_changed_fields_bump_by_one(self, service, wf_id):
+        out = service.update(
+            wf_id,
+            {"name": "New", "description": "New", "trigger_examples": ["x"]},
+        )
+        assert out["version"] == 2

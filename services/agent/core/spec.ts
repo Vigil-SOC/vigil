@@ -59,6 +59,9 @@ export interface PhaseSpec {
   approval_required: boolean;
   // Authored: what this step may call, narrowed from what its agent holds.
   tools: string[];
+  // Resolved, not authored: tools the playbook named that this deployment lacks,
+  // dropped from `tools` and journalled by the run as blind spots.
+  unavailable?: { tool: string; reason: string }[];
   // Resolved, not authored: an agent's own prompt is rendered at run start, so a
   // file leaves this empty and whoever resolves the reference fills it.
   prompt: string;
@@ -377,6 +380,7 @@ function parsePhases(raw: unknown): PhaseSpec[] {
     if (agent === "") throw new SpecError(`phases[${index}] needs an agent`);
     if (seen.has(id)) throw new SpecError(`phases declares the id ${id} twice; ids address a step, so they cannot repeat`);
     seen.add(id);
+    const unavailable = parseUnavailable(phase["unavailable"], index);
     return {
       id,
       agent,
@@ -385,7 +389,17 @@ function parsePhases(raw: unknown): PhaseSpec[] {
       approval_required: phase["approval_required"] === true,
       prompt: str(phase["prompt"]),
       tools: strings(phase["tools"], `phases[${index}].tools`),
+      ...(unavailable.length === 0 ? {} : { unavailable }),
     };
+  });
+}
+
+function parseUnavailable(raw: unknown, index: number): { tool: string; reason: string }[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new SpecError(`phases[${index}].unavailable must be a list`);
+  return raw.map((entry) => {
+    const one = asRecord(entry, `phases[${index}].unavailable`);
+    return { tool: str(one["tool"]), reason: str(one["reason"]) };
   });
 }
 
