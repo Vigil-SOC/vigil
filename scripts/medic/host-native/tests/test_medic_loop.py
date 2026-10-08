@@ -333,3 +333,74 @@ def test_real_medic_reports_start_sh_and_reaches_the_worker(box: Path) -> None:
     log = (box / "loop.log").read_text()
     assert "shape start_sh" in log, log
     assert "can't start" not in log
+
+
+# --- S9: the API key, handed over on stdin -----------------------------------------
+
+API_KEY = "Q" * 40 + "_-7"  # 43 characters, X2's shape
+
+
+def _start_with_stdin(box: Path, stdin: bytes, *extra: str) -> subprocess.Popen:
+    log = open(box / "loop.log", "w")  # noqa: SIM115 - closed with the process
+    proc = subprocess.Popen(
+        _args(box, "--api-key-stdin", *extra),
+        stdin=subprocess.PIPE,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    proc.stdin.write(stdin)
+    proc.stdin.close()
+    return proc
+
+
+def test_api_key_from_stdin_becomes_medics_own_private_copy(box: Path) -> None:
+    """start.sh pipes the key in: vigil-medic can't read Vigil's state dir (check 8)."""
+    (box / "data" / "mode").write_text("run")
+    proc = _start_with_stdin(box, API_KEY.encode() + b"\n")
+    try:
+        _wait_for(lambda: _starts(box))
+        key = box / "data" / "run" / "api_key"
+        assert key.read_text() == API_KEY
+        assert key.stat().st_mode & 0o777 == 0o600
+        assert (box / "data" / "run").stat().st_mode & 0o777 == 0o700
+        pid = _starts(box)[0][1]
+        _wait_for(lambda: (box / "data" / f"env.{pid}").exists())
+        env_text = (box / "data" / f"env.{pid}").read_text()
+    finally:
+        _stop(proc)
+    # The key is a file, never env, argv or the log.
+    assert API_KEY not in env_text
+    assert API_KEY not in (box / "loop.log").read_text()
+    assert API_KEY not in " ".join(" ".join(s) for s in _starts(box))
+
+
+@pytest.mark.parametrize(
+    "given", [b"", b"short\n", (API_KEY + "x").encode(), b"Q" * 42 + b"!", b"\n"]
+)
+def test_a_bad_key_on_stdin_leaves_the_api_off_and_medic_running(
+    box: Path, given: bytes
+) -> None:
+    run = box / "data" / "run"
+    run.mkdir(mode=0o700)
+    (run / "api_key").write_text("stale-key-from-an-earlier-start-xxxxxxxxxx")
+    (box / "data" / "mode").write_text("run")
+    proc = _start_with_stdin(box, given)
+    try:
+        _wait_for(lambda: _starts(box))
+    finally:
+        _stop(proc)
+    assert not (run / "api_key").exists()  # never an old key by mistake
+    log = (box / "loop.log").read_text()
+    assert "API key" in log and "stays off" in log
+    if given.strip():
+        assert given.strip().decode(errors="replace") not in log
+
+
+def test_without_the_flag_stdin_is_not_read(box: Path) -> None:
+    (box / "data" / "mode").write_text("run")
+    proc = _start(box)
+    try:
+        _wait_for(lambda: _starts(box))
+    finally:
+        _stop(proc)
+    assert not (box / "data" / "run" / "api_key").exists()

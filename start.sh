@@ -361,6 +361,8 @@ else
         echo "Backend already running. Use ./shutdown_all.sh to stop."; exit 1;
     }
 
+    # Medic opted in: where the backend finds Medic's status (S9). Before uvicorn.
+    medic_host_backend_env || true
     rotate_log logs/backend.log
     nohup uvicorn services.api.main:app --host "$BIND_HOST" --port 6987 --reload \
         --reload-dir services --reload-dir core --reload-dir tools \

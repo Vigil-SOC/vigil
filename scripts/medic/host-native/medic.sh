@@ -118,6 +118,34 @@ _medic_setup() {
     } >&2
 }
 
+# S9 · The backend's path to Medic's status. This shape has no gateway: the
+# backend polls Medic directly on loopback (C5 §5.3) with the shared key (X2).
+# start.sh -d calls this before it starts the backend, so the backend sees both
+# settings; an operator's own values win. The key file sits in Vigil's state dir,
+# 0600, where vigil-medic can't read it (check 8): medic_host_start pipes it to
+# the loop, which keeps Medic's own copy. Kept across restarts, so a running
+# Medic and a restarted backend agree; a key not in X2's shape is replaced.
+_MEDIC_API_URL=http://127.0.0.1:8470
+
+_medic_key_ok() { [[ "$(cat "$1" 2>/dev/null)" =~ ^[A-Za-z0-9_-]{43}$ ]]; }
+
+medic_host_backend_env() {
+    medic_host_enabled || return 0
+    local key="${VIGIL_MEDIC_API_KEY_FILE:-${VIGIL_DIR:-$HOME/.vigil}/medic_api_key}"
+    if ! _medic_key_ok "$key"; then
+        # 32 random bytes, base64url without padding: 43 characters (X2).
+        if ! (umask 077 && mkdir -p "$(dirname "$key")" \
+            && head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' > "$key.$$" \
+            && mv -f "$key.$$" "$key"); then
+            rm -f "$key.$$"
+            echo "Medic: couldn't write its API key to $key; the console will read Down." >&2
+            return 1
+        fi
+    fi
+    export VIGIL_MEDIC_API_URL="${VIGIL_MEDIC_API_URL:-$_MEDIC_API_URL}"
+    export VIGIL_MEDIC_API_KEY_FILE="$key"
+}
+
 # Returns 0 when Medic is off, running or started; 1 when it is on but couldn't
 # start (the reason and the fix are printed). Never stops Vigil from starting.
 medic_host_start() {
@@ -232,13 +260,18 @@ medic_host_start() {
         return 1
     fi
 
+    # S9: the key goes to the loop on stdin; without one, Medic runs, API off.
+    local keyin=/dev/null
+    medic_host_backend_env || true
+    if [ -r "${VIGIL_MEDIC_API_KEY_FILE:-}" ]; then keyin="$VIGIL_MEDIC_API_KEY_FILE"; fi
+
     rotate_log "$log"
     # L49: the worker's /readyz on loopback. scripts/agent_up.sh always starts
     # it on 6990 (AGENT_HEALTH_PORT in .env doesn't move it), so neither does this.
     (cd / && exec nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
         --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data" \
-        --agent-worker 127.0.0.1:6990) \
-        < /dev/null > "$log" 2>&1 &
+        --agent-worker 127.0.0.1:6990 --api-key-stdin) \
+        < "$keyin" > "$log" 2>&1 &
     echo $! > "$pidfile"
     echo "Medic: started as $_MEDIC_USER (log: logs/medic.log). Health:"
     echo "  sudo -u $_MEDIC_USER $runtime/bin/medic-loop --python $runtime/venv/bin/python" \
