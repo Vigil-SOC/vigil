@@ -162,3 +162,71 @@ def test_status_names_state_and_since_only(env):
     get(env)
     st = env.session.status()
     assert set(st) == {"state", "since"} and st["state"] == "ok"
+
+
+# ----------------------------------------------------------------------------- review fixes
+def test_401_after_a_fresh_token_backs_off_across_polls(env):
+    """Review #1: an old token refused, refresh refused, the new login's token refused
+    too. That is the revocation store failing closed: back off, report it, and don't
+    log in again on every 30 s poll."""
+    assert get(env) == 200
+    env.backend.reject_all, env.backend.refresh_status = True, 401
+    for i in range(10):
+        env.clock.offset = 60 + 30 * i
+        assert get(env) == 502
+        assert env.session.status()["state"] == "rejected_after_login"
+    assert len(logins(env)) <= 6, "at most one new login per 60 s back-off"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"{}", b"not json", b'{"access_token": "x", "refresh_token": "y"}'],
+)
+def test_unexpected_login_reply_backs_off(env, body):
+    """Review #2: a 200 the gateway can't use is a login error, not a retry-now."""
+    env.backend.login_body = body
+    for _ in range(5):
+        assert get(env) == 502
+    assert len(logins(env)) == 1 and env.session.state == "login_error"
+    assert env.session.access is None
+
+
+def test_garbage_from_the_backend_backs_off(env):
+    env.backend.srv.shutdown()
+    env.backend.srv.server_close()
+    import socket as _s
+    import threading as _t
+
+    srv = _s.socket()
+    srv.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", env.backend.port))
+    srv.listen()
+    hits = []
+
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            hits.append(1)
+            c.recv(65536)
+            c.sendall(b"garbage\r\n\r\n")
+            c.close()
+
+    _t.Thread(target=serve, daemon=True).start()
+    try:
+        for _ in range(5):
+            assert get(env) == 502
+        assert len(hits) == 1 and env.session.state == "login_error"
+    finally:
+        srv.close()
+
+
+def test_backend_clock_skew_does_not_force_a_login_per_call(env):
+    """Review #8: the token's own exp - iat sets its life, not our clock."""
+    env.backend.skew = -7200  # the backend is two hours behind: exp is "past"
+    for i in range(5):
+        env.clock.offset = 120 * i  # well inside the token's 30 minutes
+        assert get(env) == 200
+    assert len(logins(env)) == 1 and refreshes(env) == 0

@@ -192,3 +192,52 @@ def test_gateway_status_is_outbound_only(env):
     status, _, _ = send(env.inn, b"GET /_gw/status HTTP/1.1\r\nHost: g\r\n\r\n")
     assert status in (401, 403)
     assert env.medic.seen == []
+
+
+def test_trickled_headers_hit_an_absolute_deadline(env):
+    """Review #3: one byte every 0.2 s never trips a 0.5 s socket timeout."""
+    env.out_srv.RequestHandlerClass.timeout = 0.5
+    s = socket.create_connection(("127.0.0.1", env.out), timeout=0.2)
+    s.sendall(b"GET /api/health HTTP/1.1\r\nX-A: ")
+    t0, closed = time.monotonic(), False
+    while not closed and time.monotonic() - t0 < 3:
+        try:
+            s.sendall(b"a")
+            closed = s.recv(1024) == b""  # the gateway closed the connection
+        except TimeoutError:
+            continue  # still open: one more byte, 0.2 s later
+        except OSError:
+            closed = True
+    s.close()
+    assert closed and time.monotonic() - t0 < 1.5
+    assert env.backend.data() == []
+
+
+def test_connections_are_capped_when_accepted(env):
+    """Review #3: idle connections can't pile up threads past the cap."""
+    env.out_srv.conn_slots = threading.BoundedSemaphore(2)
+    idle = [socket.create_connection(("127.0.0.1", env.out)) for _ in range(2)]
+    time.sleep(0.1)
+    extra = socket.create_connection(("127.0.0.1", env.out), timeout=2)
+    assert extra.recv(1024) == b"", "over the cap: closed at once"
+    extra.close()
+    for s in idle:
+        s.close()
+    time.sleep(0.2)
+    assert get(env, b"/api/health") == 200
+
+
+def test_route_is_logged_when_the_upstream_fails(env):
+    import io
+
+    from services.medic_gateway import logs
+
+    buf = io.StringIO()
+    handler = logs.setup(buf)
+    try:
+        env.backend.status = 307
+        get(env, b"/api/health")
+    finally:
+        logs.log.removeHandler(handler)
+    line = json.loads(buf.getvalue().splitlines()[-1])
+    assert line["route"] == "/api/health" and line["code"] == "upstream_redirect"
