@@ -723,6 +723,8 @@ class AuthService:
                 "settings.write": True,
                 "ai_chat.use": True,
                 "ai_decisions.approve": True,
+                "medic.read": True,
+                "medic.admin": True,
             }
 
         with unit_of_work(session) as session:
