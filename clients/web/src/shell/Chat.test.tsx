@@ -209,6 +209,30 @@ describe('pinned case composer', () => {
     expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
     expect(fold).toHaveTextContent('2 messages · show')
   })
+
+  it('shows an error frame from the server as sent, without blaming the backend', async () => {
+    const frame = new TextEncoder().encode('data: {"error":"This case has more than Ask can read at once."}\n\n')
+    let sent = false
+    vi.mocked(streamFetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: () => {
+            const row = sent ? { done: true, value: undefined } : { done: false, value: frame }
+            sent = true
+            return Promise.resolve(row)
+          },
+        }),
+      },
+    } as unknown as Response)
+    renderPinned()
+    fireEvent.change(screen.getByPlaceholderText('Ask about this case'), { target: { value: 'why?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('This case has more than Ask can read at once.')).toBeInTheDocument()
+    expect(screen.queryByText(/Could not reach Vigil|Is the backend running/)).toBeNull()
+  })
 })
 
 describe('failed case-composer turns', () => {

@@ -1,4 +1,4 @@
-"""One reading of a case's state, shared by the case page and later the list.
+"""One reading of a case's state, shared by the case page and the list.
 
 A case status and an investigation status are different facts. The pill is
 this function, not a copy of it in the client.
@@ -13,7 +13,9 @@ from core.agents.projections import run_id_for
 from core.cases.combined_state import budget_health as _budget_health
 from core.cases.combined_state import combined_state as _combined_state
 from core.storage.models import (
+    LIVE_CASE_STATES,
     LIVE_INVESTIGATION_STATUSES,
+    RUN_LIVE_STATE,
     CaseClosureInfo,
     Investigation,
     WorkflowRun,
@@ -29,11 +31,7 @@ def combined_state(
     status. Otherwise the case status stands.
     """
     live = next(
-        (
-            status
-            for status in investigation_statuses
-            if status in LIVE_INVESTIGATION_STATUSES
-        ),
+        (status for status in investigation_statuses if status in LIVE_CASE_STATES),
         None,
     )
     return _combined_state(case_status, live) or "open"
@@ -89,12 +87,6 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
         "closed_at": closure.closed_at.isoformat() if closure.closed_at else None,
         "verdict": _verdict(closure),
     }
-
-
-# A run row has three live-ish words of its own. The case reads investigation
-# words, so a running run is ``executing`` and one held for a decision is
-# ``waiting_approval``.
-RUN_LIVE_STATE = {"running": "executing", "paused": "waiting_approval"}
 
 
 def run_ref(run: WorkflowRun) -> dict:

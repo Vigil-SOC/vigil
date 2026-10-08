@@ -76,6 +76,9 @@ interface TraceDetail {
 
 const newSessionId = () => crypto.randomUUID()
 
+/** An `{error}` frame the server sent: the backend was reached, so it is not a transport failure. */
+class ServerRefusal extends Error {}
+
 interface Conversation {
   id: string
   title: string
@@ -557,7 +560,7 @@ export default function Chat({
             } catch {
               continue
             }
-            if (ev.error) throw new Error(ev.error)
+            if (ev.error) throw new ServerRefusal(ev.error)
             if (ev.type === 'tool_processing') {
               // separate tool output from the prose preceding it
               setIsProcessingTools(true)
@@ -599,9 +602,11 @@ export default function Chat({
     } catch (e) {
       const err = e as { name?: string; message?: string }
       if (err?.name !== 'AbortError' && gen === turnGen.current) {
+        // A reason the server sent is shown as is; only a failure to reach it blames the backend.
         const why = err?.message || String(e)
+        const text = reached || e instanceof ServerRefusal ? why : `Could not reach Vigil: ${why}. Is the backend running?`
         setMessages((m) => {
-          const next: ChatMsg[] = [...m, { role: 'error', text: reached ? why : `Could not reach Vigil: ${why}. Is the backend running?` }]
+          const next: ChatMsg[] = [...m, { role: 'error', text }]
           messagesRef.current = next
           return next
         })

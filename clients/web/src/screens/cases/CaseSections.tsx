@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { format } from 'date-fns'
+import { utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
@@ -18,14 +18,10 @@ const ME = 'SOC Analyst'
 type Phase = 'loading' | 'ready' | 'error'
 
 function fmtDT(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy · HH:mm')
+  return utcDayClock(s) ?? '—'
 }
 function fmtD(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy')
+  return utcDay(s) ?? '—'
 }
 function initials(name?: string): string {
   if (!name) return '—'
