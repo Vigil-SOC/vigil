@@ -27,12 +27,13 @@ from services.medic.app.wiring import (
     TICK_S,
     Medic,
     load_dev_rules,
+    load_dev_suppression,
     load_engine_state,
     save_engine_state,
 )
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
-from services.medic.sensors.http_ready import agent_worker_ready
+from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.store import StoreError, open_writer
 
 log = logging.getLogger("services.medic")
@@ -134,7 +135,7 @@ def run(
         return 0
     try:
         shape = config.install_shape(env)
-        host, port = config.agent_worker_addr(env, shape)
+        sensors = sensors_for(env, shape)
         probe_target = config.policy_probe_addr(env, shape)
         probe_control = config.policy_control_addr(env, shape)
     except config.ConfigError as exc:
@@ -151,7 +152,7 @@ def run(
         return _run(
             data_dir,
             shape=shape,
-            sensors=[agent_worker_ready(host=host, port=port)],
+            sensors=sensors,
             clock=clock,
             sleep=sleep,
             max_cycles=max_cycles,
@@ -160,6 +161,16 @@ def run(
         )
     finally:
         os.umask(old_umask)
+
+
+def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
+    """The sensors this shape runs; raises ConfigError on an unusable address."""
+    host, port = config.agent_worker_addr(env, shape)
+    sensors: list[Sensor] = [agent_worker_ready(host=host, port=port)]
+    serve = config.agent_serve_addr(env, shape)
+    if serve is not None:
+        sensors.append(agent_serve_ready(host=serve[0], port=serve[1]))
+    return sensors
 
 
 def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
@@ -294,7 +305,7 @@ def _run(
 
 
 def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
-    rules = load_dev_rules()
+    rules, suppression = load_dev_rules(), load_dev_suppression()
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
     if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:
@@ -309,13 +320,19 @@ def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
             clock=clock,
             shape=shape,
             engine_state=state,
+            suppression=suppression,
         )
     except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
             raise
         log.warning("Engine state not usable, starting fresh: %s", type(exc).__name__)
         return Medic(
-            writer=writer, rules=rules, sensors=sensors, clock=clock, shape=shape
+            writer=writer,
+            rules=rules,
+            sensors=sensors,
+            clock=clock,
+            shape=shape,
+            suppression=suppression,
         )
 
 
