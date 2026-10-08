@@ -5410,6 +5410,240 @@
       gap: 14px;
    }
 
+   /* Data & uploads: one page of cards (SettingsData board) */
+   .data-page {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      max-width: 1280px;
+   }
+
+   .data-anchor {
+      scroll-margin-top: 22px;
+   }
+
+   .settings-card-actions a.btn {
+      text-decoration: none;
+   }
+
+   .level-pill.idle {
+      color: var(--tx2);
+      background: var(--bg3);
+      border-color: var(--ln1);
+   }
+
+   .data-loglm-fields {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px 16px;
+   }
+
+   .data-ro {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+   }
+
+   .data-ro-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .data-ro-value {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      background: var(--bg2);
+      border: 1px solid var(--ln1);
+      border-radius: 10px;
+      font-size: 12.5px;
+      color: var(--tx0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .data-ro-value.empty {
+      color: var(--tx3);
+   }
+
+   .data-ro-hint {
+      font-size: 12px;
+      color: var(--tx3);
+   }
+
+   .data-loglm-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      padding: 10px 12px;
+      background: var(--bg2);
+      border-radius: 10px;
+      font-size: 13px;
+      color: var(--tx1);
+   }
+
+   .data-loglm-msg {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .data-drop {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 26px;
+      text-align: center;
+      background: var(--bg2);
+      border: 1px dashed var(--ln2);
+      border-radius: 14px;
+      color: var(--ac);
+   }
+
+   .data-drop.over {
+      border-color: var(--ac);
+      background: var(--ac-bg);
+   }
+
+   .data-drop-title {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .data-drop-sub {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .data-job {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: var(--bg2);
+      border-radius: 10px;
+      font-size: 12.5px;
+   }
+
+   .data-job-name {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--tx0);
+   }
+
+   .data-job-msg {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: right;
+      color: var(--tx2);
+   }
+
+   /* Streams and rule-source tables: fixed layout so long settings or URLs ellipsize instead of widening the page */
+   .settings-content .tbl.data-table {
+      table-layout: fixed;
+   }
+
+   .data-table th:first-child,
+   .data-table td:first-child {
+      padding-left: 2px;
+   }
+
+   .data-table th:last-child,
+   .data-table td:last-child {
+      padding-right: 2px;
+   }
+
+   .data-table tbody td {
+      overflow: hidden;
+   }
+
+   .data-table td b {
+      font-weight: 700;
+      color: var(--tx0);
+   }
+
+   .data-table td.muted,
+   .data-table .muted {
+      color: var(--tx2);
+   }
+
+   .data-clip {
+      overflow: hidden;
+      text-overflow: ellipsis;
+   }
+
+   .data-table th:nth-child(1) { width: 24%; }
+   .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
+   .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
+   .data-rules th:nth-child(2) { width: 110px; }
+   .data-rules th:nth-child(4) { width: 90px; }
+   .data-rules th:nth-child(5) { width: 150px; }
+
+   .data-act {
+      text-align: right;
+   }
+
+   .data-act > * {
+      vertical-align: middle;
+   }
+
+   .data-act > * + * {
+      margin-left: 6px;
+   }
+
+   .data-link {
+      background: none;
+      border: 0;
+      padding: 4px 6px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--ac);
+      cursor: pointer;
+   }
+
+   .data-link:disabled {
+      color: var(--tx3);
+      cursor: default;
+   }
+
+   .data-table tbody tr.data-expand[hidden] {
+      display: none;
+   }
+
+   .data-table tbody tr.data-expand,
+   .data-table tbody tr.data-expand:hover {
+      background: transparent;
+   }
+
+   .data-table tbody tr.data-expand > td {
+      white-space: normal;
+      padding: 14px 2px 20px;
+      overflow: visible;
+   }
+
+   .chip.fmt-sigma { color: var(--ac); }
+   .chip.fmt-splunk { color: var(--good); }
+   .chip.fmt-elastic { color: var(--fair); }
+   .chip.fmt-kql { color: var(--vio); }
+   .chip.fmt-auto { color: var(--tx2); }
+
    /* inline status banner (success/error toasts inside a section) */
    .settings-banner {
       display: flex;

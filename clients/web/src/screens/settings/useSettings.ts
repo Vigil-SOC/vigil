@@ -952,17 +952,18 @@ export function useIntegrationsConfig() {
           .getIntegrations()
           .then((res) => {
             if (cancelled) return
-            const d = res.data as Partial<IntegrationsConfig>
+            const d = res.data as Partial<IntegrationsConfig> & { error?: string }
             setConfig({
               enabled_integrations: d.enabled_integrations || [],
               integrations: d.integrations || {},
               secrets_set: d.secrets_set || {},
               last_test: d.last_test || {},
             })
-            setPhase('ready')
+            // the endpoint answers 200 with an `error` when it could not read the store
+            setPhase(d.error ? 'error' : 'ready')
           })
           .catch(() => {
-            if (!cancelled) setPhase('ready')
+            if (!cancelled) setPhase('error')
           })
       })
     return () => {
