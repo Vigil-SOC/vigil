@@ -767,7 +767,7 @@ def build_setup_steps(
                 "Pick a model per agent",
                 model_line,
                 distinct >= 2,
-                "/settings?section=ai-config",
+                "/settings?section=ai-config&tab=assignment",
             ),
         ],
         "alerts_exist": alerts_exist,

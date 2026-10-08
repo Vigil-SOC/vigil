@@ -285,11 +285,17 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
   const [detail, setDetail] = useState<WfRunDetail | null>(null)
   const [dphase, setDphase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
+  const current = useRef(runId)
+  current.current = runId
   const load = useCallback(
     () =>
       workflowApi
         .getRun(runId)
-        .then((res) => { setDetail(res.data as WfRunDetail); setDphase('ready') })
+        .then((res) => {
+          if (current.current !== runId) return // a read for a run no longer shown
+          setDetail(res.data as WfRunDetail)
+          setDphase('ready')
+        })
         .catch(() => setDphase((p) => (p === 'ready' ? p : 'error'))),
     [runId],
   )

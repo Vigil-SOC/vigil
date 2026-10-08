@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
@@ -77,6 +77,12 @@ class TerminalUpdate(BaseModel):
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
 
 
+class StatusUpdate(BaseModel):
+    status: Literal["running", "paused"]
+    reason: Optional[str] = None
+    cost_usd: Optional[float] = None
+
+
 class CheckpointRaised(BaseModel):
     checkpoint_id: str
     checkpoint_class: str
@@ -128,6 +134,22 @@ def record_phase(
 
     if update.status == WAITING and update.checkpoint_id:
         _raise_approval(run_id, update, approvals)
+
+
+# A run that is waiting without a phase to say so: a hunt parked on its turn limit
+# or a refused budget. Not /terminal, which finalizes the run, and not /phases,
+# which needs a phase row. Also carries the spend, so a live run's cost is right.
+@router.post("/{run_id}/status", status_code=204)
+def record_status(
+    run_id: str,
+    update: StatusUpdate,
+    authorization: Optional[str] = Header(default=None),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> None:
+    authorise(authorization, "run status")
+    run_service.set_status(
+        run_id, update.status, reason=update.reason, cost_usd=update.cost_usd
+    )
 
 
 @router.post("/{run_id}/terminal", status_code=204)
