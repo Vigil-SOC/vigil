@@ -59,7 +59,7 @@ echo "Stopping Vigil SOC..."
 
 # Kill by PID files
 for pidfile in logs/backend.pid logs/daemon.pid logs/frontend.pid logs/llm_worker.pid \
-               logs/agent-worker.pid logs/agent-serve.pid; do
+               logs/agent-worker.pid logs/agent-serve.pid logs/medic.pid; do
     [ -f "$pidfile" ] || continue
     pid="$(cat "$pidfile")"
     # A stale pidfile's PID may have been reused by an unrelated process.
