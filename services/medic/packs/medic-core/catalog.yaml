@@ -29,3 +29,16 @@ entries:
   - {logger: services.daemon.processor, template: 'Database service initialized'}
   # services/daemon/processor.py:494
   - {logger: services.daemon.processor, template: 'Dropped finding %s: database store failed'}
+  # --- llm (F7b) ---
+  # services/daemon/processor.py:645-700 via core/llm/outage.py:19-41 (#1689)
+  - {logger: services.daemon.processor, template: 'No LLM provider configured, AI triage is skipped until one is set up'}
+  - {logger: services.daemon.processor, template: '%s; recovered after %d failures'}
+  - {logger: services.daemon.processor, template: '%s (still failing, %d failures)'}
+  # services/daemon/main.py:63 (the daemon runs as a script: CMD python services/daemon/main.py)
+  - {logger: __main__, template: 'SOC Daemon initialized'}
+  # services/worker/jobs.py:103,135
+  - {logger: services.worker.jobs, template: 'llm_call failed (returning error dict): %s'}
+  - {logger: services.worker.jobs, template: 'Provider %s not found; falling back to ClaudeService'}
+  # core/llm/target.py:53,64
+  - {logger: core.llm.target, template: "Provider %s cannot serve its own default_model %s — sending it anyway; the gateway's error is the only signal left"}
+  - {logger: core.llm.target, template: 'Provider %s cannot serve %s — falling back to %s'}
