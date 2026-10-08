@@ -583,9 +583,11 @@ services:
     mem_limit: 1g
     pids_limit: 128
     environment:
-      # The profile is the Compose switch; false here makes Medic log "off" and
-      # exit 0 (which restart: unless-stopped then retries with backoff).
-      VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-true}
+      # C8: the master switch, off unless set. The profile and overlay only
+      # decide whether the container exists; with the flag unset or false Medic
+      # logs "off" and exits 0 (unless-stopped retries it with Docker's backoff),
+      # so `docker compose up medic` by name can't start it by accident.
+      VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
       VIGIL_MEDIC_INSTALL_SHAPE: compose
       # /readyz over medic-net (the real liveness signal; /healthz always says ok).
       VIGIL_MEDIC_AGENT_WORKER_ADDR: agent-worker:6990
