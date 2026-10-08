@@ -1,0 +1,239 @@
+{{- if .Values.medic.enabled }}
+{{- include "vigil.medic.required" . }}
+{{- $medic := dict "context" . "component" "medic" }}
+{{- $fn := include "vigil.medic.fullname" . }}
+{{- /*
+Identity (C3 §4.5): Medic's own ServiceAccount, the only one in the chart that
+mounts a token, bound to a namespace Role of reads. Nothing cluster-scoped, and
+this identity never gains a verb (Phase 1 restarts get a separate one).
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Following a log is a get with follow=true; list and watch don't exist on the
+  # subresource (SP2 ⚑5).
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fn }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fn }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- if .Values.medic.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+  annotations:
+    # The decision log outlives `helm uninstall` (C4 §6.8); delete it by hand.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.medic.persistence.accessModes | nindent 4 }}
+  {{- with .Values.medic.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.medic.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+spec:
+  # One writer per store (C4 §6.7): one replica, and Recreate stops the old pod
+  # before the new one mounts the volume (C4 ENG #8).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vigil.medic.selectorLabels" $medic | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.medic.labels" $medic | nindent 8 }}
+      {{- with .Values.medic.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $fn }}
+      # No Service env vars: Medic gets the addresses it's given, nothing more.
+      enableServiceLinks: false
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      # Its own uid and gid, not the chart's shared 1000 (C4 ENG #6). fsGroup
+      # makes the volume root writable for Medic's gid where the volume type
+      # supports it; no root init container.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: medic
+          image: {{ include "vigil.medic.image" (dict "context" . "image" .Values.medic.image "suffix" "medic") | quote }}
+          imagePullPolicy: {{ include "vigil.medic.pullPolicy" (dict "context" . "image" .Values.medic.image) }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: VIGIL_MEDIC_ENABLED
+              value: "true"
+            - name: VIGIL_MEDIC_INSTALL_SHAPE
+              value: helm
+            # Medic creates data/ itself, 0700 and its own uid, and keeps the
+            # store there. The volume root can't be the store: hostPath volumes
+            # (kind, k3s local-path) ignore fsGroup, and where fsGroup applies it
+            # only adds group bits, so the root stays open to "other" (S7-1).
+            - name: VIGIL_MEDIC_DATA_DIR
+              value: /var/lib/vigil-medic/data
+            - name: VIGIL_MEDIC_AGENT_WORKER_ADDR
+              value: {{ .Values.medic.agentWorkerAddr | default (printf "%s-agent-worker:6990" $fn) | quote }}
+            # A3-3: a host:port this pod's policy blocks. Reached → Medic exits 3.
+            - name: VIGIL_MEDIC_POLICY_PROBE_ADDR
+              value: {{ .Values.medic.policyProbe.target | default (printf "%s:%v" (include "vigil.backend.fullname" .) .Values.backend.service.port) | quote }}
+          ports:
+            - name: api
+              containerPort: {{ include "vigil.medic.apiPort" . }}
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/vigil-medic
+          # C5 §5.2: `check` fails once the heartbeat is 120 s old. The 180 s
+          # watchdog exits a hung loop before liveness (4 × 30 s) acts; liveness
+          # catches a frozen process the watchdog can't. Readiness uses `check`
+          # until `check --ready` exists (C5: fails only while the API can't serve).
+          startupProbe:
+            exec:
+              command: ["python", "-m", "services.medic", "check"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "services.medic", "check"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 4
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "services.medic", "check"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 2
+          resources:
+            {{- toYaml .Values.medic.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.medic.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fn }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.medic.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.medic.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.medic.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- /* Medic's API (X2), reached only by the gateway's inbound listener. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "vigil.medic.selectorLabels" $medic | nindent 4 }}
+  ports:
+    - name: api
+      port: {{ include "vigil.medic.apiPort" . }}
+      targetPort: api
+      protocol: TCP
+{{- if .Values.agentWorker.enabled }}
+---
+{{- /*
+The agent worker has no Service (its work arrives over Redis), so Medic gets
+one for /readyz. With several replicas each read lands on one of them; per-pod
+reads come with the Kubernetes sensors (D6).
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-agent-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-worker") | nindent 4 }}
+  ports:
+    - name: readyz
+      port: 6990
+      targetPort: 6990
+      protocol: TCP
+{{- end }}
+{{- end }}

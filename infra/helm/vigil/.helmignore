@@ -12,3 +12,4 @@
 .project
 *.tmproj
 OWNERS
+medic-tests/
