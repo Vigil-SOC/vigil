@@ -3,6 +3,10 @@
 # Set: entry ERROR or reminder. Clear: the recovery line (the mirror logger has one
 # outage key, so no message match) or a backend start ("Starting Vigil SOC Backend",
 # the first line of _startup, logged before the first reconcile).
+# The backend runs 2 uvicorn workers on one log stream, so one process's start line can
+# briefly clear another's outage; each re-reports on its next failure, so it heals.
+# All #1689 latches need INFO lines: a site that raises the log level above INFO never
+# logs the clear, and its latches stay set.
 # Lane 2: B5 says lane 1 for bundled Bifrost, but log lines alone can't route there.
 apiVersion: medic.rules/v1
 kind: Rule
