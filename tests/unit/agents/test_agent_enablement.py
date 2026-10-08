@@ -16,7 +16,7 @@ from core.storage.models import ConfigAuditLog, SystemConfig
 from core.workflows.custom_workflow_service import _validate_agent_ids
 from core.workflows.playbook_resolver import UnknownPlaybook, _profile_for
 from services.api.routers import agents as agents_router
-from services.api.routers import claude
+from services.api.routers import claude, custom_agents
 
 pytestmark = pytest.mark.unit
 
@@ -92,6 +92,7 @@ def custom_agent(monkeypatch):
 def client(authenticate_app, session, custom_agent):
     app = FastAPI()
     app.include_router(agents_router.router, prefix="/api")
+    app.include_router(custom_agents.router, prefix="/api")
     authenticate_app(app)
     return TestClient(app)
 
@@ -145,6 +146,57 @@ def test_failed_write_is_a_500(client, monkeypatch):
     )
     r = client.put("/api/agents/triage/enabled", json={"enabled": False})
     assert r.status_code == 500
+
+
+@pytest.fixture
+def delete_returns(monkeypatch):
+    """Stub the DB-backed delete so only the enablement side effect is exercised."""
+
+    def _set(found: bool):
+        monkeypatch.setattr(
+            custom_agents.service, "delete_agent", lambda *_a, **_k: found
+        )
+        monkeypatch.setattr(custom_agents, "_refresh_manager", lambda: None)
+
+    return _set
+
+
+def test_deleting_an_off_agent_clears_it_so_a_recreated_one_starts_on(
+    client, session, delete_returns
+):
+    client.put(f"/api/agents/{CUSTOM}/enabled", json={"enabled": False})
+    assert CUSTOM in disabled_agent_ids()
+
+    delete_returns(True)
+    assert client.delete(f"/api/agents/custom/{CUSTOM}").status_code == 204
+
+    assert CUSTOM not in disabled_agent_ids()
+    last = [r for r in session.rows if isinstance(r, ConfigAuditLog)][-1]
+    assert last.changed_by == "test-admin"
+    assert CUSTOM in last.change_reason
+    # The same name yields the same id; the re-created agent reports on.
+    assert _enabled(client, CUSTOM) is True
+
+
+def test_deleting_an_on_agent_writes_no_config(client, session, delete_returns):
+    delete_returns(True)
+    assert client.delete(f"/api/agents/custom/{CUSTOM}").status_code == 204
+    assert session.rows == []
+
+
+def test_deleting_a_missing_agent_leaves_the_list_alone(
+    client, session, delete_returns
+):
+    client.put(f"/api/agents/{CUSTOM}/enabled", json={"enabled": False})
+    delete_returns(False)
+    assert client.delete(f"/api/agents/custom/{CUSTOM}").status_code == 404
+    assert CUSTOM in disabled_agent_ids()
+
+
+def test_failed_clear_still_returns_204(client, session, delete_returns, monkeypatch):
+    delete_returns(True)
+    monkeypatch.setattr(custom_agents, "set_agent_enabled", lambda *a: False)
+    assert client.delete(f"/api/agents/custom/{CUSTOM}").status_code == 204
 
 
 def _disable(session, *ids):

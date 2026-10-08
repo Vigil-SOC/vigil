@@ -9,6 +9,7 @@
    lives in the overview; Advanced holds Vigil runtime knobs.
    ============================================================ */
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
 import AiProvidersPanel from './AiProvidersPanel'
@@ -28,8 +29,22 @@ const TABS: [AiTab, string][] = [
   ['catalogue', 'Models'],
 ]
 
+// ?tab= picks the tab below the overview. Anything else, including Home's
+// `assignment` (the per-agent table now sits in the overview at the top of the
+// page), falls back to Keys & limits.
+function tabFromQuery(value: string | null): AiTab {
+  return TABS.find(([k]) => k === value)?.[0] ?? 'keys'
+}
+
 export default function AiConfigSection({ notify }: SectionProps) {
-  const [tab, setTab] = useState<AiTab>('keys')
+  const [searchParams] = useSearchParams()
+  const requested = tabFromQuery(searchParams.get('tab'))
+  const [tab, setTab] = useState<AiTab>(requested)
+
+  useEffect(() => {
+    setTab(requested)
+  }, [requested])
+
   return (
     <>
       <AiModelsOverview notify={notify} />

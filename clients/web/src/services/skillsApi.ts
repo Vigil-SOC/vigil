@@ -49,5 +49,13 @@ export const skillsApi = {
       )
       .then((r) => r.data),
   save: (skill: SkillWrite) => api.post<ApiSkill>('/skills', skill).then((r) => r.data),
+  /** Installs a SKILL.md or a skill .zip under the operator root; a taken name is refused (409). */
+  upload: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api
+      .post<ApiSkill>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data)
+  },
   delete: (name: string) => api.delete(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
 }

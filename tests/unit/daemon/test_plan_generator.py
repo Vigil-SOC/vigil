@@ -11,9 +11,7 @@ from services.daemon.plan_generator import (
 
 # The case is opened at admission (#920), so the plan must not send the agent
 # looking for one or minting a second.
-@pytest.mark.parametrize(
-    "workflow_id", [w for w in WORKFLOW_STEP_MAP if w != "case-review"] + ["unknown"]
-)
+@pytest.mark.parametrize("workflow_id", [*WORKFLOW_STEP_MAP, "unknown"])
 def test_case_management_step_attaches_to_the_admitted_case(workflow_id):
     plan = generate_plan("inv-1", workflow_id, [{"finding_id": "f-1"}], "c-42")
     assert "or create new case" not in plan
@@ -23,9 +21,7 @@ def test_case_management_step_attaches_to_the_admitted_case(workflow_id):
     assert "case_id: c-42" in plan
 
 
-@pytest.mark.parametrize(
-    "workflow_id", [w for w in WORKFLOW_STEP_MAP if w != "case-review"] + ["unknown"]
-)
+@pytest.mark.parametrize("workflow_id", [*WORKFLOW_STEP_MAP, "unknown"])
 def test_case_management_step_creates_a_case_when_admission_left_none(workflow_id):
     plan = generate_plan("inv-1", workflow_id, [{"finding_id": "f-1"}])
     assert "case_id: pending" in plan

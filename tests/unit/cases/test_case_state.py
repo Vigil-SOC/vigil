@@ -4,11 +4,14 @@ from core.agents.projections import run_id_for
 from services.daemon.orchestrator import shadow_run_id_for
 from core.cases.case_state import (
     budget_health,
+    case_run_refs,
     combined_state,
     detail_fields,
     investigation_ref,
 )
-from core.storage.models import CaseClosureInfo, Investigation
+from datetime import datetime
+
+from core.storage.models import CaseClosureInfo, Investigation, WorkflowRun
 
 INV = "inv-case-state"
 
@@ -70,3 +73,56 @@ def test_detail_fields_carry_the_closure_the_summary_reads():
     assert fields["closure"]["closed_by_kind"] == "analyst"
     assert fields["closure"]["verdict"] == "the scanner"
     assert fields["investigations"][0]["live"] is False
+
+
+def _run(run_id: str, status: str, at: datetime, cost: float = 0.5) -> WorkflowRun:
+    return WorkflowRun(
+        run_id=run_id,
+        workflow_id="threat-hunt",
+        workflow_name="Threat hunt",
+        status=status,
+        trigger_context={"case_id": "case-1"},
+        started_at=at,
+        total_cost_usd=cost,
+    )
+
+
+def test_a_run_started_on_the_case_is_listed_newest_first_beside_investigations():
+    old_inv = _inv("completed")
+    old_inv.created_at = datetime(2026, 10, 1)
+    runs = [_run("run-new", "running", datetime(2026, 10, 7))]
+    refs = [ref for ref, _ in case_run_refs([old_inv], runs)]
+    assert [ref["run_id"] for ref in refs] == ["run-new", run_id_for(INV)]
+    assert refs[0]["investigation_id"] is None
+    assert refs[0]["workflow_id"] == "threat-hunt"
+    assert refs[0]["cost_usd"] == 0.5
+    assert refs[0]["max_cost_usd"] == 0 and refs[0]["iteration_count"] == 0
+
+
+def test_the_investigations_own_run_is_listed_once():
+    inv = _inv("executing")
+    inv.created_at = datetime(2026, 10, 7)
+    twin = _run(run_id_for(INV), "running", datetime(2026, 10, 7))
+    refs = [ref for ref, _ in case_run_refs([inv], [twin])]
+    assert [ref["investigation_id"] for ref in refs] == [INV]
+
+
+def test_an_in_flight_run_reads_as_live_and_a_finished_one_does_not():
+    running = detail_fields(
+        "open", [], None, [_run("r1", "running", datetime(2026, 10, 7))]
+    )
+    assert running["combined_state"] == "executing"
+    assert running["investigations"][0]["live"] is True
+    paused = detail_fields(
+        "open", [], None, [_run("r2", "paused", datetime(2026, 10, 7))]
+    )
+    assert paused["combined_state"] == "waiting_approval"
+    done = detail_fields(
+        "open", [], None, [_run("r3", "completed", datetime(2026, 10, 7))]
+    )
+    assert done["combined_state"] == "open"
+    assert done["investigations"][0]["live"] is False
+    closed = detail_fields(
+        "closed", [], None, [_run("r4", "running", datetime(2026, 10, 7))]
+    )
+    assert closed["combined_state"] == "closed"

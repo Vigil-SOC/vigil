@@ -1,6 +1,9 @@
-/* Advanced: the retry switch saves on change and gates its two follow-up rows. */
+/* Advanced: the retry switch saves on change and gates its two follow-up rows.
+   ?tab= picks the tab below the overview. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import AiConfigSection from './AiConfigSection'
 
 const { setAIOperations, getAIOperations } = vi.hoisted(() => ({
@@ -16,6 +19,10 @@ vi.mock('./AiModelsOverview', () => ({ default: () => null }))
 vi.mock('./AiProvidersPanel', () => ({ default: () => <div>keys card</div> }))
 vi.mock('./AiBudgetsPanel', () => ({ default: () => <div>spending card</div> }))
 vi.mock('./AiModelsPanel', () => ({ default: () => <div>catalogue</div> }))
+
+function render(ui: ReactElement, path = '/settings?section=ai-config') {
+  return rtlRender(<MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>)
+}
 
 const ON = { local_ollama_recovery_enabled: true, local_ollama_recovery_retry_limit: 1, local_ollama_recovery_restart_gateway: true }
 
@@ -52,5 +59,23 @@ describe('AiConfigSection', () => {
     await waitFor(() => expect(setAIOperations).toHaveBeenCalledWith({ ...ON, local_ollama_recovery_retry_limit: 3 }))
     fireEvent.click(screen.getByRole('button', { name: /Reset to defaults/ }))
     await waitFor(() => expect(setAIOperations).toHaveBeenLastCalledWith(ON))
+  })
+
+  it('opens the Models tab for ?tab=catalogue', async () => {
+    render(<AiConfigSection notify={() => {}} />, '/settings?section=ai-config&tab=catalogue')
+    expect(screen.getByRole('button', { name: 'Models' })).toHaveClass('active')
+    expect(screen.getByText('catalogue')).toBeInTheDocument()
+    expect(screen.queryByText('keys card')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    '/settings?section=ai-config',
+    '/settings?section=ai-config&tab=assignment',
+    '/settings?section=ai-config&tab=nope',
+  ])('falls back to Keys & limits for %s', async (path) => {
+    render(<AiConfigSection notify={() => {}} />, path)
+    expect(screen.getByRole('button', { name: 'Keys & limits' })).toHaveClass('active')
+    expect(screen.getByText('keys card')).toBeInTheDocument()
+    expect(await screen.findByText('Advanced')).toBeInTheDocument()
   })
 })

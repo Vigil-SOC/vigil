@@ -56,7 +56,9 @@ def test_over_length_finding_id_costs_only_its_own_row():
 
     result = service.bulk_create_findings(rows)
 
+    first_error = result.pop("first_error")
     assert result == {"imported": n, "skipped": 0, "errors": 1}
+    assert first_error
     assert _count(service, "bulk-len-") == n
 
 
@@ -74,7 +76,9 @@ def test_over_length_severity_with_existing_and_duplicate_rows():
 
     result = service.bulk_create_findings(rows)
 
+    first_error = result.pop("first_error")
     assert result == {"imported": 2, "skipped": 2, "errors": 1}
+    assert first_error
     assert service.get_finding("bulk-mix-0") is not None
     assert service.get_finding("bulk-mix-1") is None
     assert service.get_finding("bulk-mix-2") is not None
