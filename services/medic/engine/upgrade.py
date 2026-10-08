@@ -86,6 +86,8 @@ class UpgradeWatch:
     def _open(self, t: float) -> None:
         if self.until is None or t >= self.until:  # the last window closed: new chain
             self.since = t
+        else:  # a late marker in a live chain: the cap counts from the earliest
+            self.since = min(self.since, t)
         self.until = max(self.until or t, t + WINDOW_S)
 
 
