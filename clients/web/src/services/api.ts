@@ -593,6 +593,14 @@ export const consoleApi = {
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
 
+export interface IntegrationTestResult {
+  success: boolean
+  message?: string
+  // "not_testable": a catalog-only entry with no MCP server behind it
+  reason?: string
+  servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
+}
+
 export const configApi = {
   getClaude: () => api.get('/config/claude'),
   setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
@@ -624,6 +632,9 @@ export const configApi = {
     enabled_integrations: string[]
     integrations: Record<string, any>
   }) => api.post('/config/integrations', data),
+  // Probes the stored config, so save first. 400 when nothing is saved.
+  testIntegration: (id: string) =>
+    api.post<IntegrationTestResult>(`/config/integrations/${encodeURIComponent(id)}/test`),
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
