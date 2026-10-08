@@ -2,7 +2,9 @@
 
 The runner expands the vector into D3 observations with the contract's own
 expander, feeds them in observed_at order, ticks every 15 s from start to end, and
-keeps every record the engine emits plus its status at each checkpoint tick. An
+keeps every record the engine emits plus its status at each checkpoint tick. The
+incident view (routed_at, suppressed_by, flapping…) is read back from the records
+alone, so a vector passes only if the records say what it expects. An
 engine restart (`engine_restarts`) builds a new engine from the JSON round-trip of
 the old one's state and re-feeds the raw history the store would hold (C4).
 """
@@ -59,18 +61,28 @@ class Run:
                     "opened_at": at,
                     "resolving_since": None,
                     "resolved_at": None,
-                    # Routing is G3's; with no suppression and no upgrade window
-                    # (part 1) an incident routes when it opens (E3 §6.4).
-                    "routed_at": at,
+                    "routed_at": at if body["route"] == "routed" else None,
                 }
                 if body["group"]:
                     inc["group"] = {g["name"]: g["value"] for g in body["group"]}
+                if "held_by_upgrade_until" in body:
+                    inc["held_by_upgrade_until"] = self.offset(
+                        body["held_by_upgrade_until"]
+                    )
                 out[body["incident_id"]] = inc
             elif rec["type"] == "incident_updated":
-                if body["change"] == "resolving":
-                    out[body["incident_id"]]["resolving_since"] = at
-                elif body["change"] == "refiring":
-                    out[body["incident_id"]]["resolving_since"] = None
+                inc, change = out[body["incident_id"]], body["change"]
+                if change == "resolving":
+                    inc["resolving_since"] = at
+                elif change == "refiring":
+                    inc["resolving_since"] = None
+                elif change == "routed":
+                    inc["routed_at"] = at
+                elif change == "suppressed":
+                    inc["suppressed_by"] = body["suppressed_by"]
+                elif change == "reopened":  # §5 flapping: the same incident again
+                    inc |= {"flapping": True, "reopen_count": body["reopen_count"]}
+                    inc |= {"resolving_since": None, "resolved_at": None}
             elif rec["type"] == "incident_resolved":
                 out[body["incident_id"]]["resolved_at"] = at
                 out[body["incident_id"]]["reason"] = body["how"]
@@ -90,7 +102,14 @@ def run(vector: dict, *, refeed_history: bool = True) -> Run:
     ]
 
     def fresh(state: dict | None) -> Engine:
-        return Engine(rules, instance_id=INSTANCE, install_shape="compose", state=state)
+        return Engine(
+            rules,
+            instance_id=INSTANCE,
+            install_shape="compose",
+            state=state,
+            suppression=vector.get("suppression", []),
+            group_cap=vector.get("limits", {}).get("group_cap", 64),
+        )
 
     engine, fed, records, status = fresh(None), 0, [], {}
     for t in range(0, secs(vector["end"]) + 1, tick):
