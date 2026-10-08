@@ -305,6 +305,44 @@
 .side-list p { margin: 0; overflow-wrap: anywhere; }
 .side-list { display: grid; gap: 6px; padding-top: 8px; }
 
+.side-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.side-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ac);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.side-more:hover { text-decoration: underline; }
+
+/* Files and IOCs: a row stack, name then meta on a second line. */
+.side-rows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.side-rows li { padding: 8px 10px; background: var(--stack-row-bg); min-width: 0; }
+.side-row-main { font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.side-rows .side-meta { margin-top: 2px; overflow-wrap: anywhere; }
+
 .case-side .case-linked {
   list-style: none;
   margin: 6px 0 0;
@@ -405,6 +443,83 @@
   text-align: right;
 }
 
+/* Closed summary card (CaseDetail board, mood=closed). */
+.case-page .case-closed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+
+.case-page .case-closed-line {
+  font-size: 12px;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-closed h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-closed p { margin: 0; }
+
+.case-page .case-closed-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-page .case-closed-rows li {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  background: var(--stack-row-bg);
+  font-size: 13px;
+}
+
+.case-page .case-closed-rows .mono { font-size: 12px; color: var(--tx2); }
+
+.case-page .case-closed-rows li > span:nth-child(2) {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-closed-rows b { font-size: 12px; font-weight: 650; color: var(--tx2); }
+.case-page .case-closed-rows b.good { color: var(--good); }
+.case-page .case-closed-rows b.poor { color: var(--poor); }
+
+.case-page .case-assess {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tx2);
+}
+
+.case-page .case-assess > span:first-child { margin-right: 4px; }
+.case-page .case-assess .case-assess-later { font-size: 12px; color: var(--tx3); }
+.case-page .case-assess .case-actions { margin-left: auto; }
+
 @media (prefers-reduced-motion: reduce) {
   .case-needs-strip .strip-dot,
   .case-needs .needs-dot { animation: none; }
@@ -476,6 +591,9 @@
 
 .case-page .case-stopped b { flex-shrink: 0; font-weight: 700; color: var(--tx1); }
 .case-page .case-stopped .clamp2 { min-width: 0; color: var(--tx2); overflow-wrap: anywhere; }
+
+.case-page .watch-link { align-self: flex-start; flex-shrink: 0; }
+.case-page .case-stopped .watch-link { margin-left: auto; align-self: center; }
 
 .case-page .case-later {
   align-items: center;
@@ -617,6 +735,7 @@
 .case-page .ev-trail p { margin: 0; }
 
 .case-page .ev-trail h3 { font-size: 13px; font-weight: 650; }
+.case-page .ev-title { display: flex; align-items: center; gap: 4px; }
 .case-page .ev-trail p { margin-top: 2px; font-size: 12px; color: var(--tx2); line-height: 1.45; }
 
 .case-page .ev-grid {
@@ -759,9 +878,22 @@
 }
 
 .case-page .case-expl-line { display: flex; align-items: center; gap: 8px; }
-.case-page .case-expl-text { min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.case-page .case-expl-main { min-width: 0; cursor: pointer; }
+.case-page .case-expl-text { min-width: 0; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-page .case-expl-main.open .case-expl-text { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 .case-page .case-expl-text.struck { text-decoration: line-through; }
-.case-page .case-expl-note { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--tx2); overflow-wrap: anywhere; }
+.case-page .case-expl-note {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.case-page .case-expl-main.open .case-expl-note { display: block; -webkit-line-clamp: unset; }
 
 .case-page .case-expl-pill {
   flex-shrink: 0;
@@ -964,7 +1096,8 @@
 .case-composer .chat-body {
   flex: 0 1 auto;
   min-height: 0;
-  max-height: 150px;
+  max-height: min(150px, 40vh);
+  max-height: min(150px, 40cqh); /* never over 40% of the drawer (a size container, shell.css); off a drawer cqh is the viewport */
   padding: 8px 24px 4px;
   gap: 10px;
   overflow-x: hidden;
@@ -1000,6 +1133,21 @@
 .case-composer .msg.vigil .body > :last-child { margin-bottom: 0; }
 .case-composer .msg.vigil.err .body { color: var(--poor); }
 .case-composer .msg.vigil .vigil-status:last-child { margin-bottom: 0; }
+
+.case-composer .msg-retry { align-self: flex-start; margin-top: 6px; padding: 3px 10px; font-size: 12px; }
+
+.case-composer .composer-earlier {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tx3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.case-composer .composer-earlier:hover { color: var(--tx1); }
 
 /* hover actions hang beside the bubble so they take no height */
 .case-composer .msg-actions {

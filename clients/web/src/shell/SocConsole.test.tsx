@@ -100,11 +100,13 @@ vi.mock('../services/api', () => ({
           ],
         },
       }),
+    listCustom: () => Promise.resolve({ data: { agents: [] } }),
   },
   claudeApi: {
     getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
   },
   mcpApi: {
+    listServers: () => Promise.resolve({ data: { servers: [] } }),
     getStatuses: () => Promise.resolve({
       data: {
         statuses: [
@@ -125,6 +127,7 @@ vi.mock('../services/api', () => ({
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
+    listModels: () => Promise.resolve({ data: { models: [] } }),
   },
   // a vi.fn, so the SSE test can supply a streaming body
   streamFetch: vi.fn(() => Promise.resolve({ ok: true, status: 200, body: null })),
@@ -201,10 +204,15 @@ vi.mock('../services/api', () => ({
     reject: vi.fn(() => Promise.resolve({})),
   },
   configApi: {
+    getAIOperations: () => Promise.resolve({ data: {} }),
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
     setTheme: () => Promise.resolve({ data: {} }),
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
     getGeneral: () => Promise.resolve({ data: { show_notifications: false } }),
+    getOrchestrator: () => Promise.resolve({ data: {} }),
+    getForceManualApproval: () => Promise.resolve({ data: { enabled: false, environment_wins: false } }),
+    // the intent report card shows its own failed state; its contents aren't under test here
+    getIntent: () => Promise.reject(new Error('not under test')),
     getAutonomy: vi.fn(() => Promise.resolve({
       data: { auto_response_enabled: true, force_manual_approval: false },
     })),
@@ -283,6 +291,11 @@ vi.mock('../services/api', () => ({
     update: () => Promise.resolve({ data: {} }),
     delete: () => Promise.resolve({ data: {} }),
     importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
+  },
+  // the spending card shows its own error state; budgets aren't under test here
+  budgetsApi: {
+    getQuota: () => Promise.reject(new Error('not under test')),
+    get: () => Promise.reject(new Error('not under test')),
   },
 }))
 
