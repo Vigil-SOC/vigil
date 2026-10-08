@@ -74,3 +74,11 @@ def test_redact_ships_only_python() -> None:
     # The image build drops *.txt (.dockerignore); a data file here would be
     # missing at runtime and Medic would die at import.
     assert {p.suffix for p in (MEDIC / "redact").iterdir() if p.is_file()} == {".py"}
+
+
+def test_huge_input_is_capped_before_redaction() -> None:
+    from services.medic.redact.choke import redact_observation
+
+    obs = {"values": [{"key": "d", "type": "text", "value": "x " * 200_000}]}
+    out = redact_observation(obs, REDACTOR)
+    assert len(out["values"][0]["value"]) == 500

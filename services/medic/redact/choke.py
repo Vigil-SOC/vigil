@@ -14,12 +14,20 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import re2
+
 from services.medic.contracts.fingerprint_ref import label_safe
-from services.medic.redact.rules import REDACTION_VERSION, Redactor
+from services.medic.redact.rules import REDACTED, REDACTION_VERSION, Redactor
 
 TEXT_MAX = 500  # observation.schema.json untrusted_text
 ARG_MAX = 200  # log.args items
 WITHHELD = "log record withheld: redactor failed"
+# Redaction time grows with input; anything past this can't survive the 500-char
+# cap anyway, so it's cut first (the cut can't leave a fragment in the output).
+INPUT_MAX = 65_536
+# "user:password@host" with no scheme: the URL rule needs "://", and the label
+# pattern allows ":" and "@", so a label would keep it verbatim.
+_USERINFO = re2.compile(r"[^@/\s]*:[^@/\s]*@")
 
 
 def redact_observation(obs: dict[str, Any], redactor: Redactor) -> dict[str, Any]:
@@ -34,7 +42,7 @@ def redact_observation(obs: dict[str, Any], redactor: Redactor) -> dict[str, Any
         nonlocal hits
         if value is None:
             return None
-        red, n = redactor.redact(value)
+        red, n = redactor.redact(value[:INPUT_MAX])
         hits += n
         return red[:cap]
 
@@ -42,7 +50,10 @@ def redact_observation(obs: dict[str, Any], redactor: Redactor) -> dict[str, Any
         # Redact first, then D3's label rule, once: a value that doesn't fit the
         # pattern is hashed, and the hash is of the redacted text, never a secret.
         nonlocal hits
-        red, n = redactor.redact(value)
+        if (m := _USERINFO.match(value)) is not None:
+            value = REDACTED + "@" + value[m.end() :]
+            hits += 1
+        red, n = redactor.redact(value[:INPUT_MAX])
         hits += n
         return label_safe(red)
 
@@ -120,7 +131,7 @@ def install_log_redaction(redactor: Redactor | None = None) -> LogRedaction:
 
 
 def _scrub(record: logging.LogRecord, redactor: Redactor) -> None:
-    message = redactor.redact(record.getMessage())[0]
+    message = redactor.redact(record.getMessage()[:INPUT_MAX])[0]
     exc_text = None
     if record.exc_info and record.exc_info[0] is not None:
         exc_text = redactor.redact(
