@@ -199,6 +199,11 @@ class Settings(BaseSettings):
     # Medic parses it: a bool here would accept spellings Medic reads as off and
     # fail startup on a typo.
     vigil_medic_enabled: str = "false"
+    # Where the backend polls Medic's status op (C5 §5.3): the gateway's inbound
+    # listener on Compose and Helm, empty until Medic is enabled. The key file
+    # holds the per-install X-Medic-Key (X2); a file, never env.
+    vigil_medic_api_url: str = ""
+    vigil_medic_api_key_file: str = ""
     vigil_csrf_enabled: bool = True
     vigil_csrf_report_only: bool = True
     vigil_csrf_exempt_paths: Optional[str] = None
