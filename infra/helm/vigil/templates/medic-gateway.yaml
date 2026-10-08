@@ -1,0 +1,169 @@
+{{- if .Values.medic.enabled }}
+{{- include "vigil.medic.required" . }}
+{{- $gw := dict "context" . "component" "medic-gateway" }}
+{{- $fn := include "vigil.medicGateway.fullname" . }}
+{{- $v := .Values.medic.gateway }}
+{{- /*
+The read-only gateway (C3 §4.6, S5): a separate pod, not a sidecar, because
+containers in one pod share a network identity and no policy could split them
+(K1 T-11). It needs no Kubernetes API, so its token isn't mounted.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $gw | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $gw | nindent 4 }}
+spec:
+  # One Viewer session: two replicas would log in twice and refresh apart.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vigil.medic.selectorLabels" $gw | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.medic.labels" $gw | nindent 8 }}
+      {{- with $v.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $fn }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      # uid/gid 10002 (S5-3); fsGroup so the mounted password file is readable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        fsGroup: 10002
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: medic-gateway
+          image: {{ include "vigil.medic.image" (dict "context" . "image" $v.image "suffix" "medic-gateway") | quote }}
+          imagePullPolicy: {{ include "vigil.medic.pullPolicy" (dict "context" . "image" $v.image) }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: VIGIL_MEDIC_GATEWAY_BACKEND
+              value: {{ printf "%s:%v" (include "vigil.backend.fullname" .) .Values.backend.service.port | quote }}
+            - name: VIGIL_MEDIC_GATEWAY_MEDIC
+              value: {{ printf "%s:%s" (include "vigil.medic.fullname" .) (include "vigil.medic.apiPort" .) | quote }}
+            # A pod has one address, so both listeners bind to it and the
+            # NetworkPolicy, not the bind, keeps Medic off the inbound side and
+            # the backend off the outbound side.
+            - name: VIGIL_MEDIC_GATEWAY_OUT_BIND
+              value: "$(POD_IP):{{ include "vigil.medicGateway.outPort" . }}"
+            - name: VIGIL_MEDIC_GATEWAY_IN_BIND
+              value: "$(POD_IP):{{ include "vigil.medicGateway.inPort" . }}"
+            - name: VIGIL_MEDIC_GATEWAY_VIEWER_USER
+              value: {{ $v.viewer.username | quote }}
+            - name: VIGIL_MEDIC_GATEWAY_VIEWER_PASSWORD_FILE
+              value: /run/secrets/medic_viewer_password
+            - name: VIGIL_CONTEXT_PATH
+              value: {{ .Values.config.VIGIL_CONTEXT_PATH | default "" | quote }}
+          ports:
+            - name: outbound
+              containerPort: {{ include "vigil.medicGateway.outPort" . }}
+              protocol: TCP
+            - name: inbound
+              containerPort: {{ include "vigil.medicGateway.inPort" . }}
+              protocol: TCP
+          volumeMounts:
+            - name: viewer-password
+              mountPath: /run/secrets
+              readOnly: true
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "services.medic_gateway", "check"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 4
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "services.medic_gateway", "check"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+      volumes:
+        # One key of an existing Secret, as a file: never env, never envFrom (R6).
+        - name: viewer-password
+          secret:
+            secretName: {{ $v.viewer.passwordSecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ $v.viewer.passwordSecret.key }}
+                path: medic_viewer_password
+      {{- with $v.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- /* One Service per listener (S5): Medic dials this one... */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $gw | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "vigil.medic.selectorLabels" $gw | nindent 4 }}
+  ports:
+    - name: outbound
+      port: {{ include "vigil.medicGateway.outPort" . }}
+      targetPort: outbound
+      protocol: TCP
+---
+{{- /* ...and the backend dials this one to reach Medic's API. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-in
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $gw | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "vigil.medic.selectorLabels" $gw | nindent 4 }}
+  ports:
+    - name: inbound
+      port: {{ include "vigil.medicGateway.inPort" . }}
+      targetPort: inbound
+      protocol: TCP
+{{- end }}
