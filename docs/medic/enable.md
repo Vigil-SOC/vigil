@@ -24,7 +24,7 @@ scripts/medic/enable-compose.sh
 The script is the whole enable, and it is safe to re-run. It:
 
 1. creates the name, password and Medic API key as `0600` files in `~/.vigil-medic/secrets` (override with `VIGIL_MEDIC_SECRETS_DIR`, an absolute path);
-2. writes `compose.env` next to them, holding the switch and this host's settings;
+2. writes `compose.env` next to them, holding the switch and this host's settings (unquoted `KEY=value` lines; from here on `start.sh` and the console add Medic's overlay, even after `--secrets-only`);
 3. builds the Medic images;
 4. recreates the backend with the switch on (Vigil's `.env` is passed along, as in the README);
 5. creates the service account;
@@ -44,7 +44,7 @@ Without the overlay, the next `up` of the daemon or an agent takes it off Medic'
 
 To rotate the password and API key, run `scripts/medic/enable-compose.sh --rotate`. The username stays the same.
 
-To turn Medic off, delete `compose.env` (or set `VIGIL_MEDIC_ENABLED=false` in it) and run `up` without Medic's files. The backend then reads the switch as false and shows **Off**. Medic's volume and data stay.
+To turn Medic off, delete `compose.env` (that file is what makes `start.sh` and the console add Medic's overlay), then run `up` without Medic's files. The backend then reads the switch as false and shows **Off**. Medic's volume and data stay.
 
 ## Helm (PROVISIONAL)
 
@@ -118,6 +118,6 @@ Host-native Medic is opt-in only. It can reach the backend, Redis and Bifrost on
 
    A `.env` copied from `env.example` is usually `0644`, so expect this once.
 
-Medic then runs as `vigil-medic` from `/opt/vigil-medic`, with install shape `start_sh`, and reads the agent worker's readiness at `127.0.0.1:6990` (or `AGENT_HEALTH_PORT`, if you changed it). Its log is `logs/medic.log`; `./shutdown_all.sh` stops it.
+Medic then runs as `vigil-medic` from `/opt/vigil-medic`, with install shape `start_sh`, and reads the agent worker's readiness at `127.0.0.1:6990`, where `scripts/agent_up.sh` starts it. Its log is `logs/medic.log`; `./shutdown_all.sh` stops it.
 
 Host-native Medic doesn't use the gateway yet, so no service account is needed. If a host-native gateway is added later, it uses the same `ensure` command with Vigil's venv: `venv/bin/python -m core.auth.service_account ensure <name> < password-file`.

@@ -104,6 +104,15 @@ def test_only_medic_settings_are_taken(calls, tmp_path) -> None:
     assert env.get("LD_PRELOAD") != "/tmp/evil.so"
 
 
+def test_compose_env_cannot_name_compose_files(calls, tmp_path) -> None:
+    """A compose file can run anything through Docker: only Vigil's env names one."""
+    _write(tmp_path, ENABLED + "VIGIL_MEDIC_COMPOSE_OVERRIDE=/tmp/evil.yml\n")
+    sm._compose(["ps"], None, 10)
+    ((cmd, env),) = calls
+    assert "/tmp/evil.yml" not in cmd
+    assert env.get("VIGIL_MEDIC_COMPOSE_OVERRIDE") != "/tmp/evil.yml"
+
+
 def test_overlay_missing_means_no_overlay(calls, tmp_path, monkeypatch) -> None:
     _write(tmp_path, ENABLED)
     monkeypatch.setattr(sm, "MEDIC_OVERLAY", tmp_path / "gone.yml")
