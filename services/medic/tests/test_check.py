@@ -98,3 +98,38 @@ def test_check_command_exit_codes(tmp_path: Path, capsys) -> None:
 
     beat(tmp_path, at=T0 - 10, started_at=T0 - 3600)
     assert main(["check"], env=env, now=T0) == 0
+
+
+def test_nan_timestamp_fails(tmp_path: Path) -> None:
+    # json accepts NaN, and every comparison with NaN is False: it would read as fresh.
+    path = heartbeat_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"v": 1, "cycle": 1, "ts": NaN, "started_at": 0, "pid": 1}')
+    ok, reason = check_heartbeat(tmp_path, now=T0)
+    assert not ok
+    assert "unreadable" in reason
+
+
+def test_stopped_heartbeat_fails(tmp_path: Path) -> None:
+    write_heartbeat(
+        tmp_path, cycle=5, now=T0, started_at=T0 - 3600, pid=1, state="stopped"
+    )
+    ok, reason = check_heartbeat(tmp_path, now=T0)
+    assert not ok
+    assert "stopped" in reason
+
+
+def test_degraded_heartbeat_passes(tmp_path: Path) -> None:
+    # C5 K-d: dependency faults make Medic degraded, never a failed check.
+    write_heartbeat(
+        tmp_path, cycle=5, now=T0, started_at=T0 - 3600, pid=1, state="degraded"
+    )
+    assert check_heartbeat(tmp_path, now=T0)[0]
+
+
+def test_loose_run_dir_is_tightened(tmp_path: Path) -> None:
+    run_dir = heartbeat_path(tmp_path).parent
+    run_dir.mkdir(mode=0o755)
+    run_dir.chmod(0o755)
+    beat(tmp_path, at=T0, started_at=T0)
+    assert run_dir.stat().st_mode & 0o777 == 0o700

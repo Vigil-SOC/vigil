@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,14 +55,41 @@ def test_unrecognised_flag_value_is_named(tmp_path: Path, caplog) -> None:
 def test_flag_on_heartbeat_appears(tmp_path: Path) -> None:
     clock = FakeClock()
     env = {"VIGIL_MEDIC_ENABLED": "true", "VIGIL_MEDIC_DATA_DIR": str(tmp_path)}
-    assert main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=3) == 0
+    seen: list[tuple[dict, bool]] = []
 
-    record = json.loads(heartbeat_path(tmp_path).read_text())
-    assert record["cycle"] == 3
-    assert record["state"] == "running"
-    assert record["ts"] == clock.wall()
-    assert clock.wall() - record["started_at"] == 3 * BEAT_INTERVAL_S
-    assert check_heartbeat(tmp_path, now=clock.wall())[0]
+    async def sleep_and_look(seconds: float) -> None:
+        # What `check` sees while Medic runs: the beat the last cycle wrote.
+        record = json.loads(heartbeat_path(tmp_path).read_text())
+        seen.append((record, check_heartbeat(tmp_path, now=clock.wall())[0]))
+        await clock.sleep(seconds)
+
+    assert main(["run"], env=env, clock=clock, sleep=sleep_and_look, max_cycles=3) == 0
+
+    assert [r["cycle"] for r, _ in seen] == [0, 1, 2]
+    assert all(r["state"] == "running" and fresh for r, fresh in seen)
+    last = json.loads(heartbeat_path(tmp_path).read_text())
+    assert last["cycle"] == 3
+    assert last["ts"] - last["started_at"] == 3 * BEAT_INTERVAL_S
+
+
+def test_clean_stop_marks_the_beat_stopped(tmp_path: Path) -> None:
+    # After a stop, `check` must not report a live Medic for the next 120 s.
+    clock = FakeClock()
+    env = {"VIGIL_MEDIC_ENABLED": "true", "VIGIL_MEDIC_DATA_DIR": str(tmp_path)}
+    assert main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=2) == 0
+    assert json.loads(heartbeat_path(tmp_path).read_text())["state"] == "stopped"
+    assert not check_heartbeat(tmp_path, now=clock.wall())[0]
+
+
+def test_run_restores_the_umask(tmp_path: Path) -> None:
+    clock = FakeClock()
+    env = {"VIGIL_MEDIC_ENABLED": "true", "VIGIL_MEDIC_DATA_DIR": str(tmp_path)}
+    before = os.umask(0o022)
+    try:
+        main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
+        assert os.umask(0o022) == 0o022
+    finally:
+        os.umask(before)
 
 
 def test_beat_is_written_at_start(tmp_path: Path) -> None:

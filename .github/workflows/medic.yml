@@ -42,8 +42,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.7"
-          python-version-file: .python-version
 
+      # uv picks Python 3.12 from services/medic/pyproject.toml's requires-python.
       - name: Install Medic's locked dependencies
         run: uv sync --project services/medic --frozen
 

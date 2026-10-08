@@ -40,7 +40,9 @@ ARG VIGIL_VERSION=
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
 # The data dir is created here, owned by 10001 and mode 0700: Docker copies
-# that ownership into a new, empty named volume (C4 §6.2).
+# that ownership into a new, empty named volume (C4 §6.2). No VOLUME line:
+# Compose (medic_data) and Helm (the PVC) mount it; an anonymous volume would
+# hide a missing mount instead of failing on the read-only root.
 RUN groupadd -g 10001 medic \
     && useradd -u 10001 -g 10001 -M -d /nonexistent -s /usr/sbin/nologin medic \
     && mkdir -p /var/lib/vigil-medic \
@@ -66,8 +68,10 @@ ENV PATH=/opt/medic/venv/bin:$PATH \
 
 USER 10001:10001
 
-# C5 §5.2 values (the llm-worker's): 4 × 30 s = the 120 s stale budget, 300 s
-# start-up grace. Compose restarts only on exit; the watchdog makes a hang exit.
+# C5 §5.2 values (the llm-worker's): interval 30 s, retries 4, 300 s start-up
+# grace. `check` itself already allows 120 s, so a hung loop reads "unhealthy"
+# about 210-240 s in, after the 180 s watchdog has exited it. Compose restarts
+# only on exit, so the watchdog is what recovers a hang there.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=4 \
   CMD ["python", "-m", "services.medic", "check"]
 

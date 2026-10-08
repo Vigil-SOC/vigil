@@ -40,8 +40,8 @@ def test_fires_on_a_stalled_loop(caplog) -> None:
         assert dog.check()
     assert exits.codes and exits.codes[0] != 0
     assert "stalled" in caplog.text
-    # The log names where the main loop is stuck.
-    assert "Stack" in caplog.text
+    # The log carries the main thread's real stack (here: this test function).
+    assert "test_fires_on_a_stalled_loop" in caplog.text
 
 
 def test_fires_from_its_own_thread() -> None:

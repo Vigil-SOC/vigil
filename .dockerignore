@@ -118,6 +118,8 @@ temp/
 # needed at runtime, and the contract fixtures include TEST-ONLY trust material.
 services/medic/.venv/
 services/medic/**/__pycache__/
+services/medic/**/.pytest_cache/
+services/medic/**/.ruff_cache/
 services/medic/tests/
 services/medic/contracts/tests/
 services/medic/contracts/tools/

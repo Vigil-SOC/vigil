@@ -94,7 +94,9 @@ type = forbidden
 source_modules =
     services.medic
 ; Every other deployable under services/, listed by name: a forbidden contract
-; can't say "services.* except Medic". A new Python service is added here.
+; can't say "services.* except Medic". A new Python service is added here
+; (services/medic/tests/test_isolation.py fails until it is). Not covered:
+; services/medic/contracts/, which has no __init__.py, so grimp skips it.
 forbidden_modules =
     core
     tools

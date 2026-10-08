@@ -85,8 +85,22 @@ def run(
         )
         return 0
 
-    # C4 §6.1: everything Medic creates is private to its own uid.
-    os.umask(0o077)
+    # C4 §6.1: everything Medic creates is private to its own uid. Restored on
+    # return, which only matters when run() is called in-process (tests).
+    old_umask = os.umask(0o077)
+    try:
+        return _run(data_dir, clock=clock, sleep=sleep, max_cycles=max_cycles)
+    finally:
+        os.umask(old_umask)
+
+
+def _run(
+    data_dir: Path,
+    *,
+    clock: SystemClock,
+    sleep: Callable[[float], Awaitable[None]],
+    max_cycles: int | None,
+) -> int:
     started_at = clock.wall()
     try:
         data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -101,9 +115,23 @@ def run(
     watchdog = Watchdog(monotonic=clock.monotonic)
     watchdog.start()
     try:
-        asyncio.run(_loop(data_dir, clock, sleep, watchdog, started_at, max_cycles))
+        cycle = asyncio.run(
+            _loop(data_dir, clock, sleep, watchdog, started_at, max_cycles)
+        )
     finally:
         watchdog.stop()
+    # So `check` doesn't call a stopped Medic healthy for the next 120 s.
+    try:
+        write_heartbeat(
+            data_dir,
+            cycle=cycle,
+            now=clock.wall(),
+            started_at=started_at,
+            pid=os.getpid(),
+            state="stopped",
+        )
+    except OSError as exc:
+        log.error("cannot write the heartbeat: %s", exc)
     log.info("Medic stopped")
     return 0
 
@@ -115,7 +143,8 @@ async def _loop(
     watchdog: Watchdog,
     started_at: float,
     max_cycles: int | None,
-) -> None:
+) -> int:
+    """Run cycles until stopped; return the last completed cycle number."""
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -145,3 +174,4 @@ async def _loop(
             # the probe reports it. Disk-full handling belongs to the store (S2).
             log.error("cannot write the heartbeat: %s", exc)
         watchdog.beat()
+    return cycle

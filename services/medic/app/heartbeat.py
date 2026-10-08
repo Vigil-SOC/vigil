@@ -8,6 +8,7 @@ the same command on Compose, Helm and host-native, copied from `arq --check`.
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -43,6 +44,9 @@ def write_heartbeat(
     """Write atomically (temp file, then rename), so `check` never reads half a file."""
     path = heartbeat_path(data_dir)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkdir leaves an existing dir's mode alone; run/ is Medic's own, so tighten
+    # it. The data root's own checks (Helm's 2770 allowed) are the store's (S2).
+    path.parent.chmod(0o700)
     record = {
         "v": FORMAT_VERSION,
         "cycle": cycle,
@@ -70,11 +74,16 @@ def check_heartbeat(data_dir: Path, *, now: float) -> tuple[bool, str]:
         ts = float(record["ts"])
         started_at = float(record["started_at"])
         cycle = int(record["cycle"])
+        state = str(record.get("state", "running"))
+        if not (math.isfinite(ts) and math.isfinite(started_at)):
+            raise ValueError("non-finite time")
     except FileNotFoundError:
         return False, f"no heartbeat at {path}"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return False, f"heartbeat unreadable at {path}: {type(exc).__name__}"
 
+    if state == "stopped":
+        return False, f"Medic stopped (cycle {cycle})"
     age = now - ts
     if age < -FUTURE_SLACK_S:
         return False, f"heartbeat is {-age:.0f} s in the future (clock fault?)"
