@@ -4,12 +4,21 @@ upgrade detector; the group cap's tie-break."""
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from services.medic.contracts.vector_expand import load
+from services.medic.contracts.vector_expand import expand, load
 from services.medic.engine import Engine, suppress
 from services.medic.engine.upgrade import UpgradeWatch
-from services.medic.tests.engine.runner import CONTRACTS, INSTANCE, group_key, run
+from services.medic.tests.engine.runner import (
+    CONTRACTS,
+    INSTANCE,
+    group_key,
+    rules_of,
+    run,
+)
 
 VECTORS = CONTRACTS / "vectors"
 
@@ -103,13 +112,84 @@ def test_a_freed_child_waits_while_unknown_and_routes_once_true() -> None:
     assert [f["change"] for _, f in out] == ["unsuppressed", "routed"]
 
 
-def test_a_child_resolving_when_freed_closes_quietly_even_if_it_refires() -> None:
-    """§6.3: the decision is made 10 min after the last parent resolved."""
+def test_a_freed_child_resolving_waits_and_routes_if_it_refires() -> None:
+    """§6.3: a resolving child that resolves closes without routing; one that refires
+    true after the last parent resolved is not only a symptom, so it routes."""
     m = {"incident_id": "inc_child000", "suppressed_by": "inc_parent00"}
     child = _open("pipe.y", P4, m | {"freed_at": 1000, "state": "resolving"}, False)
     assert suppress.route(1600, [child], [ENTRY], False, "blind") == []
     child.m["state"], child.value = "firing", True  # refires later
-    assert suppress.route(1700, [child], [ENTRY], False, "blind") == []
+    out = suppress.route(1700, [child], [ENTRY], False, "blind")
+    assert [f["change"] for _, f in out] == ["unsuppressed", "routed"]
+
+
+def test_a_refiring_child_in_a_vector_routes() -> None:
+    """v19 with one triage at +68m: resolving at the 10-min mark, then stalled again.
+    Before the review fix it stayed suppressed and unrouted for good."""
+    vector = load(VECTORS / "v19-suppression-child-outlives-parent.yaml")
+    vector["end"] = "+180m"
+    vector["series"][0]["steps"] = [[f"+{n}m", n * 2] for n in range(0, 185, 5)]
+    vector["series"][1]["steps"] += [["+68m", 21]]
+    [child] = [
+        i for i in run(vector).incidents().values() if i["rule"].startswith("pipe")
+    ]
+    assert child["routed_at"] is not None and child["routed_at"] > 75 * 60
+
+
+def test_a_group_retired_before_a_restart_stays_retired() -> None:
+    """Re-fed history still holds a retired group's old observations; they must not
+    revive it (a bogus incident) or push a really new group into overflow."""
+    vector = load(VECTORS / "v23-group-retired.yaml")
+    rule = vector["rules"][0]["inline"]
+    rule |= {"when": {"fn": "absent_for", "signal": "errors", "window": "1h"}}
+    rule["detection"] = "absence"
+    vector |= {"limits": {"group_cap": 2}, "end": "+24h40m"}
+    vector["engine_restarts"] = ["+24h20m"]
+    vector["series"].append(
+        {
+            "signal": "federation_sources",
+            "key": "sources.consecutive_errors",
+            "labels": {"source": "b"},
+            "steps": [["+24h20m", 0]],
+        }
+    )
+    vector["expect"] = [{"at": "+24h40m"}]
+    result = run(vector)
+    opened = [r for r in result.records if r["type"] == "incident_opened"]
+    # Only the real absence incident for "gone" (+1h10m), none after the restart.
+    assert [r["at"] for r in opened] == ["2026-10-07T11:10:00Z"]
+    groups = {k[2] for k in result.status if k[1] == "ingest.source-erroring"}
+    assert groups == {group_key({"source": "a"}), group_key({"source": "b"})}
+
+
+def test_state_from_the_part_1_engine_still_loads() -> None:
+    """Part-1 machines have no routing fields; their incidents routed when they
+    opened, so a restore must neither crash nor route them again."""
+    vector = load(VECTORS / "v17-suppression-basic.yaml")
+    start = datetime(2026, 10, 7, 10, tzinfo=UTC)
+    observations = expand(vector)
+
+    def engine(state=None) -> Engine:
+        return Engine(
+            rules_of(vector), instance_id=INSTANCE, install_shape="compose", state=state
+        )
+
+    first = engine()
+    for o in observations:
+        first.observe(o)
+    for t in range(0, 30 * 60 + 1, 15):
+        first.tick(start + timedelta(seconds=t))
+    state = first.state()
+    for slots in state["machines"].values():
+        for m in slots.values():
+            for k in ("opened_at", "hold_end", "routed_at", "suppressed_by"):
+                m.pop(k, None)
+    restored = engine(json.loads(json.dumps(state)))
+    for o in observations:
+        restored.observe(o)
+    records = restored.tick(start + timedelta(seconds=30 * 60 + 15))
+    assert [r for r in records if r["body"].get("change") == "routed"] == []
+    assert any(s["state"] == "firing" for s in restored.status())
 
 
 def test_nothing_routes_inside_an_upgrade_window() -> None:
