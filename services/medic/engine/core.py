@@ -448,6 +448,7 @@ _INCIDENT = (
     "opened_at",
     "routed_at",
     "suppressed_by",
+    "freed_at",  # §6.3's 10 min run from the parent, not from the reopen
     "reopen_count",
 )
 
