@@ -4791,6 +4791,30 @@
       border-bottom-color: var(--ln0);
    }
 
+   /* Alert collection: the master card and table sit on the board's 16px card padding */
+   .settings-content .fed-master .card-b {
+      padding: 14px 16px;
+   }
+
+   .settings-content .fed-master .toggle-row {
+      padding: 0;
+   }
+
+   .settings-content .fed-table thead th,
+   .settings-content .fed-table tbody td {
+      padding: 9px 12px;
+   }
+
+   .settings-content .fed-table thead th:first-child,
+   .settings-content .fed-table tbody td:first-child {
+      padding-left: 0;
+   }
+
+   .settings-content .fed-table thead th:last-child,
+   .settings-content .fed-table tbody td:last-child {
+      padding-right: 0;
+   }
+
    /* SLA policies: severity dot, inline editor (SettingsSLA board) */
    .sla-name {
       max-width: 280px;

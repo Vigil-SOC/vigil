@@ -227,14 +227,13 @@ export function useFederation() {
   const patchSource = useCallback(
     async (sourceId: string, patch: Parameters<typeof federationApi.updateSource>[1]) => {
       const res = await federationApi.updateSource(sourceId, patch)
-      setSources((prev) => prev.map((s) => (s.source_id === sourceId ? res.data : s)))
+      // the PATCH response has no lag, so keep the row's until the re-read below
+      setSources((prev) => prev.map((s) => (s.source_id === sourceId ? { ...s, ...res.data } : s)))
+      // quiet depends on the interval just changed
+      federationApi.listSources().then((r) => setSources(r.data.sources || [])).catch(() => {})
     },
     [],
   )
-
-  const editSourceLocal = useCallback((sourceId: string, patch: Partial<FederationSourceView>) => {
-    setSources((prev) => prev.map((s) => (s.source_id === sourceId ? { ...s, ...patch } : s)))
-  }, [])
 
   const pollNow = useCallback((sourceId: string) => federationApi.pollNow(sourceId), [])
 
@@ -246,7 +245,6 @@ export function useFederation() {
     reload,
     setGlobal,
     patchSource,
-    editSourceLocal,
     pollNow,
   }
 }
