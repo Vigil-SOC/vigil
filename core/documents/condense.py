@@ -7,7 +7,7 @@ condensed and by what, and a document that cannot be condensed is refused.
 
 import asyncio
 import logging
-from typing import List
+from typing import List, Optional
 
 from core.documents.extract import MAX_DOCUMENT_CHARS, DocumentRefused
 
@@ -35,7 +35,9 @@ def _chunks(text: str) -> List[str]:
     return [text[i : i + CHUNK_CHARS] for i in range(0, len(text), CHUNK_CHARS)]
 
 
-async def _condense_chunk(provider, model: str, chunk: str, limit: int) -> str:
+async def _condense_chunk(
+    provider, model: str, chunk: str, limit: int, effort: Optional[str] = None
+) -> str:
     from core.llm.router.router import LLMRouter
 
     try:
@@ -50,6 +52,7 @@ async def _condense_chunk(provider, model: str, chunk: str, limit: int) -> str:
                 }
             ],
             max_tokens=max(limit // 3, 256),
+            effort=effort,
         )
     except Exception as exc:  # noqa: BLE001 -- the reason is the operator's to read
         logger.warning("condensing with %s failed: %s", model, exc)
@@ -62,7 +65,7 @@ async def _condense_chunk(provider, model: str, chunk: str, limit: int) -> str:
 
 async def condense(text: str, pages: int) -> str:
     """``text`` cut to the cap, headed by the line that says so."""
-    from core.llm.target import resolve_dispatch
+    from core.llm.target import resolve_dispatch, resolve_effort
 
     resolved = resolve_dispatch(COMPONENT)
     if resolved is None:
@@ -73,6 +76,7 @@ async def condense(text: str, pages: int) -> str:
             "shorter document."
         )
     provider, model = resolved
+    effort = resolve_effort(COMPONENT)
     head = f"Condensed from {pages} page{'' if pages == 1 else 's'} by {model}\n\n"
     room = MAX_DOCUMENT_CHARS - len(head)
 
@@ -80,7 +84,7 @@ async def condense(text: str, pages: int) -> str:
 
     async def one(chunk: str, limit: int) -> str:
         async with slots:
-            return await _condense_chunk(provider, model, chunk, limit)
+            return await _condense_chunk(provider, model, chunk, limit, effort)
 
     body = text
     for _ in range(MAX_ROUNDS):

@@ -204,6 +204,7 @@ vi.mock('../services/api', () => ({
     reject: vi.fn(() => Promise.resolve({})),
   },
   configApi: {
+    getAIOperations: () => Promise.resolve({ data: {} }),
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
     setTheme: () => Promise.resolve({ data: {} }),
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
@@ -290,6 +291,11 @@ vi.mock('../services/api', () => ({
     update: () => Promise.resolve({ data: {} }),
     delete: () => Promise.resolve({ data: {} }),
     importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
+  },
+  // the spending card shows its own error state; budgets aren't under test here
+  budgetsApi: {
+    getQuota: () => Promise.reject(new Error('not under test')),
+    get: () => Promise.reject(new Error('not under test')),
   },
 }))
 

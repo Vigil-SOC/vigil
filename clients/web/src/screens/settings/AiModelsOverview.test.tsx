@@ -142,7 +142,7 @@ describe('model for each agent', () => {
     )
     mount()
     pickModel('Triage Agent', 'Haiku')
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'haiku'))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'haiku', {}))
     expect(screen.queryByText('Change the default model?')).toBeNull()
   })
 
@@ -161,7 +161,40 @@ describe('model for each agent', () => {
     mount()
     pickModel('Chat (Default)', 'Haiku')
     fireEvent.click(await screen.findByRole('button', { name: 'Change default' }))
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'haiku'))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'haiku', {}))
+  })
+
+  const pickEffort = (row: string, effort: string) => {
+    const cell = screen.getByText(row).closest('tr') as HTMLElement
+    // the third select in the row is the reasoning effort
+    fireEvent.click(cell.querySelectorAll('button.field-select')[2])
+    fireEvent.click(screen.getByRole('option', { name: effort }))
+  }
+
+  it('sets a row\'s reasoning effort, keeping its other settings, and drops the key for Model default', async () => {
+    assignment.mockReturnValue(
+      assignmentsReady({
+        assignments: {
+          chat_default: { component: 'chat_default', provider_id: 'anthropic-default', model_id: 'sonnet' },
+          triage: { component: 'triage', provider_id: 'anthropic-default', model_id: 'sonnet', settings: { temperature: 0.2, effort: 'low' } },
+        },
+      }),
+    )
+    mount()
+    const cell = screen.getByText('Triage Agent').closest('tr') as HTMLElement
+    expect(cell.textContent).toContain('Low')
+    pickEffort('Triage Agent', 'High')
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'sonnet', { temperature: 0.2, effort: 'high' }),
+    )
+    pickEffort('Triage Agent', 'Model default')
+    await waitFor(() => expect(assign).toHaveBeenLastCalledWith('triage', 'anthropic-default', 'sonnet', { temperature: 0.2 }))
+  })
+
+  it('offers no effort on a row that uses the default', () => {
+    mount()
+    const cell = screen.getByText('Triage Agent').closest('tr') as HTMLElement
+    expect(cell.querySelectorAll('button.field-select')).toHaveLength(2)
   })
 })
 

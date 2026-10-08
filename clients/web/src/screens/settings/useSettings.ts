@@ -689,17 +689,12 @@ export function useModelAssignment() {
     }
   }, [reloadKey])
 
-  // `fallback` undefined leaves the stored one to the server (it keeps it on the
-  // same provider and drops it on another); null clears it. The response is what
-  // was stored, so the row mirrors the server's call.
+  // The PUT replaces `settings` whole, so callers carry the keys they keep. The
+  // response is what was stored, so the row mirrors the server's call.
   const assign = useCallback(
-    (component: string, providerId: string, modelId: string, fallback?: string | null) =>
+    (component: string, providerId: string, modelId: string, settings: Record<string, unknown> = {}) =>
       aiConfigApi
-        .setComponent(component, {
-          provider_id: providerId,
-          model_id: modelId,
-          settings: fallback === undefined ? {} : { [FALLBACK_KEY]: fallback },
-        })
+        .setComponent(component, { provider_id: providerId, model_id: modelId, settings })
         .then((res) =>
           setAssignments((prev) => ({ ...prev, [component]: res.data })),
         ),
@@ -950,17 +945,18 @@ export function useIntegrationsConfig() {
           .getIntegrations()
           .then((res) => {
             if (cancelled) return
-            const d = res.data as Partial<IntegrationsConfig>
+            const d = res.data as Partial<IntegrationsConfig> & { error?: string }
             setConfig({
               enabled_integrations: d.enabled_integrations || [],
               integrations: d.integrations || {},
               secrets_set: d.secrets_set || {},
               last_test: d.last_test || {},
             })
-            setPhase('ready')
+            // the endpoint answers 200 with an `error` when it could not read the store
+            setPhase(d.error ? 'error' : 'ready')
           })
           .catch(() => {
-            if (!cancelled) setPhase('ready')
+            if (!cancelled) setPhase('error')
           })
       })
     return () => {

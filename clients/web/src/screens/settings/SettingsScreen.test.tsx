@@ -20,8 +20,7 @@ vi.mock('./SystemSection', () => ({ default: () => <div>System panel</div> }))
 vi.mock('./GeneralSection', () => ({ default: () => <div>General panel</div> }))
 vi.mock('./DeveloperSection', () => ({ default: () => <div>Developer panel</div> }))
 vi.mock('./UsersSection', () => ({ default: () => <div>Users panel</div> }))
-vi.mock('./DataIngestion', () => ({ default: () => <div>Ingestion panel</div> }))
-vi.mock('./DetectionRulesPanel', () => ({ default: () => <div>Detection panel</div> }))
+vi.mock('./DataUploadsSection', () => ({ default: () => <div>Data panel</div> }))
 
 const screenProps: ConsoleScreenProps = {
   openChat: vi.fn(),
@@ -134,15 +133,11 @@ describe('settings nav', () => {
     expect(screen.queryByText('System panel')).not.toBeInTheDocument()
   })
 
-  it('puts upload and detection rules on Data & uploads, with the retention line', () => {
+  it('opens Data & uploads as one page, for old section and tab links alike', () => {
     renderAt('/settings?section=data&tab=detection')
-    expect(screen.getByText('Retention: Not measured yet')).toBeInTheDocument()
-    expect(tabs().getByRole('button', { name: 'Detection Rules' })).toHaveClass('active')
-    expect(screen.getByText('Detection panel')).toBeInTheDocument()
-    expect(screen.queryByText('Ingestion panel')).not.toBeInTheDocument()
-
-    fireEvent.click(tabs().getByRole('button', { name: 'Manual Upload' }))
-    expect(screen.getByText('Ingestion panel')).toBeInTheDocument()
+    expect(nav().getByRole('button', { name: 'Data & uploads' })).toHaveClass('active')
+    expect(screen.getByText('Data panel')).toBeInTheDocument()
+    expect(document.querySelector('.tabs')).toBeNull()
   })
 
   it('keeps the sections goSettings already opens', () => {

@@ -1,20 +1,21 @@
 /* ============================================================
-   Settings · AI Config — the overview (providers, data residency, model for
-   each agent) above four sub-panels behind an internal tab bar.
+   Settings · AI models — the overview (providers, data residency, model for
+   each agent), then Keys, Spending limit and Advanced as cards on the page,
+   with the Bifrost model catalogue behind a second tab.
 
-   Providers, Models and Virtual Keys read and write the Bifrost gateway's own
-   config store through the backend passthrough, so what this page shows is
-   what actually routes. Which model each component uses is Vigil's own concept
-   and lives in the overview; Operations are Vigil runtime knobs.
+   Keys and the spending limit read and write the Bifrost gateway's own config
+   store through the backend passthrough, so what this page shows is what
+   actually routes. Which model each component uses is Vigil's own concept and
+   lives in the overview; Advanced holds Vigil runtime knobs.
    ============================================================ */
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
-import { Field, NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
+import { NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
 import AiProvidersPanel from './AiProvidersPanel'
 import AiModelsPanel from './AiModelsPanel'
 import AiBudgetsPanel from './AiBudgetsPanel'
-import AiModelsOverview from './AiModelsOverview'
+import AiModelsOverview, { AGENT_MODEL_TABLE_ID } from './AiModelsOverview'
 import {
   AI_OPS_DEFAULTS,
   useAiOperations,
@@ -22,26 +23,33 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 
-type AiTab = 'providers' | 'catalogue' | 'keys' | 'operations'
+type AiTab = 'keys' | 'catalogue'
 const TABS: [AiTab, string][] = [
-  ['providers', 'Providers & Keys'],
+  ['keys', 'Keys & limits'],
   ['catalogue', 'Models'],
-  ['keys', 'Virtual Keys'],
-  ['operations', 'Operations'],
 ]
 
+// ?tab= picks the tab below the overview. Anything else falls back to Keys &
+// limits; Home's `assignment` also scrolls to the per-agent table in the
+// overview (see the effect below).
 function tabFromQuery(value: string | null): AiTab {
-  return TABS.find(([k]) => k === value)?.[0] ?? 'providers'
+  return TABS.find(([k]) => k === value)?.[0] ?? 'keys'
 }
 
 export default function AiConfigSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
-  const requested = tabFromQuery(searchParams.get('tab'))
+  const query = searchParams.get('tab')
+  const requested = tabFromQuery(query)
   const [tab, setTab] = useState<AiTab>(requested)
 
   useEffect(() => {
     setTab(requested)
   }, [requested])
+
+  useEffect(() => {
+    if (query === 'assignment') document.getElementById(AGENT_MODEL_TABLE_ID)?.scrollIntoView?.({ block: 'start' })
+  }, [query])
+
   return (
     <>
       <AiModelsOverview notify={notify} />
@@ -52,15 +60,19 @@ export default function AiConfigSection({ notify }: SectionProps) {
           </button>
         ))}
       </div>
-      {tab === 'providers' && <AiProvidersPanel notify={notify} />}
+      {tab === 'keys' && (
+        <>
+          <AiProvidersPanel notify={notify} />
+          <AiBudgetsPanel notify={notify} />
+          <AdvancedPanel notify={notify} />
+        </>
+      )}
       {tab === 'catalogue' && <AiModelsPanel />}
-      {tab === 'keys' && <AiBudgetsPanel notify={notify} />}
-      {tab === 'operations' && <OperationsPanel notify={notify} />}
     </>
   )
 }
 
-function OperationsPanel({ notify }: SectionProps) {
+function AdvancedPanel({ notify }: SectionProps) {
   const { settings, setSettings, phase, save } = useAiOperations()
   const lastSaved = useRef<AIOperationsSettings>(AI_OPS_DEFAULTS)
 
@@ -83,48 +95,55 @@ function OperationsPanel({ notify }: SectionProps) {
     }
   }
 
-  const numField = (key: keyof AIOperationsSettings, label: string, hint: string, min: number, max: number) => (
-    <Field label={label} hint={hint}>
-      <NumberInput
-        value={settings[key] as number}
-        min={min}
-        max={max}
-        onChange={(e) =>
-          setSettings({ ...settings, [key]: Math.max(min, Math.min(max, Number(e.target.value) || 0)) })
-        }
-        onBlur={() => {
-          if (settings[key] !== lastSaved.current[key]) persist(settings)
-        }}
-      />
-    </Field>
-  )
+  const apply = (next: AIOperationsSettings) => { setSettings(next); persist(next) }
 
   return (
     <SettingsCard
-      title="Local Ollama enrichment recovery"
-      desc="Retry a local Ollama enrichment request when it loses the Bifrost connection. These settings persist in the database and take effect without a service restart. Cloud providers are never retried here."
+      wide
+      title="Advanced"
+      desc="Performance settings. They apply without a restart."
       actions={
-        <button className="btn ghost" onClick={() => { setSettings(AI_OPS_DEFAULTS); persist(AI_OPS_DEFAULTS) }}>
+        <button className="btn ghost" onClick={() => apply(AI_OPS_DEFAULTS)}>
           <Icon name="refresh" /> Reset to defaults
         </button>
       }
     >
       <ToggleRow
-        label="Automatically retry local AI enrichment"
-        hint="When a local Ollama enrichment request loses the Bifrost connection, retry it in the background."
+        label="Retry a local model that stops responding"
+        hint="When a local Ollama request loses the Bifrost connection, retry it in the background. Cloud providers are never retried here."
         checked={settings.local_ollama_recovery_enabled}
-        onChange={(v) => { const next = { ...settings, local_ollama_recovery_enabled: v }; setSettings(next); persist(next) }}
+        onChange={(v) => apply({ ...settings, local_ollama_recovery_enabled: v })}
       />
-      <ToggleRow
-        label="Restart the local AI gateway when unavailable"
-        hint="If Bifrost is unhealthy, restart the local gateway before retrying. Disable this to retry only when the gateway is already healthy."
-        checked={settings.local_ollama_recovery_restart_gateway}
-        disabled={!settings.local_ollama_recovery_enabled}
-        onChange={(v) => { const next = { ...settings, local_ollama_recovery_restart_gateway: v }; setSettings(next); persist(next) }}
-      />
-      <div className="settings-grid-2 mt-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
-        {numField('local_ollama_recovery_retry_limit', 'Retry attempts', 'Retries after the first failed request. 0 disables retries.', 0, 3)}
-      </div>
+      {settings.local_ollama_recovery_enabled && (
+        <>
+          <ToggleRow
+            label="Restart the local gateway first"
+            hint="If Bifrost is unhealthy, restart the local gateway before retrying. Off retries only when the gateway is already healthy."
+            checked={settings.local_ollama_recovery_restart_gateway}
+            onChange={(v) => apply({ ...settings, local_ollama_recovery_restart_gateway: v })}
+          />
+          <div className="toggle-row">
+            <div className="toggle-row-text">
+              <span className="toggle-row-label">Retry attempts</span>
+              <span className="toggle-row-hint">Retries after the first failed request. 0 disables retries.</span>
+            </div>
+            <div style={{ width: 96 }}>
+              <NumberInput
+                aria-label="Retry attempts"
+                value={settings.local_ollama_recovery_retry_limit}
+                min={0}
+                max={3}
+                onChange={(e) =>
+                  setSettings({ ...settings, local_ollama_recovery_retry_limit: Math.max(0, Math.min(3, Number(e.target.value) || 0)) })
+                }
+                onBlur={() => {
+                  if (settings.local_ollama_recovery_retry_limit !== lastSaved.current.local_ollama_recovery_retry_limit) persist(settings)
+                }}
+              />
+            </div>
+          </div>
+        </>
+      )}
     </SettingsCard>
   )
 }

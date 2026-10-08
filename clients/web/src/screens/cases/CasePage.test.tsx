@@ -208,7 +208,7 @@ describe('case page', () => {
     expect(await screen.findByRole('heading', { name: 'Hunt case' })).toBeInTheDocument()
     const header = document.querySelector('.detail-head') as HTMLElement
     expect(within(header).getByText('Executing')).toBeInTheDocument()
-    expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
+    expect(screen.getByText('Combined from 2 alerts')).toBeInTheDocument()
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     expect(within(now).getByText('who logged in')).toBeInTheDocument()
@@ -354,7 +354,7 @@ describe('case page', () => {
         evidence_count: 7,
         evidence: [
           { ...HUNT.evidence[0] },
-          // Supports one explanation and weakens another: Mixed, each link named beneath.
+          // Supports one explanation and weakens another: its stance on the leading one, each link named beneath.
           { ...base, evidence_id: 'e2', iteration: 3, source_system: 'okta', summary: 'new session', bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }, { hypothesis_id: 'h1', relation: 'weakens' }] },
           { ...base, evidence_id: 'e3', iteration: 1, source_system: 'dns', summary: 'plain lookup', source_tier: 'not_evidence', bears_on: [] },
           // Gap row with no stamped tier, and an iteration the capped moves do not cover.
@@ -365,21 +365,22 @@ describe('case page', () => {
     renderCase('case-trail')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
-    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · 2 for / 2 against / 1 neither (shown)' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · 2 support · 0 go against · 1 neither' })).toBeInTheDocument()
 
     const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
     const first = row('e1')
-    expect(within(first).getByText('Goes against')).toBeInTheDocument()
+    // Read against the leading explanation (Still forming), a row that only bears on the ruled-out one is neither.
+    expect(within(first).getByText('Neither')).toBeInTheDocument()
     expect(within(first).getByText('Telemetry')).toBeInTheDocument()
     expect(within(first).getByText('threat_hunter')).toBeInTheDocument()
     expect(within(first).getByText('The host is owned')).toBeInTheDocument()
     const second = row('e2')
-    expect(within(second).getByText('Mixed')).toBeInTheDocument()
+    expect(within(second).queryByText('Mixed')).not.toBeInTheDocument()
     expect(within(second).getByText('Feed')).toBeInTheDocument()
     expect(within(second).getByText('threat_hunter')).toBeInTheDocument()
     expect(within(second).getByText('Supports Still forming · Goes against The host is owned')).toBeInTheDocument()
     expect(within(row('e3')).getByText('Neither')).toBeInTheDocument()
-    expect(within(row('e3')).getByText('Not evidence')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Not counted')).toBeInTheDocument()
     expect(within(row('e3')).getByText('network_analyst')).toBeInTheDocument()
     const gap = row('e4')
     expect(within(gap).getByText('no push logs (gap)')).toBeInTheDocument()
@@ -539,7 +540,7 @@ describe('case page', () => {
     const doors = screen.getByRole('region', { name: 'Audit doors' })
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
-    expect(within(doors).getByText('0 for · 1 against · shown')).toBeInTheDocument()
+    expect(within(doors).getByText('0 support · 0 go against · 1 neither')).toBeInTheDocument()
     expect(within(doors).getByText('$0.2000 · 0 gaps')).toBeInTheDocument()
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
@@ -746,7 +747,7 @@ describe('case page', () => {
     renderCase('case-links')
 
     const header = (await screen.findByRole('heading', { name: 'Linked case' })).closest('.detail-head') as HTMLElement
-    expect(within(header).getByText('3 alerts combined')).toBeInTheDocument()
+    expect(within(header).getByText('Combined from 3 alerts')).toBeInTheDocument()
     expect(within(header).queryByText('console alert')).not.toBeInTheDocument()
     const side = screen.getByRole('complementary', { name: 'Case details' })
     expect(within(side).getByText('Alerts (2)')).toBeInTheDocument()
@@ -765,6 +766,32 @@ describe('case page', () => {
     const evidence = screen.getByText('no login').closest('table') ?? screen.getByText('no login').closest('section')
     expect(evidence).toBeTruthy()
     expect(within(evidence as HTMLElement).queryByRole('link', { name: 'Open in source' })).not.toBeInTheDocument()
+  })
+
+  it('puts Details first in the side panel and folds Alerts after three with +N', async () => {
+    testState.cases = [{
+      case_id: 'case-many',
+      title: 'Many alerts',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-many')],
+      linked_findings: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ finding_id: id, title: `Alert ${id}`, source_link: null })),
+    }]
+    testState.runs['run-many'] = { hunt: HUNT }
+    renderCase('case-many')
+
+    const side = await screen.findByRole('complementary', { name: 'Case details' })
+    const titles = within(side).getAllByRole('heading').map((h) => h.textContent)
+    expect(titles.slice(0, 2)).toEqual(['Details', 'Alerts (5)'])
+    expect(within(side).queryByText('Alert d')).not.toBeInTheDocument()
+    fireEvent.click(within(side).getByRole('button', { name: '+2' }))
+    expect(within(side).getByText('Alert e')).toBeInTheDocument()
+    // Summary carries no count; the other tabs keep theirs.
+    expect(screen.getByRole('tab', { name: 'Summary' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^Explanations/ })).toHaveTextContent(/\d/)
   })
 
   it('shows a failed record read', async () => {
@@ -1244,7 +1271,7 @@ describe('case page', () => {
       expect(within(head).getByText('Executing')).toHaveClass('state-pill', 'live')
       expect(await within(head).findByText('Incident response')).toBeInTheDocument()
       expect(within(head).getByText('who logged in')).toHaveClass('case-reason')
-      expect(within(head).getByText('0 alerts combined')).toBeInTheDocument()
+      expect(within(head).queryByText(/Combined from/)).not.toBeInTheDocument()
       const left = await within(head).findByText('7 h left')
       expect(left).toHaveClass('case-sla', 'good')
       expect(within(head).getByText(/Not measured yet/)).toBeInTheDocument()

@@ -14,6 +14,7 @@ from core.agents.builtins import blank_model
 if TYPE_CHECKING:
     from core.llm.router.router import ProviderSpec
 
+
 logger = logging.getLogger(__name__)
 
 _substitutions_logged: Set[Tuple[str, str]] = set()
@@ -172,3 +173,15 @@ def resolve_component(component: str) -> Optional[Tuple[str, str]]:
         return None
     provider, model = resolved
     return provider.provider_type, model
+
+
+def resolve_effort(component: str) -> Optional[str]:
+    """The reasoning effort set on a component's assignment, or None for the
+    model's own default."""
+    from core.llm.providers.registry import get_registry
+
+    try:
+        return get_registry().effort_for_component(component)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("effort lookup failed for %s: %s", component, exc)
+        return None
