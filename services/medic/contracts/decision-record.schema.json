@@ -878,7 +878,7 @@
           "$ref": "#/$defs/incident_id"
         },
         "how": {
-          "description": "E3 4 resolve reasons, plus closed_quietly for a suppressed child that resolves before it is freed (E3 6.3).",
+          "description": "E3 4 resolve reasons, including closed_quietly: a suppressed child that resolves without ever routing (E3 6.3).",
           "enum": [
             "cleared",
             "rule_retired",

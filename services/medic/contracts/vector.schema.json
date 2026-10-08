@@ -119,7 +119,7 @@
           "opened_at": {"$ref": "#/$defs/offset"},
           "resolving_since": {"oneOf": [{"$ref": "#/$defs/offset"}, {"type": "null"}]},
           "resolved_at": {"oneOf": [{"$ref": "#/$defs/offset"}, {"type": "null"}]},
-          "reason": {"enum": ["cleared", "rule_retired", "group_retired"]},
+          "reason": {"enum": ["cleared", "closed_quietly", "rule_retired", "group_retired"]},
           "flapping": {"type": "boolean"},
           "reopen_count": {"type": "integer", "minimum": 0},
           "suppressed_by": {"type": "string"},
