@@ -15,7 +15,7 @@ import { NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
 import AiProvidersPanel from './AiProvidersPanel'
 import AiModelsPanel from './AiModelsPanel'
 import AiBudgetsPanel from './AiBudgetsPanel'
-import AiModelsOverview from './AiModelsOverview'
+import AiModelsOverview, { AGENT_MODEL_TABLE_ID } from './AiModelsOverview'
 import {
   AI_OPS_DEFAULTS,
   useAiOperations,
@@ -29,21 +29,26 @@ const TABS: [AiTab, string][] = [
   ['catalogue', 'Models'],
 ]
 
-// ?tab= picks the tab below the overview. Anything else, including Home's
-// `assignment` (the per-agent table now sits in the overview at the top of the
-// page), falls back to Keys & limits.
+// ?tab= picks the tab below the overview. Anything else falls back to Keys &
+// limits; Home's `assignment` also scrolls to the per-agent table in the
+// overview (see the effect below).
 function tabFromQuery(value: string | null): AiTab {
   return TABS.find(([k]) => k === value)?.[0] ?? 'keys'
 }
 
 export default function AiConfigSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
-  const requested = tabFromQuery(searchParams.get('tab'))
+  const query = searchParams.get('tab')
+  const requested = tabFromQuery(query)
   const [tab, setTab] = useState<AiTab>(requested)
 
   useEffect(() => {
     setTab(requested)
   }, [requested])
+
+  useEffect(() => {
+    if (query === 'assignment') document.getElementById(AGENT_MODEL_TABLE_ID)?.scrollIntoView?.({ block: 'start' })
+  }, [query])
 
   return (
     <>

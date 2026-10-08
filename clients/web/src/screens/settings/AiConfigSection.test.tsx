@@ -15,7 +15,10 @@ vi.mock('../../services/api', async (orig) => ({
   ...(await orig<object>()),
   configApi: { getAIOperations: () => getAIOperations(), setAIOperations: (...a: unknown[]) => setAIOperations(...(a as [])) },
 }))
-vi.mock('./AiModelsOverview', () => ({ default: () => null }))
+vi.mock('./AiModelsOverview', () => ({
+  AGENT_MODEL_TABLE_ID: 'ai-model-for-each-agent',
+  default: () => <section id="ai-model-for-each-agent">Model for each agent</section>,
+}))
 vi.mock('./AiProvidersPanel', () => ({ default: () => <div>keys card</div> }))
 vi.mock('./AiBudgetsPanel', () => ({ default: () => <div>spending card</div> }))
 vi.mock('./AiModelsPanel', () => ({ default: () => <div>catalogue</div> }))
@@ -66,6 +69,13 @@ describe('AiConfigSection', () => {
     expect(screen.getByRole('button', { name: 'Models' })).toHaveClass('active')
     expect(screen.getByText('catalogue')).toBeInTheDocument()
     expect(screen.queryByText('keys card')).not.toBeInTheDocument()
+  })
+
+  it('scrolls to the per-agent model table for ?tab=assignment', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    render(<AiConfigSection notify={() => {}} />, '/settings?section=ai-config&tab=assignment')
+    expect(scroll).toHaveBeenCalled()
   })
 
   it.each([

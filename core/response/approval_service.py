@@ -227,6 +227,7 @@ class ApprovalService:
         reversibility: Reversibility = Reversibility.REVERSIBLE,
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
+        annotate_rule: bool = True,
     ) -> PendingAction:
         """Create a new pending action.
 
@@ -239,6 +240,8 @@ class ApprovalService:
         confidence is their own claim (an agent, a model's reading of alert
         text) and so cannot be what releases the action. A second call with
         the same ``idempotency_key`` returns the existing non-failed row.
+        ``annotate_rule=False`` keeps the deciding rule off ``reason`` for rows
+        whose reason is read by an analyst and no confidence was ever compared.
         """
         action, _inserted = self._put_action(
             action_type=action_type,
@@ -255,6 +258,7 @@ class ApprovalService:
             reversibility=reversibility,
             idempotency_key=idempotency_key,
             human_only=human_only,
+            annotate_rule=annotate_rule,
         )
         return action
 
@@ -274,6 +278,7 @@ class ApprovalService:
         reversibility: Reversibility = Reversibility.REVERSIBLE,
         idempotency_key: Optional[str] = None,
         human_only: bool = False,
+        annotate_rule: bool = True,
     ) -> tuple[PendingAction, bool]:
         """Insert an approval row, or return the existing non-failed one.
 
@@ -294,7 +299,8 @@ class ApprovalService:
         )
         if human_only:
             rule = decision_rule("approval.human_only", True)
-        reason = f"{reason}; {rule}" if reason else rule
+        if annotate_rule:
+            reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         status = (

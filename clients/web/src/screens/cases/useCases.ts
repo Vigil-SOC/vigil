@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { utcDayClock } from '../../shared/utc'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
@@ -234,8 +234,7 @@ export function useCaseDetail(id: string | null) {
     setInvestigations(asInvestigations(data.investigations))
     setClosure(asClosure(data.closure))
     setLinkedFindings(asLinkedFindings(data.linked_findings))
-    const d = data.created_at ? new Date(data.created_at) : null
-    setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
+    setCreated(utcDayClock(data.created_at) ?? '—')
   }, [])
 
   useEffect(() => {

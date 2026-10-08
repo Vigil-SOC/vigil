@@ -1,9 +1,8 @@
-import { format } from 'date-fns'
+import { utcDayClock } from '../../shared/utc'
 
 export function when(value?: string | null): string {
   if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? value : format(d, 'MMM d, yyyy · HH:mm')
+  return utcDayClock(value) ?? value
 }
 
 export function money(value: number | null | undefined): string {

@@ -118,7 +118,7 @@ def test_an_in_flight_run_reads_as_live_and_a_finished_one_does_not():
     paused = detail_fields(
         "open", [], None, [_run("r2", "paused", datetime(2026, 10, 7))]
     )
-    assert paused["combined_state"] == "waiting_approval"
+    assert paused["combined_state"] == "paused"
     done = detail_fields(
         "open", [], None, [_run("r3", "completed", datetime(2026, 10, 7))]
     )

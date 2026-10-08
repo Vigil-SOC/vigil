@@ -44,6 +44,13 @@ describe('the header', () => {
     render(<WatchRun d={{ ...hunt('completed'), workflow_version: null }} onBack={vi.fn()} />)
     expect(screen.getByText(/version not recorded/)).toBeInTheDocument()
   })
+
+  it('names the workflow by its display name, and does not end on a hunt name that is the workflow id', () => {
+    render(<WatchRun d={{ ...hunt('completed', [move(1)], { name: 'threat-hunt' }), workflow_name: 'threat-hunt', trigger_context: { case_id: 'c-1' } } as unknown as WfRunDetail} onBack={vi.fn()} />)
+    // the run id sits in its own span, so read the line whole
+    const line = screen.getByText('run-1'.slice(0, 8)).parentElement as HTMLElement
+    expect(line.textContent).toBe('Run run-1 · Threat hunt version 3 · case c-1. Replayed step by step from the record.')
+  })
 })
 
 describe('a hunt', () => {
@@ -216,6 +223,11 @@ describe('a hunt', () => {
     render(<WatchRun d={hunt('completed', [])} onBack={vi.fn()} />)
     expect(screen.getByText('No steps were recorded for this run.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /replay/i })).not.toBeInTheDocument()
+  })
+
+  it('does not double the period when a stop reason already ends in one', () => {
+    render(<WatchRun d={{ ...hunt('failed', []), error: 'ran out of turns, or abort.' } as unknown as WfRunDetail} onBack={vi.fn()} />)
+    expect(screen.getByText('Stopped · ran out of turns, or abort. No steps were recorded for this run.')).toBeInTheDocument()
   })
 
   it('stops its timer when the page goes away', async () => {
