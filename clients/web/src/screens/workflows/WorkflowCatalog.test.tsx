@@ -181,6 +181,13 @@ vi.mock('../../services/skillsApi', () => ({
       bundled: false,
       file_count: 2,
     })),
+    upload: vi.fn(() => Promise.resolve({
+      name: 'desk-check',
+      description: 'Does a desk check.',
+      source_path: 'skills/desk-check',
+      bundled: false,
+      file_count: 1,
+    })),
     delete: vi.fn(() => Promise.resolve({ deleted: 'desk-check' })),
   },
 }))
@@ -436,6 +443,44 @@ describe('workflow catalog cards', () => {
     fireEvent.change(name, { target: { value: 'new-skill' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(skillsApi.save).toHaveBeenCalledWith({ name: 'new-skill', description: 'Does a thing.', body: '1. Do it.' })
+  })
+
+  it('imports a SKILL.md, opens the drawer on it, and shows the server reason when refused', async () => {
+    render(
+      <MemoryRouter>
+        <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
+    await screen.findByText('executive-summary')
+    const input = screen.getByLabelText('Skill file')
+    expect(input).toHaveAttribute('accept', '.md,.zip')
+
+    vi.mocked(skillsApi.upload).mockRejectedValueOnce({
+      response: { data: { detail: "`name` 'Bad_Name' must be lowercase letters, digits and single hyphens" } },
+    })
+    const bad = new File(['x'], 'SKILL.md')
+    fireEvent.change(input, { target: { files: [bad] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent("`name` 'Bad_Name' must be lowercase letters")
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    vi.mocked(skillsApi.get).mockResolvedValueOnce({
+      name: 'desk-check',
+      description: 'Does a desk check.',
+      source_path: 'skills/desk-check',
+      bundled: false,
+      file_count: 1,
+      body: '# Steps\n',
+      operator_root_set: true,
+      version: 1,
+      files: [{ path: 'SKILL.md', size: 10 }],
+    })
+    const good = new File(['x'], 'SKILL.md')
+    fireEvent.change(input, { target: { files: [good] } })
+    expect(skillsApi.upload).toHaveBeenLastCalledWith(good)
+    expect(await screen.findByRole('dialog', { name: 'Edit desk-check' })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('shows the reader pane beside the cards and follows the selected card', async () => {

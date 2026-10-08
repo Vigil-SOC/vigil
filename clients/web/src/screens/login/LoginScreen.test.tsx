@@ -59,7 +59,7 @@ describe('LoginScreen', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'admin123' } })
     fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }))
     await waitFor(() => expect(login).toHaveBeenCalledWith('admin', 'admin123', undefined))
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/dashboard'))
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/'))
   })
 
   it('reveals the MFA step when the backend requires it', async () => {
