@@ -87,3 +87,17 @@ ignore_imports =
     ; rather than spoken to down a pipe. The bridge is the one crossing, and
     ; naming it here is what stops it becoming the precedent for the next one.
     core.integrations.mcp.in_process -> tools.mcp.vigil
+
+[importlinter:contract:medic]
+name = Medic imports nothing from core, tools or any other service (A3-1)
+type = forbidden
+source_modules =
+    services.medic
+; Every other deployable under services/, listed by name: a forbidden contract
+; can't say "services.* except Medic". A new Python service is added here.
+forbidden_modules =
+    core
+    tools
+    services.api
+    services.daemon
+    services.worker
