@@ -1,6 +1,6 @@
 # No active LLM provider at all: soc-daemon skips AI triage (services/daemon/processor.py:694-700,
-# #1689 pair). B5 has no exact row; the nearest is L-1.b (triage resolves to a provider
-# that can't serve it). Handoff to B5 for a row.
+# #1689 pair). B5 row L-1.k (added 2026-10-08 from F7b-6; this rule used L-1.b
+# until then).
 # Set: entry ERROR or reminder. Clear: the recovery line or a daemon start (see
 # llm-triage-queue-unavailable.yaml: a fresh process logs no recovery line). Untrusted.
 apiVersion: medic.rules/v1
@@ -8,7 +8,7 @@ kind: Rule
 id: llm.triage-no-provider
 title: No LLM provider is configured, so AI triage is skipped
 revision: 1
-fault: {class: llm, mode: L-1, causes: [L-1.b]}
+fault: {class: llm, mode: L-1, causes: [L-1.k]}
 lane: 2
 detection: event
 signals:

@@ -74,12 +74,15 @@ def test_redactor_failure_withholds_the_record(
 
 def test_medic_code_passes_no_extra_to_loggers() -> None:
     # `extra` fields are attached after the record factory runs, so they would
-    # skip redaction. Medic logs through the message only.
+    # skip redaction. Medic logs through the message only. A local venv
+    # (`uv run` inside services/medic) is third-party code, not Medic's.
     offenders = [
         str(p.relative_to(MEDIC))
         for p in MEDIC.rglob("*.py")
         if "tests" not in p.parts
         and "contracts" not in p.parts
+        and ".venv" not in p.parts
+        and "site-packages" not in p.parts
         and "extra=" in p.read_text()
     ]
     assert offenders == []
