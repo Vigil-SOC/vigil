@@ -82,6 +82,7 @@ def get_playbook(
             workflows=workflows,
             registry=registry,
             provider=provider,
+            effort=target.resolve_effort("investigation"),
         )
     except UnknownPlaybook as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None

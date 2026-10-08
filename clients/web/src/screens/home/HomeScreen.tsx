@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
 import { HoldButton } from '../../shared/HoldButton'
+import { Icon } from '../../shared/icons'
+import { InfoTip } from '../../shared/InfoTip'
+import { useToast } from '../../shell/toast'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -28,6 +31,13 @@ const STEP_ACTION: Record<string, string> = {
   notify: 'Set up',
   rules: 'Link',
   per_agent: 'Pick',
+}
+
+type Pickup = { share: number; launched: number; today: number }
+
+const NEEDS_TIP = {
+  source: 'Pending approvals and checkpoints (B1)',
+  calculation: 'Oldest first, top four shown',
 }
 
 function readHidden(): string[] {
@@ -78,8 +88,8 @@ function DecisionCard({
 }: {
   item: NeedsYouItem
   busy: boolean
-  onApprove: (id: string) => void
-  onReject: (id: string, reason: string) => void
+  onApprove: (item: NeedsYouItem, fused: boolean) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
   onOpenCase: (id: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
@@ -95,11 +105,11 @@ function DecisionCard({
         {item.reason && <p className="home-reason">{item.reason}</p>}
         <div className="home-actions">
           {item.reversibility === 'reversible' ? (
-            <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item.source_id)}>
+            <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
               Approve
             </button>
           ) : (
-            <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+            <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
           )}
           {rejecting ? (
             <form
@@ -108,7 +118,7 @@ function DecisionCard({
                 event.preventDefault()
                 const text = reason.trim()
                 if (!text) return
-                onReject(item.source_id, text)
+                onReject(item, text)
               }}
             >
               <textarea
@@ -147,10 +157,10 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen({ openCase }: ConsoleScreenProps) {
+export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [count, setCount] = useState<number | null>(null)
-  const [share, setShare] = useState<number | null>(null)
+  const [share, setShare] = useState<Pickup | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -161,6 +171,7 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
   const [demoBusy, setDemoBusy] = useState(false)
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
+  const { notify, notifyUndoable, pending, settled } = useToast()
 
   const load = useCallback(async () => {
     const ticket = ++loadTicket.current
@@ -170,14 +181,14 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     )
     const shareRead = triageApi.get().then(
       (res) => {
-        const value = res.data.strip.picked_up.share
-        return typeof value === 'number' ? value : null
+        const { share: value, launched_or_merged: launched, created_today: today } = res.data.strip.picked_up
+        return typeof value === 'number' ? { share: value, launched, today } : null
       },
       () => null,
     )
-    const [needsResult, shareValue] = await Promise.all([needs, shareRead])
+    const [needsResult, pickup] = await Promise.all([needs, shareRead])
     if (ticket !== loadTicket.current) return
-    setShare(shareValue)
+    setShare(pickup)
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
       return
@@ -210,6 +221,14 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     }
   }, [])
 
+  // a fused commit just landed or failed (possibly after Home was left and reopened): refresh
+  const seenSettled = useRef(settled)
+  useEffect(() => {
+    if (seenSettled.current === settled) return
+    seenSettled.current = settled
+    void load()
+  }, [settled, load])
+
   const dismiss = (id: string) => {
     const next = hidden.includes(id) ? hidden : [...hidden, id]
     sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(next))
@@ -230,12 +249,33 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     }
   }
 
-  const run = async (id: string, act: () => Promise<unknown>) => {
+  // Reversible approve and every reject commit through the toast's undo fuse, which owns the
+  // call, so it survives leaving Home. A held (irreversible) approve commits at once.
+  const fuse = (id: string, verb: string, past: string, title: string, commit: () => Promise<unknown>) =>
+    notifyUndoable({
+      key: id,
+      text: `${verb}: ${title}`,
+      commit,
+      doneText: `${past}: ${title}`,
+      failText: (err) => errorText(err, 'Could not update that decision'),
+    })
+
+  const approve = (item: NeedsYouItem, fused: boolean) => {
+    const commit = () => approvalsApi.approve(item.source_id)
+    if (fused) return fuse(item.source_id, 'Approving', 'Approved', item.title, commit)
+    void run(item.source_id, commit, `Approved: ${item.title}`)
+  }
+
+  const reject = (item: NeedsYouItem, reason: string) =>
+    fuse(item.source_id, 'Rejecting', 'Rejected', item.title, () => approvalsApi.reject(item.source_id, reason))
+
+  const run = async (id: string, act: () => Promise<unknown>, doneText: string) => {
     if (busyRef.current) return
     busyRef.current = id
     setBusy(id)
     try {
       await act()
+      notify('ok', doneText)
       await load()
     } catch (err) {
       setError(errorText(err, 'Could not update that decision'))
@@ -245,75 +285,167 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     }
   }
 
-  const visible = showAll ? items : items.slice(0, VISIBLE)
-  const moreWaiting = items.length - visible.length
+  // cards whose fuse is running stay out of the list and the count, so a poll can't bring them back
+  const shown = items.filter((it) => !pending.includes(it.source_id))
+  const shownCount = count === null ? null : Math.max(0, count - (items.length - shown.length))
+  const visible = showAll ? shown : shown.slice(0, VISIBLE)
+  const moreWaiting = shown.length - visible.length
   const openSteps = (setup?.steps ?? []).filter((step) => !step.done && !hidden.includes(step.id))
   const noAlerts = setup !== null && setup.alerts_exist === 0
+  const doneCount = (setup?.steps ?? []).filter((step) => step.done).length
+  const stepCount = setup?.steps.length ?? 0
+  const boardClear = shownCount !== null && !error && shown.length === 0
 
   return (
     <div className="home-screen">
-      {count !== null && <p className="home-headline">{headline(count)}</p>}
+      {shownCount !== null && <p className="home-headline">{headline(shownCount)}</p>}
       {share !== null && (
-        <p className="home-share">{(share * 100).toFixed(1)}% of alerts picked up automatically today</p>
+        <p className="home-share">
+          {(share.share * 100).toFixed(1)}% of alerts picked up automatically today
+          <InfoTip
+            label="How the pickup share is calculated"
+            align="start"
+            source="Intake triggers"
+            calculation={`Launched or merged ÷ arrived today (UTC), ${share.launched} of ${share.today}`}
+            limit="None"
+          />
+        </p>
       )}
       {error && (
         <p className="section" role="alert">
           {error}
         </p>
       )}
-      <section className="home-setup section" aria-label="Setup">
-        <div className="home-head">
-          <h2>Get more from Vigil</h2>
-          <Link to="/settings?section=integrations">Browse integrations →</Link>
-        </div>
-        {setupError && <p role="alert">{setupError}</p>}
-        {openSteps.length > 0 && (
-          <ul className="home-steps">
-            {openSteps.map((step) => (
-              <li key={step.id} className="home-step">
+      {noAlerts ? (
+        <section className="home-first section" aria-label="Setup">
+          {setupError && <p role="alert">{setupError}</p>}
+          <div className="home-first-grid">
+            <div className="home-ready">
+              <div className="home-ready-head">
                 <div>
-                  <h3>{step.title}</h3>
-                  <p>{step.state_line}</p>
+                  <h2>Get Vigil ready</h2>
+                  <p>Tick steps off as you go.</p>
                 </div>
-                <div className="home-step-actions">
-                  <Link className="btn primary" to={step.href}>
-                    {STEP_ACTION[step.id] ?? 'Open'}
-                  </Link>
-                  <button type="button" className="btn ghost" onClick={() => dismiss(step.id)}>
-                    Not now
-                  </button>
+                <span className="home-ready-count" aria-live="polite">
+                  {doneCount} of {stepCount} done
+                </span>
+              </div>
+              <div className="home-bar" aria-hidden="true">
+                <span
+                  className={doneCount === stepCount ? 'done' : undefined}
+                  style={{ width: `${stepCount ? (doneCount / stepCount) * 100 : 0}%` }}
+                />
+              </div>
+              <ul className="home-checks" aria-label="Setup steps">
+                {setup.steps.map((step) => (
+                  <li key={step.id} className={`home-check${step.done ? ' done' : ''}`}>
+                    <span className="home-tick" aria-hidden="true">
+                      {step.done && <Icon name="check" size={13} />}
+                    </span>
+                    <div>
+                      <h3>
+                        {step.title}
+                        {step.done && <span className="sr-only"> (done)</span>}
+                      </h3>
+                      <p>{step.state_line}</p>
+                    </div>
+                    <Link className="btn" to={step.href}>
+                      {STEP_ACTION[step.id] ?? 'Open'}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="home-first-side">
+              <div className="home-empty">
+                <span className="home-empty-icon" aria-hidden="true">
+                  <Icon name="link" size={20} />
+                </span>
+                <h3>No alerts yet</h3>
+                <p>
+                  Connect a SIEM, EDR or the LogLM pipeline and alerts start arriving within minutes. Decisions
+                  that need you will show up here.
+                </p>
+                <Link className="btn primary" to="/settings?section=data">
+                  <Icon name="plus" size={13} />
+                  Connect data
+                </Link>
+              </div>
+              <div className="home-notready">
+                <h3>Not ready to connect yet?</h3>
+                <p>
+                  Load a day of demo data from a sample estate. Everything is labelled demo and can be cleared in
+                  one click.
+                </p>
+                <div className="home-notready-actions">
+                  {!setup.demo_enabled && (
+                    <button type="button" className="btn" disabled={demoBusy} onClick={() => void exploreDemo()}>
+                      <Icon name="play" size={13} />
+                      Explore with demo data
+                    </button>
+                  )}
+                  {startTour && (
+                    <button type="button" className="btn ghost" onClick={startTour}>
+                      Take the tour
+                    </button>
+                  )}
                 </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {noAlerts && (
-          <div className="home-alerts">
-            <Link className="btn primary" to="/settings?section=data">
-              Connect data
-            </Link>
-            {!setup.demo_enabled && (
-              <button type="button" className="btn" disabled={demoBusy} onClick={() => void exploreDemo()}>
-                Explore with demo data
-              </button>
-            )}
-            {demoMessage && <p className="home-meta">{demoMessage}</p>}
+                {demoMessage && <p className="home-meta">{demoMessage}</p>}
+              </div>
+            </div>
           </div>
-        )}
-      </section>
+        </section>
+      ) : (
+        <section className="home-setup section" aria-label="Setup">
+          <div className="home-head">
+            <h2>Get more from Vigil</h2>
+            <Link to="/settings?section=integrations">Browse integrations →</Link>
+          </div>
+          {setupError && <p role="alert">{setupError}</p>}
+          {openSteps.length > 0 && (
+            <ul className="home-steps">
+              {openSteps.map((step) => (
+                <li key={step.id} className="home-step">
+                  <div>
+                    <h3>{step.title}</h3>
+                    <p>{step.state_line}</p>
+                  </div>
+                  <div className="home-step-actions">
+                    <Link className="btn primary" to={step.href}>
+                      {STEP_ACTION[step.id] ?? 'Open'}
+                    </Link>
+                    <button type="button" className="btn ghost" onClick={() => dismiss(step.id)}>
+                      Not now
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       <section className="section" aria-label="Needs your attention">
         <div className="home-head">
-          <h2>Needs your attention</h2>
+          <h2>
+            Needs your attention
+            <InfoTip label="How Needs your attention is calculated" align="start" {...NEEDS_TIP} />
+          </h2>
           <Link to="/cases">Cases →</Link>
         </div>
+        {boardClear && (
+          <div className="home-clear">
+            <h3>Board clear</h3>
+            <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>
+          </div>
+        )}
         <div className="home-cards">
           {visible.map((item) => (
             <DecisionCard
               key={item.source_id}
               item={item}
               busy={busy !== null}
-              onApprove={(id) => void run(id, () => approvalsApi.approve(id))}
-              onReject={(id, reason) => void run(id, () => approvalsApi.reject(id, reason))}
+              onApprove={approve}
+              onReject={reject}
               onOpenCase={openCase}
             />
           ))}

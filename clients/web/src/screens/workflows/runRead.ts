@@ -5,8 +5,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { workflowApi } from '../../services/api'
 
 export function errMsg(e: unknown): string {
-  const r = e as { response?: { data?: { detail?: string } }; message?: string }
-  return r?.response?.data?.detail || r?.message || 'Something went wrong'
+  const r = e as { response?: { data?: { detail?: string | { msg?: string }[] } }; message?: string }
+  const detail = r?.response?.data?.detail
+  // a 422 carries a list of {msg} objects, which must not reach the page as is
+  const text = Array.isArray(detail) ? detail.map((d) => d?.msg).filter(Boolean).join('; ') : detail
+  return text || r?.message || 'Something went wrong'
 }
 
 export interface WfRun {
@@ -282,11 +285,17 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
   const [detail, setDetail] = useState<WfRunDetail | null>(null)
   const [dphase, setDphase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
+  const current = useRef(runId)
+  current.current = runId
   const load = useCallback(
     () =>
       workflowApi
         .getRun(runId)
-        .then((res) => { setDetail(res.data as WfRunDetail); setDphase('ready') })
+        .then((res) => {
+          if (current.current !== runId) return // a read for a run no longer shown
+          setDetail(res.data as WfRunDetail)
+          setDphase('ready')
+        })
         .catch(() => setDphase((p) => (p === 'ready' ? p : 'error'))),
     [runId],
   )

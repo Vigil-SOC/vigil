@@ -30,6 +30,7 @@ from core.storage.models import (
     CaseWatcher,
     Investigation,
     SketchMapping,
+    WorkflowRun,
     case_findings,
 )
 
@@ -69,6 +70,23 @@ def list_case_investigations(session: Session, case_id: str) -> List[Investigati
         .order_by(
             Investigation.created_at.desc(), Investigation.investigation_id.desc()
         )
+        .all()
+    )
+
+
+def list_case_runs(session: Session, case_id: str) -> List[WorkflowRun]:
+    """Runs started on this case, newest first, found by ``trigger_context``.
+
+    ``/hunt`` and a bridge handoff start a run with the case id in its trigger
+    context and no ``Investigation`` row.
+    """
+    return (
+        session.query(WorkflowRun)
+        .filter(
+            WorkflowRun.trigger_context["case_id"].astext == case_id,
+            WorkflowRun.deleted_at.is_(None),
+        )
+        .order_by(WorkflowRun.started_at.desc(), WorkflowRun.run_id.desc())
         .all()
     )
 

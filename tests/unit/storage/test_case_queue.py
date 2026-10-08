@@ -16,6 +16,7 @@ from core.storage.models import (
     Finding,
     Investigation,
     SLAPolicy,
+    WorkflowRun,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
@@ -27,6 +28,7 @@ NOW = datetime(2026, 6, 15, 12, 0, 0)
 def session():
     db = get_db_session()
     try:
+        db.query(WorkflowRun).delete()
         db.query(Investigation).delete()
         db.query(Case).delete()
         db.query(Finding).delete()
@@ -506,3 +508,123 @@ def test_needs_you_ids_sort_first_and_an_empty_set_keeps_sla_order(session):
     page, page_total = repo.queue(needs_you_ids={"waiting"}, limit=1, offset=1, now=NOW)
     assert page_total == 4
     assert _ids(page) == ["sooner"]
+
+
+def test_needs_you_only_keeps_the_set_and_an_empty_set_returns_nothing(session):
+    _case(session, "waiting")
+    _case(session, "other")
+    _case(session, "done", status="closed")
+    repo = CaseRepository(session)
+
+    rows, total = repo.queue(
+        needs_you_ids={"waiting", "done"}, needs_you_only=True, now=NOW
+    )
+    assert (_ids(rows), total) == (["waiting"], 1)
+
+    rows, total = repo.queue(
+        needs_you_ids={"waiting", "done"}, needs_you_only=True, closed=True, now=NOW
+    )
+    assert _ids(rows) == ["done"]
+
+    for empty in (set(), None):
+        assert repo.queue(needs_you_ids=empty, needs_you_only=True, now=NOW) == ([], 0)
+    assert repo.queue(needs_you_ids=set(), now=NOW)[1] == 2
+
+
+def test_workflow_ids_compose_with_workflow_and_empty_matches_none(session):
+    for case_id, workflow in (("h1", "hunt-a"), ("h2", "hunt-b"), ("i1", "triage")):
+        _case(session, case_id)
+        _inv(session, f"inv-{case_id}", case_id, workflow_id=workflow, created_at=NOW)
+    _case(session, "bare")
+    repo = CaseRepository(session)
+
+    rows, total = repo.queue(workflow_ids={"hunt-a", "hunt-b"}, now=NOW)
+    assert (sorted(_ids(rows)), total) == (["h1", "h2"], 2)
+
+    rows, _ = repo.queue(workflow_ids={"hunt-a", "hunt-b"}, workflow="hunt-b", now=NOW)
+    assert _ids(rows) == ["h2"]
+    assert repo.queue(workflow_ids={"hunt-a"}, workflow="triage", now=NOW) == ([], 0)
+    assert repo.queue(workflow_ids=set(), now=NOW) == ([], 0)
+
+
+def test_strip_needs_you_counts_open_cases_in_the_set(session):
+    _case(session, "waiting")
+    _case(session, "also")
+    _case(session, "done", status="closed")
+    repo = CaseRepository(session)
+
+    assert (
+        repo.strip(now=NOW, needs_you_ids={"waiting", "done", "missing"}).needs_you == 1
+    )
+    assert repo.strip(now=NOW, needs_you_ids=set()).needs_you == 0
+    assert repo.strip(now=NOW).needs_you == 0
+
+
+def _run(
+    session, run_id: str, case_id: str, *, status: str, started_at: datetime, **context
+):
+    session.add(
+        WorkflowRun(
+            run_id=run_id,
+            workflow_id="threat-hunt",
+            workflow_name="threat-hunt",
+            status=status,
+            trigger_context={"case_id": case_id, **context},
+            started_at=started_at,
+            total_cost_usd=1.4989,
+        )
+    )
+    session.flush()
+
+
+def test_a_hunt_case_reads_its_run_in_one_query(session):
+    _case(session, "hunt")
+    _case(session, "mixed")
+    _case(session, "twin")
+    _run(session, "run-hunt", "hunt", status="paused", started_at=NOW)
+    _run(session, "run-done", "mixed", status="completed", started_at=NOW)
+    _inv(
+        session,
+        "inv-mixed",
+        "mixed",
+        status="executing",
+        created_at=NOW - timedelta(hours=2),
+    )
+    # An investigation's own run carries its id and is not a second ref.
+    _inv(
+        session,
+        "inv-twin",
+        "twin",
+        status="completed",
+        workflow_id="wf",
+        created_at=NOW - timedelta(hours=1),
+    )
+    _run(
+        session,
+        "run-twin",
+        "twin",
+        status="running",
+        started_at=NOW,
+        investigation_id="inv-twin",
+    )
+    repo = CaseRepository(session)
+
+    rows = []
+    statements = _sql(session, lambda: rows.extend(repo.queue(now=NOW)[0]))
+    assert len(statements) == 2  # the count and the page, however many cases
+    by_id = {row.case_id: queue_item(row, NOW) for row in rows}
+
+    hunt = by_id["hunt"]
+    assert hunt.combined_state == "paused"
+    assert hunt.workflow_id == "threat-hunt"
+    assert hunt.cost_usd == pytest.approx(1.4989)
+    assert (hunt.iteration_count, hunt.max_cost_usd) == (0, 0.0)
+    # The newest ref is the finished run, the newest live one the investigation.
+    assert by_id["mixed"].combined_state == "executing"
+    assert by_id["mixed"].workflow_id == "threat-hunt"
+    assert by_id["twin"].combined_state == "open"
+    assert by_id["twin"].workflow_id == "wf"
+
+    paused, total = repo.queue(state="paused", now=NOW)
+    assert (_ids(paused), total) == (["hunt"], 1)
+    assert repo.strip(now=NOW).by_state == {"paused": 1, "executing": 1, "open": 1}

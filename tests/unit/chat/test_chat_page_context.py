@@ -39,6 +39,11 @@ async def test_turn_without_a_model_names_the_page_and_uses_chat_default(monkeyp
     monkeypatch.setattr(claude, "live_mcp_tools", lambda _registry: [])
     monkeypatch.setattr(claude, "_relay", _relay)
 
+    async def brief(case_id, _workflows):
+        return f"BRIEF for {case_id}"
+
+    monkeypatch.setattr(claude, "case_brief", brief)
+
     response = await claude.chat_stream(
         claude.ChatRequest(
             messages=[{"role": "user", "content": "what is on this page?"}],
@@ -47,6 +52,7 @@ async def test_turn_without_a_model_names_the_page_and_uses_chat_default(monkeyp
         ),
         current_user=SimpleNamespace(username="nestor", user_id="u-1"),
         registry=MagicMock(),
+        workflows=MagicMock(),
     )
     async for _ in response.body_iterator:
         pass
@@ -55,7 +61,8 @@ async def test_turn_without_a_model_names_the_page_and_uses_chat_default(monkeyp
     assert seen["override"] is None
     assert sent["model"] == "gemini-flash-latest"
     assert "model: gemini-flash-latest" in sent["config"]
-    assert (
-        sent["system_prompt"]
-        == "The analyst opened this from page overview about case CASE-9."
+    assert sent["system_prompt"].startswith(
+        "The analyst opened this from page overview about case CASE-9. "
+        f"{claude.LATEST_ONLY}"
+        "\n\nBRIEF for CASE-9\n\n<available_skills>"
     )

@@ -105,9 +105,16 @@ function opening(history: readonly Message[], from: number): number {
   return at;
 }
 
+// The question being answered: the latest user turn in the history. A chat's first ask is
+// the task and lives in the prefix, so a history with no user turn pins nothing.
+function pinnedAt(history: readonly Message[]): number {
+  return history.findLastIndex((message) => message.role === "user");
+}
+
 // Folded to the count first, then to the weight: head and tail give ground a turn at a
 // time until the request fits max_chars, and every candidate goes through foldToCount so
 // the edge rules hold. Neither edge goes below one, so an oversized message is result_cap's job.
+// The current question is a third edge: it is never folded, wherever it falls.
 export function foldHistory(
   history: readonly Message[],
   summarise: Summarise,
@@ -137,11 +144,23 @@ function foldToCount(history: readonly Message[], summarise: Summarise, policy: 
   const start = boundary(history, policy.head);
   const head = history.slice(0, start);
   const end = Math.max(start, opening(history, history.length - policy.tail));
-  const middle = history.slice(start, end);
-  if (middle.length === 0) return { messages: history, folded: 0 };
+  const pin = pinnedAt(history);
+  const pinned = pin >= start && pin < end;
+  // The question folds around, never into: only what came before it and what came
+  // after it, up to the tail, is summarised.
+  const before = history.slice(start, pinned ? pin : end);
+  const after = pinned ? history.slice(pin + 1, end) : [];
+  if (before.length + after.length === 0) return { messages: history, folded: 0 };
 
-  const note: Message = { role: "user", content: summarise(middle) };
-  return { messages: [...head, note, ...history.slice(end)], folded: middle.length };
+  // A note and the question are all user turns, and a doubled role reads as a lost
+  // turn, so they go out as one message with the question inside it, unaltered.
+  const parts = [
+    before.length === 0 ? "" : summarise(before),
+    pinned ? history[pin]!.content : "",
+    after.length === 0 ? "" : summarise(after),
+  ].filter((part) => part !== "");
+  const note: Message = { role: "user", content: parts.join("\n\n") };
+  return { messages: [...head, note, ...history.slice(end)], folded: before.length + after.length };
 }
 
 // Re-rendered every turn and never written to the transcript: the working state
@@ -164,6 +183,12 @@ export function assemble(
   // prompt and the tool catalogue -- are spent before it gets a budget.
   const spent = sizeOf(intro) + sizeOf(tail) + JSON.stringify(prefix.tools).length;
   const room = Math.max(0, policy.max_chars - spent);
+  // A question in history is never folded, so one the prefix leaves no room for cannot
+  // be answered. A task is the prefix's own and keeps the old behaviour.
+  const question = history[pinnedAt(history)];
+  if (question !== undefined && question.content.length > room) {
+    throw new Error("This case has more than Ask can read at once. Ask about something more specific.");
+  }
   const { messages, folded } = foldHistory(history, summarise, { ...policy, max_chars: room });
   return { messages: [...intro, ...messages, ...tail], folded };
 }

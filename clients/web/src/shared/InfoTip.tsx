@@ -34,12 +34,15 @@ export function InfoTip({ label, text, align = 'end', ...lines }: InfoTipProps) 
     <span
       ref={root}
       className="info-tip"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
       onBlur={(e) => {
         if (!root.current?.contains(e.relatedTarget as Node | null)) setOpen(false)
       }}
       onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
     >
-      <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen(true)}>
         <Icon name="info" size={14} />
       </button>
       {open && (

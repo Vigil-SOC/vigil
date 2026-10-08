@@ -1,4 +1,4 @@
-"""One reading of a case's state, shared by the case page and later the list.
+"""One reading of a case's state, shared by the case page and the list.
 
 A case status and an investigation status are different facts. The pill is
 this function, not a copy of it in the client.
@@ -6,15 +6,19 @@ this function, not a copy of it in the client.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional, Sequence
 
 from core.agents.projections import run_id_for
 from core.cases.combined_state import budget_health as _budget_health
 from core.cases.combined_state import combined_state as _combined_state
 from core.storage.models import (
+    LIVE_CASE_STATES,
     LIVE_INVESTIGATION_STATUSES,
+    RUN_LIVE_STATE,
     CaseClosureInfo,
     Investigation,
+    WorkflowRun,
 )
 
 
@@ -27,11 +31,7 @@ def combined_state(
     status. Otherwise the case status stands.
     """
     live = next(
-        (
-            status
-            for status in investigation_statuses
-            if status in LIVE_INVESTIGATION_STATUSES
-        ),
+        (status for status in investigation_statuses if status in LIVE_CASE_STATES),
         None,
     )
     return _combined_state(case_status, live) or "open"
@@ -84,20 +84,64 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
         "closure_category": closure.closure_category,
         "closed_by": closure.closed_by,
         "closed_by_kind": closure.closed_by_kind or "agent",
+        "closed_at": closure.closed_at.isoformat() if closure.closed_at else None,
         "verdict": _verdict(closure),
     }
+
+
+def run_ref(run: WorkflowRun) -> dict:
+    """The case page's view of a run that has no ``Investigation`` row."""
+    state = RUN_LIVE_STATE.get(run.status)
+    return {
+        "investigation_id": None,
+        "status": run.status,
+        "workflow_id": run.workflow_id,
+        "run_id": run.run_id,
+        "live": state is not None,
+        "cost_usd": float(run.total_cost_usd or 0),
+        "max_cost_usd": 0.0,
+        "budget_health": "healthy",
+        "iteration_count": 0,
+        "created_at": run.started_at.isoformat() if run.started_at else None,
+    }
+
+
+def case_run_refs(
+    investigations: Sequence[Investigation], runs: Sequence[WorkflowRun]
+) -> list[tuple[dict, str]]:
+    """Investigation and run refs together, newest first, each with its state word.
+
+    An investigation's run is ``run_id_for`` of it, which may also be a
+    ``workflow_runs`` row; that run is listed once, as the investigation.
+    """
+    items: list[tuple[datetime, dict, str]] = [
+        (item.created_at or datetime.min, investigation_ref(item), item.status)
+        for item in investigations
+    ]
+    seen = {ref["run_id"] for _, ref, _ in items}
+    items += [
+        (
+            run.started_at or datetime.min,
+            run_ref(run),
+            RUN_LIVE_STATE.get(run.status, run.status),
+        )
+        for run in runs
+        if run.run_id not in seen
+    ]
+    items.sort(key=lambda item: (item[0], item[1]["run_id"]), reverse=True)
+    return [(ref, state) for _, ref, state in items]
 
 
 def detail_fields(
     case_status: Optional[str],
     investigations: Sequence[Investigation],
     closure: Optional[CaseClosureInfo],
+    runs: Sequence[WorkflowRun] = (),
 ) -> dict:
-    """Extras on ``GET /cases/{id}``. ``investigations`` is newest first."""
+    """Extras on ``GET /cases/{id}``. Inputs are newest first; so is the output."""
+    refs = case_run_refs(investigations, runs)
     return {
-        "combined_state": combined_state(
-            case_status, [item.status for item in investigations]
-        ),
-        "investigations": [investigation_ref(item) for item in investigations],
+        "combined_state": combined_state(case_status, [state for _, state in refs]),
+        "investigations": [ref for ref, _ in refs],
         "closure": closure_view(closure),
     }

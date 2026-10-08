@@ -290,7 +290,7 @@ describe("compose projection", () => {
     ] as const;
 
     const folded = composeProjection(RUN, events);
-    expect(folded).toEqual({ run_id: RUN, results: [executeResult] });
+    expect(folded).toEqual({ run_id: RUN, run_kind: "compose", results: [executeResult], unbound: [] });
     expect(archFor("compose").projection!(RUN, events)).toEqual(folded);
   });
 });
