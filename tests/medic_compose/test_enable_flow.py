@@ -415,3 +415,40 @@ def test_a_rotated_key_reaches_the_backend(run, how) -> None:
         assert run("--secrets-only", "--rotate").returncode == 0
         assert run().returncode == 0
     assert RECREATE_BACKEND in [_sub(c) for c in run.compose_calls()]
+
+
+# --- S6-3 / V2-7: on Linux the key file is root:10010 0640 ---------------------
+
+FAKE_LINUX_UNAME = "#!/bin/sh\necho Linux\n"
+# The script reads file modes with GNU `stat -c %a` once it believes it is on
+# Linux; answer that on the Mac running the test.
+FAKE_GNU_STAT = """#!/bin/sh
+if [ "$1" = -c ] && [ "$2" = %a ]; then exec /usr/bin/stat -f %Lp "$3"; fi
+exec /usr/bin/stat "$@"
+"""
+
+
+def _as_linux(run: Run) -> None:
+    for name, body in (("uname", FAKE_LINUX_UNAME), ("stat", FAKE_GNU_STAT)):
+        path = run.bin / name
+        path.write_text(body)
+        path.chmod(0o755)
+
+
+def test_linux_hands_the_key_to_its_own_group(run) -> None:
+    _as_linux(run)
+    done = run(VIGIL_MEDIC_DOCKER_GID="999")
+    assert done.returncode == 0, done.stdout + done.stderr
+    [chown] = [c for c in run.calls() if c[:1] == ["run"]]
+    own = chown[-1]
+    assert "chown 0:10010 /s/api_key && chmod 0640 /s/api_key" in own
+    assert "chown 10002:10002 /s/viewer_password" in own
+    # Never gid 1000, which on Linux is often a person's own group.
+    assert ":1000 " not in own + " "
+    # Before Medic and the gateway start (they read the files at start).
+    calls = run.calls()
+    first_medic_up = next(
+        i for i, c in enumerate(calls) if c[:1] == ["compose"] and "medic" in c[-3:]
+        and "up" in c
+    )
+    assert calls.index(chown) < first_medic_up

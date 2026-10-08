@@ -136,8 +136,9 @@ def test_overlay_touches_only_medic_net() -> None:
     assert set(raw["networks"]) == set(MEDIC_NETWORKS)
     for name, spec in raw["services"].items():
         if name == "backend":
-            # V2: where to poll Medic and the key to poll with. Never a network.
-            assert set(spec) == {"environment", "secrets"}, name
+            # V2: where to poll Medic and the key to poll with, plus the key
+            # file's group (S6-3). Never a network.
+            assert set(spec) == {"environment", "secrets", "group_add"}, name
             continue
         assert name in MEDIC_NET_MEMBERS - set(MEDIC_SERVICES), name
         assert set(spec) == {"networks"}, f"{name}: the overlay only adds medic-net"
@@ -426,3 +427,40 @@ def test_the_docker_group_has_one_name() -> None:
     found = [str(p) for p in places if bare.search(p.read_text(encoding="utf-8"))]
     assert found == []
     assert "${VIGIL_MEDIC_DOCKER_GID:-0}" in BASE.read_text(encoding="utf-8")
+
+
+# --- S6-3 / V2-7: the API key file's own group ---------------------------------
+
+KEY_GID = "10010"
+
+
+def test_key_readers_join_the_key_group_and_nothing_else_does(on) -> None:
+    # The file is root:10010 0640 on Linux (enable-compose.sh): Medic (10001)
+    # and the backend (1000) read it through this group, never through gid
+    # 1000, which on Linux is often a person's own group.
+    groups = {name: spec.get("group_add") or [] for name, spec in on["services"].items()}
+    with_key_gid = sorted(n for n, g in groups.items() if KEY_GID in map(str, g))
+    assert with_key_gid == ["backend", "medic"]
+    assert [str(g) for g in groups["medic"]] == [KEY_GID]
+    assert [str(g) for g in groups["backend"]] == [KEY_GID]
+
+
+def test_the_gateway_neither_mounts_the_key_nor_joins_its_group(on) -> None:
+    # It passes X-Medic-Key through and checks only its shape (S5).
+    spec = on["services"]["medic-gateway"]
+    assert not spec.get("group_add")
+    assert "medic_api_key" not in [s["source"] for s in spec.get("secrets", [])]
+
+
+def test_the_backend_mounts_the_key_only_with_the_overlay(on, home) -> None:
+    assert [s["source"] for s in on["services"]["backend"]["secrets"]] == [
+        "medic_api_key"
+    ]
+    plain = render(home=home, overlay=False)
+    assert not plain["services"]["backend"].get("group_add")
+    assert not plain["services"]["backend"].get("secrets")
+
+
+def test_the_enable_script_hands_the_key_to_the_same_group() -> None:
+    script = (REPO / "scripts/medic/enable-compose.sh").read_text()
+    assert f"MEDIC_KEY_GID={KEY_GID}" in script

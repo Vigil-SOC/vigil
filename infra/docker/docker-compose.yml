@@ -581,6 +581,9 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
     container_name: deeptempo-medic
     user: "10001:10001"
+    # Reads the API key file (root:10010 0640 on Linux) through this group,
+    # shared with the backend only (S6-3).
+    group_add: ["10010"]
     read_only: true
     # SQLite's temp files (big sorts) need somewhere writable besides the store.
     tmpfs:

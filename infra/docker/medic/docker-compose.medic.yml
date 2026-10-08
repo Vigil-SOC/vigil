@@ -33,6 +33,8 @@ services:
       VIGIL_MEDIC_API_KEY_FILE: /run/secrets/medic_api_key
     secrets:
       - medic_api_key
+    # The key file is root:10010 0640 on Linux; Medic shares this group (S6-3).
+    group_add: ["10010"]
   soc-daemon:
     networks: [medic-net]
   agent-worker:
