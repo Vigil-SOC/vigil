@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FALLBACK_KEY } from '../../config/aiComponents'
 import api, {
   aiConfigApi,
   budgetsApi,

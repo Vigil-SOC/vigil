@@ -198,6 +198,10 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       // Other settings keys are carried over; the PUT replaces the whole object.
       const rest = { ...a?.settings }
       delete rest.effort
+      // A fallback never crosses a provider or equals the new model; null clears it.
+      if (rest[FALLBACK_KEY] && (a?.provider_id !== next.providerId || rest[FALLBACK_KEY] === next.modelId)) {
+        rest[FALLBACK_KEY] = null
+      }
       await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
       notify('ok', `${component} saved.`)
     } catch (e) {
@@ -309,6 +313,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                           <Select
                             value={row.providerId}
                             placeholder="Select provider"
+                            disabled={savingFallback === c}
                             options={providerIds.map((pid) => ({ value: pid, label: pid }))}
                             onSelect={(v) => update(c, { providerId: v, modelId: '' })}
                           />
@@ -316,6 +321,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                             value={row.modelId}
                             placeholder="Select model"
                             searchable
+                            disabled={savingFallback === c}
                             options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
                             onSelect={(v) => update(c, { modelId: v })}
                           />

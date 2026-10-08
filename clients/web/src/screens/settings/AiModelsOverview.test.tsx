@@ -166,8 +166,8 @@ describe('model for each agent', () => {
 
   const pickEffort = (row: string, effort: string) => {
     const cell = screen.getByText(row).closest('tr') as HTMLElement
-    // the third select in the row is the reasoning effort
-    fireEvent.click(cell.querySelectorAll('button.field-select')[2])
+    // the fourth select in the row is the reasoning effort (the third is the fallback)
+    fireEvent.click(cell.querySelectorAll('button.field-select')[3])
     fireEvent.click(screen.getByRole('option', { name: effort }))
   }
 
@@ -194,7 +194,7 @@ describe('model for each agent', () => {
   it('offers no effort on a row that uses the default', () => {
     mount()
     const cell = screen.getByText('Triage Agent').closest('tr') as HTMLElement
-    expect(cell.querySelectorAll('button.field-select')).toHaveLength(2)
+    expect(cell.querySelectorAll('button.field-select')).toHaveLength(3)
   })
 })
 
@@ -237,7 +237,7 @@ describe('fallback for the built-in components', () => {
     const { unmount } = mount()
     fireEvent.click(fallbackTrigger('Chat (Default)'))
     fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', 'haiku'))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', { fallback_model_id: 'haiku' }))
     expect(screen.queryByText('Change the default model?')).toBeNull()
     unmount()
 
@@ -245,7 +245,7 @@ describe('fallback for the built-in components', () => {
     mount()
     fireEvent.click(fallbackTrigger('Chat (Default)'))
     fireEvent.click(screen.getByRole('option', { name: 'Stops' }))
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', null))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', { fallback_model_id: null }))
   })
 
   it('reports a failed save', async () => {

@@ -125,6 +125,11 @@ def can_serve(provider, model: str) -> bool:
     return not model.startswith("claude-") or provider.provider_type in _SERVES_CLAUDE
 
 
+def first_servable(provider, candidates) -> Optional[str]:
+    """The first non-blank candidate ``provider`` can serve, else None."""
+    return next((c for c in candidates if c and can_serve(provider, c)), None)
+
+
 def _catalogue(provider) -> Optional[set]:
     """Model ids this provider is known to serve, or None when that isn't known."""
     try:

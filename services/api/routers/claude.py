@@ -31,8 +31,8 @@ from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
 from core.llm.system_prompt import validate_system_prompt
 from core.llm.target import (
-    can_serve,
     component_fallback,
+    first_servable,
     model_for,
     note_fallback,
     provider_for,
@@ -224,16 +224,14 @@ def _servable_agent_model(
     if provider is None:
         return assignment_model
 
-    for candidate in (primary, fallback, assignment_model, component_fb):
-        if candidate and can_serve(provider, candidate):
-            if candidate == component_fb and candidate not in (
-                primary,
-                fallback,
-                assignment_model,
-            ):
-                note_fallback(component, assignment_model, candidate)
-            return candidate
-    return assignment_model
+    chosen = first_servable(
+        provider, (primary, fallback, assignment_model, component_fb)
+    )
+    if chosen is None:
+        return assignment_model
+    if chosen == component_fb and chosen not in (primary, fallback, assignment_model):
+        note_fallback(component, assignment_model, chosen)
+    return chosen
 
 
 class ContentBlock(BaseModel):

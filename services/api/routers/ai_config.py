@@ -105,6 +105,9 @@ def _settings_with_fallback(
         fallback = blank_model((row.settings or {}).get(FALLBACK_KEY))
     else:
         fallback = None
+    # Never cross-provider, even when the payload carries one.
+    if row is not None and row.provider_id != payload.provider_id:
+        fallback = None
     # A model change can land on the stored fallback; that's no fallback at all.
     if fallback == payload.model_id and FALLBACK_KEY not in payload.settings:
         fallback = None

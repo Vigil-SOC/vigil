@@ -386,3 +386,16 @@ def test_delete_clears_fallback_with_row(client, session):
     client.delete("/api/ai/config/triage")
     assert session.assignments == {}
     assert session.audits[-1].old_value["fallback_model_id"] == "b"
+
+
+def test_provider_change_drops_a_fallback_sent_with_it(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, provider="anthropic-default", model="c", fallback_model_id="d")
+    assert r.json()["settings"] == {}
+
+
+def test_model_change_onto_the_fallback_clears_it(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, model="b", fallback_model_id=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"] == {}
