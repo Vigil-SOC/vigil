@@ -1,0 +1,112 @@
+name: Medic
+
+# Medic (System Watcher) has its own lock and its own gates, so it has its own
+# workflow rather than steps in ci-cd.yml. Path-filtered: a PR that doesn't
+# touch Medic doesn't pay for it. No repository condition: nothing here needs a
+# secret, so it runs on forks as well.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/medic/**"
+      - "infra/docker/Dockerfile.medic"
+      - ".importlinter"
+      - ".dockerignore"
+      - ".github/workflows/medic.yml"
+  pull_request:
+    paths:
+      - "services/medic/**"
+      - "infra/docker/Dockerfile.medic"
+      - ".importlinter"
+      - ".dockerignore"
+      - ".github/workflows/medic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Outside services/: the repo's ratchets scan every .py file under it.
+  UV_PROJECT_ENVIRONMENT: ../../.venv
+
+jobs:
+  # The contracts are the spec every later Medic PR builds against, so their
+  # tests gate here, together with Medic's own and its import fence (A3-1).
+  medic-contracts:
+    name: Medic contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version-file: .python-version
+
+      - name: Install Medic's locked dependencies
+        run: uv sync --project services/medic --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic --frozen ruff check services/medic
+          uv run --project services/medic --frozen ruff format --check services/medic
+
+      - name: Pytest
+        run: uv run --project services/medic --frozen pytest services/medic
+
+      # The whole .importlinter file, not only Medic's contract: it is one
+      # command and the others are cheap.
+      - name: Import fence
+        run: uv run --project services/medic --frozen lint-imports
+
+  medic-image:
+    name: Medic image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/Dockerfile.medic
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Medic image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.medic
+          push: false
+          load: true
+          tags: vigil-medic:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Off by default: the flag unset, `run` exits 0 with the reason.
+      - name: Smoke test, flag off
+        run: |
+          out=$(docker run --rm --read-only vigil-medic:ci 2>&1)
+          echo "$out"
+          grep -q "VIGIL_MEDIC_ENABLED" <<<"$out"
+
+      # On, as it will run: read-only root, no capabilities, a fresh named
+      # volume. `check` must go green from the image's own HEALTHCHECK command.
+      - name: Smoke test, flag on
+        run: |
+          docker volume create medic_ci
+          docker run -d --name medic --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            -e VIGIL_MEDIC_ENABLED=true \
+            -v medic_ci:/var/lib/vigil-medic vigil-medic:ci
+          for _ in $(seq 1 30); do
+            if docker exec medic python -m services.medic check; then
+              docker exec medic id -u | grep -qx 10001
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs medic
+          exit 1
