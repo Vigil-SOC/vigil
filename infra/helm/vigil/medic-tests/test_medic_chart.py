@@ -195,6 +195,7 @@ def test_enabled_renders_the_medic_set(on) -> None:
         ("NetworkPolicy", f"{MEDIC}-deny-all"),
         ("NetworkPolicy", MEDIC),
         ("NetworkPolicy", GATEWAY),
+        ("Secret", f"{MEDIC}-api-key"),
     }
 
 
@@ -260,13 +261,15 @@ def test_medic_probes_call_check(on) -> None:
     (c,) = medic_pod(on)["containers"]
     check = ["python", "-m", "services.medic", "check"]
     # C5 §5.2: startup 10 s × 30, liveness 30 s × 4, readiness 30 s × 2.
-    for probe, period, failures in (
-        ("startupProbe", 10, 30),
-        ("livenessProbe", 30, 4),
-        ("readinessProbe", 30, 2),
+    # Readiness is `check --ready` (C5: not Ready only while the API can't
+    # serve), so the gateway's Service sends the backend's poll nowhere else.
+    for probe, period, failures, command in (
+        ("startupProbe", 10, 30, check),
+        ("livenessProbe", 30, 4, check),
+        ("readinessProbe", 30, 2, [*check, "--ready"]),
     ):
         p = c[probe]
-        assert p["exec"]["command"] == check, probe
+        assert p["exec"]["command"] == command, probe
         assert (p["periodSeconds"], p["failureThreshold"]) == (period, failures), probe
 
 
@@ -387,7 +390,9 @@ def test_medic_holds_no_viewer_password(on) -> None:
     spec = medic_pod(on)
     (c,) = spec["containers"]
     assert not [e for e in c["env"] if "PASSWORD" in e["name"] or "valueFrom" in e]
-    assert not [v for v in spec["volumes"] if "secret" in v]
+    # Its one secret is the API key (V2-8), never the Viewer's.
+    secrets = [v["secret"]["secretName"] for v in spec["volumes"] if "secret" in v]
+    assert secrets == [f"{MEDIC}-api-key"]
 
 
 def test_gateway_reads_the_viewer_password_from_one_secret_key(on) -> None:
@@ -670,7 +675,7 @@ def test_long_release_names_fit_63(chart) -> None:
         for d in docs
         if "medic" in d["metadata"]["name"]
     }
-    assert len(pairs) == 14  # nothing collided when truncated
+    assert len(pairs) == 15  # nothing collided when truncated
 
 
 def test_blank_cidrs_mean_look_it_up(chart) -> None:
@@ -679,3 +684,135 @@ def test_blank_cidrs_mean_look_it_up(chart) -> None:
     values = {k: v for k, v in MEDIC_ON.items() if not k.startswith("medic.kubeApi")}
     with pytest.raises(RenderError, match=r"medic\.kubeApi\.cidrs is required"):
         helm_template(chart, {**values, "medic.kubeApi.cidrs": "{}"})
+
+
+# --- V2-8: the API key, and the backend's poll -------------------------------
+
+import base64
+import re
+
+API_KEY = f"{MEDIC}-api-key"
+KEY_DIR = "/run/secrets/medic-api"
+BACKEND = "rel-vigil-backend"
+
+
+def backend_pod(docs):
+    return pod_spec(named(docs, "Deployment", BACKEND))
+
+
+def secret_volume(spec, secret_name):
+    vols = [v for v in spec.get("volumes", []) if "secret" in v]
+    return [v for v in vols if v["secret"]["secretName"] == secret_name]
+
+
+def test_api_key_is_generated_into_its_own_secret(on) -> None:
+    doc = named(on, "Secret", API_KEY)
+    assert doc["type"] == "Opaque"
+    assert set(doc["data"]) == {"api_key"}
+    key = base64.b64decode(doc["data"]["api_key"]).decode()
+    # X2's shape: 32 random bytes, base64url, no padding (the gateway and Medic
+    # refuse anything else).
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", key), key
+    assert "stringData" not in doc
+
+
+def test_api_key_is_never_in_values(chart) -> None:
+    values = yaml.safe_load((chart / "values.yaml").read_text())["medic"]["apiKey"]
+    assert values == {"existingSecret": "", "key": "api_key"}
+
+
+def test_two_installs_get_different_keys(render, chart) -> None:
+    a = named(helm_template(chart, MEDIC_ON), "Secret", API_KEY)["data"]["api_key"]
+    b = named(helm_template(chart, MEDIC_ON), "Secret", API_KEY)["data"]["api_key"]
+    assert a != b
+
+
+def test_api_key_value_appears_only_in_its_secret(all_on) -> None:
+    key = base64.b64decode(named(all_on, "Secret", API_KEY)["data"]["api_key"]).decode()
+    elsewhere = [
+        f"{d['kind']}/{d['metadata']['name']}"
+        for d in all_on
+        if key in yaml.safe_dump(d) and d["metadata"]["name"] != API_KEY
+    ]
+    assert elsewhere == []
+
+
+@pytest.mark.parametrize("pod", [medic_pod, backend_pod])
+def test_medic_and_backend_mount_the_key_as_a_file(on, pod) -> None:
+    spec = pod(on)
+    (vol,) = secret_volume(spec, API_KEY)
+    # Kubernetes gives a secret file the pod's fsGroup (Medic 10001, backend
+    # 1000), so group-read is enough and "other" gets nothing (S6-3 / V2-7).
+    assert vol["secret"]["defaultMode"] == 0o440
+    assert vol["secret"]["items"] == [{"key": "api_key", "path": "api_key"}]
+    (c,) = spec["containers"]
+    mounts = [m for m in c["volumeMounts"] if m["name"] == vol["name"]]
+    assert mounts == [{"name": vol["name"], "mountPath": KEY_DIR, "readOnly": True}]
+    env = {e["name"]: e for e in c["env"]}
+    assert env["VIGIL_MEDIC_API_KEY_FILE"] == {
+        "name": "VIGIL_MEDIC_API_KEY_FILE",
+        "value": f"{KEY_DIR}/api_key",
+    }
+    assert "envFrom" not in c or all(
+        API_KEY not in str(src) for src in c.get("envFrom", [])
+    )
+    assert not [e for e in c["env"] if API_KEY in str(e.get("valueFrom", ""))]
+
+
+def test_backend_polls_through_the_gateways_inbound_listener(on) -> None:
+    (c,) = backend_pod(on)["containers"]
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["VIGIL_MEDIC_API_URL"] == f"http://{GATEWAY}-in:8470"
+    assert env["VIGIL_MEDIC_ENABLED"] == "true"
+
+
+def test_gateway_never_holds_the_api_key(on) -> None:
+    # It passes X-Medic-Key through and checks only its shape; Medic compares it.
+    assert secret_volume(gateway_pod(on), API_KEY) == []
+    (c,) = gateway_pod(on)["containers"]
+    assert not [e for e in c["env"] if "API_KEY" in e["name"]]
+
+
+def test_medic_off_gives_the_backend_no_medic_path(render) -> None:
+    docs = render()
+    spec = backend_pod(docs)
+    (c,) = spec["containers"]
+    names = {e["name"] for e in c["env"]}
+    assert not names & {"VIGIL_MEDIC_API_URL", "VIGIL_MEDIC_API_KEY_FILE"}
+    assert not [v for v in spec.get("volumes", []) if "medic" in v["name"]]
+    assert [
+        d for d in docs if d["kind"] == "Secret" and "medic" in d["metadata"]["name"]
+    ] == []
+
+
+def test_existing_secret_replaces_the_generated_one(render) -> None:
+    docs = render(
+        {
+            **MEDIC_ON,
+            "medic.apiKey.existingSecret": "ops-medic",
+            "medic.apiKey.key": "k",
+        }
+    )
+    assert [d for d in kinds(docs, "Secret") if d["metadata"]["name"] == API_KEY] == []
+    for spec in (medic_pod(docs), backend_pod(docs)):
+        (vol,) = secret_volume(spec, "ops-medic")
+        assert vol["secret"]["items"] == [{"key": "k", "path": "api_key"}]
+
+
+def test_backend_and_medic_mount_the_same_secret(on) -> None:
+    (m,) = secret_volume(medic_pod(on), API_KEY)
+    (b,) = secret_volume(backend_pod(on), API_KEY)
+    assert m["secret"] == b["secret"]
+
+
+def test_gateway_admits_the_backend_on_the_inbound_port(all_on) -> None:
+    policy = named(all_on, "NetworkPolicy", GATEWAY)
+    backend_labels = pod_labels(named(all_on, "Deployment", BACKEND))
+    admitted = [
+        p["port"]
+        for rule in policy["spec"]["ingress"]
+        for peer in rule["from"]
+        if selects(peer.get("podSelector", {}), backend_labels)
+        for p in rule["ports"]
+    ]
+    assert admitted == [8470]

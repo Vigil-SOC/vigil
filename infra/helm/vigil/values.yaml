@@ -904,9 +904,10 @@ networkPolicies:
 # It needs a cluster that ENFORCES NetworkPolicy (Calico, Cilium, a managed
 # cluster with policy enforcement on, kind's kindnet since it gained policy
 # support). At start it connects to the gateway (allowed) and then tries a
-# connection its policy blocks (see below). Unless the first connects
-# and the second is dropped, it exits with code 3 and says why, and the pod
-# crash-loops: on flannel or any plugin without policy support it will not run.
+# connection its policy blocks (see below). Unless the first connects and the
+# second is dropped (or refused three times, for plugins set to REJECT), it
+# exits with code 3 and says why, and the pod crash-loops: on flannel or any
+# plugin without policy support it will not run.
 # Known limits:
 #   - Cilium matches ipBlock against node/host addresses only with
 #     policy-cidr-match-mode=nodes; without it, an API server on node IPs is
@@ -942,6 +943,18 @@ medic:
   # outbound listener (<fullname>-medic-gateway:8471, allowed) and then tries
   # its inbound one (<fullname>-medic-gateway-in:8470, which only the backend
   # may reach). Same pods, so both have endpoints or neither does.
+  # X-Medic-Key (X2): the shared secret the backend presents, through the
+  # gateway's inbound listener, to Medic's API (one poll a minute; Down after
+  # 270 s without an answer). Minted at install into <fullname>-medic-api-key
+  # (32 random bytes, base64url) and kept across upgrades; never put a key here.
+  # Medic and the backend mount it as a file. Where `lookup` can't run (helm
+  # template, Argo CD, Flux) every render mints a new one, so create the Secret
+  # yourself and name it, e.g.
+  #   kubectl create secret generic medic-api-key --from-file=api_key=<(
+  #     python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+  apiKey:
+    existingSecret: ""
+    key: api_key
   # Where Medic reads the agent worker's /readyz. Empty → a Service this chart
   # renders for it (<fullname>-medic-agent-worker:6990). Needs
   # agentWorker.enabled: the egress policy allows only the chart's agent worker.

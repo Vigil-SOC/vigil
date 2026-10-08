@@ -20,6 +20,13 @@ pytestmark = [
 
 CHART = Path(__file__).resolve().parents[3] / "infra" / "helm" / "vigil"
 USER = "medic-a1b2c3d4e5f6"
+# What any Medic-on render needs since S7 (the chart refuses without them).
+MEDIC_ON = (
+    "medic.enabled=true",
+    "medic.kubeApi.cidrs[0]=10.0.0.1/32",
+    f"medic.gateway.viewer.username={USER}",
+    "medic.gateway.viewer.passwordSecret.name=medic-viewer",
+)
 
 
 @pytest.fixture(scope="module")
@@ -63,7 +70,7 @@ def _backend_env(chart: Path, *sets: str) -> dict:
     [
         ((), "false"),
         (("medic.enabled=false",), "false"),
-        (("medic.enabled=true",), "true"),
+        (MEDIC_ON, "true"),
     ],
 )
 def test_backend_flag_follows_medic_enabled(chart, sets, expected) -> None:
@@ -92,13 +99,7 @@ def _notes(chart: Path, *sets: str) -> str:
 
 def test_notes_give_the_account_step_only_when_medic_is_on(chart) -> None:
     assert "core.auth.service_account" not in _notes(chart)
-    notes = _notes(
-        chart,
-        "medic.enabled=true",
-        f"medic.gateway.viewer.username={USER}",
-        "medic.gateway.viewer.passwordSecret.name=medic-viewer",
-        "medic.gateway.viewer.passwordSecret.key=password",
-    )
+    notes = _notes(chart, *MEDIC_ON, "medic.gateway.viewer.passwordSecret.key=password")
     assert f"ensure {USER}" in notes
     assert "get secret medic-viewer -o jsonpath='{.data.password}'" in notes
     # The password travels on a pipe: no --from-literal, no value on a command line.

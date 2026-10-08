@@ -149,6 +149,10 @@ spec:
               value: {{ printf "%s-in:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.inPort" .) | quote }}
             - name: VIGIL_MEDIC_POLICY_CONTROL_ADDR
               value: {{ printf "%s:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.outPort" .) | quote }}
+            # The key its API checks (X2), re-read per request. In the pod Medic
+            # listens on every address (S9): its NetworkPolicy admits only the
+            # gateway.
+            {{- include "vigil.medic.apiKeyEnv" . | nindent 12 }}
           ports:
             - name: api
               containerPort: {{ include "vigil.medic.apiPort" . }}
@@ -156,10 +160,14 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/vigil-medic
+            {{- include "vigil.medic.apiKeyMount" . | nindent 12 }}
           # C5 §5.2: `check` fails once the heartbeat is 120 s old. The 180 s
           # watchdog exits a hung loop before liveness (4 × 30 s) acts; liveness
-          # catches a frozen process the watchdog can't. Readiness uses `check`
-          # until `check --ready` exists (C5: fails only while the API can't serve).
+          # catches a frozen process the watchdog can't. Readiness is
+          # `check --ready` (C5): not Ready only while the API can't answer the
+          # status op, so the gateway's Service has no endpoint that would only
+          # refuse the backend's poll. Worst case to a liveness restart: ≤ 120 s
+          # stale + 4 × 30 s, after the watchdog's 180 s.
           startupProbe:
             exec:
               command: ["python", "-m", "services.medic", "check"]
@@ -174,13 +182,14 @@ spec:
             failureThreshold: 4
           readinessProbe:
             exec:
-              command: ["python", "-m", "services.medic", "check"]
+              command: ["python", "-m", "services.medic", "check", "--ready"]
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 2
           resources:
             {{- toYaml .Values.medic.resources | nindent 12 }}
       volumes:
+        {{- include "vigil.medic.apiKeyVolume" . | nindent 8 }}
         - name: data
           {{- if .Values.medic.persistence.enabled }}
           persistentVolumeClaim:
