@@ -63,6 +63,10 @@ export interface Mirror {
   // terminal, so a push nobody retries is a case IR never receives. false means
   // "not filed, ask again"; the caller decides when to stop.
   handoff(runId: string, handoff: TerminalHandoff): Promise<boolean>;
+  // Alerts a hunt's evidence cites, for the backend to link to the hunt's case. Like
+  // handoff it answers whether it landed, and the backend is idempotent per finding,
+  // so a caller that is unsure may ask again.
+  findings(runId: string, findingIds: readonly string[]): Promise<boolean>;
   decisions(runId: string): Promise<ResolutionPayload[]>;
 }
 
@@ -77,6 +81,7 @@ export const nullMirror: Mirror = {
   // it will ever be. Reporting failure here would have a caller that retries on it
   // re-asking a no-op on every iteration for the life of the run.
   handoff: async () => true,
+  findings: async () => true,
   decisions: async () => [],
 };
 
@@ -113,6 +118,7 @@ export function httpMirror(options: MirrorOptions): Mirror {
     terminal: async (runId, result) => void (await post(`/${encodeURIComponent(runId)}/terminal`, result)),
     status: (runId, update) => post(`/${encodeURIComponent(runId)}/status`, update),
     handoff: (runId, handoff) => post(`/${encodeURIComponent(runId)}/handoff`, handoff),
+    findings: (runId, findingIds) => post(`/${encodeURIComponent(runId)}/findings`, { finding_ids: findingIds }),
     decisions: httpAnswers(options),
   };
 }
