@@ -6,7 +6,7 @@ go only to that operator root. The bundled library is never modified.
 """
 
 import logging
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from core.skills.skill_library import (
     skill_version,
     write_operator_skill,
 )
+from core.skills.skill_usage import skill_usage
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,11 @@ class SkillResponse(BaseModel):
     source_path: str
     bundled: bool
     file_count: int
+    # Reads of the skill body in the last 7 days, and the distinct agents
+    # that made them (#1560). Zero when the usage query could not run: the
+    # skills themselves come from disk and must still list.
+    reads_7d: int = 0
+    agents_7d: int = 0
 
 
 class SkillFile(BaseModel):
@@ -75,13 +81,32 @@ class SkillWriteRequest(BaseModel):
     version: Optional[int] = None
 
 
-def _response(skill: Skill) -> SkillResponse:
+def _usage_by_skill() -> Dict[str, Tuple[int, int]]:
+    """The 7-day usage map, or empty when the database cannot answer.
+
+    One grouped query for the whole list, joined in memory. A database
+    error degrades to no usage rather than failing a list that is served
+    from disk (#1560).
+    """
+    try:
+        return skill_usage()
+    except Exception:  # noqa: BLE001
+        logger.exception("skill usage query failed; listing skills without it")
+        return {}
+
+
+def _response(
+    skill: Skill, usage: Optional[Dict[str, Tuple[int, int]]] = None
+) -> SkillResponse:
+    reads, agents = (usage or {}).get(skill.name, (0, 0))
     return SkillResponse(
         name=skill.name,
         description=skill.description,
         source_path=str(skill.path),
         bundled=is_bundled(skill),
         file_count=len(skill_files(skill)),
+        reads_7d=reads,
+        agents_7d=agents,
     )
 
 
@@ -105,7 +130,8 @@ def _http(exc: SkillError) -> HTTPException:
 @router.get("/", response_model=list[SkillResponse], include_in_schema=False)
 async def list_skills():
     """Every valid skill under the configured roots, bundled library first."""
-    return [_response(skill) for skill in load_skills(skill_roots())]
+    usage = _usage_by_skill()
+    return [_response(skill, usage) for skill in load_skills(skill_roots())]
 
 
 @router.get("/{name}", response_model=SkillDetail)
@@ -120,7 +146,7 @@ async def get_skill(name: str):
     except OSError as exc:
         logger.warning("could not read skill %s: %s", name, exc)
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
-    listed = _response(skill)
+    listed = _response(skill, _usage_by_skill())
     return SkillDetail(
         **listed.model_dump(),
         body=body,

@@ -889,3 +889,24 @@ function terminal(outcome: TerminalPayload["outcome"], reason: string): Seeded {
 async function seed(state: State, ...events: readonly Seeded[]): Promise<void> {
   await state.append(RUN, events);
 }
+
+describe("the turn's agent reaches the dispatch", () => {
+  // Skill reads are credited per turn (#1560): compose shares one harness
+  // across phases, so the agent has to ride from the turn config through
+  // the stream into every dispatch call.
+  it("hands cfg.agent_id to dispatch.invoke, and nothing when unset", async () => {
+    const seen: (string | undefined)[] = [];
+    const capturing: ToolDispatch = {
+      invoke: async (tool, args, signal, agentId) => {
+        seen.push(agentId);
+        return localDispatch.invoke(tool, args, signal, agentId);
+      },
+    };
+    const script = [{ calls: [{ tool: "bump", args: "{}" }] }, { calls: [] }, HALT];
+
+    await outcomeOf(config({ agent_id: "triage-agent" }), harnessOf(script, { dispatch: capturing }));
+    await outcomeOf(config(), harnessOf(script, { dispatch: capturing }));
+
+    expect(seen).toEqual(["triage-agent", undefined]);
+  });
+});

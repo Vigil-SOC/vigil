@@ -10687,6 +10687,8 @@ export interface components {
         };
         /** InvokeRequest */
         InvokeRequest: {
+            /** Agent Id */
+            agent_id?: string | null;
             /** Args */
             args?: {
                 [key: string]: unknown;
@@ -11691,6 +11693,11 @@ export interface components {
         };
         /** SkillDetail */
         SkillDetail: {
+            /**
+             * Agents 7D
+             * @default 0
+             */
+            agents_7d: number;
             /** Body */
             body: string;
             /** Bundled */
@@ -11705,6 +11712,11 @@ export interface components {
             name: string;
             /** Operator Root Set */
             operator_root_set: boolean;
+            /**
+             * Reads 7D
+             * @default 0
+             */
+            reads_7d: number;
             /** Source Path */
             source_path: string;
             /** Version */
@@ -11726,6 +11738,11 @@ export interface components {
         };
         /** SkillResponse */
         SkillResponse: {
+            /**
+             * Agents 7D
+             * @default 0
+             */
+            agents_7d: number;
             /** Bundled */
             bundled: boolean;
             /** Description */
@@ -11734,6 +11751,11 @@ export interface components {
             file_count: number;
             /** Name */
             name: string;
+            /**
+             * Reads 7D
+             * @default 0
+             */
+            reads_7d: number;
             /** Source Path */
             source_path: string;
         };

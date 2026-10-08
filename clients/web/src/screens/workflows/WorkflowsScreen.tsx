@@ -5,7 +5,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
-import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
+import { type Workflow, type AgentTemplate, type Skill, prettyHandle, skillUsageText } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type ReplayReport } from '../../services/api'
@@ -2989,13 +2989,14 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
 }
 
 const SKILL_GRANT_INFO = 'The grant offers the whole library.'
-const SKILL_USAGE_INFO = 'Skill reads are not recorded yet.'
+const SKILL_USAGE_INFO = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
 
-// The card's usage line; swap this one element when skill reads are recorded.
-function SkillUsage() {
+// The card's usage line (#1560): skill reads are recorded now, so this
+// renders the 7-day counts the API returns.
+function SkillUsage({ skill }: { skill: Skill }) {
   return (
     <span className="sk-usage">
-      Used by · Not measured yet
+      {skillUsageText(skill.reads7d, skill.agents7d)}
       <button type="button" className="btn ghost icon" aria-label={SKILL_USAGE_INFO} title={SKILL_USAGE_INFO}>
         <Icon name="info" size={14} />
       </button>
@@ -3048,7 +3049,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
-                <SkillUsage />
+                <SkillUsage skill={s} />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}

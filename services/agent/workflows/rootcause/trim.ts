@@ -70,8 +70,8 @@ export function shown(result: ToolResult, cap: number): ToolResult {
 // Every remote call goes through here; record and finish answer in-process.
 export function showing(dispatch: ToolDispatch, cap: number): ToolDispatch {
   return {
-    invoke: async (tool, args, signal) => {
-      const result = await dispatch.invoke(tool, args, signal);
+    invoke: async (tool, args, signal, agentId) => {
+      const result = await dispatch.invoke(tool, args, signal, agentId);
       return tool.local ? result : shown(result, cap);
     },
   };

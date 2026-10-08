@@ -251,7 +251,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     if (args === null) {
       return finish({ ok: false, failure: { kind: "invalid_args", detail: "arguments were not valid JSON" } });
     }
-    return finish(await this.harness.dispatch.invoke(tool, args, this.cfg.signal));
+    return finish(await this.harness.dispatch.invoke(tool, args, this.cfg.signal, this.cfg.agent_id));
   }
 
   // The one path a result takes, and where wrap scans it. A gated call is journaled
