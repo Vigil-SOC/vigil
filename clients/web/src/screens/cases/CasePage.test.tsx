@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
 import { ToastProvider } from '../../shell/toast'
-import { approvalsApi, casesApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, casesApi, orchestratorApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
@@ -44,7 +44,6 @@ vi.mock('../../services/api', () => ({
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
     getRun: vi.fn((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })),
-    replayRun: vi.fn(),
     verifyRun: vi.fn(),
   },
   orchestratorApi: { exportInvestigation: vi.fn() },
@@ -569,6 +568,108 @@ describe('case page', () => {
     renderCase('case-record')
     fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
     expect(await screen.findByText('the agent layer answered 502')).toBeInTheDocument()
+  })
+
+  describe('Record tab', () => {
+    const rows = [
+      { id: 'r1', at: '2026-06-15T10:00:00Z', kind: 'agent', source: 'run', chained: true, text: 'Lead started step 7' },
+      { id: 'r2', at: '2026-06-15T10:05:00Z', kind: 'recall', source: 'run', chained: true, text: 'Recalled 3 rows' },
+      { id: 'r3', at: '2026-06-15T10:09:00Z', kind: 'case_audit_logs', source: 'case', chained: false, text: 'M. Kaur closed the task' },
+      { id: 'r4', at: '2026-06-15T10:11:00Z', kind: 'run', source: 'run', chained: true, text: 'Run started' },
+    ]
+
+    const openRecord = async (ui: () => ReturnType<typeof renderCase> | ReturnType<typeof renderDetail> = () => renderCase('case-rec')) => {
+      testState.cases = [{
+        case_id: 'case-rec',
+        title: 'Record case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'executing',
+        investigations: [investigation('executing', true, 'run/1')],
+      }]
+      testState.runs['run/1'] = { hunt: HUNT }
+      ui()
+      fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
+    }
+
+    it('types each row, counts All, and filters by chip', async () => {
+      testState.recordRows = rows
+      await openRecord()
+      expect(await screen.findByRole('button', { name: 'All 4' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('Lead started step 7').closest('.rec-row')).toHaveTextContent('Agent')
+      expect(screen.getByText('Lead started step 7').closest('.rec-row')).toHaveTextContent('chained')
+      expect(screen.getByText('M. Kaur closed the task').closest('.rec-row')).not.toHaveTextContent('chained')
+      expect(screen.queryByRole('button', { name: 'Gate' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Human' }))
+      expect(screen.getByRole('button', { name: 'Human' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('M. Kaur closed the task')).toBeInTheDocument()
+      expect(screen.queryByText('Lead started step 7')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Memory' }))
+      expect(screen.getByText('Recalled 3 rows')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'System' }))
+      expect(screen.getByText('Run started')).toBeInTheDocument()
+      expect(screen.queryByText('Recalled 3 rows')).not.toBeInTheDocument()
+    })
+
+    it('shows the empty and loading states', async () => {
+      testState.recordRows = []
+      await openRecord()
+      expect(await screen.findByText('No record yet')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'All 0' })).toBeInTheDocument()
+    })
+
+    it('opens the ⓘ note on the chain', async () => {
+      testState.recordRows = rows
+      await openRecord()
+      fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit rows are not.')
+    })
+
+    it('Replay links to the run on Workflows, and closes the drawer', async () => {
+      testState.recordRows = rows
+      const onBack = vi.fn()
+      await openRecord(() => renderDetail('case-rec', { onBack, onExpand: vi.fn() }))
+      const link = await screen.findByRole('link', { name: 'Replay' })
+      expect(link).toHaveAttribute('href', '/workflows?run=run%2F1')
+      fireEvent.click(link)
+      expect(onBack).toHaveBeenCalled()
+    })
+
+    it('has no Replay link without a run', async () => {
+      testState.recordRows = rows
+      testState.cases = [{
+        case_id: 'case-rec',
+        title: 'Record case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [],
+      }]
+      renderCase('case-rec')
+      fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
+      await screen.findByText('Lead started step 7')
+      expect(screen.queryByRole('link', { name: 'Replay' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Verify chain' })).not.toBeInTheDocument()
+    })
+
+    it('Verify chain and Export audit keep their behaviour', async () => {
+      testState.recordRows = rows
+      vi.mocked(workflowApi.verifyRun).mockResolvedValue({ data: { ok: true, events: 12 } } as never)
+      vi.mocked(orchestratorApi.exportInvestigation).mockResolvedValue({ data: { a: 1 } } as never)
+      const createUrl = vi.fn(() => 'blob:x')
+      Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: vi.fn() })
+      await openRecord()
+      fireEvent.click(await screen.findByRole('button', { name: 'Verify chain' }))
+      expect(await screen.findByText('Chain verified (12 events).')).toBeInTheDocument()
+      expect(workflowApi.verifyRun).toHaveBeenCalledWith('run/1')
+      fireEvent.click(screen.getByRole('button', { name: 'Export audit' }))
+      await waitFor(() => expect(orchestratorApi.exportInvestigation).toHaveBeenCalledWith('inv-1'))
+      expect(createUrl).toHaveBeenCalled()
+    })
   })
 
   it('pins Ask on the case and keeps Tell and Do from posting', async () => {

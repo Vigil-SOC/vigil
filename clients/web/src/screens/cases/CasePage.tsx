@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { FilterChip } from '../../shared/FilterChip'
+import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, useRunDetail } from '../workflows/runRead'
 import { slaLevel } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
@@ -8,7 +11,6 @@ import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
-import { InfoTip } from '../../shared/InfoTip'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
@@ -42,7 +44,7 @@ type Tab = (typeof TABS)[number]
 const NEEDS_POLL_MS = 20_000
 
 const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
-const CHAINED = 'Only the run’s rows are hash-chained. Case audit rows are not.'
+const RECORD_CHIPS = ['agent', 'human', 'memory', 'system'] as const
 
 /** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
 const EXPL_TONE: Record<string, string> = {
@@ -637,22 +639,6 @@ export function CasePage({
     return text ? `${base}\n\nWhy?\n${text}` : base
   }
 
-  const replay = async () => {
-    if (!runId) return
-    setBusy(true)
-    setNote('')
-    try {
-      const res = await workflowApi.replayRun(runId)
-      const data = res.data as { decisions?: unknown[] }
-      const n = Array.isArray(data.decisions) ? data.decisions.length : 0
-      setNote(n ? `Replay returned ${n} decision${n === 1 ? '' : 's'}.` : 'Replay returned.')
-    } catch (e) {
-      setNote(detailOf(e, 'Replay failed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const verify = async () => {
     if (!runId) return
     setBusy(true)
@@ -828,7 +814,6 @@ export function CasePage({
                 </section>
                 {doors}
                 <div className="case-actions">
-                  {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
                   <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
                 </div>
               </>
@@ -973,17 +958,30 @@ export function CasePage({
           )}
 
           {tab === 'Record' && (
-            <>
-              <p>
-                Newest first.
-                <Mark text={CHAINED} />
-              </p>
-              <div className="case-chips" role="group" aria-label="Record source">
-                {(['all', 'agent', 'human', 'memory', 'system'] as const).map((name) => (
-                  <button key={name} className={`btn ghost${chip === name ? ' active' : ''}`} onClick={() => setChip(name)}>
-                    {name}
-                  </button>
-                ))}
+            <section className="rec-card">
+              <div className="rec-bar">
+                <div className="rec-chips" role="group" aria-label="Record source">
+                  <FilterChip label={`All ${rows.length}`} active={chip === 'all'} onClick={() => setChip('all')} />
+                  {RECORD_CHIPS.map((name) => (
+                    <FilterChip key={name} label={name[0].toUpperCase() + name.slice(1)} active={chip === name} onClick={() => setChip(name)} />
+                  ))}
+                  <InfoTip
+                    label="About the record"
+                    align="start"
+                    source="The run’s journal and the case audit log, newest first."
+                    calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
+                    limit="Only the run’s rows are hash-chained. Case audit rows are not."
+                  />
+                </div>
+                <div className="rec-actions">
+                  {runId && (
+                    <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
+                      Replay
+                    </Link>
+                  )}
+                  {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
+                  {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
+                </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}
               {recordPhase === 'error' && (
@@ -999,22 +997,25 @@ export function CasePage({
               {recordPhase === 'ready' && shown.length === 0 && (
                 <EmptyState compact icon="clock" title="No record yet" />
               )}
-              {recordPhase === 'ready' && shown.map((row) => (
-                <div key={row.id} className="case-record">
-                  <span className="tag">{recordChip(row.kind)}</span>
-                  <div>
-                    <div>{row.text || row.kind}</div>
-                    <div className="muted">{when(row.at)}{row.chained ? ' · chained' : ''}</div>
-                  </div>
-                  <button type="button" className="btn ghost" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+              {recordPhase === 'ready' && shown.length > 0 && (
+                <div className="rec-rows">
+                  {shown.map((row) => {
+                    const type = recordChip(row.kind)
+                    return (
+                      <div key={row.id} className="rec-row">
+                        <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
+                        <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
+                        <span className="rec-text" title={row.text}>
+                          {row.text || row.kind}
+                          {row.chained && <span className="rec-chained">chained</span>}
+                        </span>
+                        <button type="button" className="rec-why" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-              <div className="case-actions">
-                {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
-                {runId && <button className="btn" onClick={verify} disabled={busy}>Verify</button>}
-                {latest?.investigation_id && <button className="btn" onClick={download} disabled={busy}>Export</button>}
-              </div>
-            </>
+              )}
+            </section>
           )}
           {note && <p className="muted">{note}</p>}
         </div>

@@ -1345,6 +1345,10 @@
             "title": "Closed Today",
             "type": "integer"
           },
+          "needs_you": {
+            "title": "Needs You",
+            "type": "integer"
+          },
           "sla_at_risk": {
             "title": "Sla At Risk",
             "type": "integer"
@@ -1354,7 +1358,8 @@
           "by_state",
           "sla_at_risk",
           "closed_today",
-          "agent_closure_share"
+          "agent_closure_share",
+          "needs_you"
         ],
         "title": "CaseQueueStrip",
         "type": "object"
@@ -4345,6 +4350,32 @@
                 }
               ],
               "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "needs_you",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Needs You",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
             }
           },
           {

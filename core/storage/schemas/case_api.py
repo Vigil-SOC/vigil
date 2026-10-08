@@ -63,6 +63,7 @@ class CaseQueueStrip(BaseModel):
     sla_at_risk: int
     closed_today: int
     agent_closure_share: float
+    needs_you: int
 
 
 class CaseListResponse(BaseModel):

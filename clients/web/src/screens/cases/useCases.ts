@@ -40,6 +40,8 @@ export const CASE_PAGE_LIMIT = 100
 export interface CaseFilters {
   query: string
   state: string
+  needsYou: boolean
+  kind: string
   priority: string
   sla: '' | 'risk'
   assignee: string
@@ -52,6 +54,8 @@ export interface CaseFilters {
 export const INITIAL_CASE_FILTERS: CaseFilters = {
   query: '',
   state: '',
+  needsYou: false,
+  kind: '',
   priority: 'any',
   sla: '',
   assignee: '',
@@ -66,6 +70,7 @@ export interface CaseStrip {
   sla_at_risk: number
   closed_today: number
   agent_closure_share: number
+  needs_you: number
 }
 
 export const EMPTY_STRIP: CaseStrip = {
@@ -73,6 +78,7 @@ export const EMPTY_STRIP: CaseStrip = {
   sla_at_risk: 0,
   closed_today: 0,
   agent_closure_share: 0,
+  needs_you: 0,
 }
 
 function toParams(f: CaseFilters) {
@@ -82,6 +88,8 @@ function toParams(f: CaseFilters) {
   }
   if (f.state === 'closed') params.closed = true
   else if (f.state) params.state = f.state
+  if (f.needsYou) params.needs_you = true
+  if (f.kind) params.kind = f.kind
   if (f.priority && f.priority !== 'any') params.priority = f.priority
   if (f.sla === 'risk') params.sla_at_risk = true
   if (f.assignee.trim()) params.assignee = f.assignee.trim()

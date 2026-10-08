@@ -278,6 +278,8 @@ export const casesApi = {
     assignee?: string
     closed?: boolean
     query?: string
+    needs_you?: boolean
+    kind?: string
     limit?: number
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),

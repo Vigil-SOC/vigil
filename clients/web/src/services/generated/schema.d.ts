@@ -1262,6 +1262,9 @@ export interface paths {
          *     the case ids that sort first; then resolution time left ascending, rows
          *     with no SLA last, then last activity descending. The same set marks
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
+         *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
+         *     latest investigation ran a workflow of that ``run_kind`` (none when no
+         *     workflow has it); both compose with the other filters.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -6816,6 +6819,9 @@ export interface paths {
          *     the case ids that sort first; then resolution time left ascending, rows
          *     with no SLA last, then last activity descending. The same set marks
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
+         *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
+         *     latest investigation ran a workflow of that ``run_kind`` (none when no
+         *     workflow has it); both compose with the other filters.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -9206,6 +9212,8 @@ export interface components {
             };
             /** Closed Today */
             closed_today: number;
+            /** Needs You */
+            needs_you: number;
             /** Sla At Risk */
             sla_at_risk: number;
         };
@@ -14814,6 +14822,8 @@ export interface operations {
                 assignee?: string | null;
                 closed?: boolean | null;
                 query?: string | null;
+                needs_you?: boolean;
+                kind?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -24382,6 +24392,8 @@ export interface operations {
                 assignee?: string | null;
                 closed?: boolean | null;
                 query?: string | null;
+                needs_you?: boolean;
+                kind?: string | null;
                 limit?: number;
                 offset?: number;
             };
