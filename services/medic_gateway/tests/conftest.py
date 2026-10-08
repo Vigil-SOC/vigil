@@ -23,8 +23,9 @@ def _b64(d: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
 
 
-def make_token(kind: str, ttl: int, n: int) -> str:
-    claims = {"exp": int(time.time()) + ttl, "token_type": kind, "n": n}
+def make_token(kind: str, ttl: int, n: int, skew: int = 0) -> str:
+    now = int(time.time()) + skew  # skew: the backend's clock minus ours
+    claims = {"exp": now + ttl, "iat": now, "token_type": kind, "n": n}
     return f"{_b64({'alg': 'HS256'})}.{_b64(claims)}.sig{n}"
 
 
@@ -45,6 +46,8 @@ class Stub:
         self.extra: dict[str, str] = {"X-Medic-Api-Version": "1.0"}
         self.delay = 0.0
         self.drip = 0.0
+        self.skew = 0
+        self.login_body: bytes | None = None  # a 200 with this body instead
         stub = self
 
         class H(BaseHTTPRequestHandler):
@@ -84,6 +87,8 @@ class Stub:
                     if stub.login_status != 200:
                         extra = {"Retry-After": "77"}
                         return self._reply(stub.login_status, b"{}", extra=extra)
+                    if stub.login_body is not None:
+                        return self._reply(200, stub.login_body)
                     return self._issue()
                 if self.path.endswith("/api/auth/refresh"):
                     if stub.refresh_status != 200:
@@ -100,10 +105,10 @@ class Stub:
 
             def _issue(self):
                 stub.issued += 1
-                n, ttl = stub.issued, stub.access_ttl
+                n, ttl, skew = stub.issued, stub.access_ttl, stub.skew
                 body = {
-                    "access_token": make_token("access", ttl, n),
-                    "refresh_token": make_token("refresh", 604800, n),
+                    "access_token": make_token("access", ttl, n, skew),
+                    "refresh_token": make_token("refresh", 604800, n, skew),
                     "token_type": "bearer",
                 }
                 self._reply(200, json.dumps(body).encode())
