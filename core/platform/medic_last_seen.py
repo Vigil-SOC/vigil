@@ -32,12 +32,12 @@ from sqlalchemy import text
 from core.config import Settings, get_settings
 from core.platform.medic_status import (
     POLL_INTERVAL_S,
+    POLL_TIMEOUT_S,
     LastSeen,
     MedicStatus,
     medic_enabled,
     medic_status,
 )
-from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,9 @@ logger = logging.getLogger(__name__)
 _POLL_LOCK = 8_274_120
 # A replica whose own timer fires within this much of the last poll skips it.
 _FRESH = timedelta(seconds=POLL_INTERVAL_S - 5)
-REQUEST_TIMEOUT_S = 10.0
+# Unwritten this long, the row's failure is history (as medic_status reads it).
+_STALE = timedelta(seconds=3 * POLL_INTERVAL_S)
+REQUEST_TIMEOUT_S = float(POLL_TIMEOUT_S)
 SNAPSHOT_MAX_BYTES = 2048
 _MAX_BODY = 64 * 1024
 
@@ -76,13 +78,15 @@ class FailureKind(str, Enum):
 class Outcome:
     snapshot: Optional[dict]
     failure: Optional[FailureKind]
+    # The HTTP status behind a failure (the kinds are closed; 429 reads 5xx).
+    http_status: Optional[int] = None
 
 
 Fetch = Callable[[str, Optional[str]], Outcome]
 
 
-def _fail(kind: FailureKind) -> Outcome:
-    return Outcome(snapshot=None, failure=kind)
+def _fail(kind: FailureKind, http_status: Optional[int] = None) -> Outcome:
+    return Outcome(snapshot=None, failure=kind, http_status=http_status)
 
 
 def read_key(settings: Settings) -> Optional[str]:
@@ -164,7 +168,7 @@ def snapshot_bytes(snap: dict) -> bytes:
 def _classify(response: httpx.Response) -> Outcome:
     status = response.status_code
     if status in (401, 403):
-        return _fail(FailureKind.UNAUTHORIZED)
+        return _fail(FailureKind.UNAUTHORIZED, status)
     if status != 200:
         # The gateway reports the hop to Medic as problem JSON with a closed code.
         try:
@@ -172,18 +176,19 @@ def _classify(response: httpx.Response) -> Outcome:
         except (ValueError, AttributeError):
             code = None
         if code == "upstream_unreachable":
-            return _fail(FailureKind.REFUSED)
+            return _fail(FailureKind.REFUSED, status)
         if code == "upstream_timeout":
-            return _fail(FailureKind.TIMEOUT)
-        return _fail(FailureKind.SERVER_ERROR)
+            return _fail(FailureKind.TIMEOUT, status)
+        return _fail(FailureKind.SERVER_ERROR, status)
+    # Read whole by httpx first; the gateway caps what it relays at 2 MiB.
     if len(response.content) > _MAX_BODY:
-        return _fail(FailureKind.SERVER_ERROR)
+        return _fail(FailureKind.SERVER_ERROR, status)
     try:
         snap = typed_snapshot(response.json())
     except ValueError:
         snap = None
     if snap is None:
-        return _fail(FailureKind.SERVER_ERROR)
+        return _fail(FailureKind.SERVER_ERROR, status)
     return Outcome(snapshot=snap, failure=None)
 
 
@@ -225,7 +230,9 @@ def poll_once(
     """Poll Medic and record the result, unless another replica just did.
 
     Returns True if this call polled. The lock is held across the request (at
-    most ``REQUEST_TIMEOUT_S``), so a replica that ticks meanwhile skips.
+    most ``REQUEST_TIMEOUT_S``), so a replica that ticks meanwhile skips. Times
+    are Postgres's ``now()``, so every replica reads and writes one clock
+    (still the backend's side, never Medic's); ``now`` overrides it in tests.
     """
     from core.storage.connection import get_db_session
     from core.storage.models import MedicLastSeen
@@ -233,7 +240,6 @@ def poll_once(
     settings = settings or get_settings()
     if not medic_enabled(settings):
         return False
-    now = now or utcnow()
     fetch = fetch or fetch_status
     with get_db_session() as session, session.begin():
         locked = session.execute(
@@ -241,6 +247,7 @@ def poll_once(
         ).scalar()
         if not locked:
             return False
+        now = now or _db_now(session)
         row = session.get(MedicLastSeen, 1)
         if row is not None and now - row.updated_at < _FRESH:
             return False
@@ -248,6 +255,11 @@ def poll_once(
         if row is None:
             row = MedicLastSeen(id=1, updated_at=now)
             session.add(row)
+        elif now - row.updated_at >= _STALE:
+            # Nobody polled for a while (Medic was off): an old failure is not
+            # the start of this one.
+            row.first_failed_at = None
+            row.failure_kind = None
         row.updated_at = now
         if outcome.failure is None:
             if row.first_failed_at is not None:
@@ -258,24 +270,38 @@ def poll_once(
             row.status_snapshot = outcome.snapshot
         else:
             if row.first_failed_at is None:
-                logger.warning("Medic status poll failed: %s", outcome.failure.value)
+                logger.warning(
+                    "Medic status poll failed: %s (HTTP %s)",
+                    outcome.failure.value,
+                    outcome.http_status or "-",
+                )
                 row.first_failed_at = now
             row.failure_kind = outcome.failure.value
     return True
 
 
-def read_last_seen() -> Optional[LastSeen]:
+def _db_now(session) -> datetime:
+    return session.execute(text("SELECT now() AT TIME ZONE 'UTC'")).scalar_one()
+
+
+def read_last_seen() -> tuple[Optional[LastSeen], datetime]:
+    """The row (None before the first poll) and Postgres's time, read together."""
     from core.storage.connection import get_db_session
     from core.storage.models import MedicLastSeen
 
     with get_db_session() as session, session.begin():
+        now = _db_now(session)
         row = session.get(MedicLastSeen, 1)
         if row is None:
-            return None
-        return LastSeen(
-            last_seen_at=row.last_seen_at,
-            first_failed_at=row.first_failed_at,
-            failure_kind=row.failure_kind,
+            return None, now
+        return (
+            LastSeen(
+                last_seen_at=row.last_seen_at,
+                first_failed_at=row.first_failed_at,
+                failure_kind=row.failure_kind,
+                updated_at=row.updated_at,
+            ),
+            now,
         )
 
 
@@ -287,19 +313,27 @@ def current_status(
     if not medic_enabled(settings):
         return MedicStatus.OFF
     try:
-        seen = read_last_seen()
+        seen, db_now = read_last_seen()
     except Exception:  # noqa: BLE001 - Postgres down: the console can't tell
         return MedicStatus.UNKNOWN
-    return medic_status(settings, seen, now)
+    return medic_status(settings, seen, now or db_now)
 
 
 async def run_poller(settings: Settings, interval: float = POLL_INTERVAL_S) -> None:
+    """A fixed cadence: a slow (timed-out) poll doesn't push the next one back.
+
+    Cancelling it at shutdown leaves an in-flight poll to finish in its thread
+    (at most ``REQUEST_TIMEOUT_S``); its transaction then commits or rolls back.
+    """
+    loop = asyncio.get_running_loop()
+    due = loop.time()
     while True:
         try:
             await asyncio.to_thread(poll_once, settings)
         except Exception as exc:  # noqa: BLE001 - the next tick tries again
             logger.warning("Medic status poll skipped: %s", type(exc).__name__)
-        await asyncio.sleep(interval)
+        due += interval
+        await asyncio.sleep(max(0.0, due - loop.time()))
 
 
 def start_poller(settings: Optional[Settings] = None) -> Optional[asyncio.Task]:
@@ -307,5 +341,13 @@ def start_poller(settings: Optional[Settings] = None) -> Optional[asyncio.Task]:
     settings = settings or get_settings()
     if not medic_enabled(settings):
         return None
+    # Polls would still run and read Down; say why once, never the key.
+    if not settings.vigil_medic_api_url:
+        logger.warning("Medic is on but VIGIL_MEDIC_API_URL is empty: Medic reads Down")
+    if read_key(settings) is None:
+        logger.warning(
+            "Medic is on but VIGIL_MEDIC_API_KEY_FILE is missing, unreadable or "
+            "not an X2 key: Medic reads Down"
+        )
     logger.info("Medic status poller started (every %ss)", POLL_INTERVAL_S)
     return asyncio.get_running_loop().create_task(run_poller(settings))

@@ -27,9 +27,15 @@ _TRUE = frozenset({"true", "1", "yes", "on"})
 
 # C5 §5.3: one poll a minute. PRD US-05: a dead Medic shows Down within 5 min.
 POLL_INTERVAL_S = 60
+POLL_TIMEOUT_S = 10
 DOWN_AFTER_S = 300
 _POLL = timedelta(seconds=POLL_INTERVAL_S)
+# The longest a failure can go unnoticed: one interval plus a timed-out request.
+_NOTICE_LAG = timedelta(seconds=POLL_INTERVAL_S + POLL_TIMEOUT_S)
 _RUNNING_FOR = 2 * _POLL
+# Nobody has written the row for this long (Medic was off, or no poller ran):
+# what it says is history, not Medic's state now.
+_STALE_AFTER = 3 * _POLL
 _DOWN_AFTER = timedelta(seconds=DOWN_AFTER_S)
 
 
@@ -37,7 +43,7 @@ class MedicStatus(str, Enum):
     OFF = "off"  # the flag is false: Medic exits at start, nothing is polled
     RUNNING = "running"  # answered the status op within the last 2 polls
     DOWN = "down"  # failing, and unseen for DOWN_AFTER_S (C5 §5.4)
-    UNKNOWN = "unknown"  # never seen, between running and down, or no row to read
+    UNKNOWN = "unknown"  # never seen, between running and down, stale, or unreadable
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,7 @@ class LastSeen:
     last_seen_at: Optional[datetime]
     first_failed_at: Optional[datetime]
     failure_kind: Optional[str]
+    updated_at: Optional[datetime] = None
 
 
 def medic_enabled(settings: Optional[Settings] = None) -> bool:
@@ -64,12 +71,14 @@ def medic_status(
     if seen is None:
         return MedicStatus.UNKNOWN
     now = now or utcnow()
+    if seen.updated_at is not None and now - seen.updated_at >= _STALE_AFTER:
+        return MedicStatus.UNKNOWN
     if seen.first_failed_at is not None:
-        # The outage started at the last success. The first failure is only
-        # noticed up to one poll later, so it alone counts from one poll before
-        # it: a Medic last seen long ago (the backend was off) that refuses
-        # once on restart gets the same grace as any other outage.
-        since = seen.first_failed_at - _POLL
+        # The outage started at the last success. The first failure is noticed
+        # at most one interval plus a timeout later, so it alone counts from
+        # that far back: a Medic last seen long ago (the backend was off) that
+        # refuses once on restart gets the same grace as any other outage.
+        since = seen.first_failed_at - _NOTICE_LAG
         if seen.last_seen_at is not None:
             since = max(since, seen.last_seen_at)
         if now - since >= _DOWN_AFTER:
