@@ -24,3 +24,18 @@ entries:
   - parent: {mode: L-3}
     children: {cause: P-2.e}
     why: LLM jobs with no consumer stall runs (B5 P-2.e).
+  - parent: {rule: llm.budget-exhausted}
+    children: {rule: llm.calls-failing}
+    why: Budget errors are LLM call failures too. Show the budget, not the generic failure count.
+  - parent: {rule: llm.provider-key-unusable}
+    children: {rule: llm.calls-failing}
+    why: Rejected-key errors are LLM call failures too. Show the key, not the generic failure count.
+  - parent: {rule: llm.model-unservable}
+    children: {rule: llm.calls-failing}
+    why: Unservable-model errors are LLM call failures too. Show the model, not the generic failure count.
+  - parent: {rule: llm.rate-limited}
+    children: {rule: llm.calls-failing}
+    why: Rate-limit errors are LLM call failures too. Show the quota, not the generic failure count.
+  - parent: {rule: llm.gateway-unreachable}
+    children: {rule: llm.calls-failing}
+    why: With Bifrost unreachable every call fails. Show the gateway, not the generic failure count.
