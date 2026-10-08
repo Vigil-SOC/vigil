@@ -14,6 +14,9 @@
 -- Existing keys win (grants || permissions), so a grant an operator has turned
 -- off stays off: Compose's db-seed re-runs this file on every `up`. A role that
 -- already holds every key is left alone. Idempotent.
+-- Roles other than the role-* defaults (e.g. the legacy admin/analyst/viewer that
+-- migrate_schema.seed_default_roles makes on a create_all-only database) get
+-- nothing, as with loglm.view.
 UPDATE roles AS r
 SET permissions = g.grants || r.permissions,
     updated_at = NOW()

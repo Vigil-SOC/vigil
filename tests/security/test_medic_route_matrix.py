@@ -22,11 +22,13 @@ The role x route cases skip until H3 fills in a row's backend route.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from starlette.routing import Mount
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-prod")
 
@@ -57,7 +59,9 @@ MEDIC_GRANTS: dict[str, frozenset[str]] = {
 # One row per X2 operation:
 # (operationId, X2 method, X2 path, permission, backend method, backend path, body).
 # H3 fills in the backend method and path (and a body for a write) when it builds
-# the route; until then the role cases for that row skip.
+# the route; until then the role cases for that row skip. Write the backend path
+# as the route's template (``/api/medic/incidents/{incident_id}``): it is the
+# coverage key, and the request fills each ``{param}`` with a placeholder.
 MEDIC_ROUTES = [
     ("getStatus", "GET", "/v1/status", MEDIC_READ_PERMISSION, None, None, None),
     ("listIncidents", "GET", "/v1/incidents", MEDIC_READ_PERMISSION, None, None, None),
@@ -144,7 +148,11 @@ def _medic_routes_in_app() -> set[str]:
                 visit(candidate)
             return
         path = getattr(obj, "path_format", None) or getattr(obj, "path", None)
-        if not isinstance(path, str) or not path.startswith("/api/medic"):
+        if not isinstance(path, str) or "medic" not in path.lower():
+            return
+        if isinstance(obj, Mount):
+            # A mounted sub-app hides its routes from this walk.
+            found.add(f"MOUNT {path}")
             return
         for method in set(getattr(obj, "methods", None) or ()) - {"HEAD", "OPTIONS"}:
             found.add(f"{method} {path}")
@@ -158,7 +166,7 @@ def test_every_medic_route_in_the_app_has_a_matrix_row():
     covered = {f"{method} {path}" for *_, method, path, _body in MEDIC_ROUTES if path}
     assert (
         _medic_routes_in_app() <= covered
-    ), "Every /api/medic route needs a row in MEDIC_ROUTES (H3)"
+    ), "Every Medic route needs a row in MEDIC_ROUTES (H3); no Medic Mounts"
 
 
 def test_the_grants_cover_every_seeded_role_and_only_medic_permissions():
@@ -208,13 +216,20 @@ def test_role_x_route(role, row, monkeypatch):
     app.dependency_overrides[auth_module.get_current_active_user] = lambda: user
     app.dependency_overrides[auth_module.get_current_user] = lambda: user
     try:
-        response = TestClient(app).request(method, path, json=body)
+        url = re.sub(r"\{[^}]+\}", "x-1", path)
+        response = TestClient(app).request(method, url, json=body)
     finally:
         app.dependency_overrides.pop(auth_module.get_current_active_user, None)
         app.dependency_overrides.pop(auth_module.get_current_user, None)
 
     if permission in MEDIC_GRANTS[role]:
-        assert response.status_code != 403, (role, op_id, response.text[:200])
+        # Not 401 either: an auth dependency the overrides miss would otherwise
+        # pass every allowed row without reaching the permission check.
+        assert response.status_code not in (401, 403), (
+            role,
+            op_id,
+            response.text[:200],
+        )
     else:
         assert response.status_code == 403, (role, op_id, response.text[:200])
         assert permission in response.text, (role, op_id, response.text[:200])
