@@ -4788,6 +4788,95 @@
       font-weight: 650;
    }
 
+   /* Vigil MCP server tab (board SettingsIntegrations.dc.html) */
+   .mcp-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+   }
+
+   /* the card is the frame; the table inside keeps only its rules */
+   .mcp-card .int-table {
+      border: 0;
+      background: none;
+   }
+
+   .mcp-callout {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--fair-bg);
+      border: 1px solid var(--fair-ln);
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--tx0);
+   }
+
+   .mcp-callout svg { color: var(--fair); vertical-align: -3px; }
+
+   .mcp-token {
+      margin: 0;
+      max-width: 100%;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+      background: var(--bg2);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      user-select: all;
+   }
+
+   .mcp-head h3,
+   .mcp-head h4 {
+      margin: 0 0 3px;
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.35;
+      color: var(--tx0);
+   }
+
+   .mcp-head p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .mcp-onoff {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--bg2);
+   }
+
+   .mcp-onoff-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .mcp-onoff-text b {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .ag-switch:disabled { opacity: .5; cursor: not-allowed; }
+
    .settings-content {
       flex: 1;
       min-width: 0;
@@ -4854,6 +4943,30 @@
       text-transform: none;
       color: var(--tx2);
       border-bottom-color: var(--ln0);
+   }
+
+   /* Alert collection: the master card and table sit on the board's 16px card padding */
+   .settings-content .fed-master .card-b {
+      padding: 14px 16px;
+   }
+
+   .settings-content .fed-master .toggle-row {
+      padding: 0;
+   }
+
+   .settings-content .fed-table thead th,
+   .settings-content .fed-table tbody td {
+      padding: 9px 12px;
+   }
+
+   .settings-content .fed-table thead th:first-child,
+   .settings-content .fed-table tbody td:first-child {
+      padding-left: 0;
+   }
+
+   .settings-content .fed-table thead th:last-child,
+   .settings-content .fed-table tbody td:last-child {
+      padding-right: 0;
    }
 
    /* SLA policies: severity dot, inline editor (SettingsSLA board) */
@@ -4942,6 +5055,208 @@
 
    .sla-actions .grow {
       flex: 1;
+   }
+
+   /* Limits and autonomy: profile cards, limit rows, tool classes (SettingsLimits board) */
+   .lim-switch {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-radius: 10px;
+      background: var(--bg2);
+   }
+
+   .lim-switch .toggle-row-text {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+   }
+
+   .lim-switch .toggle-row-label {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .lim-switch .toggle-row-hint {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .lim-profiles,
+   .lim-classes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+   }
+
+   .lim-profile {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1.5px solid var(--ln1);
+      background: var(--bg2);
+      color: var(--tx1);
+      text-align: left;
+      cursor: pointer;
+   }
+
+   .lim-profile.on {
+      border-color: var(--ac);
+      background: var(--ac-bg);
+   }
+
+   .lim-profile:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: 2px;
+   }
+
+   .lim-profile-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--tx0);
+   }
+
+   .lim-profile-flag {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--good);
+   }
+
+   .lim-profile-vals {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--tx1);
+   }
+
+   .lim-profile-vals.muted {
+      color: var(--tx2);
+   }
+
+   .lim-row {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr) minmax(0, 330px);
+      gap: 12px;
+      align-items: center;
+      padding: 10px 2px;
+      border-top: 1px solid var(--ln0);
+   }
+
+   .lim-row-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .lim-row-title span {
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .lim-row-tag {
+      font-size: 11px;
+      color: var(--tx3);
+   }
+
+   .lim-row-tag.fair {
+      color: var(--fair);
+   }
+
+   .lim-row-ctl {
+      justify-self: end;
+      min-width: 0;
+   }
+
+   .lim-class {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg2);
+      font-size: 12.5px;
+      color: var(--tx2);
+   }
+
+   .lim-class h4 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+   }
+
+   .lim-class.good h4 { color: var(--good); }
+   .lim-class.fair h4 { color: var(--fair); }
+   .lim-class.poor h4 { color: var(--poor); }
+
+   .lim-class-note {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      color: var(--tx0);
+   }
+
+   .lim-seg {
+      display: flex;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 10px;
+      background: var(--bg1);
+      border: 1px solid var(--ln1);
+   }
+
+   .lim-seg button {
+      flex: 1;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--tx2);
+      font-size: 12.5px;
+      white-space: nowrap;
+      cursor: pointer;
+   }
+
+   .lim-seg button[aria-pressed='true'] {
+      background: var(--bg3);
+      color: var(--tx0);
+      font-weight: 600;
+   }
+
+   .lim-seg button:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: 1px;
+   }
+
+   @media (max-width: 900px) {
+      .lim-profiles,
+      .lim-classes {
+         grid-template-columns: minmax(0, 1fr);
+      }
+
+      .lim-row {
+         grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .lim-row-tag {
+         grid-column: 1;
+         grid-row: 2;
+      }
    }
 
    .settings-grid-2 {
