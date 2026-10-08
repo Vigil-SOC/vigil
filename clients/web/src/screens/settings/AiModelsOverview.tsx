@@ -292,6 +292,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                           <Select
                             value={row.modelId}
                             placeholder="Select model"
+                            searchable
                             options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
                             onSelect={(v) => update(c, { modelId: v })}
                           />
