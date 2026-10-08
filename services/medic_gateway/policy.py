@@ -88,7 +88,7 @@ CURSOR = ("[A-Za-z0-9_-]{1,256}", 1)
 BOOL = ("true|false", 1)
 TYPES = (
     "incident_opened|incident_updated|incident_resolved|feedback|adjudication"
-    "|anchor|store_reset|pack_event"
+    "|anchor|store_reset|pack_event|gap"
 )
 INBOUND = [
     Route("GET", "/v1/status"),
