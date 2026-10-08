@@ -7,15 +7,18 @@ piped byte for byte with back-pressure; a slow reader must not grow memory.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 import time
 
+from services.medic_dockerproxy import server
 from services.medic_dockerproxy.tests.conftest import (
     CID,
     STREAM_HEAD,
     chunk,
     frame,
+    http_json,
 )
 
 FOLLOW = f"/containers/{CID}/logs?follow=1&stdout=1&stderr=1&timestamps=1"
@@ -186,3 +189,72 @@ async def _close_docker(h) -> None:
     h._uds.close()
     await h._uds.wait_closed()
     os.unlink(h.docker.path)
+
+
+def test_over_cap_flood_is_shed_at_once(h):
+    """Beyond twice the cap a connection is closed without being read, so a
+    flood can't pile up tasks and descriptors behind the busy reply."""
+    h.start_proxy(max_connections=1)
+
+    async def handler(r, w, target):
+        await h.docker.follow_until_closed(w, frame(1, b"tick\n"))
+
+    h.docker.routes["/logs"] = handler
+    held = h.connect()
+    _request(held, FOLLOW)
+    held.recv(1024)
+    idle = [h.connect() for _ in range(3)]  # never send a head
+    # The first one waits for its head (to answer 503); the ones beyond 2 x cap
+    # are closed at once, with no reply and no read.
+    t0 = time.monotonic()
+    shed = 0
+    for s in idle:
+        s.settimeout(0.5)
+        try:
+            shed += s.recv(1024) == b""
+        except TimeoutError:
+            pass
+    assert shed >= 1 and time.monotonic() - t0 < 1.6
+    for s in idle + [held]:
+        s.close()
+
+
+def test_json_reply_to_a_stalled_reader_times_out(h, monkeypatch):
+    """A client that stops reading a projected reply loses its slot. The body cap
+    is raised here so the reply (~17 MiB) outgrows every kernel socket buffer."""
+    monkeypatch.setattr(server, "MAX_JSON_BODY", 64 << 20)
+    h.start_proxy(max_connections=1, write_timeout=0.5)
+    row = {"Id": "a" * 64, "Names": ["/x"], "State": "running", "Created": 1}
+    rows = [row] * 150_000  # already projected: ~16 MiB in and out
+
+    async def handler(r, w, target):
+        w.write(http_json(200, json.dumps(rows).encode()))
+        await w.drain()
+
+    h.docker.routes["/containers/json"] = handler
+    s = h.connect(rcvbuf=4096)
+    _request(s, "/containers/json")
+    assert s.recv(64).startswith(b"HTTP/1.1 200")  # the reply has started
+    assert h.proxy.open == 1
+    deadline = time.monotonic() + 5
+    while h.proxy.open and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert h.proxy.open == 0
+    s.close()
+
+
+def test_half_close_after_the_request_ends_a_follow(h):
+    """Documented, fail-safe: EOF from Medic means 'gone' (httpx doesn't half-close)."""
+
+    async def handler(r, w, target):
+        w.write(STREAM_HEAD + chunk(frame(1, b"one line\n")))
+        await w.drain()
+        await r.read()
+        h.docker.closed.set()
+
+    h.docker.routes["/logs"] = handler
+    s = h.connect()
+    _request(s, FOLLOW)
+    s.shutdown(socket.SHUT_WR)
+    h.call(asyncio.wait_for(h.docker.closed.wait(), 2))
+    s.close()
