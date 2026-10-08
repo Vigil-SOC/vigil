@@ -1,9 +1,8 @@
 rule: llm.model-substituted
 cases:
-- id: daemon-swaps-the-triage-model
-  fires: true
-  why: The swap logs once per process; the rule holds for the 1 h window, then resolves.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-daemon-swaps-the-triage-model
+  title: 'The swap logs once per process; the rule holds for the 1 h window, then resolves.'
   end: +70m
   sensors:
   - {id: log.llm-worker, covers: [log_llm_worker], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -21,9 +20,9 @@ cases:
   - {at: +61m, rule: llm.model-substituted, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.model-substituted, active_since: +1m, opened_at: +3m, resolving_since: +61m, resolved_at: +66m, reason: cleared, routed_at: +3m}
-- id: worker-falls-back-to-claude
-  fires: true
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v02-worker-falls-back-to-claude
+  title: Worker falls back to claude
   end: +10m
   sensors:
   - {id: log.llm-worker, covers: [log_llm_worker], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -34,16 +33,16 @@ cases:
     level: WARNING
     logger: services.worker.jobs
     template: 'Provider %s not found; falling back to ClaudeService'
-    message: 'Provider 7f3e2a10 not found; falling back to ClaudeService'
+    message: Provider 7f3e2a10 not found; falling back to ClaudeService
     at: +2m
   expect:
+  - {at: +2m, rule: llm.model-substituted, eval: true, state: pending}
   - {at: +4m, rule: llm.model-substituted, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.model-substituted, active_since: +2m, opened_at: +4m, resolving_since: null, resolved_at: null, routed_at: +4m}
-- id: chat-requests-and-lookalikes-are-ignored
-  fires: false
-  why: The backend's swap line (any logged-in user can cause it through chat) isn't read; a daemon line at INFO fails the level filter; an unrendered line fails catalog trust.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v03-chat-requests-and-lookalikes-are-ignored
+  title: 'The backend''s swap line (any logged-in user can cause it through chat) isn''t read; a daemon line at INFO fails the level filter; an unrendered line fails catalog trust.'
   end: +10m
   sensors:
   - {id: log.llm-worker, covers: [log_llm_worker], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -54,13 +53,13 @@ cases:
     level: WARNING
     logger: core.llm.target
     template: 'Provider %s cannot serve %s — falling back to %s'
-    message: 'Provider openai-1 cannot serve gpt-4o — falling back to gpt-4o-mini'
+    message: Provider openai-1 cannot serve gpt-4o — falling back to gpt-4o-mini
     at: +1m
   - signal: log_soc_daemon
     level: INFO
     logger: core.llm.target
     template: 'Provider %s cannot serve %s — falling back to %s'
-    message: 'Provider openai-1 cannot serve gpt-4o — falling back to gpt-4o-mini'
+    message: Provider openai-1 cannot serve gpt-4o — falling back to gpt-4o-mini
     at: +2m
   - signal: log_soc_daemon
     level: WARNING
@@ -69,5 +68,6 @@ cases:
     message: 'Provider %s cannot serve %s — falling back to %s'
     at: +3m
   expect:
+  - {at: +1m, rule: llm.model-substituted, eval: unknown, state: inactive}
   - {at: +6m, rule: llm.model-substituted, eval: unknown, state: inactive}
   incidents: {}

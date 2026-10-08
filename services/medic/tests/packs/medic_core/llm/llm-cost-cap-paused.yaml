@@ -1,8 +1,8 @@
 rule: llm.cost-cap-paused
 cases:
-- id: hourly-cap-reached
-  fires: true
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-hourly-cap-reached
+  title: Hourly cap reached
   end: +40m
   sensors:
   - {id: gateway.orchestrator, covers: [orchestrator_status], interval: 300s, service: backend, states: [[+0s, ok]]}
@@ -16,9 +16,9 @@ cases:
   - {at: +30m, rule: llm.cost-cap-paused, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.cost-cap-paused, active_since: +5m, opened_at: +10m, resolving_since: +30m, resolved_at: +35m, reason: cleared, routed_at: +10m}
-- id: under-the-cap
-  fires: false
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v02-under-the-cap
+  title: Under the cap
   end: +30m
   sensors:
   - {id: gateway.orchestrator, covers: [orchestrator_status], interval: 300s, service: backend, states: [[+0s, ok]]}
@@ -27,5 +27,6 @@ cases:
   series:
   - {signal: orchestrator_status, key: cost.hourly_paused, steps: [[+0s, false]]}
   expect:
+  - {at: +5m, rule: llm.cost-cap-paused, eval: false, state: inactive}
   - {at: +20m, rule: llm.cost-cap-paused, eval: false, state: inactive}
   incidents: {}
