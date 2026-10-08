@@ -60,7 +60,8 @@ class FakeSensor:
 
 
 def stamp_only(draft: dict[str, Any]) -> dict[str, Any]:
-    """A choke that redacts nothing: the framework's tests don't depend on K2's."""
+    """A choke that redacts nothing: the framework's tests don't depend on K2's.
+    `Rig(..., choke=None)` runs the production default, K2's redaction choke."""
     return {**draft, "redaction": {"version": "none", "hits": 0}}
 
 
@@ -71,7 +72,7 @@ class Rig:
         *,
         capacity: int = 1024,
         dev_mode: bool = False,
-        choke: Choke = stamp_only,
+        choke: Choke | None = stamp_only,
     ) -> None:
         self.clock = FakeClock()
         self.stats = Stats()

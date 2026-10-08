@@ -1,0 +1,169 @@
+{
+ "$comment": "K2 redaction fixtures (S3, closes eng-review F-14). One must_redact case per redact.awk family (scripts/vigil-support/redact.awk at 9959a69a: key names :49-77 + :155-201, URL credentials :348 + :260-279, PEM :344-345 + :281-292, token shapes :407-422, long flags :206-232) plus the contextual (token) \\S+ rule K1 T-01 adds. 'secret' must be absent from the output and 'expected' is the exact output. must_keep lines must come back byte-identical (false-positive guards). Values are fake.",
+ "version": 1,
+ "must_redact": [
+  {
+   "id": "key-env",
+   "family": "key_name",
+   "input": "POSTGRES_PASSWORD=hunter2hunter2",
+   "secret": "hunter2hunter2",
+   "expected": "POSTGRES_PASSWORD=[REDACTED]"
+  },
+  {
+   "id": "key-json",
+   "family": "key_name",
+   "input": "{\"api_key\": \"canary-key-value-0001\", \"n\": 3}",
+   "secret": "canary-key-value-0001",
+   "expected": "{\"api_key\": \"[REDACTED]\", \"n\": 3}"
+  },
+  {
+   "id": "key-yaml-camel",
+   "family": "key_name",
+   "input": "  clientSecret: canary-client-secret-02",
+   "secret": "canary-client-secret-02",
+   "expected": "  clientSecret: [REDACTED]"
+  },
+  {
+   "id": "key-run-together",
+   "family": "key_name",
+   "input": "connecting with PGPASSWORD=canarypg0003 to db",
+   "secret": "canarypg0003",
+   "expected": "connecting with PGPASSWORD=[REDACTED] to db"
+  },
+  {
+   "id": "key-registry-name",
+   "family": "key_name",
+   "input": "SPLUNK_USERNAME=canary-admin-0004",
+   "secret": "canary-admin-0004",
+   "expected": "SPLUNK_USERNAME=[REDACTED]"
+  },
+  {
+   "id": "key-query-param",
+   "family": "key_name",
+   "input": "GET /reset?token=canaryResetToken0005&next=/",
+   "secret": "canaryResetToken0005",
+   "expected": "GET /reset?token=[REDACTED]&next=/"
+  },
+  {
+   "id": "key-authorization",
+   "family": "key_name",
+   "input": "Authorization: Basic Y2FuYXJ5OmNhbmFyeTAwMDY=",
+   "secret": "Y2FuYXJ5OmNhbmFyeTAwMDY=",
+   "expected": "Authorization: [REDACTED]"
+  },
+  {
+   "id": "key-wrapped",
+   "family": "key_name",
+   "input": "x password=SecretStr(\"canaryWrapped0019\") y",
+   "secret": "canaryWrapped0019",
+   "expected": "x password=SecretStr(\"[REDACTED]\") y"
+  },
+  {
+   "id": "key-name-value-pair",
+   "family": "key_name",
+   "input": "- name: SMTP_PASSWORD\n  value: canaryPair0020",
+   "secret": "canaryPair0020",
+   "expected": "- name: SMTP_PASSWORD\n  value: [REDACTED]"
+  },
+  {
+   "id": "url-credential",
+   "family": "url_credential",
+   "input": "redis url redis://default:canaryRedisPw0007@redis:6379/0",
+   "secret": "canaryRedisPw0007",
+   "expected": "redis url redis://default:[REDACTED]@redis:6379/0"
+  },
+  {
+   "id": "pem-one-line",
+   "family": "pem",
+   "input": "key=x -----BEGIN RSA PRIVATE KEY-----MIIcanaryPem0008-----END RSA PRIVATE KEY----- tail",
+   "secret": "MIIcanaryPem0008",
+   "expected": "key=x [REDACTED] tail"
+  },
+  {
+   "id": "pem-unterminated",
+   "family": "pem",
+   "input": "-----BEGIN PRIVATE KEY-----\nMIIcanaryPem0009\nmore",
+   "secret": "MIIcanaryPem0009",
+   "expected": "[REDACTED]"
+  },
+  {
+   "id": "token-bearer",
+   "family": "token_shape",
+   "input": "sent header Bearer canaryBearerToken0010abc",
+   "secret": "canaryBearerToken0010abc",
+   "expected": "sent header Bearer [REDACTED]"
+  },
+  {
+   "id": "token-jwt",
+   "family": "token_shape",
+   "input": "jwt eyJhbGciOiJIUzI1NiJ9.eyJjYW5hcnkiOjExfQ.c2lnMDAxMQ",
+   "secret": "eyJjYW5hcnkiOjExfQ",
+   "expected": "jwt [REDACTED]"
+  },
+  {
+   "id": "token-sk",
+   "family": "token_shape",
+   "input": "provider rejected sk-ant-canary0012abcdefghijklmnopqrstu",
+   "secret": "sk-ant-canary0012abcdefghijklmnopqrstu",
+   "expected": "provider rejected [REDACTED]"
+  },
+  {
+   "id": "token-github",
+   "family": "token_shape",
+   "input": "clone failed for ghp_canary0013abcdefghijklmnopqrstuvwx",
+   "secret": "ghp_canary0013abcdefghijklmnopqrstuvwx",
+   "expected": "clone failed for [REDACTED]"
+  },
+  {
+   "id": "token-aws",
+   "family": "token_shape",
+   "input": "aws AKIACANARY0014EXAMPLE rejected",
+   "secret": "AKIACANARY0014EXAMPLE",
+   "expected": "aws [REDACTED] rejected"
+  },
+  {
+   "id": "token-google",
+   "family": "token_shape",
+   "input": "gemini AIzaCanary0015abcdefghijklmnopqrstuv",
+   "secret": "AIzaCanary0015abcdefghijklmnopqrstuv",
+   "expected": "gemini [REDACTED]"
+  },
+  {
+   "id": "flag-long",
+   "family": "flag",
+   "input": "vigil --db-password canaryDbPass0016 --port 6379",
+   "secret": "canaryDbPass0016",
+   "expected": "vigil --db-password [REDACTED] --port 6379"
+  },
+  {
+   "id": "contextual-token",
+   "family": "contextual_token",
+   "input": "Password reset token Zm9vYmFyY2FuYXJ5MDAxNw issued",
+   "secret": "Zm9vYmFyY2FuYXJ5MDAxNw",
+   "expected": "Password reset token [REDACTED] issued"
+  },
+  {
+   "id": "contextual-token-colon",
+   "family": "contextual_token",
+   "input": "reset Token canary-0018-reset-value",
+   "secret": "canary-0018-reset-value",
+   "expected": "reset Token [REDACTED]"
+  }
+ ],
+ "must_keep": [
+  "AUTH_MIN_PASSWORD_LENGTH=12",
+  "PASSWORD_RESET_TTL_SECONDS: 3600",
+  "2026-10-05 12:00:00,123 - vigil.daemon - INFO - polled https://api.example.com/v1/x",
+  "CORS_ORIGINS=http://localhost:6988,https://vigil.example.com/app",
+  "http://host:8080/p?email=a@b.com",
+  "ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}",
+  "- OPENAI_API_KEY=$OPENAI_API_KEY",
+  "Password reset token expired",
+  "Password reset token has a bad signature",
+  "worker monitor reported 3 events",
+  "/usr/bin/vigil --port 6987 --log-level info --workers 4",
+  "token_count=1200",
+  "password: null",
+  "Splunk configuration incomplete: missing password"
+ ]
+}
