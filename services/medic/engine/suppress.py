@@ -74,7 +74,7 @@ def route(
     out: list[tuple[dict, dict]] = []
     for inc in opens:
         m = inc.m
-        if m.get("routed_at") is not None or m.get("quiet"):
+        if m.get("routed_at") is not None:
             continue
         mine = [
             e
@@ -104,12 +104,12 @@ def route(
             m["freed_at"] = m.get("freed_at") or now
             if now - m["freed_at"] < OUTLIVE_S or upgrading:
                 continue
-            if m["state"] == "resolving":
-                m["quiet"] = True  # it was only a symptom: it closes without routing
-            elif inc.value is True:
+            if m["state"] == "firing" and inc.value is True:
                 m["suppressed_by"], m["routed_at"] = None, now
                 out += [(m, {"change": "unsuppressed"}), (m, {"change": "routed"})]
-            continue  # firing but unknown: wait for a decided tick
+            # Resolving or unknown: wait. One that resolves closes without ever
+            # routing (it was only a symptom); one that refires true routes then.
+            continue
         if (mine and now < m["hold_end"]) or upgrading:  # §6.2 hold, §7
             continue
         m["routed_at"] = now
