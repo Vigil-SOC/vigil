@@ -64,8 +64,14 @@ class HttpReady:
     def covers(self) -> tuple[str, ...]:
         return (self.signal,)
 
+    @property
+    def instance(self) -> str:
+        # host:port only: netloc would carry any user:password@ in the URL.
+        parts = urlsplit(self.url)
+        return f"{parts.hostname}:{parts.port or 80}"
+
     async def collect(self, ctx: SensorContext) -> Sequence[Reading]:
-        instance = urlsplit(self.url).netloc
+        instance = self.instance
         # httpx's own limit sits inside the framework's hard cap, so a slow target
         # is classified here (connect vs read) rather than cut by the scheduler.
         limit = httpx.Timeout(self.timeout_s * 0.8)

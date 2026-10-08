@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from itertools import pairwise
 
 import pytest
@@ -205,3 +206,66 @@ async def test_choke_failure_drops_the_payload_and_counts_it() -> None:
     assert rig.health("ok.one")[-1]["counters"]["redactor_failures"] == 1
     assert rig.health("ok.one")[-1]["state"] == "degraded"
     assert rig.scheduler.status()["redactor_failures"] == 2
+
+
+async def test_sensor_raising_cancelled_error_itself_is_a_failure() -> None:
+    # Review B1: a stray CancelledError from a client library, not our cut.
+    class Leaky(FakeSensor):
+        async def collect(self, ctx):  # type: ignore[override]
+            self.calls += 1
+            raise asyncio.CancelledError
+
+    sensor = Leaky("leaky.one")
+    rig = Rig([sensor])
+    for _ in range(12):
+        await rig.tick(TICK_S)
+    assert sensor.calls <= 6  # never every tick (the bug: 11); backs off after 3
+    states = [h["state"] for h in rig.health("leaky.one")]
+    assert "ok" not in states and states[-1] == "blind"
+    errors = [o for o in rig.sink.of("sample") if o["outcome"] == "error"]
+    assert errors and errors[0]["error"]["class"] == "other"
+
+
+async def test_generator_readings_are_accepted() -> None:
+    # Review S3: an iterable that isn't a list must not kill the cycle.
+    class Gen(FakeSensor):
+        async def collect(self, ctx):  # type: ignore[override]
+            self.calls += 1
+            return (
+                r
+                for r in [
+                    Reading("api_health", "backend", values=[Value.flag("ok", True)])
+                ]
+            )
+
+    sensor = Gen("gen.one")
+    rig = Rig([sensor])
+    for _ in range(12):
+        await rig.tick(TICK_S)
+    assert sensor.calls == 6
+    assert rig.health("gen.one")[-1]["state"] == "ok"
+
+
+async def test_sink_failure_is_counted_and_the_loop_survives() -> None:
+    # Review S2b: Sink.write raising must not lose the batch silently or stop sensors.
+    rig = Rig([FakeSensor("ok.one")])
+
+    def broken(obs: dict) -> None:
+        raise OSError("disk full")
+
+    rig.sink.write = broken  # type: ignore[method-assign]
+    await rig.tick()
+    assert rig.stats["ok.one"].dropped == 2  # the sample and its health
+    stop = asyncio.Event()
+    ticks = {"n": 0}
+    real_sleep = rig.clock.sleep
+
+    async def sleep(seconds: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] >= 3:
+            stop.set()
+        await real_sleep(seconds)
+
+    rig.clock.sleep = sleep  # type: ignore[method-assign]
+    await rig.scheduler.run(rig.pipeline.drain, stop)
+    assert ticks["n"] == 3

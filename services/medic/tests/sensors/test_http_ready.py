@@ -195,3 +195,9 @@ def test_defaults_point_at_the_readiness_ports() -> None:
     assert agent_worker_ready().url == "http://agent-worker:6990/readyz"
     assert agent_serve_ready().url == "http://agent-serve:6989/readyz"
     assert agent_worker_ready().covers == ("agent_worker_readyz",)
+
+
+def test_instance_never_carries_userinfo() -> None:
+    # Review S1: netloc would keep user:password@ and it fits the label pattern.
+    s = sensor("http://vigil:hunter2@agent-worker:6990/readyz")
+    assert s.instance == "agent-worker:6990"

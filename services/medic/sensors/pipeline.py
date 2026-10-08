@@ -108,6 +108,17 @@ class Pipeline:
                     where,
                 )
                 return 0
-        self.sink.write(obs)
+        try:
+            self.sink.write(obs)
+        # A sink that can't take it (store full, locked) loses this observation,
+        # counted against its sensor; the rest of the batch still goes.
+        except Exception as exc:  # noqa: BLE001
+            stats.dropped += 1
+            log.warning(
+                "Dropped an observation from %s: the sink failed (%s)",
+                subject,
+                type(exc).__name__,
+            )
+            return 0
         self._seq[emitter] = seq + 1
         return 1

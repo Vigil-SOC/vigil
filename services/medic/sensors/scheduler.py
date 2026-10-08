@@ -116,7 +116,12 @@ class Scheduler:
         """The production loop (S4 wires `drain` to the pipeline)."""
         while not stop.is_set():
             await self.tick()
-            drain()
+            # The loop is what keeps every sensor and heartbeat going, so
+            # nothing a sink does may stop it (the pipeline counts its drops).
+            try:
+                drain()
+            except Exception as exc:  # noqa: BLE001
+                log.error("Draining observations failed: %s", type(exc).__name__)
             await self.clock.sleep(TICK_S)
 
     async def tick(self) -> None:
@@ -151,15 +156,28 @@ class Scheduler:
     def _start(self, st: _State, now: float) -> None:
         st.started, st.cut = now, False
         self.bus.stats[st.sensor.id].reads += 1
-        st.task = asyncio.get_running_loop().create_task(
+        task = asyncio.get_running_loop().create_task(
             self._call(st), name=f"medic.sensor.{st.sensor.id}"
         )
+        task.add_done_callback(lambda done: self._reap(st, done))
+        st.task = task
+
+    def _reap(self, st: _State, task: asyncio.Task[None]) -> None:
+        """Safety net: anything that escapes `_call` is still a counted failure."""
+        if task.cancelled() or task.exception() is None:
+            return
+        log.error(
+            "Sensor %s: framework error %s",
+            st.sensor.id,
+            type(task.exception()).__name__,
+        )
+        self._fail(st, ReadError("other", detail="framework error"))
 
     async def _call(self, st: _State) -> None:
         sensor = st.sensor
         try:
             async with asyncio.timeout(sensor.timeout_s):
-                readings = await sensor.collect(self.ctx)
+                readings = list(await sensor.collect(self.ctx))
             drafts = [self._sample(st, r) for r in readings]
         except TimeoutError:
             if not st.cut:
@@ -174,7 +192,13 @@ class Scheduler:
         except asyncio.CancelledError:
             if st.cut:
                 return  # we cut it; the tick already recorded the failure
-            raise
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # a real cancel from outside: Medic is shutting down
+            # A stray CancelledError from inside the sensor is a failure, not an
+            # exit: otherwise the sensor would go silent and still read ok.
+            self._fail(st, ReadError("other", detail="collect() raised CancelledError"))
+            return
         # A crashing sensor is a counted failure, whatever it raised.
         except Exception as exc:  # noqa: BLE001
             # The type only: an exception message can carry what the sensor read.
