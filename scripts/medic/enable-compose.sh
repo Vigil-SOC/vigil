@@ -36,7 +36,8 @@
 #   VIGIL_MEDIC_COMPOSE_OVERRIDE  one more compose file, last on every command
 #                             (an operator's own override; the live tests' stubs)
 # Vigil's own settings come from the repo .env, as for `docker compose
-# --env-file .env` (README); variables already in the environment win.
+# --env-file .env` (README; VIGIL_MEDIC_DOTENV names another file); variables
+# already in the environment win over it, and Medic's compose.env over both.
 set -euo pipefail
 
 usage() {
@@ -182,17 +183,28 @@ VIGIL_MEDIC_DOCKER_GID=$docker_gid
 VIGIL_MEDIC_VIEWER_USER=$viewer_user"
 
 # Recreating the backend re-renders its whole environment, and shell env beats
-# --env-file, so load Vigil's .env into the shell as start.sh does (without
-# start.sh's copy of env.example when there is none). Otherwise lib.sh's dc()
-# would hand the backend the default OLLAMA_URL over the one in .env.
-if [ -f "$REPO_ROOT/.env" ]; then
+# every --env-file, so the shell must hold the right values, in this order:
+#   1. Vigil's .env (otherwise lib.sh's dc() hands the backend its default
+#      OLLAMA_URL over the one in .env); no copy of env.example if there's none;
+#   2. what the caller exported, which wins over .env (start.sh's rule, and the
+#      README's exported JWT_SECRET_KEY);
+#   3. compose.env last: env.example's VIGIL_MEDIC_ENABLED="false" must not
+#      switch Medic off.
+dotenv="${VIGIL_MEDIC_DOTENV:-$REPO_ROOT/.env}"
+if [ -f "$dotenv" ]; then
+    caller="$(export -p)"
     set -a
     # shellcheck source=/dev/null
-    source "$REPO_ROOT/.env"
+    source "$dotenv"
     set +a
+    eval "$caller"
 fi
+set -a
+# shellcheck source=/dev/null
+source "$settings"
+set +a
 env_files=()
-[ -f "$REPO_ROOT/.env" ] && env_files+=(--env-file "$REPO_ROOT/.env")
+[ -f "$dotenv" ] && env_files+=(--env-file "$dotenv")
 env_files+=(--env-file "$settings")
 override=()
 [ -n "${VIGIL_MEDIC_COMPOSE_OVERRIDE:-}" ] && override=(-f "$VIGIL_MEDIC_COMPOSE_OVERRIDE")
@@ -221,19 +233,19 @@ backend_renders() {
     dcm config backend | grep -E "$1" > /dev/null
 }
 
-backend_running() {
-    local running
-    running="$(dcm ps --status running --services)"
-    printf '%s\n' "$running" | grep -Fx backend > /dev/null
-}
-
 ensure_account() {
-    local err rc _
+    local err rc running up=0 _
     for _ in $(seq 1 60); do
-        backend_running && break
+        # An assignment, so a failing compose call stops the run (set -e)
+        # rather than reading as a backend that isn't up.
+        running="$(dcm ps --status running --services)"
+        if printf '%s\n' "$running" | grep -Fx backend > /dev/null; then
+            up=1
+            break
+        fi
         sleep 3
     done
-    if ! backend_running; then
+    if [ "$up" = 0 ]; then
         echo "error: the backend container isn't running; see: docker compose logs backend" >&2
         exit 1
     fi
@@ -259,6 +271,11 @@ ensure_account() {
     exit 1
 }
 
+if [ "$secrets_only" = 1 ] && { [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ]; }; then
+    # The next full run must recreate medic and the gateway even though it
+    # finds these files "kept".
+    : > "$dir/.recreate"
+fi
 if [ "$secrets_only" = 0 ]; then
     # Recreating the backend re-renders its environment. Refuse if this shell
     # would hand it no JWT secret, which it won't start without (README).
@@ -285,11 +302,13 @@ if [ "$secrets_only" = 0 ]; then
                 --entrypoint sh vigil-medic-gateway:local -c "$own"
         fi
     fi
-    if [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ]; then
+    if [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ] \
+        || [ -e "$dir/.recreate" ]; then
         # A new file (--rotate, or one deleted and re-minted): Compose
         # bind-mounts the old inode, so only a recreate sees it. Straight after
         # the password changed, since the gateway stops after two refusals.
         dcm up -d --force-recreate medic medic-gateway
+        rm -f "$dir/.recreate"
     fi
     # Only the medic-net members already running: enabling Medic starts nothing
     # else of Vigil's. Docker drops them off medic-net unless recreated with
