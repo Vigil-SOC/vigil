@@ -298,3 +298,18 @@ def test_a_database_error_prints_no_parameters(monkeypatch):
     assert code == sa.EX_SOFTWARE == 70
     assert "SECRETHASH" not in out + err
     assert "IntegrityError" in err
+
+
+def test_no_users_table_yet_is_not_ready_not_an_error(monkeypatch):
+    from sqlalchemy.exc import NoSuchTableError
+
+    def missing(conn):
+        raise NoSuchTableError("users")
+
+    monkeypatch.setattr(
+        sa,
+        "inspect",
+        lambda conn: type("I", (), {"get_columns": staticmethod(missing)})(),
+    )
+    code, _, err = _run("ensure", NAME)
+    assert code == 75, err

@@ -36,7 +36,7 @@ import uuid
 from typing import Optional, TextIO
 
 from sqlalchemy import inspect
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
 from core.auth.auth_service import AuthService
 from core.storage.connection import get_db_manager
@@ -75,7 +75,11 @@ def _email(username: str) -> str:
 
 def schema_ready(conn) -> bool:
     """Whether ``users.service_account`` exists (create_all, 40_*.sql or migration)."""
-    columns = inspect(conn).get_columns("users")
+    try:
+        columns = inspect(conn).get_columns("users")
+    except NoSuchTableError:
+        return False  # create_all hasn't run yet
+
     return any(c["name"] == "service_account" for c in columns)
 
 
