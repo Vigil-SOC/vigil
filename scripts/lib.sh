@@ -58,7 +58,8 @@ _dc_medic() {
     fi
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in VIGIL_MEDIC_*=*) ;; *) continue ;; esac
-        case "${line%%=*}" in *[!A-Z0-9_]*) continue ;; esac
+        # Override files come from Vigil's own environment, never from compose.env.
+        case "${line%%=*}" in *[!A-Z0-9_]*|VIGIL_MEDIC_COMPOSE_OVERRIDE) continue ;; esac
         medic_env+=("$line")
     done < "$settings"
     medic_files=(-f "$overlay")

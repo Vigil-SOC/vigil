@@ -45,6 +45,8 @@ COMPOSE_FILE = REPO_ROOT / "infra" / "docker" / "docker-compose.yml"
 # Medic on Compose (V1-4): see _medic_compose().
 MEDIC_OVERLAY = REPO_ROOT / "infra" / "docker" / "medic" / "docker-compose.medic.yml"
 _MEDIC_SETTING = re.compile(r"^(VIGIL_MEDIC_[A-Z0-9_]*)=(.*)$")
+# Read from Vigil's own environment only: compose.env can't name compose files.
+_MEDIC_OVERRIDE = "VIGIL_MEDIC_COMPOSE_OVERRIDE"
 
 
 # postgres/redis/bifrost are stoppable=False on purpose: a UI stop button on
@@ -190,12 +192,13 @@ def _medic_compose(env: Dict[str, str]) -> List[str]:
             type(e).__name__,
         )
         return []
+    overrides = env.get(_MEDIC_OVERRIDE, "")
     for line in text.splitlines():
         match = _MEDIC_SETTING.match(line)
-        if match:
+        if match and match.group(1) != _MEDIC_OVERRIDE:
             env[match.group(1)] = match.group(2)
     files = ["-f", str(MEDIC_OVERLAY)]
-    for extra in env.get("VIGIL_MEDIC_COMPOSE_OVERRIDE", "").split(":"):
+    for extra in overrides.split(":"):
         if extra:
             files += ["-f", extra]
     return files
