@@ -444,3 +444,111 @@ def test_startup_and_shutdown_call_them():
 
     assert "_start_medic_poller(app)" in inspect.getsource(main._startup)
     assert "await _stop_medic_poller(app)" in inspect.getsource(main._shutdown)
+
+
+# --- review fixes: stale rows, the database's clock, saying why -----------------
+
+
+def test_re_enabling_starts_a_new_outage_not_an_old_one(on):
+    """Off for an hour with a failure stored: the first poll back starts afresh."""
+    mls.poll_once(on, now=T0, fetch=_ok)
+    mls.poll_once(on, now=_at(60), fetch=_fail("refused"))
+    back = _at(3600)
+    assert mls.current_status(on, now=back) is MedicStatus.UNKNOWN  # stale row
+    mls.poll_once(on, now=back, fetch=_fail("refused"))
+    [row] = _row()
+    assert row["first_failed_at"] == back
+    assert mls.current_status(on, now=back + timedelta(seconds=60)) is (
+        MedicStatus.UNKNOWN
+    )
+
+
+def test_times_come_from_the_database_not_this_replicas_clock(on, monkeypatch):
+    """A replica whose clock is an hour off still writes and reads one clock."""
+    import core.time
+    from core.platform import medic_status as ms
+
+    for module in (ms, core.time):
+        monkeypatch.setattr(module, "utcnow", lambda: datetime(2001, 1, 1))
+    with get_db_manager().session_scope() as s:
+        db_now = s.execute(text("SELECT now() AT TIME ZONE 'UTC'")).scalar()
+    assert mls.poll_once(on, fetch=_ok) is True
+    [row] = _row()
+    assert abs(row["updated_at"] - db_now) < timedelta(seconds=30)
+    assert mls.current_status(on) is MedicStatus.RUNNING
+
+
+def test_a_missing_url_or_key_is_said_once_at_start(tmp_path, caplog):
+    import asyncio
+
+    settings = Settings(
+        _env_file=None,
+        vigil_medic_enabled="true",
+        vigil_medic_api_url="",
+        vigil_medic_api_key_file=str(tmp_path / "missing"),
+    )
+
+    async def start_and_stop():
+        task = mls.start_poller(settings)
+        task.cancel()
+
+    with caplog.at_level("WARNING", logger=mls.logger.name):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(mls, "run_poller", _forever)
+            asyncio.run(start_and_stop())
+    text_ = caplog.text
+    assert "VIGIL_MEDIC_API_URL" in text_ and "VIGIL_MEDIC_API_KEY_FILE" in text_
+
+
+def test_a_good_config_says_nothing(on, caplog):
+    import asyncio
+
+    async def start_and_stop():
+        mls.start_poller(on).cancel()
+
+    with caplog.at_level("WARNING", logger=mls.logger.name):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(mls, "run_poller", _forever)
+            asyncio.run(start_and_stop())
+    assert caplog.text == ""
+    assert KEY not in caplog.text
+
+
+async def _forever(settings, interval=60):
+    import asyncio
+
+    await asyncio.sleep(3600)
+
+
+def test_the_first_failure_logs_the_http_status_never_the_body(on, caplog):
+    def handler(request):
+        return httpx.Response(429, json={"code": "slow_down " + KEY})
+
+    def fetch(url, key):
+        return mls.fetch_status(url, key, transport=httpx.MockTransport(handler))
+
+    with caplog.at_level("WARNING", logger=mls.logger.name):
+        mls.poll_once(on, now=T0, fetch=fetch)
+        mls.poll_once(on, now=_at(60), fetch=fetch)
+    assert caplog.text.count("Medic status poll failed") == 1
+    assert "5xx" in caplog.text and "429" in caplog.text
+    assert KEY not in caplog.text and "slow_down" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_loop_keeps_a_fixed_cadence_when_a_poll_is_slow(on, monkeypatch):
+    import asyncio
+
+    starts = []
+
+    def slow(settings):
+        starts.append(time.monotonic())
+        time.sleep(0.05)
+
+    monkeypatch.setattr(mls, "poll_once", slow)
+    task = asyncio.create_task(mls.run_poller(on, interval=0.1))
+    while len(starts) < 4:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert all(0.08 < g < 0.13 for g in gaps), gaps

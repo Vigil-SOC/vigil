@@ -154,17 +154,17 @@ def test_killed_medic_reads_down_within_five_minutes_of_the_kill():
 
 def test_a_backend_back_after_a_long_gap_does_not_flash_down():
     """Last seen a day ago (the backend was off), one refused poll now: a
-    restarting Medic gets the same 4 more minutes as any other outage."""
+    restarting Medic gets the same grace as any other outage."""
     seen = _seen(last=T0, failed=_at(86_400), kind="refused")
     assert ms.medic_status(_on(), seen, _at(86_400)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(86_400 + 239)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(86_400 + 240)) is ms.MedicStatus.DOWN
+    assert ms.medic_status(_on(), seen, _at(86_400 + 229)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(86_400 + 230)) is ms.MedicStatus.DOWN
 
 
-def test_never_seen_and_failing_is_down_after_four_more_polls():
+def test_never_seen_and_failing_is_down_after_the_grace():
     seen = _seen(failed=T0, kind="timeout")
-    assert ms.medic_status(_on(), seen, _at(239)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(240)) is ms.MedicStatus.DOWN
+    assert ms.medic_status(_on(), seen, _at(229)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(230)) is ms.MedicStatus.DOWN
 
 
 def test_a_stale_row_without_failures_is_unknown_not_down():
@@ -176,3 +176,31 @@ def test_a_stale_row_without_failures_is_unknown_not_down():
 def test_off_wins_over_any_row():
     seen = _seen(last=T0, failed=_at(60), kind="refused")
     assert ms.medic_status(_settings("false"), seen, _at(900)) is ms.MedicStatus.OFF
+
+
+@pytest.mark.parametrize("rhythm", [60, 70])  # 70: each failing poll times out (10 s)
+@pytest.mark.parametrize("kill_after", [1, 30, 59])
+def test_down_by_kill_plus_300_for_any_kill_time(kill_after, rhythm):
+    last = T0
+    kill = _at(kill_after)
+    failed = None
+    tick = rhythm
+    while tick < 900:
+        if failed is None:
+            failed = _at(tick)
+        for second in range(tick, tick + rhythm):
+            seen = ms.LastSeen(last, failed, "timeout", updated_at=_at(tick))
+            if ms.medic_status(_on(), seen, _at(second)) is ms.MedicStatus.DOWN:
+                assert _at(second) - kill <= timedelta(seconds=300)
+                return
+        tick += rhythm
+    raise AssertionError("never Down")
+
+
+def test_a_row_nobody_has_written_for_three_polls_is_unknown():
+    """Medic was off (or every poller stopped): an old failure says nothing now."""
+    seen = ms.LastSeen(T0, _at(60), "refused", updated_at=_at(120))
+    assert ms.medic_status(_on(), seen, _at(299)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(300)) is ms.MedicStatus.UNKNOWN
+    fresh = ms.LastSeen(T0, _at(60), "refused", updated_at=_at(299))
+    assert ms.medic_status(_on(), fresh, _at(300)) is ms.MedicStatus.DOWN
