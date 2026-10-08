@@ -202,6 +202,10 @@ services:
       # on; the OTLP push needs the collector from --profile observability.
       VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      # Medic's master switch, read here too so the console shows Off, not Down
+      # (C8). Same variable and default as the medic service: on without the
+      # Medic profile reads as down, which is loud, never as a silent off.
+      VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
       PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       SSL_CERT_FILE:
@@ -642,7 +646,10 @@ services:
       VIGIL_MEDIC_GATEWAY_IN_BIND: medic-gateway-in:8470
       # The Viewer account the gateway logs in as. Its password is a file, never
       # env: the gateway refuses to start with one in its environment.
-      VIGIL_MEDIC_GATEWAY_VIEWER_USER: ${VIGIL_MEDIC_VIEWER_USER:-medic-viewer}
+      # medic-<12 random a-z0-9>, minted by scripts/medic/enable-compose.sh (D2-17).
+      # No default: unset, the gateway refuses to start rather than try a
+      # guessable name.
+      VIGIL_MEDIC_GATEWAY_VIEWER_USER: ${VIGIL_MEDIC_VIEWER_USER:-}
     secrets:
       - medic_viewer_password
     restart: unless-stopped
