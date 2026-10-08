@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { Cost } from '../../shared/cost'
+import { utcClock as hhmm } from '../../shared/utc'
 import {
   IN_FLIGHT, callFailure, callLine, fmtDuration, useInvestigateReplay,
   type CallFailure, type HuntView, type InvestigateDecisionView, type RootCauseBudgets, type RootCauseEntry, type WfRunDetail,
@@ -42,10 +43,6 @@ export const STEP_MS = 1400
 export const UNSUPPORTED = 'Replay isn’t available for this kind of run yet.'
 export const PLAYBOOK = 'A playbook runs its phases in order, with no lead agent to watch. Its phases are listed in History.'
 
-const hhmm = (iso?: string | null): string | null => {
-  const t = iso ? new Date(iso) : null
-  return t && !Number.isNaN(t.getTime()) ? t.toISOString().slice(11, 16) : null
-}
 const titled = (action: string) => {
   const words = action.replace(/[_-]+/g, ' ').trim().toLowerCase()
   return words.charAt(0).toUpperCase() + words.slice(1)
@@ -360,6 +357,7 @@ function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: bool
   const [playing, setPlaying] = useState(false)
   const [opened, setOpened] = useState<Record<string, boolean>>({})
   const cards = useRef<(HTMLDivElement | null)[]>([])
+  const list = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (follow && live) setCursor(last) }, [follow, live, last])
   // one timer, cleared on every step, on pause and on unmount
@@ -370,7 +368,15 @@ function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: bool
     const timer = setTimeout(() => setCursor(cursor + 1), STEP_MS)
     return () => clearTimeout(timer)
   }, [playing, cursor, last, live])
-  useEffect(() => { cards.current[cursor]?.scrollIntoView?.({ block: 'nearest' }) }, [cursor])
+  // the steps list follows the active step on its own; scrollIntoView would also move the page
+  useEffect(() => {
+    const box = list.current
+    const card = cards.current[cursor]
+    if (!box || !card) return
+    const top = card.offsetTop // the box is the card's offset parent
+    if (top < box.scrollTop) box.scrollTop = top
+    else if (top + card.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + card.offsetHeight - box.clientHeight
+  }, [cursor])
 
   const at = Math.min(cursor, last)
   const jump = (i: number) => { setFollow(live && i >= last); setCursor(i) }
@@ -406,14 +412,16 @@ function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: bool
         <div className="flex flex-col gap-2 min-w-0">
           <Heading>What the lead agent did</Heading>
           {note && <span className="text-[12px] text-[var(--tx2)]">{note}</span>}
-          {steps.map((s, i) => (
-            <StepCard
-              key={s.key} step={s} i={i} mark={markOf(i, at, s, i === last, live, halt)} error={i === last && (halt?.kind === 'failed' || halt?.kind === 'cancelled') ? halt.reason || null : null} selected={i === at}
-              open={Boolean(opened[s.key])} onPick={() => jump(i)}
-              onToggle={() => setOpened((o) => ({ ...o, [s.key]: !o[s.key] }))}
-              cardRef={(el) => { cards.current[i] = el }}
-            />
-          ))}
+          <div ref={list} className="relative flex flex-col gap-2 overflow-y-auto max-h-[max(360px,calc(100vh-300px))]">
+            {steps.map((s, i) => (
+              <StepCard
+                key={s.key} step={s} i={i} mark={markOf(i, at, s, i === last, live, halt)} error={i === last && (halt?.kind === 'failed' || halt?.kind === 'cancelled') ? halt.reason || null : null} selected={i === at}
+                open={Boolean(opened[s.key])} onPick={() => jump(i)}
+                onToggle={() => setOpened((o) => ({ ...o, [s.key]: !o[s.key] }))}
+                cardRef={(el) => { cards.current[i] = el }}
+              />
+            ))}
+          </div>
         </div>
         {panels(at)}
       </div>
@@ -427,7 +435,8 @@ function OneLine({ children }: { children: React.ReactNode }) {
 
 /** The one line where the player would be, with why the run stopped when it did. */
 function NoSteps({ live, halt }: { live: boolean; halt: Halt | null }) {
-  return <OneLine>{halt ? `${haltCaption(halt)}. No steps were recorded for this run.` : live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
+  // a halt reason often ends in its own period
+  return <OneLine>{halt ? `${haltCaption(halt).replace(/[.\s]+$/, '')}. No steps were recorded for this run.` : live ? 'No steps yet. The first one shows here when the lead makes it.' : 'No steps were recorded for this run.'}</OneLine>
 }
 
 function HuntReplay({ d, hunt, live, halt }: { d: WfRunDetail; hunt: HuntView | null; live: boolean; halt: Halt | null }) {
@@ -499,8 +508,10 @@ function hypothesisOf(d: WfRunDetail): string | null {
 function Header({ d, hypothesis, tail, onBack }: { d: WfRunDetail; hypothesis: string | null; tail: string | null; onBack: () => void }) {
   const name = d.workflow_name
   const caseId = d.hunt?.scope?.case_id ?? d.trigger_context?.case_id
-  const about = [typeof caseId === 'string' && caseId ? `case ${caseId}` : null, d.hunt?.name].filter(Boolean).join(': ')
-  const workflow = name ? `${name} ${typeof d.workflow_version === 'number' ? versionText(d) : `(${versionText(d)})`}` : versionText(d)
+  // a hunt with no name of its own carries the workflow id as its name; the heading already says which workflow
+  const huntName = d.hunt?.name && d.hunt.name !== name ? d.hunt.name : null
+  const about = [typeof caseId === 'string' && caseId ? `case ${caseId}` : null, huntName].filter(Boolean).join(': ')
+  const workflow = name ? `${workflowTitle(name)} ${typeof d.workflow_version === 'number' ? versionText(d) : `(${versionText(d)})`}` : versionText(d)
   const lead = `${workflow}${about ? ` · ${about}` : ''}`
   const subtitle = ['Run ', <span key="id" className="font-mono" title={d.run_id}>{d.run_id.slice(0, 8)}</span>, ` · ${lead}${tail ? `${/[.?!]$/.test(lead) ? ' ' : '. '}${tail}` : ''}`]
   return (
@@ -533,7 +544,7 @@ export function WatchRun({ d, onBack }: { d: WfRunDetail; onBack: () => void }) 
     : recorded === 'investigate' ? 'investigate' : recorded === 'root_cause' ? 'root_cause' : d.hunt ? 'hunt' : 'playbook'
   const tail = kind === 'playbook' ? null : live && !halt ? 'Live.' : 'Replayed step by step from the record.'
   return (
-    <div className="flex flex-col gap-3.5 px-[22px] py-5 pb-[110px]">
+    <div className="flex flex-col gap-3.5 px-[22px] pt-5 pb-[110px]">
       <Header d={d} hypothesis={kind === 'hunt' ? hypothesisOf(d) : null} tail={tail} onBack={onBack} />
       {kind === 'hunt' && <HuntReplay d={d} hunt={d.hunt ?? null} live={live} halt={halt} />}
       {kind === 'investigate' && <InvestigateReplay d={d} live={live} halt={halt} />}
