@@ -190,6 +190,25 @@ def test_oversized_upload_is_refused(operator, monkeypatch):
     )
 
 
+def test_name_with_a_trailing_newline_is_refused(operator):
+    client, root = operator
+    resp = _upload(
+        client, "SKILL.md", "---\nname: |\n  desk-check\ndescription: x\n---\n"
+    )
+    _refused(resp, 400, "must be lowercase letters", root)
+
+
+def test_corrupt_compressed_entry_is_refused_not_a_500(operator):
+    client, root = operator
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_BZIP2) as zf:
+        zf.writestr("SKILL.md", _skill_md() * 20)
+    data = bytearray(buf.getvalue())
+    for i in range(45, 70):  # inside the first entry's bzip2 stream
+        data[i] ^= 0xFF
+    _refused(_upload(client, "x.zip", bytes(data)), 400, "not a readable zip", root)
+
+
 def test_non_zip_bytes_named_zip_are_refused(operator):
     client, root = operator
     _refused(_upload(client, "x.zip", b"not a zip"), 400, "not a readable zip", root)

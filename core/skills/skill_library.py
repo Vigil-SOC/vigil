@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import lzma
 import os
 import re
 import shutil
@@ -39,7 +40,7 @@ LIBRARY_ROOT = Path(__file__).resolve().parent / "library"
 
 # The spec's name grammar: lowercase letters, digits and single hyphens, never
 # at either end. The length bound is checked separately for a clearer message.
-_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _NAME_MAX = 64
 _DESCRIPTION_MAX = 1024
 _COMPATIBILITY_MAX = 500
@@ -563,6 +564,8 @@ def install_uploaded_skill(
             NotImplementedError,
             zlib.error,
             EOFError,
+            OSError,
+            lzma.LZMAError,
         ) as exc:
             raise SkillError(f"not a readable zip archive: {exc}") from exc
     else:
@@ -572,6 +575,7 @@ def install_uploaded_skill(
         scratch = Path(tempfile.mkdtemp(prefix=".copy-", dir=root))
     except OSError as exc:
         raise SkillError(f"could not write under {root}: {exc}") from exc
+    final: Optional[Path] = None
     try:
         staged = scratch / name
         staged.mkdir()
@@ -591,6 +595,8 @@ def install_uploaded_skill(
             )
         os.replace(staged, final)
     except OSError as exc:
+        if final and os.path.lexists(final):  # lost a race for the name
+            raise SkillConflict(f"A skill named {name!r} already exists.") from exc
         raise SkillError(f"could not install {name!r}: {exc}") from exc
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
