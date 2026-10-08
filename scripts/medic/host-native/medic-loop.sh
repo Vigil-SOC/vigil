@@ -27,6 +27,7 @@ START=5 MAX=300 CAP=5 WINDOW=600
 [ $# -gt 0 ] || usage
 while [ $# -gt 0 ]; do
     case "$1" in
+        --api-key-stdin) KEYIN=1; shift ;;
         --probe) MODE=probe; shift; break ;;
         --check) MODE=check; shift ;;
         --python|--app|--data-dir|--agent-worker|--backoff-start|--backoff-max|--cap-exits|--cap-window)
@@ -76,6 +77,28 @@ cd "$APP" || exit 1
 [ "$MODE" = check ] && medic check
 
 umask 077
+
+# --api-key-stdin (S9): Medic's API key, piped in by start.sh. Vigil's copy sits
+# in a directory this user can't read (check 8), so Medic keeps its own,
+# <data>/run/api_key, where it looks on this shape. Never argv or env. A missing
+# or malformed key removes the old copy: Medic never answers to a stale key.
+if [ "${KEYIN:-0}" = 1 ]; then
+    key=""
+    IFS= read -r key || true
+    exec 0</dev/null
+    rm -f "$DATA/run/api_key"
+    if [[ "$key" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+        if ! { mkdir -p "$DATA/run" && chmod 700 "$DATA/run" \
+            && printf '%s' "$key" > "$DATA/run/.api_key.$$" \
+            && mv -f "$DATA/run/.api_key.$$" "$DATA/run/api_key"; }; then
+            rm -f "$DATA/run/.api_key.$$"
+            say "couldn't write Medic's API key; its API stays off"
+        fi
+    else
+        say "no usable API key on stdin (43 base64url characters); Medic's API stays off"
+    fi
+    key=""
+fi
 
 # Fail closed: ts 0 reads as stale, so `check` goes red at once.
 mark_crash_looping() {
