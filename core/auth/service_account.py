@@ -13,14 +13,19 @@ and the users API won't give it another role. The name is random so it can't be
 guessed; the password is the gateway's alone.
 
 ``ensure`` is idempotent: same password → unchanged, new password → rotated
-(failure count and any lock cleared), and any other active service account is
+(failure count and any lock cleared). Every run also puts back what a stolen
+gateway session could change through ``/api/auth/me``: the email (a reset
+address) and MFA (which would lock the gateway out). Any other active service
+account is
 retired, so a re-minted name leaves no stale login behind. It refuses an
 existing account that is not a Viewer service account. Nothing it prints or logs
 holds the password.
 
 Exit codes (sysexits, so a caller can tell them from ``docker compose exec``'s
-own failures): 0 done · 64 bad input · 77 refused · 75 database not ready (no
-``users.service_account`` column or no Viewer role yet; the caller retries).
+own failures): 0 done · 64 bad input · 70 database error · 77 refused · 75
+database not ready (no ``users.service_account`` column or no Viewer role yet;
+the caller retries). Errors print their type only: SQLAlchemy's carry the
+statement's parameters, which include the password hash.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ import uuid
 from typing import Optional, TextIO
 
 from sqlalchemy import inspect
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from core.auth.auth_service import AuthService
 from core.storage.connection import get_db_manager
@@ -49,6 +54,7 @@ _PASSWORD = re.compile(r"^[!-~]{32,72}$")
 
 EX_OK = 0
 EX_USAGE = 64
+EX_SOFTWARE = 70
 EX_TEMPFAIL = 75
 EX_REFUSED = 77
 
@@ -59,6 +65,12 @@ class ServiceAccountError(Exception):
 
 class NotReady(Exception):
     """The schema or the Viewer role isn't there yet; worth retrying."""
+
+
+def _email(username: str) -> str:
+    # Unique and NOT NULL; .invalid never resolves (RFC 2606), so no reset email
+    # can go anywhere.
+    return f"{username}@service.invalid"
 
 
 def schema_ready(conn) -> bool:
@@ -92,9 +104,7 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 User(
                     user_id=f"user-{uuid.uuid4().hex[:12]}",
                     username=username,
-                    # Unique and NOT NULL; .invalid never resolves (RFC 2606),
-                    # so no reset email can go anywhere.
-                    email=f"{username}@service.invalid",
+                    email=_email(username),
                     password_hash=AuthService.hash_password(password),
                     full_name="Medic gateway (service account)",
                     role_id=VIEWER_ROLE_ID,
@@ -122,6 +132,10 @@ def ensure(username: str, password: str) -> tuple[str, int]:
             user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None
+            user.email = _email(username)
+            user.mfa_enabled = False
+            user.mfa_secret = None
+            user.mfa_recovery_codes = []
 
         retired = 0
         others = session.query(User).filter(
@@ -169,9 +183,11 @@ def main(
         print(f"database not ready: {exc}", file=stderr)
         return EX_TEMPFAIL
     except OperationalError as exc:
-        # The DSN (and so no password of ours) is all this can carry.
         print(f"database not ready: {type(exc).__name__}", file=stderr)
         return EX_TEMPFAIL
+    except SQLAlchemyError as exc:
+        print(f"database error: {type(exc).__name__}", file=stderr)
+        return EX_SOFTWARE
     line = f"service account {username}: {outcome}"
     if retired:
         line += f" (retired {retired} other)"
