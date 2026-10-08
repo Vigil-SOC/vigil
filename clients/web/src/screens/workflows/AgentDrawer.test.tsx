@@ -7,6 +7,8 @@ import { agentsApi } from '../../services/api'
 vi.mock('../../services/api', () => ({
   agentsApi: {
     getCustom: vi.fn(),
+    getAgent: vi.fn(),
+    forkAgent: vi.fn(() => Promise.resolve({ data: { id: 'custom-triage-agent-copy' } })),
     getAvailableTools: vi.fn(),
     createCustom: vi.fn(() => Promise.resolve({ data: {} })),
     updateCustom: vi.fn(() => Promise.resolve({ data: {} })),
@@ -174,5 +176,47 @@ describe('agent drawer', () => {
     }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(agentsApi.updateCustom).toHaveBeenCalledWith('custom-mine', expect.objectContaining({ icon: 'M', color: '#112233' })))
+  })
+
+  describe('a built-in', () => {
+    const BUILT_IN = {
+      id: 'triage', name: 'Triage agent', description: 'Scores alerts', specialization: 'Triage', icon: 'T', color: '#FF6B6B',
+      recommended_tools: ['search_logs'], max_tokens: 2048, enable_thinking: false, system_prompt: 'You triage.', model: null, fallback_model: null,
+    }
+    beforeEach(() => vi.mocked(agentsApi.getAgent).mockResolvedValue({ data: BUILT_IN } as never))
+
+    it('opens with its prompt and the built-in line, and creates nothing until Save', async () => {
+      open({ agentId: 'triage', builtIn: true })
+      expect(await screen.findByLabelText('Prompt')).toHaveValue('You triage.')
+      expect(screen.getByText('Built in. Saving creates your own editable copy; the original stays available.')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Role')).toBeNull()
+      expect(agentsApi.getCustom).not.toHaveBeenCalled()
+      expect(agentsApi.forkAgent).not.toHaveBeenCalled()
+    })
+
+    it('Save my copy forks once with the edited fields and hands back the copy', async () => {
+      const { onSaved } = open({ agentId: 'triage', builtIn: true })
+      fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Careful triage' } })
+      fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Be careful.' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save my copy' }))
+      await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ id: 'custom-triage-agent-copy' }))
+      expect(agentsApi.forkAgent).toHaveBeenCalledTimes(1)
+      expect(agentsApi.forkAgent).toHaveBeenCalledWith('triage', expect.objectContaining({
+        name: 'Careful triage', system_prompt_override: 'Be careful.', max_tokens: 2048, recommended_tools: ['search_logs'], model: null,
+      }))
+      expect(agentsApi.createCustom).not.toHaveBeenCalled()
+      expect(agentsApi.updateCustom).not.toHaveBeenCalled()
+    })
+
+    it('a failed save shows the error, keeps the drawer and the edits, and calls onSaved never', async () => {
+      vi.mocked(agentsApi.forkAgent).mockRejectedValueOnce({ response: { data: { detail: [{ type: 'value_error', loc: ['body'], msg: 'Value error, prompt too long' }] } } })
+      const { onSaved } = open({ agentId: 'triage', builtIn: true })
+      fireEvent.change(await screen.findByLabelText('Prompt'), { target: { value: 'Edited.' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save my copy' }))
+      expect(await screen.findByText(/prompt too long/)).toBeInTheDocument()
+      expect(onSaved).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Prompt')).toHaveValue('Edited.')
+      expect(screen.getByRole('button', { name: 'Save my copy' })).toBeEnabled()
+    })
   })
 })
