@@ -187,7 +187,7 @@ export function assemble(
   // be answered. A task is the prefix's own and keeps the old behaviour.
   const question = history[pinnedAt(history)];
   if (question !== undefined && question.content.length > room) {
-    throw new Error("the system prompt and tool catalogue leave no room for the current question");
+    throw new Error("This case has more than Ask can read at once. Ask about a specific explanation or evidence row.");
   }
   const { messages, folded } = foldHistory(history, summarise, { ...policy, max_chars: room });
   return { messages: [...intro, ...messages, ...tail], folded };
