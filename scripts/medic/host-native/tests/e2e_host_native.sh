@@ -76,10 +76,25 @@ grep -q "DEV_MODE is on" <<<"$out" || fail "no DEV_MODE refusal: $out"
 [ -e logs/medic.pid ] && fail "DEV_MODE refusal left a pidfile"
 pass "DEV_MODE refused (T-37)"
 
+# Start for real.
+medic_host_start || fail "medic_host_start failed"
+wait_for 60 loop_check || fail "check never went green"
+pass "Medic runs and check is green"
+pid=$(medic_pid)
+[ -n "$pid" ] || fail "no Medic process owned by vigil-medic"
+[ "$(ps -o uid= -p "$pid" | tr -d ' ')" = "$(id -u vigil-medic)" ] || fail "Medic isn't running as vigil-medic"
+exe=$(ps -o args= -p "$pid")
+case "$exe" in "$RT/venv/bin/python"*) ;; *) fail "Medic isn't on its own venv: $exe" ;; esac
+pass "runs as vigil-medic from $RT/venv"
+[ "$(_medic_stat "$DATA")" = "$(id -u vigil-medic) 700" ] || fail "$DATA isn't vigil-medic 0700"
+pass "data dir $DATA is vigil-medic 0700"
+
 # A stand-in agent worker /readyz on 127.0.0.1:6990, where scripts/agent_up.sh
 # starts the real one (free on a CI runner); it records each path it serves.
+# Started after Medic, on Medic's own venv (a bare python3 stalled on the macOS
+# runner); Medic re-reads /readyz every 30 s.
 READY_LOG="$STATE/readyz.hits"
-python3 - "$READY_LOG" "$STATE/readyz.up" > "$STATE/readyz.err" 2>&1 <<'PY' &
+"$RT/venv/bin/python" - "$READY_LOG" "$STATE/readyz.up" > "$STATE/readyz.err" 2>&1 <<'PY' &
 import http.server, sys
 hits, up = sys.argv[1], sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
@@ -97,22 +112,9 @@ trap 'kill "$READY_PID" 2>/dev/null' EXIT
 ready_up() { [ -s "$STATE/readyz.up" ]; }
 wait_for 30 ready_up || fail "the /readyz stand-in didn't start: $(cat "$STATE/readyz.err")"
 
-# Start for real.
-medic_host_start || fail "medic_host_start failed"
-wait_for 60 loop_check || fail "check never went green"
-pass "Medic runs and check is green"
-pid=$(medic_pid)
-[ -n "$pid" ] || fail "no Medic process owned by vigil-medic"
-[ "$(ps -o uid= -p "$pid" | tr -d ' ')" = "$(id -u vigil-medic)" ] || fail "Medic isn't running as vigil-medic"
-exe=$(ps -o args= -p "$pid")
-case "$exe" in "$RT/venv/bin/python"*) ;; *) fail "Medic isn't on its own venv: $exe" ;; esac
-pass "runs as vigil-medic from $RT/venv"
-[ "$(_medic_stat "$DATA")" = "$(id -u vigil-medic) 700" ] || fail "$DATA isn't vigil-medic 0700"
-pass "data dir $DATA is vigil-medic 0700"
-
 # L49: install shape start_sh, and the worker reached on loopback.
 read_ready() { grep -qx /readyz "$READY_LOG" 2>/dev/null; }
-wait_for 60 read_ready || fail "Medic never read the agent worker's /readyz on 127.0.0.1:6990"
+wait_for 90 read_ready || fail "Medic never read the agent worker's /readyz on 127.0.0.1:6990"
 grep -q "shape start_sh" logs/medic.log || fail "Medic didn't report install shape start_sh"
 pass "reports start_sh and reads /readyz on 127.0.0.1:6990 (L49)"
 
