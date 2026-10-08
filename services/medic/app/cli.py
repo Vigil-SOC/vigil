@@ -80,6 +80,7 @@ def main(
         return 0 if ok else 1
     # Before anything logs (S3 → S4): every record this process writes is redacted.
     redaction = install_log_redaction()
+    levels = {name: logging.getLogger(name).level for name in QUIET_LOGGERS}
     for name in QUIET_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
     try:
@@ -92,8 +93,10 @@ def main(
             watchdog_exit=watchdog_exit,
             watchdog_poll_s=watchdog_poll_s,
         )
-    finally:
-        redaction.uninstall()  # only matters in-process (tests)
+    finally:  # only matters in-process (tests)
+        redaction.uninstall()
+        for name, level in levels.items():
+            logging.getLogger(name).setLevel(level)
 
 
 def run(
@@ -169,6 +172,13 @@ def _run(
         log.error("Medic can't open its store: %s", exc)
         return 1
     with writer:
+        # Built first: a start that can't build writes no gap and no beat, so a
+        # crash loop neither grows the store nor reads healthy (S4 review #1).
+        try:
+            medic = _build(writer, data_dir, shape, sensors, clock)
+        except Exception as exc:  # logged (redacted), exit 1
+            log.exception("Medic can't start: %s", type(exc).__name__)
+            return 1
         try:
             write_gap(writer, gap)
             write_heartbeat(
@@ -181,7 +191,6 @@ def _run(
         except (OSError, StoreError, sqlite3.Error) as exc:
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
             return 1
-        medic = _build(writer, data_dir, shape, sensors, clock)
         log.info("Medic running; data dir %s, shape %s", data_dir, shape)
         watchdog = Watchdog(
             monotonic=clock.monotonic,
@@ -190,10 +199,17 @@ def _run(
             on_stall=lambda: mark_stalled(data_dir),
         )
         watchdog.start()
+        cycle, code = 0, 0
         try:
             cycle = asyncio.run(
                 _loop(data_dir, medic, clock, sleep, watchdog, started_at, max_cycles)
             )
+        # Logged here, through Medic's redaction, rather than as Python's own
+        # unredacted traceback on stderr (S4 review #3). A kill is a BaseException
+        # and isn't caught: nothing gets to say goodbye then.
+        except Exception as exc:
+            log.exception("Medic stopped on an error: %s", type(exc).__name__)
+            code = 1
         finally:
             watchdog.stop()
     # So `check` doesn't call a stopped Medic healthy for the next 120 s.
@@ -209,12 +225,17 @@ def _run(
     except OSError as exc:
         log.error("cannot write the heartbeat: %s", exc)
     log.info("Medic stopped")
-    return 0
+    return code
 
 
 def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
     rules = load_dev_rules()
     state = load_engine_state(data_dir)
+    last_tick = (state or {}).get("last_tick")
+    if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:
+        # The clock stepped back: every tick would be skipped until it caught up.
+        log.warning("Engine state is from the future, starting fresh")
+        state = None
     try:
         return Medic(
             writer=writer,
@@ -224,7 +245,7 @@ def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
             shape=shape,
             engine_state=state,
         )
-    except (ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
             raise
         log.warning("Engine state not usable, starting fresh: %s", type(exc).__name__)
@@ -267,7 +288,8 @@ async def _loop(
             # the probe reports it. Disk-full handling belongs to the store (G3).
             log.error("cannot write the heartbeat: %s", exc)
         watchdog.beat()
-        sleeper = asyncio.ensure_future(sleep(TICK_S))
+        # To the next grid boundary, so a cycle's own run time never skips a tick.
+        sleeper = asyncio.ensure_future(sleep(TICK_S - clock.wall() % TICK_S))
         stopper = asyncio.ensure_future(stop.wait())
         await asyncio.wait({sleeper, stopper}, return_when=asyncio.FIRST_COMPLETED)
         stopper.cancel()
