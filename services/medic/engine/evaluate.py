@@ -54,14 +54,28 @@ def ts(text: str) -> float:
 
 def decide(op: str, x: float, value, covered: bool) -> bool | None:
     """Compare x, or, when x is only a lower bound, decide only if every y ≥ x agrees."""
-    holds = OPS[op](x, value)
-    if covered:
+    holds = _cmp(op, x, value)
+    if holds is UNKNOWN or covered:
         return holds
     if op in (">", ">="):  # once true for x, true for every larger y
         return True if holds else UNKNOWN
     if op in ("==", "!="):  # decided only once x is already past the value
+        if not isinstance(value, int | float):
+            return UNKNOWN
         return (op == "!=") if x > value else UNKNOWN
     return UNKNOWN if holds else False  # < and <=: once false, false for every y
+
+
+def _cmp(op: str, x, value) -> bool | None:
+    """A comparison; values of types that don't compare (text vs number) are unknown."""
+    try:
+        return OPS[op](x, value)
+    except TypeError:
+        return UNKNOWN
+
+
+def _number(v) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool)
 
 
 @functools.lru_cache(maxsize=512)
@@ -120,11 +134,10 @@ def _key_source(log: dict, source: str):
 class Reads:
     """One signal's reads up to tick T, for one group (or shared by every group)."""
 
-    def __init__(
-        self, items: list[tuple[float, dict, dict | None]], interval: float | None
-    ):
-        self.items = items  # (t, observation, matching value entry or None), by t
+    def __init__(self, items: list, interval: float | None, signal_ok: list[float]):
+        self.items = items  # (t, observation, this series' entry or None), by t
         self.interval = interval
+        self.signal_ok = signal_ok  # times of every ok read of the signal
 
     def ok(self):
         return [r for r in self.items if r[1]["outcome"] == "ok"]
@@ -178,6 +191,9 @@ class Context:
         """Evidence: per signal, the newest observation the evaluation used (G2)."""
         if name not in self.evidence or read[0] >= self.evidence[name][0]:
             self.evidence[name] = read
+        self.taint(read)
+
+    def taint(self, read) -> None:
         if read[2] is not None and read[2].get("trust") == "untrusted":
             self.untrusted = True
 
@@ -189,10 +205,7 @@ def evaluate(node: dict, ctx: Context) -> bool | None:
         return k_any([evaluate(n, ctx) for n in node["any"]])
     if "not" in node:
         return k_not(evaluate(node["not"], ctx))
-    try:
-        return _FNS[node["fn"]](node, ctx)
-    except (TypeError, ValueError):  # a value of the wrong type: can't evaluate
-        return UNKNOWN
+    return _FNS[node["fn"]](node, ctx)
 
 
 def _latest(node, ctx, age: bool = False):
@@ -207,8 +220,13 @@ def _latest(node, ctx, age: bool = False):
     ctx.note(node["signal"], read)
     if read[2] is None or read[2]["state"] != "present":
         return False  # absent is a known fact (§2)
-    x = ctx.now - ts(read[2]["value"]) if age else read[2]["value"]
-    return OPS[node["op"]](x, ctx.value(node["value"]))
+    x = read[2]["value"]
+    if age:
+        try:
+            x = ctx.now - ts(x)
+        except (TypeError, ValueError):  # not a timestamp: can't evaluate
+            return UNKNOWN
+    return _cmp(node["op"], x, ctx.value(node["value"]))
 
 
 def _from_baseline(base: float | None, times: list[float], lo: float, ctx, gap) -> bool:
@@ -226,6 +244,8 @@ def _window(node, ctx):
     lo, present = ctx.now - w, reads.present()
     before = [r for r in present if r[0] <= lo and r[0] >= lo - gap][-1:]
     inside = [r for r in present if r[0] > lo]
+    for r in inside[:-1] + before:
+        ctx.taint(r)
     if inside:
         ctx.note(node["signal"], inside[-1])
     oks = [r[0] for r in reads.ok()]
@@ -250,6 +270,8 @@ def _increase(node, ctx, per_second: bool = False):
     if got is None:
         return UNKNOWN
     w, seq, full, vtype = got
+    if not all(_number(r[2]["value"]) for r in seq):
+        return UNKNOWN  # not a number: can't evaluate
     if vtype != "counter":
         if not full:
             return UNKNOWN  # a gauge's rise has no lower bound
@@ -302,7 +324,9 @@ def _absent_for(node, ctx):
             return UNKNOWN
         seen = [r for r in reads.ok() if r[0] > ctx.now - w]
         hits = [r for r in seen if r[2] is not None and r[2]["state"] == "present"]
-        times, interval = [r[0] for r in seen], reads.interval
+        # Covered by the signal's ok reads (§2): a source that vanished from a
+        # sensor that still reads is absent, not unknown.
+        times, interval = reads.signal_ok, reads.interval
     if hits or seen:
         ctx.note(node["signal"], (hits or seen)[-1])
     if hits:
