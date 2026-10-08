@@ -243,3 +243,58 @@ def test_a_fresh_process_initialises_the_database(monkeypatch):
 
     assert calls == ["init"]
     assert code == 0, err
+
+
+def test_a_service_account_does_not_close_first_admin_bootstrap():
+    """Enabling Medic before anyone signs in must leave the install claimable."""
+    from services.api.routers import auth as auth_router
+
+    _run("ensure", NAME)
+
+    with unit_of_work() as session:
+        assert auth_router._has_any_user(session) is False
+        assert auth_router.bootstrap_status(session).required is True
+
+    AuthService.create_user(
+        username="first-admin",
+        email="admin@example.com",
+        password="Correct-Horse-Battery-9",
+        full_name="Admin",
+        role_id="role-viewer",
+    )
+    with unit_of_work() as session:
+        assert auth_router._has_any_user(session) is True
+
+
+def test_ensure_undoes_what_a_stolen_session_could_change():
+    """Rotation must recover the account: email back, MFA off (review S5)."""
+    _run("ensure", NAME)
+    with unit_of_work() as session:
+        user = session.query(User).filter(User.username == NAME).one()
+        user.email = "attacker@example.com"
+        user.mfa_enabled = True
+        user.mfa_secret = "gAAAAA-something"
+        user.mfa_recovery_codes = ["x"]
+
+    code, _, err = _run("ensure", NAME, stdin="d" * 64 + "\n")
+
+    assert code == 0, err
+    user = _user()
+    assert user.email == f"{NAME}@service.invalid"
+    assert user.mfa_enabled is False
+    assert user.mfa_secret is None
+    assert user.mfa_recovery_codes == []
+
+
+def test_a_database_error_prints_no_parameters(monkeypatch):
+    """SQLAlchemy errors carry the statement's parameters (the hash): type only."""
+    from sqlalchemy.exc import IntegrityError
+
+    def boom(*a, **k):
+        raise IntegrityError("INSERT ...", {"password_hash": "$2b$SECRETHASH"}, None)
+
+    monkeypatch.setattr(sa, "ensure", boom)
+    code, out, err = _run("ensure", NAME)
+    assert code == sa.EX_SOFTWARE == 70
+    assert "SECRETHASH" not in out + err
+    assert "IntegrityError" in err
