@@ -100,6 +100,7 @@ vi.mock('../services/api', () => ({
           ],
         },
       }),
+    listCustom: () => Promise.resolve({ data: { agents: [] } }),
   },
   claudeApi: {
     getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
@@ -126,6 +127,7 @@ vi.mock('../services/api', () => ({
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
+    listModels: () => Promise.resolve({ data: { models: [] } }),
   },
   // a vi.fn, so the SSE test can supply a streaming body
   streamFetch: vi.fn(() => Promise.resolve({ ok: true, status: 200, body: null })),
