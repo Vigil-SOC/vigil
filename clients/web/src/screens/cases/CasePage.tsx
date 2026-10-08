@@ -956,7 +956,7 @@ export function CasePage({
                 <ul className="case-stack">
                   {fold.calls.map((call, i) => (
                     <li key={`${call.tool}-${i}`}>
-                      <span>{call.question || '—'}</span>
+                      <span className="clamp2" title={call.question}>{call.question || '—'}</span>
                       <span className="src">{call.tool || '—'}</span>
                       <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
                       <span className="num">{money(call.cost_usd)}</span>
@@ -965,7 +965,7 @@ export function CasePage({
                   ))}
                   {gaps.map((gap) => (
                     <li key={gap.id} className="gap">
-                      <span>{gap.text}</span>
+                      <span className="clamp2" title={gap.text}>{gap.text}</span>
                       <span className="src">No source</span>
                       <span className="num">—</span>
                       <span className="num">—</span>
