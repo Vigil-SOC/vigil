@@ -4,10 +4,13 @@
 # sudo rule the setup instructions add, so it is also the only command that rule
 # allows: hence the --probe and --check modes.
 #
-#   medic-loop --python P --app DIR --data-dir DIR [tuning]   run Medic, restart on exit
+#   medic-loop --python P --app DIR --data-dir DIR [--agent-worker H:P] [tuning]   run Medic
 #   medic-loop --python P --app DIR --data-dir DIR --check    `python -m services.medic check`
 #   medic-loop --probe PATH...                                print the PATHs this user can read
 #
+# --agent-worker: where the agent worker's /readyz listens (default 127.0.0.1:6990;
+# start.sh passes AGENT_HEALTH_PORT's). Medic always runs with install shape
+# start_sh (L49).
 # Tuning (C5 §5.2 defaults): --backoff-start 5 --backoff-max 300 (seconds, doubling
 # per restart, back to the start after a run of --cap-window or longer);
 # --cap-exits 5 --cap-window 600 (more exits than that in the window: give up and
@@ -19,19 +22,20 @@ set -u
 usage() { sed -n '7,9p' "$0" | sed 's/^# *//' >&2; exit 2; }
 say() { printf 'medic-loop %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
-PY="" APP="" DATA="" MODE=run
+PY="" APP="" DATA="" MODE=run WORKER=127.0.0.1:6990
 START=5 MAX=300 CAP=5 WINDOW=600
 [ $# -gt 0 ] || usage
 while [ $# -gt 0 ]; do
     case "$1" in
         --probe) MODE=probe; shift; break ;;
         --check) MODE=check; shift ;;
-        --python|--app|--data-dir|--backoff-start|--backoff-max|--cap-exits|--cap-window)
+        --python|--app|--data-dir|--agent-worker|--backoff-start|--backoff-max|--cap-exits|--cap-window)
             [ $# -ge 2 ] || usage
             case "$1" in
                 --python) PY="$2" ;;
                 --app) APP="$2" ;;
                 --data-dir) DATA="$2" ;;
+                --agent-worker) WORKER="$2" ;;
                 --backoff-start) START="$2" ;;
                 --backoff-max) MAX="$2" ;;
                 --cap-exits) CAP="$2" ;;
@@ -53,6 +57,9 @@ if [ -z "$PY" ] || [ -z "$APP" ] || [ -z "$DATA" ]; then usage; fi
 for n in "$START" "$MAX" "$CAP" "$WINDOW"; do
     case "$n" in ''|*[!0-9]*) usage ;; esac
 done
+# host:port, nothing else (Medic checks it again, app/config.py).
+case "${WORKER%:*}" in ''|*[!A-Za-z0-9.-]*) usage ;; esac
+case "${WORKER##*:}" in ''|*[!0-9]*) usage ;; esac
 
 # Medic gets a fresh environment: only these, never the caller's. sudo resets the
 # environment as well; this holds even where a sudoers rule keeps it (check 9).
@@ -61,6 +68,7 @@ medic() {
     exec env -i PATH=/usr/bin:/bin HOME="$DATA" LANG=C.UTF-8 \
         PYTHONPATH="$APP" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
         VIGIL_MEDIC_ENABLED=true VIGIL_MEDIC_DATA_DIR="$DATA" \
+        VIGIL_MEDIC_INSTALL_SHAPE=start_sh VIGIL_MEDIC_AGENT_WORKER_ADDR="$WORKER" \
         "$PY" -m services.medic "$1"
 }
 

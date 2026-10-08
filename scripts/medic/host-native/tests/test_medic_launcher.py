@@ -95,7 +95,7 @@ def _env(sb: Path, **extra: str) -> dict[str, str]:
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("VIGIL_", "DEV_MODE", "UV"))
+        if not k.startswith(("VIGIL_", "DEV_MODE", "UV", "AGENT_HEALTH_PORT"))
     }
     return {
         **env,
@@ -271,11 +271,55 @@ def test_readable_secret_refuses_to_start(sb: Path, name: str) -> None:
     assert not (sb / "repo" / "logs" / "medic.pid").exists()
 
 
-def test_readable_dotenv_refuses_to_start(sb: Path) -> None:
-    (sb / "repo" / ".env").write_text("POSTGRES_PASSWORD=x\n")
+def test_readable_dotenv_refuses_and_prints_the_exact_chmod(sb: Path) -> None:
+    """S8-4: the repo .env (0644 when copied from env.example) gets its own fix."""
+    dotenv = sb / "repo" / ".env"
+    dotenv.write_text("POSTGRES_PASSWORD=x\n")
+    dotenv.chmod(0o644)
     out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true")
+    lines = out.stderr.splitlines()
     assert "rc=1" in out.stdout
-    assert str(sb / "repo" / ".env") in out.stdout + out.stderr
+    assert f"  chmod 0600 {dotenv}" in lines
+    # Only the State Directory's own secrets need its mode changed.
+    assert not any(ln.startswith("  chmod 0700") for ln in lines), out.stderr
+    assert not (sb / "repo" / "logs" / "medic.pid").exists()
+
+
+def test_printed_chmod_fix_is_shell_quoted(sb: Path) -> None:
+    state = sb / "my state"
+    (sb / "state").rename(state)
+    (state / "jwt_secret").chmod(0o644)
+    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", VIGIL_DIR=str(state))
+    lines = out.stderr.splitlines()
+    assert f"  chmod 0600 {sb}/my\\ state/jwt_secret" in lines, out.stderr
+    assert f"  chmod 0700 {sb}/my\\ state" in lines
+
+
+# --- DEV_MODE (S8-7, K1 T-37): refused, not warned --------------------------
+
+
+@pytest.mark.parametrize(
+    "value", ["true", "TRUE", " yes ", "1", "on", "t", "y", "maybe"]
+)
+def test_dev_mode_refuses_to_start(sb: Path, value: str) -> None:
+    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", DEV_MODE=value)
+    text = out.stdout + out.stderr
+    assert "rc=1" in out.stdout
+    assert "Medic not started: DEV_MODE is on" in out.stderr, text
+    assert "T-37" in out.stderr
+    assert not (sb / "repo" / "logs" / "medic.pid").exists()
+    # Refused before anything runs as vigil-medic or gets installed.
+    assert _calls(sb, "sudo.calls") == "" and _calls(sb, "uv.calls") == ""
+    assert list((sb / "runtime").iterdir()) == []
+
+
+@pytest.mark.parametrize("value", ["", "false", "FALSE", "0", "no", "off", "f", "n"])
+def test_dev_mode_off_values_do_not_refuse(sb: Path, value: str) -> None:
+    out = _bash(
+        sb, RUN, VIGIL_MEDIC_ENABLED="true", DEV_MODE=value, STUB_USER="missing"
+    )
+    assert "DEV_MODE" not in out.stdout + out.stderr
+    assert "there is no OS user vigil-medic" in out.stderr
 
 
 def test_venv_failure_does_not_start(sb: Path) -> None:
@@ -288,10 +332,10 @@ def test_venv_failure_does_not_start(sb: Path) -> None:
 
 
 def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
-    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", DEV_MODE="true")
+    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true")
     text = out.stdout + out.stderr
     assert "rc=0" in out.stdout, text
-    assert "loopback" in text and "DEV_MODE" in text
+    assert "loopback" in text and "DEV_MODE" not in text
     rt = sb / "runtime"
 
     # Its own venv, from its own lock, with the interpreter inside the runtime dir
@@ -319,6 +363,8 @@ def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
     assert len(sudo) == 2
     assert all(c.startswith(f"-n -u vigil-medic -- {rt}/bin/medic-loop") for c in sudo)
     assert "--probe" in sudo[0] and f"--data-dir {sb / 'data'}" in sudo[1]
+    # L49: the worker's readiness port on loopback (AGENT_HEALTH_PORT's default).
+    assert "--agent-worker 127.0.0.1:6990" in sudo[1]
     assert set(_calls(sb, "sudo.cwd").split()) == {"/"}
 
     # A second start while it runs doesn't start a second Medic.
@@ -336,6 +382,26 @@ def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
     )
     assert _check(sb).returncode != 0
     assert "stopped" in (sb / "repo" / "logs" / "medic.log").read_text()
+
+
+def test_agent_health_port_reaches_the_loop(sb: Path) -> None:
+    """Vigil's worker listens on AGENT_HEALTH_PORT; Medic must read that port."""
+    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", AGENT_HEALTH_PORT="7001")
+    try:
+        assert "rc=0" in out.stdout, out.stdout + out.stderr
+        # The loop is launched in the background: its sudo call lands a bit later.
+        _wait_for(lambda: len(_calls(sb, "sudo.calls").splitlines()) == 2)
+        assert (
+            "--agent-worker 127.0.0.1:7001" in _calls(sb, "sudo.calls").splitlines()[1]
+        )
+    finally:
+        pid = int((sb / "repo" / "logs" / "medic.pid").read_text())
+        os.kill(pid, signal.SIGTERM)
+        _wait_for(
+            lambda: (
+                subprocess.run(["kill", "-0", str(pid)], check=False).returncode != 0
+            )
+        )
 
 
 # --- The hooks in start.sh and shutdown_all.sh ---------------------------------
