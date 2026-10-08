@@ -130,6 +130,9 @@ translated to its endpoint, hence the endpoint addresses.
 {{- if .Values.medic.policyProbe -}}
 {{- fail "medic.policyProbe can't be set: the probe target is fixed (the gateway's inbound listener), because any other target could only weaken the NetworkPolicy proof" -}}
 {{- end -}}
+{{- if not (.Values.podSecurityContext).fsGroup -}}
+{{- fail "medic.enabled needs podSecurityContext.fsGroup (default 1000): the backend reads Medic's API key file (0440) through that group" -}}
+{{- end -}}
 {{- $_ := required "medic.gateway.viewer.username is required when medic.enabled: the Viewer account the gateway logs in as" .Values.medic.gateway.viewer.username -}}
 {{- $_ := required "medic.gateway.viewer.passwordSecret.name is required when medic.enabled: an existing Secret holding the Viewer password (never put the password in values)" .Values.medic.gateway.viewer.passwordSecret.name -}}
 {{- end -}}
@@ -148,14 +151,20 @@ through and checks only its shape.
 
 {{/* The key file as a volume: group-read only. Kubernetes gives a secret file
      the pod's fsGroup, so Medic (10001) and the backend (1000) each read their
-     own copy and "other" reads nothing (S6-3 / V2-7). */}}
+     own copy and "other" reads nothing (S6-3 / V2-7). The backend's copy is
+     optional: a missing Secret must not keep Vigil's API from starting; it
+     reads Down instead.
+     Usage: include "vigil.medic.apiKeyVolume" (dict "context" . "optional" true) */}}
 {{- define "vigil.medic.apiKeyVolume" -}}
 - name: medic-api-key
   secret:
-    secretName: {{ include "vigil.medic.apiKeySecret" . }}
+    secretName: {{ include "vigil.medic.apiKeySecret" .context }}
     defaultMode: 0440
+    {{- if .optional }}
+    optional: true
+    {{- end }}
     items:
-      - key: {{ .Values.medic.apiKey.key }}
+      - key: {{ .context.Values.medic.apiKey.key }}
         path: api_key
 {{- end -}}
 

@@ -148,6 +148,14 @@ spec:
       port: {{ include "vigil.medicGateway.outPort" . }}
       targetPort: outbound
       protocol: TCP
+    # Only the NetworkPolicy probe's target (A3-3): Medic's policy blocks it.
+    # On this Service, not -in, so the control (8471) and the target share one
+    # EndpointSlice: kube-proxy can't refuse the target for want of endpoints
+    # while the control already connects (S7b review #1).
+    - name: probe
+      port: {{ include "vigil.medicGateway.inPort" . }}
+      targetPort: inbound
+      protocol: TCP
 ---
 {{- /* ...and the backend dials this one to reach Medic's API. */}}
 apiVersion: v1
