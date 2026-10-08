@@ -13,11 +13,15 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from services.medic.api.history import record_exit, record_start
+from services.medic.api.server import Api, StatusBoard
+from services.medic.api.status import build_status, read_chain
 from services.medic.app import config
 from services.medic.app.gap import pending_gap, write_gap
 from services.medic.app.heartbeat import (
     check_heartbeat,
     mark_stalled,
+    read_heartbeat,
     write_heartbeat,
 )
 from services.medic.app.policy_probe import Verdict
@@ -144,6 +148,11 @@ def run(
     # Before the store opens: a refusal writes nothing (no gap, no beat).
     if probe_target is not None and not _policy_enforced(probe_target, probe_control):
         return POLICY_REFUSED
+    try:
+        api = ApiSettings(config.api_bind(env), config.api_key_file(env, data_dir))
+    except config.ConfigError as exc:
+        log.error("Medic can't start: %s", exc)
+        return 1
 
     # C4 §6.1: everything Medic creates is private to its own uid. Restored on
     # return, which only matters when run() is called in-process (tests).
@@ -158,6 +167,7 @@ def run(
             max_cycles=max_cycles,
             watchdog_exit=watchdog_exit,
             watchdog_poll_s=watchdog_poll_s,
+            api=api,
         )
     finally:
         os.umask(old_umask)
@@ -233,6 +243,7 @@ def _run(
     max_cycles: int | None,
     watchdog_exit: Callable[[int], None],
     watchdog_poll_s: float,
+    api: ApiSettings | None = None,
 ) -> int:
     started_at = clock.wall()
     try:
@@ -242,6 +253,7 @@ def _run(
         return 1
     # Read before the new heartbeat replaces the last one (C5 §5.1, C4 §6.8).
     gap = pending_gap(data_dir, now=started_at)
+    previous_beat = read_heartbeat(data_dir)
     try:
         writer = open_writer(data_dir)
     except StoreError as exc:
@@ -268,6 +280,15 @@ def _run(
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
             return 1
         log.info("Medic running; data dir %s, shape %s", data_dir, shape)
+        status = _Status(
+            medic,
+            data_dir,
+            api,
+            clock,
+            started_at,
+            record_start(data_dir, now=started_at, previous_beat=previous_beat),
+        )
+        status.publish(cycle=0)
         watchdog = Watchdog(
             monotonic=clock.monotonic,
             exit_fn=watchdog_exit,
@@ -278,7 +299,16 @@ def _run(
         cycle, code = 0, 0
         try:
             cycle = asyncio.run(
-                _loop(data_dir, medic, clock, sleep, watchdog, started_at, max_cycles)
+                _loop(
+                    data_dir,
+                    medic,
+                    clock,
+                    sleep,
+                    watchdog,
+                    started_at,
+                    max_cycles,
+                    status.publish,
+                )
             )
         # Logged here, through Medic's redaction, rather than as Python's own
         # unredacted traceback on stderr (S4 review #3). A kill is a BaseException
@@ -288,6 +318,8 @@ def _run(
             code = 1
         finally:
             watchdog.stop()
+            status.stop()
+        record_exit(data_dir, now=clock.wall(), code=code)
     # So `check` doesn't call a stopped Medic healthy for the next 120 s.
     try:
         write_heartbeat(
@@ -344,6 +376,7 @@ async def _loop(
     watchdog: Watchdog,
     started_at: float,
     max_cycles: int | None,
+    after_cycle: Callable[..., None] = lambda **_: None,
 ) -> int:
     """Run 15 s cycles until stopped; return the last completed cycle number."""
     stop = asyncio.Event()
@@ -369,6 +402,7 @@ async def _loop(
             # The loop is alive, so the watchdog keeps quiet; `check` goes stale and
             # the probe reports it. Disk-full handling belongs to the store (G3).
             log.error("cannot write the heartbeat: %s", exc)
+        after_cycle(cycle=cycle)
         watchdog.beat()
         # To the next grid boundary, so a cycle's own run time never skips a tick.
         sleeper = asyncio.ensure_future(sleep(TICK_S - clock.wall() % TICK_S))
@@ -380,3 +414,61 @@ async def _loop(
         else:
             sleeper.cancel()
     return cycle
+
+
+@dataclass(frozen=True)
+class ApiSettings:
+    bind: tuple[str, int]
+    key_file: Path | None
+
+
+class _Status:
+    """`/v1/status` (S9): a snapshot per cycle, published to the API's listener.
+
+    Nothing here can stop the loop or fail `check` (C5): a snapshot that can't be
+    built is skipped (the API answers `busy` once it's stale), and the listener
+    retries on its own."""
+
+    def __init__(self, medic, data_dir, api, clock, started_at, history) -> None:
+        self.medic, self.data_dir, self.clock = medic, data_dir, clock
+        self.started_at, self.history = started_at, history
+        self.board = StatusBoard()
+        self.api = None
+        if api is not None:
+            self.api = Api(
+                api.bind,
+                key_file=api.key_file,
+                board=self.board,
+                wall=clock.wall,
+                monotonic=clock.monotonic,
+            )
+        self._failing = False
+
+    def publish(self, *, cycle: int) -> None:
+        now = self.clock.wall()
+        try:
+            snapshot = build_status(
+                instance_id=self.medic.writer.instance_id,
+                now=now,
+                started_at=self.started_at,
+                heartbeat_at=now,
+                cycle=cycle,
+                history=self.history,
+                scheduler=self.medic.scheduler.status(),
+                usage=self.medic.writer.usage(),
+                decisions_lost=self.medic.unstored,
+                chain=read_chain(self.data_dir),
+            )
+        except Exception as exc:  # noqa: BLE001 (never the loop's problem)
+            if not self._failing:
+                log.error("Status snapshot not built: %s", type(exc).__name__)
+            self._failing = True
+        else:
+            self._failing = False
+            self.board.publish(snapshot, started_at=self.started_at, taken_at=now)
+        if self.api is not None:
+            self.api.ensure()
+
+    def stop(self) -> None:
+        if self.api is not None:
+            self.api.stop()

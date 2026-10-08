@@ -34,6 +34,16 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 | `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`; elsewhere unset, and agent-serve isn't read unless it's set; `host:port` only |
 | `VIGIL_MEDIC_POLICY_PROBE_ADDR` | Helm only, and required there (the chart sets it): a `host:port` Medic's NetworkPolicy must block |
 | `VIGIL_MEDIC_POLICY_CONTROL_ADDR` | Helm only, and required there: a `host:port` on the same pods that the policy allows |
+| `VIGIL_MEDIC_API_PORT` | `8470`: where `GET /v1/status` listens. On `127.0.0.1`, or on every interface of the container or pod when `VIGIL_MEDIC_INSTALL_SHAPE` is set to `compose` or `helm` |
+| `VIGIL_MEDIC_API_KEY_FILE` | The file holding `X-Medic-Key` (43 base64url characters). Default: Compose `/run/secrets/medic_api_key`; host-native `<data dir>/run/api_key` (written by the restart loop); Helm none (the chart sets it) |
+
+**API (X2, S9 slice).** `run` serves `GET /v1/status` from a snapshot each cycle
+publishes (never older than one 15 s tick; older than two and it answers `503
+busy`). Every request needs `X-Medic-Key`, compared in constant time with the
+key file, which is re-read per request; anything else is `401`, then `404` for
+any other path and `405` for any other method, as RFC 9457 problem JSON. The
+other X2 operations are G3's. A listener that can't start (no key, port taken)
+is logged once and retried every minute; it never stops Medic or fails `check`.
 
 On Helm, `run` first connects to the control (retried for up to a minute while
 it starts), then tries the probe target once. Only "control connected, target
@@ -41,7 +51,8 @@ dropped" proves NetworkPolicy is enforced; anything else, and Medic logs why
 and exits **3** before opening its store (A3-3).
 
 Data directory: `medic.db` (+ `-wal`, `-shm`), `medic.lock`, `instance_id`,
-`run/heartbeat`, `run/engine-state.json`. `python -m services.medic.store verify`
+`run/heartbeat`, `run/engine-state.json`, `run/starts.json` (restarts and the last
+exit reason for `/v1/status`), and host-native only `run/api_key`. `python -m services.medic.store verify`
 checks the chain.
 
 ## Isolation
