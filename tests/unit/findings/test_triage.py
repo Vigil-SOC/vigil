@@ -183,7 +183,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
 
     payload = triage_payload(now=NOW, day=DAY)
     rows = _by_id(payload)
-    assert rows[waiting]["state_label"] == "Waiting"
+    assert rows[waiting]["state_label"] == "Waiting for a slot"
     assert rows[waiting]["case_door"] is None
     assert rows[waiting]["pickup_seconds"] is None
     assert rows[waiting]["source"] == "splunk"
@@ -205,7 +205,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[added]["state_label"] == "Added to a case"
     assert rows[added]["case_door"] == "tr-case-1"
 
-    assert rows[ghost]["state_label"] == "tr-inv-ghost"
+    assert rows[ghost]["state_label"] == "Added to a case"
     assert rows[ghost]["case_door"] is None
     assert rows[ghost]["source"] == "Ask"
     assert rows[ghost]["document"] == "please look"
@@ -223,7 +223,15 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert info["trust_floor"]["limit"]
     assert set(payload["breakdown_info"]) == {"trust", "weight", "score"}
 
+    assert all("tr-" not in row["state_label"] for row in payload["rows"])
+    counts = payload["counts"]
+    assert counts["total"] == len(payload["rows"])
+    assert counts["state"] == {"queued": 1, "launched": 3, "merged": 2, "expired": 1}
+    assert counts["kind"] == {"detection": 4, "schedule": 2, "human_ask": 1}
+    assert counts["source"] == {"splunk": 4, "Schedule": 2, "Ask": 1}
+
     filtered = triage_payload(now=NOW, day=DAY, state="queued")
+    assert filtered["counts"] == counts
     assert filtered["strip"]["waiting"] == payload["strip"]["waiting"]
     assert waiting in [row["id"] for row in filtered["rows"]]
     assert {row["state"] for row in filtered["rows"]} == {"queued"}
@@ -341,6 +349,14 @@ def test_source_filter_keeps_an_older_row_the_cap_would_drop():
     assert len(unfiltered) == ROW_CAP
     filtered = triage_payload(now=NOW, day=DAY, source="tr-kept")
     assert [row["id"] for row in filtered["rows"]] == [kept]
+    # counts see the rows the cap drops, and the filters leave them alone
+    counts = triage_payload(now=NOW, day=DAY)["counts"]
+    assert counts["total"] == ROW_CAP + 1
+    assert counts["source"] == {"tr-kept": 1, "tr-other": ROW_CAP}
+    assert counts["state"] == {"expired": ROW_CAP + 1}
+    assert filtered["counts"] == counts
+    for narrow in ({"kind": "schedule"}, {"state": "queued"}):
+        assert triage_payload(now=NOW, day=DAY, **narrow)["counts"] == counts
 
 
 def test_finding_only_source_has_null_lag_and_is_not_quiet():

@@ -246,6 +246,7 @@ vi.mock('../services/api', () => ({
           cases_created_today: 0,
           trust_floor: 'Not measured yet',
         },
+        counts: { total: 0, kind: {}, source: {}, state: {} },
         sources: [],
         arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
         strip_info: {
@@ -449,7 +450,7 @@ describe('SocConsole', () => {
       ['Agents & workflows', 'Agents & workflows'],
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
-      ['Triage queue', 'Triage queue'],
+      ['Triage queue', 'Triage queue'], // the screen draws its own heading
       ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],

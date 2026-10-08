@@ -1,7 +1,7 @@
 """One read of the intake queue for the Triage screen.
 
-The strip counts the whole ``intake_triggers`` table. Kind, source, and state
-narrow only the returned rows. Ranking is ``rank_intake_row``; this module
+The strip and ``counts`` cover the whole ``intake_triggers`` table. Kind,
+source, and state narrow only the returned rows. Ranking is ``rank_intake_row``; this module
 does not keep a second sort key.
 """
 
@@ -96,15 +96,14 @@ def _state_label(
 ) -> tuple[str, Optional[str]]:
     """Display word and the case door, when the id is still a case."""
     if state == "queued":
-        return "Waiting", None
+        return "Waiting for a slot", None
     if state == "launched":
         if case_id:
             return "Started a case", case_id
         return "Picked up", None
     if state == "merged":
-        if merged_into and merged_into in case_ids:
-            return "Added to a case", merged_into
-        return merged_into or "", None
+        # the door only when the id is still a case; never the id as the label
+        return "Added to a case", merged_into if merged_into in case_ids else None
     if state == "expired":
         return "Expired", None
     return state, None
@@ -291,6 +290,20 @@ def _present(
     }
 
 
+def _counts(rows: list[dict], findings: dict[str, dict]) -> dict:
+    """Every intake row by kind, source, and state, before filters and the cap."""
+    kinds: dict[str, int] = {}
+    sources: dict[str, int] = {}
+    states: dict[str, int] = {}
+    for row in rows:
+        kinds[row["kind"]] = kinds.get(row["kind"], 0) + 1
+        states[row["state"]] = states.get(row["state"], 0) + 1
+        name = _source_text(row["kind"], findings.get(row.get("finding_id") or ""))
+        if name:
+            sources[name] = sources.get(name, 0) + 1
+    return {"total": len(rows), "kind": kinds, "source": sources, "state": states}
+
+
 def _strip(rows: list[dict], day: date) -> dict:
     start, end = utc_day_bounds(day)
     created_today = [
@@ -345,6 +358,7 @@ def triage_payload(
         if finding is not None:
             row["_finding"] = finding
     strip = _strip(stored, day)
+    counts = _counts(stored, findings)
     queued = [row for row in stored if row["state"] == "queued"]
     decided = [row for row in stored if row["state"] != "queued"]
     queued.sort(
@@ -383,6 +397,7 @@ def triage_payload(
     return {
         "rows": presented,
         "strip": strip,
+        "counts": counts,
         "sources": _sources(day, now),
         "arrival_info": ARRIVAL_INFO,
         "strip_info": STRIP_INFO,

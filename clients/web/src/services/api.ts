@@ -1444,6 +1444,13 @@ export interface TriagePayload {
     cases_created_today: number
     trust_floor: string
   }
+  /** every intake row, before the filters and the row cap; zero entries are left out */
+  counts: {
+    total: number
+    kind: Record<string, number>
+    source: Record<string, number>
+    state: Record<string, number>
+  }
   sources: TriageSource[]
   arrival_info: string
   strip_info: {
