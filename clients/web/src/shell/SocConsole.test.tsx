@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, it, expect, beforeAll, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { act, cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
+import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
@@ -36,7 +37,7 @@ function renderConsole(path = '/dashboard') {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/">
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<LandingRedirect />} />
             <Route path=":screen" element={<ConsoleAt />} />
           </Route>
         </Routes>
@@ -325,7 +326,7 @@ afterEach(() => {
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
 
-const MORE_LABELS = ['Overview', 'Triage', 'Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
+const MORE_LABELS = ['Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
 
 function clickScreen(name: string) {
   const inMore = MORE_LABELS.some((label) => name === label || name.startsWith(`${label} (`))
@@ -361,12 +362,12 @@ describe('SocConsole', () => {
     expect(screen.getByText('Security operations overview')).toBeInTheDocument()
   })
 
-  it('puts Home first on the primary nav and still opens Dashboard at /', async () => {
+  it('puts Home first on the primary nav and opens it at /', async () => {
     renderConsole('/')
-    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Dashboard')
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Home')
     const nav = screen.getByRole('navigation', { name: 'Primary' })
     const names = within(nav).getAllByRole('button').map((button) => button.getAttribute('aria-label'))
-    expect(names.slice(0, 4)).toEqual(['Home', 'Cases', 'Agents & workflows', 'Settings'])
+    expect(names.slice(0, 6)).toEqual(['Home', 'Overview', 'Triage queue', 'Cases', 'Agents & workflows', 'Settings'])
     expect(screen.getByRole('button', { name: 'Home' }).querySelector('.vg-nav-count')).toBeNull()
     expect(screen.getByRole('button', { name: 'Cases' }).querySelector('.vg-nav-count')).toBeNull()
   })
@@ -413,8 +414,31 @@ describe('SocConsole', () => {
     // an unknown path is probed as a page extension first, so the 404 body only
     // lands once that resolution settles
     expect(await screen.findByText('404')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Back to dashboard/ }))
-    expect(title()).toBe('Dashboard')
+    fireEvent.click(screen.getByRole('button', { name: /Back to Home/ }))
+    expect(title()).toBe('Home')
+  })
+
+  it('sends the 404 button to Overview for an operator without the Home permission', async () => {
+    authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+    renderConsole('/does-not-exist')
+    fireEvent.click(await screen.findByRole('button', { name: /Back to Overview/ }))
+    expect(title()).toBe('Overview')
+  })
+
+  it('offers Back to Home on Access denied', () => {
+    authState.allow = (permission: string) => permission !== 'cases.read'
+    renderConsole('/cases')
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Home' }))
+    expect(title()).toBe('Home')
+  })
+
+  it('lands / on Home, or on Overview without the Home permission', () => {
+    renderConsole('/')
+    expect(title()).toBe('Home')
+    cleanup()
+    authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
+    renderConsole('/')
+    expect(title()).toBe('Overview')
   })
 
   it('navigates primary screens and the More menu', () => {
@@ -424,7 +448,7 @@ describe('SocConsole', () => {
       ['Agents & workflows', 'Agents & workflows'],
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
-      ['Triage', 'Triage'],
+      ['Triage queue', 'Triage queue'],
       ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],
@@ -897,6 +921,22 @@ describe('SocConsole', () => {
     expect(poor).toHaveClass('is-poor')
   })
 
+  it('re-reads the status sources every 30 seconds and turns Poor when one degrades later', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderConsole()
+      expect(await screen.findByRole('status', { name: 'System status' })).toHaveTextContent('Good')
+      vi.mocked(consoleApi.getHealth).mockResolvedValue({ data: { status: 'degraded' } } as never)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      const line = screen.getByRole('status', { name: 'System status' })
+      expect(line).toHaveClass('is-poor')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('omits a failed routability read instead of calling the line Fair', async () => {
     vi.mocked(consoleApi.getRoutability).mockRejectedValueOnce(new Error('403'))
     renderConsole()
@@ -1020,7 +1060,7 @@ describe('SocConsole', () => {
       renderConsole()
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Console tour' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Take the tour' }))
       expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
       expect(screen.queryByRole('menu', { name: 'Account' })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
 import { HoldButton } from '../../shared/HoldButton'
+import { useToast } from '../../shell/toast'
 import './home.css'
 
 const POLL_MS = 20_000
@@ -78,8 +79,8 @@ function DecisionCard({
 }: {
   item: NeedsYouItem
   busy: boolean
-  onApprove: (id: string) => void
-  onReject: (id: string, reason: string) => void
+  onApprove: (item: NeedsYouItem, fused: boolean) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
   onOpenCase: (id: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
@@ -95,11 +96,11 @@ function DecisionCard({
         {item.reason && <p className="home-reason">{item.reason}</p>}
         <div className="home-actions">
           {item.reversibility === 'reversible' ? (
-            <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item.source_id)}>
+            <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
               Approve
             </button>
           ) : (
-            <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+            <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
           )}
           {rejecting ? (
             <form
@@ -108,7 +109,7 @@ function DecisionCard({
                 event.preventDefault()
                 const text = reason.trim()
                 if (!text) return
-                onReject(item.source_id, text)
+                onReject(item, text)
               }}
             >
               <textarea
@@ -161,6 +162,7 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
   const [demoBusy, setDemoBusy] = useState(false)
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
+  const { notify, notifyUndoable, pending, settled } = useToast()
 
   const load = useCallback(async () => {
     const ticket = ++loadTicket.current
@@ -210,6 +212,14 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     }
   }, [])
 
+  // a fused commit just landed or failed (possibly after Home was left and reopened): refresh
+  const seenSettled = useRef(settled)
+  useEffect(() => {
+    if (seenSettled.current === settled) return
+    seenSettled.current = settled
+    void load()
+  }, [settled, load])
+
   const dismiss = (id: string) => {
     const next = hidden.includes(id) ? hidden : [...hidden, id]
     sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(next))
@@ -230,12 +240,33 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     }
   }
 
-  const run = async (id: string, act: () => Promise<unknown>) => {
+  // Reversible approve and every reject commit through the toast's undo fuse, which owns the
+  // call, so it survives leaving Home. A held (irreversible) approve commits at once.
+  const fuse = (id: string, verb: string, past: string, title: string, commit: () => Promise<unknown>) =>
+    notifyUndoable({
+      key: id,
+      text: `${verb}: ${title}`,
+      commit,
+      doneText: `${past}: ${title}`,
+      failText: (err) => errorText(err, 'Could not update that decision'),
+    })
+
+  const approve = (item: NeedsYouItem, fused: boolean) => {
+    const commit = () => approvalsApi.approve(item.source_id)
+    if (fused) return fuse(item.source_id, 'Approving', 'Approved', item.title, commit)
+    void run(item.source_id, commit, `Approved: ${item.title}`)
+  }
+
+  const reject = (item: NeedsYouItem, reason: string) =>
+    fuse(item.source_id, 'Rejecting', 'Rejected', item.title, () => approvalsApi.reject(item.source_id, reason))
+
+  const run = async (id: string, act: () => Promise<unknown>, doneText: string) => {
     if (busyRef.current) return
     busyRef.current = id
     setBusy(id)
     try {
       await act()
+      notify('ok', doneText)
       await load()
     } catch (err) {
       setError(errorText(err, 'Could not update that decision'))
@@ -245,14 +276,17 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
     }
   }
 
-  const visible = showAll ? items : items.slice(0, VISIBLE)
-  const moreWaiting = items.length - visible.length
+  // cards whose fuse is running stay out of the list and the count, so a poll can't bring them back
+  const shown = items.filter((it) => !pending.includes(it.source_id))
+  const shownCount = count === null ? null : Math.max(0, count - (items.length - shown.length))
+  const visible = showAll ? shown : shown.slice(0, VISIBLE)
+  const moreWaiting = shown.length - visible.length
   const openSteps = (setup?.steps ?? []).filter((step) => !step.done && !hidden.includes(step.id))
   const noAlerts = setup !== null && setup.alerts_exist === 0
 
   return (
     <div className="home-screen">
-      {count !== null && <p className="home-headline">{headline(count)}</p>}
+      {shownCount !== null && <p className="home-headline">{headline(shownCount)}</p>}
       {share !== null && (
         <p className="home-share">{(share * 100).toFixed(1)}% of alerts picked up automatically today</p>
       )}
@@ -312,8 +346,8 @@ export default function HomeScreen({ openCase }: ConsoleScreenProps) {
               key={item.source_id}
               item={item}
               busy={busy !== null}
-              onApprove={(id) => void run(id, () => approvalsApi.approve(id))}
-              onReject={(id, reason) => void run(id, () => approvalsApi.reject(id, reason))}
+              onApprove={approve}
+              onReject={reject}
               onOpenCase={openCase}
             />
           ))}
