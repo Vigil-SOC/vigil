@@ -77,12 +77,12 @@ def test_medic_code_passes_no_extra_to_loggers() -> None:
     # skip redaction. Medic logs through the message only. A local venv
     # (`uv run` inside services/medic) is third-party code, not Medic's.
     offenders = [
-        str(p.relative_to(MEDIC))
-        for p in MEDIC.rglob("*.py")
-        if "tests" not in p.parts
-        and "contracts" not in p.parts
-        and ".venv" not in p.parts
-        and "site-packages" not in p.parts
-        and "extra=" in p.read_text()
+        str(rel)
+        for rel in (p.relative_to(MEDIC) for p in MEDIC.rglob("*.py"))
+        if "tests" not in rel.parts
+        and "contracts" not in rel.parts
+        and ".venv" not in rel.parts
+        and "site-packages" not in rel.parts
+        and "extra=" in (MEDIC / rel).read_text()
     ]
     assert offenders == []
