@@ -1,9 +1,8 @@
 rule: llm.provider-key-unusable
 cases:
-- id: provider-rejects-the-key
-  fires: true
-  why: I1 live eval cell P-4.a (provider key revoked, upstream L-2.a). Three rejected calls in 15 m, in steady state (the 1 h branches are known).
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-provider-rejects-the-key
+  title: 'I1 live eval cell P-4.a (provider key revoked, upstream L-2.a). Three rejected calls in 15 m, in steady state (the 1 h branches are known).'
   end: +85m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -13,7 +12,7 @@ cases:
     level: ERROR
     logger: services.worker.jobs
     template: 'llm_call failed (returning error dict): %s'
-    message: "llm_call failed (returning error dict): AuthenticationError: Error code: 401 - invalid x-api-key"
+    message: 'llm_call failed (returning error dict): AuthenticationError: Error code: 401 - invalid x-api-key'
     at: +61m
     repeat: {every: 1m, until: +63m}
   expect:
@@ -22,10 +21,9 @@ cases:
   - {at: +76m, rule: llm.provider-key-unusable, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.provider-key-unusable, active_since: +63m, opened_at: +65m, resolving_since: +76m, resolved_at: +81m, reason: cleared, routed_at: +65m}
-- id: saved-key-reports-bad-status
-  fires: true
-  why: Bifrost stored the key but says it doesn't work (one ERROR when the admin saves it).
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v02-saved-key-reports-bad-status
+  title: 'Bifrost stored the key but says it doesn''t work (one ERROR when the admin saves it).'
   end: +10m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -38,12 +36,13 @@ cases:
     message: 'Bifrost: provider anthropic key stored but reports status=list_models_failed (invalid x-api-key)'
     at: +1m
   expect:
+  - {at: +1m, rule: llm.provider-key-unusable, eval: true, state: pending}
   - {at: +3m, rule: llm.provider-key-unusable, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.provider-key-unusable, active_since: +1m, opened_at: +3m, resolving_since: null, resolved_at: null, routed_at: +3m}
-- id: two-rejections-are-below-the-bar
-  fires: false
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v03-two-rejections-are-below-the-bar
+  title: Two rejections are below the bar
   end: +70m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -53,7 +52,7 @@ cases:
     level: ERROR
     logger: services.worker.jobs
     template: 'llm_call failed (returning error dict): %s'
-    message: "llm_call failed (returning error dict): AuthenticationError: Error code: 401 - invalid x-api-key"
+    message: 'llm_call failed (returning error dict): AuthenticationError: Error code: 401 - invalid x-api-key'
     at: +1m
     repeat: {every: 5m, until: +6m}
   expect:
