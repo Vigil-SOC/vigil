@@ -257,7 +257,10 @@ def _link_findings(case_id: str, run_id: str, finding_ids: List[str]) -> None:
                 )
         except Exception:  # noqa: BLE001 — the hunt carries on either way
             logger.exception(
-                "could not link finding %s of %s to case %s", finding_id, run_id, case_id
+                "could not link finding %s of %s to case %s",
+                finding_id,
+                run_id,
+                case_id,
             )
 
 
