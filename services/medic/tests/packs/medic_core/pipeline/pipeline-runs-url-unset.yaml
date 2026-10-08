@@ -1,0 +1,30 @@
+rule: pipeline.runs-url-unset
+defaults:
+  sensors:
+    - {id: log.agent-worker, covers: [log_agent_worker], interval: 15s, service: agent-worker, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-for-a-day-after-the-start-line
+    title: agent-worker starts without VIGIL_RUNS_URL
+    end: +25h
+    logs:
+      - {at: +1m, signal: log_agent_worker, level: ERROR, logger: agent.worker, trusted: false,
+         template: 'VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered',
+         message: 'VIGIL_RUNS_URL is unset: run progress will not be mirrored to the backend and checkpoints cannot be answered'}
+    expect:
+      - {at: +1m, rule: pipeline.runs-url-unset, eval: true, state: firing, incident: A}
+      - {at: +24h1m, rule: pipeline.runs-url-unset, eval: false, state: resolving, incident: A}
+      - {at: +24h6m, rule: pipeline.runs-url-unset, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.runs-url-unset, active_since: +1m, opened_at: +1m, resolving_since: +24h1m,
+          resolved_at: +24h6m, reason: cleared, routed_at: +1m}
+  - kind: silent
+    id: v02-silent-on-other-worker-errors
+    title: Other agent-worker errors aren't this one
+    end: +25h
+    logs:
+      - {at: +1m, signal: log_agent_worker, level: ERROR, logger: agent.worker, trusted: false, template: worker error, message: worker error}
+    expect:
+      - {at: +30s, rule: pipeline.runs-url-unset, eval: unknown, state: inactive, note: the window is not watched yet}
+      - {at: +25h, rule: pipeline.runs-url-unset, eval: false, state: inactive}
+    incidents: {}

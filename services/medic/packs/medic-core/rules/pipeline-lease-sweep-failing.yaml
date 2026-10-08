@@ -1,0 +1,29 @@
+# P-2.i · the agent worker's lease sweeper fails every tick (default 30 s,
+# services/agent/worker.ts:624-631), so runs orphaned by a crash are never
+# resumed. No recovery line; a good sweep logs nothing. B5 says lane 1 (restart
+# agent-worker), but one log line can't route to lane 1 (ENGINE_API §5): lane 3.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.lease-sweep-failing
+title: The agent worker's lease sweeper keeps failing
+revision: 1
+fault: {class: pipeline, mode: P-2, causes: [P-2.i]}
+lane: 3
+detection: event
+signals:
+  failed:
+    log:
+      signal: log_agent_worker
+      logger: {eq: agent.worker}
+      level: [WARNING]
+      template: {eq: sweep failed}
+      trusted_only: false
+when: {fn: count, signal: failed, window: 10m, op: ">=", value: 10}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: The agent worker's lease sweeper has failed repeatedly, so runs interrupted by a crash or restart are not resumed.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report and the
+    agent-worker log. Check that agent-worker can reach Postgres; restarting
+    agent-worker may restore the sweeper. Record what you did.
