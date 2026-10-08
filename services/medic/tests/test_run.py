@@ -18,6 +18,7 @@ from services.medic.app.heartbeat import (
     check_heartbeat,
     heartbeat_path,
 )
+from services.medic.app.wiring import TICK_S
 from services.medic.tests.fakes import FakeClock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -65,11 +66,13 @@ def test_flag_on_heartbeat_appears(tmp_path: Path) -> None:
 
     assert main(["run"], env=env, clock=clock, sleep=sleep_and_look, max_cycles=3) == 0
 
-    assert [r["cycle"] for r, _ in seen] == [0, 1, 2]
+    # A cycle runs, then beats, then sleeps one 15 s tick (S4).
+    assert [r["cycle"] for r, _ in seen] == [1, 2, 3]
     assert all(r["state"] == "running" and fresh for r, fresh in seen)
     last = json.loads(heartbeat_path(tmp_path).read_text())
     assert last["cycle"] == 3
-    assert last["ts"] - last["started_at"] == 3 * BEAT_INTERVAL_S
+    assert last["ts"] - last["started_at"] == 3 * TICK_S
+    assert TICK_S <= BEAT_INTERVAL_S  # C5: a beat at least every 30 s
 
 
 def test_clean_stop_marks_the_beat_stopped(tmp_path: Path) -> None:
@@ -151,3 +154,38 @@ def test_module_entry_point_check_without_heartbeat(tmp_path: Path) -> None:
     result = _module("check", env={"VIGIL_MEDIC_DATA_DIR": str(tmp_path)})
     assert result.returncode == 1
     assert "no heartbeat" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        ("VIGIL_MEDIC_INSTALL_SHAPE", "kubernetes"),
+        ("VIGIL_MEDIC_AGENT_WORKER_ADDR", "http://agent-worker:6990/readyz"),
+        ("VIGIL_MEDIC_AGENT_WORKER_ADDR", "user:hunter2secret@agent-worker:6990"),
+        ("VIGIL_MEDIC_AGENT_WORKER_ADDR", "agent-worker:70000"),
+    ],
+)
+def test_a_setting_medic_cant_use_stops_it_without_echoing_the_value(
+    tmp_path: Path, caplog, var: str, value: str
+) -> None:
+    env = {
+        "VIGIL_MEDIC_ENABLED": "true",
+        "VIGIL_MEDIC_DATA_DIR": str(tmp_path),
+        var: value,
+    }
+    with caplog.at_level(logging.INFO, logger="services.medic"):
+        assert main(["run"], env=env, max_cycles=0) == 1
+    assert var in caplog.text
+    assert value not in caplog.text
+    assert not heartbeat_path(tmp_path).exists()
+
+
+def test_check_reports_a_stalled_medic_unhealthy(tmp_path: Path) -> None:
+    from services.medic.app.heartbeat import mark_stalled, write_heartbeat
+
+    write_heartbeat(tmp_path, cycle=4, now=1000.0, started_at=900.0, pid=1)
+    mark_stalled(tmp_path)
+    ok, reason = check_heartbeat(tmp_path, now=1001.0)
+    assert not ok and "stalled" in reason
+    # The last good beat is kept: the next start's gap starts there.
+    assert json.loads(heartbeat_path(tmp_path).read_text())["ts"] == 1000.0
