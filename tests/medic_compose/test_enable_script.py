@@ -2,9 +2,9 @@
 
 C3 §7 check 13 / K1 T-34: the installer generates a random Viewer password; no
 literal one exists anywhere. The script also generates the Medic API secret
-(X2's `X-Medic-Key`). Creating the Viewer account is V1; until then the script
-prints that one manual step. `--secrets-only` skips the Docker work (image build
-and file ownership on Linux), which is what makes this test runnable anywhere.
+(X2's `X-Medic-Key`) and the Viewer's random name (D2-17). `--secrets-only`
+skips the Docker work, which is what makes this test runnable anywhere; the full
+run is `test_enable_flow.py`.
 """
 
 from __future__ import annotations
@@ -91,15 +91,14 @@ def test_refuses_a_loose_secrets_dir(tmp_path) -> None:
     assert "0700" in done.stderr
 
 
-def test_prints_the_manual_step_and_the_up_command(tmp_path) -> None:
+def test_prints_the_compose_command_with_medics_settings(tmp_path) -> None:
     secrets = tmp_path / "s"
     out = _run(tmp_path, secrets).stdout
-    assert "Viewer" in out and "medic-viewer" in out
-    assert str(secrets / "viewer_password") in out
+    assert f"--env-file {secrets / 'compose.env'}" in out
     assert "--profile medic" in out
     assert "infra/docker/medic/docker-compose.medic.yml" in out
-    assert "VIGIL_MEDIC_DOCKER_GID=" in out
-    assert "VIGIL_MEDIC_ENABLED=true" in out
+    # No manual account step any more: the full run creates it.
+    assert "create the user" not in out
 
 
 def test_unknown_argument_is_refused(tmp_path) -> None:
