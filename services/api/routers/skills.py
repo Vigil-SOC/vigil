@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import (
@@ -73,6 +73,15 @@ class SkillWriteRequest(BaseModel):
     source: Optional[str] = None
     # The version the drawer opened; an overwrite is refused if it has moved.
     version: Optional[int] = None
+
+    @field_validator("body")
+    @classmethod
+    def body_not_blank(cls, v: str) -> str:
+        # A skill with no steps gives an agent nothing to follow; write-time
+        # only, so skills already on disk with an empty body still load.
+        if not v.strip():
+            raise ValueError("body must not be empty")
+        return v
 
 
 def _response(skill: Skill) -> SkillResponse:

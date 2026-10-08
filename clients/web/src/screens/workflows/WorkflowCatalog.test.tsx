@@ -433,8 +433,10 @@ describe('workflow catalog cards', () => {
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
 
     fireEvent.change(name, { target: { value: 'new-skill' } })
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Steps (SKILL.md)'), { target: { value: '# Steps\n' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(skillsApi.save).toHaveBeenCalledWith({ name: 'new-skill', description: 'Does a thing.', body: '' })
+    expect(skillsApi.save).toHaveBeenCalledWith({ name: 'new-skill', description: 'Does a thing.', body: '# Steps\n' })
   })
 
   it('shows the reader pane beside the cards and follows the selected card', async () => {
