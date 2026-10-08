@@ -433,6 +433,7 @@ dbInit:
     - 39_case_findings_finding_index.sql
     - 40_users_service_account.sql
     - 41_medic_last_seen.sql
+    - 42_medic_permissions.sql
   resources:
     requests:
       cpu: 50m

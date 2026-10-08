@@ -603,6 +603,26 @@ def seed_default_roles(conn):
     logger.info("  Seeded default roles: admin, analyst, viewer")
 
 
+# medic.read / medic.admin for the default roles (C6/V3); existing keys win, so a
+# grant an operator turned off stays off. The same statement as
+# infra/database/init/42_medic_permissions.sql.
+@migration("Grant medic.read / medic.admin to the default roles")
+def grant_medic_permissions(conn):
+    if not _table_exists(conn, 'roles'):
+        return
+    conn.execute(text("""
+        UPDATE roles AS r
+        SET permissions = g.grants || r.permissions,
+            updated_at = NOW()
+        FROM (VALUES
+            ('role-admin', '{"medic.read": true, "medic.admin": true}'::jsonb),
+            ('role-manager', '{"medic.read": true}'::jsonb)
+        ) AS g (role_id, grants)
+        WHERE r.role_id = g.role_id
+          AND NOT r.permissions ?& ARRAY(SELECT jsonb_object_keys(g.grants));
+    """))
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
