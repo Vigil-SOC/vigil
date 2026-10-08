@@ -46,12 +46,13 @@ def _columns(conn):
 
 
 def _checks(conn):
-    return conn.execute(
+    rows = conn.execute(
         text(
-            "SELECT count(*) FROM pg_constraint "
+            "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
             "WHERE conrelid = 'medic_last_seen'::regclass AND contype = 'c'"
         )
-    ).scalar_one()
+    ).all()
+    return dict(rows)
 
 
 def _step():
@@ -83,11 +84,16 @@ def conn():
 
 def test_create_all_builds_the_table(conn):
     assert _columns(conn) == COLUMNS
-    assert _checks(conn) >= 3
+    assert set(_checks(conn)) == {
+        "medic_last_seen_one_row",
+        "medic_last_seen_failure_kind",
+        "medic_last_seen_snapshot_typed",
+    }
 
 
 @pytest.mark.parametrize("how", ["init_sql", "migration"])
 def test_init_sql_and_migration_build_the_same_table(conn, how):
+    orm_checks = _checks(conn)
     conn.execute(text("DROP TABLE medic_last_seen"))
     if how == "init_sql":
         conn.execute(text(INIT_SQL.read_text()))
@@ -96,7 +102,7 @@ def test_init_sql_and_migration_build_the_same_table(conn, how):
         _step()(conn)
         _step()(conn)
     assert _columns(conn) == COLUMNS
-    assert _checks(conn) >= 3
+    assert _checks(conn) == orm_checks
     _insert(conn, failure_kind="refused")
 
 
