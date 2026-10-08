@@ -304,11 +304,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                   const providerModels = row.providerId ? modelsByProvider[row.providerId] || [] : []
                   return (
                     <tr key={c}>
-                      <td style={{ minWidth: 220, maxWidth: 300 }}>
+                      <td style={{ minWidth: 200, maxWidth: 300 }}>
                         <div className="aim-who">{meta.label}</div>
                         <div className="aim-note">{meta.description}</div>
                       </td>
-                      <td style={{ minWidth: 400 }}>
+                      <td style={{ minWidth: 340 }}>
                         <div className="aim-model">
                           <Select
                             value={row.providerId}
