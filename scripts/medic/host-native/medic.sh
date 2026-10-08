@@ -88,8 +88,11 @@ _medic_setup() {
     runtime="${VIGIL_MEDIC_HOST_RUNTIME:-/opt/vigil-medic}"
     {
         echo "Medic not started: $1."
-        echo "One-time setup, as an admin (each line is safe to re-run), then ./start.sh -d again:"
-        if [ "$(_medic_os)" = Darwin ]; then
+        echo "One-time setup, as an admin, then ./start.sh -d again:"
+        if id -u "$_MEDIC_USER" >/dev/null 2>&1; then
+            # Never re-number an existing user: its files would no longer be its own.
+            echo "  (user $_MEDIC_USER exists: skip creating it)"
+        elif [ "$(_medic_os)" = Darwin ]; then
             id=$(_medic_free_id)
             echo "  sudo dscl . -create /Groups/$_MEDIC_USER PrimaryGroupID $id"
             echo "  sudo dscl . -create /Users/$_MEDIC_USER UniqueID $id"
@@ -116,9 +119,18 @@ medic_host_start() {
     _medic_warning
 
     local pidfile="$REPO_ROOT/logs/medic.pid" log="$REPO_ROOT/logs/medic.log"
-    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    # The args check: a stale pidfile's PID may now be someone else's.
+    if [ -f "$pidfile" ] && ps -o args= -p "$(cat "$pidfile")" 2>/dev/null | grep -q medic-loop; then
         echo "Medic: already running (pid $(cat "$pidfile"))."
         return 0
+    fi
+    # A loop that outlived its sudo (SIGKILL, OOM) has no pidfile and Vigil's user
+    # can't signal it; starting a second one would share its data dir.
+    local orphan
+    if orphan=$(pgrep -u "$_MEDIC_USER" -f 'bin/medic-loop' 2>/dev/null) && [ -n "$orphan" ]; then
+        echo "Medic not started: a Medic loop is already running as $_MEDIC_USER" \
+            "(pid $(echo "$orphan" | tr '\n' ' ')). Stop it with: sudo kill $(echo "$orphan" | tr '\n' ' ')" >&2
+        return 1
     fi
 
     local data runtime uid readable

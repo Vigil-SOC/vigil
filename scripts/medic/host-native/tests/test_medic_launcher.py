@@ -217,6 +217,30 @@ def test_missing_user_prints_exact_setup_and_does_not_start(
     assert _calls(sb, "uv.calls") == ""
 
 
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_existing_user_is_never_recreated(sb: Path, os_name: str) -> None:
+    """Re-running the printed setup must not re-number an existing vigil-medic."""
+    out = _bash(
+        sb, RUN, VIGIL_MEDIC_ENABLED="true", STUB_SUDO="fail", MEDIC_HOST_OS=os_name
+    )
+    text = out.stdout + out.stderr
+    assert "rc=1" in out.stdout and "NOPASSWD" in text
+    assert "dscl" not in text and "useradd" not in text
+    assert "user vigil-medic exists" in text
+
+
+def test_stale_pidfile_with_reused_pid_is_not_running(sb: Path) -> None:
+    sleeper = subprocess.Popen(["sleep", "30"])
+    try:
+        (sb / "repo" / "logs" / "medic.pid").write_text(str(sleeper.pid))
+        out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", STUB_USER="missing")
+        assert "already running" not in out.stdout + out.stderr
+        assert "rc=1" in out.stdout
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+
 @pytest.mark.parametrize("problem", ["missing", "mode"])
 def test_bad_data_dir_does_not_start(sb: Path, problem: str) -> None:
     if problem == "missing":
