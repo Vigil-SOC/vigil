@@ -1,4 +1,4 @@
-/* Shared kit: level badge, ⓘ, Not measured yet, page head. Tokens only. */
+/* Shared kit: level badge, meter bar, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
 .level-pill {
   display: inline-flex;
   align-items: center;
@@ -93,4 +93,111 @@
   font-size: 13px;
   line-height: 1.5;
   color: var(--tx1);
+}
+
+.meter-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg4);
+  overflow: hidden;
+}
+
+.meter-fill { height: 100%; }
+.meter-fill.good { background: var(--good); }
+.meter-fill.fair { background: var(--fair); }
+.meter-fill.poor { background: var(--poor); }
+
+@keyframes kit-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--tx2);
+  background: var(--bg3);
+}
+
+.state-pill .state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.state-pill.live { color: var(--ac); background: var(--ac-bg); }
+.state-pill.needs { color: var(--poor); background: var(--poor-bg); }
+.state-pill.needs .state-dot { animation: kit-blink 1.6s infinite; }
+
+.sev-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--tx0);
+}
+
+.sev-mark .sev-box {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  background: var(--sev-none);
+}
+
+.sev-mark.critical .sev-box { background: var(--sev-crit); }
+.sev-mark.high .sev-box { background: var(--sev-high); }
+.sev-mark.medium .sev-box { background: var(--sev-med); }
+.sev-mark.low .sev-box { background: var(--sev-low); }
+
+.tab-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0 22px;
+}
+
+.tab-strip > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 2px;
+  margin-bottom: -1px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--tx2);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab-strip > button:hover,
+.tab-strip > button.active { color: var(--tx0); }
+.tab-strip > button.active { border-bottom-color: var(--ac); }
+
+.tab-strip .tab-count {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--tx2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tab-strip > button.active .tab-count { background: var(--ac-bg); color: var(--ac); }
+
+@media (prefers-reduced-motion: reduce) {
+  .state-pill.needs .state-dot { animation: none; }
 }

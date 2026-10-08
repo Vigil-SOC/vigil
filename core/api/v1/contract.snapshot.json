@@ -929,7 +929,7 @@
         "type": "object"
       },
       "CaseInvestigationRef": {
-        "description": "One investigation on the case page. Newest first on the detail read.",
+        "description": "One run on the case page: an investigation, or a run started on the case\nwith no investigation row (``investigation_id`` null). Newest first.",
         "properties": {
           "budget_health": {
             "default": "healthy",
@@ -953,8 +953,15 @@
             "title": "Created At"
           },
           "investigation_id": {
-            "title": "Investigation Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Investigation Id"
           },
           "iteration_count": {
             "default": 0,
@@ -985,7 +992,6 @@
           }
         },
         "required": [
-          "investigation_id",
           "status",
           "workflow_id",
           "run_id"
@@ -1021,6 +1027,17 @@
               }
             ],
             "title": "Source Link"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
         "required": [
@@ -2076,6 +2093,17 @@
               }
             ],
             "title": "Timestamp"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           },
           "updated_at": {
             "anyOf": [

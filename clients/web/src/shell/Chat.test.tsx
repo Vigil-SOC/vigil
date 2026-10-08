@@ -30,6 +30,7 @@ vi.mock('../services/api', () => ({
   claudeApi: { getModels: vi.fn(() => new Promise(() => undefined)) },
   conversationsApi: {
     get: vi.fn(),
+    list: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
     importHistory: vi.fn(),
@@ -81,6 +82,8 @@ describe('Ask Vigil dock', () => {
     expect(screen.queryByRole('button', { name: /Default agent/ })).toBeNull()
     expect(document.querySelector('.model-sel')).toBeNull()
     expect(document.querySelector('.cm-cost')).toBeNull()
+    expect(document.querySelector('.case-composer')).toBeNull()
+    expect(document.querySelector('.composer-note')).toBeNull()
   })
 
   it('stores a case id from full-text search and ignores a typed id that was not returned', async () => {
@@ -172,6 +175,39 @@ describe('Ask Vigil dock', () => {
     expect(screen.getByText(format(new Date(older), 'MMM d, yyyy'))).toBeInTheDocument()
     fireEvent.click(screen.getByText('Monday thread'))
     await waitFor(() => expect(conversationsApi.get).toHaveBeenCalledWith('newer'))
+  })
+})
+
+describe('pinned case composer', () => {
+  function renderPinned() {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [] } } as never)
+    return render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" />)
+  }
+
+  it('starts as one row with the note, Ask only, and no fold', () => {
+    renderPinned()
+    expect(screen.getByText('Private to you · Ask only')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Tell' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Do' })).toBeDisabled()
+    expect(document.querySelector('.composer-fold')).toBeNull()
+    expect(document.querySelector('.chat-body')).toBeNull()
+    expect(screen.queryByTestId('attached-case')).toBeNull()
+  })
+
+  it('shows Stop while loading, then the error and a fold that hides the thread', async () => {
+    let fail: (e: Error) => void = () => undefined
+    vi.mocked(streamFetch).mockReturnValue(new Promise((_, reject) => { fail = reject }))
+    renderPinned()
+    fireEvent.change(screen.getByPlaceholderText('Ask about this case'), { target: { value: 'why?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByTitle('Stop')
+
+    fail(new Error('boom'))
+    expect(await screen.findByText(/Could not reach Vigil: boom/)).toBeInTheDocument()
+    const fold = screen.getByRole('button', { name: /2 messages · hide/ })
+    fireEvent.click(fold)
+    expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
+    expect(fold).toHaveTextContent('2 messages · show')
   })
 })
 

@@ -5,6 +5,7 @@ optional ``VIGIL_SKILLS_PATH`` root; see ``core.skills.skill_library``. Writes
 go only to that operator root. The bundled library is never modified.
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -27,6 +28,8 @@ from core.skills.skill_library import (
     skill_version,
     write_operator_skill,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -115,7 +118,8 @@ async def get_skill(name: str):
     try:
         body = skill_body(skill)
     except OSError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.warning("could not read skill %s: %s", name, exc)
+        raise HTTPException(status_code=400, detail="Could not read the skill") from exc
     listed = _response(skill)
     return SkillDetail(
         **listed.model_dump(),
@@ -133,7 +137,12 @@ async def get_skill_file(name: str, path: str):
         content = read_skill_file(_loaded(name), path)
     except SkillError as exc:
         raise _http(exc) from exc
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
+        logger.warning("could not read skill file %s/%s: %s", name, path, exc)
+        raise HTTPException(
+            status_code=400, detail="Could not read the skill file"
+        ) from exc
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SkillFileContent(path=path, content=content)
 

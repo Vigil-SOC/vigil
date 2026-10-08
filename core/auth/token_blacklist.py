@@ -18,6 +18,7 @@ Verify-path failures (Redis unreachable during `is_token_revoked`) default to
 you deliberately prefer availability over security during Redis outages.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,12 @@ logger = logging.getLogger(__name__)
 
 _JTI_PREFIX = "blacklist:jti:"
 _USER_CUTOFF_PREFIX = "user_revoked_before:"
+_REFRESH_USED_PREFIX = "refresh_used:"
+
+# A browser with several tabs or parallel requests can present one refresh
+# cookie to /refresh more than once before the rotated cookie lands; a replay
+# inside this window is the same client, not a stolen copy.
+REFRESH_REUSE_GRACE_SECONDS = 10
 
 # If True, Redis failures during verification allow the request through.
 # Default: False (fail-closed). Set REVOCATION_FAIL_OPEN=true for fail-open.
@@ -110,6 +117,39 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
     await client.set(f"{_JTI_PREFIX}{jti}", "1", ex=ttl_seconds)
 
 
+async def consume_refresh_jti(jti: str, expires_at: Optional[datetime]) -> bool:
+    """
+    Claim a refresh token for rotation. True if this is its first use (or a
+    replay inside REFRESH_REUSE_GRACE_SECONDS); False if it was already
+    rotated. Redis failures follow REVOCATION_FAIL_OPEN, like is_token_revoked.
+    """
+    client = _get_client()
+    if client is None:
+        return _FAIL_OPEN
+
+    ttl_seconds = 1
+    if expires_at is not None:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        ttl_seconds = max(
+            1, int((expires_at - datetime.now(tz=timezone.utc)).total_seconds())
+        )
+
+    key = f"{_REFRESH_USED_PREFIX}{jti}"
+    now = _now_ts()
+    try:
+        if await client.set(key, str(now), ex=ttl_seconds, nx=True):
+            return True
+        first_used = await client.get(key)
+        return (
+            first_used is not None
+            and now - int(first_used) <= REFRESH_REUSE_GRACE_SECONDS
+        )
+    except Exception as exc:
+        _note_lookup_failed(exc)
+        return _FAIL_OPEN
+
+
 async def revoke_all_for_user(user_id: str) -> None:
     """
     Invalidate every outstanding token for a user by moving the cutoff
@@ -119,7 +159,39 @@ async def revoke_all_for_user(user_id: str) -> None:
     if client is None:
         logger.warning("revoke_all_for_user: redis client unavailable; skipping")
         return
-    await client.set(f"{_USER_CUTOFF_PREFIX}{user_id}", str(_now_ts()))
+    # Every token older than the cutoff has expired once a refresh token's
+    # lifetime has passed, so the key can age out instead of accumulating.
+    ttl_seconds = get_settings().jwt_refresh_expiration_days * 86400
+    await client.set(f"{_USER_CUTOFF_PREFIX}{user_id}", str(_now_ts()), ex=ttl_seconds)
+
+
+async def warn_if_redis_evicts() -> None:
+    """
+    Log an error when Redis can evict keys under memory pressure.
+
+    Revocation keys live only in Redis; an evicted key reads as "not revoked".
+    The shipped Compose, desktop and Helm configs run ``noeviction``; this
+    catches an operator-managed Redis that does not. Best-effort: managed
+    Redis often blocks CONFIG.
+    """
+    client = _get_client()
+    if client is None:
+        return
+    try:
+        config = await asyncio.wait_for(
+            client.config_get("maxmemory-policy"), timeout=3
+        )
+    except Exception as exc:
+        logger.debug("Redis eviction-policy check skipped: %s", exc)
+        return
+    policy = str(config.get("maxmemory-policy", "")) or "unknown"
+    if policy not in ("noeviction", "unknown"):
+        logger.error(
+            "Redis maxmemory-policy is %r: under memory pressure Redis can evict"
+            " token-revocation keys, silently re-validating logged-out or"
+            " reset sessions. Set maxmemory-policy to noeviction.",
+            policy,
+        )
 
 
 async def is_token_revoked(payload: dict) -> bool:

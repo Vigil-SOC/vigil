@@ -414,7 +414,7 @@ export function gapsOf(attempts: readonly Attempt[]): ToolGap[] {
 
 // Total characters of tool output one dispatch may journal. Shared rather than
 // per-call: one 500-row answer must not crowd the record of the calls after it.
-const CALL_BUDGET = 16_000;
+export const CALL_BUDGET = 16_000;
 
 // The execution log the audit trail needs. wrapped.text is what the worker was
 // actually shown -- already scrubbed, delimiter-safe and capped at result_cap by

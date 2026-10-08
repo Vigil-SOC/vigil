@@ -138,7 +138,8 @@ class TestCapabilityBinding:
     def test_states_bounds_for_every_capability_a_hunt_binds(self):
         from core.workflows.playbook_resolver import CAPABILITY_BOUNDS
 
-        assert set(CAPABILITY_BOUNDS) == set(HUNT_CAPABILITIES)
+        # case_records is the investigate lead's; get_finding keeps the default.
+        assert set(CAPABILITY_BOUNDS) == set(HUNT_CAPABILITIES) | {"case_records"}
 
     # Dropped rather than fatal: the hunt journals the drop as a visibility gap,
     # which is a better answer than refusing to run at all.
@@ -335,10 +336,13 @@ def test_an_investigate_definition_resolves_with_no_phases():
     assert loaded["objectives"]
     assert "blast radius" in loaded["narrative"].lower()
     config = yaml.safe_load(config_text)
-    assert [tool["id"] for tool in config["tools"]] == ["case_records", "get_finding"]
+    ids = [tool["id"] for tool in config["tools"]]
+    assert ids[:2] == ["case_records", "get_finding"]
+    assert {"search_findings", "lookup_indicators"} <= set(ids)
     assert config["budgets"]["max_cost_usd"] == 5.0
     assert config["budgets"]["max_wall_ms"] == 1_800_000
-    assert config["budgets"]["max_calls"] >= 1
+    # HUNT_ITERATIONS decisions, each a full tool loop plus the emission retries.
+    assert config["budgets"]["max_calls"] == 80
     assert config["approvals"] == []
 
 
@@ -358,35 +362,99 @@ def test_resolve_declares_case_records_and_get_finding():
     assert ids.count("case_records") == 1
 
 
-def test_resolve_emits_get_finding_when_no_phase_named_it():
-    from core.workflows.workflows_service import WorkflowDefinition
+# The lead asks for case_records and get_finding by capability, and the resolver
+# binds each to the tool that answers it, so the tool carries its capability.
+def test_the_investigate_lead_tools_are_bound_capabilities():
+    _, config_text = resolve("incident-response")
+    tools = {tool["id"]: tool for tool in yaml.safe_load(config_text)["tools"]}
+    assert tools["case_records"]["provides"] == "case_records"
+    assert tools["case_records"]["max_rows"] == 100
+    assert tools["get_finding"]["provides"] == "get_finding"
 
-    definition = WorkflowDefinition(
-        workflow_id="bare",
-        file_path="",
-        metadata={
-            "name": "bare",
-            "description": "",
-            "phases": [
-                {
-                    "id": "p1",
-                    "agent": "triage",
-                    "name": "Triage",
-                    "instructions": "look",
-                }
-            ],
-        },
-        body="",
+
+# Every need binds when the catalogue has a tool for it, and telemetry_search is
+# the one a deployment with no SIEM server lacks.
+def test_the_investigate_lead_binds_all_five_needs_given_a_siem():
+    from core.workflows.playbook_resolver import (
+        INVESTIGATE_CAPABILITIES,
+        _bound_capabilities,
+        _tool_catalogue,
     )
 
-    class _Workflows:
-        def get_workflow(self, _id):
-            return definition
+    catalogue = _tool_catalogue(None)
+    catalogue["splunk-selfhosted_splunk_execute"] = {
+        "name": "splunk-selfhosted_splunk_execute",
+        "description": "run a search",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+    bound = _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
+    assert [tool["provides"] for tool in bound] == list(INVESTIGATE_CAPABILITIES)
 
-    _, config_text = resolve("bare", workflows=_Workflows())
+
+def test_the_investigate_lead_lacks_telemetry_search_without_a_siem_tool():
+    _, config_text = resolve("incident-response")
+    provided = {tool.get("provides") for tool in yaml.safe_load(config_text)["tools"]}
+    assert "telemetry_search" not in provided
+    assert {"findings_search", "indicator_lookup"} <= provided
+
+
+# A catalogue without get_finding binds only case_records, so the lead's config
+# declares one provider and the run journals the other as unbound.
+def test_an_investigate_capability_the_catalogue_lacks_binds_nothing():
+    from core.workflows.playbook_resolver import (
+        INVESTIGATE_CAPABILITIES,
+        _bound_capabilities,
+        _tool_catalogue,
+    )
+
+    catalogue = _tool_catalogue(None)
+    catalogue.pop("get_finding")
+    bound = _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
+    assert "get_finding" not in [tool["provides"] for tool in bound]
+    assert "case_records" in [tool["provides"] for tool in bound]
+
+
+def _compose_with(*tool_names):
+    return _compose_phases(
+        {
+            "id": "p1",
+            "agent": "triage",
+            "name": "Triage",
+            "instructions": "look",
+            "tools": list(tool_names),
+        }
+    )
+
+
+# Compose grants per phase and has no lead, so it carries only what a phase names.
+def test_a_compose_config_carries_no_investigate_tools():
+    _, config_text = resolve("phase-fixture", workflows=_compose_with())
     ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
-    assert "case_records" in ids
-    assert "get_finding" in ids
+    assert "case_records" not in ids and "get_finding" not in ids
+
+
+# The phase loses a tool the deployment lacks, and the playbook says which, so
+# the run journals a blind spot rather than carrying on as though nothing was asked.
+def test_a_phase_tool_the_deployment_lacks_is_dropped_and_recorded():
+    playbook, config_text = resolve(
+        "phase-fixture", workflows=_compose_with("get_finding", "acme_edr_isolate")
+    )
+    [phase] = yaml.safe_load(playbook)["phases"]
+    assert "get_finding" in phase["tools"] and "acme_edr_isolate" not in phase["tools"]
+    assert phase["unavailable"] == [
+        {
+            "tool": "acme_edr_isolate",
+            "reason": "no tool in this deployment answers acme_edr_isolate",
+        }
+    ]
+    ids = [t["id"] for t in yaml.safe_load(config_text)["tools"]]
+    assert "get_finding" in ids and "acme_edr_isolate" not in ids
+
+
+def test_a_phase_whose_tools_are_all_present_records_nothing_unavailable():
+    playbook, _ = resolve("phase-fixture", workflows=_compose_with("get_finding"))
+    [phase] = yaml.safe_load(playbook)["phases"]
+    assert "unavailable" not in phase
 
 
 # One number read as both a turn count and a call count ended a hunt three turns

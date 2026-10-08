@@ -180,3 +180,11 @@ export function useSkills() {
 
   return { rows, phase, error, reload }
 }
+
+/** The line under a model name: where the model came from. */
+export function modelSource(a: Pick<AgentTemplate, 'model' | 'modelSource' | 'category'>): string | null {
+  if (!a.model) return null
+  if (a.modelSource === 'agent') return 'Set for this agent'
+  if (a.modelSource === 'assignment' && a.category) return `${a.category.charAt(0).toUpperCase()}${a.category.slice(1).replace(/_/g, ' ')} default`
+  return 'Default'
+}

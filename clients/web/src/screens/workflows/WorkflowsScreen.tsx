@@ -1,16 +1,17 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { NotMeasured } from '../../shared/NotMeasured'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
-import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, type Phase } from './useWorkflowsData'
+import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
+import WorkflowReaderPane from './WorkflowReaderPane'
+import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
@@ -87,7 +88,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
         </div>
       </div>
       {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={setCreating} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} />}
+      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
       {creating && <WorkflowBuilder autoGenerate={creating === 'ai'} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); workflows.reload() }} />}
@@ -175,23 +176,24 @@ const KIND_LABEL: Record<string, string> = {
 }
 const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: 'Nightly', shadow: 'Runs alongside' }
 
-type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
+type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
 
-/** One workflow on the board's card column. Opening the card reads it; the
- *  actions sit under it until the reader carries them. */
-function WorkflowCard({ wf: w, onOpen }: { wf: Workflow; onOpen: (kind: WfModal['kind']) => void }) {
+/** One workflow on the board's card column. Clicking the card shows it in the
+ *  reader beside the column; the actions sit under it as well. */
+function WorkflowCard({ wf: w, selected, onSelect, onOpen }: { wf: Workflow; selected: boolean; onSelect: () => void; onOpen: (kind: WfModal['kind']) => void }) {
   const commands = LIVE_COMMANDS.filter((c) => c.workflowId === w.id)
   // an absent triggers list (older backend) draws no chip at all, not "started by hand"
   const triggers = w.triggers?.map((t) => TRIGGER_LABEL[t] ?? t) ?? []
   if (w.triggers?.length === 0) triggers.push('Started by hand')
   return (
-    <div className={`wfk${w.enabled ? '' : ' off'}`}>
+    <div className={`wfk${w.enabled ? '' : ' off'}${selected ? ' sel' : ''}`}>
       <div
         role="button"
         tabIndex={0}
         className="wfk-main"
-        onClick={() => onOpen('details')}
-        onKeyDown={activateOnKey(() => onOpen('details'))}
+        aria-pressed={selected}
+        onClick={onSelect}
+        onKeyDown={activateOnKey(onSelect)}
       >
         <span className="wfk-head">
           <span className="wfk-name" title={w.name}>{w.name}</span>
@@ -229,55 +231,86 @@ function WorkflowCard({ wf: w, onOpen }: { wf: Workflow; onOpen: (kind: WfModal[
   )
 }
 
+/** Sizes an element to reach the bottom of the console's scrolling view, so the
+ *  card column and the reader each scroll on their own instead of the page. */
+function useFillHeight<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    const view = el?.closest('.view') as HTMLElement | null
+    if (!el || !view) return
+    const fit = () => {
+      const top = el.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop
+      el.style.height = `${Math.max(320, view.clientHeight - top)}px`
+    }
+    fit()
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit)
+    ro?.observe(view)
+    window.addEventListener('resize', fit)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', fit) }
+  })
+  return ref
+}
+
 function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>; onCreate: (kind: 'blank' | 'ai') => void; goSettings: ConsoleScreenProps['goSettings'] }) {
   const { rows, phase, error, reload } = feed
-  const [q, setQ] = useState('')
   const [modal, setModal] = useState<WfModal | null>(null)
+  // the pane replaces the table; read from the rows so an edit or a delete shows in it
+  const [openId, setOpenId] = useState<string | null>(null)
+  const open = rows.find((w) => w.id === openId)
+  // bumped by a save, so the pane reads the edited definition again
+  const [saves, setSaves] = useState(0)
   const close = () => setModal(null)
-  const list: Workflow[] = q
-    ? rows.filter((w) => w.name.toLowerCase().includes(q.toLowerCase()))
-    : rows
+  const list = rows
+  // the board always shows one workflow in the reader; the first row until one is chosen
+  const shown = open ?? (phase === 'ready' ? list[0] : undefined)
+  const layoutRef = useFillHeight<HTMLDivElement>()
   return (
     <>
-      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <div className="search" style={{ maxWidth: 320 }}>
-          <span><Icon name="search" /></span>
-          <input aria-label="Search workflows" placeholder="Search workflows…" value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <div className="flex-1" />
-        <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="btn ghost" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
-      </div>
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="flow" title="Loading workflows…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load workflows" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && list.length === 0 && (
         <StateMsg>
           <EmptyState
-            icon={q ? 'filter' : 'flow'}
-            title={q ? 'No workflows match this search' : 'No workflows yet'}
-            body={q ? 'Clear the search to return to the workflow catalog.' : 'Create a workflow manually or generate one with AI from a plain-language investigation goal.'}
-            primary={q ? { label: 'Clear search', onClick: () => setQ(''), icon: 'close' } : { label: 'New workflow', onClick: () => onCreate('blank'), icon: 'plus' }}
-            secondary={q ? undefined : { label: 'Generate with AI', onClick: () => onCreate('ai'), icon: 'sparkle' }}
+            icon="flow"
+            title="No workflows yet"
+            body="Create a workflow manually or generate one with AI from a plain-language investigation goal."
+            primary={{ label: 'New workflow', onClick: () => onCreate('blank'), icon: 'plus' }}
+            secondary={{ label: 'Generate with AI', onClick: () => onCreate('ai'), icon: 'sparkle' }}
           />
         </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
-        // bottom padding keeps the last card's actions clear of the fixed Ask Vigil button
-        <div className="px-[22px] pt-5 pb-[110px]">
-          <div className="wfk-col">
-            {list.map((w) => <WorkflowCard key={w.id} wf={w} onOpen={(kind) => setModal({ kind, wf: w })} />)}
+        <div className="wfk-layout" ref={layoutRef}>
+          {/* bottom padding keeps the last card's actions clear of the fixed Ask Vigil button */}
+          <div className="wfk-col px-[22px] pt-5 pb-[110px]">
+            {list.map((w) => (
+              <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} onOpen={(kind) => setModal({ kind, wf: w })} />
+            ))}
             <div className="wfk-new">
               <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
               <span className="text-[12px] leading-[1.45] text-tx-2">Describe how your team works a case and Vigil drafts the workflow for you to edit.</span>
               <button className="btn ghost wfk-btn self-start" onClick={() => onCreate('ai')}><Icon name="sparkle" /> Generate with AI</button>
             </div>
           </div>
+          {shown && (
+            <div className="wfk-reader">
+              <WorkflowReaderPane
+                key={`${shown.id}:${saves}`}
+                wf={shown}
+                onWatch={() => setModal({ kind: 'history', wf: shown })}
+                onRun={() => setModal({ kind: 'run', wf: shown })}
+                onEdit={() => setModal({ kind: 'edit', wf: shown })}
+                onDelete={() => setModal({ kind: 'delete', wf: shown })}
+                onToggled={reload}
+              />
+            </div>
+          )}
         </div>
       )}
-      {modal?.kind === 'details' && <WorkflowReader wf={modal.wf} onClose={close} />}
       {modal?.kind === 'run' && <RunModal wf={modal.wf} onClose={close} onStarted={() => setModal({ kind: 'history', wf: modal.wf })} />}
       {modal?.kind === 'history' && <HistoryModal wf={modal.wf} onClose={close} />}
-      {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); reload() }} />}
+      {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); setSaves((n) => n + 1); reload() }} />}
       {modal?.kind === 'delete' && <DeleteModal wf={modal.wf} onClose={close} onDeleted={() => { close(); reload() }} />}
       {phase === 'ready' && rows.length === 0 && (
         <div className="px-[22px] pb-5">
@@ -319,7 +352,7 @@ function WatchButton({ wf, className = 'btn ghost' }: { wf: Workflow; className?
 
 const INPUT_CLS = 'w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line'
 
-function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxLength, list, rows = 3 }: {
+function Field({ label, value, onChange, placeholder, textarea, mono, hint, rows = 3 }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -327,8 +360,6 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
   textarea?: boolean
   mono?: boolean
   hint?: string
-  maxLength?: number
-  list?: string
   rows?: number
 }) {
   const cls = `${INPUT_CLS}${mono ? ' font-mono' : ''}`
@@ -339,7 +370,7 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
         // resize-y + max-w-full: grow vertically only, never wider than the modal
         <textarea className={`${cls} resize-y max-w-full`} rows={rows} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       ) : (
-        <input className={cls} value={value} placeholder={placeholder} maxLength={maxLength} list={list} onChange={(e) => onChange(e.target.value)} />
+        <input className={cls} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       )}
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
     </label>
@@ -394,246 +425,6 @@ function ComboField({ label, value, onChange, placeholder, options, hint }: {
       </div>
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
     </label>
-  )
-}
-
-interface ReaderPhase {
-  id?: string
-  phase_id?: string
-  agent?: string
-  agent_id?: string
-  name?: string
-  tools?: string[]
-  approval_required?: boolean
-}
-
-interface WfDetail {
-  body?: string
-  /** Single-agent file workflows only: the lead, and the model a run uses. */
-  agent?: { role: string; model: string | null; model_source: 'assignment' | 'default' | null }
-  run_kind?: string
-  hunt_like?: boolean
-  objectives?: unknown
-  checkpoints?: unknown
-  phases?: ReaderPhase[] | null
-}
-
-type ReaderKind = 'roster' | 'single' | 'ordered'
-
-function readerKind(huntLike: boolean, runKind: string): ReaderKind {
-  if (huntLike) return 'roster'
-  if (runKind === 'investigate' || runKind === 'root_cause') return 'single'
-  return 'ordered'
-}
-
-function phasesOf(detail: WfDetail): ReaderPhase[] {
-  return Array.isArray(detail.phases) ? detail.phases : []
-}
-
-function phaseAgent(phase: ReaderPhase): string {
-  return phase.agent || phase.agent_id || ''
-}
-
-function stringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
-}
-
-function checkpointEntries(value: unknown): [string, string][] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return []
-  return Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <span className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3">{children}</span>
-}
-
-function PhaseTools({ tools }: { tools: string[] }) {
-  if (tools.length === 0) return null
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
-      {tools.map((tool) => (
-        <span key={tool} className="font-mono text-[11.5px] text-tx-2 bg-bg border border-line-soft rounded-[6px] px-2 py-1">{tool}</span>
-      ))}
-    </div>
-  )
-}
-
-function Roster({ detail }: { detail: WfDetail }) {
-  const agentMeta = useAgentMeta()
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-[13px] text-tx-2">The lead dispatches among these.</p>
-      {phasesOf(detail).map((phase, i) => {
-        const agent = phaseAgent(phase)
-        const meta = agentMeta(agent)
-        return (
-          <div key={phase.id || phase.phase_id || `${agent}-${i}`}>
-            <span className="agent-chip">
-              <span className="ad" style={{ background: meta.color }} />
-              {meta.label}
-            </span>
-            <PhaseTools tools={phase.tools || []} />
-            {phase.approval_required && <div className="text-[12px] text-tx-2 mt-1">Approval required</div>}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-/** Read-only instructions, clamped to a few lines until "Show all". */
-function Instructions({ body }: { body: string }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
-  const [clipped, setClipped] = useState(false)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el || open) return
-    const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1)
-    measure()
-    // The same text clips differently at another width.
-    if (typeof ResizeObserver === 'undefined') return
-    const watch = new ResizeObserver(measure)
-    watch.observe(el)
-    return () => watch.disconnect()
-  }, [body, open])
-  return (
-    <div className="flex flex-col gap-1.5">
-      <SectionLabel>Instructions</SectionLabel>
-      <div
-        ref={ref}
-        className={`bg-bg-2 border border-line rounded-[10px] px-3 py-2.5 overflow-hidden${open ? '' : ' max-h-[7.5rem]'}`}
-      >
-        <ReportBody md={body} />
-      </div>
-      {(clipped || open) && (
-        <button type="button" className="self-start text-[12px] text-accent" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? 'Show less' : 'Show all'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function SingleAgent({ detail }: { detail: WfDetail }) {
-  const objectives = stringList(detail.objectives)
-  const { agent, body } = detail
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2">
-        <p className="text-[13px] text-tx-2">This workflow runs as one agent.</p>
-        {agent && (
-          <div className="flex flex-col min-w-0">
-            <span className="text-[13px] font-bold text-tx">{agent.role}</span>
-            {agent.model && (
-              <span className="text-[12px] text-tx-2">
-                <span className="font-semibold text-tx">{agent.model}</span>
-                {' · '}
-                {agent.model_source === 'assignment' ? 'Investigation default' : 'Default'}
-              </span>
-            )}
-          </div>
-        )}
-        {objectives.length > 0 && (
-          <ul className="list-disc pl-5 text-[13px] text-tx-2 flex flex-col gap-1">
-            {objectives.map((line) => <li key={line}>{line}</li>)}
-          </ul>
-        )}
-      </div>
-      {body?.trim() && <Instructions body={body} />}
-    </div>
-  )
-}
-
-function OrderedPhases({ detail }: { detail: WfDetail }) {
-  const agentMeta = useAgentMeta()
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[13px] text-tx-2">Phases run in this order.</p>
-      <ol className="flex flex-col gap-3 list-decimal pl-5">
-        {phasesOf(detail).map((phase, i) => {
-          const agent = phaseAgent(phase)
-          const meta = agentMeta(agent)
-          return (
-            <li key={phase.id || phase.phase_id || `${agent}-${i}`} className="text-[13px] text-tx-2">
-              <span className="font-semibold">{meta.label}</span>
-              {phase.name ? <span className="text-tx-3"> · {phase.name}</span> : null}
-              {phase.approval_required ? <span> · Approval required</span> : null}
-              <PhaseTools tools={phase.tools || []} />
-            </li>
-          )
-        })}
-      </ol>
-    </div>
-  )
-}
-
-function ReaderShape({ detail }: { detail: WfDetail }) {
-  const kind = readerKind(detail.hunt_like === true, detail.run_kind || 'compose')
-  switch (kind) {
-    case 'roster':
-      return <Roster detail={detail} />
-    case 'single':
-      return <SingleAgent detail={detail} />
-    case 'ordered':
-      return <OrderedPhases detail={detail} />
-    default: {
-      const _exhaustive: never = kind
-      return _exhaustive
-    }
-  }
-}
-
-function Pauses({ detail }: { detail: WfDetail }) {
-  const policies = checkpointEntries(detail.checkpoints)
-  const approval = phasesOf(detail).some((phase) => phase.approval_required)
-  if (policies.length === 0 && !approval) {
-    return <p className="text-[13px] text-tx-2">This definition declares no pause.</p>
-  }
-  if (policies.length === 0) return null
-  return (
-    <div className="flex flex-col gap-1.5">
-      <SectionLabel>Checkpoints</SectionLabel>
-      {policies.map(([name, policy]) => (
-        <div key={name} className="text-[13px] text-tx-2">
-          <span className="font-mono">{name}</span> {policy}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function WorkflowReader({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
-  const [detail, setDetail] = useState<WfDetail | null>(null)
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
-
-  useEffect(() => {
-    let cancelled = false
-    workflowApi
-      .get(wf.id)
-      .then((res) => { if (!cancelled) { setDetail(res.data as WfDetail); setPhase('ready') } })
-      .catch(() => { if (!cancelled) setPhase('error') })
-    return () => { cancelled = true }
-  }, [wf.id])
-
-  return (
-    <Popup open onClose={onClose} title={wf.name} width={820}>
-      <div className="flex flex-col gap-4">
-        {phase === 'loading' && <div className="muted text-[12.5px]">Loading…</div>}
-        {phase === 'error' && <p className="text-[13px] text-tx-2">Couldn’t load this workflow.</p>}
-        {phase === 'ready' && detail && (
-          <>
-            <ReaderShape detail={detail} />
-            <Pauses detail={detail} />
-            <div className="flex flex-col gap-1.5">
-              <SectionLabel>Per-stage stops</SectionLabel>
-              <p className="text-[13px] text-tx-2"><NotMeasured /></p>
-            </div>
-          </>
-        )}
-      </div>
-    </Popup>
   )
 }
 
@@ -704,17 +495,20 @@ function turnsHint(asked: string, cost: string, limits: WfLimits | null): string
   return `${turns} turn(s): each is a lead decision, the workers it dispatches and the pass that argues against them.${where}`
 }
 
-/** What the hunt will not be able to look at, said before the run costs anything.
+/** What the run will not be able to look at, said before it costs anything.
  *  The same fact reaches the journal only once the run is over. */
-function Blindness({ unbound }: { unbound: string[] }) {
+function Blindness({ unbound, investigation = false }: { unbound: string[]; investigation?: boolean }) {
   if (unbound.length === 0) return null
   const blind = unbound.includes('telemetry_search')
+  const noun = investigation ? 'investigation' : 'hunt'
   return (
     <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>
       No tool here answers {unbound.join(', ')}.{' '}
       {blind
-        ? 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
-        : 'The roles that need it will run without it, and the hunt will record the gap.'}
+        ? investigation
+          ? 'Without telemetry_search the investigation can read findings and indicators but not the SIEM, and will record the gap.'
+          : 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
+        : `The roles that need it will run without it, and the ${noun} will record the gap.`}
     </div>
   )
 }
@@ -1079,6 +873,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   // the ceilings and the unbound-tool warning. Everything else, root-cause included,
   // gets the finding, case, and context dialog.
   const isHuntLike = wf.huntLike
+  const isInvestigate = wf.runKind === 'investigate'
   const turns = Number(iterations)
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)
   const cost = Number(maxCost)
@@ -1151,7 +946,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
         {isHuntLike && <Unpriced pricing={limits?.pricing} />}
-        {isHuntLike && <Blindness unbound={limits?.capabilities?.unbound ?? []} />}
+        {(isHuntLike || isInvestigate) && (
+          <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
+        )}
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
@@ -3012,19 +2809,11 @@ const SUCCESS_TIP = {
 }
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
-/** The line under the model name: where the model came from. */
-function modelSource(a: AgentTemplate): string | null {
-  if (!a.model) return null
-  if (a.modelSource === 'agent') return 'Set for this agent'
-  if (a.modelSource === 'assignment' && a.category) return `${a.category.charAt(0).toUpperCase()}${a.category.slice(1).replace(/_/g, ' ')} default`
-  return 'Default'
-}
-
-function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
+function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount: number | null }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
   // optimistic On switches, dropped when the list reloads
   const [enabledNow, setEnabledNow] = useState<Record<string, boolean>>({})
@@ -3062,14 +2851,14 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
           {phase === 'ready' ? `${builtins.length} built-in agent${builtins.length === 1 ? '' : 's'} plus your own. Each can use its own model.` : 'Built-in agents plus your own. Each can use its own model.'}
         </span>
         <button className="ag-btn" title="Refresh" aria-label="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="ag-btn" onClick={() => setCreating(true)}><Icon name="sparkle" /> Describe a new agent</button>
-        <button className="ag-btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New agent</button>
+        <button className="ag-btn" onClick={() => setCreating('describe')}><Icon name="sparkle" /> Describe a new agent</button>
+        <button className="ag-btn primary" onClick={() => setCreating('blank')}><Icon name="plus" /> New agent</button>
       </div>
 
       {toggleErr && <div className="ag-err" role="alert">{toggleErr}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="brain" title="Loading agents…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating(true), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating('blank'), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
 
       {phase === 'ready' && rows.length > 0 && (
         <>
@@ -3094,8 +2883,11 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
       )}
 
       {(creating || editId) && (
-        <AgentEditModal
+        <AgentDrawer
           agentId={editId}
+          describe={creating === 'describe'}
+          toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
+          skillCount={skillCount}
           onClose={() => { setEditId(null); setCreating(false) }}
           onSaved={() => { setEditId(null); setCreating(false); reload() }}
         />
@@ -3166,297 +2958,6 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
         </tbody>
       </table>
     </div>
-  )
-}
-
-interface CustomAgentDetail {
-  id: string
-  name?: string
-  description?: string | null
-  specialization?: string | null
-  icon?: string | null
-  color?: string | null
-  role?: string | null
-  methodology?: string | null
-  extra_principles?: string | null
-  system_prompt_override?: string | null
-  recommended_tools?: string[]
-  max_tokens?: number
-  enable_thinking?: boolean
-  model?: string | null
-  fallback_model?: string | null
-  effective_prompt?: string
-  forked_from?: string | null
-}
-
-interface AgentForm {
-  name: string
-  specialization: string
-  description: string
-  icon: string
-  color: string
-  role: string
-  extra_principles: string
-  methodology: string
-  system_prompt_override: string
-  recommended_tools: string
-  max_tokens: string
-  enable_thinking: boolean
-  model: string
-  fallback_model: string
-}
-
-const BLANK_AGENT_FORM: AgentForm = {
-  name: '', specialization: '', description: '', icon: '', color: '#7d74f3', role: '',
-  extra_principles: '', methodology: '', system_prompt_override: '', recommended_tools: '',
-  max_tokens: '', enable_thinking: false, model: '', fallback_model: '',
-}
-
-/** AI-assisted drafting;
-    mirroring the old Agent Builder. `agentId === null` ⇒ create mode. */
-function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null; onClose: () => void; onSaved: () => void }) {
-  const isCreate = agentId === null
-  const [agent, setAgent] = useState<CustomAgentDetail | null>(null)
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(isCreate ? 'ready' : 'loading')
-  const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [form, setForm] = useState<AgentForm | null>(isCreate ? { ...BLANK_AGENT_FORM } : null)
-  const [advanced, setAdvanced] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
-  const [toolNames, setToolNames] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const [aiOpen, setAiOpen] = useState(isCreate)
-  const [aiDesc, setAiDesc] = useState('')
-  const [aiFeedback, setAiFeedback] = useState('')
-  const [aiDraft, setAiDraft] = useState<GeneratedAgentDraft | null>(null)
-  const [aiBusy, setAiBusy] = useState(false)
-  const [aiErr, setAiErr] = useState<string | null>(null)
-
-  const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) =>
-    setForm((f) => (f ? { ...f, [k]: v } : f))
-
-  useEffect(() => {
-    let cancelled = false
-    agentsApi.getAvailableTools().then((r) => !cancelled && setToolNames((r.data?.tools || []) as string[])).catch(() => {})
-    if (agentId === null) return () => { cancelled = true }
-    agentsApi
-      .getCustom(agentId)
-      .then((res) => {
-        if (cancelled) return
-        const a = res.data as CustomAgentDetail
-        setAgent(a)
-        setForm({
-          name: a.name || '',
-          specialization: a.specialization || '',
-          description: a.description || '',
-          icon: a.icon || '',
-          color: a.color || '#7d74f3',
-          role: a.role || '',
-          extra_principles: a.extra_principles || '',
-          methodology: a.methodology || '',
-          system_prompt_override: a.system_prompt_override || '',
-          recommended_tools: (a.recommended_tools || []).join(', '),
-          max_tokens: a.max_tokens ? String(a.max_tokens) : '',
-          enable_thinking: !!a.enable_thinking,
-          model: a.model || '',
-          fallback_model: a.fallback_model || '',
-        })
-        setAdvanced(!!a.system_prompt_override)
-        setPhase('ready')
-      })
-      .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
-    return () => { cancelled = true }
-  }, [agentId])
-
-  // merge an AI draft into the form, preserving a name the user already typed
-  const mergeDraft = (d: GeneratedAgentDraft) =>
-    setForm((f) => f ? {
-      ...f,
-      name: f.name.trim() ? f.name : d.name,
-      specialization: d.specialization || f.specialization,
-      description: d.description || f.description,
-      icon: d.icon || f.icon,
-      color: d.color || f.color,
-      role: d.role || f.role,
-      extra_principles: d.extra_principles || f.extra_principles,
-      methodology: d.methodology || f.methodology,
-      recommended_tools: (d.recommended_tools || []).join(', ') || f.recommended_tools,
-      max_tokens: d.max_tokens ? String(d.max_tokens) : f.max_tokens,
-      enable_thinking: typeof d.enable_thinking === 'boolean' ? d.enable_thinking : f.enable_thinking,
-    } : f)
-
-  const generate = (feedback?: string) => {
-    if (!aiDesc.trim()) return
-    setAiBusy(true)
-    setAiErr(null)
-    agentsApi
-      .generateCustom({ description: aiDesc.trim(), current_draft: aiDraft, feedback: feedback?.trim() || undefined })
-      .then((res) => {
-        const d = res.data?.draft
-        if (d) { setAiDraft(d); mergeDraft(d); setAiFeedback('') }
-      })
-      .catch((e) => setAiErr(errMsg(e)))
-      .finally(() => setAiBusy(false))
-  }
-
-  const save = () => {
-    if (!form) return
-    setBusy(true)
-    setError(null)
-    const tokens = parseInt(form.max_tokens, 10)
-    const payload = {
-      name: form.name.trim(),
-      specialization: form.specialization.trim(),
-      description: form.description.trim(),
-      icon: form.icon.trim() || null,
-      color: form.color || null,
-      role: form.role.trim(),
-      extra_principles: form.extra_principles.trim(),
-      methodology: form.methodology.trim(),
-      // Advanced override replaces the base template; clear it when toggled off.
-      system_prompt_override: advanced ? form.system_prompt_override.trim() || null : null,
-      recommended_tools: form.recommended_tools.split(',').map((t) => t.trim()).filter(Boolean),
-      ...(Number.isFinite(tokens) && tokens > 0 ? { max_tokens: tokens } : {}),
-      enable_thinking: form.enable_thinking,
-      model: form.model.trim() || null,
-      fallback_model: form.fallback_model.trim() || null,
-    }
-    const req = isCreate ? agentsApi.createCustom(payload) : agentsApi.updateCustom(agentId, payload)
-    req.then(onSaved).catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-
-  const title = isCreate ? 'New agent' : (phase === 'ready' ? `Edit agent · ${agent?.name || agentId}` : 'Edit agent')
-
-  return (
-    <Popup open onClose={onClose} title={title} width={760}>
-      {phase === 'loading' && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>Loading agent…</div>}
-      {phase === 'error' && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>Couldn’t load agent: {loadErr}</div>}
-      {phase === 'ready' && form && (
-        <div className="flex flex-col gap-3.5">
-          {agent?.forked_from && <p className="text-[11.5px] text-tx-3">Forked from <span className="mono">{agent.forked_from}</span></p>}
-
-          {/* AI assist — describe the agent and let Vigil draft the fields */}
-          <div className="border border-line rounded-[8px] overflow-hidden">
-            <button className="w-full flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-tx-2 bg-bg hover:bg-panel" onClick={() => setAiOpen((v) => !v)}>
-              <Icon name="sparkle" size={14} /> AI assist — describe the agent, Vigil drafts the fields
-              <span className="ml-auto" style={{ transform: aiOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
-            </button>
-            {aiOpen && (
-              <div className="border-t border-line p-3 flex flex-col gap-2.5">
-                <Field label="Describe the agent" value={aiDesc} onChange={setAiDesc} textarea rows={2} placeholder="e.g. Triages cloud IAM misconfigurations and privilege-escalation paths in AWS/GCP." />
-                <div className="flex justify-end">
-                  <button className="btn primary" disabled={aiBusy || !aiDesc.trim()} style={{ opacity: aiBusy || !aiDesc.trim() ? 0.5 : 1 }} onClick={() => generate()}>
-                    <Icon name="sparkle" /> {aiBusy ? 'Generating…' : aiDraft ? 'Regenerate draft' : 'Generate draft'}
-                  </button>
-                </div>
-                {aiDraft && (
-                  <>
-                    <p className="text-[11.5px] text-tx-3">Draft applied to the form below — tweak any field directly, or refine with a follow-up:</p>
-                    <div className="flex gap-2.5 items-end">
-                      <div className="flex-1"><Field label="Refine" value={aiFeedback} onChange={setAiFeedback} placeholder="Add memory-forensics tools; be more conservative on containment." /></div>
-                      <button className="btn ghost" disabled={aiBusy || !aiFeedback.trim()} style={{ opacity: aiBusy || !aiFeedback.trim() ? 0.5 : 1 }} onClick={() => generate(aiFeedback)}>Refine</button>
-                    </div>
-                  </>
-                )}
-                {aiErr && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{aiErr}</div>}
-              </div>
-            )}
-          </div>
-
-          {/* Identity */}
-          <div className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Identity</div>
-          <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} hint={isCreate ? 'Agent ID is derived from the name.' : 'Agent ID is derived from the name and cannot be changed.'} />
-          <Field label="Specialization" value={form.specialization} onChange={(v) => set('specialization', v)} />
-          <Field label="Description" value={form.description} onChange={(v) => set('description', v)} textarea />
-          <div className="grid grid-cols-2 gap-3.5">
-            <Field label="Icon (1 char)" value={form.icon} onChange={(v) => set('icon', v.slice(0, 1))} maxLength={1} />
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Color</span>
-              <input type="color" className="w-full h-[38px] bg-bg border border-line rounded-[7px] p-1 cursor-pointer" value={form.color} onChange={(e) => set('color', e.target.value)} />
-            </label>
-          </div>
-
-          {/* Prompt fragments */}
-          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Prompt fragments</div>
-          <p className="text-[11.5px] text-tx-3 -mt-2">Rendered into the Vigil base prompt (preserves entity-recognition directives; adds read-only memory when recall_entity is granted).</p>
-          <Field label="Role *" value={form.role} onChange={(v) => set('role', v)} hint={'Renders as: "You are a SOC {role} in the Vigil SOC platform."'} />
-          <Field label="Extra principles" value={form.extra_principles} onChange={(v) => set('extra_principles', v)} textarea />
-          <Field label="Methodology" value={form.methodology} onChange={(v) => set('methodology', v)} textarea />
-          <label className="flex items-center gap-2.5 text-[12.5px] text-tx-2 cursor-pointer">
-            <span
-              className={`sk-toggle${advanced ? ' on' : ''}`}
-              role="switch"
-              aria-checked={advanced}
-              aria-label="Advanced: write the full system prompt yourself"
-              tabIndex={0}
-              onClick={() => setAdvanced((v) => !v)}
-              onKeyDown={activateOnKey(() => setAdvanced((v) => !v))}
-            ><span className="kn" /></span>
-            Advanced: bypass base template (write the full system prompt yourself)
-          </label>
-          {advanced && (
-            <Field label="System prompt (verbatim — replaces the base template)" value={form.system_prompt_override} onChange={(v) => set('system_prompt_override', v)} textarea mono rows={12} />
-          )}
-
-          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Model</div>
-          <p className="text-[11.5px] text-tx-3 -mt-2">Workflow runs use the investigation assignment in Settings › AI models.</p>
-          <div className="grid grid-cols-2 gap-3.5">
-            <Field label="Model" value={form.model} onChange={(v) => set('model', v)} mono placeholder="Assignment model" />
-            <Field label="Fallback model" value={form.fallback_model} onChange={(v) => set('fallback_model', v)} mono placeholder="Optional" />
-          </div>
-
-          {/* Tools & behavior */}
-          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Tools &amp; behavior</div>
-          <Field
-            label="Recommended MCP tools (comma-separated)"
-            value={form.recommended_tools}
-            onChange={(v) => set('recommended_tools', v)}
-            mono
-            list="agent-tool-names"
-            hint={toolNames.length ? `${toolNames.length} tools available — free text accepted if a tool isn't in the registry yet.` : undefined}
-          />
-          <datalist id="agent-tool-names">{toolNames.map((t) => <option key={t} value={t} />)}</datalist>
-          <div className="grid grid-cols-2 gap-3.5 items-end">
-            <Field label="Max tokens" value={form.max_tokens} onChange={(v) => set('max_tokens', v.replace(/[^0-9]/g, ''))} placeholder="2048" />
-            <label className="flex items-center gap-2.5 text-[12.5px] text-tx-2 cursor-pointer h-[38px]">
-              <span
-                className={`sk-toggle${form.enable_thinking ? ' on' : ''}`}
-                role="switch"
-                aria-checked={form.enable_thinking}
-                aria-label="Enable thinking"
-                tabIndex={0}
-                onClick={() => set('enable_thinking', !form.enable_thinking)}
-                onKeyDown={activateOnKey(() => set('enable_thinking', !form.enable_thinking))}
-              ><span className="kn" /></span>
-              Enable thinking
-            </label>
-          </div>
-
-          {/* Preview of the saved effective prompt (the exact text Claude receives) */}
-          {agent?.effective_prompt && (
-            <div className="border border-line rounded-[8px] overflow-hidden">
-              <button className="w-full flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-tx-2 bg-bg hover:bg-panel" onClick={() => setShowPreview((v) => !v)}>
-                <span style={{ transform: showPreview ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
-                Preview effective prompt
-              </button>
-              {showPreview && (
-                <div className="border-t border-line">
-                  <pre className="font-mono text-[11px] leading-[1.5] text-tx-2 whitespace-pre-wrap p-3 m-0 overflow-auto" style={{ maxHeight: '40vh' }}>{agent.effective_prompt}</pre>
-                  <p className="text-[11px] text-tx-3 px-3 pb-2.5">This is the exact system prompt Claude receives. Re-save to refresh.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-          <div className="flex justify-end gap-2.5 pt-1">
-            <button className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn primary" disabled={busy || !form.name.trim() || !form.role.trim()} style={{ opacity: busy || !form.name.trim() || !form.role.trim() ? 0.5 : 1 }} onClick={save}>{busy ? (isCreate ? 'Creating…' : 'Saving…') : (isCreate ? 'Create agent' : 'Save changes')}</button>
-          </div>
-        </div>
-      )}
-    </Popup>
   )
 }
 
