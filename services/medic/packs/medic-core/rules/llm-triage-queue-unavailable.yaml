@@ -1,0 +1,63 @@
+# L-3.d: Redis or the ARQ queue is unreachable, so nothing can submit LLM jobs.
+# "LLM gateway" in these lines is the ARQ client get_llm_gateway() opens on Redis
+# (core/llm/gateway/gateway.py:134-144), not Bifrost: L-3.d, not L-4 (E2's fixture
+# llm-gateway-outage said L-4.a).
+# Set: the #1689 entry ERROR or its "still failing" reminder (core/llm/outage.py:19-31), so
+# a Medic started mid-outage catches up. Clear: the recovery line, the plain "connected"
+# line, or a process start ("SOC Daemon initialized", main.py runs as __main__;
+# "LLMGateway initialized" on the backend). report_recovered logs nothing in a fresh
+# process, so without the start line a fix plus restart would leave the latch set
+# forever; if the fault persists, the new process logs the entry ERROR again.
+# Gap: once connected the gateway is cached, so a Redis outage *after* start is logged
+# only as an f-string ("LLM queue triage error: ...") and isn't seen here.
+# Message/args matching makes the rule untrusted: lane 2 (B5: 1 by ownership).
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.triage-queue-unavailable
+title: Vigil can't reach the LLM job queue, so AI triage and LLM calls are skipped
+revision: 1
+fault: {class: llm, mode: L-3, causes: [L-3.d]}
+lane: 2
+detection: event
+signals:
+  daemon_down:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [ERROR]
+      template: {re2: '^(Failed to connect LLM gateway, AI triage is skipped until it connects: %s|%s \(still failing, %d failures\))$'}
+      message: {prefix: 'Failed to connect LLM gateway, AI triage is skipped until it connects'}
+  daemon_up:
+    log:
+      signal: log_soc_daemon
+      logger: {re2: '^(services\.daemon\.processor|__main__)$'}
+      level: [INFO]
+      template: {re2: '^(%s; recovered after %d failures|LLM gateway connected for AI triage|SOC Daemon initialized)$'}
+      message: {re2: '^(LLM gateway connected for AI triage|SOC Daemon initialized)'}
+  backend_down:
+    log:
+      signal: log_backend
+      logger: {eq: services.api.main}
+      level: [ERROR]
+      template: {eq: 'LLM Gateway not available, LLM calls will fail until Redis and the ARQ worker are up: %s'}
+  backend_up:
+    log:
+      signal: log_backend
+      logger: {eq: core.llm.gateway.gateway}
+      level: [INFO]
+      template: {eq: LLMGateway initialized (connected to Redis)}
+when:
+  any:
+    - {fn: latch, set: daemon_down, clear: daemon_up}
+    - {fn: latch, set: backend_down, clear: backend_up}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: soc-daemon or the backend can't connect to the LLM job queue in Redis, so findings are stored without AI triage and LLM calls fail.
+  fix: >-
+    Check that Redis is running and reachable from soc-daemon and the backend
+    (Compose: the redis container; Helm: the Redis service; host-native: the local
+    Redis), and that REDIS_URL and the Redis password match on every service. If
+    you run your own Redis, check it with whoever operates it. When Redis is back,
+    soc-daemon reconnects on the next finding; the backend reconnects on its next
+    LLM call or restart.

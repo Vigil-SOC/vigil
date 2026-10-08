@@ -1,0 +1,35 @@
+# Catch-all for sustained llm-worker failures the specific rules don't name: Bifrost
+# 5xx, request-conversion errors for new model families (L-1.j), Bifrost can't reach
+# Ollama (L-4.b). Specific rules suppress it (suppression.yaml). The class list is an
+# allowlist of path failures: it leaves out PromptInjectionBlocked and plain
+# BadRequestError (alert content can trigger both, e.g. an oversized finding), keeping
+# only the 400s that name a request-shape fault. Classes a specific rule names (budget,
+# auth, rate limit, NotFound) aren't counted: those rules cover them. 15 m hold on a 5 m window (K1 T-07).
+# Lane 3: unknown cause, escalate. Untrusted (args).
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.calls-failing
+title: Many LLM calls are failing for a reason Medic can't name
+revision: 1
+fault: {class: llm, mode: L-4, causes: [L-1.j, L-4.b]}
+lane: 3
+detection: event
+signals:
+  failed:
+    log:
+      signal: llm_worker_errors_as_success
+      logger: {eq: services.worker.jobs}
+      level: [ERROR]
+      template: {eq: 'llm_call failed (returning error dict): %s'}
+      args: {"0": {re2: '^(InternalServerError|APIConnectionError|APITimeoutError|APIStatusError|ConnectError|ConnectTimeout|ReadTimeout|RemoteProtocolError|HTTPStatusError|TimeoutError): |^BadRequestError: .*(?i:not supported|failed to convert)'}}
+params:
+  calls: {type: number, default: 5, min: 3, max: 1000}
+when: {fn: count, signal: failed, window: 5m, op: ">=", value: {param: calls}}
+for: 15m
+keep_firing_for: 10m
+advice:
+  summary: Possible LLM path fault. Many LLM calls have failed for 10 minutes or more, with errors Medic has no specific rule for.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report. As a
+    workaround, assign triage and chat_default to a different model or provider in
+    Settings, AI Config and see whether the failures stop. Record what you did.
