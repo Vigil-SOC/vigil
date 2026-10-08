@@ -133,3 +133,39 @@ translated to its endpoint, hence the endpoint addresses.
 {{- $_ := required "medic.gateway.viewer.username is required when medic.enabled: the Viewer account the gateway logs in as" .Values.medic.gateway.viewer.username -}}
 {{- $_ := required "medic.gateway.viewer.passwordSecret.name is required when medic.enabled: an existing Secret holding the Viewer password (never put the password in values)" .Values.medic.gateway.viewer.passwordSecret.name -}}
 {{- end -}}
+
+{{/*
+X-Medic-Key (X2, V2-8): the Secret Medic and the backend both mount, and the
+key in it. medic.apiKey.existingSecret wins; otherwise <medic>-api-key, which
+medic-api-key.yaml renders. The gateway never holds it: it passes the header
+through and checks only its shape.
+*/}}
+{{- define "vigil.medic.apiKeySecret" -}}
+{{- .Values.medic.apiKey.existingSecret | default (printf "%s-api-key" (include "vigil.medic.fullname" .)) -}}
+{{- end -}}
+
+{{- define "vigil.medic.apiKeyDir" -}}/run/secrets/medic-api{{- end -}}
+
+{{/* The key file as a volume: group-read only. Kubernetes gives a secret file
+     the pod's fsGroup, so Medic (10001) and the backend (1000) each read their
+     own copy and "other" reads nothing (S6-3 / V2-7). */}}
+{{- define "vigil.medic.apiKeyVolume" -}}
+- name: medic-api-key
+  secret:
+    secretName: {{ include "vigil.medic.apiKeySecret" . }}
+    defaultMode: 0440
+    items:
+      - key: {{ .Values.medic.apiKey.key }}
+        path: api_key
+{{- end -}}
+
+{{- define "vigil.medic.apiKeyMount" -}}
+- name: medic-api-key
+  mountPath: {{ include "vigil.medic.apiKeyDir" . }}
+  readOnly: true
+{{- end -}}
+
+{{- define "vigil.medic.apiKeyEnv" -}}
+- name: VIGIL_MEDIC_API_KEY_FILE
+  value: {{ printf "%s/api_key" (include "vigil.medic.apiKeyDir" .) | quote }}
+{{- end -}}
