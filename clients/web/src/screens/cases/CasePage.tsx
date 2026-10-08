@@ -1052,6 +1052,7 @@ export function CasePage({
         onClose={() => undefined}
         pageKey={pageKey}
         lockedCaseId={id}
+        collapseKey={tab}
         seed={askSeed?.id === id ? askSeed.text : null}
         onSeedConsumed={() => setAskSeed(null)}
         onTurnDone={refreshFold}

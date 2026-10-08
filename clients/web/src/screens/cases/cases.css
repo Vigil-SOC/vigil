@@ -1096,7 +1096,8 @@
 .case-composer .chat-body {
   flex: 0 1 auto;
   min-height: 0;
-  max-height: 150px;
+  max-height: min(150px, 40vh);
+  max-height: min(150px, 40cqh); /* never over 40% of the drawer (a size container, shell.css); off a drawer cqh is the viewport */
   padding: 8px 24px 4px;
   gap: 10px;
   overflow-x: hidden;
@@ -1132,6 +1133,21 @@
 .case-composer .msg.vigil .body > :last-child { margin-bottom: 0; }
 .case-composer .msg.vigil.err .body { color: var(--poor); }
 .case-composer .msg.vigil .vigil-status:last-child { margin-bottom: 0; }
+
+.case-composer .msg-retry { align-self: flex-start; margin-top: 6px; padding: 3px 10px; font-size: 12px; }
+
+.case-composer .composer-earlier {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tx3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.case-composer .composer-earlier:hover { color: var(--tx1); }
 
 /* hover actions hang beside the bubble so they take no height */
 .case-composer .msg-actions {

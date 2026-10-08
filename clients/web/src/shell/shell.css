@@ -345,6 +345,7 @@
 .vg-case-drawer {
   width: 75%;
   height: 100%;
+  container-type: size; /* the case composer caps its thread at 40cqh */
   display: flex;
   flex-direction: column;
   min-width: 0;
