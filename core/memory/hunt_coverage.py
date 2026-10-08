@@ -8,7 +8,8 @@ says what has hunted them. In-flight wins over concluded (epic #886, decision 2)
 - ``concluded`` -- a distilled Verdict already covers it; the rows say what was
   found, and a proposal is still offered should the operator want a fresh look.
 - ``uncovered`` -- nobody has hunted it; the proposal is a body
-  ``POST /api/workflows/threat-hunt/execute`` accepts as-is.
+  ``POST /api/workflows/threat-hunt/execute`` accepts as-is. ``with_claim``
+  swaps its template hypothesis for the report's own claim (#1918).
 
 Nothing here starts a hunt or files a directive. Both the ``check_hunt_coverage``
 backend tool and the ``/workflows/threat-hunt/coverage`` route call this.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from core.memory.hunt_claim import claim_from
 from core.memory.prior_hunts import list_prior_hunts
 from core.threat_intel.threat_feed_service import parse_report
 
@@ -36,10 +38,13 @@ def _split(asked: Sequence[str], hit: set) -> Dict[str, List[str]]:
     }
 
 
-def build_proposal(keys: Sequence[str], techniques: Sequence[str]) -> Dict[str, Any]:
-    """A ``WorkflowExecuteRequest`` body. The T-IDs go in the hypothesis text
-    because that is the only place the request carries them, and it is where
-    the in-flight matcher reads them from once the hunt is running."""
+def build_proposal(
+    keys: Sequence[str], techniques: Sequence[str], claim: Optional[str] = None
+) -> Dict[str, Any]:
+    """A ``WorkflowExecuteRequest`` body. The hypothesis is the report's
+    ``claim`` when it has one; else an indicator template, whose T-IDs go in the
+    text because that is the only place the request carries them, and where the
+    in-flight matcher reads them from once the hunt is running."""
     parts = []
     if keys:
         parts.append(f"indicators {', '.join(keys)}")
@@ -47,7 +52,7 @@ def build_proposal(keys: Sequence[str], techniques: Sequence[str]) -> Dict[str, 
         parts.append(f"techniques {', '.join(techniques)}")
     # One line: execute_workflow reads each hypothesis as a line of text, so a
     # key carrying a newline would split the statement from its subjects.
-    hypothesis = " ".join(
+    hypothesis = claim or " ".join(
         f"Activity from the reported {' and '.join(parts)} is present in the "
         "environment".split()
     )
@@ -108,5 +113,19 @@ def check_coverage(
         if status == "concluded":
             result["concluded"] = rows
         result["proposal"] = build_proposal(keys, t_ids)
+        result["execute"] = {"method": "POST", "path": EXECUTE_PATH}
+    return result
+
+
+async def with_claim(result: Dict[str, Any], report: str) -> Dict[str, Any]:
+    """``result`` with the report's own claim as the proposed hypothesis (#1918).
+
+    The indicators stay the hypothesis's subjects. A report already being hunted
+    gets a proposal too, beside its ``running`` status, so a repeat paste still
+    has something to accept. With no claim the template stays.
+    """
+    claim = await claim_from(report)
+    if claim or result["status"] == "running":
+        result["proposal"] = build_proposal(result["keys"], result["techniques"], claim)
         result["execute"] = {"method": "POST", "path": EXECUTE_PATH}
     return result
