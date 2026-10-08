@@ -557,8 +557,11 @@ services:
   # and the overlay infra/docker/medic/docker-compose.medic.yml, which declares
   # Medic's two networks and puts soc-daemon and the agents on medic-net. The
   # profile alone fails with "undefined network" instead of half-starting; without either,
-  # this file renders exactly as it would without Medic (tests/medic_compose/).
-  # scripts/medic/enable-compose.sh writes the secrets and prints the command.
+  # this file renders as it would without Medic except the backend's
+  # VIGIL_MEDIC_ENABLED line (V1-2; tests/medic_compose/).
+  # scripts/medic/enable-compose.sh writes the secrets and compose.env; from then
+  # on scripts/lib.sh `dc` (start.sh) and the console's service controls add the
+  # overlay themselves.
   #
   # Isolation (C3 §4.4): Medic is on two `internal: true` networks (no route off
   # the host) that the backend, Redis, Postgres and Bifrost are not on:

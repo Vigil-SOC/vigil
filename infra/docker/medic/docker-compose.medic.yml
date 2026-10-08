@@ -9,7 +9,9 @@
 # default changes nothing). So it adds Medic's networks and the backend's path to
 # Medic's status, and nothing else. Use it on every compose command that should
 # keep Medic, or Docker drops the agents off medic-net at the next `up` (Medic
-# then sees DNS errors: blind, not down).
+# then sees DNS errors: blind, not down). scripts/lib.sh `dc` (start.sh) and
+# the console's service controls add it whenever enable-compose.sh's compose.env
+# exists (V1-4).
 #
 # Both networks are `internal: true`: nothing on them has a route off the host
 # (C3 R2). Neither holds the backend (R1), Redis, Postgres or Bifrost (C3 §5).
