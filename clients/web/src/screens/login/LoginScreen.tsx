@@ -9,6 +9,18 @@ import { Icon } from '../../shared/icons'
 import { VigilLogo } from '../../shared/VigilLogo'
 import { useColorScheme } from '../../contexts/ColorSchemeContext'
 
+const UNREACHABLE_MSG = "Can't reach the Vigil API. Is the backend running?"
+
+// No response, or a 5xx without a server `detail` (e.g. Vite's proxy answering
+// ECONNREFUSED with a 500), means the API never saw the request.
+function requestErrorMessage(err: any, fallback: string): string {
+  const status: number = err?.response?.status
+  const detail = err?.response?.data?.detail
+  const hasDetail = typeof detail === 'string' && detail.length > 0
+  if (!err?.response || (status >= 500 && !hasDetail)) return UNREACHABLE_MSG
+  return hasDetail ? detail : fallback
+}
+
 export default function LoginScreen() {
   const navigate = useNavigate()
   const { login } = useAuth()
@@ -49,9 +61,9 @@ export default function LoginScreen() {
     try {
       await bootstrapApi.create({ username: usernameOrEmail, email, password })
       await login(usernameOrEmail, password)
-      navigate('/dashboard')
+      navigate('/')
     } catch (err: any) {
-      setError(err?.response?.data?.detail || 'Could not create your account.')
+      setError(requestErrorMessage(err, 'Could not create your account.'))
     } finally {
       setLoading(false)
     }
@@ -63,14 +75,21 @@ export default function LoginScreen() {
     setLoading(true)
     try {
       await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
-      navigate('/dashboard')
+      navigate('/')
     } catch (err: any) {
       if (err?.message === 'MFA_REQUIRED') {
         setShowMfa(true)
         setMfaCode('')
         setError('Enter your 2FA code to continue.')
       } else {
-        setError(err?.response?.data?.detail || 'Sign in failed. Check your credentials.')
+        setError(
+          requestErrorMessage(
+            err,
+            err?.response?.status === 401
+              ? 'Sign in failed. Check your credentials.'
+              : 'Sign in failed. Please try again.',
+          ),
+        )
       }
     } finally {
       setLoading(false)

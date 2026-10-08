@@ -7,11 +7,15 @@ export default function CaseDrawer({
   caseId,
   onClose,
   pageKey,
+  seed,
+  onSeedConsumed,
 }: {
   caseId: string
   onClose: () => void
   /** SocConsole's current route key, stored on the pinned thread as page_context. */
   pageKey: string
+  seed?: string | null
+  onSeedConsumed?: () => void
 }) {
   const navigate = useNavigate()
 
@@ -39,6 +43,8 @@ export default function CaseDrawer({
             onClose()
           }}
           pageKey={pageKey}
+          seed={seed}
+          onSeedConsumed={onSeedConsumed}
         />
       </aside>
     </div>

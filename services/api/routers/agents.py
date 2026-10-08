@@ -68,6 +68,10 @@ async def get_agent(agent_id: str):
         "recommended_tools": agent.recommended_tools,
         "max_tokens": agent.max_tokens,
         "enable_thinking": agent.enable_thinking,
+        "system_prompt": agent.system_prompt,
+        "model": agent.model,
+        "fallback_model": agent.fallback_model,
+        "component_category": agent.component_category,
     }
 
 

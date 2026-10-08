@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from services.api.errors import register_exception_handlers
 from services.api.routers.orchestrator import router as orchestrator_router
 
 pytestmark = pytest.mark.unit
@@ -173,11 +174,13 @@ def test_status_queued_does_not_report_zero_when_intake_count_fails(monkeypatch)
     monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
 
     app = FastAPI()
+    register_exception_handlers(app)
     app.include_router(orchestrator_router, prefix="/api/orchestrator")
     resp = TestClient(app).get("/api/orchestrator/status")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": "intake table unreachable"}
+    assert resp.json()["detail"] == "Internal server error"
+    assert "intake table unreachable" not in resp.text
 
 
 # ---- POST /investigations: the document on a Human Ask (#1010) ----

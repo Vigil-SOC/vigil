@@ -13,6 +13,7 @@ import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
 import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
+import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsState'
 import SlaPoliciesSection from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
 import type { SectionProps } from './types'
@@ -101,11 +102,20 @@ function resolveNav(sectionParam: string | null): NavKey {
   return NAV[0].key
 }
 
-export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {
+export default function SettingsScreen(props: ConsoleScreenProps) {
+  return (
+    <IntegrationsStateProvider>
+      <SettingsLayout {...props} />
+    </IntegrationsStateProvider>
+  )
+}
+
+function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
   const active = resolveNav(sectionParam)
   const { notify } = useToast()
+  const { attention } = useIntegrationsState()
 
   useEffect(() => {
     setViewFull(true)
@@ -128,6 +138,9 @@ export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {
           >
             <Icon name={item.icon} size={16} />
             <span>{item.label}</span>
+            {item.key === 'integrations' && attention.length > 0 && (
+              <span className="settings-nav-count" aria-label={`${attention.length} need attention`}>{attention.length}</span>
+            )}
           </button>
         ))}
       </nav>

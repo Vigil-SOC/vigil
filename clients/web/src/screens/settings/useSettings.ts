@@ -21,6 +21,7 @@ import api, {
   type PlatformDatabaseProxyConfig,
 } from '../../services/api'
 import { loadCustomIntegrations } from '../../config/integrations'
+import type { LastTest } from './integrationHealth'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -226,14 +227,13 @@ export function useFederation() {
   const patchSource = useCallback(
     async (sourceId: string, patch: Parameters<typeof federationApi.updateSource>[1]) => {
       const res = await federationApi.updateSource(sourceId, patch)
-      setSources((prev) => prev.map((s) => (s.source_id === sourceId ? res.data : s)))
+      // the PATCH response has no lag, so keep the row's until the re-read below
+      setSources((prev) => prev.map((s) => (s.source_id === sourceId ? { ...s, ...res.data } : s)))
+      // quiet depends on the interval just changed
+      federationApi.listSources().then((r) => setSources(r.data.sources || [])).catch(() => {})
     },
     [],
   )
-
-  const editSourceLocal = useCallback((sourceId: string, patch: Partial<FederationSourceView>) => {
-    setSources((prev) => prev.map((s) => (s.source_id === sourceId ? { ...s, ...patch } : s)))
-  }, [])
 
   const pollNow = useCallback((sourceId: string) => federationApi.pollNow(sourceId), [])
 
@@ -245,7 +245,6 @@ export function useFederation() {
     reload,
     setGlobal,
     patchSource,
-    editSourceLocal,
     pollNow,
   }
 }
@@ -362,13 +361,46 @@ export interface ForceManualApproval {
   environment_wins: boolean
 }
 
-/** GET /config/orchestrator carries profiles for the cards. They are not stored. */
-export function stripOrchestratorProfiles<T>(data: T & { profiles?: unknown }): T {
+/** Inclusive range and scrub step of one numeric setting, served by GET /config/orchestrator. */
+export interface OrchestratorBound {
+  min: number
+  max: number
+  step: number
+}
+
+export type OrchestratorBounds = Partial<Record<keyof OrchestratorConfig, OrchestratorBound>>
+
+/**
+ * GET /config/orchestrator carries profiles, defaults and bounds for the screens.
+ * They are not stored.
+ */
+export function stripOrchestratorProfiles<T>(
+  data: T & { profiles?: unknown; defaults?: unknown; bounds?: unknown },
+): T {
   const rest = { ...data }
   delete rest.profiles
+  delete rest.defaults
+  delete rest.bounds
   return rest
 }
 
+const LIMIT_FIELDS = [
+  'max_cost_per_investigation',
+  'max_iterations_per_agent',
+  'max_runtime_per_investigation',
+  'max_concurrent_agents',
+  'max_total_hourly_cost',
+] as const satisfies readonly (keyof InvestigationProfileValues)[]
+
+export const raisesLimit = (prev: OrchestratorConfig, next: OrchestratorConfig) =>
+  LIMIT_FIELDS.some((field) => next[field] > prev[field])
+
+export const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationProfileValues) =>
+  (Object.entries(values) as [keyof InvestigationProfileValues, number][]).every(
+    ([k, v]) => cfg[k] === v,
+  )
+
+/** Setup's fallback before the server answers; Settings shows the served `defaults`. */
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,
@@ -390,7 +422,10 @@ export interface OrchestratorStatus {
 }
 
 export function useOrchestrator() {
-  const [config, setConfig] = useState<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
+  // null until the server has answered: there is no client-side default to show
+  const [config, setConfig] = useState<OrchestratorConfig | null>(null)
+  const [defaults, setDefaults] = useState<OrchestratorConfig | null>(null)
+  const [bounds, setBounds] = useState<OrchestratorBounds>({})
   const [profiles, setProfiles] = useState<InvestigationProfiles>({})
   const [status, setStatus] = useState<OrchestratorStatus | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -401,22 +436,26 @@ export function useOrchestrator() {
     let cancelled = false
     setPhase('loading')
     Promise.all([
-      configApi.getOrchestrator().catch(() => ({ data: ORCHESTRATOR_DEFAULTS })),
+      configApi.getOrchestrator(),
       orchestratorApi.getStatus().catch(() => ({ data: null })),
     ])
       .then(([cfgRes, statusRes]) => {
         if (cancelled) return
-        const data = (cfgRes.data ?? {}) as Partial<OrchestratorConfig> & {
-          profiles?: InvestigationProfiles
-        }
-        const { profiles: nextProfiles, ...rest } = data
+        const { profiles: nextProfiles, defaults: nextDefaults, bounds: nextBounds, ...rest } =
+          cfgRes.data as OrchestratorConfig & {
+            profiles?: InvestigationProfiles
+            defaults?: OrchestratorConfig
+            bounds?: OrchestratorBounds
+          }
         setProfiles(nextProfiles ?? {})
-        setConfig({ ...ORCHESTRATOR_DEFAULTS, ...rest })
+        setDefaults(nextDefaults ?? null)
+        setBounds(nextBounds ?? {})
+        setConfig(rest)
         setStatus((statusRes.data as OrchestratorStatus | null) ?? null)
         setPhase('ready')
       })
       .catch(() => {
-        if (!cancelled) setPhase('ready') // fall back to defaults — never block the screen
+        if (!cancelled) setPhase('error')
       })
     return () => {
       cancelled = true
@@ -429,7 +468,7 @@ export function useOrchestrator() {
     [],
   )
 
-  return { config, setConfig, profiles, status, phase, reload, save, purgeAll }
+  return { config, setConfig, defaults, bounds, profiles, status, phase, reload, save, purgeAll }
 }
 
 export function useForceManualApproval() {
@@ -650,9 +689,9 @@ export function useModelAssignment() {
   }, [reloadKey])
 
   const assign = useCallback(
-    (component: string, providerId: string, modelId: string) =>
+    (component: string, providerId: string, modelId: string, settings: Record<string, unknown> = {}) =>
       aiConfigApi
-        .setComponent(component, { provider_id: providerId, model_id: modelId })
+        .setComponent(component, { provider_id: providerId, model_id: modelId, settings })
         .then(() =>
           setAssignments((prev) => ({
             ...prev,
@@ -660,7 +699,7 @@ export function useModelAssignment() {
               component,
               provider_id: providerId,
               model_id: modelId,
-              settings: {},
+              settings,
               updated_by: null,
               updated_at: null,
             },
@@ -887,6 +926,8 @@ export interface IntegrationsConfig {
   integrations: Record<string, Record<string, unknown>>
   // Per-integration {secretField: isSet} — booleans only, never the values.
   secrets_set: Record<string, Record<string, boolean>>
+  // Result of the last Test per integration; untested ids are absent.
+  last_test: Record<string, LastTest>
 }
 
 export function useIntegrationsConfig() {
@@ -894,6 +935,7 @@ export function useIntegrationsConfig() {
     enabled_integrations: [],
     integrations: {},
     secrets_set: {},
+    last_test: {},
   })
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
@@ -915,6 +957,7 @@ export function useIntegrationsConfig() {
               enabled_integrations: d.enabled_integrations || [],
               integrations: d.integrations || {},
               secrets_set: d.secrets_set || {},
+              last_test: d.last_test || {},
             })
             // the endpoint answers 200 with an `error` when it could not read the store
             setPhase(d.error ? 'error' : 'ready')
@@ -946,9 +989,10 @@ export function useIntegrationsConfig() {
           enabled_integrations: d.enabled_integrations ?? enabled_integrations,
           integrations: d.integrations ?? {},
           secrets_set: d.secrets_set ?? config.secrets_set,
+          last_test: d.last_test ?? config.last_test,
         })
       } catch {
-        setConfig({ enabled_integrations, integrations, secrets_set: config.secrets_set })
+        setConfig({ ...config, enabled_integrations, integrations })
       }
     },
     [config],
@@ -962,7 +1006,7 @@ export function useIntegrationsConfig() {
         : config.enabled_integrations.filter((id) => id !== integrationId)
       const integrations = config.integrations
       await configApi.setIntegrations({ enabled_integrations, integrations })
-      setConfig({ enabled_integrations, integrations, secrets_set: config.secrets_set })
+      setConfig({ ...config, enabled_integrations, integrations })
     },
     [config],
   )

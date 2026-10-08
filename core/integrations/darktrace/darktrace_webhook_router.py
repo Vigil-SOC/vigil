@@ -177,10 +177,10 @@ def _parse_json(raw: bytes) -> Dict:
 
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as e:
+    except (ValueError, UnicodeDecodeError):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid JSON body: {e}",
+            detail="Invalid JSON body",
         )
     if not isinstance(payload, dict):
         raise HTTPException(

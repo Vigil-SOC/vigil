@@ -496,16 +496,15 @@ export async function startHunt(
   // Raised whichever way the policy falls, so the approval is a ledger fact
   // rather than something a caller remembers. An ask with nothing pending deadlocks.
   //
-  // "this run", not "this hunt": a root-cause run parks here too, and it is usually
-  // one no operator started -- a hunt's escalation teed it up -- so a question in
-  // the inbox calling it a hunt names the wrong run. spec.name is not the substitute
-  // it looks like: it is the playbook's own name, which is as often a phrase about
-  // the activity ("beaconing on the finance segment") as it is a title.
+  // "hunt" only for a hunt: a root-cause run parks here too, and it is usually one
+  // no operator started -- a hunt's escalation teed it up -- so calling it a hunt
+  // names the wrong run. spec.name is no substitute: it is the playbook's own name,
+  // as often a phrase about the activity as it is a title.
+  const count = spec.hypotheses.length + spec.operator_hypotheses.length;
   const checkpoint = raiseCheckpoint(
     "hypothesis_approval",
     0,
-    `Approve and start this run on ${spec.hypotheses.length + spec.operator_hypotheses.length} hypothesis(es)` +
-      `${spec.operator_hypotheses.length > 0 ? `, ${spec.operator_hypotheses.length} from your request` : ""}?`,
+    `Approve and start this ${runKind === "hunt" ? "hunt" : "run"} on ${count} ${count === 1 ? "hypothesis" : "hypotheses"}`,
     {
       hypotheses: [...ledger.projection.hypotheses.values()].map((hypothesis) => ({
         hypothesis_id: hypothesis.hypothesis_id,
@@ -620,6 +619,10 @@ export class HuntController {
     // Human input is integrated at the boundary, before anything is decided on
     // it — and it is how a parked hunt is resolved, so it is drained first.
     if (await this.applyDirectives()) return this.halted();
+
+    // An answer the console journaled never passed through a directive, so nothing
+    // above has released the hunt it answered.
+    if (this.reconcileStart()) return this.halted();
 
     const suspended = this.ledger.projection.hunt;
     if (suspended.status === "parked" || suspended.status === "pending_approval") {
@@ -978,8 +981,9 @@ export class HuntController {
     return declared.size > 0 && !declared.has(entityKey) ? entityKey : null;
   }
 
-  // Why the hunt will not step. The budget park keeps 08's wording, because its
-  // three answers are extend, conclude and abort; a raised checkpoint takes two
+  // Why the hunt will not step. This is the line an operator reads on the run row
+  // and the case page, so it names no hunt id and only what the console offers: the
+  // approval card for a checkpoint, and the run's Keep going and conclude otherwise.
   private suspendedBecause(): string {
     const hunt = this.ledger.projection.hunt;
     const pending = pendingCheckpoints(this.ledger.projection);
@@ -987,17 +991,11 @@ export class HuntController {
     if (pending.length > 0) {
       // Every one of them, not just the first: a hunt released on one answer
       // while another is outstanding would step with a question still open.
-      return (
-        `${hunt.hunt_id} is waiting on ${pending.length} checkpoint(s). ` +
-        pending
-          .map((checkpoint) => `${checkpoint.checkpoint_class} ${checkpoint.checkpoint_id}: ${checkpoint.question}`)
-          .join(" | ") +
-        ` Answer each with a directive — approve <id>, or reject <id> with a reason.`
-      );
+      return `Waiting for your approval: ${pending.map((checkpoint) => checkpoint.question).join(" | ")}`;
     }
     return (
-      `${hunt.hunt_id} is parked: ${hunt.parked_reason ?? "awaiting an operator"}. ` +
-      "Resolve it with a directive — extend (grant +N iterations or +$N), conclude (accept the stop), or abort."
+      `Stopped: ${hunt.parked_reason ?? "awaiting an operator"}. ` +
+      "Use Keep going on the run to carry on, or conclude it."
     );
   }
 
@@ -1071,7 +1069,7 @@ export class HuntController {
 
     switch (checkpoint.checkpoint_class) {
       case "hypothesis_approval":
-        this.resolveStart(checkpoint, directive, approved);
+        this.resolveStart(approved, directive.actor, directive.text);
         return;
       case "verdict_review":
         this.resolveVerdict(checkpoint, directive, approved);
@@ -1094,14 +1092,35 @@ export class HuntController {
     }
   }
 
-  private resolveStart(checkpoint: Checkpoint, directive: Directive, approved: boolean): void {
+  private resolveStart(approved: boolean, actor: string, text: string): void {
     if (approved) {
       this.unpark();
       return;
     }
     // Through terminate() like every other ending, so a hunt that was never
     // allowed to start still finalizes: the report is a header and the
-    this.terminate("aborted", `${directive.actor} rejected the hypotheses at the start checkpoint: ${directive.text}`);
+    this.terminate("aborted", `${actor} rejected the hypotheses at the start checkpoint: ${text}`);
+  }
+
+  // The start gate answered through the ledger rather than a directive: the console's
+  // approval is journaled by journalAnswers, which applyResolution never sees. Only this
+  // class -- verdict_review and scope_extension carry side effects of their own in
+  // applyResolution, so they are not released here.
+  // Returns true when the answer ended the hunt.
+  private reconcileStart(): boolean {
+    if (this.ledger.projection.hunt.status !== "pending_approval") return false;
+    for (const checkpoint of this.ledger.projection.checkpoints.values()) {
+      if (checkpoint.checkpoint_class !== "hypothesis_approval") continue;
+      const answer = resolutionOf(this.ledger.projection, checkpoint.checkpoint_id);
+      if (answer === undefined) continue;
+      this.resolveStart(answer.answer === "approve", answer.actor, answer.text);
+      return this.ended();
+    }
+    return false;
+  }
+
+  private ended(): boolean {
+    return this.ledger.projection.hunt.status === "terminal";
   }
 
   // The one place an approval reaches a hypothesis, and it applies the patch

@@ -7,6 +7,10 @@ import pytest
 
 from core.llm.chat_layers import changes_for_tool, changes_for_tools
 from core.workflows import catalog, hunt_preflight
+from core.workflows.playbook_resolver import (
+    INVESTIGATE_BUDGETS,
+    INVESTIGATE_CAPABILITIES,
+)
 from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 
 pytestmark = pytest.mark.unit
@@ -140,12 +144,27 @@ def test_a_single_agent_is_a_lead_analyst_with_its_tools_and_no_checkpoints():
 
     assert report["roles"]["lead"] == {
         "name": "Lead analyst",
-        "tools": ["case_records", "get_finding"],
+        "tools": list(INVESTIGATE_CAPABILITIES),
     }
     assert report["roles"]["helpers"] == [] and report["roles"]["reviewer"] is None
-    assert {r["name"] for r in report["permissions"]} == {"case_records", "get_finding"}
+    assert [r["name"] for r in report["permissions"]] == list(INVESTIGATE_CAPABILITIES)
     assert report["checkpoints"] == {} and report["checkpoints_note"]
-    assert set(report["budgets"]) == {"max_calls", "max_cost_usd", "max_wall_ms"}
+    assert report["budgets"] == INVESTIGATE_BUDGETS
+
+
+# The reader's rows and the Run modal's Blindness line both read this report, so an
+# investigation that cannot reach a SIEM has to say so in both, and only there.
+def test_an_investigation_marks_telemetry_search_unbound_when_nothing_provides_it():
+    report = _file("incident-response")
+
+    assert report["capabilities"]["unbound"] == ["telemetry_search"]
+    assert set(report["capabilities"]["bound"]) == set(INVESTIGATE_CAPABILITIES) - {
+        "telemetry_search"
+    }
+    rows = {r["name"]: r for r in report["permissions"]}
+    assert rows["telemetry_search"]["bound"] is False
+    assert all(r["bound"] for n, r in rows.items() if n != "telemetry_search")
+    assert "pricing" not in report
 
 
 def test_root_cause_is_given_its_turns_and_the_hunt_cost_and_wall():
@@ -306,3 +325,19 @@ def test_an_unknown_id_is_none():
     assert (
         hunt_preflight.preflight(WorkflowsService(), None, "no-such-workflow") is None
     )
+
+
+@pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
+def test_a_turned_off_phase_agent_is_noted_before_the_run_starts(
+    monkeypatch, workflow_id
+):
+    off = {"threat_hunter"}
+    monkeypatch.setattr(
+        "core.workflows.playbook_resolver.disabled_agent_ids", lambda: off
+    )
+    report = _file(workflow_id)
+    assert "phase names agent threat_hunter is turned off" in report["roles_note"]
+    assert report["roles"]["lead"]  # same roles as ever; the note is the addition
+
+    off.clear()
+    assert _file(workflow_id)["roles_note"] is None

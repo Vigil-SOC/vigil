@@ -15,7 +15,11 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.llm.bifrost.admin import push_provider_key, sync_all_provider_models
+from core.llm.bifrost.admin import (
+    fetch_catalogue_models,
+    push_provider_key,
+    sync_all_provider_models,
+)
 from core.llm.providers import provider_service
 
 # Anthropic's live /v1/models endpoint is consulted via
@@ -426,6 +430,20 @@ async def _probe_provider_connection(
                 )
                 resp.raise_for_status()
                 success = True
+        elif provider_type == "openrouter":
+            if not api_key:
+                raise RuntimeError("no api key configured")
+            # Fixed host: OpenRouter's key check, which refuses a bad key (the
+            # /models listing does not).
+            async with httpx.AsyncClient(
+                timeout=15.0, follow_redirects=False
+            ) as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/auth/key",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                success = True
         elif provider_type == "anthropic":
             if base_url:
                 try:
@@ -551,6 +569,9 @@ async def discover_models(
                 organization=req.organization,
                 allow_loopback=True,
             )
+        elif req.provider_type == "openrouter":
+            # Bifrost's own datasheet: the catalogue OpenRouter's rates come from.
+            meta = await fetch_catalogue_models("openrouter") or []
         else:  # ollama
             # Admin opted in to a self-hosted Ollama URL — loopback is
             # the legitimate default. The non-admin route never gets
@@ -567,10 +588,6 @@ async def discover_models(
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"{req.provider_type}: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(e))
 
     return {"models": [m.id for m in meta]}
 
@@ -613,10 +630,7 @@ async def list_models(
     # ``fetch_provider_models`` delegates to the discovery module and
     # falls back to the cold-boot list on any error, so callers always
     # get a usable payload.
-    try:
-        models = await fetch_provider_models(row)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(e))
+    models = await fetch_provider_models(row)
     return {"models": models}
 
 
@@ -640,10 +654,7 @@ async def refresh_provider_models(
     # sees the new state too, not just the backend's cache.
     sync_results = await sync_all_provider_models()
 
-    try:
-        models = await fetch_provider_models(row)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(e))
+    models = await fetch_provider_models(row)
     return {
         "provider_id": provider_id,
         "provider_type": row.provider_type,

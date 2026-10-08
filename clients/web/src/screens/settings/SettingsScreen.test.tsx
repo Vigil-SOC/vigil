@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -7,6 +7,11 @@ import SettingsScreen from './SettingsScreen'
 
 vi.mock('./AiConfigSection', () => ({ default: () => <div>AI panel</div> }))
 vi.mock('./IntegrationsSection', () => ({ default: () => <div>Integrations panel</div> }))
+const integrationsState = vi.hoisted(() => ({ attention: [] as unknown[] }))
+vi.mock('./IntegrationsState', () => ({
+  IntegrationsStateProvider: ({ children }: { children: unknown }) => children,
+  useIntegrationsState: () => integrationsState,
+}))
 vi.mock('./FederationSection', () => ({ default: () => <div>Federation panel</div> }))
 vi.mock('./SlaPoliciesSection', () => ({ default: () => <div>SLA panel</div> }))
 vi.mock('./AutoInvestigateSection', () => ({ default: () => <div>Autonomy panel</div> }))
@@ -48,6 +53,17 @@ function tabs() {
 }
 
 describe('settings nav', () => {
+  it('counts integrations that need attention on the Integrations item only', () => {
+    integrationsState.attention = [{}, {}]
+    renderAt('/settings?section=system')
+    expect(nav().getByRole('button', { name: /Integrations/ })).toHaveTextContent('2')
+    expect(nav().getByRole('button', { name: 'System' })).not.toHaveTextContent('2')
+    integrationsState.attention = []
+    cleanup()
+    renderAt('/settings?section=system')
+    expect(nav().getByRole('button', { name: 'Integrations' })).not.toHaveTextContent(/\d/)
+  })
+
   it('groups the existing panels under the seven screens', () => {
     renderAt('/settings')
     const labels = ['AI models', 'Integrations', 'Alert collection', 'SLA policies', 'Limits & autonomy', 'Data & uploads', 'System']
