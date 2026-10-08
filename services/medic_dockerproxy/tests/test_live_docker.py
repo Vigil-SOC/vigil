@@ -155,7 +155,10 @@ def test_logs_non_follow(live):
 
 def test_events_type_forced_to_container(live):
     now = int(time.time())
-    st, resp = get(live, f"/events?since={now - 600}&until={now}")
+    window = f"since={now - 600}&until={now}"
+    # Negative control: the fixture's `docker run` raised network events.
+    assert b'"Type":"network"' in raw_docker(f"/events?{window}")
+    st, resp = get(live, f"/events?{window}")
     assert st == 200
     assert b'"Type":"image"' not in body(resp) and b'"Type":"network"' not in body(resp)
 

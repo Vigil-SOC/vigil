@@ -36,6 +36,13 @@ VALUE = {
     "filters": re.compile(rf".{{1,{MAX_FILTERS}}}", re.DOTALL),
 }
 EVENT_TYPES = ["container"]
+# Lifecycle actions only (S5p-7): exec_create/exec_start carry the whole command
+# line of every `docker exec` and health probe, the leak SP2 ⚑1 closed for Cmd.
+# Docker matches `health_status` against "health_status: <state>".
+EVENT_ACTIONS = [
+    "create", "start", "restart", "die", "kill", "stop", "oom", "destroy",
+    "health_status",
+]  # fmt: skip
 
 # name -> (segments, allowed query names and their value kinds). `{id}` = ID_RE.
 # `details` is never allowed on logs: it adds log-opt env attributes (SP2 §3).
@@ -131,6 +138,10 @@ def check_target(target: str) -> Request:
         f = _filters(seen.get("filters", "{}"))
         if route == "events":
             f["type"] = EVENT_TYPES  # forced: container events only (SP2 §3)
+            asked = f.get("event", EVENT_ACTIONS)
+            if not isinstance(asked, list) or not set(asked) <= set(EVENT_ACTIONS):
+                raise Refuse(403, "event_not_allowed")
+            f["event"] = asked
         seen["filters"] = json.dumps(f, separators=(",", ":"), sort_keys=True)
     q = urllib.parse.urlencode(seen)
     return Request(route, path + ("?" + q if q else ""))
