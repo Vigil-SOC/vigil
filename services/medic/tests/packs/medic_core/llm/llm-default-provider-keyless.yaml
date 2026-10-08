@@ -1,0 +1,71 @@
+rule: llm.default-provider-keyless
+cases:
+- id: keyless-anthropic-default
+  fires: true
+  why: The fresh-install seed (L-1.a), until a key is added at +10m.
+  start: '2026-10-08T10:00:00Z'
+  end: +20m
+  sensors:
+  - {id: gateway.llm-providers, covers: [llm_providers], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    llm_providers: {providers.is_default: bool, providers.is_active: bool, providers.has_api_key: bool, providers.provider_type: enum}
+  series:
+  - {signal: llm_providers, key: providers.is_default, labels: {provider: anthropic-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.is_active, labels: {provider: anthropic-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.has_api_key, labels: {provider: anthropic-1}, steps: [[+0s, false], [+10m, true]]}
+  - {signal: llm_providers, key: providers.provider_type, labels: {provider: anthropic-1}, steps: [[+0s, anthropic]]}
+  expect:
+  - {at: +5m, rule: llm.default-provider-keyless, group: {provider: anthropic-1}, eval: true, state: firing, incident: A}
+  - {at: +10m, rule: llm.default-provider-keyless, group: {provider: anthropic-1}, eval: false, state: resolving, incident: A}
+  incidents:
+    A: {rule: llm.default-provider-keyless, group: {provider: anthropic-1}, active_since: +0s, opened_at: +5m, resolving_since: +10m, resolved_at: +15m, reason: cleared, routed_at: +5m}
+- id: keyless-ollama-default-is-fine
+  fires: false
+  why: Ollama needs no API key.
+  start: '2026-10-08T10:00:00Z'
+  end: +15m
+  sensors:
+  - {id: gateway.llm-providers, covers: [llm_providers], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    llm_providers: {providers.is_default: bool, providers.is_active: bool, providers.has_api_key: bool, providers.provider_type: enum}
+  series:
+  - {signal: llm_providers, key: providers.is_default, labels: {provider: ollama-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.is_active, labels: {provider: ollama-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.has_api_key, labels: {provider: ollama-1}, steps: [[+0s, false]]}
+  - {signal: llm_providers, key: providers.provider_type, labels: {provider: ollama-1}, steps: [[+0s, ollama]]}
+  expect:
+  - {at: +10m, rule: llm.default-provider-keyless, group: {provider: ollama-1}, eval: false, state: inactive}
+  incidents: {}
+- id: keyless-vertex-default-is-fine
+  fires: false
+  why: Vertex uses a service-account file, not an API key.
+  start: '2026-10-08T10:00:00Z'
+  end: +15m
+  sensors:
+  - {id: gateway.llm-providers, covers: [llm_providers], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    llm_providers: {providers.is_default: bool, providers.is_active: bool, providers.has_api_key: bool, providers.provider_type: enum}
+  series:
+  - {signal: llm_providers, key: providers.is_default, labels: {provider: vertex-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.is_active, labels: {provider: vertex-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.has_api_key, labels: {provider: vertex-1}, steps: [[+0s, false]]}
+  - {signal: llm_providers, key: providers.provider_type, labels: {provider: vertex-1}, steps: [[+0s, vertex]]}
+  expect:
+  - {at: +10m, rule: llm.default-provider-keyless, group: {provider: vertex-1}, eval: false, state: inactive}
+  incidents: {}
+- id: keyless-but-not-default
+  fires: false
+  start: '2026-10-08T10:00:00Z'
+  end: +15m
+  sensors:
+  - {id: gateway.llm-providers, covers: [llm_providers], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    llm_providers: {providers.is_default: bool, providers.is_active: bool, providers.has_api_key: bool, providers.provider_type: enum}
+  series:
+  - {signal: llm_providers, key: providers.is_default, labels: {provider: openai-1}, steps: [[+0s, false]]}
+  - {signal: llm_providers, key: providers.is_active, labels: {provider: openai-1}, steps: [[+0s, true]]}
+  - {signal: llm_providers, key: providers.has_api_key, labels: {provider: openai-1}, steps: [[+0s, false]]}
+  - {signal: llm_providers, key: providers.provider_type, labels: {provider: openai-1}, steps: [[+0s, openai]]}
+  expect:
+  - {at: +10m, rule: llm.default-provider-keyless, group: {provider: openai-1}, eval: false, state: inactive}
+  incidents: {}
