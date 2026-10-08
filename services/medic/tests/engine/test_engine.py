@@ -250,3 +250,32 @@ def test_records_are_identical_across_hash_seeds() -> None:
         for seed in ("1", "2", "3")
     }
     assert len(digests) == 1
+
+
+def test_absent_for_still_fires_when_a_source_vanishes() -> None:
+    """absent_for's coverage is the signal's ok reads (§2), so a source that drops out
+    of a sensor still reading other sources is absent, not unknown."""
+    vector = copy.deepcopy(load(VECTORS / "v09-errors-are-not-absence.yaml"))
+    vector["end"] = "+45m"
+    vector["sensors"][0]["states"] = [["+0s", "ok"]]
+    polls = vector["series"][0]
+    polls["to"] = "+10m"  # elastic stops being reported at all
+    vector["series"].append({**polls, "labels": {"source": "a"}, "to": "+45m"})
+    probe = {"rule": "ingest.source-never-polled", "group": {"source": "elastic"}}
+    vector["expect"] = [{**probe, "at": "+40m15s", "eval": True, "state": "pending"}]
+    s = run(vector).status[
+        (40 * 60 + 15, "ingest.source-never-polled", group_key({"source": "elastic"}))
+    ]
+    assert s["eval"] == "true"
+
+
+def test_engine_bugs_are_not_swallowed_as_unknown(monkeypatch) -> None:
+    """Only a wrong-type *value* is unknown; a fault in the engine itself raises."""
+    from services.medic.engine import evaluate
+
+    def broken(node, ctx):
+        raise ValueError("engine bug")
+
+    monkeypatch.setitem(evaluate._FNS, "increase", broken)
+    with pytest.raises(ValueError, match="engine bug"):
+        run(load(VECTORS / "v01-hold-for-fires-and-resolves.yaml"))
