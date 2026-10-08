@@ -109,3 +109,44 @@ def test_unknown_argument_is_refused(tmp_path) -> None:
     )
     assert done.returncode == 2
     assert not (tmp_path / "s").exists()
+
+
+def test_rotate_says_to_recreate_the_containers(tmp_path) -> None:
+    # Compose bind-mounts the file: a running gateway keeps the old inode.
+    secrets = tmp_path / "s"
+    _run(tmp_path, secrets)
+    out = _run(tmp_path, secrets, "--rotate").stdout
+    assert "--force-recreate medic medic-gateway" in out
+
+
+def test_relative_secrets_dir_is_refused(tmp_path) -> None:
+    env = clean_env(tmp_path, VIGIL_MEDIC_SECRETS_DIR="relative/secrets")
+    done = subprocess.run(
+        [str(ENABLE), "--secrets-only"],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert done.returncode == 1
+    assert "absolute" in done.stderr
+    assert not (tmp_path / "relative").exists()
+
+
+def test_a_damaged_secret_is_not_kept(tmp_path) -> None:
+    secrets = tmp_path / "s"
+    _run(tmp_path, secrets)
+    (secrets / "viewer_password").write_text("\n")
+    done = _run(tmp_path, secrets)
+    assert done.returncode == 1
+    assert "--rotate" in done.stderr
+
+
+def test_default_dir_is_outside_vigils_state_dir(tmp_path) -> None:
+    env = clean_env(tmp_path)
+    done = subprocess.run(
+        [str(ENABLE), "--secrets-only"], env=env, capture_output=True, text=True
+    )
+    assert done.returncode == 0, done.stderr
+    assert (tmp_path / ".vigil-medic" / "secrets" / "viewer_password").is_file()
+    assert not (tmp_path / ".vigil").exists()

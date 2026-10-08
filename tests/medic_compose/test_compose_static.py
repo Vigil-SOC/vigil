@@ -24,6 +24,8 @@ from tests.medic_compose.compose import (
     FORBIDDEN_ENV,
     HAVE_COMPOSE,
     MEDIC_NET_MEMBERS,
+    MEDIC_NETWORKS,
+    MEDIC_PRIVATE_MEMBERS,
     MEDIC_SERVICES,
     NOT_ON_MEDIC_NET,
     OVERLAY,
@@ -89,7 +91,8 @@ def test_profile_off_starts_no_medic_container(home) -> None:
     cfg = render(*OTHER_PROFILES, home=home, overlay=False)
     assert not set(MEDIC_SERVICES) & set(cfg["services"])
     assert "medic_data" not in (cfg.get("volumes") or {})
-    assert "medic-net" not in (cfg.get("networks") or {})
+    for net in MEDIC_NETWORKS:
+        assert net not in (cfg.get("networks") or {})
 
 
 def test_medic_services_sit_behind_the_medic_profile_only() -> None:
@@ -103,13 +106,13 @@ def test_profile_without_overlay_fails_loudly(home) -> None:
     # DNS error, so Medic sensor-blind for the agents. Compose refuses instead.
     done = render_raw("medic", home=home, overlay=False)
     assert done.returncode != 0
-    assert "medic-net" in done.stderr
+    assert "medic-net" in done.stderr or "medic-private" in done.stderr
 
 
 def test_overlay_touches_only_medic_net() -> None:
     raw = yaml.safe_load(OVERLAY.read_text(encoding="utf-8"))
     assert set(raw) == {"services", "networks"}
-    assert set(raw["networks"]) == {"medic-net"}
+    assert set(raw["networks"]) == set(MEDIC_NETWORKS)
     for name, spec in raw["services"].items():
         assert name in MEDIC_NET_MEMBERS - set(MEDIC_SERVICES), name
         assert set(spec) == {"networks"}, f"{name}: the overlay only adds medic-net"
@@ -119,19 +122,22 @@ def test_overlay_touches_only_medic_net() -> None:
 # --- C3 §7 check 1 ----------------------------------------------------------
 
 
-def test_medic_net_is_internal(on) -> None:
-    assert on["networks"]["medic-net"].get("internal") is True
+@pytest.mark.parametrize("net", MEDIC_NETWORKS)
+def test_medic_networks_are_internal(on, net) -> None:
+    assert on["networks"][net].get("internal") is True
 
 
-def test_medic_net_holds_exactly_the_listed_members(on) -> None:
+@pytest.mark.parametrize(
+    "net, expected",
+    [("medic-net", MEDIC_NET_MEMBERS), ("medic-private", MEDIC_PRIVATE_MEMBERS)],
+)
+def test_medic_networks_hold_exactly_the_listed_members(on, net, expected) -> None:
     members = {
-        name
-        for name, spec in on["services"].items()
-        if "medic-net" in networks_of(spec)
+        name for name, spec in on["services"].items() if net in networks_of(spec)
     }
-    assert members == MEDIC_NET_MEMBERS
+    assert members == expected
     for name in NOT_ON_MEDIC_NET:
-        assert "medic-net" not in networks_of(on["services"][name]), name
+        assert net not in networks_of(on["services"][name]), name
 
 
 def test_members_keep_their_own_network(on) -> None:
@@ -139,14 +145,13 @@ def test_members_keep_their_own_network(on) -> None:
         assert networks_of(on["services"][name]) == {"deeptempo-network", "medic-net"}
 
 
-def test_medic_is_on_medic_net_only(on) -> None:
-    assert networks_of(on["services"]["medic"]) == {"medic-net"}
-    assert networks_of(on["services"]["medic-dockerproxy"]) == {"medic-net"}
+def test_medic_side_networks(on) -> None:
+    svc = on["services"]
+    assert networks_of(svc["medic"]) == set(MEDIC_NETWORKS)
+    # The agents can't reach Medic's Docker proxy or its Viewer session (S6-9).
+    assert networks_of(svc["medic-dockerproxy"]) == {"medic-private"}
     # The gateway is the one bridge to the backend (C3 §4.6).
-    assert networks_of(on["services"]["medic-gateway"]) == {
-        "medic-net",
-        "deeptempo-network",
-    }
+    assert networks_of(svc["medic-gateway"]) == {"medic-private", "deeptempo-network"}
 
 
 def test_medic_mounts_only_its_data_volume(on) -> None:
@@ -167,6 +172,8 @@ def test_only_the_proxy_mounts_the_docker_socket_read_only(on) -> None:
                 assert name == "medic-dockerproxy", name
                 assert m["type"] == "bind" and m.get("read_only") is True
                 assert m["target"] == "/var/run/docker.sock"
+                # A missing socket must fail, not become an empty directory.
+                assert m["bind"]["create_host_path"] is False
     sock = [m for m in on["services"]["medic-dockerproxy"].get("volumes") or []]
     assert len(sock) == 1 and "docker.sock" in sock[0]["source"]
     assert on["services"]["medic-gateway"].get("volumes") in (None, [])
@@ -178,6 +185,9 @@ def test_no_vigil_home_on_any_medic_service(on) -> None:
             assert m.get("source") not in ("vigil_home", "vigil_investigations"), name
             assert ".vigil" not in str(m.get("source")), name
             assert ".vigil" not in str(m.get("target")), name
+    # Secrets are bind mounts too: none may come from Vigil's state directory.
+    for name, secret in on["secrets"].items():
+        assert "/.vigil/" not in secret["file"], name
 
 
 # --- hardening (C4 uid, C7 limits, no published ports) ----------------------
@@ -229,10 +239,10 @@ def test_gateway_binds_each_listener_to_one_network(on) -> None:
     nets = spec["networks"]
     # SP1 ⚑6: an alias that exists on exactly one network, so it resolves to that
     # network's address only (the service name resolves on both).
-    assert out_host in (nets["medic-net"] or {}).get("aliases", [])
+    assert out_host in (nets["medic-private"] or {}).get("aliases", [])
     assert in_host in (nets["deeptempo-network"] or {}).get("aliases", [])
     assert out_host not in (nets["deeptempo-network"] or {}).get("aliases", [])
-    assert in_host not in (nets["medic-net"] or {}).get("aliases", [])
+    assert in_host not in (nets["medic-private"] or {}).get("aliases", [])
     assert env["VIGIL_MEDIC_GATEWAY_OUT_BIND"].endswith(":8471")
     assert env["VIGIL_MEDIC_GATEWAY_IN_BIND"].endswith(":8470")
     assert env["VIGIL_MEDIC_GATEWAY_BACKEND"] == "backend:6987"

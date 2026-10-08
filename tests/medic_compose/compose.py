@@ -24,10 +24,12 @@ OVERLAY = COMPOSE_DIR / "medic" / "docker-compose.medic.yml"
 ENABLE = REPO / "scripts" / "medic" / "enable-compose.sh"
 
 MEDIC_SERVICES = ("medic", "medic-gateway", "medic-dockerproxy")
-# C3 §4.4, shape C. `backend` is deliberately absent (R1).
-MEDIC_NET_MEMBERS = frozenset(
-    {*MEDIC_SERVICES, "soc-daemon", "agent-worker", "agent-serve"}
-)
+# C3 §4.4, shape C, split in two (S6-9). `backend` is on neither (R1).
+# medic-net: Medic and the Vigil services whose ports it reads directly.
+MEDIC_NET_MEMBERS = frozenset({"medic", "soc-daemon", "agent-worker", "agent-serve"})
+# medic-private: Medic and its own gateway and Docker proxy, nothing of Vigil's.
+MEDIC_PRIVATE_MEMBERS = frozenset(MEDIC_SERVICES)
+MEDIC_NETWORKS = ("medic-net", "medic-private")
 NOT_ON_MEDIC_NET = ("backend", "redis", "postgres", "bifrost")
 # K1 §6 C6 and C3 §7 check 2: none of these in any Medic-side environment.
 FORBIDDEN_ENV = (
