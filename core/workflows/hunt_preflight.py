@@ -12,8 +12,13 @@ off the frozen catalog read. Every shape is read from the engine's own constants
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.agents.enablement import disabled_message
 from core.llm.chat_layers import changes_for_tool
-from core.workflows.playbook_resolver import INVESTIGATE_CAPABILITIES, UnknownPlaybook
+from core.workflows.playbook_resolver import (
+    INVESTIGATE_CAPABILITIES,
+    UnknownPlaybook,
+    disabled_phase_agents,
+)
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
     COMPOSE_RUN_KIND,
@@ -102,11 +107,16 @@ def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str
     """``{lead, helpers, reviewer}`` for this kind, and a note when it is empty."""
     kind = definition.run_kind
     if is_hunt_like(kind):
-        return {
+        roles = {
             "lead": {"name": LEAD_NAMES[kind], "tools": list(LEAD_TOOLS[kind])},
             "helpers": [_helper(p or {}) for p in definition.phases],
             "reviewer": {"name": "Critic", "tools": []},
-        }, None
+        }
+        off = disabled_phase_agents(definition)
+        if off:
+            note = f"Its phases cannot run as written: phase names {disabled_message(off[0])}"
+            return roles, note
+        return roles, None
     if kind == ROOT_CAUSE_RUN_KIND:
         lead = {"name": SINGLE_LEAD, "tools": list(LEAD_TOOLS[kind])}
         return {"lead": lead, "helpers": [], "reviewer": None}, None

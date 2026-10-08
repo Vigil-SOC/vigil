@@ -481,6 +481,8 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 interface WfLimits {
   capabilities?: { bound: string[]; unbound: string[] }
   budgets?: { max_iterations: number; max_cost_usd: number }
+  /** set when a phase's agent is turned off: the server will refuse the run. */
+  roles_note?: string | null
   /** exact, zero or unknown — how confidently the model's rate resolved. */
   pricing?: { model: string; source: string }
 }
@@ -945,6 +947,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
       <div className="flex flex-col gap-3.5">
         <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
+        {isHuntLike && limits?.roles_note && (
+          <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>{limits.roles_note}</div>
+        )}
         {isHuntLike && <Unpriced pricing={limits?.pricing} />}
         {(isHuntLike || isInvestigate) && (
           <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
