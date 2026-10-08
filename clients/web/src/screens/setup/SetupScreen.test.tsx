@@ -219,6 +219,8 @@ describe('SetupScreen', () => {
         data: source({ enabled: false }),
       } as never)
       await connect()
+      // the hook re-reads the list after a save; it must report the switch as off
+      vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ enabled: false })]))
       fireEvent.click(await screen.findByRole('switch', { name: 'Collect alerts' }))
       expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { enabled: false })
       expect(await screen.findByRole('button', { name: 'Test' })).toBeDisabled()

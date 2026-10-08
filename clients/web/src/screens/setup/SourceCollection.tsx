@@ -58,7 +58,8 @@ export default function SourceCollection({ sourceId }: { sourceId: string }) {
       // the hook's copy can be 10s old, and a regular cycle in that gap would pass for the test
       const fresh = await federationApi.listSources().catch(() => null)
       before = fresh?.data.sources?.find((s) => s.source_id === sourceId)?.last_poll_at ?? before
-      await pollNow(sourceId)
+      const queued = await pollNow(sourceId)
+      if (!queued.data.ok) throw new Error('not queued')
     } catch {
       setTesting(false)
       setResult({ ok: false, text: 'Could not queue the test' })
@@ -165,7 +166,7 @@ export default function SourceCollection({ sourceId }: { sourceId: string }) {
             onBlur={() => {
               const next = Number(interval)
               setIntervalDraft(null)
-              if (interval === null || !interval || next < 10 || next > 86400) return
+              if (interval === null || !Number.isInteger(next) || next < 10 || next > 86400) return
               if (next !== source.interval_seconds)
                 guard(() => patchSource(sourceId, { interval_seconds: next }), 'Could not save')
             }}
@@ -177,7 +178,7 @@ export default function SourceCollection({ sourceId }: { sourceId: string }) {
             value={source.min_severity || ''}
             options={SEVERITY_OPTIONS}
             onSelect={(v) =>
-              guard(() => patchSource(sourceId, { min_severity: v || null }), 'Could not save')
+              guard(() => patchSource(sourceId, { min_severity: v }), 'Could not save')
             }
           />
         </div>

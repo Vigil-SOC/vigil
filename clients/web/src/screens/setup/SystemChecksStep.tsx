@@ -28,8 +28,8 @@ const COULD_NOT_READ: Result = { phase: 'needs', detail: 'Could not read' }
 const readHealth = async (): Promise<Result> => {
   const res = await consoleApi.getHealth()
   const status = (res.data as { status?: string } | undefined)?.status
-  if (status && status !== 'healthy') return { phase: 'needs', detail: `Status is ${status}` }
-  return { phase: 'passed', detail: status || 'Reachable' }
+  if (status !== 'healthy') return { phase: 'needs', detail: `Status is ${status ?? 'unknown'}` }
+  return { phase: 'passed', detail: status }
 }
 
 const readStorage = async (): Promise<Result> => {
