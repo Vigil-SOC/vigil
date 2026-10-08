@@ -85,5 +85,5 @@ def setup(stream) -> logging.Handler:
     return handler
 
 
-def event(name: str, **fields) -> None:
-    log.info(name, extra=fields)
+def event(name: str, level: int = logging.INFO, **fields) -> None:
+    log.log(level, name, extra=fields)
