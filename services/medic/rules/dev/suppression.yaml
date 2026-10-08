@@ -1,0 +1,4 @@
+# Dev-mode suppression entries (E3 §6), in the pack's suppression.yaml shape:
+# [{parent: {rule|mode|cause|class: ...}, children: {...}, match: [label, ...]}].
+# Empty: the one dev rule has no parent. A pack's own file replaces this (F6).
+[]

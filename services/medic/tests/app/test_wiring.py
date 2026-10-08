@@ -1,7 +1,8 @@
-"""S4 wiring: observations → engine (15 s tick) → router R1 → store, end to end.
+"""Wiring: observations → engine (15 s tick) → router R1 → store, end to end.
 
-E3 vectors run through the app path, not only the engine: what lands in the
-store must be the incidents the vector expects, routed and chained.
+Every E3 vector runs through the app path, not only the engine (S10): what lands
+in the store must be the incidents the vector expects, field for field, with
+`route` written once, by the engine (S4b2-2), and chained.
 """
 
 from __future__ import annotations
@@ -34,11 +35,32 @@ def _replay_vector(name: str, data_dir: Path) -> tuple[dict, list[dict]]:
         instance_id=INSTANCE,
         start=_start(vector),
         seconds=secs(vector["end"]),
+        suppression=vector.get("suppression", []),
+        group_cap=vector.get("limits", {}).get("group_cap", 64),
     )
     return vector, stored(data_dir)
 
 
-@pytest.mark.parametrize("name", ["v01", "v02"])
+ALL = [p.stem[:3] for p in sorted(VECTORS.glob("v[0-9][0-9]-*.yaml"))]
+
+
+def test_every_engine_vector_runs_through_the_app_path() -> None:
+    assert ALL[0] == "v01" and len(ALL) == 29 and "v29" in ALL
+
+
+def _route_facts(records: list[dict]) -> dict[str, list[str]]:
+    """incident_id -> each record that says it routed (or was held at open)."""
+    facts: dict[str, list[str]] = {}
+    for r in records:
+        body = r["body"]
+        if r["type"] == "incident_opened":
+            facts[body["incident_id"]] = [body["route"]]
+        elif body.get("change") == "routed":
+            facts[body["incident_id"]].append("routed")
+    return facts
+
+
+@pytest.mark.parametrize("name", ALL)
 def test_vector_through_the_app_path(tmp_path: Path, name: str) -> None:
     vector, records = _replay_vector(name, tmp_path / "store")
     engine_only = [{k: r[k] for k in ("type", "at", "body")} for r in records]
@@ -46,19 +68,27 @@ def test_vector_through_the_app_path(tmp_path: Path, name: str) -> None:
 
     want = vector["incidents"]
     assert len(got) == len(want)
+    ids: dict[str, str] = {}  # the vector's label -> the stored incident_id
     for label, inc in want.items():
         match = [
-            g
-            for g in got.values()
+            iid
+            for iid, g in got.items()
             if g["rule"] == inc["rule"]
             and g["active_since"] == secs(inc["active_since"])
             and group_key(g.get("group", {})) == group_key(inc.get("group", {}))
         ]
         assert len(match) == 1, label
+        ids[label] = match[0]
+    for label, inc in want.items():
         for field, value in inc.items():
             if isinstance(value, str) and value.startswith("+"):
                 value = secs(value)
-            assert match[0].get(field) == value, (label, field)
+            if field == "suppressed_by":  # vectors name the parent by label
+                value = ids[value]
+            assert got[ids[label]].get(field) == value, (label, field)
+    # The engine's route, untouched by the router, and routed at most once.
+    for iid, facts in _route_facts(records).items():
+        assert facts in (["routed"], ["held"], ["held", "routed"]), (iid, facts)
     assert verify_store(tmp_path / "store").ok
 
 

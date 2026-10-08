@@ -2,8 +2,10 @@
 
 Each cycle the scheduler starts the sensors that are due, the pipeline hands every
 finished, redacted observation to the engine, and the engine evaluates the tick on
-the 15 s grid. What it emits, the router completes and the store's single writer
-chains. A read that finishes between cycles reaches the engine on the next one.
+the 15 s grid. The engine (E3 complete: suppression, group cap, upgrade windows)
+writes each record's routing, `route` included; the router adds lane, runbook and
+would_have; the store's single writer chains. A read that finishes between cycles
+reaches the engine on the next one.
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from services.medic.engine import Engine, LoadedRule, load_rule_file
 from services.medic.router import Router
@@ -35,12 +39,31 @@ log = logging.getLogger("services.medic")
 
 TICK_S = 15  # semantics.md §1
 DEV_RULES_DIR = Path(__file__).resolve().parents[1] / "rules" / "dev"
+DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
+GROUP_CAP = 64  # live groups per rule (semantics.md §3)
 ENGINE_STATE_VERSION = 1
 
 
 def load_dev_rules(directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
     """Dev-mode rules through the S4b loader. No pack loader, no signatures (F6)."""
-    return [load_rule_file(p) for p in sorted(directory.glob("*.yaml"))]
+    return [
+        load_rule_file(p)
+        for p in sorted(directory.glob("*.yaml"))
+        if p.name != DEV_SUPPRESSION.name
+    ]
+
+
+def load_dev_suppression(path: Path = DEV_SUPPRESSION) -> list[dict[str, Any]]:
+    """The dev set's suppression.yaml entries (E3 §6); the pack's, once F6 loads
+    packs. The engine shape-checks every entry and refuses a malformed one."""
+    if not path.exists():
+        return []
+    entries = yaml.safe_load(path.read_text())
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise TypeError(f"{path.name}: expected a list of suppression entries")
+    return entries
 
 
 class EngineSink:
@@ -63,6 +86,8 @@ class Medic:
         clock: Clock,
         shape: str,
         engine_state: dict[str, Any] | None = None,
+        suppression: Sequence[Mapping[str, Any]] = (),
+        group_cap: int = GROUP_CAP,
     ) -> None:
         self.writer, self.clock = writer, clock
         self.engine = Engine(
@@ -70,6 +95,8 @@ class Medic:
             instance_id=writer.instance_id,
             install_shape=shape,
             state=engine_state,
+            suppression=[dict(e) for e in suppression],
+            group_cap=group_cap,
         )
         self.router = Router(rules)
         self.bus = Bus(Stats())

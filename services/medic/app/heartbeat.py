@@ -27,6 +27,13 @@ FUTURE_SLACK_S = 60
 
 FORMAT_VERSION = 1
 
+# The states `check` calls healthy. `degraded` is C5 K-d: a dependency fault is
+# reported in the state, never as a failed check. Every other state fails with
+# its own name (S10, handoff from S8): `stopped`, `stalled`, the host-native
+# loop's `crash-looping`, and anything unknown.
+HEALTHY_STATES = ("running", "degraded")
+KNOWN_UNHEALTHY = ("stopped", "stalled", "crash-looping")
+
 
 def heartbeat_path(data_dir: Path) -> Path:
     return data_dir / "run" / "heartbeat"
@@ -73,7 +80,7 @@ def _parse(path: Path) -> dict:
         "started_at": float(record["started_at"]),
         "cycle": int(record["cycle"]),
         "pid": int(record.get("pid", 0)),
-        "state": str(record.get("state", "running")),
+        "state": record.get("state"),
     }
     if not (math.isfinite(out["ts"]) and math.isfinite(out["started_at"])):
         raise ValueError("non-finite time")
@@ -123,8 +130,11 @@ def check_heartbeat(data_dir: Path, *, now: float) -> tuple[bool, str]:
         beat["state"],
     )
 
-    if state in ("stopped", "stalled"):
+    if state in KNOWN_UNHEALTHY:
         return False, f"Medic {state} (cycle {cycle})"
+    if state not in HEALTHY_STATES:
+        shown = repr(state[:32]) if isinstance(state, str) else "missing"
+        return False, f"unknown heartbeat state {shown} (cycle {cycle})"
     age = now - ts
     if age < -FUTURE_SLACK_S:
         return False, f"heartbeat is {-age:.0f} s in the future (clock fault?)"

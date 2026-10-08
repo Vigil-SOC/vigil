@@ -20,17 +20,20 @@ from services.medic.app.heartbeat import (
     mark_stalled,
     write_heartbeat,
 )
+from services.medic.app.policy_probe import Verdict
+from services.medic.app.policy_probe import probe as policy_probe
 from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
     Medic,
     load_dev_rules,
+    load_dev_suppression,
     load_engine_state,
     save_engine_state,
 )
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
-from services.medic.sensors.http_ready import agent_worker_ready
+from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
 from services.medic.store import StoreError, open_writer
 
 log = logging.getLogger("services.medic")
@@ -41,6 +44,14 @@ USAGE = "usage: python -m services.medic {run|check}"
 # shape K2's patterns miss, and httpx logs every request at INFO. A sensor's
 # target must never reach Medic's log, so these stay quiet below WARNING.
 QUIET_LOGGERS = ("httpx", "httpcore")
+
+# A3-3: the exit code for "this cluster doesn't enforce NetworkPolicy". Not 1, so
+# an operator (and the kind CI) can tell a refusal from a crash.
+POLICY_REFUSED = 3
+# Medic usually starts before the gateway is Ready: the control (only) is retried.
+CONTROL_ATTEMPTS = 12
+CONTROL_RETRY_S = 5.0
+_control_wait = time.sleep
 
 
 @dataclass(frozen=True)
@@ -124,10 +135,15 @@ def run(
         return 0
     try:
         shape = config.install_shape(env)
-        host, port = config.agent_worker_addr(env, shape)
+        sensors = sensors_for(env, shape)
+        probe_target = config.policy_probe_addr(env, shape)
+        probe_control = config.policy_control_addr(env, shape)
     except config.ConfigError as exc:
         log.error("Medic can't start: %s", exc)
         return 1
+    # Before the store opens: a refusal writes nothing (no gap, no beat).
+    if probe_target is not None and not _policy_enforced(probe_target, probe_control):
+        return POLICY_REFUSED
 
     # C4 §6.1: everything Medic creates is private to its own uid. Restored on
     # return, which only matters when run() is called in-process (tests).
@@ -136,7 +152,7 @@ def run(
         return _run(
             data_dir,
             shape=shape,
-            sensors=[agent_worker_ready(host=host, port=port)],
+            sensors=sensors,
             clock=clock,
             sleep=sleep,
             max_cycles=max_cycles,
@@ -145,6 +161,66 @@ def run(
         )
     finally:
         os.umask(old_umask)
+
+
+def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
+    """The sensors this shape runs; raises ConfigError on an unusable address."""
+    host, port = config.agent_worker_addr(env, shape)
+    sensors: list[Sensor] = [agent_worker_ready(host=host, port=port)]
+    serve = config.agent_serve_addr(env, shape)
+    if serve is not None:
+        sensors.append(agent_serve_ready(host=serve[0], port=serve[1]))
+    return sensors
+
+
+def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
+    """A3-3. Proof = the allowed path connects AND the forbidden one is dropped.
+
+    A timeout alone could be a dead pod network or a Service with no endpoints
+    (IPVS drops those), so the control comes first (S7 review #1). On Helm the
+    two are the gateway's two listeners on the same pods, so a connected control
+    also proves the target has live endpoints."""
+    hint = (
+        "Check that the Medic gateway is Running and Ready and that DNS works "
+        "from Medic's pod."
+    )
+    for attempt in range(CONTROL_ATTEMPTS):
+        checked = policy_probe(control)
+        if checked is Verdict.CONNECTED:
+            break
+        if attempt < CONTROL_ATTEMPTS - 1:
+            _control_wait(CONTROL_RETRY_S)
+    if checked is not Verdict.CONNECTED:
+        log.error(
+            "Medic refuses to run: it can't prove NetworkPolicy is enforced: the "
+            "control connection to %s:%d, which its policy allows, was %s (A3-3). %s",
+            *control,
+            checked.value,
+            hint,
+        )
+        return False
+    verdict = policy_probe(target)
+    if verdict is Verdict.BLOCKED:
+        log.info("NetworkPolicy is enforced: the probe to %s:%d was dropped", *target)
+        return True
+    if verdict is Verdict.CONNECTED:
+        log.error(
+            "Medic refuses to run: NetworkPolicy isn't enforced on this cluster. "
+            "It reached %s:%d, which its own policy blocks, so nothing here would "
+            "stop it reaching Vigil's backend or Redis (A3-3). Install a network "
+            "plugin that enforces NetworkPolicy (Calico, Cilium, ...), or leave "
+            "medic.enabled off.",
+            *target,
+        )
+    else:
+        log.error(
+            "Medic refuses to run: it can't prove NetworkPolicy is enforced (%s "
+            "for %s:%d; only a dropped connection proves it, A3-3). %s",
+            verdict.value,
+            *target,
+            hint,
+        )
+    return False
 
 
 def _run(
@@ -229,7 +305,7 @@ def _run(
 
 
 def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
-    rules = load_dev_rules()
+    rules, suppression = load_dev_rules(), load_dev_suppression()
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
     if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:
@@ -244,13 +320,19 @@ def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
             clock=clock,
             shape=shape,
             engine_state=state,
+            suppression=suppression,
         )
     except Exception as exc:  # any bad state: start fresh, never a crash loop
         if state is None:
             raise
         log.warning("Engine state not usable, starting fresh: %s", type(exc).__name__)
         return Medic(
-            writer=writer, rules=rules, sensors=sensors, clock=clock, shape=shape
+            writer=writer,
+            rules=rules,
+            sensors=sensors,
+            clock=clock,
+            shape=shape,
+            suppression=suppression,
         )
 
 
