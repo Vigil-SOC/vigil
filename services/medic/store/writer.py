@@ -321,10 +321,13 @@ class DecisionWriter:
             return sealed
 
     def _check(self, sealed: dict[str, Any]) -> str:
-        """Schema, then instance; returns the canonical text that is stored."""
+        """Schema, gap order, then instance; returns the canonical text that is stored."""
         error = best_match(self._validator.iter_errors(sealed))
         if error is not None:
             raise RecordRefused("E-SCHEMA", error.json_path, error.message)
+        if sealed["type"] == "gap" and not decision_chain.gap_ok(sealed["body"]):
+            # verify() would fail on it, and a broken chain won't reopen (S2-4).
+            raise RecordRefused("E-GAP", "$.body", "the gap ends before it starts")
         named = sealed["body"].get("instance_id")
         if named is not None and named != self.instance_id:
             raise RecordRefused(

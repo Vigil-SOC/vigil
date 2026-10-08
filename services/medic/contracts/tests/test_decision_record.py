@@ -46,6 +46,7 @@ BODY_TYPES = [
     "anchor",
     "store_reset",
     "pack_event",
+    "gap",
 ]
 ENGINE_TYPES = {"incident_opened", "incident_updated", "incident_resolved"}
 
@@ -477,3 +478,66 @@ def test_a_bundled_import_has_no_admin() -> None:
         "by": "u",
     }
     assert not VALIDATOR.is_valid(_pack_record(body))
+
+
+# --- S2-5 (decided 2026-10-07): a time Medic wasn't watching is in the chain ----------
+
+
+def _gap_chain() -> list[dict]:
+    return load(FIX / "valid" / "chain-04-gap.jsonl")
+
+
+def test_gap_chain_records_a_stall_and_a_time_off() -> None:
+    gaps = [r["body"] for r in _gap_chain() if r["type"] == "gap"]
+    assert [g["reason"] for g in gaps] == ["stalled", "off"]
+    for g in gaps:
+        assert g["from"] <= g["to"]
+
+
+def test_a_gap_is_written_after_the_time_it_covers() -> None:
+    # C4 §6.8: written at start-up, so the wall-clock `at` is never before `to`.
+    for rec in _gap_chain():
+        if rec["type"] == "gap":
+            assert rec["at"] >= rec["body"]["to"], rec["seq"]
+
+
+def test_a_gap_that_ends_before_it_starts_breaks_the_chain() -> None:
+    records = _gap_chain()
+    i = next(i for i, r in enumerate(records) if r["type"] == "gap")
+    body = records[i]["body"]
+    body["from"], body["to"] = body["to"], body["from"]
+    for j in range(i, len(records)):  # a forger re-seals everything after it
+        records[j] = seal(
+            {k: v for k, v in records[j].items() if k not in ("prev", "hash")},
+            records[j - 1],
+        )
+    assert VALIDATOR.is_valid(records[i]), "the schema can't compare two fields"
+    with pytest.raises(ChainError) as err:
+        verify(records)
+    assert (err.value.code, err.value.seq) == ("E-GAP", records[i]["seq"])
+
+
+def test_gap_times_compare_as_instants_not_strings() -> None:
+    # "…:00.5Z" sorts before "…:00Z" as a string but is the later instant.
+    gap = {
+        "v": 1,
+        "at": "2026-12-07T10:00:01Z",
+        "type": "gap",
+        "body": {
+            "from": "2026-12-07T10:00:00Z",
+            "to": "2026-12-07T10:00:00.5Z",
+            "reason": "off",
+        },
+    }
+    records = [seal(gap, None)]
+    assert VALIDATOR.is_valid(records[0])
+    assert verify(records) == records[0]["hash"]
+
+
+def test_a_gap_reason_is_stalled_or_off() -> None:
+    rec = deepcopy(next(r for r in _gap_chain() if r["type"] == "gap"))
+    for reason in ("stalled", "off"):
+        rec["body"]["reason"] = reason
+        assert VALIDATOR.is_valid(rec), reason
+    rec["body"]["reason"] = "maintenance"
+    assert not VALIDATOR.is_valid(rec)
