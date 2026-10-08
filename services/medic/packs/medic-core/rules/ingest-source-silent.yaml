@@ -1,12 +1,13 @@
 # I-1 umbrella · polls succeed, nothing arrives. The causes that still return an
-# empty, successful fetch at 8f98bdf6 land here (I-1.i; I-1.d inferred, its B5 line
-# is gone); the ones that now raise (I-1.a #1605, I-1.e, I-1.k) show as failing polls.
+# empty, successful fetch at 8f98bdf6 land here (I-1.d inferred, its B5 line is
+# gone); the ones that now raise (I-1.a #1605, I-1.e, I-1.k) show as failing polls.
+# "Recent success" is 30 min: twice the longest default interval (Security Hub 900 s).
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.source-silent
 title: Enabled source reports healthy polls but has delivered no findings
 revision: 1
-fault: {class: ingest, mode: I-1, causes: [I-1.d, I-1.i]}
+fault: {class: ingest, mode: I-1, causes: [I-1.d]}
 lane: 3
 detection: absence
 signals:
@@ -17,7 +18,7 @@ group_by: [source]
 when:
   all:
     - {fn: latest, signal: enabled, op: "==", value: true}
-    - {fn: age, signal: last_success, op: "<", value: 600}
+    - {fn: age, signal: last_success, op: "<", value: 1800}
     - {fn: increase, signal: arrivals, window: {param: quiet_window}, op: "==", value: 0}
 for: 15m
 keep_firing_for: 30m

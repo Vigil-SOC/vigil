@@ -1,6 +1,9 @@
-# I-1.b · #1661 config_gap.py: WARNING once on the first skipped poll (+ a reminder
-# every 60), INFO once when the config is complete. Latched, so the quiet stretch
-# between reminders stays firing. Grouping on args[0] makes the rule untrusted.
+# I-1.b · #1661 config_gap.py: WARNING on the first skipped poll, then a reminder
+# every 60 skipped polls (1 h at a 60 s interval, 5 h at 300 s). Counted over a
+# window, not latched: the INFO "complete" line only comes from the daemon process
+# that saw the gap (module memory), so it never comes if the admin turns the
+# integration off or soc-daemon restarts first, and a set latch never retires.
+# Grouping on args[0] makes the rule untrusted.
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.integration-config-incomplete
@@ -17,17 +20,12 @@ signals:
       level: [WARNING]
       template: {re2: '^%s configuration (still )?incomplete \(missing: %s\)'}
       keys: {integration: "args[0]"}
-  complete:
-    log:
-      signal: log_soc_daemon
-      logger: {prefix: core.integrations.}
-      level: [INFO]
-      template: {eq: '%s configuration complete; polling resumed after %d skipped polls'}
-      keys: {integration: "args[0]"}
 group_by: [integration]
-when: {fn: latch, set: incomplete, clear: complete}
+when: {fn: count, signal: incomplete, window: {param: reminder_window}, op: ">=", value: 1}
 for: 2m
 keep_firing_for: 5m
+params:
+  reminder_window: {type: duration, default: 6h, min: 1h, max: 48h}
 advice:
   summary: An integration is switched on but missing settings, so Vigil skips every poll and no alerts arrive from it.
   fix: >-
@@ -35,4 +33,5 @@ advice:
     integration (Elastic: Elasticsearch URL; OpenSearch: OpenSearch URL;
     Sentinel: client secret, subscription ID, resource group, workspace name;
     Defender: tenant and app credentials), or turn the integration off. Polling
-    resumes on its own once the settings are complete.
+    resumes on its own; this incident closes once the daemon has stopped
+    reporting the gap for 6 hours.
