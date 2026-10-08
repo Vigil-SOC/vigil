@@ -305,6 +305,44 @@
 .side-list p { margin: 0; overflow-wrap: anywhere; }
 .side-list { display: grid; gap: 6px; padding-top: 8px; }
 
+.side-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.side-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ac);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.side-more:hover { text-decoration: underline; }
+
+/* Files and IOCs: a row stack, name then meta on a second line. */
+.side-rows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.side-rows li { padding: 8px 10px; background: var(--stack-row-bg); min-width: 0; }
+.side-row-main { font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.side-rows .side-meta { margin-top: 2px; overflow-wrap: anywhere; }
+
 .case-side .case-linked {
   list-style: none;
   margin: 6px 0 0;
@@ -697,6 +735,7 @@
 .case-page .ev-trail p { margin: 0; }
 
 .case-page .ev-trail h3 { font-size: 13px; font-weight: 650; }
+.case-page .ev-title { display: flex; align-items: center; gap: 4px; }
 .case-page .ev-trail p { margin-top: 2px; font-size: 12px; color: var(--tx2); line-height: 1.45; }
 
 .case-page .ev-grid {
@@ -839,9 +878,22 @@
 }
 
 .case-page .case-expl-line { display: flex; align-items: center; gap: 8px; }
-.case-page .case-expl-text { min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.case-page .case-expl-main { min-width: 0; cursor: pointer; }
+.case-page .case-expl-text { min-width: 0; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-page .case-expl-main.open .case-expl-text { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 .case-page .case-expl-text.struck { text-decoration: line-through; }
-.case-page .case-expl-note { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--tx2); overflow-wrap: anywhere; }
+.case-page .case-expl-note {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.case-page .case-expl-main.open .case-expl-note { display: block; -webkit-line-clamp: unset; }
 
 .case-page .case-expl-pill {
   flex-shrink: 0;
