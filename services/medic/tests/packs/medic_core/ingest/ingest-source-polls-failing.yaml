@@ -21,7 +21,7 @@ cases:
       - {at: +40m, rule: ingest.source-polls-failing, group: {source: splunk}, eval: false, state: inactive}
     incidents:
       A: {rule: ingest.source-polls-failing, group: {source: splunk}, active_since: +6m, opened_at: +16m,
-          resolving_since: +30m, resolved_at: +40m, reason: cleared, routed_at: +16m}
+          resolving_since: +30m, resolved_at: +40m, reason: cleared, routed_at: +21m}
   - kind: silent
     id: v02-silent-on-transient-errors-or-a-disabled-source
     title: Two failures then a success, and a disabled source with stale errors, stay quiet
