@@ -1,0 +1,32 @@
+rule: ingest.host-clock-ahead
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-when-alerts-keep-arriving-from-the-future
+    title: The host clock is behind; every 10-minute batch caps the cursor
+    end: +30m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: WARNING, logger: core.federation.adapters._base,
+         template: "Federation %s: newest alert time %s is ahead of this host's clock (window end %s); capping the cursor there",
+         message: "Federation splunk: newest alert time 2026-10-08T00:09:00+00:00 is ahead of this host's clock (window end 2026-10-08T00:01:00+00:00); capping the cursor there",
+         repeat: {every: 10m, until: +30m}}
+    expect:
+      - {at: +11m, rule: ingest.host-clock-ahead, eval: unknown, state: inactive, note: 2 lines seen decides nothing yet}
+      - {at: +21m, rule: ingest.host-clock-ahead, eval: true, state: pending}
+      - {at: +23m, rule: ingest.host-clock-ahead, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.host-clock-ahead, active_since: +21m, opened_at: +23m, resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-one-future-dated-alert
+    title: One future-dated alert in an hour is a source's quirk, not host skew
+    end: +65m
+    logs:
+      - {at: +5m, signal: log_soc_daemon, level: WARNING, logger: core.federation.adapters._base,
+         template: "Federation %s: newest alert time %s is ahead of this host's clock (window end %s); capping the cursor there",
+         message: "Federation elastic: newest alert time 2026-10-08T00:07:00+00:00 is ahead of this host's clock (window end 2026-10-08T00:05:00+00:00); capping the cursor there"}
+    expect:
+      - {at: +10m, rule: ingest.host-clock-ahead, eval: unknown, state: inactive}
+      - {at: +65m, rule: ingest.host-clock-ahead, eval: false, state: inactive}
+    incidents: {}
