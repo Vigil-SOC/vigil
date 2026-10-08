@@ -1,0 +1,38 @@
+# I-1.b · #1661 config_gap.py: WARNING once on the first skipped poll (+ a reminder
+# every 60), INFO once when the config is complete. Latched, so the quiet stretch
+# between reminders stays firing. Grouping on args[0] makes the rule untrusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.integration-config-incomplete
+title: SIEM integration is enabled but missing required settings
+revision: 1
+fault: {class: ingest, mode: I-1, causes: [I-1.b]}
+lane: 2
+detection: event
+signals:
+  incomplete:
+    log:
+      signal: log_soc_daemon
+      logger: {prefix: core.integrations.}
+      level: [WARNING]
+      template: {re2: '^%s configuration (still )?incomplete \(missing: %s\)'}
+      keys: {integration: "args[0]"}
+  complete:
+    log:
+      signal: log_soc_daemon
+      logger: {prefix: core.integrations.}
+      level: [INFO]
+      template: {eq: '%s configuration complete; polling resumed after %d skipped polls'}
+      keys: {integration: "args[0]"}
+group_by: [integration]
+when: {fn: latch, set: incomplete, clear: complete}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: An integration is switched on but missing settings, so Vigil skips every poll and no alerts arrive from it.
+  fix: >-
+    Open Settings, Integrations and fill every required field for this
+    integration (Elastic: Elasticsearch URL; OpenSearch: OpenSearch URL;
+    Sentinel: client secret, subscription ID, resource group, workspace name;
+    Defender: tenant and app credentials), or turn the integration off. Polling
+    resumes on its own once the settings are complete.
