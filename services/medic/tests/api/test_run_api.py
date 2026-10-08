@@ -182,3 +182,16 @@ def test_key_file_defaults_per_shape(tmp_path) -> None:
     assert config.api_key_file({config.SHAPE_VAR: "helm"}, tmp_path) is None
     named = {config.API_KEY_FILE_VAR: "/x/key", config.SHAPE_VAR: "helm"}
     assert config.api_key_file(named, tmp_path) == Path("/x/key")
+
+
+def test_bind_peer_per_shape() -> None:
+    import pytest
+
+    assert config.api_bind_peer({config.SHAPE_VAR: "compose"}) == "medic-gateway-out"
+    for env in ({}, {config.SHAPE_VAR: "helm"}, {config.SHAPE_VAR: "start_sh"}):
+        assert config.api_bind_peer(env) is None
+    named = {config.SHAPE_VAR: "helm", config.API_BIND_PEER_VAR: "gw.example"}
+    assert config.api_bind_peer(named) == "gw.example"
+    with pytest.raises(config.ConfigError) as err:
+        config.api_bind_peer({config.API_BIND_PEER_VAR: "a b/SECRET"})
+    assert "SECRET" not in str(err.value)
