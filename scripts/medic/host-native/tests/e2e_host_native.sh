@@ -9,7 +9,8 @@
 # Covers privilege-model checks 8 and 12 and the host-native half of 9 (C3 §7),
 # plus: DEV_MODE is refused (K1 T-37), Medic runs as vigil-medic from its own
 # venv, reports install shape start_sh and reads the agent worker's /readyz on
-# loopback (L49), `check` goes green, a kill -9 is restarted after the backoff,
+# loopback (L49), the backend reads Medic's /v1/status on loopback (S9), `check`
+# goes green, a kill -9 is restarted after the backoff,
 # and a TERM to the pidfile stops it all.
 set -uo pipefail
 
@@ -123,6 +124,46 @@ for f in master.key secrets.enc jwt_secret; do
     if sudo -n -u vigil-medic cat "$STATE/$f" >/dev/null 2>&1; then fail "vigil-medic can read $f"; fi
 done
 pass "vigil-medic can't read master.key, secrets.enc, jwt_secret (check 8)"
+
+# S9: the backend's status path on this shape. No gateway: Vigil's user GETs
+# Medic's /v1/status on loopback with the key file start.sh -d exports, exactly
+# as the backend's poll does (core/platform/medic_last_seen.py fetch_status).
+medic_host_backend_env || fail "medic_host_backend_env failed"
+[ "$VIGIL_MEDIC_API_URL" = http://127.0.0.1:8470 ] || fail "backend URL: $VIGIL_MEDIC_API_URL"
+[ "$VIGIL_MEDIC_API_KEY_FILE" = "$STATE/medic_api_key" ] || fail "key file: $VIGIL_MEDIC_API_KEY_FILE"
+if sudo -n -u vigil-medic cat "$STATE/medic_api_key" >/dev/null 2>&1; then
+    fail "vigil-medic can read Vigil's copy of the API key"
+fi
+backend_poll() {
+    "$RT/venv/bin/python" - "$VIGIL_MEDIC_API_KEY_FILE" > "$STATE/status.out" 2>&1 <<'PY'
+import http.client, json, sys
+key = open(sys.argv[1]).read().strip()
+def get(k):
+    c = http.client.HTTPConnection("127.0.0.1", 8470, timeout=5)
+    c.request("GET", "/v1/status", headers={"X-Medic-Key": k})
+    r = c.getresponse()
+    return r.status, r.read()
+status, body = get(key)
+assert status == 200, status
+doc = json.loads(body)
+assert doc["instance_id"].startswith("mi_") and doc["api_version"] == "1.0", doc
+assert get("W" * 43)[0] == 401
+print(doc["state"])
+PY
+}
+wait_for 60 backend_poll || fail "backend-side poll of 127.0.0.1:8470 failed: $(cat "$STATE/status.out")"
+pass "backend reads Medic's status on 127.0.0.1:8470 with the key (state $(cat "$STATE/status.out"))"
+if command -v ss >/dev/null; then
+    listen=$(ss -Hltn 'sport = :8470')
+else
+    listen=$(sudo -n lsof -nP -iTCP:8470 -sTCP:LISTEN)
+fi
+grep -q '127\.0\.0\.1' <<<"$listen" || fail "no loopback listener on 8470: $listen"
+if grep -Eq '(\*|0\.0\.0\.0|\[::\]):8470' <<<"$listen"; then fail "8470 listens beyond loopback: $listen"; fi
+pass "Medic's API listens on loopback only"
+key=$(cat "$VIGIL_MEDIC_API_KEY_FILE")
+if grep -qF "$key" logs/medic.log; then fail "the API key is in logs/medic.log"; fi
+pass "the API key is in no log"
 
 # Check 9, host-native half: no Vigil credential in Medic's environment.
 if [ -r /proc/self/environ ]; then

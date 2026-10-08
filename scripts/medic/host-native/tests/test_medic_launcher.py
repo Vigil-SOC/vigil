@@ -9,9 +9,13 @@ the CI job's e2e script (e2e_host_native.sh).
 
 from __future__ import annotations
 
+import http.client
+import json
 import os
+import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -398,6 +402,111 @@ def test_agent_up_still_pins_the_worker_port() -> None:
     assert "AGENT_HEALTH_PORT=6990" in (REPO / "scripts" / "agent_up.sh").read_text()
 
 
+# --- S9: the backend's path to Medic's status (no gateway on this shape) ------------
+
+KEY_RE = r"[A-Za-z0-9_-]{43}"
+BACKEND_ENV = (
+    'rc=0; medic_host_backend_env || rc=$?; echo "rc=$rc"; '
+    'echo "url=${VIGIL_MEDIC_API_URL-unset}"; echo "file=${VIGIL_MEDIC_API_KEY_FILE-unset}"'
+)
+
+
+def _vars(out: subprocess.CompletedProcess[str]) -> dict[str, str]:
+    return dict(ln.split("=", 1) for ln in out.stdout.splitlines() if "=" in ln)
+
+
+def test_backend_env_off_does_nothing(sb: Path) -> None:
+    out = _bash(sb, BACKEND_ENV)
+    assert _vars(out) == {"rc": "0", "url": "unset", "file": "unset"}
+    assert not (sb / "state" / "medic_api_key").exists()
+    assert out.stderr == ""
+
+
+def test_backend_env_mints_a_private_key_and_points_the_backend_at_loopback(
+    sb: Path,
+) -> None:
+    out = _bash(sb, BACKEND_ENV, VIGIL_MEDIC_ENABLED="true")
+    got = _vars(out)
+    key = sb / "state" / "medic_api_key"
+    assert got == {"rc": "0", "url": "http://127.0.0.1:8470", "file": str(key)}
+    assert re.fullmatch(KEY_RE, key.read_text().strip())
+    assert key.stat().st_mode & 0o777 == 0o600
+    first = key.read_text()
+    # Idempotent: a restart keeps the key the running Medic already holds.
+    _bash(sb, BACKEND_ENV, VIGIL_MEDIC_ENABLED="true")
+    assert key.read_text() == first
+    assert first.strip() not in out.stdout + out.stderr
+
+
+def test_backend_env_keeps_operator_settings(sb: Path) -> None:
+    own = sb / "own_key"
+    own.write_text("Z" * 43)
+    own.chmod(0o600)
+    out = _bash(
+        sb,
+        BACKEND_ENV,
+        VIGIL_MEDIC_ENABLED="true",
+        VIGIL_MEDIC_API_URL="http://127.0.0.1:9470",
+        VIGIL_MEDIC_API_KEY_FILE=str(own),
+    )
+    assert _vars(out)["url"] == "http://127.0.0.1:9470"
+    assert _vars(out)["file"] == str(own)
+    assert own.read_text() == "Z" * 43
+
+
+def test_backend_env_replaces_a_key_not_in_x2s_shape(sb: Path) -> None:
+    key = sb / "state" / "medic_api_key"
+    key.write_text("0123abcd" * 8)  # V1's old 64-hex format
+    _bash(sb, BACKEND_ENV, VIGIL_MEDIC_ENABLED="true")
+    assert re.fullmatch(KEY_RE, key.read_text().strip())
+
+
+def test_start_hands_the_key_to_the_loop_on_stdin(sb: Path) -> None:
+    out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true")
+    assert "rc=0" in out.stdout, out.stdout + out.stderr
+    _wait_for(lambda: len(_calls(sb, "sudo.calls").splitlines()) == 2)
+    loop_call = _calls(sb, "sudo.calls").splitlines()[1]
+    assert "--api-key-stdin" in loop_call
+    key = (sb / "state" / "medic_api_key").read_text().strip()
+    assert key not in loop_call
+    copy = sb / "data" / "run" / "api_key"
+    _wait_for(copy.exists)
+    assert copy.read_text() == key
+
+
+def test_backend_reads_medics_status_on_loopback(sb: Path) -> None:
+    """What the backend's poll does on host-native (V2 fetch_status): GET
+    http://127.0.0.1:8470/v1/status with the key file start.sh exported."""
+    with socket.socket() as probe:
+        if probe.connect_ex(("127.0.0.1", 8470)) == 0:
+            pytest.skip("something already listens on 127.0.0.1:8470")
+    out = _bash(sb, BACKEND_ENV + "; " + RUN, VIGIL_MEDIC_ENABLED="true")
+    assert "rc=0" in out.stdout, out.stdout + out.stderr
+    key_file = _vars(out)["file"]
+    key = Path(key_file).read_text().strip()
+
+    def get(k: str):
+        conn = http.client.HTTPConnection("127.0.0.1", 8470, timeout=5)
+        try:
+            conn.request("GET", "/v1/status", headers={"X-Medic-Key": k})
+            resp = conn.getresponse()
+            return resp.status, resp.read()
+        except OSError:
+            return None, b""
+        finally:
+            conn.close()
+
+    _wait_for(lambda: get(key)[0] == 200, timeout=60)
+    status, body = get(key)
+    assert status == 200
+    doc = json.loads(body)
+    assert doc["state"] in ("starting", "running", "degraded", "blind")
+    assert doc["instance_id"].startswith("mi_")
+    assert get("W" * 43)[0] == 401
+    log = (sb / "repo" / "logs" / "medic.log").read_text()
+    assert "listening on 127.0.0.1:8470" in log and key not in log
+
+
 # --- The hooks in start.sh and shutdown_all.sh ---------------------------------
 
 
@@ -408,6 +517,8 @@ def test_start_sh_hooks_medic_into_daemon_mode_only() -> None:
     foreground = text.split("# Foreground", 1)[1].split("# Daemon", 1)[0]
     assert "medic_host_start" in daemon and "medic_host_start" not in foreground
     assert "medic_host_foreground_notice" in foreground
+    # S9: the backend learns where Medic's status is before it starts.
+    assert daemon.index("medic_host_backend_env") < daemon.index("nohup uvicorn")
 
 
 def test_shutdown_all_stops_medic_by_pidfile() -> None:

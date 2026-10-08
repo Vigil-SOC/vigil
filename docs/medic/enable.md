@@ -120,4 +120,13 @@ Host-native Medic is opt-in only. It can reach the backend, Redis and Bifrost on
 
 Medic then runs as `vigil-medic` from `/opt/vigil-medic`, with install shape `start_sh`, and reads the agent worker's readiness at `127.0.0.1:6990`, where `scripts/agent_up.sh` starts it. Its log is `logs/medic.log`; `./shutdown_all.sh` stops it.
 
+**Status in the console.** This shape has no gateway: the backend polls Medic's `GET /v1/status` directly on `127.0.0.1:8470`, where Medic listens (loopback only). Before it starts the backend, `./start.sh -d` sets the two backend settings, unless `.env` already gives them a value:
+
+| Setting | Value on host-native |
+|---|---|
+| `VIGIL_MEDIC_API_URL` | `http://127.0.0.1:8470` |
+| `VIGIL_MEDIC_API_KEY_FILE` | `~/.vigil/medic_api_key` (the State Directory, `VIGIL_DIR`) |
+
+The key (32 random bytes, base64url) is created `0600` on the first start with Medic on and kept across restarts; a key file not in that format is replaced. `vigil-medic` can't read it there, so `start.sh` hands it to Medic's restart loop on stdin, and the loop keeps Medic's own `0600` copy at `<data dir>/run/api_key`. To rotate it, delete `~/.vigil/medic_api_key` and run `./shutdown_all.sh` then `./start.sh -d`. Medic without a usable key keeps watching with its API off (`logs/medic.log` says so), and the console reads Down.
+
 Host-native Medic doesn't use the gateway yet, so no service account is needed. If a host-native gateway is added later, it uses the same `ensure` command with Vigil's venv: `venv/bin/python -m core.auth.service_account ensure <name> < password-file`.
