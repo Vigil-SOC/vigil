@@ -101,6 +101,12 @@ REFUSED = [
     ("GET", f"/containers/{CID}/logs?tail=-1", ""),
     ("GET", f"/containers/{CID}/logs?follow=1%26details%3D1", ""),
     ("GET", "/events?filters=%7B%22type%22%3A%22image%22%7D&filters=%7B%7D", ""),
+    ("GET", "/events?filters=%7B%22event%22%3A%5B%22exec_create%22%5D%7D", ""),
+    (
+        "GET",
+        "/events?filters=%7B%22event%22%3A%5B%22start%22%2C%22exec_start%22%5D%7D",
+        "",
+    ),
     ("GET", "/_ping?x=1", ""),
     ("GET", "/containers/json", "Content-Length: 0\r\nContent-Length: 0\r\n"),
     ("GET", "/containers/json", "Host: other\r\n"),
@@ -183,6 +189,19 @@ def test_events_type_forced_to_container(h, filters):
     assert got["type"] == ["container"]
     if filters and "label" in filters:
         assert got["label"] == ["a=b"]
+    # S5p-7: exec_* events carry whole command lines (SP2 ⚑1's leak, via events).
+    assert set(got["event"]) == {
+        "create", "start", "restart", "die", "kill", "stop", "oom", "destroy",
+        "health_status",
+    }  # fmt: skip
+
+
+def test_events_may_narrow_the_lifecycle_set(h):
+    f = quote(json.dumps({"event": ["die", "start"]}))
+    assert h.get(f"/events?filters={f}")[0] == 200
+    (head,) = h.docker.heads
+    sent = parse_qs(urlsplit(head.split(b" ")[1].decode()).query)
+    assert json.loads(sent["filters"][0])["event"] == ["die", "start"]
 
 
 def test_refusal_body_is_fixed_json(h):
