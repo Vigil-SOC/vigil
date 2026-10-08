@@ -36,6 +36,22 @@ screen (POST /api/auth/bootstrap) where you create the admin with a password
 of your choosing; it closes as soon as one account exists.
 {{- end }}
 
+{{- $medic := .Values.medic | default dict }}
+{{- if eq ($medic.enabled | toString) "true" }}
+{{- $user := dig "gateway" "viewer" "username" "<medic.gateway.viewer.username>" $medic }}
+{{- $secret := dig "gateway" "viewer" "passwordSecret" "name" "<passwordSecret.name>" $medic }}
+{{- $key := dig "gateway" "viewer" "passwordSecret" "key" "password" $medic }}
+
+Medic is on. Once the backend is up, create its gateway's Viewer service account
+(lockout-exempt, Viewer only; docs/medic/enable.md). The password goes from the
+Secret to the backend on a pipe, never on a command line. Re-run after changing
+the Secret to rotate, then restart the gateway:
+
+   kubectl -n {{ .Release.Namespace }} get secret {{ $secret }} -o jsonpath='{.data.{{ $key }}}' | base64 -d \
+     | kubectl -n {{ .Release.Namespace }} exec -i deploy/{{ include "vigil.backend.fullname" . }} -- \
+         python -m core.auth.service_account ensure {{ $user }}
+{{- end }}
+
 {{- if not .Values.secrets.anthropicApiKey }}
 {{- if and (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecret.enabled) }}
 
