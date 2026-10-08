@@ -1,9 +1,8 @@
 rule: llm.model-unservable
 cases:
-- id: embedding-model-assigned-to-triage
-  fires: true
-  why: I1 live eval cell L-1.c. Two triage calls fail on an embedding model.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-embedding-model-assigned-to-triage
+  title: I1 live eval cell L-1.c. Two triage calls fail on an embedding model.
   end: +15m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -21,12 +20,13 @@ cases:
     message: 'llm_call failed (returning error dict): APIStatusError: Error code: 404 - model "llama3.2" not found, try pulling it first'
     at: +5m
   expect:
+  - {at: +5m, rule: llm.model-unservable, eval: true, state: pending}
   - {at: +7m, rule: llm.model-unservable, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.model-unservable, active_since: +5m, opened_at: +7m, resolving_since: null, resolved_at: null, routed_at: +7m}
-- id: one-failure-is-below-the-bar
-  fires: false
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v02-one-failure-is-below-the-bar
+  title: One failure is below the bar
   end: +40m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -35,8 +35,9 @@ cases:
     level: ERROR
     logger: services.worker.jobs
     template: 'llm_call failed (returning error dict): %s'
-    message: "llm_call failed (returning error dict): NotFoundError: Error code: 404 - model 'gemini-1.5-pro' is no longer available"
+    message: 'llm_call failed (returning error dict): NotFoundError: Error code: 404 - model ''gemini-1.5-pro'' is no longer available'
     at: +1m
   expect:
+  - {at: +2m, rule: llm.model-unservable, eval: unknown, state: inactive}
   - {at: +35m, rule: llm.model-unservable, eval: false, state: inactive}
   incidents: {}
