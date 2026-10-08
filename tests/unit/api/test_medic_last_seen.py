@@ -552,3 +552,23 @@ async def test_the_loop_keeps_a_fixed_cadence_when_a_poll_is_slow(on, monkeypatc
     task.cancel()
     gaps = [b - a for a, b in zip(starts, starts[1:])]
     assert all(0.08 < g < 0.13 for g in gaps), gaps
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_poll_does_not_cause_a_burst(on, monkeypatch):
+    import asyncio
+
+    starts = []
+
+    def stall_once(settings):
+        starts.append(time.monotonic())
+        if len(starts) == 1:
+            time.sleep(0.35)  # 3+ intervals
+
+    monkeypatch.setattr(mls, "poll_once", stall_once)
+    task = asyncio.create_task(mls.run_poller(on, interval=0.1))
+    while len(starts) < 4:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    gaps = [b - a for a, b in zip(starts[1:], starts[2:])]
+    assert all(g > 0.08 for g in gaps), gaps
