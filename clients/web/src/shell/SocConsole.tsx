@@ -436,7 +436,10 @@ function SocConsoleInner() {
             onOpenChat={askVigil}
             caseOpen={openCaseId !== null}
             onOpenCase={setDrawerCase}
-            onGo={(next) => go(next)}
+            onGo={(next, options) => {
+              setDrawerCase(null) // the drawer would sit over the next screen
+              go(next, options)
+            }}
           />
           <div className="vg-header-end">
             {assist !== null && (
