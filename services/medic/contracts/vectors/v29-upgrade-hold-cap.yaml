@@ -1,0 +1,188 @@
+id: v29-upgrade-hold-cap
+title: A version that keeps flipping holds new incidents for at most 60 min after the first flip, sensor-blind included
+covers:
+- §7 upgrade windows
+- §2 sensor-blind
+start: '2026-10-07T10:00:00Z'
+end: +100m
+engine_restarts:
+- +40m
+rules:
+- ref: ingest-kafka-decode-errors.yaml
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.kafka-disconnected
+    title: Vector rule ingest.kafka-disconnected
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 3
+    signals:
+      connected:
+        sample:
+          signal: daemon_status.kafka
+          key: connected
+    when:
+      fn: latest
+      signal: connected
+      op: ==
+      value: false
+    for: 2m
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+- id: http.version
+  covers:
+  - version
+  interval: 60s
+  service: backend
+  states:
+  - - +0s
+    - ok
+- id: http.triage
+  covers:
+  - triage
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+  - - +20m
+    - stopped
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+  version:
+    version: enum
+series:
+- signal: version
+  key: version
+  steps:
+  - - +0s
+    - 1.8.0
+  - - +10m
+    - 1.9.0
+  - - +20m
+    - 1.8.0
+  - - +30m
+    - 1.9.0
+  - - +40m
+    - 1.8.0
+  - - +50m
+    - 1.9.0
+  - - +60m
+    - 1.8.0
+  - - +70m
+    - 1.9.0
+  - - +80m
+    - 1.8.0
+  - - +90m
+    - 1.9.0
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 0
+  - - +75m
+    - 10
+  - - +85m
+    - 20
+  - - +95m
+    - 30
+- signal: daemon_status.kafka
+  key: missing_id_errors
+  steps:
+  - - +0s
+    - 0
+- signal: daemon_status.kafka
+  key: connected
+  steps:
+  - - +0s
+    - true
+  - - +15m
+    - false
+expect:
+- at: +30m
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: pending
+  note: for elapsed at +17m, but held; the flip at +10m opened the chain
+- at: +69m45s
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: pending
+  note: still held; uncapped, the flips would hold it until +105m
+- at: +70m
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: firing
+  incident: A
+  note: the cap, 60 min after the first flip (§7, S4b2-6)
+- at: +69m45s
+  rule: watcher.sensor-blind
+  eval: true
+  state: pending
+  group:
+    sensor: http.triage
+- at: +70m
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.triage
+  incident: SB
+  note: sensor-blind is never held past the cap
+- at: +80m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: pending
+- at: +85m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: firing
+  incident: B
+  note: the flips at +80m and +90m are in the same chain, already capped, so nothing holds it
+incidents:
+  A:
+    rule: ingest.kafka-disconnected
+    active_since: +15m
+    opened_at: +70m
+    resolving_since: null
+    resolved_at: null
+    held_by_upgrade_until: +70m
+    routed_at: +70m
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +21m
+    opened_at: +70m
+    resolving_since: null
+    resolved_at: null
+    held_by_upgrade_until: +70m
+    group:
+      sensor: http.triage
+    routed_at: +70m
+  B:
+    rule: ingest.kafka-decode-errors
+    active_since: +75m
+    opened_at: +85m
+    resolving_since: null
+    resolved_at: null
+    routed_at: +85m
