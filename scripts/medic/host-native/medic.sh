@@ -135,7 +135,6 @@ medic_host_backend_env() {
     if _medic_key_ok "$key"; then
         chmod 0600 "$key" 2>/dev/null || true
     else
-        _MEDIC_KEY_MINTED=1
         # 32 random bytes, base64url without padding: 43 characters (X2).
         if ! (umask 077 && mkdir -p "$(dirname "$key")" \
             && head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' > "$key.$$" \
@@ -144,6 +143,7 @@ medic_host_backend_env() {
             echo "Medic: couldn't write its API key to $key; the console will read Down." >&2
             return 1
         fi
+        _MEDIC_KEY_MINTED=1
     fi
     export VIGIL_MEDIC_API_URL="${VIGIL_MEDIC_API_URL:-$_MEDIC_API_URL}"
     export VIGIL_MEDIC_API_KEY_FILE="$key"
