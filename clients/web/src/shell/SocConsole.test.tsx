@@ -106,6 +106,7 @@ vi.mock('../services/api', () => ({
     getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
   },
   mcpApi: {
+    listServers: () => Promise.resolve({ data: { servers: [] } }),
     getStatuses: () => Promise.resolve({
       data: {
         statuses: [

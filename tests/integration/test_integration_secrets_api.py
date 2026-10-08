@@ -166,3 +166,59 @@ def test_get_redacts_registered_secret_fields(tmp_path):
     assert cfg == {"url": "https://vstrike.net", "verify_ssl": True}
     for forbidden in ("username", "password"):
         assert forbidden not in cfg
+
+
+def test_get_serves_last_test_for_tested_rows_only():
+    """GET carries {at, success, error} per tested row; no secret rides along."""
+    from services.api.routers import config as config_module
+
+    fake_service = MagicMock()
+    fake_service.list_integrations.return_value = [
+        {
+            "integration_id": "vstrike",
+            "enabled": True,
+            "config": {"url": "https://vstrike.net", "password": "wonderland"},
+            "last_test_at": "2026-10-06T12:00:00+00:00",
+            "last_test_success": False,
+            "last_error": "vstrike: connection refused",
+        },
+        {
+            "integration_id": "github",
+            "enabled": True,
+            "config": {},
+            "last_test_at": None,
+            "last_test_success": None,
+            "last_error": None,
+        },
+    ]
+
+    with patch.object(config_module, "get_config_service", return_value=fake_service):
+        result = config_module.get_integrations_config()
+
+    assert result["last_test"] == {
+        "vstrike": {
+            "at": "2026-10-06T12:00:00+00:00",
+            "success": False,
+            "error": "vstrike: connection refused",
+        }
+    }
+    assert "wonderland" not in str(result)
+
+
+def test_get_serves_empty_last_test_when_unconfigured_or_failing():
+    from services.api.routers import config as config_module
+
+    fake_service = MagicMock()
+    fake_service.list_integrations.return_value = []
+    with patch.object(
+        config_module, "get_config_service", return_value=fake_service
+    ), patch.object(
+        config_module, "load_integrations_config", return_value={"configured": False}
+    ):
+        assert config_module.get_integrations_config()["last_test"] == {}
+    with patch.object(
+        config_module, "get_config_service", return_value=fake_service
+    ), patch.object(
+        config_module, "load_integrations_config", side_effect=RuntimeError("db down")
+    ):
+        assert config_module.get_integrations_config()["last_test"] == {}
