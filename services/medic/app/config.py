@@ -116,3 +116,46 @@ def policy_control_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] |
     return _helm_addr(
         env, shape, POLICY_CONTROL_VAR, "a host:port Medic's NetworkPolicy allows"
     )
+
+
+# Medic's API (X2, S9). The port is X2's default; the address is loopback unless
+# the shape says Medic is inside its own container or pod, where Compose's
+# networks and Helm's NetworkPolicy are the fence (C3). Fail safe: a host-native
+# Medic with no shape set still binds loopback only.
+API_PORT_VAR = "VIGIL_MEDIC_API_PORT"
+API_KEY_FILE_VAR = "VIGIL_MEDIC_API_KEY_FILE"
+API_PORT_DEFAULT = 8470
+# Where Compose mounts the `medic_api_key` secret.
+COMPOSE_KEY_FILE = Path("/run/secrets/medic_api_key")
+_CONTAINER_SHAPES = ("compose", "helm")
+_PORT = re.compile(r"[0-9]{1,5}")
+
+
+def _explicit_shape(env: Mapping[str, str]) -> str:
+    return (env.get(SHAPE_VAR) or "").strip()
+
+
+def api_bind(env: Mapping[str, str]) -> tuple[str, int]:
+    value = env.get(API_PORT_VAR)
+    port = API_PORT_DEFAULT
+    if value is not None:
+        if not _PORT.fullmatch(value) or not 0 < int(value) < 65536:
+            raise ConfigError(f"{API_PORT_VAR} is not a port number (value not shown)")
+        port = int(value)
+    if _explicit_shape(env) in _CONTAINER_SHAPES:
+        return "0.0.0.0", port
+    return "127.0.0.1", port
+
+
+def api_key_file(env: Mapping[str, str], data_dir: Path) -> Path | None:
+    """The file holding X-Medic-Key. Host-native: `<data dir>/run/api_key`, which
+    the restart loop writes from what start.sh hands it. Helm: the chart names it."""
+    value = (env.get(API_KEY_FILE_VAR) or "").strip()
+    if value:
+        return Path(value)
+    shape = _explicit_shape(env)
+    if shape == "compose":
+        return COMPOSE_KEY_FILE
+    if shape == "helm":
+        return None
+    return data_dir / "run" / "api_key"
