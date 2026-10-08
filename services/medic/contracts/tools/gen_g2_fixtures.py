@@ -379,6 +379,47 @@ def store_reset(day: list[dict]) -> list[dict]:
     )
 
 
+def gaps() -> list[dict]:
+    """S2-5: Medic hung (the watchdog ended it), then was turned off overnight.
+
+    Each gap is written at the next start-up, so its wall-clock `at` follows `to`;
+    the incident it interrupted carries on in the same chain.
+    """
+    return chain(
+        [
+            rec("2026-12-07T09:15:00Z", "incident_opened", OPEN_LANE2),
+            rec(
+                "2026-12-07T09:24:11Z",
+                "gap",
+                {
+                    "from": "2026-12-07T09:20:30Z",
+                    "to": "2026-12-07T09:24:10Z",
+                    "reason": "stalled",
+                },
+            ),
+            rec(
+                "2026-12-07T09:36:15Z",
+                "incident_updated",
+                {"incident_id": ID2, "change": "resolving", "eval": "false"},
+            ),
+            rec(
+                "2026-12-08T08:30:01Z",
+                "gap",
+                {
+                    "from": "2026-12-07T18:00:00Z",
+                    "to": "2026-12-08T08:30:00Z",
+                    "reason": "off",
+                },
+            ),
+            rec(
+                "2026-12-08T08:35:15Z",
+                "incident_resolved",
+                {"incident_id": ID2, "how": "cleared", "eval": "false"},
+            ),
+        ]
+    )
+
+
 INVALID = {
     "free-text-field": (
         "an unlisted free-text field (K1 T-04)",
@@ -464,23 +505,41 @@ INVALID_IDENTITY = {
 }
 
 
+INVALID_GAP = {
+    "gap-unknown-reason": (
+        "a gap reason outside stalled | off",
+        lambda r: r["body"].__setitem__("reason", "maintenance"),
+    ),
+    "gap-without-end": (
+        "a gap that doesn't say when it ended",
+        lambda r: r["body"].pop("to"),
+    ),
+    "gap-free-text": (
+        "a gap carrying a free-text note (K1 T-04)",
+        lambda r: r["body"].__setitem__("note", "upgrade window, ignore"),
+    ),
+}
+
+
 def main() -> None:
     day = pilot_day()
     for name, records in {
         "chain-01-pilot-day": day,
         "chain-02-after-purge": after_purge(day),
         "chain-03-store-reset": store_reset(day),
+        "chain-04-gap": gaps(),
     }.items():
         path = OUT / "valid" / f"{name}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records))
     (OUT / "invalid").mkdir(parents=True, exist_ok=True)
-    first = {r["type"]: r for r in reversed(day)}
+    first = {r["type"]: r for r in reversed(day + gaps())}
     for table, base in (
         (INVALID, first["incident_opened"]),
         (INVALID_FEEDBACK, first["feedback"]),
         (INVALID_PACK_EVENT, first["pack_event"]),
         (INVALID_IDENTITY, first["incident_opened"]),
+        (INVALID_GAP, first["gap"]),
     ):
         for name, (why, mutate) in table.items():
             doc = deepcopy(base)
