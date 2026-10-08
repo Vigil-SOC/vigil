@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from services.medic.api.history import record_exit, record_start
+from services.medic.api.ready import check_ready
 from services.medic.api.server import Api, StatusBoard
 from services.medic.api.status import build_status, read_chain
 from services.medic.app import config
@@ -42,7 +43,7 @@ from services.medic.store import StoreError, open_writer
 
 log = logging.getLogger("services.medic")
 
-USAGE = "usage: python -m services.medic {run|check}"
+USAGE = "usage: python -m services.medic {run|check [--ready]}"
 
 # httpcore's DEBUG trace logs raw response headers (Set-Cookie and the like) in a
 # shape K2's patterns miss, and httpx logs every request at INFO. A sensor's
@@ -90,10 +91,14 @@ def main(
     to real time and a real exit."""
     # Medic reads its own env: it may not import core.config (A3-1).
     env = os.environ if env is None else env  # noqa: ENV001
-    if len(argv) != 1 or argv[0] not in ("run", "check"):
+    if list(argv) not in (["run"], ["check"], ["check", "--ready"]):
         print(USAGE, file=sys.stderr)
         return 2
     data_dir = config.data_dir(env, sys.platform)
+    if list(argv) == ["check", "--ready"]:  # readiness: can the API serve (C5)
+        ok, reason = check_ready(env, data_dir)
+        print(reason)
+        return 0 if ok else 1
     if argv[0] == "check":
         ok, reason = check_heartbeat(data_dir, now=time.time() if now is None else now)
         print(reason)
