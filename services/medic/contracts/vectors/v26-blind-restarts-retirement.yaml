@@ -3,6 +3,7 @@ title: 'Retirement needs 24 h of covered silence: a blind period in the middle r
 covers:
 - §3 group lifetime
 - §2 coverage
+- §2 sensor-blind
 start: '2026-10-07T10:00:00Z'
 end: +36h45m
 rules:
@@ -89,6 +90,14 @@ expect:
   state: inactive
   group: *id001
   note: 24 h of covered silence after the blind period ended
+- at: +12h3m
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.federation
+  incident: SB
+  note: 'the blind period itself: blind after 3 failed reads, for: 2m (§2, S4b2-1)'
 incidents:
   A:
     rule: ingest.source-erroring
@@ -99,3 +108,13 @@ incidents:
     reason: group_retired
     group: *id001
     routed_at: +0s
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +12h1m
+    opened_at: +12h3m
+    resolving_since: +12h30m
+    resolved_at: +12h30m
+    reason: cleared
+    group:
+      sensor: http.federation
+    routed_at: +12h3m
