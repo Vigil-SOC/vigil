@@ -47,6 +47,16 @@ describe('LogLM pipeline card', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 
+  it('starts from the last stored test instead of Not tested yet', async () => {
+    vi.mocked(configApi.getIntegrations).mockResolvedValue({
+      data: { ...configured.data, last_test: { loglm: { at: new Date().toISOString(), success: false, error: 'Connector rejected the session request (401)' } } },
+    } as never)
+    renderCard()
+
+    expect(await screen.findByText('Connector rejected the session request (401)')).toBeInTheDocument()
+    expect(screen.queryByText('Not tested yet')).not.toBeInTheDocument()
+  })
+
   it('hands editing to Integrations rather than saving here', async () => {
     renderCard()
 

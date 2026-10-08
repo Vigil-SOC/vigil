@@ -4,6 +4,7 @@ import { Icon } from '../../shared/icons'
 import { LevelBadge, type Level } from '../../shared/LevelBadge'
 import { SettingsCard } from '../../shared/ui'
 import { configApi } from '../../services/api'
+import { relativeTime } from './integrationHealth'
 import { useIntegrationsConfig } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -46,7 +47,7 @@ export default function LoglmCard({ notify }: SectionProps) {
     setTesting(true)
     try {
       const res = await configApi.testIntegration('loglm')
-      setResult({ ok: !!res.data.success, message: res.data.message })
+      setResult({ ok: !!res.data.success, message: res.data.message ?? '' })
     } catch (e) {
       const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setResult({ ok: false, message: detail || 'The test could not run.' })
@@ -56,10 +57,17 @@ export default function LoglmCard({ notify }: SectionProps) {
     }
   }
 
+  const last = config.last_test.loglm
+  const stored: TestResult | null =
+    last && last.success !== null
+      ? { ok: last.success, message: last.success ? `Last test passed ${relativeTime(last.at)}.` : last.error || 'Last test failed.' }
+      : null
+  const shown = result ?? stored
+
   const status: { level: Level; word: string; text: string } = !url
     ? { level: null, word: 'Not set up', text: 'Add the connector URL in Integrations to connect LogLM.' }
-    : result
-      ? { level: result.ok ? 'good' : 'poor', word: '', text: result.message }
+    : shown
+      ? { level: shown.ok ? 'good' : 'poor', word: '', text: shown.message }
       : { level: null, word: 'Not tested yet', text: 'Run a test to check the connector answers and accepts the session secret.' }
 
   return (
