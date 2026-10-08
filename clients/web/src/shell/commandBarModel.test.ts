@@ -44,10 +44,17 @@ describe('/hunt preview with an attachment', () => {
     expect(commandPreview('hunt', 'mine', JIRA, READY({ status: 'proposed', hypothesis: 'H1' })).line).toBe('Start a threat hunt: mine')
   })
 
+  it('proposes beside a hunt already running and names it', () => {
+    const answer = { status: 'running', in_flight: [{ run_id: 'r1', case_id: 'c1' }], proposal: { hypothesis: 'H1' } }
+    const proposal = proposalFrom(answer)
+    expect(proposal).toMatchObject({ status: 'proposed', hypothesis: 'H1', running: { caseId: 'c1', runId: 'r1' } })
+    expect(commandPreview('hunt', '', JIRA, READY(proposal))).toMatchObject({ disabled: false, note: expect.stringContaining('already running') })
+  })
+
   it('stays disabled while reading, when refused, and with no proposal', () => {
     expect(commandPreview('hunt', 'x', JIRA, { status: 'reading', name: 'a.pdf' }).disabled).toBe(true)
     expect(commandPreview('hunt', 'x', JIRA, { status: 'refused', name: 'a.pdf', reason: 'No' })).toEqual({ line: 'No', disabled: true })
-    const none = proposalFrom({ status: 'running' })
+    const none = proposalFrom({ status: 'uncovered' })
     expect(commandPreview('hunt', '', JIRA, READY(none)).disabled).toBe(true)
     expect(commandPreview('hunt', '', JIRA).line).toBe('Add a hypothesis')
   })

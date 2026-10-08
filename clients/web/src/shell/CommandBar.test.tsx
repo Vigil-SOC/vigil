@@ -7,7 +7,7 @@ import CaseDrawer from './CaseDrawer'
 import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 
-const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, getIntegrations, apiGet } = vi.hoisted(() => ({
+const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, getIntegrations, apiGet, apiPost } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
   deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
@@ -18,6 +18,7 @@ const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument,
   getFinding: vi.fn(),
   getIntegrations: vi.fn(),
   apiGet: vi.fn(),
+  apiPost: vi.fn(),
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -84,7 +85,7 @@ vi.mock('../services/api', () => ({
   },
   default: {
     get: (path: string, config?: unknown) => apiGet(path, config),
-    post: vi.fn(),
+    post: (path: string, body?: unknown) => apiPost(path, body),
   },
 }))
 
@@ -102,7 +103,11 @@ function renderBar(props?: Partial<ComponentProps<typeof CommandBar>>) {
   const onOpenChat = props?.onOpenChat ?? vi.fn()
   const onOpenCase = props?.onOpenCase ?? vi.fn()
   const onGo = props?.onGo ?? vi.fn()
-  render(<CommandBar boards={BOARDS} onOpenChat={onOpenChat} onOpenCase={onOpenCase} onGo={onGo} caseOpen={props?.caseOpen} />)
+  render(
+    <ToastProvider>
+      <CommandBar boards={BOARDS} onOpenChat={onOpenChat} onOpenCase={onOpenCase} onGo={onGo} caseOpen={props?.caseOpen} />
+    </ToastProvider>,
+  )
   return { onOpenChat, onOpenCase, onGo }
 }
 
@@ -132,12 +137,18 @@ beforeEach(() => {
   attachDocument.mockReset()
   attachDocument.mockResolvedValue({ data: {} })
   createCase.mockResolvedValue({ data: { case_id: 'case-new' } })
+  apiPost.mockReset()
   getIntegrations.mockResolvedValue({ data: { enabled_integrations: [], integrations: {}, secrets_set: {} } })
   getCase.mockImplementation((id: string) => {
     if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', finding_ids: [] } })
     if (id === 'case-9') {
       return Promise.resolve({
-        data: { case_id: 'case-9', title: 'Exact case', status: 'open', priority: 'high', assignee: 'ada', finding_ids: [], created_at: '2026-06-15T09:14:00Z' },
+        data: { case_id: 'case-9', title: 'Exact case', status: 'open', priority: 'high', assignee: 'ada', finding_ids: [], created_at: '2026-06-15T09:14:00Z', investigations: [] },
+      })
+    }
+    if (id === 'case-7') {
+      return Promise.resolve({
+        data: { case_id: 'case-7', title: 'Run case', finding_ids: [], investigations: [{ run_id: 'run-new' }, { run_id: 'run-old' }] },
       })
     }
     return Promise.reject(new Error('missing case'))
@@ -296,6 +307,89 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(await screen.findByText('Jira is missing project_key')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
+  })
+
+  it('tags an exact finding id Alert and opens it on Overview', async () => {
+    const { onGo } = renderBar()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'f-1' } })
+    const row = await screen.findByRole('option', { name: /LSASS/ })
+    expect(row.querySelector('.vg-command-dest')).toHaveTextContent('Alert')
+    fireEvent.click(row)
+    expect(onGo).toHaveBeenCalledWith('overview', { search: '?alert=f-1' })
+  })
+
+  it('explains Later rows on hover and skips them with the arrow keys', () => {
+    renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/' } })
+    for (const name of [/\/hold/, /\/isolate/, /\/phish/, /Custom commands/]) {
+      expect(screen.getByRole('option', { name }).parentElement).toHaveAttribute('title', 'Coming in a later release')
+    }
+    expect(screen.getByRole('option', { name: /\/ticket/ }).parentElement).not.toHaveAttribute('title')
+    for (let step = 0; step < 5; step += 1) {
+      fireEvent.keyDown(input, { key: 'ArrowDown' })
+      expect(screen.getByRole('option', { selected: true })).not.toBeDisabled()
+    }
+  })
+
+  it('/replay opens Watch a run on the newest investigation', async () => {
+    const { onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/replay case-7' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await screen.findByText('Watch the latest run on case case-7')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(onGo).toHaveBeenCalledWith('workflows', { search: '?run=run-new' }))
+    expect(onOpenCase).not.toHaveBeenCalled()
+  })
+
+  it('/replay on a case with no run opens the drawer and says so', async () => {
+    const { onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/replay case-9' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-9'))
+    expect(await screen.findByText('Case case-9 has no run to replay')).toBeInTheDocument()
+    expect(onGo).not.toHaveBeenCalled()
+  })
+
+  it('/replay on a case that cannot be read toasts the error and keeps the preview', async () => {
+    const { onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/replay nope' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('missing case')
+    expect(screen.getByRole('button', { name: 'Run' })).toBeInTheDocument()
+    expect(onOpenCase).not.toHaveBeenCalled()
+    expect(onGo).not.toHaveBeenCalled()
+  })
+
+  it('confirms /investigate, /hunt and /ticket with a toast', async () => {
+    getIntegrations.mockResolvedValue({
+      data: {
+        enabled_integrations: ['jira'],
+        integrations: { jira: { url: 'https://jira.example', username: 'ada', project_key: 'SOC' } },
+        secrets_set: { jira: { api_token: true } },
+      },
+    })
+    renderBar()
+    const input = screen.getByRole('combobox')
+    const runCommand = async (text: string, toast: string) => {
+      fireEvent.change(input, { target: { value: text } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      const run = await screen.findByRole('button', { name: 'Run' })
+      await waitFor(() => expect(run).toBeEnabled())
+      fireEvent.click(run)
+      expect(await screen.findByText(toast)).toBeInTheDocument()
+    }
+    await runCommand('/investigate f-1', 'Started Incident response workflow')
+    await runCommand('/hunt rare beacon', 'Hunt started on case "rare beacon"')
+    apiPost.mockResolvedValueOnce({ data: { success: true, issue_key: 'SOC-12' } })
+    await runCommand('/ticket case-9', 'Created SOC-12')
+    apiPost.mockResolvedValueOnce({ data: { success: true } })
+    await runCommand('/ticket case-9', 'Ticket created')
   })
 
   it('opens the case drawer from /replay, expands to the cases route, and closes in place', async () => {
@@ -480,13 +574,22 @@ describe('CommandBar', () => {
         expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
       })
 
-      it('names a hunt already running and offers no proposal', async () => {
-        checkCoverage.mockResolvedValueOnce({ data: { status: 'running', in_flight: [] } })
-        const { input } = renderHunt()
+      it('names a hunt already running, still proposes, and opens its case', async () => {
+        checkCoverage.mockResolvedValueOnce({
+          data: {
+            status: 'running',
+            in_flight: [{ run_id: 'wfr-live', case_id: 'case-live' }],
+            proposal: { hypothesis: PROPOSED, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true },
+          },
+        })
+        const { onOpenCase, input } = renderHunt()
         await openHunt(input)
         pick(pdf())
-        expect(await screen.findByText(/A hunt is already running on what this document covers/)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
+        expect(await screen.findByText(`Start a threat hunt: ${PROPOSED}`)).toBeInTheDocument()
+        expect(screen.getByText(/A hunt is already running on what this document covers/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
+        fireEvent.click(screen.getByRole('button', { name: 'Open its case' }))
+        expect(onOpenCase).toHaveBeenCalledWith('case-live')
       })
 
       it('shows a refusal in the preview and clears it with Remove', async () => {

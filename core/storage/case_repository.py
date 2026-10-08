@@ -11,7 +11,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from sqlalchemy import Select, and_, case, exists, func, or_, select
+from sqlalchemy import (
+    Float,
+    Select,
+    and_,
+    case,
+    cast,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.orm import Session
 
 from core.storage.models import (
@@ -21,9 +33,14 @@ from core.storage.models import (
     CaseSLA,
     Finding,
     Investigation,
+    WorkflowRun,
     case_findings,
 )
-from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
+from core.storage.models.workflow import (
+    LIVE_CASE_STATES,
+    LIVE_INVESTIGATION_STATUSES,
+    RUN_LIVE_STATE,
+)
 from core.time import utcnow
 
 # status / priority / assignee accept either a single value or a list.
@@ -54,48 +71,90 @@ def _ranked(stmt: Select, name: str):
     return select(*ranked.c).where(ranked.c.rn == 1).subquery(name)
 
 
-def _latest_investigations():
+def _case_runs():
+    """Every run a case reads, as one relation: investigations plus run-only refs.
+
+    The SQL of ``case_state.case_run_refs``. A run started on the case with
+    ``trigger_context.case_id`` and no ``Investigation`` row (``/hunt``) is a
+    ref; an investigation's own run is not, since it carries that
+    investigation's id. Its state is the run's word, its cost the run's total,
+    and it has no iteration count or cap of its own.
+    """
+    run_case_id = WorkflowRun.trigger_context["case_id"].astext
+    investigations = select(
+        Investigation.case_id.label("ref_case_id"),
+        Investigation.investigation_id.label("ref_id"),
+        Investigation.workflow_id.label("workflow_id"),
+        Investigation.iteration_count.label("iteration_count"),
+        Investigation.cost_usd.label("cost_usd"),
+        Investigation.max_cost_usd.label("max_cost_usd"),
+        Investigation.status.label("state"),
+        Investigation.created_at.label("created_at"),
+        Investigation.last_activity_at.label("last_activity_at"),
+    ).where(Investigation.case_id.isnot(None))
+    runs = select(
+        run_case_id.label("ref_case_id"),
+        WorkflowRun.run_id.label("ref_id"),
+        WorkflowRun.workflow_id.label("workflow_id"),
+        literal(0).label("iteration_count"),
+        cast(WorkflowRun.total_cost_usd, Float).label("cost_usd"),
+        literal(0.0).label("max_cost_usd"),
+        case(
+            *((WorkflowRun.status == k, v) for k, v in RUN_LIVE_STATE.items()),
+            else_=WorkflowRun.status,
+        ).label("state"),
+        WorkflowRun.started_at.label("created_at"),
+        func.coalesce(WorkflowRun.finished_at, WorkflowRun.started_at).label(
+            "last_activity_at"
+        ),
+    ).where(
+        run_case_id.isnot(None),
+        WorkflowRun.deleted_at.is_(None),
+        ~exists().where(
+            Investigation.investigation_id
+            == WorkflowRun.trigger_context["investigation_id"].astext
+        ),
+    )
+    return union_all(investigations, runs).subquery("case_runs")
+
+
+def _newest_ref(refs, *, live_only: bool = False, **columns):
+    """One row per case: its newest ref, or newest live ref, with ``columns``."""
+    where = [refs.c.ref_case_id.isnot(None)]
+    if live_only:
+        where.append(refs.c.state.in_(LIVE_CASE_STATES))
     return _ranked(
         select(
-            Investigation.case_id.label("inv_case_id"),
-            Investigation.workflow_id.label("workflow_id"),
-            Investigation.iteration_count.label("iteration_count"),
-            Investigation.cost_usd.label("cost_usd"),
-            Investigation.max_cost_usd.label("max_cost_usd"),
-            Investigation.last_activity_at.label("inv_last_activity_at"),
+            *(refs.c[source].label(label) for label, source in columns.items()),
             func.row_number()
             .over(
-                partition_by=Investigation.case_id,
-                order_by=(
-                    Investigation.created_at.desc(),
-                    Investigation.investigation_id.desc(),
-                ),
+                partition_by=refs.c.ref_case_id,
+                order_by=(refs.c.created_at.desc(), refs.c.ref_id.desc()),
             )
             .label("rn"),
-        ).where(Investigation.case_id.isnot(None)),
-        "latest_investigation",
+        ).where(*where),
+        "live_investigation" if live_only else "latest_investigation",
+    )
+
+
+def _latest_investigations():
+    return _newest_ref(
+        _case_runs(),
+        inv_case_id="ref_case_id",
+        workflow_id="workflow_id",
+        iteration_count="iteration_count",
+        cost_usd="cost_usd",
+        max_cost_usd="max_cost_usd",
+        inv_last_activity_at="last_activity_at",
     )
 
 
 def _live_investigations():
-    return _ranked(
-        select(
-            Investigation.case_id.label("live_case_id"),
-            Investigation.status.label("live_status"),
-            func.row_number()
-            .over(
-                partition_by=Investigation.case_id,
-                order_by=(
-                    Investigation.created_at.desc(),
-                    Investigation.investigation_id.desc(),
-                ),
-            )
-            .label("rn"),
-        ).where(
-            Investigation.case_id.isnot(None),
-            Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
-        ),
-        "live_investigation",
+    return _newest_ref(
+        _case_runs(),
+        live_only=True,
+        live_case_id="ref_case_id",
+        live_status="state",
     )
 
 

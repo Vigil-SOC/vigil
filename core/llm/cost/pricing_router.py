@@ -92,6 +92,11 @@ GATEWAY = "bifrost"
 def priced_as(provider_type: str, model_id: str) -> tuple[str, str]:
     from core.llm.providers.registry import VALID_PROVIDER_TYPES
 
+    # OpenRouter ids are "<vendor>/<model>" under OpenRouter itself, so the vendor
+    # prefix is not a provider to price as; the registry falls back to the vendor's
+    # sheet when OpenRouter's lacks the id.
+    if provider_type.lower() == "openrouter":
+        return "openrouter", model_id
     named, _, bare = model_id.partition("/")
     if bare and named.lower() in VALID_PROVIDER_TYPES:
         return named.lower(), bare

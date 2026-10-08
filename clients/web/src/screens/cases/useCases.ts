@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { utcDayClock } from '../../shared/utc'
 import { casesApi } from '../../services/api'
 import { mapApiCase, mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
@@ -24,8 +24,16 @@ export interface CaseClosureView {
   closure_category: string
   closed_by: string
   closed_by_kind: string
+  closed_at: string | null
   verdict: string
 }
+
+export const CLOSURE_CATEGORIES = [
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'false_positive', label: 'False positive' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'unable_to_resolve', label: 'Unable to resolve' },
+] as const
 
 export interface CaseLinkedFinding {
   finding_id: string
@@ -193,6 +201,7 @@ function asClosure(raw: unknown): CaseClosureView | null {
     closure_category: o.closure_category,
     closed_by: typeof o.closed_by === 'string' ? o.closed_by : '',
     closed_by_kind: typeof o.closed_by_kind === 'string' ? o.closed_by_kind : '',
+    closed_at: typeof o.closed_at === 'string' && o.closed_at ? o.closed_at : null,
     verdict: typeof o.verdict === 'string' ? o.verdict : '',
   }
 }
@@ -225,8 +234,7 @@ export function useCaseDetail(id: string | null) {
     setInvestigations(asInvestigations(data.investigations))
     setClosure(asClosure(data.closure))
     setLinkedFindings(asLinkedFindings(data.linked_findings))
-    const d = data.created_at ? new Date(data.created_at) : null
-    setCreated(d && !Number.isNaN(d.getTime()) ? format(d, 'MMM d, yyyy · HH:mm') : '—')
+    setCreated(utcDayClock(data.created_at) ?? '—')
   }, [])
 
   useEffect(() => {
