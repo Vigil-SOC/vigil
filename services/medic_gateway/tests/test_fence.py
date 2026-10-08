@@ -43,7 +43,7 @@ def _code_lines(path: Path) -> int:
 
 def test_gateway_code_stays_small():
     """A3-2 asked for '≤ ~500 lines' so a reviewer can hold all of it; S5's logic
-    lands at about 660 once formatted and complete (⚑ S5-1, PROVISIONAL)."""
+    lands at about 660 once formatted and complete (S5-1, decided 2026-10-07)."""
     n = sum(_code_lines(f) for f in SOURCES)
     assert n <= MAX_CODE_LINES, n
 
