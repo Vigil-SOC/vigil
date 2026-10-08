@@ -120,6 +120,10 @@ def test_overlay_touches_only_medic_net() -> None:
     assert set(raw) == {"services", "networks"}
     assert set(raw["networks"]) == set(MEDIC_NETWORKS)
     for name, spec in raw["services"].items():
+        if name == "backend":
+            # V2: where to poll Medic and the key to poll with. Never a network.
+            assert set(spec) == {"environment", "secrets"}, name
+            continue
         assert name in MEDIC_NET_MEMBERS - set(MEDIC_SERVICES), name
         assert set(spec) == {"networks"}, f"{name}: the overlay only adds medic-net"
         assert list(spec["networks"]) == ["medic-net"], name
@@ -353,3 +357,39 @@ def test_gateway_has_no_default_viewer_name(home) -> None:
         "medic", home=home, env={"VIGIL_MEDIC_VIEWER_USER": "medic-a1b2c3d4e5f6"}
     )["services"]["medic-gateway"]
     assert env_of(named)["VIGIL_MEDIC_GATEWAY_VIEWER_USER"] == "medic-a1b2c3d4e5f6"
+
+
+# --- V2: the backend polls Medic's status through the gateway (C5 §5.3) -------
+
+
+def test_backend_polls_medic_through_the_gateways_inbound_listener(on) -> None:
+    backend, gateway = on["services"]["backend"], on["services"]["medic-gateway"]
+    env = env_of(backend)
+    host, port = env["VIGIL_MEDIC_API_URL"].removeprefix("http://").split(":")
+    # The alias the inbound listener binds to, on the one network both share.
+    assert gateway["networks"]["deeptempo-network"]["aliases"] == [host]
+    assert env_of(gateway)["VIGIL_MEDIC_GATEWAY_IN_BIND"] == f"{host}:{port}"
+    assert "deeptempo-network" in networks_of(backend)
+    # Still never on Medic's own networks (C3 rule 5).
+    assert not networks_of(backend) & set(MEDIC_NETWORKS)
+
+
+def test_backend_reads_the_key_medic_checks_from_a_file(on) -> None:
+    backend, medic = on["services"]["backend"], on["services"]["medic"]
+    [mount] = [s for s in backend.get("secrets", []) if s["source"] == "medic_api_key"]
+    assert (
+        env_of(backend)["VIGIL_MEDIC_API_KEY_FILE"] == f"/run/secrets/{mount['source']}"
+    )
+    assert any(s["source"] == "medic_api_key" for s in medic["secrets"])
+    # A file, never env: not in `docker inspect`, not in a support bundle.
+    assert not any(
+        "KEY" in k and k != "VIGIL_MEDIC_API_KEY_FILE"
+        for k in env_of(backend)
+        if k.startswith("VIGIL_MEDIC")
+    )
+
+
+def test_without_medic_the_backend_has_no_medic_path(home) -> None:
+    backend = render(home=home, overlay=False)["services"]["backend"]
+    assert "VIGIL_MEDIC_API_URL" not in env_of(backend)
+    assert not backend.get("secrets")
