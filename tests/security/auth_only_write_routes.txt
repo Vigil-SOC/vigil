@@ -85,6 +85,7 @@ POST /api/services/{name}/stop
 POST /api/skills
 POST /api/skills/
 POST /api/skills/upload
+POST /api/skills/{name}/test
 POST /api/sla-policies/
 POST /api/sla-policies/{policy_id}/set-default
 POST /api/v1/cases/search

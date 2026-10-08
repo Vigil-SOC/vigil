@@ -24,8 +24,16 @@ export interface CaseClosureView {
   closure_category: string
   closed_by: string
   closed_by_kind: string
+  closed_at: string | null
   verdict: string
 }
+
+export const CLOSURE_CATEGORIES = [
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'false_positive', label: 'False positive' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'unable_to_resolve', label: 'Unable to resolve' },
+] as const
 
 export interface CaseLinkedFinding {
   finding_id: string
@@ -193,6 +201,7 @@ function asClosure(raw: unknown): CaseClosureView | null {
     closure_category: o.closure_category,
     closed_by: typeof o.closed_by === 'string' ? o.closed_by : '',
     closed_by_kind: typeof o.closed_by_kind === 'string' ? o.closed_by_kind : '',
+    closed_at: typeof o.closed_at === 'string' && o.closed_at ? o.closed_at : null,
     verdict: typeof o.verdict === 'string' ? o.verdict : '',
   }
 }

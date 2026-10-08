@@ -61,6 +61,7 @@
   white-space: normal; /* a th above may be nowrap */
 }
 
+.info-tip-pop::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; } /* keeps hover across the gap */
 .info-tip-pop.end { right: 0; }
 .info-tip-pop.start { left: 0; }
 .info-tip-line b { color: var(--tx0); font-weight: 650; }
@@ -392,4 +393,89 @@
 
 @media (prefers-reduced-motion: reduce) {
   .state-pill.needs .state-dot { animation: none; }
+}
+
+/* Duration picker: a pill that opens hours and minutes fields and presets (DesignSystem board). */
+.dp { position: relative; display: inline-flex; }
+
+.dp-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  color: var(--tx2);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dp-pill b { font-size: 13px; font-weight: 700; color: var(--tx0); }
+.dp-pill svg { align-self: center; margin-left: 4px; color: var(--tx3); }
+.dp-pill:hover,
+.dp-pill[aria-expanded='true'] { border-color: var(--ac-ln); }
+
+.dp-pop {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln2);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+}
+
+.dp-fields { display: flex; gap: 8px; }
+.dp-fields.shake { animation: dp-shake 0.3s; }
+.dp-field { display: inline-flex; align-items: baseline; gap: 4px; font-size: 11.5px; color: var(--tx2); }
+
+.dp-input {
+  width: 52px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  color: var(--tx0);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  outline: none;
+}
+.dp-input:focus { background: var(--ac-bg); border-color: var(--ac-ln); color: var(--ac); }
+
+.dp-presets { display: flex; gap: 5px; }
+.dp-preset {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg3);
+  border: 1px solid var(--ln1);
+  color: var(--tx1);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dp-preset:hover { border-color: var(--ac-ln); color: var(--ac); }
+
+@keyframes dp-shake {
+  0%, 100% { transform: translateX(0); }
+  18% { transform: translateX(-5px); }
+  36% { transform: translateX(4px); }
+  54% { transform: translateX(-3px); }
+  72% { transform: translateX(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dp-fields.shake { animation: none; }
 }
