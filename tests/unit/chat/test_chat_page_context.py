@@ -61,8 +61,7 @@ async def test_turn_without_a_model_names_the_page_and_uses_chat_default(monkeyp
     assert seen["override"] is None
     assert sent["model"] == "gemini-flash-latest"
     assert "model: gemini-flash-latest" in sent["config"]
-    assert (
-        sent["system_prompt"]
-        == "The analyst opened this from page overview about case CASE-9."
-        "\n\nBRIEF for CASE-9"
+    assert sent["system_prompt"].startswith(
+        "The analyst opened this from page overview about case CASE-9."
+        "\n\nBRIEF for CASE-9\n\n<available_skills>"
     )
