@@ -123,7 +123,9 @@ INBOUND = [
     Route("GET", "/v1/decisions/{seq}", segs={"seq": SEQ}),
     Route("GET", "/v1/sensors"),
     Route("GET", "/v1/pack"),
-    Route("GET", "/v1/export", {"from": (TS, 1), "to": (TS, 1)}),
+    Route(
+        "GET", "/v1/export", {"from": (TS, 1), "to": (TS, 1)}, required=("from", "to")
+    ),
 ]
 
 
@@ -186,7 +188,7 @@ def check_headers(method: str, headers) -> None:
     if method == "GET" and cl and cl[0].strip() != "0":
         raise Reject(400, "get_with_body")
     if method == "POST":
-        if len(cl) != 1 or not cl[0].isdigit():
+        if len(cl) != 1 or not re.fullmatch("[0-9]{1,9}", cl[0]):
             raise Reject(400, "bad_content_length")
         if int(cl[0]) > MAX_POST_BODY:
             raise Reject(413, "body_too_large")

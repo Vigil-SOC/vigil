@@ -44,10 +44,13 @@ class Config:
     context_path: str
 
 
+WILDCARDS = ("", "*", "0.0.0.0", "::", "[::]")
+
+
 def _hostport(env: Mapping[str, str], name: str) -> tuple[str, int]:
     host, _, port = env.get(P + name, "").rpartition(":")
-    if not host or not port.isdigit():
-        raise ConfigError(f"{P}{name} must be host:port")
+    if host in WILDCARDS or not port.isdigit():
+        raise ConfigError(f"{P}{name} must be host:port, and not a wildcard host")
     return host, int(port)
 
 
