@@ -1,0 +1,26 @@
+# I-1.i · the federation row is enabled but its integration is off, so every poll
+# is an empty success. Needs sources.is_configured from the federation sensor
+# (requires: D6).
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.federation-integration-disabled
+title: Federation source is enabled but its integration is not configured
+revision: 1
+fault: {class: ingest, mode: I-1, causes: [I-1.i]}
+lane: 2
+detection: event
+signals:
+  enabled:    {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
+  configured: {sample: {signal: federation_sources, key: sources.is_configured, by: [source]}}
+group_by: [source]
+when:
+  all:
+    - {fn: latest, signal: enabled, op: "==", value: true}
+    - {fn: latest, signal: configured, op: "==", value: false}
+for: 15m
+keep_firing_for: 5m
+advice:
+  summary: A federation source is switched on but its integration is off or unconfigured, so its polls return nothing.
+  fix: >-
+    In Settings, Integrations either turn the integration on and complete its
+    settings, or disable the matching federation source, so the two agree.
