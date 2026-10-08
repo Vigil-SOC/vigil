@@ -937,15 +937,14 @@ export default function Chat({
           onKeyDown={onKeyDown}
         />
         <div className="ci-row">
-          {caseId ? (
+          {caseId && !lockedCaseId ? (
             <span className="chat-case" data-testid="attached-case">
               <span>{caseId}</span>
-              {lockedCaseId ? null : (
-                <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
-              )}
+              <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
             </span>
           ) : null}
           <div className="ci-grow" />
+          {pinned && <span className="composer-note">Private to you · Ask only</span>}
           {loading ? (
             <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
           ) : (
@@ -960,21 +959,21 @@ export default function Chat({
     <>
     {pinned ? (
       <section className="case-composer" aria-label="Ask Vigil">
-        <div className="composer-modes" role="group" aria-label="Composer mode">
-          <button type="button" className="on" aria-pressed="true">Ask</button>
-          <button type="button" disabled title="Coming in a later release">Tell</button>
-          <button type="button" disabled title="Coming in a later release">Do</button>
-        </div>
-        <div className="chat-note">
-          <span>Private to you · Ask only</span>
-        </div>
         {messages.length > 0 && (
-          <button type="button" className="composer-fold" onClick={() => setThreadOpen((openThread) => !openThread)}>
+          <button type="button" className="composer-fold" aria-expanded={threadOpen} onClick={() => setThreadOpen((openThread) => !openThread)}>
+            <span className="composer-chev" aria-hidden="true">▾</span>
             {messages.length} message{messages.length === 1 ? '' : 's'} · {threadOpen ? 'hide' : 'show'}
           </button>
         )}
         {threadOpen && transcript}
-        {foot}
+        <div className="composer-box">
+          <div className="composer-modes" role="group" aria-label="Composer mode">
+            <button type="button" className="on" aria-pressed="true">Ask</button>
+            <button type="button" disabled title="Coming in a later release">Tell</button>
+            <button type="button" disabled title="Coming in a later release">Do</button>
+          </div>
+          {foot}
+        </div>
       </section>
     ) : (
     <aside

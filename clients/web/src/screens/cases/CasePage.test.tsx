@@ -211,7 +211,7 @@ describe('case page', () => {
     expect(within(header).getByText('Executing')).toBeInTheDocument()
     expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Now · step 3')).toBeInTheDocument()
+    expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     expect(within(now).getByText('who logged in')).toBeInTheDocument()
     const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
     expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
