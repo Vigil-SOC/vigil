@@ -34,7 +34,7 @@ Rules:
 
 | Variable | Example |
 |---|---|
-| `VIGIL_MEDIC_DOCKERPROXY_BIND` | `medic-dockerproxy:8472` (an alias on `medic-net`; not a wildcard) |
+| `VIGIL_MEDIC_DOCKERPROXY_BIND` | `medic-dockerproxy:8472` (an alias on `medic-private`; not a wildcard) |
 | `VIGIL_MEDIC_DOCKERPROXY_SOCKET` | default `/var/run/docker.sock` |
 
 It refuses to start (exit 2) if `AGENT_INTERNAL_TOKEN`, `VIGIL_TOOLS_TOKEN`,
@@ -68,7 +68,9 @@ the negative control); it skips without a Docker socket and must run in CI.
 `infra/docker/Dockerfile.medic-dockerproxy`: uid/gid 10003, read-only root
 filesystem, `HEALTHCHECK` running `check`. Run it with the socket mounted `:ro`
 and the socket's group added (`group_add`: the `docker` gid on Linux, 0 on
-Docker Desktop).
+Docker Desktop). On Compose that gid is `VIGIL_MEDIC_DOCKER_GID`, which
+`scripts/medic/enable-compose.sh` finds and writes to `compose.env`; it is the
+only name for it.
 
 ```
 docker build -f infra/docker/Dockerfile.medic-dockerproxy -t vigil-medic-dockerproxy .

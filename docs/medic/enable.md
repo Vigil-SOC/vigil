@@ -32,7 +32,7 @@ The script is the whole enable, and it is safe to re-run. It:
 
 It never prints a secret. It refuses to run if recreating the backend would leave it without a `JWT_SECRET_KEY`.
 
-After the script, every compose command that should keep Medic needs Medic's settings and overlay. The script prints the exact command:
+After the script, `./start.sh` (through `scripts/lib.sh`'s `dc`) and the console's service controls add Medic's overlay and settings themselves whenever `compose.env` exists, so a restart through them keeps Medic on its network. A `docker compose` command you type yourself needs them too. The script prints the exact command:
 
 ```bash
 docker compose --env-file .env --env-file ~/.vigil-medic/secrets/compose.env \
@@ -40,9 +40,11 @@ docker compose --env-file .env --env-file ~/.vigil-medic/secrets/compose.env \
   --profile medic up -d
 ```
 
+Without the overlay, the next `up` of the daemon or an agent takes it off Medic's network, and Medic reads DNS errors from then on: it goes blind, which it reports as "can't see", not as an incident.
+
 To rotate the password and API key, run `scripts/medic/enable-compose.sh --rotate`. The username stays the same.
 
-To turn Medic off, run `up` without Medic's files. The backend then reads the switch as false and shows **Off**. Medic's volume and data stay.
+To turn Medic off, delete `compose.env` (or set `VIGIL_MEDIC_ENABLED=false` in it) and run `up` without Medic's files. The backend then reads the switch as false and shows **Off**. Medic's volume and data stay.
 
 ## Helm (PROVISIONAL)
 
@@ -80,10 +82,42 @@ These steps need the chart's Medic templates (the Medic and gateway Deployments,
 
 ## Host-native (`start.sh`)
 
-Host-native Medic is opt-in only. It can reach the backend, Redis and Bifrost on loopback, so it doesn't meet the isolation rule (K1 T-14).
+Host-native Medic is opt-in only. It can reach the backend, Redis and Bifrost on loopback, so it doesn't meet the isolation rule (K1 T-14). `./start.sh -d` prints that warning every time Medic is on.
+
+**Before you start, check the host:**
+
+- **Not under DEV_MODE.** With `DEV_MODE` on, every backend request is an admin with no login, so `./start.sh -d` refuses to start Medic (K1 T-37) and says so. Vigil itself still starts.
+- **A supported OS.** Medic builds its own venv from `services/medic/uv.lock`. Its regex library (`google-re2`) ships prebuilt wheels only for **glibc 2.28 or later** (RHEL 8, Debian 10, Ubuntu 20.04 and later; the locked wheels are tagged `manylinux_2_27` x86_64 and `manylinux_2_26` aarch64) and **macOS 13 or later**, Python 3.12. There are no musl (Alpine) wheels. Elsewhere `uv` falls back to building from source, which needs a C++ compiler and the RE2/Abseil headers, and Medic usually doesn't start ("building its venv … failed").
+- **`./start.sh -d`, not foreground.** Only daemon mode runs Medic's restart loop.
+
+**Steps:**
 
 1. Set `VIGIL_MEDIC_ENABLED="true"` in the repo `.env`. The host-run backend reads the switch from there.
-2. Run `./start.sh -d`. The first run prints the one-time admin setup block and starts nothing until that setup is done. The block creates the user `vigil-medic`, the directories `/var/lib/vigil-medic` (mode `0700`) and `/opt/vigil-medic`, and one sudoers rule. The installer never creates the user silently.
-3. Run `./start.sh -d` again.
+2. Run `./start.sh -d`. With Medic on and its setup missing, it prints a one-time admin setup block, starts Vigil, and leaves Medic off. The installer and `start.sh` **never** create the OS user, its directories or the sudo rule: an admin runs the block, as printed. On Linux it looks like this (`<you>` is the user that runs Vigil):
+
+   ```bash
+   id vigil-medic >/dev/null 2>&1 || sudo useradd --system --user-group \
+       --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin vigil-medic
+   sudo install -d -o vigil-medic -g vigil-medic -m 0700 /var/lib/vigil-medic
+   sudo install -d -o <you> -m 0755 /opt/vigil-medic
+   echo '<you> ALL=(vigil-medic) NOPASSWD: /opt/vigil-medic/bin/medic-loop' | sudo tee /etc/sudoers.d/vigil-medic >/dev/null
+   sudo chmod 0440 /etc/sudoers.d/vigil-medic && sudo visudo -cf /etc/sudoers.d/vigil-medic
+   ```
+
+   On macOS the user is created with `dscl` instead (a hidden user and group with a free id below 500, shell `/usr/bin/false`, home `/var/empty`), and the data directory is `/Library/Application Support/vigil-medic`. Use the block `start.sh` prints: it picks the free id on your machine, and it skips the user lines if `vigil-medic` already exists, so an existing user is never re-numbered.
+
+   The sudo rule lets `<you>` run exactly one program as `vigil-medic`: Medic's restart loop. It also means that anyone who controls `<you>` can act as `vigil-medic` (disclosed in K4).
+3. Run `./start.sh -d` again. Before starting Medic it checks, as `vigil-medic`, that Medic can't read Vigil's secrets: `~/.vigil/master.key`, `secrets.enc`, `jwt_secret` and the repo `.env`. If it can read any of them, Medic isn't started and the exact fix is printed, for example:
+
+   ```
+   Medic not started: vigil-medic can read Vigil secrets (privilege-model check 8):
+     /home/<you>/vigil/.env
+   Make each readable by its owner only, then ./start.sh -d again:
+     chmod 0600 /home/<you>/vigil/.env
+   ```
+
+   A `.env` copied from `env.example` is usually `0644`, so expect this once.
+
+Medic then runs as `vigil-medic` from `/opt/vigil-medic`, with install shape `start_sh`, and reads the agent worker's readiness at `127.0.0.1:6990` (or `AGENT_HEALTH_PORT`, if you changed it). Its log is `logs/medic.log`; `./shutdown_all.sh` stops it.
 
 Host-native Medic doesn't use the gateway yet, so no service account is needed. If a host-native gateway is added later, it uses the same `ensure` command with Vigil's venv: `venv/bin/python -m core.auth.service_account ensure <name> < password-file`.
