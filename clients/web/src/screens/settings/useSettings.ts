@@ -21,6 +21,7 @@ import api, {
   type PlatformDatabaseProxyConfig,
 } from '../../services/api'
 import { loadCustomIntegrations } from '../../config/integrations'
+import type { LastTest } from './integrationHealth'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -903,6 +904,8 @@ export interface IntegrationsConfig {
   integrations: Record<string, Record<string, unknown>>
   // Per-integration {secretField: isSet} — booleans only, never the values.
   secrets_set: Record<string, Record<string, boolean>>
+  // Result of the last Test per integration; untested ids are absent.
+  last_test: Record<string, LastTest>
 }
 
 export function useIntegrationsConfig() {
@@ -910,6 +913,7 @@ export function useIntegrationsConfig() {
     enabled_integrations: [],
     integrations: {},
     secrets_set: {},
+    last_test: {},
   })
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
@@ -931,6 +935,7 @@ export function useIntegrationsConfig() {
               enabled_integrations: d.enabled_integrations || [],
               integrations: d.integrations || {},
               secrets_set: d.secrets_set || {},
+              last_test: d.last_test || {},
             })
             setPhase('ready')
           })
@@ -961,9 +966,10 @@ export function useIntegrationsConfig() {
           enabled_integrations: d.enabled_integrations ?? enabled_integrations,
           integrations: d.integrations ?? {},
           secrets_set: d.secrets_set ?? config.secrets_set,
+          last_test: d.last_test ?? config.last_test,
         })
       } catch {
-        setConfig({ enabled_integrations, integrations, secrets_set: config.secrets_set })
+        setConfig({ ...config, enabled_integrations, integrations })
       }
     },
     [config],
@@ -977,7 +983,7 @@ export function useIntegrationsConfig() {
         : config.enabled_integrations.filter((id) => id !== integrationId)
       const integrations = config.integrations
       await configApi.setIntegrations({ enabled_integrations, integrations })
-      setConfig({ enabled_integrations, integrations, secrets_set: config.secrets_set })
+      setConfig({ ...config, enabled_integrations, integrations })
     },
     [config],
   )
