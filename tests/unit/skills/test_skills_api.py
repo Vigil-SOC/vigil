@@ -359,7 +359,7 @@ def test_saving_a_builtin_as_a_copy_carries_the_folder_at_version_one(operator):
 
 def test_a_copy_refuses_bad_sources_taken_names_and_leaves_nothing_behind(operator):
     client, root = operator
-    body = {"description": "Mine.", "body": "", "source": FOLDER_SKILL}
+    body = {"description": "Mine.", "body": "Steps.", "source": FOLDER_SKILL}
     assert (
         client.post(
             "/api/skills", json={"name": "x", **body, "source": "nope"}
@@ -376,6 +376,16 @@ def test_a_copy_refuses_bad_sources_taken_names_and_leaves_nothing_behind(operat
     _write(client, "taken")
     assert client.post("/api/skills", json={"name": "taken", **body}).status_code == 400
     assert [p.name for p in root.iterdir()] == ["taken"]
+
+
+@pytest.mark.parametrize("blank", ["", "   \n"])
+def test_a_blank_body_is_refused_with_422_and_nothing_is_written(operator, blank):
+    client, root = operator
+    resp = client.post(
+        "/api/skills", json={"name": "empty-steps", "description": "d", "body": blank}
+    )
+    assert resp.status_code == 422
+    assert list(root.iterdir()) == []
 
 
 def test_a_stale_version_is_refused_with_409_and_nothing_is_written(operator):
@@ -440,7 +450,7 @@ def test_a_copy_leaves_hidden_files_behind_and_lists_what_it_copied(
     listed = client.get("/api/skills/wip").json()["files"]
     resp = client.post(
         "/api/skills",
-        json={"name": "wip-copy", "description": "d", "body": "", "source": "wip"},
+        json={"name": "wip-copy", "description": "d", "body": "Steps.", "source": "wip"},
     )
     assert resp.status_code == 200
     copied = client.get("/api/skills/wip-copy").json()["files"]

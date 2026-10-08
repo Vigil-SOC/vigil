@@ -49,7 +49,7 @@ class SIEMIngestionAdapter:
         settle_delay: Optional[timedelta] = None,
     ) -> None:
         self.name = name
-        self._integration_id = integration_id
+        self.integration_id = integration_id
         self._default_interval = default_interval
         self._service_factory = service_factory
         self._service: Optional[Any] = None
@@ -67,7 +67,7 @@ class SIEMIngestionAdapter:
         self._settle_delay = settle_delay
 
     def is_configured(self) -> bool:
-        return is_integration_enabled(self._integration_id)
+        return is_integration_enabled(self.integration_id)
 
     def default_interval(self) -> int:
         return self._default_interval

@@ -154,10 +154,10 @@ async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
 def _parse_json(raw: bytes) -> Dict[str, Any]:
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid JSON body: {exc}",
+            detail="Invalid JSON body",
         )
     if not isinstance(payload, dict):
         raise HTTPException(

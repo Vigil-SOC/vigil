@@ -92,7 +92,9 @@ class IntegrationDescriptor:
     mcp_server_names: Tuple[str, ...] = ()
     fields: Tuple[IntegrationField, ...] = ()
     # Optional console URL. ``{external_id}`` and the descriptor's non-secret
-    # field names. No vendor ships one; evidence refs win when they are links.
+    # field names. Set only where the stored ``external_id`` is the vendor's
+    # own alert id and the vendor documents the URL; cite the doc beside it.
+    # Evidence refs win when they are links.
     console_link_template: Optional[str] = None
 
     @property
