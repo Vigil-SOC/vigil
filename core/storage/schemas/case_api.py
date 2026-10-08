@@ -75,9 +75,10 @@ class CaseListResponse(BaseModel):
 
 
 class CaseInvestigationRef(BaseModel):
-    """One investigation on the case page. Newest first on the detail read."""
+    """One run on the case page: an investigation, or a run started on the case
+    with no investigation row (``investigation_id`` null). Newest first."""
 
-    investigation_id: str
+    investigation_id: Optional[str] = None
     status: str
     workflow_id: str
     run_id: str
@@ -102,6 +103,7 @@ class CaseLinkedFinding(BaseModel):
     """One finding the case already links, and the source door when one exists."""
 
     finding_id: str
+    title: Optional[str] = None
     description: Optional[str] = None
     source_link: Optional[str] = None
 
@@ -125,7 +127,7 @@ class CaseRecordRow(BaseModel):
 
 
 class CaseRecordResponse(BaseModel):
-    """The merged record. ``run_id`` is absent when the case has no investigation."""
+    """The merged record. ``run_id`` is absent when the case has no run."""
 
     run_id: Optional[str] = None
     investigation_id: Optional[str] = None

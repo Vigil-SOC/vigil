@@ -1962,6 +1962,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach Case Document
+         * @description Keep the original of a document attached to a hunt, as ``document`` evidence.
+         *
+         *     Extraction already happened, at ``/workflows/threat-hunt/document``, so this
+         *     stores the file and says nothing about its text.
+         */
+        post: operations["post_api_cases_case_id_attachments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/close": {
         parameters: {
             query?: never;
@@ -2308,8 +2331,8 @@ export interface paths {
          *
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
-         *     ``case_id`` column. The run is ``run_id_for`` of the latest investigation,
-         *     not the shadow adjudication.
+         *     ``case_id`` column. The run is the case's latest, an investigation's
+         *     ``run_id_for`` or a run started on the case, never the shadow adjudication.
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -5648,6 +5671,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/overview/alerts/{finding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Overview Alert
+         * @description One alert in the feed item's shape, including noise-marked and older ones.
+         */
+        get: operations["get_api_overview_alerts_finding_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reasoning/investigation/{investigation_id}/interactions": {
         parameters: {
             query?: never;
@@ -7919,6 +7962,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Hunt Document
+         * @description Read an attached document for a hunt. Stateless: nothing is stored here, and
+         *     the text is what the caller sends as ``document`` on execute.
+         *
+         *     Over the document cap the text is condensed on the summarization model, and
+         *     its first line says so.
+         */
+        post: operations["post_api_workflows_threat-hunt_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/threat-hunt/feed-proposals": {
         parameters: {
             query?: never;
@@ -8170,6 +8237,23 @@ export interface paths {
         put?: never;
         /** Record Phase */
         post: operations["post_internal_runs_run_id_phases"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/runs/{run_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Status */
+        post: operations["post_internal_runs_run_id_status"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8450,6 +8534,18 @@ export interface components {
             /** Services */
             services: string[];
         };
+        /** Body_attach_case_document_api_cases__case_id__attachments_post */
+        Body_attach_case_document_api_cases__case_id__attachments_post: {
+            /** File */
+            file: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Pages
+             * @default 1
+             */
+            pages: number;
+        };
         /** Body_generate_from_file_api_custom_integrations_generate_upload_post */
         Body_generate_from_file_api_custom_integrations_generate_upload_post: {
             /**
@@ -8476,6 +8572,11 @@ export interface components {
              * @default json
              */
             format: string;
+        };
+        /** Body_read_hunt_document_api_workflows_threat_hunt_document_post */
+        Body_read_hunt_document_api_workflows_threat_hunt_document_post: {
+            /** File */
+            file: string;
         };
         /** Body_upload_and_ingest_file_api_ingest_upload_post */
         Body_upload_and_ingest_file_api_ingest_upload_post: {
@@ -8927,7 +9028,8 @@ export interface components {
         };
         /**
          * CaseInvestigationRef
-         * @description One investigation on the case page. Newest first on the detail read.
+         * @description One run on the case page: an investigation, or a run started on the case
+         *     with no investigation row (``investigation_id`` null). Newest first.
          */
         CaseInvestigationRef: {
             /**
@@ -8943,7 +9045,7 @@ export interface components {
             /** Created At */
             created_at?: string | null;
             /** Investigation Id */
-            investigation_id: string;
+            investigation_id?: string | null;
             /**
              * Iteration Count
              * @default 0
@@ -8977,6 +9079,8 @@ export interface components {
             finding_id: string;
             /** Source Link */
             source_link?: string | null;
+            /** Title */
+            title?: string | null;
         };
         /** CaseListResponse */
         CaseListResponse: {
@@ -9107,7 +9211,7 @@ export interface components {
         };
         /**
          * CaseRecordResponse
-         * @description The merged record. ``run_id`` is absent when the case has no investigation.
+         * @description The merged record. ``run_id`` is absent when the case has no run.
          */
         CaseRecordResponse: {
             /** Investigation Id */
@@ -10191,6 +10295,8 @@ export interface components {
             status?: string | null;
             /** Timestamp */
             timestamp?: string | null;
+            /** Title */
+            title?: string | null;
             /** Updated At */
             updated_at?: string | null;
         };
@@ -11732,6 +11838,18 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** StatusUpdate */
+        StatusUpdate: {
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "paused";
+        };
         /**
          * SubmitFeedbackRequest
          * @description Request model for submitting feedback on an AI decision.
@@ -12450,6 +12568,8 @@ export interface components {
             case_id?: string | null;
             /** Context */
             context?: string | null;
+            /** Document */
+            document?: string | null;
             /** Finding Id */
             finding_id?: string | null;
             /** Hypothesis */
@@ -15740,6 +15860,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_cases_case_id_attachments: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_attach_case_document_api_cases__case_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseEvidenceSchema"];
                 };
             };
             /** @description Validation Error */
@@ -22287,6 +22444,39 @@ export interface operations {
             };
         };
     };
+    get_api_overview_alerts_finding_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_reasoning_investigation_investigation_id_interactions: {
         parameters: {
             query?: {
@@ -26120,6 +26310,41 @@ export interface operations {
             };
         };
     };
+    "post_api_workflows_threat-hunt_document": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_read_hunt_document_api_workflows_threat_hunt_document_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_workflows_threat-hunt_feed-proposals": {
         parameters: {
             query?: {
@@ -26549,6 +26774,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PhaseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_status: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatusUpdate"];
             };
         };
         responses: {

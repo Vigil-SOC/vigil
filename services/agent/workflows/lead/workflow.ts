@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import pLimit from "p-limit";
-import type { DispatchPayload, NewEvent, RunKind, RunOutcome } from "../../contracts/events.js";
+import type { DispatchPayload, NewEvent, RunKind, RunOutcome, UnboundPayload } from "../../contracts/events.js";
 import { journalAnswers, noAnswers, type Answers } from "../../core/answers.js";
 import { announceOpen, noAnnounce, type Announce } from "../../core/checkpoints.js";
 import { commitTurn, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
 import { drain, streamTurn } from "../../core/stream.js";
-import { SpecError, type RoleSpec, type RunSpec } from "../../core/spec.js";
+import { SpecError, unboundCapabilities, type RoleSpec, type RunSpec } from "../../core/spec.js";
 import { topologyFor, type Assignment, type Round } from "../../core/topology.js";
 import { scrub } from "../../core/security.js";
 import { CALL_BUDGET, callsOf } from "../hunt/adapters.js";
@@ -32,7 +32,7 @@ export interface FindingPayload {
   answer: unknown;
 }
 
-export type LeadKinds = { decision: DecisionPayload; finding: FindingPayload };
+export type LeadKinds = { decision: DecisionPayload; finding: FindingPayload; unbound: UnboundPayload };
 type Event = NewEvent<LeadKinds>;
 
 export interface LeadOptions {
@@ -310,6 +310,10 @@ function event(options: LeadOptions, kind: Event["kind"], payload: Event["payloa
 }
 
 async function open(harness: Harness<LeadKinds>, options: LeadOptions): Promise<void> {
+  // Journalled with the opening, so a resume (which skips open) cannot declare them twice.
+  const unbound = unboundCapabilities(options.spec.roles, options.spec.tools).map((capability) =>
+    event(options, "unbound", { capability, reason: `no tool in this deployment answers ${capability}` }),
+  );
   await harness.state.append(options.run_id, [
     event(options, "run", {
       run_kind: options.run_kind,
@@ -319,6 +323,7 @@ async function open(harness: Harness<LeadKinds>, options: LeadOptions): Promise<
       tenant_id: null,
       started_by: options.started_by ?? "worker",
     }),
+    ...unbound,
   ]);
 }
 

@@ -11,8 +11,8 @@ WARNINGS=0
 command -v docker &>/dev/null || { echo "Warning: Docker not installed."; WARNINGS=$((WARNINGS+1)); }
 if ! command -v node &>/dev/null; then
     echo "Warning: Node.js not installed."; WARNINGS=$((WARNINGS+1))
-elif ! node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" 2>/dev/null; then
-    echo "Warning: Node.js 18+ required. Found: $(node --version)"; WARNINGS=$((WARNINGS+1))
+elif ! node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)" 2>/dev/null; then
+    echo "Warning: Node.js 20+ required. Found: $(node --version)"; WARNINGS=$((WARNINGS+1))
 fi
 [ "$WARNINGS" -gt 0 ] && echo ""
 

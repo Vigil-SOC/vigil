@@ -1,4 +1,4 @@
-/* Shared kit: level badge, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
+/* Shared kit: level badge, meter bar, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
 .level-pill {
   display: inline-flex;
   align-items: center;
@@ -94,6 +94,18 @@
   line-height: 1.5;
   color: var(--tx1);
 }
+
+.meter-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg4);
+  overflow: hidden;
+}
+
+.meter-fill { height: 100%; }
+.meter-fill.good { background: var(--good); }
+.meter-fill.fair { background: var(--fair); }
+.meter-fill.poor { background: var(--poor); }
 
 @keyframes kit-blink {
   0%, 100% { opacity: 1; }

@@ -364,6 +364,7 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
         entries.append(
             CaseLinkedFinding(
                 finding_id=row.finding_id,
+                title=row.title,
                 description=row.description,
                 source_link=resolve_source_link(
                     {
@@ -401,7 +402,8 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     case = dict(loaded)
     investigations = case_records_service.list_case_investigations(session, case_id)
     closure = session.get(CaseClosureInfo, case_id)
-    case.update(detail_fields(case.get("status"), investigations, closure))
+    runs = case_records_service.list_case_runs(session, case_id)
+    case.update(detail_fields(case.get("status"), investigations, closure, runs))
     case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 

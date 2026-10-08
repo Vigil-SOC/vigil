@@ -35,11 +35,16 @@ EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
 
-# The investigate arch names these on the lead. Compose phases never declare
-# case_records, and a workflow that omitted get_finding still needs the lead to
-# fetch the finding it was opened on.
-INVESTIGATE_TOOLS = ("case_records", "get_finding")
-CASE_RECORDS_BOUNDS = {"max_rows": 100, "timeout_ms": 15_000}
+# What the investigate arch's lead asks for. Only telemetry_search needs an
+# integration; the rest are native tools. Naming them as capabilities is what lets
+# a missing one reach the run as a blind spot rather than a log line.
+INVESTIGATE_CAPABILITIES = (
+    "case_records",
+    "get_finding",
+    "telemetry_search",
+    "findings_search",
+    "indicator_lookup",
+)
 
 
 def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, Any]]:
@@ -124,6 +129,8 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     # One candidate and no fallback: episodic memory is Vigil's own tier, so a
     # deployment either carries it or has no history to offer.
     "entity_recall": (Candidate(None, ("recall_entity",)),),
+    "case_records": (Candidate(None, ("case_records",)),),
+    "get_finding": (Candidate(None, ("get_finding",)),),
 }
 
 
@@ -140,6 +147,7 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # recall answers with one envelope, and the injected `limit` is in
     # RECALL_IGNORED_ARGS because memory caps each list itself.
     "entity_recall": {"timeout_ms": 30_000, "max_rows": 200},
+    "case_records": {"max_rows": 100, "timeout_ms": 15_000},
 }
 
 
@@ -262,21 +270,17 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
     return resolved
 
 
-# Phase-declared tools, plus the investigate lead's. Extra names on a compose
-# config are harmless — compose grants per phase. A catalogue handed to the
-# registry would widen every grant to everything, which is deny-by-default inverted.
+# The tools the phases name, as this deployment carries them. A catalogue handed
+# to the registry would widen every grant to everything, which is deny-by-default
+# inverted. One the deployment lacks is dropped here and reported by _drop_missing.
 def _tools_of(
-    phases: List[Dict[str, Any]], registry: Optional["MCPRegistry"]
+    phases: List[Dict[str, Any]], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    catalogue = _tool_catalogue(registry)
     wanted: List[str] = []
     for phase in phases:
         for tool in phase["tools"]:
             if tool not in wanted:
                 wanted.append(tool)
-    for name in INVESTIGATE_TOOLS:
-        if name not in wanted:
-            wanted.append(name)
 
     tools: List[Dict[str, Any]] = []
     for name in wanted:
@@ -286,14 +290,13 @@ def _tools_of(
             # does not carry should lose that tool, not fail to run at all.
             logger.warning("playbook names unknown tool %s; dropping it", name)
             continue
-        extra = CASE_RECORDS_BOUNDS if name == "case_records" else {}
         tools.append(
             {
                 "id": name,
                 "kind": REMOTE,
                 "description": entry.get("description", ""),
                 "parameters": entry.get("input_schema") or {},
-                **extra,
+                **CAPABILITY_BOUNDS.get(name, {}),
             }
         )
     return tools
@@ -306,9 +309,17 @@ def _budgets(phases: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"max_calls": max(len(phases), 1) * per_phase, **DEFAULT_SPEND}
 
 
+# A tool a phase named and this deployment lacks leaves its grant and is recorded
+# on the phase, so the run journals a blind spot rather than a log line.
 def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
     for phase in phases:
+        missing = [tool for tool in phase["tools"] if tool not in declared]
         phase["tools"] = [tool for tool in phase["tools"] if tool in declared]
+        if missing:
+            phase["unavailable"] = [
+                {"tool": tool, "reason": f"no tool in this deployment answers {tool}"}
+                for tool in missing
+            ]
 
 
 # Only ART execute is gated. The id must be one config.tools actually carries:
@@ -341,7 +352,18 @@ def resolve(
             f"{workflow_id} declares no phases; there is nothing to run"
         )
 
-    tools = _tools_of(phases, registry)
+    catalogue = _tool_catalogue(registry)
+    # A lead holds what it asked for; compose grants per phase and has no lead.
+    lead = (
+        _bound_capabilities(list(INVESTIGATE_CAPABILITIES), catalogue)
+        if definition.run_kind == "investigate"
+        else []
+    )
+    tools = lead + [
+        tool
+        for tool in _tools_of(phases, catalogue)
+        if tool["id"] not in {held["id"] for held in lead}
+    ]
     _drop_missing(phases, [tool["id"] for tool in tools])
 
     playbook = {
@@ -359,7 +381,11 @@ def resolve(
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
-        "budgets": _budgets(phases),
+        "budgets": (
+            dict(INVESTIGATE_BUDGETS)
+            if definition.run_kind == "investigate"
+            else _budgets(phases)
+        ),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
         # ART execute parks until a human approves. Other grants, and a compose
@@ -410,21 +436,29 @@ ROOT_CAUSE_MAX_CALLS = 1024
 # keys, and a turn is the hunt's unit rather than the harness's.
 HUNT_THRESHOLDS = {"max_iterations": HUNT_ITERATIONS}
 
+# An investigation has no phases to count: its lead decides until it concludes, so
+# it gets as many decisions as a hunt gets iterations, each with a full tool loop.
+INVESTIGATE_BUDGETS = {
+    "max_calls": HUNT_ITERATIONS * (int(DEFAULT_RUNTIME["max_turns"]) + EMIT_ATTEMPTS),
+    **DEFAULT_SPEND,
+}
+
 
 # What this deployment can and cannot answer, without resolving a whole playbook. The
 # console asks before a run starts, so the deployment gap is told before the spend.
 def capability_report(
     registry: Optional["MCPRegistry"] = None,
+    needs: Tuple[str, ...] = HUNT_CAPABILITIES,
 ) -> Dict[str, List[str]]:
     catalogue = _tool_catalogue(registry)
     bound = {
         tool["provides"]
-        for tool in _bound_capabilities(list(HUNT_CAPABILITIES), catalogue)
+        for tool in _bound_capabilities(list(needs), catalogue)
         if tool.get("provides")
     }
     return {
-        "bound": [name for name in HUNT_CAPABILITIES if name in bound],
-        "unbound": [name for name in HUNT_CAPABILITIES if name not in bound],
+        "bound": [name for name in needs if name in bound],
+        "unbound": [name for name in needs if name not in bound],
     }
 
 
