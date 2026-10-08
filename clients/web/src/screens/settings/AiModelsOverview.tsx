@@ -137,12 +137,22 @@ function ProviderCard({ name, keyCount, stays, isDefault, routable }: {
 }
 
 /* ---------------- Model for each agent ---------------- */
-interface RowState { inherit: boolean; providerId: string; modelId: string }
+// '' is the model's own default effort: the key is left out of settings.
+type Effort = '' | 'low' | 'medium' | 'high'
+const EFFORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'default', label: 'Model default' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+]
+interface RowState { inherit: boolean; providerId: string; modelId: string; effort: Effort }
+
+const savedEffort = (a: ComponentAssignment | undefined): Effort => (a?.settings?.effort as Effort) || ''
 
 const rowFor = (c: string, a: ComponentAssignment | undefined): RowState =>
   a
-    ? { inherit: false, providerId: a.provider_id, modelId: a.model_id }
-    : { inherit: c !== CHAT_DEFAULT_KEY, providerId: '', modelId: '' }
+    ? { inherit: false, providerId: a.provider_id, modelId: a.model_id, effort: savedEffort(a) }
+    : { inherit: c !== CHAT_DEFAULT_KEY, providerId: '', modelId: '', effort: '' }
 
 interface CustomAgentRow {
   id: string
@@ -183,8 +193,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       }
       if (!next.providerId || !next.modelId) return
       const a = assignments[component]
-      if (a && a.provider_id === next.providerId && a.model_id === next.modelId) return
-      await assign(component, next.providerId, next.modelId)
+      if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort(a) === next.effort) return
+      // Other settings keys are carried over; the PUT replaces the whole object.
+      const rest = { ...a?.settings }
+      delete rest.effort
+      await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
@@ -195,7 +208,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const changes = (component: string, next: RowState) => {
     const a = assignments[component]
     if (next.inherit) return a !== undefined
-    return !!next.providerId && !!next.modelId && (!a || a.provider_id !== next.providerId || a.model_id !== next.modelId)
+    return (
+      !!next.providerId &&
+      !!next.modelId &&
+      (!a || a.provider_id !== next.providerId || a.model_id !== next.modelId || savedEffort(a) !== next.effort)
+    )
   }
 
   const update = (component: string, patch: Partial<RowState>) => {
@@ -223,7 +240,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       wide
       id={AGENT_MODEL_TABLE_ID}
       title="Model for each agent"
-      desc="Pick a model per agent, or leave it on the default. Unassigned rows use Chat (Default). Workflow runs use the investigation assignment."
+      desc="Pick a model per agent, and optionally how hard it thinks, or leave it on the default. Unassigned rows use Chat (Default). Workflow runs use the investigation assignment."
     >
       {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading AI config…" />}
       {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
@@ -275,14 +292,24 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                         —{' '}
                         <InfoTip label="About the fallback" text="A fallback is set on custom agents, not on these components." />
                       </td>
-                      <td className="aim-muted">—</td>
+                      <td style={{ minWidth: 140 }}>
+                        {row.inherit ? (
+                          <span className="aim-muted">—</span>
+                        ) : (
+                          <Select
+                            value={row.effort || 'default'}
+                            options={EFFORT_OPTIONS}
+                            onSelect={(v) => update(c, { effort: v === 'default' ? '' : (v as Effort) })}
+                          />
+                        )}
+                      </td>
                       <td className="aim-nowrap"><NotMeasured /></td>
                       <td>
                         <Toggle
                           label={`${meta.label} uses the default`}
                           checked={row.inherit}
                           disabled={c === CHAT_DEFAULT_KEY}
-                          onChange={(on) => update(c, { inherit: on, ...(on ? { providerId: '', modelId: '' } : {}) })}
+                          onChange={(on) => update(c, { inherit: on, ...(on ? { providerId: '', modelId: '', effort: '' as Effort } : {}) })}
                         />
                       </td>
                     </tr>
