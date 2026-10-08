@@ -15,12 +15,15 @@ Compose invariants worth preserving:
   ``start.sh`` created via ``scripts/lib.sh::dc``.
 - ``cwd`` is the repo root and the compose file is passed by absolute path, so
   behaviour doesn't depend on where the backend was launched from.
+- Once Medic is enabled on Compose, every call also carries Medic's overlay
+  and settings, exactly as ``scripts/lib.sh::dc`` does (``_medic_compose``).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "infra" / "docker" / "docker-compose.yml"
+# Medic on Compose (V1-4): see _medic_compose().
+MEDIC_OVERLAY = REPO_ROOT / "infra" / "docker" / "medic" / "docker-compose.medic.yml"
+_MEDIC_SETTING = re.compile(r"^(VIGIL_MEDIC_[A-Z0-9_]*)=(.*)$")
 
 
 # postgres/redis/bifrost are stoppable=False on purpose: a UI stop button on
@@ -159,6 +165,42 @@ def docker_available() -> tuple[bool, str]:
     return True, r.stdout.strip()
 
 
+def _medic_compose(env: Dict[str, str]) -> List[str]:
+    """Medic's overlay and settings, once scripts/medic/enable-compose.sh has run.
+
+    The same rule as ``scripts/lib.sh dc``: with ``<secrets dir>/compose.env``
+    and the overlay both present, add ``-f <overlay>`` (then the operator's
+    ``VIGIL_MEDIC_COMPOSE_OVERRIDE`` files) and put compose.env's
+    ``VIGIL_MEDIC_*`` lines into ``env``, over the backend's own .env values.
+    Without it, a restart from here would drop the agents off medic-net and
+    leave Medic blind. Returns the extra ``-f`` arguments; updates ``env``.
+    """
+    secrets_dir = env.get("VIGIL_MEDIC_SECRETS_DIR") or str(
+        Path(env.get("HOME") or Path.home()) / ".vigil-medic" / "secrets"
+    )
+    settings = Path(secrets_dir) / "compose.env"
+    if not (settings.is_file() and MEDIC_OVERLAY.is_file()):
+        return []
+    try:
+        text = settings.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning(
+            "Can't read %s (%s); Compose runs without Medic's overlay",
+            settings,
+            type(e).__name__,
+        )
+        return []
+    for line in text.splitlines():
+        match = _MEDIC_SETTING.match(line)
+        if match:
+            env[match.group(1)] = match.group(2)
+    files = ["-f", str(MEDIC_OVERLAY)]
+    for extra in env.get("VIGIL_MEDIC_COMPOSE_OVERRIDE", "").split(":"):
+        if extra:
+            files += ["-f", extra]
+    return files
+
+
 def _compose(
     args: List[str], profile: Optional[str], timeout: int
 ) -> subprocess.CompletedProcess:
@@ -168,8 +210,9 @@ def _compose(
     # Containers reach the host-native Ollama via host.docker.internal; the
     # ambient OLLAMA_URL is the host-side value. See ollama_process.
     env["OLLAMA_URL"] = container_base_url()
+    medic_files = _medic_compose(env)
     return subprocess.run(
-        [*_dc_cmd(), "-f", str(COMPOSE_FILE), *args],
+        [*_dc_cmd(), "-f", str(COMPOSE_FILE), *medic_files, *args],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
