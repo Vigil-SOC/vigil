@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import (
@@ -75,6 +75,14 @@ class SkillWriteRequest(BaseModel):
     source: Optional[str] = None
     # The version the drawer opened; an overwrite is refused if it has moved.
     version: Optional[int] = None
+
+    # Write-time only: skills already on disk with an empty body still load.
+    @field_validator("body")
+    @classmethod
+    def _body_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Steps cannot be empty")
+        return value
 
 
 def _response(skill: Skill) -> SkillResponse:

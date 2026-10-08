@@ -528,9 +528,11 @@ export const agentsApi = {
     api.patch(`/agents/custom/${agent_id}`, data),
   deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
   getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
-  // built-ins are never mutated; a fork is a new editable copy
-  forkAgent: (source_agent_id: string, new_name?: string) =>
-    api.post(`/agents/${source_agent_id}/fork`, { new_name }),
+  // any agent, built-in or custom, with its prompt, model and fallback
+  getAgent: (agent_id: string) => api.get(`/agents/agents/${agent_id}`),
+  // built-ins are never mutated; a fork is a new editable copy, with these fields replacing the source's
+  forkAgent: (source_agent_id: string, overrides: Partial<CustomAgentPayload> = {}) =>
+    api.post(`/agents/${source_agent_id}/fork`, overrides),
 
   generateCustom: (data: {
     description: string
