@@ -61,11 +61,10 @@ async def test_canary_per_family_absent_from_sink_and_log() -> None:
         assert case["secret"] not in log, case["id"]
     samples = rig.sink.of("sample")
     assert len(samples) == 5 * len(CASES)
-    assert all(
-        s["redaction"]["hits"] >= 1
-        for s in samples
-        if s["outcome"] == "error" or s["values"][0]["type"] == "text"
-    )
+    # Every planted variant must register a hit: label_safe would hide a miss in
+    # a label, enum or instance from the "not in sink" check (review S4).
+    missed = [s for s in samples if s["redaction"]["hits"] < 1]
+    assert missed == []
     rig.assert_all_valid()
 
 
@@ -152,3 +151,18 @@ def test_production_default_is_the_redaction_choke() -> None:
         "target": {"service": "backend", "shape": "helm"},
     }
     assert pipeline.choke(draft)["redaction"]["version"] == "k2min-1"
+
+
+async def test_userinfo_in_a_label_shaped_value_is_redacted() -> None:
+    # Review S1: "user:pw@host" fits the label pattern, so label_safe keeps it.
+    reading = Reading(
+        "api_health",
+        "backend",
+        instance="vigil:canaryUserinfo0032@agent-worker:6990",
+        values=[Value.flag("ok", True, {"via": ":canaryUserinfo0033@redis:6379"})],
+    )
+    rig = Rig(choke=None, sensors=[FakeSensor("ui.one", readings=[reading])])
+    await rig.tick()
+    sample = rig.sink.of("sample")[0]
+    assert "canaryUserinfo" not in json.dumps(rig.sink.observations)
+    assert sample["redaction"]["hits"] == 2
