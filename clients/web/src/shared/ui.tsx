@@ -652,16 +652,18 @@ export function SettingsCard({
   desc,
   actions,
   wide,
+  id,
   children,
 }: {
   title: ReactNode
   desc?: ReactNode
   actions?: ReactNode
   wide?: boolean
+  id?: string
   children: ReactNode
 }) {
   return (
-    <section className={`card card-sq settings-card${wide ? ' wide' : ''}`}>
+    <section id={id} className={`card card-sq settings-card${wide ? ' wide' : ''}`}>
       <div className="card-h">
         <div className="settings-card-head">
           <h3>{title}</h3>

@@ -592,6 +592,9 @@
 .case-page .case-stopped b { flex-shrink: 0; font-weight: 700; color: var(--tx1); }
 .case-page .case-stopped .clamp2 { min-width: 0; color: var(--tx2); overflow-wrap: anywhere; }
 
+.case-page .watch-link { align-self: flex-start; flex-shrink: 0; }
+.case-page .case-stopped .watch-link { margin-left: auto; align-self: center; }
+
 .case-page .case-later {
   align-items: center;
   padding: 12px 18px;

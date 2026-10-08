@@ -103,6 +103,8 @@ export interface HuntFold {
   outcome: string | null
   reason: string
   costUsd: number | null
+  /** What this run was granted, extensions included; null when the run row carries no budgets. */
+  maxCostUsd: number | null
 }
 
 export interface LeadFold {
@@ -147,6 +149,45 @@ export function explanationWord(status: string, supports: number, weakens: numbe
 export function wordDisplay(word: string): string {
   const text = word.replace(/_/g, ' ')
   return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED'] as const
+type HuntAction = (typeof HUNT_ACTIONS)[number]
+
+function isHuntAction(token: string): token is HuntAction {
+  return (HUNT_ACTIONS as readonly string[]).includes(token)
+}
+
+/** A lead's decision action in plain words; an unknown token reads as a sentence, never the raw enum. */
+export function actionWords(token: string): string {
+  if (!isHuntAction(token)) return wordDisplay(token.toLowerCase())
+  switch (token) {
+    case 'INVESTIGATE':
+      return 'Look into a new lead'
+    case 'EXPAND':
+      return 'Widen the search'
+    case 'PIVOT':
+      return 'Switch to a different angle'
+    case 'DEEPEN':
+      return 'Dig deeper into the same lead'
+    case 'ABANDON':
+      return 'Rule out an explanation'
+    case 'VALIDATE':
+      return 'Check an explanation against the evidence'
+    case 'CHECKPOINT':
+      return 'Stop to ask you'
+    case 'CONCLUDE':
+      return 'Wrap up and report'
+    // The label core/workflows/hunt_preflight.py gives HANDOFF_IR.
+    case 'HANDOFF_IR':
+      return 'Start incident response on a proven explanation'
+    case 'STALLED':
+      return 'Stalled, no decision made'
+    default: {
+      const unhandled: never = token
+      return unhandled
+    }
+  }
 }
 
 const ADDED_BY: Record<string, string> = {
@@ -289,7 +330,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
     return [{
-      doing: str(o.query_intent) || str(o.action),
+      doing: str(o.query_intent) || actionWords(str(o.action)),
       worker: str(o.worker_agent_id),
       at: typeof o.created_at === 'string' ? o.created_at : null,
       iteration: num(o.iteration),
@@ -333,6 +374,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
         }]
       })
     : []
+  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
@@ -348,6 +390,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
+    maxCostUsd: budgets ? num(budgets.max_cost_usd) : null,
   }
 }
 
@@ -357,7 +400,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
   const rows = decisions.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
-    return [{ doing: str(o.action), worker: str(o.worker), at: null, iteration: null }]
+    return [{ doing: actionWords(str(o.action)), worker: str(o.worker), at: null, iteration: null }]
   }).reverse()
   const findings = Array.isArray(raw.findings)
     ? raw.findings.flatMap((item) => {

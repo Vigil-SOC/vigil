@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react'
 import { casesApi } from '../../services/api'
-import { LevelBadge, slaLevel } from '../../shared/LevelBadge'
+import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { MeterBar } from '../../shared/MeterBar'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { money, timeLeft, when } from './caseFormat'
+import { IN_FLIGHT } from '../workflows/runRead'
 import type { RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
@@ -19,12 +20,38 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function Details({ latest, workflowNames, sla, closed, fold }: {
+interface Spend {
+  cost: number | null
+  cap: number | null
+  /** The server's word, when it was read off the same two numbers shown; else derived from them. */
+  level: Level
+}
+
+/** What the newest run has spent against what it was granted. `fold` is that run's fold, or null when it is another run. */
+function spendOf(latest: CaseInvestigationRef | null, fold: RunFold | null): Spend {
+  const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
+  const foldCap = fold?.kind === 'hunt' && fold.maxCostUsd ? fold.maxCostUsd : null
+  // The refs are re-read only when a run ends, so a run in flight is read off its own fold.
+  const cost = (inFlight ? fold.costUsd ?? latest?.cost_usd : latest?.cost_usd || fold?.costUsd) ?? null
+  const cap = foldCap ?? (latest && latest.max_cost_usd > 0 ? latest.max_cost_usd : null)
+  if (cost === null || cap === null) return { cost, cap, level: null }
+  // A live number or a fold's cap outruns the server's word, which a hunt's ref never had a cap for.
+  const level = inFlight || foldCap !== null ? levelOf(cost / cap) : slaLevel(latest?.budget_health)
+  return { cost, cap, level }
+}
+
+/** The server's 75 / 90 cuts. */
+function levelOf(ratio: number): Level {
+  return ratio >= 0.9 ? 'poor' : ratio >= 0.75 ? 'fair' : 'good'
+}
+
+function Details({ latest, workflowNames, sla, closed, fold, spend }: {
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>
   sla: Sla
   closed: boolean
   fold: RunFold | null
+  spend: Spend
 }) {
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   const entities = fold?.recall && !fold.recall.unavailable ? fold.recall.keys.join(', ') : ''
@@ -34,7 +61,7 @@ function Details({ latest, workflowNames, sla, closed, fold }: {
         <dt>Workflow</dt>
         <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : '—'}</dd>
         <dt>Limit</dt>
-        <dd>{latest && latest.max_cost_usd > 0 ? money(latest.max_cost_usd) : '—'}</dd>
+        <dd>{spend.cap ? money(spend.cap) : '—'}</dd>
         <dt>Resolve by</dt>
         <dd>
           {sla ? when(sla.due) : '—'}
@@ -81,19 +108,17 @@ function Alerts({ items }: { items: CaseLinkedFinding[] }) {
   )
 }
 
-/** X, the bar and the word all read the latest run: the server's budget_health is computed from the same two numbers. */
-function Cost({ latest }: { latest: CaseInvestigationRef | null }) {
-  const measured = !!latest && latest.max_cost_usd > 0
-  const level = latest ? slaLevel(latest.budget_health) : null
+/** X, the bar and the word all read the newest run; the bar and word appear only once a cap is known. */
+function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
   return (
     <Block title="Cost">
-      {measured ? (
+      {cost !== null && cost > 0 ? (
         <>
           <div className="side-cost">
-            <span>{money(latest.cost_usd)} of {money(latest.max_cost_usd)}</span>
-            <LevelBadge level={level} className={`side-level ${level ?? ''}`} />
+            <span>{cap ? `${money(cost)} of ${money(cap)}` : money(cost)}</span>
+            {cap && <LevelBadge level={level} className={`side-level ${level ?? ''}`} />}
           </div>
-          <MeterBar pct={(latest.cost_usd / latest.max_cost_usd) * 100} level={level} label="Cost against the limit" />
+          {cap && <MeterBar pct={(cost / cap) * 100} level={level} label="Cost against the limit" />}
         </>
       ) : (
         <NotMeasured />
@@ -207,7 +232,7 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
 }
 
 /** The Details, Alerts, Cost, Known and People blocks of the case side panel. */
-export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold }: {
+export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold, latestFold }: {
   caseId: string
   linked: CaseLinkedFinding[]
   owner: string
@@ -216,12 +241,15 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
   sla: Sla
   closed: boolean
   fold: RunFold | null
+  /** `fold` when it is the newest run's, else null. */
+  latestFold: RunFold | null
 }) {
+  const spend = spendOf(latest, latestFold)
   return (
     <>
-      <Details latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
+      <Details latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
       <Alerts items={linked} />
-      <Cost latest={latest} />
+      <Cost spend={spend} />
       <Known fold={fold} />
       <People caseId={caseId} owner={owner} />
     </>
