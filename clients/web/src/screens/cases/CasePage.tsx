@@ -15,6 +15,7 @@ import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
+import { EvidenceTrail } from './EvidenceTrail'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
 import { money, timeLeft, when } from './caseFormat'
@@ -721,7 +722,6 @@ export function CasePage({
     }
   }
 
-  const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
@@ -903,36 +903,7 @@ export function CasePage({
             )
           )}
 
-          {tab === 'Evidence' && (
-            fold?.kind === 'hunt' ? (
-              fold.evidence.length === 0 ? (
-                <EmptyState compact icon="shield" title="No evidence yet" />
-              ) : (
-                <EvidenceTable
-                  focusId={focusEvidence}
-                  rows={fold.evidence.map((row) => ({
-                    id: row.evidence_id,
-                    step: String(row.iteration),
-                    observation: row.is_gap ? `${row.summary} (gap)` : row.summary,
-                    source: row.source_system,
-                    bears: row.bears_on.map((link) => `${link.relation} ${link.hypothesis_id}`).join(', ') || '—',
-                  }))}
-                />
-              )
-            ) : findings.length === 0 ? (
-              <EmptyState compact icon="shield" title="No evidence yet" />
-            ) : (
-              <EvidenceTable
-                rows={findings.map((row, i) => ({
-                  id: `${row.agent_id}-${i}`,
-                  step: String(i + 1),
-                  observation: row.answer || '—',
-                  source: row.agent_id,
-                  bears: '—',
-                }))}
-              />
-            )
-          )}
+          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
 
           {tab === 'Checked' && (
             !fold || fold.calls.length === 0 ? (
@@ -1185,41 +1156,5 @@ function FindingList({ fold }: { fold: RunFold | null }) {
         <li key={i}><Clamped text={`${row.agent_id}: ${row.answer || '—'}`} /></li>
       ))}
     </ul>
-  )
-}
-
-function EvidenceTable({
-  rows,
-  focusId,
-}: {
-  rows: { id: string; step: string; observation: string; source: string; bears: string }[]
-  focusId?: string | null
-}) {
-  const focusRef = useRef<HTMLTableRowElement>(null)
-  useEffect(() => {
-    const node = focusRef.current
-    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
-  }, [focusId, rows])
-  return (
-    <div className="table-wrap">
-      <table className="tbl">
-        <thead><tr><th>Step</th><th>Observation</th><th>Source</th><th>Bears on</th></tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              ref={row.id === focusId ? focusRef : undefined}
-              className={row.id === focusId ? 'cite-target' : undefined}
-              data-evidence-id={row.id}
-            >
-              <td>{row.step}</td>
-              <td>{row.observation || '—'}</td>
-              <td>{row.source || '—'}</td>
-              <td>{row.bears}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   )
 }
