@@ -302,14 +302,7 @@ if [ "$secrets_only" = 0 ]; then
         exit 1
     fi
     dcm build medic medic-gateway medic-dockerproxy
-    # The backend polls Medic with api_key (V2). Compose bind-mounts the file, so
-    # a new one reaches a running backend only on a recreate.
-    if [ "$api_outcome" = created ] || [ -e "$dir/.recreate" ]; then
-        dcm up -d --force-recreate backend
-    fi
-    # db-seed seeds the Viewer role; only a full `up` would start it otherwise.
-    dcm up -d backend db-seed
-    ensure_account
+    # Before anything starts that reads them: each file to its reader (step 5).
     if [ "$(uname -s)" = Linux ]; then
         # api_key: read by Medic and the backend through their shared group,
         # never gid 1000, which on Linux is often a person's own group.
@@ -325,6 +318,14 @@ if [ "$secrets_only" = 0 ]; then
                 --entrypoint sh vigil-medic-gateway:local -c "$own"
         fi
     fi
+    # The backend polls Medic with api_key (V2). Compose bind-mounts the file, so
+    # a new one reaches a running backend only on a recreate.
+    if [ "$api_outcome" = created ] || [ -e "$dir/.recreate" ]; then
+        dcm up -d --force-recreate backend
+    fi
+    # db-seed seeds the Viewer role; only a full `up` would start it otherwise.
+    dcm up -d backend db-seed
+    ensure_account
     if [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ] \
         || [ -e "$dir/.recreate" ]; then
         # A new file (--rotate, or one deleted and re-minted): Compose

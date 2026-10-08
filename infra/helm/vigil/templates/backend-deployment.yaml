@@ -51,7 +51,7 @@ spec:
             # as Down (C8). Rendered whether or not Medic is.
             - name: VIGIL_MEDIC_ENABLED
               value: {{ ternary "true" "false" (eq ((.Values.medic).enabled | toString) "true") | quote }}
-            {{- if (.Values.medic).enabled }}
+            {{- if eq ((.Values.medic).enabled | toString) "true" }}
             # The status poll (C5 §5.3, V2-8): through the gateway's inbound
             # listener, with the key Medic checks. Never a direct path to Medic.
             - name: VIGIL_MEDIC_API_URL
@@ -108,14 +108,14 @@ spec:
           volumeMounts:
             {{- include "vigil.stateVolumeMount" . | nindent 12 }}
             {{- include "vigil.caBundleVolumeMount" . | nindent 12 }}
-            {{- if (.Values.medic).enabled }}
+            {{- if eq ((.Values.medic).enabled | toString) "true" }}
             {{- include "vigil.medic.apiKeyMount" . | nindent 12 }}
             {{- end }}
       volumes:
         {{- include "vigil.stateVolume" . | nindent 8 }}
         {{- include "vigil.caBundleVolume" . | nindent 8 }}
-        {{- if (.Values.medic).enabled }}
-        {{- include "vigil.medic.apiKeyVolume" . | nindent 8 }}
+        {{- if eq ((.Values.medic).enabled | toString) "true" }}
+        {{- include "vigil.medic.apiKeyVolume" (dict "context" . "optional" true) | nindent 8 }}
         {{- end }}
       {{- with .Values.backend.nodeSelector }}
       nodeSelector:

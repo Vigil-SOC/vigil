@@ -57,8 +57,9 @@ POLICY_REFUSED = 3
 CONTROL_ATTEMPTS = 12
 CONTROL_RETRY_S = 5.0
 # A refused target counts only if it stays refused (S7-2): kube-proxy also
-# rejects a Service with no endpoints yet, and the inbound Service's endpoints
-# can trail the outbound one's by a moment on a cluster that enforces nothing.
+# rejects a Service with no endpoints yet. On Helm the target and the control
+# share a Service (one EndpointSlice), so that can't happen there; the retries
+# are a second guard for any other source of a passing refusal.
 TARGET_ATTEMPTS = 3
 TARGET_RETRY_S = 5.0
 _probe_wait = time.sleep

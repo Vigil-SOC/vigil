@@ -452,3 +452,10 @@ def test_linux_hands_the_key_to_its_own_group(run) -> None:
         and "up" in c
     )
     assert calls.index(chown) < first_medic_up
+    # And before the backend starts with the key mounted (review #7): otherwise
+    # its first poll finds the file unreadable and logs a misleading warning.
+    first_backend_up = next(
+        i for i, c in enumerate(calls) if c[:1] == ["compose"] and "up" in c
+        and "backend" in c
+    )
+    assert calls.index(chown) < first_backend_up

@@ -83,10 +83,9 @@ fi
 $K wait --for=condition=Ready nodes --all --timeout=300s
 kind load docker-image "vigil-medic:$TAG" "vigil-medic-gateway:$TAG" --name "$CLUSTER"
 if [[ $MODE == backend ]]; then
-  for img in postgres:16-alpine redis:7-alpine; do
-    docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
-  done
-  kind load docker-image "vigil-backend:$TAG" postgres:16-alpine redis:7-alpine --name "$CLUSTER"
+  # Postgres and Redis are pulled by the node: kind's import of a multi-arch
+  # image saved from a one-platform local copy fails ("content digest not found").
+  kind load docker-image "vigil-backend:$TAG" --name "$CLUSTER"
 fi
 
 # --- stubs and secrets -----------------------------------------------------------
@@ -151,7 +150,6 @@ if [[ $MODE == backend ]]; then
   vigil_set=(--set backend.replicaCount=1
     --set backend.image.repository=vigil-backend --set backend.image.tag="$TAG"
     --set backend.image.pullPolicy=Never
-    --set postgresql.persistence.enabled=false --set redis.persistence.enabled=false
     --set secrets.postgresPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.jwtSecretKey="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
 else
@@ -408,6 +406,11 @@ if [[ $MODE == calico ]]; then
   await "$gw_ip" 8470 refused "S7-2 gateway inbound under Reject"
   $K -n "$NS" rollout restart "deploy/$FN-medic" >/dev/null
   $K -n "$NS" rollout status "deploy/$FN-medic" --timeout=300s || fail "S7-2: Medic didn't come back under Reject"
+  # Recreate: wait until the old pod is gone, so `logs deploy/…` reads the new one.
+  for _ in $(seq 60); do
+    [[ $($K -n "$NS" get pods -l app.kubernetes.io/component=medic --no-headers | wc -l) -eq 1 ]] && break
+    sleep 2
+  done
   $K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced: the probe to .* was refused every time" \
     || fail "S7-2: no 'refused every time' line"
   ok "S7-2: under Reject Medic logs 'refused every time' and is Ready"

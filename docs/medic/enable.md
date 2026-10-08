@@ -52,7 +52,7 @@ To turn Medic off, delete `compose.env` (that file is what makes `start.sh` and 
 
 The chart needs a cluster whose network plugin **enforces NetworkPolicy** (Calico, Cilium, kind's default kindnet, or a managed cluster with enforcement on). Medic checks at start and refuses to run (exit 3) where nothing enforces it, e.g. flannel. Plugins set to reject denied traffic rather than drop it are fine.
 
-The chart mints Medic's API key at install into the Secret `<release>-medic-api-key` and keeps it across upgrades; Medic and the backend mount it as a file. The backend polls `http://<release>-medic-gateway-in:8470` once a minute and shows **Down** after 270 seconds without an answer. Where Helm can't read the cluster when it renders (`helm template`, Argo CD, Flux), create the Secret yourself (key `api_key`, 32 random bytes base64url) and set `medic.apiKey.existingSecret`; otherwise every render mints a new key.
+The chart mints Medic's API key at install into the Secret `<release>-medic-api-key` and keeps it across upgrades; Medic and the backend mount it as a file. The backend polls `http://<release>-medic-gateway-in:8470` once a minute and shows **Down** after 270 seconds without an answer. Where Helm can't read the cluster when it renders (`helm template`, Argo CD, Flux), create the Secret yourself (key `api_key`, 32 random bytes base64url) and set `medic.apiKey.existingSecret`; otherwise every render mints a new key. For the same reason `helm diff` and a client-side `helm upgrade --dry-run` always show the key as changed; a real `helm upgrade` keeps it.
 
 1. Before you install or upgrade, create the gateway's password Secret and choose the name. The password is written to a file and never appears on a command line.
 

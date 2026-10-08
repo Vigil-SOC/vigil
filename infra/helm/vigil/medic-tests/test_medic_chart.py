@@ -286,7 +286,7 @@ def test_medic_env_names_its_shape_and_targets(on) -> None:
     # A3-3: the probe tries the gateway's inbound listener, which only the
     # backend may reach; the control is the outbound listener on the same pods,
     # so "control connects" proves the target has live endpoints (re-review).
-    assert env["VIGIL_MEDIC_POLICY_PROBE_ADDR"] == f"{GATEWAY}-in:8470"
+    assert env["VIGIL_MEDIC_POLICY_PROBE_ADDR"] == f"{GATEWAY}:8470"
     assert env["VIGIL_MEDIC_POLICY_CONTROL_ADDR"] == f"{GATEWAY}:8471"
 
 
@@ -451,7 +451,14 @@ def test_gateway_is_its_own_deployment(on) -> None:
 def test_one_service_per_gateway_listener(on) -> None:
     out = named(on, "Service", GATEWAY)
     inb = named(on, "Service", f"{GATEWAY}-in")
-    assert [p["port"] for p in out["spec"]["ports"]] == [8471]
+    # The Medic-side Service also carries 8470, only as the policy probe's
+    # target (S7b review #1): one Service, one EndpointSlice, so the control
+    # and the target get their endpoints in the same update and kube-proxy
+    # can't refuse the target for want of endpoints while the control connects.
+    assert [(p["name"], p["port"]) for p in out["spec"]["ports"]] == [
+        ("outbound", 8471),
+        ("probe", 8470),
+    ]
     assert [p["port"] for p in inb["spec"]["ports"]] == [8470]
 
 
@@ -741,6 +748,10 @@ def test_api_key_value_appears_only_in_its_secret(all_on) -> None:
 def test_medic_and_backend_mount_the_key_as_a_file(on, pod) -> None:
     spec = pod(on)
     (vol,) = secret_volume(spec, API_KEY)
+    # The backend's copy is optional (review #2): a missing or wrong
+    # existingSecret leaves the backend running and reading Down, never stuck
+    # in ContainerCreating. Medic's isn't: without the key it can't serve.
+    assert vol["secret"].get("optional", False) is (pod is backend_pod)
     # Kubernetes gives a secret file the pod's fsGroup (Medic 10001, backend
     # 1000), so group-read is enough and "other" gets nothing (S6-3 / V2-7).
     assert vol["secret"]["defaultMode"] == 0o440
@@ -802,7 +813,16 @@ def test_existing_secret_replaces_the_generated_one(render) -> None:
 def test_backend_and_medic_mount_the_same_secret(on) -> None:
     (m,) = secret_volume(medic_pod(on), API_KEY)
     (b,) = secret_volume(backend_pod(on), API_KEY)
-    assert m["secret"] == b["secret"]
+    assert {**m["secret"], "optional": True} == b["secret"]
+
+
+def test_the_backends_key_read_needs_its_fsgroup(chart) -> None:
+    # 0440 is root:<fsGroup>; without fsGroup the backend (uid 1000) can't read
+    # it and would show Down with only a warning (review #3).
+    with pytest.raises(RenderError, match=r"podSecurityContext\.fsGroup"):
+        helm_template(chart, {**MEDIC_ON, "podSecurityContext.fsGroup": "null"})
+    helm_template(chart, {"podSecurityContext.fsGroup": "null"})  # Medic off: fine
+
 
 
 def test_gateway_admits_the_backend_on_the_inbound_port(all_on) -> None:

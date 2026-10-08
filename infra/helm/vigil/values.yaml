@@ -941,8 +941,9 @@ medic:
       - ReadWriteOnce      # ReadWriteOncePod where the storage driver has it
   # The NetworkPolicy probe is not configurable: Medic connects to the gateway's
   # outbound listener (<fullname>-medic-gateway:8471, allowed) and then tries
-  # its inbound one (<fullname>-medic-gateway-in:8470, which only the backend
-  # may reach). Same pods, so both have endpoints or neither does.
+  # its inbound one on the same Service (<fullname>-medic-gateway:8470, which
+  # Medic's policy blocks; only the backend may reach the inbound listener).
+  # One Service, one EndpointSlice: both have endpoints or neither does.
   # X-Medic-Key (X2): the shared secret the backend presents, through the
   # gateway's inbound listener, to Medic's API (one poll a minute; Down after
   # 270 s without an answer). Minted at install into <fullname>-medic-api-key
