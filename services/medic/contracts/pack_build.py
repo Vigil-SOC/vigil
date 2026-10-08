@@ -55,12 +55,12 @@ def _kind(path: str) -> str:
 
 
 def _entries(kind: str, text: str) -> int:
-    doc = yaml.load(text, Loader=_StrictLoader)
+    doc = yaml.load(text, Loader=_StrictLoader)  # nosec B506 - _StrictLoader subclasses SafeLoader
     return len(doc.get("entries", [])) if kind in ("suppression", "catalog") else 1
 
 
 def build(src: Path) -> bytes:
-    source = yaml.load((src / "pack.yaml").read_text(), Loader=_StrictLoader)
+    source = yaml.load((src / "pack.yaml").read_text(), Loader=_StrictLoader)  # nosec B506 - _StrictLoader subclasses SafeLoader
     errors = [e.message for e in _SOURCE.iter_errors(source)]
     if errors:
         raise BuildError(f"pack.yaml: {errors}")

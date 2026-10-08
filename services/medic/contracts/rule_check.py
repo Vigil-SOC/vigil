@@ -76,7 +76,7 @@ def load(text: str) -> tuple[dict | None, Result]:
         res.errors.append(("E-SIZE", f"rule larger than {MAX_RULE_BYTES} bytes"))
         return None, res
     try:
-        doc = yaml.load(text, Loader=_StrictLoader)
+        doc = yaml.load(text, Loader=_StrictLoader)  # nosec B506 - _StrictLoader subclasses SafeLoader
     except yaml.YAMLError as exc:
         msg = str(exc)
         code = (

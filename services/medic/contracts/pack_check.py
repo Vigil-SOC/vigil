@@ -90,7 +90,7 @@ def _reject_constant(name: str) -> None:
 
 
 def _yaml(text: str):
-    return yaml.load(text, Loader=_StrictLoader)
+    return yaml.load(text, Loader=_StrictLoader)  # nosec B506 - _StrictLoader subclasses SafeLoader
 
 
 def check_pack(
