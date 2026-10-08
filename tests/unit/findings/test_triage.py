@@ -256,6 +256,9 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
 
     filtered = triage_payload(now=NOW, day=DAY, state="queued")
     assert filtered["counts"] == counts
+    # matched is the filtered rows before the cap: one for the source, every row unfiltered
+    assert filtered["matched"] == 1
+    assert triage_payload(now=NOW, day=DAY)["matched"] == counts["total"]
     assert filtered["strip"]["waiting"] == payload["strip"]["waiting"]
     assert waiting in [row["id"] for row in filtered["rows"]]
     assert {row["state"] for row in filtered["rows"]} == {"queued"}

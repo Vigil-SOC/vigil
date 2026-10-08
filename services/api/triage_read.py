@@ -379,6 +379,7 @@ def triage_payload(
     )
     link_configs: dict[str, dict[str, str]] = {}
     presented = []
+    matched = 0
     for row in queued + decided:
         finding = findings.get(row["finding_id"]) if row.get("finding_id") else None
         workflow = _workflow(
@@ -391,11 +392,12 @@ def triage_payload(
             continue
         if source and item["source"] != source:
             continue
-        presented.append(item)
-        if len(presented) >= ROW_CAP:
-            break
+        matched += 1
+        if len(presented) < ROW_CAP:
+            presented.append(item)
     return {
         "rows": presented,
+        "matched": matched,
         "strip": strip,
         "counts": counts,
         "sources": _sources(day, now),

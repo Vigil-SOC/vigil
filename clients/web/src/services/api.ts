@@ -1463,6 +1463,8 @@ export interface TriagePayload {
     cases_created_today: number
     trust_floor: string
   }
+  /** rows that pass the filters, before the row cap */
+  matched: number
   /** every intake row, before the filters and the row cap; zero entries are left out */
   counts: {
     total: number

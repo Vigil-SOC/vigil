@@ -6969,7 +6969,8 @@
       background: var(--bg3);
    }
 
-   .tq-source {
+   .tq-table tbody td:nth-child(2) {
+      white-space: normal;
       overflow-wrap: anywhere;
    }
 

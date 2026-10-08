@@ -75,6 +75,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       cases_created_today: 1,
       trust_floor: 'Not measured yet',
     },
+    matched: 12,
     counts: {
       total: 12,
       kind: { detection: 7, schedule: 3, human_ask: 2 },
@@ -200,7 +201,7 @@ describe('TriageScreen', () => {
 
   it('keeps a linked source as a selected chip with 0, and says when the cap hides rows', async () => {
     const base = payload()
-    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, counts: { ...base.counts, total: 340 } } } as never)
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, matched: 340, counts: { ...base.counts, total: 340 } } } as never)
     renderScreen('/triage?source=okta')
     await screen.findByLabelText('Intake strip')
     expect(screen.getByRole('button', { name: 'okta 0' })).toHaveAttribute('aria-pressed', 'true')

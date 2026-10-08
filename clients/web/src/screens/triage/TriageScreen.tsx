@@ -197,11 +197,11 @@ function Filters({
       {group('state', state, 'What happened', STATES)}
       {filtered ? (
         <span className="tq-summary">
-          Showing {data.rows.length} of {counts.total} ·{' '}
+          Showing {data.rows.length} of {data.matched} ·{' '}
           <button type="button" onClick={clear}>Clear</button>
         </span>
-      ) : counts.total > ROW_CAP ? (
-        <span className="tq-summary">Showing {ROW_CAP} of {counts.total}</span>
+      ) : data.matched > ROW_CAP ? (
+        <span className="tq-summary">Showing {ROW_CAP} of {data.matched}</span>
       ) : null}
     </div>
   )
