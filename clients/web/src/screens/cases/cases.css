@@ -621,7 +621,8 @@
 
 .case-page .ev-grid {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 112px 84px 60px 24px;
+  /* By is wider than the board's 60px so a worker id such as network_analyst is not cut to three letters. */
+  grid-template-columns: 36px minmax(0, 1fr) 112px 84px 104px 24px;
   gap: 10px;
   align-items: center;
 }
