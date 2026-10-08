@@ -7,6 +7,7 @@ a restart and outlives the raw history (§2).
 
 from __future__ import annotations
 
+import bisect
 import json
 
 from services.medic.engine.evaluate import Reads, line_group, line_matches, ts
@@ -48,9 +49,8 @@ class History:
         else:
             index = self.logs if obs["kind"] == "log" else self.samples
             series = index.setdefault(obs["signal"], [])
-        series.append((ts(obs["t"]), obs))
-        if len(series) > 1 and series[-2][0] > series[-1][0]:  # a late line
-            series.sort(key=lambda r: (r[0], r[1]["id"]))
+        # Ordered by (t, id) whatever the arrival order, so live and replay agree.
+        bisect.insort(series, (ts(obs["t"]), obs), key=lambda r: (r[0], r[1]["id"]))
 
     def prune(self, before: float) -> None:
         """Drop reads older than every window still needs (keeps each newest one)."""
@@ -62,9 +62,12 @@ class History:
                 del series[:i]
 
     def sample_reads(self, spec: dict, group_by: list, group: dict, now: float):
-        """The signal's reads for this group; None when the series is ambiguous (§3)."""
+        """The reads of this group's series: failed reads, plus ok reads that carry
+        its value (present or absent). An ok read without it isn't a read of this
+        series: a source that disappeared goes stale, it doesn't read absent (§4).
+        None when a shared signal has more than one series at its newest read (§3)."""
         produces = bool(group_by) and set(group_by) <= set(spec.get("by", []))
-        items, series = [], set()
+        rows = []
         for t, obs in self.samples.get(spec["signal"], []):
             if t > now:
                 break
@@ -75,10 +78,18 @@ class History:
                     for v in found
                     if all(v["labels"].get(n) == group[n] for n in group_by)
                 ]
-            series.update(gkey(v.get("labels", {})) for v in found)
-            items.append((t, obs, found[0] if found else None))
-        if len(series) > 1:
+            rows.append((t, obs, found))
+        newest = next((f for _, o, f in reversed(rows) if f), [])
+        if len({gkey(v.get("labels", {})) for v in newest}) > 1:
             return None  # ambiguous_series: unknown
+        series = gkey(newest[0].get("labels", {})) if newest else None
+        items = []
+        for t, obs, found in rows:
+            entry = next(
+                (v for v in found if gkey(v.get("labels", {})) == series), None
+            )
+            if obs["outcome"] != "ok" or entry is not None:
+                items.append((t, obs, entry))
         return Reads(items, self.interval.get(spec["signal"]))
 
     def log_reads(self, spec: dict, group_by: list, group: dict, now: float):
