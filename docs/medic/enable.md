@@ -4,7 +4,7 @@ Medic (the System Watcher) watches this install's own health. It changes nothing
 
 `VIGIL_MEDIC_ENABLED` is the master switch everywhere (Helm: `medic.enabled`). Medic exits at start when the switch is false. The backend reads the same switch, so the console shows a Medic you turned off as **Off**, not **Down**. Only `true`, `1`, `yes` or `on` turn it on. Anything else counts as off.
 
-With the switch on, one backend process asks Medic for its status once a minute, through the gateway, with the API key, and keeps the answer in Postgres. The console's status is **Running** while Medic answers, and **Down** once it has failed to answer for 5 minutes. A short backend restart keeps it. After 3 minutes or more with nothing polling (the backend down, or Medic switched off), the status starts over: **Unknown** until the next answer, or **Down** about 4 minutes later if Medic still doesn't answer.
+With the switch on, one backend process asks Medic for its status once a minute, through the gateway, with the API key, and keeps the answer in Postgres. The console's status is **Running** while Medic answers, and **Down** once it has failed to answer for 270 seconds (4½ minutes), so a stopped Medic shows Down inside 5 minutes. A short backend restart keeps it. After 3 minutes or more with nothing polling (the backend down, or Medic switched off), the status starts over: **Unknown** until the next answer, or **Down** about 3½ minutes later if Medic still doesn't answer.
 
 On Compose and Helm, Medic reads the backend only through its own read-only gateway. The gateway logs in as a **service account**:
 
