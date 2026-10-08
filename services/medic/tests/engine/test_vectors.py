@@ -26,9 +26,7 @@ from services.medic.tests.engine.runner import (
 # Engine core part 2 (S4b2) landed: no vector is expected to fail.
 PART2: set[str] = set()
 # Vectors waiting on a contract decision (outputs/skeleton/S4b-notes.md, ⚑ list).
-CONTRACT: dict[str, str] = {
-    "v26": "⚑ S4b2-1: v26 omits the sensor-blind incident §2 requires (S4b2-notes)",
-}
+CONTRACT: dict[str, str] = {}
 RECORD = Draft202012Validator(
     json.loads((CONTRACTS / "decision-record.schema.json").read_text())
 )
