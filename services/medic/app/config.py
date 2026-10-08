@@ -10,6 +10,8 @@ ENABLED_VAR = "VIGIL_MEDIC_ENABLED"
 DATA_DIR_VAR = "VIGIL_MEDIC_DATA_DIR"
 SHAPE_VAR = "VIGIL_MEDIC_INSTALL_SHAPE"
 AGENT_WORKER_VAR = "VIGIL_MEDIC_AGENT_WORKER_ADDR"
+# A3-3: on Helm, a host:port Medic's egress policy must block (the chart sets it).
+POLICY_PROBE_VAR = "VIGIL_MEDIC_POLICY_PROBE_ADDR"
 
 SHAPES = ("start_sh", "compose", "helm")
 DEFAULT_SHAPE = "compose"  # PROVISIONAL (S4-2): S6/S7/S8 set it per shape
@@ -64,9 +66,29 @@ def install_shape(env: Mapping[str, str]) -> str:
     return value
 
 
-def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
-    value = (env.get(AGENT_WORKER_VAR) or AGENT_WORKER_DEFAULT[shape]).strip()
+def _host_port(var: str, value: str) -> tuple[str, int]:
     match = _ADDR.match(value)
     if not match or not 0 < int(match.group(2)) < 65536:
-        raise ConfigError(f"{AGENT_WORKER_VAR} is not host:port (value not shown)")
+        raise ConfigError(f"{var} is not host:port (value not shown)")
     return match.group(1), int(match.group(2))
+
+
+def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
+    value = (env.get(AGENT_WORKER_VAR) or AGENT_WORKER_DEFAULT[shape]).strip()
+    return _host_port(AGENT_WORKER_VAR, value)
+
+
+def policy_probe_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
+    """Helm only, and required there: no target means no proof (A3-3, fail closed).
+
+    Compose isolates Medic by Docker network (`medic-net`); host-native can't be
+    isolated at all (C3 §4.7). Neither has a NetworkPolicy to test."""
+    if shape != "helm":
+        return None
+    value = (env.get(POLICY_PROBE_VAR) or "").strip()
+    if not value:
+        raise ConfigError(
+            f"{POLICY_PROBE_VAR} is required on Helm: it names the host:port "
+            "Medic's NetworkPolicy must block (the chart sets it)"
+        )
+    return _host_port(POLICY_PROBE_VAR, value)
