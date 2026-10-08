@@ -663,6 +663,10 @@
   opacity: 0;
 }
 
+.chat .chist-row.renaming .chist-actions {
+  display: none;
+}
+
 .chat .chist-row:hover .chist-actions,
 .chat .chist-row:focus-within .chist-actions {
   opacity: 1;

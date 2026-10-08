@@ -33,7 +33,6 @@ vi.mock('../services/api', () => ({
   conversationsApi: {
     list: vi.fn(() => new Promise(() => undefined)),
     get: vi.fn(),
-    list: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
     importHistory: vi.fn(),
@@ -234,7 +233,7 @@ describe('Ask Vigil dock', () => {
     expect(screen.getByText(format(new Date(newer), 'MMM d, yyyy'))).toBeInTheDocument()
     expect(screen.getByText(format(new Date(older), 'MMM d, yyyy'))).toBeInTheDocument()
     expect(screen.getByText('Case CASE-9')).toBeInTheDocument()
-    expect(screen.getByText('Triage')).toBeInTheDocument()
+    expect(screen.getByText('Triage queue')).toBeInTheDocument()
     expect(screen.getByText('General')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText(/Ask Vigil/)).toBeNull()
 

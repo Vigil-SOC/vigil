@@ -324,6 +324,8 @@ export default function Chat({
   const [caseId, setCaseId] = useState<string | null>(lockedCaseId ?? null)
   const [threadOpen, setThreadOpen] = useState(false)
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
+  // the token mentionHits answers, so "No matching cases" is never shown for a search still in flight
+  const [mentionFor, setMentionFor] = useState<string | null>(null)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceItems, setTraceItems] = useState<TraceItem[]>([])
@@ -365,12 +367,17 @@ export default function Chat({
     }
   }, [open, pinned])
 
-  // a row click or new conversation unmounts the focused control
+  // a closed dock reopens on the conversation, not the history view
   useEffect(() => {
-    if (!historyOpen && open && !pinned && !panelRef.current?.contains(document.activeElement)) {
-      taRef.current?.focus()
-    }
-  }, [historyOpen, open, pinned])
+    if (!open) setHistoryOpen(false)
+  }, [open])
+
+  // a row click, rename or delete unmounts the focused control; keep focus in the dock
+  useEffect(() => {
+    const root = panelRef.current
+    if (!open || pinned || !root || root.contains(document.activeElement)) return
+    root.querySelector<HTMLElement>(historyOpen ? '.chist-search input' : 'textarea')?.focus()
+  }, [historyOpen, open, pinned, renamingId, serverConvos])
 
   // the trace dialog owns its Esc + focus handling
   const anyPopupOpen = traceOpen
@@ -429,6 +436,7 @@ export default function Chat({
   useEffect(() => {
     if (token == null || !token.trim()) {
       setMentionHits(token == null ? null : [])
+      setMentionFor(null)
       return
     }
     let live = true
@@ -436,10 +444,14 @@ export default function Chat({
       api
         .get('/cases/search/full-text', { params: { query: token } })
         .then((res) => {
-          if (live) setMentionHits(caseHits(res.data))
+          if (!live) return
+          setMentionHits(caseHits(res.data))
+          setMentionFor(token)
         })
         .catch(() => {
-          if (live) setMentionHits([])
+          if (!live) return
+          setMentionHits([])
+          setMentionFor(token)
         })
     }, 150)
     return () => {
@@ -684,6 +696,7 @@ export default function Chat({
   // the seed prompt is deterministic per finding/case, so it doubles as the
   // dedup key for reusing an existing thread
   const openInvestigation = async (prompt: string) => {
+    setHistoryOpen(false)
     if (loading) return
     if (currentKeyRef.current === prompt && messages.length > 0) return // already here
     const mapped = loadKeymap()[prompt]
@@ -956,7 +969,7 @@ export default function Chat({
           <div className="chat-mention" role="listbox" aria-label="Matching cases">
             <span className="cm-head">Mention</span>
             {mentionHits.length === 0 ? (
-              <div className="cm-empty">{token?.trim() ? 'No matching cases' : 'Type a case id or title'}</div>
+              <div className="cm-empty">{!token?.trim() ? 'Type a case id or title' : mentionFor === token ? 'No matching cases' : 'Searching…'}</div>
             ) : (
               mentionHits.map((hit) => (
                 <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
@@ -1083,7 +1096,7 @@ export default function Chat({
               {g.rows.map((c) => (
                 <div
                   key={c.id}
-                  className={`chist-row${c.id === sessionRef.current ? ' current' : ''}${c.archived ? ' archived' : ''}`}
+                  className={`chist-row${c.id === sessionRef.current ? ' current' : ''}${c.archived ? ' archived' : ''}${renamingId === c.id ? ' renaming' : ''}`}
                 >
                   {renamingId === c.id ? (
                     <input
