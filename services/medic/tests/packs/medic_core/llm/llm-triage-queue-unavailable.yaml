@@ -1,9 +1,8 @@
 rule: llm.triage-queue-unavailable
 cases:
-- id: daemon-outage-latches-until-recovery
-  fires: true
-  why: soc-daemon logs the #1689 ERROR once, then the recovery line 8 minutes later.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-daemon-outage-latches-until-recovery
+  title: soc-daemon logs the
   end: +20m
   sensors:
   - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
@@ -28,10 +27,9 @@ cases:
   - {at: +16m, rule: llm.triage-queue-unavailable, eval: false, state: inactive}
   incidents:
     A: {rule: llm.triage-queue-unavailable, active_since: +2m, opened_at: +4m, resolving_since: +10m, resolved_at: +15m, reason: cleared, routed_at: +4m}
-- id: daemon-restart-clears-the-latch
-  fires: true
-  why: Fixed and restarted. The new process logs no recovery line (outage state is per process), so its start line clears the latch.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v02-daemon-restart-clears-the-latch
+  title: 'Fixed and restarted. The new process logs no recovery line (outage state is per process), so its start line clears the latch.'
   end: +20m
   sensors:
   - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
@@ -49,13 +47,13 @@ cases:
     template: SOC Daemon initialized
     at: +8m
   expect:
+  - {at: +4m, rule: llm.triage-queue-unavailable, eval: true, state: firing, incident: A}
   - {at: +8m, rule: llm.triage-queue-unavailable, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.triage-queue-unavailable, active_since: +2m, opened_at: +4m, resolving_since: +8m, resolved_at: +13m, reason: cleared, routed_at: +4m}
-- id: reminder-catches-a-late-start
-  fires: true
-  why: Medic started after the entry ERROR; the every-100-failures reminder sets the latch.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v03-reminder-catches-a-late-start
+  title: Medic started after the entry ERROR; the every-100-failures reminder sets the latch.
   end: +10m
   sensors:
   - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
@@ -68,13 +66,13 @@ cases:
     message: 'Failed to connect LLM gateway, AI triage is skipped until it connects: ConnectionError: Connection refused (still failing, 100 failures)'
     at: +1m
   expect:
+  - {at: +1m, rule: llm.triage-queue-unavailable, eval: true, state: pending}
   - {at: +3m, rule: llm.triage-queue-unavailable, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.triage-queue-unavailable, active_since: +1m, opened_at: +3m, resolving_since: null, resolved_at: null, routed_at: +3m}
-- id: backend-startup-failure-latches
-  fires: true
-  why: The backend logs once at startup that the gateway is unavailable and never reconnects.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v04-backend-startup-failure-latches
+  title: The backend logs once at startup that the gateway is unavailable and never reconnects.
   end: +10m
   sensors:
   - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
@@ -91,10 +89,9 @@ cases:
   - {at: +10m, rule: llm.triage-queue-unavailable, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.triage-queue-unavailable, active_since: +1m, opened_at: +3m, resolving_since: null, resolved_at: null, routed_at: +3m}
-- id: recovery-inside-the-hold
-  fires: false
-  why: Redis came back within the 2 m hold; nothing opens.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v05-recovery-inside-the-hold
+  title: Redis came back within the 2 m hold; nothing opens.
   end: +10m
   sensors:
   - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
@@ -116,10 +113,9 @@ cases:
   - {at: +2m, rule: llm.triage-queue-unavailable, eval: true, state: pending}
   - {at: +3m, rule: llm.triage-queue-unavailable, eval: false, state: inactive}
   incidents: {}
-- id: unrendered-lookalike-is-ignored
-  fires: false
-  why: A line whose message equals its %-template wasn't rendered from args (an f-string lookalike), so it isn't catalog-trusted (fingerprint.md §2) and can't set the latch.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v06-unrendered-lookalike-is-ignored
+  title: 'A line whose message equals its %-template wasn''t rendered from args (an f-string lookalike), so it isn''t catalog-trusted (fingerprint.md §2) and can''t set the latch.'
   end: +10m
   sensors:
   - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
@@ -132,5 +128,6 @@ cases:
     message: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'
     at: +2m
   expect:
+  - {at: +2m, rule: llm.triage-queue-unavailable, eval: false, state: inactive}
   - {at: +5m, rule: llm.triage-queue-unavailable, eval: false, state: inactive}
   incidents: {}

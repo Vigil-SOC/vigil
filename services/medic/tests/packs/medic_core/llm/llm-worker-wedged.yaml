@@ -1,8 +1,8 @@
 rule: llm.worker-wedged
 cases:
-- id: running-but-unhealthy
-  fires: true
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-running-but-unhealthy
+  title: Running but unhealthy
   end: +20m
   sensors:
   - {id: docker.containers, covers: [containers], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -11,17 +11,31 @@ cases:
     containers: {state: enum, health: enum}
     agent_worker_readyz: {ready: bool}
   series:
-  - {signal: containers, key: state, labels: {service: llm-worker}, steps: [[+0s, running]]}
-  - {signal: containers, key: health, labels: {service: llm-worker}, steps: [[+0s, healthy], [+2m, unhealthy], [+10m, healthy]]}
+  - signal: containers
+    key: state
+    labels: {service: llm-worker}
+    steps:
+    - - +0s
+      - running
+  - signal: containers
+    key: health
+    labels: {service: llm-worker}
+    steps:
+    - - +0s
+      - healthy
+    - - +2m
+      - unhealthy
+    - - +10m
+      - healthy
   - {signal: agent_worker_readyz, key: ready, steps: [[+0s, true]]}
   expect:
   - {at: +5m, rule: llm.worker-wedged, eval: true, state: firing, incident: A}
   - {at: +10m, rule: llm.worker-wedged, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.worker-wedged, active_since: +2m, opened_at: +5m, resolving_since: +10m, resolved_at: +15m, reason: cleared, routed_at: +5m}
-- id: another-container-unhealthy
-  fires: false
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v02-another-container-unhealthy
+  title: Another container unhealthy
   end: +10m
   sensors:
   - {id: docker.containers, covers: [containers], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -30,18 +44,38 @@ cases:
     containers: {state: enum, health: enum}
     agent_worker_readyz: {ready: bool}
   series:
-  - {signal: containers, key: state, labels: {service: llm-worker}, steps: [[+0s, running]]}
-  - {signal: containers, key: health, labels: {service: llm-worker}, steps: [[+0s, healthy]]}
-  - {signal: containers, key: state, labels: {service: soc-daemon}, steps: [[+0s, running]]}
-  - {signal: containers, key: health, labels: {service: soc-daemon}, steps: [[+0s, unhealthy]]}
+  - signal: containers
+    key: state
+    labels: {service: llm-worker}
+    steps:
+    - - +0s
+      - running
+  - signal: containers
+    key: health
+    labels: {service: llm-worker}
+    steps:
+    - - +0s
+      - healthy
+  - signal: containers
+    key: state
+    labels: {service: soc-daemon}
+    steps:
+    - - +0s
+      - running
+  - signal: containers
+    key: health
+    labels: {service: soc-daemon}
+    steps:
+    - - +0s
+      - unhealthy
   - {signal: agent_worker_readyz, key: ready, steps: [[+0s, true]]}
   expect:
+  - {at: +1m, rule: llm.worker-wedged, eval: false, state: inactive}
   - {at: +8m, rule: llm.worker-wedged, eval: false, state: inactive}
   incidents: {}
-- id: redis-down-is-not-a-wedge
-  fires: false
-  why: arq --check fails when Redis is down too; the agent-worker's /readyz (false without Redis) keeps a restart from being proposed.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v03-redis-down-is-not-a-wedge
+  title: 'arq --check fails when Redis is down too; the agent-worker''s /readyz (false without Redis) keeps a restart from being proposed.'
   end: +12m
   sensors:
   - {id: docker.containers, covers: [containers], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -50,9 +84,22 @@ cases:
     containers: {state: enum, health: enum}
     agent_worker_readyz: {ready: bool}
   series:
-  - {signal: containers, key: state, labels: {service: llm-worker}, steps: [[+0s, running]]}
-  - {signal: containers, key: health, labels: {service: llm-worker}, steps: [[+0s, healthy], [+2m, unhealthy]]}
+  - signal: containers
+    key: state
+    labels: {service: llm-worker}
+    steps:
+    - - +0s
+      - running
+  - signal: containers
+    key: health
+    labels: {service: llm-worker}
+    steps:
+    - - +0s
+      - healthy
+    - - +2m
+      - unhealthy
   - {signal: agent_worker_readyz, key: ready, steps: [[+0s, true], [+2m, false]]}
   expect:
+  - {at: +1m, rule: llm.worker-wedged, eval: false, state: inactive}
   - {at: +10m, rule: llm.worker-wedged, eval: false, state: inactive}
   incidents: {}

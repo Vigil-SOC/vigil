@@ -1,9 +1,8 @@
 rule: llm.rate-limited
 cases:
-- id: sustained-429s
-  fires: true
-  why: A 429 every minute for 20 minutes.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-sustained-429s
+  title: A 429 every minute for 20 minutes.
   end: +35m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -14,7 +13,7 @@ cases:
     level: ERROR
     logger: services.worker.jobs
     template: 'llm_call failed (returning error dict): %s'
-    message: "llm_call failed (returning error dict): RateLimitError: Error code: 429 - rate_limit_error"
+    message: 'llm_call failed (returning error dict): RateLimitError: Error code: 429 - rate_limit_error'
     at: +1m
     repeat: {every: 1m, until: +20m}
   expect:
@@ -24,9 +23,9 @@ cases:
   - {at: +23m, rule: llm.rate-limited, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.rate-limited, active_since: +3m, opened_at: +18m, resolving_since: +23m, resolved_at: +33m, reason: cleared, routed_at: +18m}
-- id: retries-exhausted-on-429
-  fires: true
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v02-retries-exhausted-on-429
+  title: Retries exhausted on 429
   end: +20m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -41,13 +40,13 @@ cases:
     at: +1m
     repeat: {every: 1m, until: +20m}
   expect:
+  - {at: +3m, rule: llm.rate-limited, eval: true, state: pending}
   - {at: +18m, rule: llm.rate-limited, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.rate-limited, active_since: +3m, opened_at: +18m, resolving_since: null, resolved_at: null, routed_at: +18m}
-- id: one-burst-does-not-fire
-  fires: false
-  why: Five minutes of 429s (a flood of findings, which an outsider can cause) isn't enough persistence.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v03-one-burst-does-not-fire
+  title: 'Five minutes of 429s (a flood of findings, which an outsider can cause) isn''t enough persistence.'
   end: +20m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -58,7 +57,7 @@ cases:
     level: ERROR
     logger: services.worker.jobs
     template: 'llm_call failed (returning error dict): %s'
-    message: "llm_call failed (returning error dict): RateLimitError: Error code: 429 - rate_limit_error"
+    message: 'llm_call failed (returning error dict): RateLimitError: Error code: 429 - rate_limit_error'
     at: +1m
     repeat: {every: 30s, until: +6m}
   - signal: log_backend
