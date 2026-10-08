@@ -180,6 +180,9 @@ def test_record_sequences_are_legal(path: Path) -> None:
         else:
             assert step in NEXT.get(last.get(iid, ""), ()), (iid, last.get(iid), step)
             last[iid] = "closed" if step == "incident_resolved" else step
+        if body.get("how") in ("cleared", "closed_quietly"):  # §6.3, S4b2-3
+            quiet = suppressed[iid] and not routed[iid]
+            assert (body["how"] == "closed_quietly") == quiet, (iid, body["how"])
         if step == "evidence_added":
             items[iid] += len(body["evidence"])
         elif step == "suppressed":

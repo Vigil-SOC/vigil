@@ -164,6 +164,6 @@ incidents:
     opened_at: +50m
     resolving_since: +60m
     resolved_at: +90m
-    reason: cleared
+    reason: closed_quietly
     suppressed_by: P
     routed_at: null

@@ -198,6 +198,10 @@ def test_incidents_respect_for_keep_suppression_and_routing(vector: dict) -> Non
                 label
             )
         child = is_child(vector, inc["rule"], rule)
+        # §4/§6.3: a suppressed child that never routed closes quietly, and only it.
+        if inc.get("reason") in ("cleared", "closed_quietly"):
+            quiet = "suppressed_by" in inc and inc.get("routed_at") is None
+            assert (inc["reason"] == "closed_quietly") == quiet, label
         if "suppressed_by" in inc:
             parent = incidents[inc["suppressed_by"]]
             prule = rules[parent["rule"]]
