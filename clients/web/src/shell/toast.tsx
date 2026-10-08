@@ -101,14 +101,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       timers.current.set(
         id,
         setTimeout(() => {
-          release(o.key)
           dismiss(id)
           o.commit()
             .then(
               () => notify('ok', o.doneText),
               (err: unknown) => notify('err', o.failText(err)),
             )
-            .finally(() => setSettled((n) => n + 1))
+            .finally(() => {
+              // the key stays pending while the commit is in flight so the card can't flash back
+              release(o.key)
+              setSettled((n) => n + 1)
+            })
         }, FUSE_MS),
       )
     },

@@ -205,6 +205,24 @@ describe('Home', () => {
     expect(vi.mocked(approvalsApi.needsYou).mock.calls.length).toBeGreaterThan(1) // reloaded
   })
 
+  it('keeps the card hidden while the commit is in flight', async () => {
+    mockQueue([item({ source_id: 'act-rev' })])
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(approvalsApi.approve).mockReturnValue(new Promise((resolve) => (finish = resolve)) as never)
+    renderHome()
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await tick(8000)
+    expect(approvalsApi.approve).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+    mockQueue([])
+    finish({})
+    await tick(0)
+    expect(screen.getByText('Approved: Block 1.2.3.4')).toBeInTheDocument()
+  })
+
   it('Undo before 8 s sends nothing and brings the card back', async () => {
     mockQueue([item({ source_id: 'act-rev' })])
     renderHome()
