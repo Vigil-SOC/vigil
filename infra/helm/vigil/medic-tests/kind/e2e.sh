@@ -289,6 +289,7 @@ expect "$FN-backend" 6987 timeout "R1 backend Service"
 expect "$be_ip" 6987 timeout "R1 backend pod"
 expect "$gw_ip" 8471 connected "gateway outbound"
 expect "$gw_ip" 8470 timeout "gateway inbound (backend's side)"
+expect "$FN-medic-gateway" 8470 timeout "probe target (gateway Service, port 8470)"
 expect "$FN-medic-agent-worker" 6990 connected "agent worker /readyz"
 expect 1.1.1.1 443 timeout "R2 internet"
 expect "$api_ep" "$api_port" connected "check 15 Kubernetes API"
@@ -406,11 +407,8 @@ if [[ $MODE == calico ]]; then
   await "$gw_ip" 8470 refused "S7-2 gateway inbound under Reject"
   $K -n "$NS" rollout restart "deploy/$FN-medic" >/dev/null
   $K -n "$NS" rollout status "deploy/$FN-medic" --timeout=300s || fail "S7-2: Medic didn't come back under Reject"
-  # Recreate: wait until the old pod is gone, so `logs deploy/…` reads the new one.
-  for _ in $(seq 60); do
-    [[ $($K -n "$NS" get pods -l app.kubernetes.io/component=medic --no-headers | wc -l) -eq 1 ]] && break
-    sleep 2
-  done
+  # Recreate: `rollout status` returns once the old pod is gone, so the log read
+  # below is the new pod's.
   $K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced: the probe to .* was refused every time" \
     || fail "S7-2: no 'refused every time' line"
   ok "S7-2: under Reject Medic logs 'refused every time' and is Ready"

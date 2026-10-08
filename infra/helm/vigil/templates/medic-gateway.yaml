@@ -131,7 +131,8 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 ---
-{{- /* One Service per listener (S5): Medic dials this one... */}}
+{{- /* One Service per side (S5): Medic dials this one (8471; 8470 here is only
+     the NetworkPolicy probe's target, which Medic's policy blocks)... */}}
 apiVersion: v1
 kind: Service
 metadata:
