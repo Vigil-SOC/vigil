@@ -1,6 +1,7 @@
 # I-5.b · a sender's token no longer matches DAEMON_WEBHOOK_TOKEN: pushes get a
 # 401 and an access-log line only. Anyone who can reach the port can send a bad
-# token, so this needs corroboration: refusals keep coming AND no push gets in.
+# token, so this needs corroboration: refusals keep coming, no push gets in, AND
+# pushes were accepted within the last 48 h (a real sender that stopped working).
 # Reads the poller's webhook_rejections per endpoint and reason (requires: D6).
 apiVersion: medic.rules/v1
 kind: Rule
@@ -23,12 +24,13 @@ when:
   all:
     - {fn: increase, signal: rejected, window: 30m, op: ">=", value: {param: min_rejections}}
     - {fn: increase, signal: accepted, window: 30m, op: "==", value: 0}
+    - {fn: increase, signal: accepted, window: 48h, op: ">", value: 0}
 for: 10m
 keep_firing_for: 15m
 params:
   min_rejections: {type: number, default: 20, min: 1, max: 1000}
 advice:
-  summary: Pushes to the soc-daemon webhook keep being refused for a wrong token, and none has been accepted for 30 minutes.
+  summary: Pushes to the soc-daemon webhook keep being refused for a wrong token, and none has been accepted for 30 minutes, after pushes had been working.
   fix: >-
     Make the token the sender uses match DAEMON_WEBHOOK_TOKEN in the soc-daemon
     environment (one of them was likely rotated), then restart soc-daemon if you

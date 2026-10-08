@@ -1,6 +1,8 @@
 # I-4 · federation polling stopped without an error: the adapter task died (I-4.d),
 # the adapters never registered (I-4.c) or the runner reads the source as off
-# (I-4.e). No new success, no new failure.
+# (I-4.e). No new success, no new failure. Gated on the global federation switch
+# (requires: D6 global.enabled): with it off the legacy poller owns the source and
+# last_success_at stalls by design.
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.federation-source-stalled
@@ -10,12 +12,14 @@ fault: {class: ingest, mode: I-4, causes: [I-4.c, I-4.d, I-4.e]}
 lane: 3
 detection: absence
 signals:
+  federation:   {sample: {signal: federation_sources, key: global.enabled}}
   enabled:      {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
   errors:       {sample: {signal: federation_sources, key: sources.consecutive_errors, by: [source]}}
   last_success: {sample: {signal: federation_sources, key: sources.last_success_at, by: [source]}}
 group_by: [source]
 when:
   all:
+    - {fn: latest, signal: federation, op: "==", value: true}
     - {fn: latest, signal: enabled, op: "==", value: true}
     - {fn: latest, signal: errors, op: "==", value: 0}
     - any:

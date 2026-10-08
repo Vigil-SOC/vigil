@@ -1,6 +1,7 @@
 # I-3.d · #1341: a finding whose store fails after the retry is forgotten and
 # logged once (%-style). What's left after the fix is "the database rejected
 # writes"; who owns the database decides lane 1 or 2, so lane 2 until G1 can tell.
+# Any store exception drops, including one malformed finding, hence >= 3.
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.processor-store-dropped
@@ -16,14 +17,13 @@ signals:
       logger: {eq: services.daemon.processor}
       level: [ERROR]
       template: {eq: 'Dropped finding %s: database store failed'}
-when: {fn: count, signal: dropped, window: 15m, op: ">=", value: 1}
+when: {fn: count, signal: dropped, window: 15m, op: ">=", value: 3}
 for: 2m
 keep_firing_for: 15m
 advice:
   summary: The database refused to store some new findings, so they were dropped and won't be retried.
   fix: >-
     Check Postgres: free disk space, the connection limit, and its log for
-    rejected writes. Once it accepts writes, new findings are stored again; the
-    dropped ones need to be re-sent from their source. If Vigil runs its own
-    bundled Postgres and it looks healthy, send this incident to DeepTempo
-    Support.
+    rejected writes. If Postgres is healthy, a source may be sending findings it
+    can't store; send this incident to DeepTempo Support. Once it accepts writes, new findings are stored again; the
+    dropped ones need to be re-sent from their source.

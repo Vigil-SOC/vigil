@@ -11,7 +11,7 @@ cases:
     end: +12m
     series:
       - {signal: daemon_status.poller, key: webhook_rejections, labels: {endpoint: daemon/webhook, reason: no_secret},
-         steps: [[+0m, 0], [+2m, 4], [+6m, 12], [+10m, 30]]}
+         steps: [[+0m, 0], [+2m, 4], [+6m, 32], [+10m, 60]]}
     expect:
       - {at: +2m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: unknown, state: inactive}
       - {at: +6m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: true, state: pending}
