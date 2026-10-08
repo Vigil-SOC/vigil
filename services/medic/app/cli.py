@@ -149,7 +149,11 @@ def run(
     if probe_target is not None and not _policy_enforced(probe_target, probe_control):
         return POLICY_REFUSED
     try:
-        api = ApiSettings(config.api_bind(env), config.api_key_file(env, data_dir))
+        api = ApiSettings(
+            config.api_bind(env),
+            config.api_key_file(env, data_dir),
+            config.api_bind_peer(env),
+        )
     except config.ConfigError as exc:
         log.error("Medic can't start: %s", exc)
         return 1
@@ -420,6 +424,7 @@ async def _loop(
 class ApiSettings:
     bind: tuple[str, int]
     key_file: Path | None
+    bind_peer: str | None = None
 
 
 class _Status:
@@ -441,6 +446,7 @@ class _Status:
                 board=self.board,
                 wall=clock.wall,
                 monotonic=clock.monotonic,
+                bind_peer=api.bind_peer,
             )
         self._failing = False
 

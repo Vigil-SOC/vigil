@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import itertools
 import json
 import logging
 import socket
@@ -325,3 +326,43 @@ def test_no_key_file_setting_says_which_variable(board, clock, caplog) -> None:
         api.ensure()
     assert not api.running
     assert "VIGIL_MEDIC_API_KEY_FILE" in caplog.text
+
+
+def test_bind_peer_narrows_the_listener_to_the_address_toward_it(
+    key_file, board, clock, caplog
+) -> None:
+    # Compose: only the address on the gateway's network (medic-private), never
+    # medic-net, where the agents could reach it (K1 §6 G3).
+    api = _api(key_file, board, clock, _free_port(), bind_peer="localhost")
+    api.bind = ("0.0.0.0", api.bind[1])  # what config gives a container shape
+    try:
+        with caplog.at_level(logging.INFO, logger="services.medic"):
+            api.ensure()
+        assert api.running
+        assert api.server.server_address[0] == "127.0.0.1"
+        assert "listening on 127.0.0.1:" in caplog.text
+    finally:
+        api.stop()
+
+
+def test_an_unresolvable_peer_waits_and_retries(key_file, board, clock, caplog) -> None:
+    api = _api(key_file, board, clock, _free_port(), bind_peer="medic-test.invalid")
+    with caplog.at_level(logging.WARNING, logger="services.medic"):
+        api.ensure()
+        clock.advance(61)
+        api.ensure()
+    assert not api.running
+    assert caplog.text.count("isn't listening yet") == 1
+    assert "medic-test.invalid" in caplog.text
+
+
+def test_first_retries_are_quick_then_once_a_minute(tmp_path, board, clock) -> None:
+    api = _api(tmp_path / "nope", board, clock, _free_port())
+    tries = []
+    real = api._try_start
+    api._try_start = lambda: tries.append(clock.monotonic()) or real()
+    for _ in range(400):
+        api.ensure()
+        clock.advance(1)
+    gaps = [b - a for a, b in itertools.pairwise(tries)]
+    assert gaps[:4] == [5, 10, 20, 40] and set(gaps[4:]) == {60}
