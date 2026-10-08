@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.defaults import DEFAULT_MODEL
 from core.skills.skill_library import READ_SKILL_TOOL
@@ -194,7 +195,6 @@ def _candidate_names(capability: str) -> Tuple[str, ...]:
 # An agent's prompt is rendered now rather than read from a file: the memory block
 # depends on the agent's own grant, so a stored copy would describe another agent.
 def _profile_for(agent_id: str) -> Any:
-    from core.agents.enablement import disabled_agent_ids, disabled_message
     from core.agents.manager import (
         CUSTOM_AGENT_ID_PREFIX,
         AgentManager,
@@ -212,6 +212,17 @@ def _profile_for(agent_id: str) -> Any:
     if agent_id in disabled_agent_ids():
         raise UnknownPlaybook(f"phase names {disabled_message(agent_id)}")
     return profile
+
+
+# Phase agents that are turned off, in phase order. One read of the switch for the
+# whole definition; hunt-like kinds name agents here without resolving profiles.
+def disabled_phase_agents(definition: Any) -> List[str]:
+    disabled = disabled_agent_ids()
+    named = (
+        (phase or {}).get("agent") or (phase or {}).get("agent_id")
+        for phase in definition.phases
+    )
+    return [agent for agent in dict.fromkeys(named) if agent in disabled]
 
 
 def _prompt_for(agent_id: str) -> str:
@@ -488,6 +499,9 @@ def resolve_hunt(
     definition = (workflows or WorkflowsService()).get_workflow(workflow_id)
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
+
+    if off := disabled_phase_agents(definition):
+        raise UnknownPlaybook(f"phase names {disabled_message(off[0])}")
 
     # Empty is the shipped case, not an error: what a hunt tests belongs to the caller.
     # A run with none from either source is refused in execute_workflow.
