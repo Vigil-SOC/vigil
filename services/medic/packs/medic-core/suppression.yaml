@@ -2,8 +2,4 @@
 # child; keep each batch's entries under its heading when merging.
 apiVersion: medic.suppression/v1
 kind: Suppression
-entries:
-  # --- ingest (F7a) ---
-  - parent: {rule: ingest.integration-config-incomplete}
-    children: {rule: ingest.federation-integration-disabled}
-    why: A half-configured integration also reads as not configured on its federation row. Show the missing settings.
+entries: []
