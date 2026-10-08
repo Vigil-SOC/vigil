@@ -10,6 +10,7 @@ ENABLED_VAR = "VIGIL_MEDIC_ENABLED"
 DATA_DIR_VAR = "VIGIL_MEDIC_DATA_DIR"
 SHAPE_VAR = "VIGIL_MEDIC_INSTALL_SHAPE"
 AGENT_WORKER_VAR = "VIGIL_MEDIC_AGENT_WORKER_ADDR"
+AGENT_SERVE_VAR = "VIGIL_MEDIC_AGENT_SERVE_ADDR"
 # A3-3: on Helm, a host:port Medic's egress policy must block (the chart sets it).
 POLICY_PROBE_VAR = "VIGIL_MEDIC_POLICY_PROBE_ADDR"
 # ...and a host:port it allows (the gateway): the positive control.
@@ -23,6 +24,10 @@ AGENT_WORKER_DEFAULT = {
     "compose": "agent-worker:6990",
     "helm": "agent-worker:6990",
 }
+# Where agent-serve's /readyz listens (6989). Compose only by default: agent-serve
+# is on medic-net there (S6). Helm's egress policy has no rule for it yet (S7 → D6)
+# and host-native is S11's, so there it is read only if the variable names it.
+AGENT_SERVE_DEFAULT = {"compose": "agent-serve:6989"}
 # host:port only: no scheme, path, userinfo or IPv6 brackets to smuggle anything in.
 _ADDR = re.compile(r"^([A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?):([0-9]{1,5})$")
 
@@ -78,6 +83,11 @@ def _host_port(var: str, value: str) -> tuple[str, int]:
 def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
     value = (env.get(AGENT_WORKER_VAR) or AGENT_WORKER_DEFAULT[shape]).strip()
     return _host_port(AGENT_WORKER_VAR, value)
+
+
+def agent_serve_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
+    value = (env.get(AGENT_SERVE_VAR) or AGENT_SERVE_DEFAULT.get(shape, "")).strip()
+    return _host_port(AGENT_SERVE_VAR, value) if value else None
 
 
 def _helm_addr(env: Mapping[str, str], shape: str, var: str, what: str):

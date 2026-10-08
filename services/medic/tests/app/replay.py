@@ -36,6 +36,8 @@ def replay(
     seconds: int,
     shape: str = "compose",
     arrived: Sequence[float] | None = None,
+    suppression: Sequence[dict[str, Any]] = (),
+    group_cap: int = 64,
 ) -> None:
     """Tick from `start` for `seconds`, feeding each observation once it arrived:
     at `arrived[i]` (wall clock) for a live recording, else at its observed_at."""
@@ -44,7 +46,15 @@ def replay(
     pending = sorted(zip(times, observations, strict=True), key=lambda p: p[0])
     clock = FakeClock(wall=start.timestamp())
     with open_writer(data_dir) as writer:
-        medic = Medic(writer=writer, rules=rules, sensors=[], clock=clock, shape=shape)
+        medic = Medic(
+            writer=writer,
+            rules=rules,
+            sensors=[],
+            clock=clock,
+            shape=shape,
+            suppression=suppression,
+            group_cap=group_cap,
+        )
         fed = 0
         for t in range(0, seconds + 1, TICK_S):
             clock.advance(start.timestamp() + t - clock.wall())

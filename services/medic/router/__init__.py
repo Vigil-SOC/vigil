@@ -2,10 +2,11 @@
 
 An incident's lane is its rule's lane, read from rule metadata and never from
 evidence (K1 T-05). The router adds the fields of incident_opened the engine
-doesn't own: `route`, `lane`, `runbook` and `would_have` (S4b-6 (a)). Every
-incident routes when it opens. Suppression and the routing hold (R2), the lane-1
-gate at routing time (R3), unknown signatures (R4) and simulated escalation (R6)
-are the full router's (G3).
+doesn't own: `lane`, `runbook` and `would_have`. **The engine alone writes
+`route`** and the routing updates (S4b2-2): when an incident routes depends on
+engine state (open parents, the 10-min outlive check, upgrade windows, E3 §6/§7).
+The lane-1 gate at routing time (R3), unknown signatures (R4) and simulated
+escalation (R6) are the full router's (G3).
 """
 
 from __future__ import annotations
@@ -45,9 +46,10 @@ class Router:
         rule_id = record["body"]["rule"]["id"]
         if rule_id not in self._lanes:
             raise ValueError(f"no rule {rule_id!r} in the router's rule set")
+        if record["body"].get("route") not in ("routed", "held"):
+            raise ValueError("incident_opened without the engine's route")
         lane = self._lanes[rule_id]
         body = copy.deepcopy(record["body"]) | {
-            "route": "routed",
             "lane": {"value": lane, "reason": "rule"},
             "runbook": None,
             "would_have": would_have(lane),

@@ -26,7 +26,7 @@ INSTANCE = "mi_0123456789abcdef"
 
 
 def _opened(meta: dict, at: str = "2026-10-07T10:00:00Z") -> dict:
-    """An engine incident_opened: the engine's fields only (S4b-6 (a))."""
+    """An engine incident_opened: the engine's fields only, `route` included."""
     rule_id = meta["rule"]["id"]
     return {
         "type": "incident_opened",
@@ -37,6 +37,7 @@ def _opened(meta: dict, at: str = "2026-10-07T10:00:00Z") -> dict:
             "install_shape": "compose",
             "active_since": at,
             "group": [],
+            "route": "routed",  # the engine's since S4b2-2
             "evidence": [],
             **deepcopy(meta),
         },
@@ -143,3 +144,23 @@ def test_an_incident_for_a_rule_the_router_wasnt_given_is_refused() -> None:
     rule = _with_lane(2)
     with pytest.raises(ValueError, match="ingest.integration-config-incomplete"):
         Router([]).route(_opened(rule_meta(rule)))
+
+
+@pytest.mark.parametrize("route", ["routed", "held"])
+def test_the_router_never_writes_route(route: str) -> None:
+    # S4b2-2 (decided): routing time is the engine's. The router keeps the
+    # engine's value and adds only lane, runbook and would_have.
+    rule = load_rule_file(RULES_DIR / "ingest-integration-config-incomplete.yaml")
+    record = _opened(rule_meta(rule))
+    record["body"]["route"] = route
+    body = Router([rule]).route(record)["body"]
+    assert body["route"] == route
+    assert set(body) - set(record["body"]) == {"lane", "runbook", "would_have"}
+
+
+def test_an_opened_record_without_the_engines_route_is_refused() -> None:
+    rule = load_rule_file(RULES_DIR / "ingest-integration-config-incomplete.yaml")
+    record = _opened(rule_meta(rule))
+    del record["body"]["route"]
+    with pytest.raises(ValueError, match="route"):
+        Router([rule]).route(record)

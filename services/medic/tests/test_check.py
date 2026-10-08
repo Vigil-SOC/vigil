@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from services.medic.app.cli import main
 from services.medic.app.heartbeat import (
@@ -133,3 +136,50 @@ def test_loose_run_dir_is_tightened(tmp_path: Path) -> None:
     run_dir.chmod(0o755)
     beat(tmp_path, at=T0, started_at=T0)
     assert run_dir.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    "state, reason",
+    [
+        ("stalled", "Medic stalled"),
+        ("stopped", "Medic stopped"),
+        ("crash-looping", "Medic crash-looping"),
+        ("starting", "unknown heartbeat state 'starting'"),
+        ("", "unknown heartbeat state ''"),
+        ("RUNNING", "unknown heartbeat state 'RUNNING'"),
+    ],
+)
+def test_any_state_but_running_fails_with_its_reason(
+    tmp_path: Path, state: str, reason: str, capsys
+) -> None:
+    # S8 → S10 (handoff L55): a fresh beat is still unhealthy unless it says running.
+    write_heartbeat(
+        tmp_path, cycle=3, now=T0 - 5, started_at=T0 - 3600, pid=1, state=state
+    )
+    ok, got = check_heartbeat(tmp_path, now=T0)
+    assert not ok and reason in got, got
+    assert main(["check"], env={"VIGIL_MEDIC_DATA_DIR": str(tmp_path)}, now=T0) == 1
+    assert reason in capsys.readouterr().out
+
+
+def test_a_heartbeat_with_no_state_fails(tmp_path: Path) -> None:
+    beat(tmp_path, at=T0 - 5, started_at=T0 - 3600)
+    record = json.loads(heartbeat_path(tmp_path).read_text())
+    del record["state"]
+    heartbeat_path(tmp_path).write_text(json.dumps(record))
+    ok, reason = check_heartbeat(tmp_path, now=T0)
+    assert not ok and "unknown heartbeat state" in reason
+
+
+def test_the_host_native_loops_crash_looping_beat_fails_as_crash_looping(
+    tmp_path: Path,
+) -> None:
+    # What scripts/medic/host-native/medic-loop.sh writes (ts 0): the state is the
+    # reason, not staleness.
+    heartbeat_path(tmp_path).parent.mkdir(parents=True)
+    heartbeat_path(tmp_path).write_text(
+        '{"v": 1, "cycle": 0, "ts": 0, "started_at": 0, "pid": 7, '
+        '"state": "crash-looping"}\n'
+    )
+    ok, reason = check_heartbeat(tmp_path, now=T0)
+    assert not ok and reason.startswith("Medic crash-looping")
