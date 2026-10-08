@@ -533,6 +533,16 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
         logger.exception("could not record the handoff of %s on %s", run_id, case_id)
 
 
+# What the analyst reads under a checkpoint's question. Never the class name or a
+# threshold: those are config, not an explanation.
+_CHECKPOINT_REASONS = {
+    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
+    "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
+    "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",
+}
+
+
 # A run parked on a checkpoint, as a question in the approvals inbox. Only the
 # compose path raised these before, so a hunt parked where nobody could see it.
 @router.post("/{run_id}/checkpoints", status_code=204)
@@ -551,7 +561,9 @@ def record_checkpoint(
         checkpoint_id=raised.checkpoint_id,
         title=raised.question[:120] or raised.checkpoint_class,
         description=raised.question,
-        reason=f"The run parked on a {raised.checkpoint_class} checkpoint",
+        reason=_CHECKPOINT_REASONS.get(
+            raised.checkpoint_class, "The run is waiting on your answer."
+        ),
         parameters={
             "checkpoint_class": raised.checkpoint_class,
             "run_kind": raised.run_kind,

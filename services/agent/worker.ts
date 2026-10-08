@@ -257,11 +257,15 @@ export async function advance(
     // whose answer is sitting at the endpoint unjournaled has been answered. The
     // workflow journals again on every iteration; this is idempotent against what
     // the ledger already holds, so the second call appends nothing.
-    await journalAnswers(state, job.run_id, job.run_kind, answersFor());
+    const answered = await journalAnswers(state, job.run_id, job.run_kind, answersFor());
 
     if (await abandonIfParkedOut(state, leases, job, spec)) return;
     if (await abandonIfStalled(state, leases, job)) return;
     if (latest !== null) await markResumed(state, job, owner, latest);
+    // An answer was just taken, so the run is working again from here: the first
+    // iteration can take minutes, and onCost only clears the row once it ends.
+    // Compose reports its own state through its phases.
+    if (answered > 0 && job.run_kind !== "compose") await tell(job.run_id, { status: "running", reason: "", cost_usd: await spentOn(state, job.run_id) });
     const parked = await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
