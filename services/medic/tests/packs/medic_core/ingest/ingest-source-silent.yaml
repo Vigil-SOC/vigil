@@ -1,0 +1,52 @@
+rule: ingest.source-silent
+defaults:
+  sensors:
+    - {id: http.federation, covers: [federation_sources], interval: 60s, service: backend, states: [[+0s, ok]]}
+    - {id: http.triage, covers: [triage], interval: 60s, service: backend, states: [[+0s, ok]]}
+  types:
+    federation_sources: {sources.enabled: bool, sources.last_success_at: timestamp}
+    triage: {sources.arrivals: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-polls-succeed-and-nothing-arrives
+    title: Elastic polls fine for the whole (site-shortened) quiet window but delivers nothing
+    params: {quiet_window: 1h}
+    end: +80m
+    series:
+      - {signal: federation_sources, key: sources.enabled, labels: {source: elastic}, steps: [[+0s, true]]}
+      - signal: federation_sources
+        key: sources.last_success_at
+        labels: {source: elastic}
+        steps: [[+0m, '2026-10-08T00:00:00Z'], [+9m, '2026-10-08T00:09:00Z'], [+18m, '2026-10-08T00:18:00Z'],
+                [+27m, '2026-10-08T00:27:00Z'], [+36m, '2026-10-08T00:36:00Z'], [+45m, '2026-10-08T00:45:00Z'],
+                [+54m, '2026-10-08T00:54:00Z'], [+63m, '2026-10-08T01:03:00Z'], [+72m, '2026-10-08T01:12:00Z']]
+      - {signal: triage, key: sources.arrivals, labels: {source: elastic}, steps: [[+0s, 50]]}
+    expect:
+      - {at: +30m, rule: ingest.source-silent, group: {source: elastic}, eval: unknown, state: inactive, note: not watched for the whole window yet}
+      - {at: +60m, rule: ingest.source-silent, group: {source: elastic}, eval: true, state: pending}
+      - {at: +75m, rule: ingest.source-silent, group: {source: elastic}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.source-silent, group: {source: elastic}, active_since: +60m, opened_at: +75m,
+          resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-when-findings-arrive-or-the-source-is-off
+    title: A source with arrivals and a disabled source with none both stay quiet
+    params: {quiet_window: 1h}
+    end: +70m
+    series:
+      - {signal: federation_sources, key: sources.enabled, labels: {source: splunk}, steps: [[+0s, true]]}
+      - signal: federation_sources
+        key: sources.last_success_at
+        labels: {source: splunk}
+        steps: [[+0m, '2026-10-08T00:00:00Z'], [+9m, '2026-10-08T00:09:00Z'], [+18m, '2026-10-08T00:18:00Z'],
+                [+27m, '2026-10-08T00:27:00Z'], [+36m, '2026-10-08T00:36:00Z'], [+45m, '2026-10-08T00:45:00Z'],
+                [+54m, '2026-10-08T00:54:00Z'], [+63m, '2026-10-08T01:03:00Z']]
+      - {signal: triage, key: sources.arrivals, labels: {source: splunk}, steps: [[+0m, 0], [+20m, 4], [+50m, 9]]}
+      - {signal: federation_sources, key: sources.enabled, labels: {source: crowdstrike}, steps: [[+0s, false]]}
+      - {signal: federation_sources, key: sources.last_success_at, labels: {source: crowdstrike}, steps: [[+0s, '2026-10-07T00:00:00Z']]}
+      - {signal: triage, key: sources.arrivals, labels: {source: crowdstrike}, steps: [[+0s, 7]]}
+    expect:
+      - {at: +25m, rule: ingest.source-silent, group: {source: splunk}, eval: false, state: inactive, note: 4 arrivals seen decides == 0}
+      - {at: +65m, rule: ingest.source-silent, group: {source: splunk}, eval: false, state: inactive}
+      - {at: +65m, rule: ingest.source-silent, group: {source: crowdstrike}, eval: false, state: inactive}
+    incidents: {}
