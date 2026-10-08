@@ -79,6 +79,19 @@ def test_suppression_entries_are_read_as_written(tmp_path: Path) -> None:
         load_pack_suppression(tmp_path)
 
 
+def test_suppression_is_read_as_strictly_as_a_rule(tmp_path: Path) -> None:
+    # Dev mode must not load a file F6's loader would refuse.
+    import yaml
+
+    path = tmp_path / "suppression.yaml"
+    path.write_text(
+        "apiVersion: medic.suppression/v1\nkind: Suppression\nentries:\n"
+        "  - {parent: {class: llm}, parent: {class: ingest}, children: {mode: P-4}}\n"
+    )
+    with pytest.raises(yaml.YAMLError, match="E-YAML-DUPKEY"):
+        load_pack_suppression(tmp_path)
+
+
 def test_a_malformed_suppression_entry_stops_medic_before_it_beats(
     tmp_path: Path, monkeypatch
 ) -> None:

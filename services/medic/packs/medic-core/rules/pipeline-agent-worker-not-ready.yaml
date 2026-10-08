@@ -4,6 +4,7 @@
 # queued runs aren't picked up. A refused connection reads ready=false too (the
 # process is gone). Which of Redis or the worker is at fault can't be told from
 # /readyz alone, so lane 3 (Phase 1: restart, once Redis is shown healthy).
+# Outsider: no (an unauthenticated probe on a port only Medic and the agents reach).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.agent-worker-not-ready

@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from services.medic.contracts import rule_check
 from services.medic.engine import Engine, LoadedRule, load_rule_file
 from services.medic.router import Router
 from services.medic.sensors import (
@@ -56,7 +57,8 @@ def load_pack_suppression(pack: Path = PACK_SOURCE) -> list[dict[str, Any]]:
     path = pack / "suppression.yaml"
     if not path.exists():
         return []
-    doc = yaml.safe_load(path.read_text())
+    # The loader's strict YAML (no aliases, no duplicate keys), as F6 will use.
+    doc = yaml.load(path.read_text(), Loader=rule_check._StrictLoader)
     entries = doc.get("entries") if isinstance(doc, dict) else None
     if not isinstance(entries, list):
         raise TypeError(f"{path.name}: expected a mapping with a list of entries")
