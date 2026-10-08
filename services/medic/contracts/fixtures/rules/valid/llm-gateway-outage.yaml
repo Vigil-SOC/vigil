@@ -1,0 +1,30 @@
+# Enter/recover pair · L-4 / P-4.a (#1689 core/llm/outage.py; services/daemon/processor.py:650).
+# The recovery line uses the generic template "%s; recovered after %d failures",
+# so matching which outage recovered needs args[0], which makes the rule untrusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.gateway-outage
+title: Daemon can't connect to the LLM gateway, so AI triage is skipped
+revision: 1
+fault: {class: llm, mode: L-4, causes: [L-4.a]}
+lane: 2
+signals:
+  down:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [ERROR]
+      template: {eq: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'}
+  recovered:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: services.daemon.processor}
+      level: [INFO]
+      template: {eq: '%s; recovered after %d failures'}
+      args: {"0": {eq: LLM gateway connected for AI triage}}
+when: {fn: latch, set: down, clear: recovered}
+advice:
+  summary: soc-daemon can't reach the LLM gateway, so new findings are stored without AI triage.
+  fix: >-
+    Check that the Bifrost container is running and reachable from soc-daemon,
+    and that its provider keys are valid (Settings, LLM providers).
