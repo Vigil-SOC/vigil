@@ -4723,6 +4723,95 @@
       font-weight: 650;
    }
 
+   /* Vigil MCP server tab (board SettingsIntegrations.dc.html) */
+   .mcp-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+   }
+
+   /* the card is the frame; the table inside keeps only its rules */
+   .mcp-card .int-table {
+      border: 0;
+      background: none;
+   }
+
+   .mcp-callout {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--fair-bg);
+      border: 1px solid var(--fair-ln);
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--tx0);
+   }
+
+   .mcp-callout svg { color: var(--fair); vertical-align: -3px; }
+
+   .mcp-token {
+      margin: 0;
+      max-width: 100%;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+      background: var(--bg2);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      user-select: all;
+   }
+
+   .mcp-head h3,
+   .mcp-head h4 {
+      margin: 0 0 3px;
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.35;
+      color: var(--tx0);
+   }
+
+   .mcp-head p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .mcp-onoff {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--bg2);
+   }
+
+   .mcp-onoff-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .mcp-onoff-text b {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .ag-switch:disabled { opacity: .5; cursor: not-allowed; }
+
    .settings-content {
       flex: 1;
       min-width: 0;
