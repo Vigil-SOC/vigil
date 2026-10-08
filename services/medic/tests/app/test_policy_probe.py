@@ -1,9 +1,11 @@
 """A3-3: on Helm, Medic refuses to start where NetworkPolicy isn't enforced.
 
-At start Medic tries one connection its own egress policy must block (by default
-the backend Service, C3 R1). Only a timeout proves the policy dropped it:
-connecting proves it isn't enforced, and a refusal or a name that won't resolve
-proves nothing, so Medic refuses on both (fail closed).
+At start Medic connects to the gateway's outbound listener, which its policy
+allows (the control), then tries the inbound one on the same pods, which its
+policy blocks (the target). A target that times out, or is refused while the
+control connects, proves the policy (S7-2: some plugins REJECT rather than
+drop). Connecting proves it isn't enforced; anything else proves nothing, so
+Medic refuses (fail closed).
 """
 
 from __future__ import annotations
@@ -56,14 +58,16 @@ def test_connected_means_not_enforced() -> None:
     assert not v.enforced
 
 
-def test_refused_is_inconclusive_and_not_enforced() -> None:
+def test_refused_is_its_own_verdict_and_counts_as_enforced() -> None:
+    # S7-2: a plugin set to REJECT (Calico `Reject`) answers a denied SYN with
+    # an ICMP unreachable, which connect() reports as refused.
     v = probe(
         ("backend", 6987),
         connect=_connect_raising(ConnectionRefusedError()),
         resolve=_resolve_ok,
     )
-    assert v == Verdict.INCONCLUSIVE
-    assert not v.enforced
+    assert v == Verdict.REFUSED
+    assert v.enforced
 
 
 def test_name_that_wont_resolve_is_inconclusive() -> None:
@@ -171,7 +175,7 @@ def _run(tmp_path: Path, monkeypatch, caplog, verdicts: dict, waits=None) -> int
         return v.pop(0) if isinstance(v, list) else v
 
     monkeypatch.setattr(cli, "policy_probe", probe)
-    monkeypatch.setattr(cli, "_control_wait", ([] if waits is None else waits).append)
+    monkeypatch.setattr(cli, "_probe_wait", ([] if waits is None else waits).append)
     clock = FakeClock()
     with caplog.at_level(logging.INFO, logger="services.medic"):
         return main(
@@ -302,3 +306,110 @@ def test_control_retry_is_bounded(tmp_path: Path, monkeypatch, caplog) -> None:
     assert code == POLICY_REFUSED
     assert len(waits) == cli.CONTROL_ATTEMPTS - 1
     assert cli.CONTROL_ATTEMPTS * cli.CONTROL_RETRY_S <= 120
+
+
+# --- S7-2: a refused target is a policy at work (REJECT-style plugins) ------
+
+
+def test_run_starts_when_the_target_is_refused_every_time(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from services.medic.app import cli
+
+    waits: list[float] = []
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {CONTROL: Verdict.CONNECTED, TARGET: Verdict.REFUSED},
+        waits,
+    )
+    assert code == 0
+    assert "NetworkPolicy is enforced" in caplog.text and "refused" in caplog.text
+    # A refusal is confirmed: an endpoint-less Service is refused too (kube-proxy
+    # REJECTs), so it must hold while endpoints have had time to appear.
+    assert waits == [cli.TARGET_RETRY_S] * (cli.TARGET_ATTEMPTS - 1)
+    assert cli.TARGET_ATTEMPTS >= 3
+    assert (cli.TARGET_ATTEMPTS - 1) * cli.TARGET_RETRY_S >= 10
+    assert heartbeat_path(tmp_path).exists()
+
+
+def test_a_refusal_that_turns_into_a_connection_is_not_enforced(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    # The inbound Service's endpoints lagged the outbound one's on a cluster
+    # that doesn't enforce anything: refused first, then connected.
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {
+            CONTROL: Verdict.CONNECTED,
+            TARGET: [Verdict.REFUSED, Verdict.CONNECTED, Verdict.REFUSED],
+        },
+    )
+    assert code == POLICY_REFUSED
+    assert "NetworkPolicy isn't enforced" in caplog.text
+    assert _wrote_nothing(tmp_path)
+
+
+def test_refused_then_dropped_is_enforced(tmp_path: Path, monkeypatch, caplog) -> None:
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {
+            CONTROL: Verdict.CONNECTED,
+            TARGET: [Verdict.REFUSED, Verdict.BLOCKED],
+        },
+    )
+    assert code == 0
+    assert "NetworkPolicy is enforced" in caplog.text
+
+
+@pytest.mark.parametrize("later", [Verdict.INCONCLUSIVE, Verdict.UNRESOLVED])
+def test_refused_then_proving_nothing_refuses(
+    tmp_path: Path, monkeypatch, caplog, later
+) -> None:
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {CONTROL: Verdict.CONNECTED, TARGET: [Verdict.REFUSED, later]},
+    )
+    assert code == POLICY_REFUSED
+    assert "can't prove" in caplog.text and later.value in caplog.text
+    assert _wrote_nothing(tmp_path)
+
+
+@pytest.mark.parametrize("control", [Verdict.REFUSED, Verdict.BLOCKED])
+def test_a_refused_target_proves_nothing_unless_the_control_connects(
+    tmp_path: Path, monkeypatch, caplog, control
+) -> None:
+    code = _run(
+        tmp_path, monkeypatch, caplog, {CONTROL: control, TARGET: Verdict.REFUSED}
+    )
+    assert code == POLICY_REFUSED
+    assert "control" in caplog.text
+    assert _wrote_nothing(tmp_path)
+
+
+def test_real_sockets_refused_target_with_a_live_control_starts(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from services.medic.app import cli
+
+    monkeypatch.setattr(cli, "_probe_wait", lambda s: None)
+    with socket.socket() as srv, socket.socket() as closed:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(4)
+        closed.bind(("127.0.0.1", 0))  # bound, never listening: RST → refused
+        env = {
+            **_env(tmp_path),
+            config.POLICY_CONTROL_VAR: "{}:{}".format(*srv.getsockname()),
+            config.POLICY_PROBE_VAR: "{}:{}".format(*closed.getsockname()),
+        }
+        clock = FakeClock()
+        with caplog.at_level(logging.INFO, logger="services.medic"):
+            code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
+    assert code == 0, caplog.text
