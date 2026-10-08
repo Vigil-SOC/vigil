@@ -91,6 +91,8 @@ while :; do
     started=$(date +%s)
     medic run &
     child=$!
+    # TERM between `&` and `child=$!` found no child to pass on to.
+    [ "$stopping" -eq 1 ] && kill -TERM "$child" 2>/dev/null
     say "started Medic (pid $child)"
     wait "$child"
     rc=$?
@@ -122,7 +124,7 @@ while :; do
     say "Medic exited (code $rc) after ${ran}s; restarting in ${delay}s"
     sleep "$delay" &
     sleeper=$!
-    wait "$sleeper"
+    [ "$stopping" -eq 1 ] || wait "$sleeper"
     if [ "$stopping" -eq 1 ]; then
         kill "$sleeper" 2>/dev/null
         say "stopped"
