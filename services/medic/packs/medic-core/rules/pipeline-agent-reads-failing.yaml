@@ -8,6 +8,8 @@
 # are executing, so after a fix without a restart the recovery line may never
 # come (and at DAEMON_LOG_LEVEL WARNING neither clear line is logged): the latch
 # counts only while executing runs are stale (no recorded activity > 5 min).
+# A run that already had activity is stale-killed at 300 s, so it may not hold
+# the gate for the 2 min hold; the next run (NULL activity, never killed) does.
 # Outsider: no (soc-daemon's own config and agent-serve's token).
 apiVersion: medic.rules/v1
 kind: Rule
