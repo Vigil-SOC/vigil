@@ -168,6 +168,10 @@
   background: var(--bg3);
 }
 
+.vg-command-later {
+  display: block;
+}
+
 .vg-command-row:disabled {
   opacity: 0.45;
   cursor: default;

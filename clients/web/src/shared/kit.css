@@ -61,6 +61,7 @@
   white-space: normal; /* a th above may be nowrap */
 }
 
+.info-tip-pop::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; } /* keeps hover across the gap */
 .info-tip-pop.end { right: 0; }
 .info-tip-pop.start { left: 0; }
 .info-tip-line b { color: var(--tx0); font-weight: 650; }

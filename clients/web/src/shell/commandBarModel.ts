@@ -20,7 +20,7 @@ export interface CommandDef {
 export const COMMANDS: CommandDef[] = [
   { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false, workflowId: 'incident-response' },
   { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false, workflowId: 'threat-hunt' },
-  { id: 'replay', name: '/replay', hint: '<case>', desc: 'Open a case by id', runs: 'Opens the case', later: false },
+  { id: 'replay', name: '/replay', hint: '<case>', desc: "Watch a case's latest run", runs: 'Opens Watch a run', later: false },
   { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false },
   { id: 'ticket', name: '/ticket', hint: '<case>', desc: 'Create a Jira ticket from a case', runs: 'Exports the case to Jira', later: false },
   { id: 'hold', name: '/hold', hint: '<case or kind>', desc: 'Hold a case, or every case of one kind', runs: '—', later: true },
@@ -31,7 +31,7 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
 
-export type DestTag = 'Case' | 'Finding' | 'Page' | 'Command' | 'Recent'
+export type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent'
 
 export interface BoardLink {
   key: string
@@ -58,6 +58,7 @@ export interface PaletteRow {
   disabled: boolean
   commandId?: CommandId
   caseId?: string
+  findingId?: string
   page?: string
   recent?: string
 }
@@ -232,7 +233,7 @@ export function commandPreview(
     }
     case 'replay':
       return a
-        ? { line: `Open case ${a}`, disabled: false }
+        ? { line: `Watch the latest run on case ${a}`, disabled: false }
         : { line: 'Add a case id', disabled: true }
     case 'ask':
       return a
@@ -323,8 +324,9 @@ export function buildRows(
       key: `finding:${hit.id}`,
       label: hit.title || hit.id,
       hint: hit.id,
-      dest: 'Finding',
+      dest: 'Alert',
       disabled: false,
+      findingId: hit.id,
     })
   }
   for (const hit of hits?.textCases ?? []) pushCase(rows, seen, hit)
