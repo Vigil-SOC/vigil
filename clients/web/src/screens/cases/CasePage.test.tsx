@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
 import { ToastProvider } from '../../shell/toast'
-import { approvalsApi, casesApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, casesApi, orchestratorApi, streamFetch, workflowApi, type NeedsYouItem } from '../../services/api'
 
 const testState = vi.hoisted(() => ({
   canDelete: true,
@@ -35,6 +35,7 @@ vi.mock('../../services/api', () => ({
       return Promise.resolve({ data: { rows: testState.recordRows, run_id: null, investigation_id: null } })
     }),
     getComments: vi.fn(() => Promise.resolve({ data: { comments: [] } })),
+    addComment: vi.fn(),
     getTasks: vi.fn(() => Promise.resolve({ data: { tasks: [] } })),
     getEvidence: vi.fn(() => Promise.resolve({ data: { evidence: [] } })),
     getIOCs: vi.fn(() => Promise.resolve({ data: { iocs: [] } })),
@@ -43,7 +44,6 @@ vi.mock('../../services/api', () => ({
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'incident-response', name: 'Incident response' }] } })),
     getRun: vi.fn((id: string) => Promise.resolve({ data: { run_id: id, ...(testState.runs[id] as object) } })),
-    replayRun: vi.fn(),
     verifyRun: vi.fn(),
   },
   orchestratorApi: { exportInvestigation: vi.fn() },
@@ -95,7 +95,7 @@ const HUNT = {
     { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null, provenance: '' },
   ],
   evidence: [
-    { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
+    { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
   ],
   evidence_count: 1,
   calls: [
@@ -135,11 +135,11 @@ function renderCase(id: string) {
 }
 
 /** The case page alone, as the drawer renders it. */
-function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void } = {}) {
+function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void; seed?: string | null; onSeedConsumed?: () => void } = {}) {
   const ui = (caseId: string) => (
     <MemoryRouter>
       <ToastProvider>
-        <CasesDetail id={caseId} onBack={props.onBack ?? vi.fn()} onExpand={props.onExpand} pageKey="cases" />
+        <CasesDetail id={caseId} onBack={props.onBack ?? vi.fn()} onExpand={props.onExpand} pageKey="cases" seed={props.seed} onSeedConsumed={props.onSeedConsumed} />
       </ToastProvider>
     </MemoryRouter>
   )
@@ -211,7 +211,7 @@ describe('case page', () => {
     expect(within(header).getByText('Executing')).toBeInTheDocument()
     expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
     const now = await screen.findByRole('region', { name: 'Now' })
-    expect(within(now).getByText('Now · step 3')).toBeInTheDocument()
+    expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     expect(within(now).getByText('who logged in')).toBeInTheDocument()
     const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
     expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
@@ -309,6 +309,116 @@ describe('case page', () => {
     expect((await screen.findAllByText('The run could not be read.')).length).toBeGreaterThan(0)
   })
 
+  it('lays a hunt evidence trail out: stance, tier, by, a disabled row action, header counts', async () => {
+    testState.cases = [{
+      case_id: 'case-trail',
+      title: 'Trail case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-trail')],
+    }]
+    const base = { gap_detail: null, is_gap: false, source_tier: 'feed' }
+    testState.runs['run-trail'] = {
+      hunt: {
+        ...HUNT,
+        evidence_count: 7,
+        evidence: [
+          { ...HUNT.evidence[0] },
+          // Supports one explanation and weakens another: Mixed, each link named beneath.
+          { ...base, evidence_id: 'e2', iteration: 3, source_system: 'okta', summary: 'new session', bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }, { hypothesis_id: 'h1', relation: 'weakens' }] },
+          { ...base, evidence_id: 'e3', iteration: 1, source_system: 'dns', summary: 'plain lookup', source_tier: 'not_evidence', bears_on: [] },
+          // Gap row with no stamped tier, and an iteration the capped moves do not cover.
+          { ...base, evidence_id: 'e4', iteration: 9, source_system: 'mfa', summary: 'no push logs', is_gap: true, gap_detail: 'no source', source_tier: undefined, bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }] },
+        ],
+      },
+    }
+    renderCase('case-trail')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · 2 for / 2 against / 1 neither (shown)' })).toBeInTheDocument()
+
+    const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
+    const first = row('e1')
+    expect(within(first).getByText('Goes against')).toBeInTheDocument()
+    expect(within(first).getByText('Telemetry')).toBeInTheDocument()
+    expect(within(first).getByText('threat_hunter')).toBeInTheDocument()
+    expect(within(first).getByText('The host is owned')).toBeInTheDocument()
+    const second = row('e2')
+    expect(within(second).getByText('Mixed')).toBeInTheDocument()
+    expect(within(second).getByText('Feed')).toBeInTheDocument()
+    expect(within(second).getByText('threat_hunter')).toBeInTheDocument()
+    expect(within(second).getByText('Supports Still forming · Goes against The host is owned')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Neither')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Not evidence')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('network_analyst')).toBeInTheDocument()
+    const gap = row('e4')
+    expect(within(gap).getByText('no push logs (gap)')).toBeInTheDocument()
+    expect(within(gap).getAllByText('—')).toHaveLength(2) // no tier, move not in the capped list
+
+    const act = within(first).getByRole('button', { name: 'Actions for this row' })
+    expect(act).toBeDisabled()
+    expect(act).toHaveAttribute('title', 'Coming in a later release')
+  })
+
+  it('shows loading, then a read error, instead of an empty evidence trail', async () => {
+    testState.cases = [{
+      case_id: 'case-err',
+      title: 'Error case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-err')],
+    }]
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
+    renderCase('case-err')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('The run could not be read.')).toBeInTheDocument()
+    expect(screen.queryByText('No evidence yet')).not.toBeInTheDocument()
+  })
+
+  it('says the run is loading while the fold is unread', async () => {
+    testState.cases = [{
+      case_id: 'case-wait',
+      title: 'Waiting case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-wait')],
+    }]
+    vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
+    renderCase('case-wait')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(screen.getByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('No evidence yet')).not.toBeInTheDocument()
+  })
+
+  it('says a hunt with no evidence rows has none yet', async () => {
+    testState.cases = [{
+      case_id: 'case-none',
+      title: 'Bare case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-none')],
+    }]
+    testState.runs['run-none'] = { hunt: { ...HUNT, evidence: [], evidence_count: 0 } }
+    renderCase('case-none')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('No evidence yet')).toBeInTheDocument()
+  })
+
   it('gives an investigate run the honest line and puts findings in the evidence table', async () => {
     testState.cases = [{
       case_id: 'case-inv',
@@ -343,7 +453,10 @@ describe('case page', () => {
     expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'About explanations' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
-    expect(await screen.findByText('benign traffic')).toBeInTheDocument()
+    const finding = (await screen.findByText('benign traffic')).closest('[data-evidence-id]') as HTMLElement
+    expect(screen.getByRole('heading', { name: 'Evidence trail · 1 row' })).toBeInTheDocument()
+    expect(within(finding).getAllByText('—')).toHaveLength(2) // no tier, no stance
+    expect(within(finding).getAllByText('lead')).toHaveLength(2) // source and by
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
     expect(await screen.findByText(/list users/)).toBeInTheDocument()
     expect(screen.getByText(/tool down/)).toBeInTheDocument()
@@ -642,6 +755,108 @@ describe('case page', () => {
     expect(await screen.findByText('the agent layer answered 502')).toBeInTheDocument()
   })
 
+  describe('Record tab', () => {
+    const rows = [
+      { id: 'r1', at: '2026-06-15T10:00:00Z', kind: 'agent', source: 'run', chained: true, text: 'Lead started step 7' },
+      { id: 'r2', at: '2026-06-15T10:05:00Z', kind: 'recall', source: 'run', chained: true, text: 'Recalled 3 rows' },
+      { id: 'r3', at: '2026-06-15T10:09:00Z', kind: 'case_audit_logs', source: 'case', chained: false, text: 'M. Kaur closed the task' },
+      { id: 'r4', at: '2026-06-15T10:11:00Z', kind: 'run', source: 'run', chained: true, text: 'Run started' },
+    ]
+
+    const openRecord = async (ui: () => ReturnType<typeof renderCase> | ReturnType<typeof renderDetail> = () => renderCase('case-rec')) => {
+      testState.cases = [{
+        case_id: 'case-rec',
+        title: 'Record case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'executing',
+        investigations: [investigation('executing', true, 'run/1')],
+      }]
+      testState.runs['run/1'] = { hunt: HUNT }
+      ui()
+      fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
+    }
+
+    it('types each row, counts All, and filters by chip', async () => {
+      testState.recordRows = rows
+      await openRecord()
+      expect(await screen.findByRole('button', { name: 'All 4' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('Lead started step 7').closest('.rec-row')).toHaveTextContent('Agent')
+      expect(screen.getByText('Lead started step 7').closest('.rec-row')).toHaveTextContent('chained')
+      expect(screen.getByText('M. Kaur closed the task').closest('.rec-row')).not.toHaveTextContent('chained')
+      expect(screen.queryByRole('button', { name: 'Gate' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Human' }))
+      expect(screen.getByRole('button', { name: 'Human' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('M. Kaur closed the task')).toBeInTheDocument()
+      expect(screen.queryByText('Lead started step 7')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Memory' }))
+      expect(screen.getByText('Recalled 3 rows')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'System' }))
+      expect(screen.getByText('Run started')).toBeInTheDocument()
+      expect(screen.queryByText('Recalled 3 rows')).not.toBeInTheDocument()
+    })
+
+    it('shows the empty and loading states', async () => {
+      testState.recordRows = []
+      await openRecord()
+      expect(await screen.findByText('No record yet')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'All 0' })).toBeInTheDocument()
+    })
+
+    it('opens the ⓘ note on the chain', async () => {
+      testState.recordRows = rows
+      await openRecord()
+      fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit rows are not.')
+    })
+
+    it('Replay links to the run on Workflows, and closes the drawer', async () => {
+      testState.recordRows = rows
+      const onBack = vi.fn()
+      await openRecord(() => renderDetail('case-rec', { onBack, onExpand: vi.fn() }))
+      const link = await screen.findByRole('link', { name: 'Replay' })
+      expect(link).toHaveAttribute('href', '/workflows?run=run%2F1')
+      fireEvent.click(link)
+      expect(onBack).toHaveBeenCalled()
+    })
+
+    it('has no Replay link without a run', async () => {
+      testState.recordRows = rows
+      testState.cases = [{
+        case_id: 'case-rec',
+        title: 'Record case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [],
+      }]
+      renderCase('case-rec')
+      fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
+      await screen.findByText('Lead started step 7')
+      expect(screen.queryByRole('link', { name: 'Replay' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Verify chain' })).not.toBeInTheDocument()
+    })
+
+    it('Verify chain and Export audit keep their behaviour', async () => {
+      testState.recordRows = rows
+      vi.mocked(workflowApi.verifyRun).mockResolvedValue({ data: { ok: true, events: 12 } } as never)
+      vi.mocked(orchestratorApi.exportInvestigation).mockResolvedValue({ data: { a: 1 } } as never)
+      const createUrl = vi.fn(() => 'blob:x')
+      Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: vi.fn() })
+      await openRecord()
+      fireEvent.click(await screen.findByRole('button', { name: 'Verify chain' }))
+      expect(await screen.findByText('Chain verified (12 events).')).toBeInTheDocument()
+      expect(workflowApi.verifyRun).toHaveBeenCalledWith('run/1')
+      fireEvent.click(screen.getByRole('button', { name: 'Export audit' }))
+      await waitFor(() => expect(orchestratorApi.exportInvestigation).toHaveBeenCalledWith('inv-1'))
+      expect(createUrl).toHaveBeenCalled()
+    })
+  })
+
   it('pins Ask on the case and keeps Tell and Do from posting', async () => {
     testState.cases = [{
       case_id: 'case-hunt',
@@ -701,6 +916,26 @@ describe('case page', () => {
     })
   })
 
+  it('sends an incoming seed as typed on the case thread, then clears it', async () => {
+    testState.cases = [{
+      case_id: 'case-hunt',
+      title: 'Hunt case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: ['f1'],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [],
+    }]
+    const onSeedConsumed = vi.fn()
+    renderDetail('case-hunt', { seed: 'what happened on web-01?', onSeedConsumed })
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.case_id).toBe('case-hunt')
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: 'what happened on web-01?' })
+    expect(onSeedConsumed).toHaveBeenCalled()
+  })
+
   it('chips a hunt evidence id and opens that row, and drops the thread when the case changes', async () => {
     testState.cases = [
       {
@@ -737,8 +972,9 @@ describe('case page', () => {
     expect(screen.queryByText('no login')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'e1' }))
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
-    const row = (await screen.findByText('no login')).closest('tr')
+    const row = (await screen.findByText('no login')).closest('[data-evidence-id]')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
+    expect(row).toHaveClass('cite-target')
 
     showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
@@ -1115,6 +1351,144 @@ describe('case page', () => {
       expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     })
   })
+
+  describe('side panel', () => {
+    const base = (over: Record<string, unknown> = {}) => ({
+      case_id: 'case-9',
+      title: 'Frame case',
+      status: 'open',
+      priority: 'high',
+      assignee: 'ada lovelace',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      ...over,
+    })
+    beforeEach(() => {
+      vi.mocked(casesApi.getComments).mockClear()
+      vi.mocked(casesApi.getEscalations).mockClear()
+    })
+    const side = async () => within(await screen.findByRole('complementary', { name: 'Case details' }))
+    const withBudget = (cost: number, max: number, health: string) => ({
+      ...base(),
+      investigations: [{ ...investigation('open', false, 'run-x'), cost_usd: cost, max_cost_usd: max, budget_health: health }],
+    })
+
+    it('writes details, a level-coloured cost meter and the recall cards', async () => {
+      testState.cases = [withBudget(1, 2, 'warning')]
+      testState.runs['run-x'] = {
+        hunt: {
+          ...HUNT,
+          recall: {
+            keys: ['host-1', 'ada'],
+            verdicts: [{ investigation_kind: 'case', investigation_id: 'case-1', concluded_at: '2026-05-02T10:00:00Z', hypothesis_id: 'h1', statement: 'malicious', outcome: 'proven' }],
+            sightings: [{ investigation_kind: 'hunt', investigation_id: 'hunt-1', concluded_at: '2026-05-02T10:00:00Z', entity_key: 'host-1', source_system: 'splunk', hit_count: 2 }],
+            gaps: [{ investigation_kind: 'hunt', investigation_id: 'hunt-2', concluded_at: '2026-05-02T10:00:00Z', hypothesis_id: 'h2', statement: 'no EDR', disposition: 'no_evidence_gathered' }],
+          },
+        },
+      }
+      renderDetail('case-9')
+      const panel = await side()
+      expect(await panel.findByText('Incident response')).toBeInTheDocument()
+      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.0000')
+      expect(await panel.findByText('host-1, ada')).toBeInTheDocument()
+      expect(panel.getByText('$1.0000 of $2.0000')).toBeInTheDocument()
+      expect(panel.getByText('Fair')).toHaveClass('fair')
+      const meter = panel.getByRole('meter')
+      expect(meter).toHaveAttribute('aria-valuenow', '50')
+      expect(meter.firstElementChild).toHaveClass('meter-fill', 'fair')
+      expect(panel.getByText('proven — malicious').nextElementSibling).toHaveTextContent('Verdict')
+      expect(panel.getByText('host-1 · splunk · 2 hits').nextElementSibling).toHaveTextContent('Sighting')
+      expect(panel.getByText('no evidence gathered — no EDR').nextElementSibling).toHaveTextContent('Gap')
+      expect(document.querySelector('.case-side .k')).toBeNull()
+    })
+
+    it('clamps an overspent bar and reads Poor', async () => {
+      testState.cases = [withBudget(3, 2, 'critical')]
+      renderDetail('case-9')
+      const panel = await side()
+      const meter = await panel.findByRole('meter')
+      expect(meter).toHaveAttribute('aria-valuenow', '100')
+      expect(meter.firstElementChild).toHaveStyle({ width: '100%' })
+      expect(panel.getByText('Poor')).toBeInTheDocument()
+    })
+
+    it('shows Not measured, no bar and no Good for no run or a zero limit', async () => {
+      testState.cases = [base()]
+      const { unmount } = renderDetail('case-9')
+      let panel = await side()
+      expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
+      expect(panel.queryByRole('meter')).not.toBeInTheDocument()
+      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('—')
+      unmount()
+
+      testState.cases = [withBudget(0, 0, 'healthy')]
+      renderDetail('case-9')
+      panel = await side()
+      expect(await panel.findByText('Not measured yet')).toBeInTheDocument()
+      expect(panel.queryByRole('meter')).not.toBeInTheDocument()
+      expect(panel.queryByText('Good')).not.toBeInTheDocument()
+    })
+
+    it('keeps the two empty recall copies', async () => {
+      testState.cases = [withBudget(1, 2, 'healthy')]
+      testState.runs['run-x'] = { hunt: HUNT }
+      const { unmount } = renderDetail('case-9')
+      expect(await (await side()).findByText('The run did not journal a recall.')).toBeInTheDocument()
+      unmount()
+
+      testState.runs['run-x'] = { hunt: { ...HUNT, recall: { unavailable: 'memory down' } } }
+      renderDetail('case-9')
+      expect(await (await side()).findByText('Recall did not happen: memory down')).toBeInTheDocument()
+    })
+
+    it('collapses People to the owner while comments load, then counts them once, and expands', async () => {
+      testState.cases = [base()]
+      let resolve: (v: unknown) => void = () => undefined
+      vi.mocked(casesApi.getComments).mockReturnValueOnce(new Promise((r) => { resolve = r }) as never)
+      vi.mocked(casesApi.getTasks).mockResolvedValueOnce({ data: { tasks: [{ task_id: 1, title: 'Isolate host', status: 'pending', priority: 'high' }] } } as never)
+      renderDetail('case-9')
+      const panel = await side()
+      const toggle = await panel.findByRole('button', { name: /^People/ })
+      expect(toggle).toHaveTextContent('People · ada lovelace')
+      expect(toggle).not.toHaveTextContent('comment')
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await act(async () => {
+        resolve({ data: { comments: [
+          { comment_id: 1, author: 'ada', content: 'first', created_at: '2026-06-15T09:00:00Z' },
+          { comment_id: 2, author: 'bob', content: 'reply', created_at: '2026-06-15T09:05:00Z', parent_comment_id: 1 },
+        ] } })
+      })
+      await waitFor(() => expect(toggle).toHaveTextContent('People · ada lovelace, 2 comments'))
+      expect(panel.queryByText('first')).not.toBeInTheDocument()
+
+      fireEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      expect(panel.getByText('AL')).toHaveClass('avatar')
+      expect(await panel.findByText('Comments 2 · Tasks 1 · Tickets 0')).toBeInTheDocument()
+      expect(panel.getByText('first')).toBeInTheDocument()
+      expect(panel.getByText('Isolate host')).toBeInTheDocument()
+      expect(panel.getByText('No linked tickets.')).toBeInTheDocument()
+      // lifted: one fetch each, open or closed
+      expect(casesApi.getEscalations).toHaveBeenCalledTimes(1)
+    })
+
+    it('says comments are unavailable on a failed read, and posting reloads them', async () => {
+      testState.cases = [base({ assignee: null })]
+      vi.mocked(casesApi.getComments).mockRejectedValueOnce(new Error('down'))
+      renderDetail('case-9')
+      const panel = await side()
+      const toggle = await panel.findByRole('button', { name: /^People/ })
+      await waitFor(() => expect(toggle).toHaveTextContent('People · unassigned, comments unavailable'))
+      fireEvent.click(toggle)
+      expect(await panel.findByText('Couldn’t load comments.')).toBeInTheDocument()
+      expect(panel.getByText('Comments — · Tasks 0 · Tickets 0')).toBeInTheDocument()
+
+      vi.mocked(casesApi.addComment).mockResolvedValueOnce({ data: {} } as never)
+      fireEvent.change(panel.getByPlaceholderText('Write a comment…'), { target: { value: 'hello' } })
+      fireEvent.click(panel.getByRole('button', { name: /Post/ }))
+      await waitFor(() => expect(casesApi.getComments).toHaveBeenCalledTimes(2))
+    })
+  })
 })
 
 describe('Memory and blind spots tab', () => {
@@ -1176,7 +1550,7 @@ describe('Memory and blind spots tab', () => {
     })
     fireEvent.click(await memoryTab())
     expect(await screen.findByText('list users — tool down')).toBeInTheDocument()
-    expect(screen.getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Recalled' })).getByText('10.0.0.7 · splunk · 4 hits')).toBeInTheDocument()
   })
 
   it('keeps Withdraw and Record a blind spot disabled as Later', async () => {

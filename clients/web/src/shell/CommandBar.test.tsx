@@ -7,14 +7,18 @@ import CaseDrawer from './CaseDrawer'
 import { ToastProvider } from './toast'
 import type { BoardLink } from './commandBarModel'
 
-const { execute, createCase, deleteCase, getCase, getFinding, getIntegrations, apiGet } = vi.hoisted(() => ({
+const { execute, createCase, deleteCase, readDoc, checkCoverage, attachDocument, getCase, getFinding, getIntegrations, apiGet, apiPost } = vi.hoisted(() => ({
   execute: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   createCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { case_id: 'case-new' } })),
   deleteCase: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
+  readDoc: vi.fn((..._args: unknown[]) => Promise.resolve({ data: { text: '', pages: 1, condensed: false } })),
+  checkCoverage: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
+  attachDocument: vi.fn((..._args: unknown[]) => Promise.resolve({ data: {} })),
   getCase: vi.fn(),
   getFinding: vi.fn(),
   getIntegrations: vi.fn(),
   apiGet: vi.fn(),
+  apiPost: vi.fn(),
 }))
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -36,6 +40,7 @@ vi.mock('../services/api', () => ({
     }),
     create: (data: unknown) => createCase(data),
     delete: (id: string) => deleteCase(id),
+    attachDocument: (id: string, file: File, opts: unknown) => attachDocument(id, file, opts),
     getSLA: () => Promise.resolve({ data: {} }),
     getRecord: () => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } }),
     getComments: () => Promise.resolve({ data: { comments: [] } }),
@@ -69,6 +74,8 @@ vi.mock('../services/api', () => ({
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [] } })),
     execute: (id: string, params: unknown) => execute(id, params),
+    readHuntDocument: (file: File) => readDoc(file),
+    checkCoverage: (body: unknown) => checkCoverage(body),
     getRun: vi.fn(() => Promise.resolve({ data: {} })),
   },
   approvalsApi: {
@@ -78,7 +85,7 @@ vi.mock('../services/api', () => ({
   },
   default: {
     get: (path: string, config?: unknown) => apiGet(path, config),
-    post: vi.fn(),
+    post: (path: string, body?: unknown) => apiPost(path, body),
   },
 }))
 
@@ -96,7 +103,11 @@ function renderBar(props?: Partial<ComponentProps<typeof CommandBar>>) {
   const onOpenChat = props?.onOpenChat ?? vi.fn()
   const onOpenCase = props?.onOpenCase ?? vi.fn()
   const onGo = props?.onGo ?? vi.fn()
-  render(<CommandBar boards={BOARDS} onOpenChat={onOpenChat} onOpenCase={onOpenCase} onGo={onGo} />)
+  render(
+    <ToastProvider>
+      <CommandBar boards={BOARDS} onOpenChat={onOpenChat} onOpenCase={onOpenCase} onGo={onGo} caseOpen={props?.caseOpen} />
+    </ToastProvider>,
+  )
   return { onOpenChat, onOpenCase, onGo }
 }
 
@@ -121,13 +132,23 @@ beforeEach(() => {
   execute.mockResolvedValue({ data: {} })
   createCase.mockClear()
   deleteCase.mockClear()
+  readDoc.mockReset()
+  checkCoverage.mockReset()
+  attachDocument.mockReset()
+  attachDocument.mockResolvedValue({ data: {} })
   createCase.mockResolvedValue({ data: { case_id: 'case-new' } })
+  apiPost.mockReset()
   getIntegrations.mockResolvedValue({ data: { enabled_integrations: [], integrations: {}, secrets_set: {} } })
   getCase.mockImplementation((id: string) => {
     if (id === 'case') return Promise.resolve({ data: { case_id: 'case', title: 'Exact case', finding_ids: [] } })
     if (id === 'case-9') {
       return Promise.resolve({
-        data: { case_id: 'case-9', title: 'Exact case', status: 'open', priority: 'high', assignee: 'ada', finding_ids: [], created_at: '2026-06-15T09:14:00Z' },
+        data: { case_id: 'case-9', title: 'Exact case', status: 'open', priority: 'high', assignee: 'ada', finding_ids: [], created_at: '2026-06-15T09:14:00Z', investigations: [] },
+      })
+    }
+    if (id === 'case-7') {
+      return Promise.resolve({
+        data: { case_id: 'case-7', title: 'Run case', finding_ids: [], investigations: [{ run_id: 'run-new' }, { run_id: 'run-old' }] },
       })
     }
     return Promise.reject(new Error('missing case'))
@@ -171,6 +192,22 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'Tab' })
     expect(onOpenChat).toHaveBeenCalledWith('why this beacon')
     expect(localStorage.getItem(RECENTS)).toBeNull()
+  })
+
+  it('hints Tab by where it goes, and an empty query does nothing', () => {
+    const { onOpenChat } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(screen.getByText('Tab').parentElement).toHaveTextContent('Tab ask Vigil')
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(onOpenChat).not.toHaveBeenCalled()
+  })
+
+  it('hints Tab as asking on the case when one is open', () => {
+    renderBar({ caseOpen: true })
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(screen.getByText('Tab').parentElement).toHaveTextContent('Tab ask on this case')
   })
 
   it('ranks an exact id, then full-text and ioc hits, then boards', async () => {
@@ -272,6 +309,89 @@ describe('CommandBar', () => {
     expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
   })
 
+  it('tags an exact finding id Alert and opens it on Overview', async () => {
+    const { onGo } = renderBar()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'f-1' } })
+    const row = await screen.findByRole('option', { name: /LSASS/ })
+    expect(row.querySelector('.vg-command-dest')).toHaveTextContent('Alert')
+    fireEvent.click(row)
+    expect(onGo).toHaveBeenCalledWith('overview', { search: '?alert=f-1' })
+  })
+
+  it('explains Later rows on hover and skips them with the arrow keys', () => {
+    renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/' } })
+    for (const name of [/\/hold/, /\/isolate/, /\/phish/, /Custom commands/]) {
+      expect(screen.getByRole('option', { name }).parentElement).toHaveAttribute('title', 'Coming in a later release')
+    }
+    expect(screen.getByRole('option', { name: /\/ticket/ }).parentElement).not.toHaveAttribute('title')
+    for (let step = 0; step < 5; step += 1) {
+      fireEvent.keyDown(input, { key: 'ArrowDown' })
+      expect(screen.getByRole('option', { selected: true })).not.toBeDisabled()
+    }
+  })
+
+  it('/replay opens Watch a run on the newest investigation', async () => {
+    const { onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/replay case-7' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await screen.findByText('Watch the latest run on case case-7')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(onGo).toHaveBeenCalledWith('workflows', { search: '?run=run-new' }))
+    expect(onOpenCase).not.toHaveBeenCalled()
+  })
+
+  it('/replay on a case with no run opens the drawer and says so', async () => {
+    const { onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/replay case-9' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-9'))
+    expect(await screen.findByText('Case case-9 has no run to replay')).toBeInTheDocument()
+    expect(onGo).not.toHaveBeenCalled()
+  })
+
+  it('/replay on a case that cannot be read toasts the error and keeps the preview', async () => {
+    const { onGo, onOpenCase } = renderBar()
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '/replay nope' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('missing case')
+    expect(screen.getByRole('button', { name: 'Run' })).toBeInTheDocument()
+    expect(onOpenCase).not.toHaveBeenCalled()
+    expect(onGo).not.toHaveBeenCalled()
+  })
+
+  it('confirms /investigate, /hunt and /ticket with a toast', async () => {
+    getIntegrations.mockResolvedValue({
+      data: {
+        enabled_integrations: ['jira'],
+        integrations: { jira: { url: 'https://jira.example', username: 'ada', project_key: 'SOC' } },
+        secrets_set: { jira: { api_token: true } },
+      },
+    })
+    renderBar()
+    const input = screen.getByRole('combobox')
+    const runCommand = async (text: string, toast: string) => {
+      fireEvent.change(input, { target: { value: text } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      const run = await screen.findByRole('button', { name: 'Run' })
+      await waitFor(() => expect(run).toBeEnabled())
+      fireEvent.click(run)
+      expect(await screen.findByText(toast)).toBeInTheDocument()
+    }
+    await runCommand('/investigate f-1', 'Started Incident response workflow')
+    await runCommand('/hunt rare beacon', 'Hunt started on case "rare beacon"')
+    apiPost.mockResolvedValueOnce({ data: { success: true, issue_key: 'SOC-12' } })
+    await runCommand('/ticket case-9', 'Created SOC-12')
+    apiPost.mockResolvedValueOnce({ data: { success: true } })
+    await runCommand('/ticket case-9', 'Ticket created')
+  })
+
   it('opens the case drawer from /replay, expands to the cases route, and closes in place', async () => {
     render(
       <MemoryRouter initialEntries={['/dashboard']}>
@@ -364,6 +484,147 @@ describe('CommandBar', () => {
       await runHunt(input, HYPOTHESIS)
       expect(await screen.findByText('Failed to create case')).toBeInTheDocument()
       expect(execute).not.toHaveBeenCalled()
+    })
+
+    describe('attached intelligence', () => {
+      const REPORT = 'Beacon to 203.0.113.9 using T1071'
+      const PROPOSED = 'Activity from the reported indicators ip:203.0.113.9 is present in the environment'
+
+      function pdf(name = 'advisory.pdf') {
+        return new File(['%PDF'], name, { type: 'application/pdf' })
+      }
+
+      async function openHunt(input: HTMLInputElement, text = '') {
+        fireEvent.change(input, { target: { value: `/hunt ${text}`.trimEnd() } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+        await screen.findByRole('button', { name: 'Attach intelligence' })
+      }
+
+      function pick(file: File) {
+        fireEvent.change(screen.getByLabelText('Attach intelligence file'), { target: { files: [file] } })
+      }
+
+      beforeEach(() => {
+        readDoc.mockResolvedValue({ data: { text: REPORT, pages: 3, condensed: false } })
+        checkCoverage.mockResolvedValue({ data: { status: 'uncovered', proposal: { hypothesis: PROPOSED, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true } } })
+      })
+
+      it('offers the control on /hunt only', async () => {
+        const { input } = renderHunt()
+        fireEvent.change(input, { target: { value: '/ask what' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+        await screen.findByRole('button', { name: 'Run' })
+        expect(screen.queryByRole('button', { name: 'Attach intelligence' })).not.toBeInTheDocument()
+      })
+
+      it('reads a picked file, shows its name and pages, and sends the text with the hunt', async () => {
+        const { onOpenCase, input } = renderHunt()
+        await openHunt(input, 'credential access')
+        const file = pdf()
+        pick(file)
+        expect(await screen.findByText('advisory.pdf')).toBeInTheDocument()
+        expect(screen.getByText('3 pages')).toBeInTheDocument()
+        expect(checkCoverage).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+        await waitFor(() => expect(onOpenCase).toHaveBeenCalledWith('case-new'))
+        expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: 'credential access', case_id: 'case-new', document: REPORT })
+        expect(attachDocument).toHaveBeenCalledWith('case-new', file, { name: undefined, pages: 3 })
+        expect(execute.mock.invocationCallOrder[0]).toBeLessThan(attachDocument.mock.invocationCallOrder[0])
+      })
+
+      it('takes a file dropped on the preview', async () => {
+        const { input } = renderHunt()
+        await openHunt(input)
+        const file = pdf('dropped.pdf')
+        fireEvent.drop(screen.getByRole('button', { name: 'Run' }).closest('.vg-command-preview') as HTMLElement, { dataTransfer: { files: [file] } })
+        expect(await screen.findByText('dropped.pdf')).toBeInTheDocument()
+        expect(readDoc).toHaveBeenCalledWith(file)
+      })
+
+      it('attaches pasted text as "Pasted text"', async () => {
+        const { input } = renderHunt()
+        await openHunt(input, 'credential access')
+        fireEvent.click(screen.getByRole('button', { name: 'Paste text' }))
+        fireEvent.change(screen.getByLabelText('Intelligence text'), { target: { value: REPORT } })
+        fireEvent.click(screen.getByRole('button', { name: 'Attach text' }))
+        expect(await screen.findByText('Pasted text')).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+        await waitFor(() => expect(attachDocument).toHaveBeenCalled())
+        expect(attachDocument.mock.calls[0][2]).toEqual({ name: 'Pasted text', pages: 3 })
+      })
+
+      it('proposes a hypothesis from the document when none is typed, and runs with it', async () => {
+        const { input } = renderHunt()
+        await openHunt(input)
+        pick(pdf())
+        expect(await screen.findByText(`Start a threat hunt: ${PROPOSED}`)).toBeInTheDocument()
+        expect(checkCoverage).toHaveBeenCalledWith({ report: REPORT })
+        expect(screen.getByText(/Proposed from the document/)).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+        await waitFor(() => expect(execute).toHaveBeenCalled())
+        expect(execute).toHaveBeenCalledWith('threat-hunt', { hypothesis: PROPOSED, case_id: 'case-new', document: REPORT, hypothesis_subjects: { [PROPOSED]: ['ip:203.0.113.9'] }, approve_hypotheses: true })
+      })
+
+      it('says why there is no proposal and keeps Run disabled', async () => {
+        checkCoverage.mockRejectedValueOnce({ response: { status: 400, data: { detail: 'nothing to check' } } })
+        const { input } = renderHunt()
+        await openHunt(input)
+        pick(pdf())
+        expect(await screen.findByText(/Nothing in this document to propose a hypothesis from/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
+      })
+
+      it('names a hunt already running and offers no proposal', async () => {
+        checkCoverage.mockResolvedValueOnce({ data: { status: 'running', in_flight: [] } })
+        const { input } = renderHunt()
+        await openHunt(input)
+        pick(pdf())
+        expect(await screen.findByText(/A hunt is already running on what this document covers/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
+      })
+
+      it('shows a refusal in the preview and clears it with Remove', async () => {
+        readDoc.mockRejectedValueOnce({ response: { status: 422, data: { detail: 'brief.docx is an Office file, and reading it needs LibreOffice, which is not installed on this server.' } } })
+        const { input } = renderHunt()
+        await openHunt(input, 'credential access')
+        pick(new File(['x'], 'brief.docx'))
+        expect(await screen.findByText(/needs LibreOffice/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
+        fireEvent.click(screen.getByRole('button', { name: 'Remove brief.docx' }))
+        expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled()
+      })
+
+      it('refuses a wrong type without sending it', async () => {
+        const { input } = renderHunt()
+        await openHunt(input, 'credential access')
+        pick(new File(['MZ'], 'tool.exe'))
+        expect(await screen.findByText(/\.exe files cannot be attached/)).toBeInTheDocument()
+        expect(readDoc).not.toHaveBeenCalled()
+      })
+
+      it('keeps no original on the case when the server refuses the hunt', async () => {
+        execute.mockRejectedValue({ response: { data: { detail: 'Workflow threat-hunt is disabled' } } })
+        const { input } = renderHunt()
+        await openHunt(input, 'credential access')
+        pick(pdf())
+        await screen.findByText('advisory.pdf')
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+        expect(await screen.findByText('Workflow threat-hunt is disabled')).toBeInTheDocument()
+        expect(deleteCase).toHaveBeenCalledWith('case-new')
+        expect(attachDocument).not.toHaveBeenCalled()
+        expect(screen.getByText('advisory.pdf')).toBeInTheDocument()
+      })
+
+      it('says so when the hunt started but the original could not be kept', async () => {
+        attachDocument.mockRejectedValue({ response: { data: { detail: 'The document could not be kept on the case' } } })
+        const { onOpenCase, input } = renderHunt()
+        await openHunt(input, 'credential access')
+        pick(pdf())
+        await screen.findByText('advisory.pdf')
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+        expect(await screen.findByText(/could not be kept on the case: The document could not be kept on the case/)).toBeInTheDocument()
+        expect(onOpenCase).toHaveBeenCalledWith('case-new')
+      })
     })
   })
 })

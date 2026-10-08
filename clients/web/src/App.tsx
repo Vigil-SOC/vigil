@@ -1,8 +1,9 @@
 import { lazy, Suspense } from 'react'
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { Routes, Route, Outlet } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import ProtectedRoute from './routing/ProtectedRoute'
 import SetupGate from './routing/SetupGate'
+import LandingRedirect from './routing/LandingRedirect'
 // eager, so it can be the Suspense fallback for the lazy chunks below
 import Loader from './routing/Loader'
 
@@ -42,7 +43,7 @@ function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<LandingRedirect />} />
             <Route path=":screen" element={<SocConsole />} />
             {/* deeper junk paths (/a/b/…) fall through to the in-shell 404 */}
             <Route path="*" element={<SocConsole />} />

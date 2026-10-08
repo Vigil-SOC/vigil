@@ -1262,6 +1262,9 @@ export interface paths {
          *     the case ids that sort first; then resolution time left ascending, rows
          *     with no SLA last, then last activity descending. The same set marks
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
+         *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
+         *     latest investigation ran a workflow of that ``run_kind`` (none when no
+         *     workflow has it); both compose with the other filters.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -1956,6 +1959,29 @@ export interface paths {
          *         Updated case
          */
         post: operations["post_api_cases_case_id_activities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases/{case_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach Case Document
+         * @description Keep the original of a document attached to a hunt, as ``document`` evidence.
+         *
+         *     Extraction already happened, at ``/workflows/threat-hunt/document``, so this
+         *     stores the file and says nothing about its text.
+         */
+        post: operations["post_api_cases_case_id_attachments"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5985,6 +6011,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Skill
+         * @description Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+         *
+         *     A name already taken is refused (409); nothing is overwritten.
+         */
+        post: operations["post_api_skills_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/{name}": {
         parameters: {
             query?: never;
@@ -6793,6 +6841,9 @@ export interface paths {
          *     the case ids that sort first; then resolution time left ascending, rows
          *     with no SLA last, then last activity descending. The same set marks
          *     ``needs_you`` on each row. Page size defaults to the repository limit.
+         *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
+         *     latest investigation ran a workflow of that ``run_kind`` (none when no
+         *     workflow has it); both compose with the other filters.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -7705,7 +7756,7 @@ export interface paths {
         get: operations["get_api_workflows_custom_workflow_id"];
         /**
          * Update Custom Workflow
-         * @description Update an existing custom workflow. Increments version.
+         * @description Update an existing custom workflow. Increments version only when its definition changes.
          */
         put: operations["put_api_workflows_custom_workflow_id"];
         post?: never;
@@ -7933,6 +7984,30 @@ export interface paths {
          *     so the router does not pull a database session factory in at import.
          */
         post: operations["post_api_workflows_threat-hunt_coverage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/threat-hunt/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Hunt Document
+         * @description Read an attached document for a hunt. Stateless: nothing is stored here, and
+         *     the text is what the caller sends as ``document`` on execute.
+         *
+         *     Over the document cap the text is condensed on the summarization model, and
+         *     its first line says so.
+         */
+        post: operations["post_api_workflows_threat-hunt_document"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8190,6 +8265,23 @@ export interface paths {
         put?: never;
         /** Record Phase */
         post: operations["post_internal_runs_run_id_phases"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/runs/{run_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Status */
+        post: operations["post_internal_runs_run_id_status"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8470,6 +8562,18 @@ export interface components {
             /** Services */
             services: string[];
         };
+        /** Body_attach_case_document_api_cases__case_id__attachments_post */
+        Body_attach_case_document_api_cases__case_id__attachments_post: {
+            /** File */
+            file: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Pages
+             * @default 1
+             */
+            pages: number;
+        };
         /** Body_generate_from_file_api_custom_integrations_generate_upload_post */
         Body_generate_from_file_api_custom_integrations_generate_upload_post: {
             /**
@@ -8497,6 +8601,11 @@ export interface components {
              */
             format: string;
         };
+        /** Body_read_hunt_document_api_workflows_threat_hunt_document_post */
+        Body_read_hunt_document_api_workflows_threat_hunt_document_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_and_ingest_file_api_ingest_upload_post */
         Body_upload_and_ingest_file_api_ingest_upload_post: {
             /**
@@ -8508,6 +8617,11 @@ export interface components {
             file: string;
             /** Format */
             format?: string | null;
+        };
+        /** Body_upload_skill_api_skills_upload_post */
+        Body_upload_skill_api_skills_upload_post: {
+            /** File */
+            file: string;
         };
         /**
          * BootstrapRequest
@@ -9127,6 +9241,8 @@ export interface components {
             };
             /** Closed Today */
             closed_today: number;
+            /** Needs You */
+            needs_you: number;
             /** Sla At Risk */
             sla_at_risk: number;
         };
@@ -11759,6 +11875,18 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** StatusUpdate */
+        StatusUpdate: {
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "paused";
+        };
         /**
          * SubmitFeedbackRequest
          * @description Request model for submitting feedback on an AI decision.
@@ -12477,6 +12605,8 @@ export interface components {
             case_id?: string | null;
             /** Context */
             context?: string | null;
+            /** Document */
+            document?: string | null;
             /** Finding Id */
             finding_id?: string | null;
             /** Hypothesis */
@@ -14721,6 +14851,8 @@ export interface operations {
                 assignee?: string | null;
                 closed?: boolean | null;
                 query?: string | null;
+                needs_you?: boolean;
+                kind?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -15767,6 +15899,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_cases_case_id_attachments: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_attach_case_document_api_cases__case_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseEvidenceSchema"];
                 };
             };
             /** @description Validation Error */
@@ -22969,6 +23138,41 @@ export interface operations {
             };
         };
     };
+    post_api_skills_upload: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_skill_api_skills_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_skills_name: {
         parameters: {
             query?: never;
@@ -24252,6 +24456,8 @@ export interface operations {
                 assignee?: string | null;
                 closed?: boolean | null;
                 query?: string | null;
+                needs_you?: boolean;
+                kind?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -26180,6 +26386,41 @@ export interface operations {
             };
         };
     };
+    "post_api_workflows_threat-hunt_document": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_read_hunt_document_api_workflows_threat_hunt_document_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_workflows_threat-hunt_feed-proposals": {
         parameters: {
             query?: {
@@ -26609,6 +26850,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PhaseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_status: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatusUpdate"];
             };
         };
         responses: {

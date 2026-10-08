@@ -278,6 +278,8 @@ export const casesApi = {
     assignee?: string
     closed?: boolean
     query?: string
+    needs_you?: boolean
+    kind?: string
     limit?: number
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
@@ -330,6 +332,17 @@ export const casesApi = {
   updateTags: (id: string, tags: string[]) =>
     api.put(`/cases/${id}/tags`, { tags }),
 
+  /** Keeps the original of a hunt's attached document on the case, as one `document` evidence row. */
+  attachDocument: (id: string, file: File, opts: { name?: string; pages: number }) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (opts.name) form.append('name', opts.name)
+    form.append('pages', String(opts.pages))
+    return api.post<Schema<'CaseEvidenceSchema'>>(`/cases/${id}/attachments`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+    })
+  },
   getEvidence: (id: string) =>
     api.get<Schema<'CaseEvidenceListResponse'>>(`/cases/${id}/evidence`),
   addEvidence: (id: string, data: Schema<'EvidenceAdd'>) =>
@@ -1026,6 +1039,12 @@ export interface ReplayReport {
   recalled: string[]
 }
 
+export interface HuntDocument {
+  text: string
+  pages: number
+  condensed: boolean
+}
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
@@ -1038,9 +1057,21 @@ export const workflowApi = {
     case_id?: string
     context?: string
     hypothesis?: string
+    /** Text a person attached (at most 64 KB), read by the run as material. */
+    document?: string
+    hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
+  readHuntDocument: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<HuntDocument>('/workflows/threat-hunt/document', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: LLM_TIMEOUT,
+    })
+  },
   // Read-only: is this report already hunted? Answers running | concluded | uncovered,
   // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
@@ -1396,6 +1427,11 @@ export interface TriageSource {
   quiet: boolean | null
 }
 
+export interface TriageInfo {
+  source: string
+  calculation: string
+}
+
 export interface TriagePayload {
   rows: TriageRow[]
   strip: {
@@ -1410,6 +1446,13 @@ export interface TriagePayload {
   }
   sources: TriageSource[]
   arrival_info: string
+  strip_info: {
+    picked_up: TriageInfo
+    waiting: TriageInfo
+    cases_created_today: TriageInfo
+    trust_floor: TriageInfo & { limit: string }
+  }
+  breakdown_info: { trust: string; weight: string; score: string }
   unmeasured_text: string
 }
 

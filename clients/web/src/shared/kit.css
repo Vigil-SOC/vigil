@@ -1,4 +1,4 @@
-/* Shared kit: level badge, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
+/* Shared kit: level badge, meter bar, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
 .level-pill {
   display: inline-flex;
   align-items: center;
@@ -78,7 +78,7 @@
   gap: 4px;
 }
 
-.page-head h2 {
+.page-head :is(h1, h2) {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
@@ -94,6 +94,41 @@
   line-height: 1.5;
   color: var(--tx1);
 }
+
+/* with an actions slot: text left, controls right, bottom-aligned */
+.page-head.with-actions {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.page-head-text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.page-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.meter-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg4);
+  overflow: hidden;
+}
+
+.meter-fill { height: 100%; }
+.meter-fill.good { background: var(--good); }
+.meter-fill.fair { background: var(--fair); }
+.meter-fill.poor { background: var(--poor); }
 
 @keyframes kit-blink {
   0%, 100% { opacity: 1; }
@@ -185,6 +220,35 @@
 }
 
 .tab-strip > button.active .tab-count { background: var(--ac-bg); color: var(--ac); }
+
+.filter-chip {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ln1);
+  background: transparent;
+  color: var(--tx0);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filter-chip:hover { background: var(--bg3); }
+.filter-chip.active { border-color: var(--ac); background: var(--ac-bg); }
+
+/* list size: the Cases list's chips carry a state dot and a count */
+.filter-chip.list {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  color: var(--tx1);
+}
+.filter-chip.list.active { border-color: var(--ac-ln); color: var(--tx0); }
+.filter-chip .chip-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
+.filter-chip .chip-count { color: var(--tx2); }
 
 @media (prefers-reduced-motion: reduce) {
   .state-pill.needs .state-dot { animation: none; }

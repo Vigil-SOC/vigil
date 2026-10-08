@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRow, type NeedsYouItem } from '../../services/api'
+import { FilterChip } from '../../shared/FilterChip'
+import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, useRunDetail } from '../workflows/runRead'
 import { slaLevel } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
@@ -8,12 +11,14 @@ import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
-import { InfoTip } from '../../shared/InfoTip'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
-import { CommentsCard, EvidenceCard, IOCsCard, TasksCard } from './CaseSections'
+import { EvidenceTrail } from './EvidenceTrail'
+import { EvidenceCard, IOCsCard } from './CaseSections'
+import { CaseSide } from './CaseSide'
+import { money, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -41,7 +46,7 @@ type Tab = (typeof TABS)[number]
 const NEEDS_POLL_MS = 20_000
 
 const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
-const CHAINED = 'Only the run’s rows are hash-chained. Case audit rows are not.'
+const RECORD_CHIPS = ['agent', 'human', 'memory', 'system'] as const
 
 /** Pill tone per explanationWord(); the three non-verdict words stay neutral. */
 const EXPL_TONE: Record<string, string> = {
@@ -60,12 +65,6 @@ function Mark({ text }: { text: string }) {
   )
 }
 
-function when(value?: string | null): string {
-  if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? value : format(d, 'MMM d, yyyy · HH:mm')
-}
-
 /** "Closed <time> by <who>"; a missing or unparseable time is dropped. */
 function closedBy(closure: CaseClosureView | null): string {
   if (!closure) return ''
@@ -73,11 +72,6 @@ function closedBy(closure: CaseClosureView | null): string {
   const time = at && !Number.isNaN(at.getTime()) ? ` ${format(at, 'MMM d, yyyy · HH:mm')}` : ''
   const who = closure.closed_by ? ` by ${closure.closed_by}` : ''
   return time || who ? `Closed${time}${who}` : ''
-}
-
-function money(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `$${value.toFixed(4)}`
 }
 
 function clock(value: string | null | undefined): string {
@@ -98,15 +92,6 @@ function detailOf(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
   return (error as { message?: string })?.message || fallback
-}
-
-/** Resolve-by clock: "7 h left", or "2 d over" once past due. */
-function timeLeft(due: string): string {
-  const ms = new Date(due).getTime() - Date.now()
-  if (Number.isNaN(ms)) return ''
-  const min = Math.round(Math.abs(ms) / 60_000)
-  const span = min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
-  return `${span} ${ms < 0 ? 'over' : 'left'}`
 }
 
 /** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
@@ -465,6 +450,8 @@ export function CasePage({
   phase,
   error,
   pageKey,
+  seed,
+  onSeedConsumed,
   onBack,
   onExpand,
   onEdit,
@@ -485,6 +472,9 @@ export function CasePage({
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
   pageKey: string
+  /** Text typed in the command bar; handed to the composer, then cleared. */
+  seed?: string | null
+  onSeedConsumed?: () => void
   /** The "Cases" crumb; in the drawer it also backs the Close icon. */
   onBack: () => void
   /** Set only in the drawer: shows the Expand and Close icons. */
@@ -558,6 +548,13 @@ export function CasePage({
     setChip('all')
   }, [id])
 
+  // the command bar's text rides the composer's own seed path
+  useEffect(() => {
+    if (!seed) return
+    setAskSeed({ id, text: seed })
+    onSeedConsumed?.()
+  }, [seed, id, onSeedConsumed])
+
   const latest = investigations[0] ?? null
   const runId = latest?.run_id ?? null
   const live = investigations.filter((item) => item.live)
@@ -591,8 +588,8 @@ export function CasePage({
 
   // A live run may have added evidence the answer just cited; re-read without blanking the page.
   const refreshFold = useCallback(() => {
-    if (runId) void loadRun()
-  }, [runId, loadRun])
+    void loadRun() // a failed read keeps what is shown
+  }, [loadRun])
 
   useEffect(() => {
     let cancelled = false
@@ -665,22 +662,6 @@ export function CasePage({
     return text ? `${base}\n\nWhy?\n${text}` : base
   }
 
-  const replay = async () => {
-    if (!runId) return
-    setBusy(true)
-    setNote('')
-    try {
-      const res = await workflowApi.replayRun(runId)
-      const data = res.data as { decisions?: unknown[] }
-      const n = Array.isArray(data.decisions) ? data.decisions.length : 0
-      setNote(n ? `Replay returned ${n} decision${n === 1 ? '' : 's'}.` : 'Replay returned.')
-    } catch (e) {
-      setNote(detailOf(e, 'Replay failed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const verify = async () => {
     if (!runId) return
     setBusy(true)
@@ -751,7 +732,6 @@ export function CasePage({
     }
   }
 
-  const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
@@ -935,36 +915,7 @@ export function CasePage({
             )
           )}
 
-          {tab === 'Evidence' && (
-            fold?.kind === 'hunt' ? (
-              fold.evidence.length === 0 ? (
-                <EmptyState compact icon="shield" title="No evidence yet" />
-              ) : (
-                <EvidenceTable
-                  focusId={focusEvidence}
-                  rows={fold.evidence.map((row) => ({
-                    id: row.evidence_id,
-                    step: String(row.iteration),
-                    observation: row.is_gap ? `${row.summary} (gap)` : row.summary,
-                    source: row.source_system,
-                    bears: row.bears_on.map((link) => `${link.relation} ${link.hypothesis_id}`).join(', ') || '—',
-                  }))}
-                />
-              )
-            ) : findings.length === 0 ? (
-              <EmptyState compact icon="shield" title="No evidence yet" />
-            ) : (
-              <EvidenceTable
-                rows={findings.map((row, i) => ({
-                  id: `${row.agent_id}-${i}`,
-                  step: String(i + 1),
-                  observation: row.answer || '—',
-                  source: row.agent_id,
-                  bears: '—',
-                }))}
-              />
-            )
-          )}
+          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
 
           {tab === 'Checked' && (
             !fold || fold.calls.length === 0 ? (
@@ -1002,17 +953,30 @@ export function CasePage({
           )}
 
           {tab === 'Record' && (
-            <>
-              <p>
-                Newest first.
-                <Mark text={CHAINED} />
-              </p>
-              <div className="case-chips" role="group" aria-label="Record source">
-                {(['all', 'agent', 'human', 'memory', 'system'] as const).map((name) => (
-                  <button key={name} className={`btn ghost${chip === name ? ' active' : ''}`} onClick={() => setChip(name)}>
-                    {name}
-                  </button>
-                ))}
+            <section className="rec-card">
+              <div className="rec-bar">
+                <div className="rec-chips" role="group" aria-label="Record source">
+                  <FilterChip label={`All ${rows.length}`} active={chip === 'all'} onClick={() => setChip('all')} />
+                  {RECORD_CHIPS.map((name) => (
+                    <FilterChip key={name} label={name[0].toUpperCase() + name.slice(1)} active={chip === name} onClick={() => setChip(name)} />
+                  ))}
+                  <InfoTip
+                    label="About the record"
+                    align="start"
+                    source="The run’s journal and the case audit log, newest first."
+                    calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
+                    limit="Only the run’s rows are hash-chained. Case audit rows are not."
+                  />
+                </div>
+                <div className="rec-actions">
+                  {runId && (
+                    <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
+                      Replay
+                    </Link>
+                  )}
+                  {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
+                  {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
+                </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}
               {recordPhase === 'error' && (
@@ -1028,61 +992,32 @@ export function CasePage({
               {recordPhase === 'ready' && shown.length === 0 && (
                 <EmptyState compact icon="clock" title="No record yet" />
               )}
-              {recordPhase === 'ready' && shown.map((row) => (
-                <div key={row.id} className="case-record">
-                  <span className="tag">{recordChip(row.kind)}</span>
-                  <div>
-                    <div>{row.text || row.kind}</div>
-                    <div className="muted">{when(row.at)}{row.chained ? ' · chained' : ''}</div>
-                  </div>
-                  <button type="button" className="btn ghost" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+              {recordPhase === 'ready' && shown.length > 0 && (
+                <div className="rec-rows">
+                  {shown.map((row) => {
+                    const type = recordChip(row.kind)
+                    return (
+                      <div key={row.id} className="rec-row">
+                        <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
+                        <span className={`rec-type ${type}`}>{type[0].toUpperCase() + type.slice(1)}</span>
+                        <span className="rec-text" title={row.text}>
+                          {row.text || row.kind}
+                          {row.chained && <span className="rec-chained">chained</span>}
+                        </span>
+                        <button type="button" className="rec-why" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-              <div className="case-actions">
-                {runId && <button className="btn" onClick={replay} disabled={busy}>Replay</button>}
-                {runId && <button className="btn" onClick={verify} disabled={busy}>Verify</button>}
-                {latest?.investigation_id && <button className="btn" onClick={download} disabled={busy}>Export</button>}
-              </div>
-            </>
+              )}
+            </section>
           )}
           {note && <p className="muted">{note}</p>}
         </div>
 
         <aside className="case-side" aria-label="Case details">
           <LinkedFindings items={linkedFindings} />
-          <div><span className="k">Workflow</span><div>{latest?.workflow_id || '—'}</div></div>
-          <div>
-            <span className="k">Budget</span>
-            <div>
-              {latest ? `${money(latest.cost_usd)} / ${money(latest.max_cost_usd)} · ${latest.budget_health}` : '—'}
-            </div>
-          </div>
-          <div>
-            <span className="k">Resolve by</span>
-            <div>{sla ? `${when(sla.due)}${sla.health ? ` · ${sla.health}` : ''}` : '—'}</div>
-          </div>
-          <div>
-            <span className="k">Entities</span>
-            <div>{fold?.recall && !fold.recall.unavailable && fold.recall.keys.length ? fold.recall.keys.join(', ') : '—'}</div>
-          </div>
-          <div><span className="k">Cost</span><div>{money(fold?.costUsd ?? latest?.cost_usd)}</div></div>
-          <details className="case-fold">
-            <summary>People</summary>
-            <p>Owner {c?.ownerName || '—'}</p>
-            <CommentsCard caseId={id} />
-            <TasksCard caseId={id} />
-            <Tickets caseId={id} />
-          </details>
-          <details className="case-fold">
-            <summary>Known about these entities</summary>
-            <p className="muted">
-              {fold?.recall
-                ? fold.recall.unavailable
-                  ? `Recall did not happen: ${fold.recall.unavailable}`
-                  : `${fold.recall.keys.join(', ') || 'No entities'}${fold.recall.verdicts.length ? `. Verdicts: ${fold.recall.verdicts.map((v) => [v.outcome, v.statement].filter(Boolean).join(' — ')).join('; ')}` : ''}${fold.recall.gaps.length ? `. Gaps: ${fold.recall.gaps.map((g) => g.statement).join('; ')}` : ''}`
-                : 'The run did not journal a recall.'}
-            </p>
-          </details>
+          <CaseSide key={id} caseId={id} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />
@@ -1251,76 +1186,5 @@ function FindingList({ fold }: { fold: RunFold | null }) {
         <li key={i}><Clamped text={`${row.agent_id}: ${row.answer || '—'}`} /></li>
       ))}
     </ul>
-  )
-}
-
-function EvidenceTable({
-  rows,
-  focusId,
-}: {
-  rows: { id: string; step: string; observation: string; source: string; bears: string }[]
-  focusId?: string | null
-}) {
-  const focusRef = useRef<HTMLTableRowElement>(null)
-  useEffect(() => {
-    const node = focusRef.current
-    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
-  }, [focusId, rows])
-  return (
-    <div className="table-wrap">
-      <table className="tbl">
-        <thead><tr><th>Step</th><th>Observation</th><th>Source</th><th>Bears on</th></tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              ref={row.id === focusId ? focusRef : undefined}
-              className={row.id === focusId ? 'cite-target' : undefined}
-              data-evidence-id={row.id}
-            >
-              <td>{row.step}</td>
-              <td>{row.observation || '—'}</td>
-              <td>{row.source || '—'}</td>
-              <td>{row.bears}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function Tickets({ caseId }: { caseId: string }) {
-  const [rows, setRows] = useState<{ id: string; label: string }[]>([])
-  const [phase, setPhase] = useState<Phase>('loading')
-
-  useEffect(() => {
-    let cancelled = false
-    casesApi
-      .getEscalations(caseId)
-      .then((res) => {
-        if (cancelled) return
-        setRows((res.data.escalations || []).map((row) => ({
-          id: String(row.escalation_id ?? row.escalated_to),
-          label: [row.escalated_to, row.reason].filter(Boolean).join(' — ') || 'Ticket',
-        })))
-        setPhase('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setPhase('error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [caseId])
-
-  return (
-    <section>
-      <h3>Linked tickets</h3>
-      {phase === 'loading' && <p className="muted">Loading tickets…</p>}
-      {phase === 'error' && <p className="muted">Couldn’t load tickets.</p>}
-      {phase === 'ready' && rows.length === 0 && <p className="muted">No linked tickets.</p>}
-      {rows.map((row) => <p key={row.id}>{row.label}</p>)}
-    </section>
   )
 }

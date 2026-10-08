@@ -235,6 +235,10 @@
       background: var(--crit-dim);
    }
 
+   .user-pop-count {
+      color: var(--tx-3);
+   }
+
    .user-pop-mfa {
       display: flex;
       align-items: center;
@@ -1674,82 +1678,6 @@
       min-height: 0;
    }
 
-   .case-side {
-      flex: 0 0 280px;
-      width: 280px;
-      border-left: 1px solid var(--line);
-      overflow-y: auto;
-      padding: 16px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      font-size: 13px;
-   }
-
-   .case-side .k {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--tx-3);
-      margin-bottom: 2px;
-   }
-
-   .case-composer {
-      flex: 0 0 auto;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      border-top: 1px solid var(--line);
-      background: var(--bg);
-   }
-
-   .case-composer .chat-body {
-      flex: 0 1 auto;
-      min-height: 0;
-      max-height: 150px;
-   }
-
-   .composer-modes {
-      display: flex;
-      gap: 4px;
-      padding: 8px 14px 0;
-   }
-
-   .composer-modes button {
-      height: 26px;
-      padding: 0 10px;
-      border-radius: 8px;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--tx-3);
-      font-size: 12px;
-      font-weight: 700;
-   }
-
-   .composer-modes button.on {
-      color: var(--accent-2);
-      background: var(--accent-dim);
-      border-color: var(--accent-line);
-   }
-
-   .composer-modes button:disabled {
-      opacity: 0.45;
-      cursor: default;
-   }
-
-   .composer-fold {
-      align-self: flex-start;
-      margin: 4px 14px 0;
-      padding: 0;
-      border: none;
-      background: none;
-      color: var(--tx-3);
-      font-size: 12px;
-      cursor: pointer;
-   }
-
    .cite-row {
       display: flex;
       flex-wrap: wrap;
@@ -1792,19 +1720,11 @@
       padding: 6px 0;
    }
 
-   .case-actions, .case-chips {
+   .case-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
    }
-
-   .case-record {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-   }
-
-   .case-record > div { flex: 1; min-width: 0; }
 
    .case-fold > summary {
       cursor: pointer;
@@ -2658,6 +2578,47 @@
       color: var(--tx);
    }
 
+   /* undo fuse (components/undo-fuse.md): outlined Undo + 2px accent bar that runs out in 8 s */
+   .toast.fused {
+      position: relative;
+      align-items: center;
+      padding-bottom: 14px;
+   }
+
+   .toast-undo {
+      flex: 0 0 auto;
+      height: 26px;
+      padding: 0 11px;
+      border-radius: 999px;
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      color: var(--tx);
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+   }
+
+   .toast-undo:hover {
+      background: var(--hover);
+   }
+
+   .toast-fuse {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 5px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--accent);
+      transform-origin: left center;
+      animation: vg-fuse 8s linear forwards;
+   }
+
+   @keyframes vg-fuse {
+      from { transform: scaleX(1); }
+      to { transform: scaleX(0); }
+   }
+
    @keyframes toast-in {
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: none; }
@@ -2665,6 +2626,7 @@
 
    @media (prefers-reduced-motion: reduce) {
       .toast { animation: none; }
+      .toast-fuse { animation: none; }
    }
 
    .md> :first-child {
@@ -5858,6 +5820,77 @@
       padding: 10px 0;
    }
 
+   /* ---------- Triage: alert column, expanded row, strip ⓘ ---------- */
+   .tq-alert {
+      display: block;
+      max-width: 34ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+   }
+
+   .tbl tbody tr.row-expanded:hover {
+      background: none;
+   }
+
+   .tbl tbody tr.row-expanded>td {
+      padding: 0 22px 12px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
+   .tq-panel {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--bg-2);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: default;
+   }
+
+   .tq-h {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx-2);
+   }
+
+   .tq-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--tx-2);
+   }
+
+   .tq-val {
+      font-family: var(--mono);
+      color: var(--tx);
+   }
+
+   .tq-val .not-measured {
+      font-family: var(--font);
+   }
+
+   .tq-evidence {
+      font-size: 12px;
+      color: var(--tx-2);
+   }
+
+   .tq-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+   }
+
+   /* the ⓘ sits in the tile's top-right corner, out of the label's ellipsis clip */
+   .kpi>.info-tip {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+   }
+
    .tech-expand>td {
       padding: 0 !important;
       background: var(--bg);
@@ -6373,6 +6406,26 @@
    font-size: 12.5px;
    letter-spacing: .03em;
    color: var(--tx-3);
+}
+
+.soc-unreachable {
+   max-width: min(420px, calc(100vw - 48px));
+   padding: 0 24px;
+   text-align: center;
+}
+
+.soc-unreachable-title {
+   margin: 0;
+   font-size: 18px;
+   font-weight: 650;
+   color: var(--tx);
+}
+
+.soc-unreachable-body {
+   margin: -10px 0 0;
+   font-size: 13px;
+   line-height: 1.5;
+   color: var(--tx-2);
 }
 
 @keyframes soc-loader-pulse {

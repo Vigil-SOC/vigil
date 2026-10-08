@@ -20,7 +20,7 @@ export interface CommandDef {
 export const COMMANDS: CommandDef[] = [
   { id: 'investigate', name: '/investigate', hint: '<finding or context>', desc: 'Run incident response on a finding or a description of what you saw', runs: 'Incident response workflow', later: false, workflowId: 'incident-response' },
   { id: 'hunt', name: '/hunt', hint: '<hypothesis>', desc: 'Start a hypothesis-driven threat hunt', runs: 'Threat hunt workflow', later: false, workflowId: 'threat-hunt' },
-  { id: 'replay', name: '/replay', hint: '<case>', desc: 'Open a case by id', runs: 'Opens the case', later: false },
+  { id: 'replay', name: '/replay', hint: '<case>', desc: "Watch a case's latest run", runs: 'Opens Watch a run', later: false },
   { id: 'ask', name: '/ask', hint: '<question>', desc: 'Ask Vigil your question in chat', runs: 'Opens Ask Vigil', later: false },
   { id: 'ticket', name: '/ticket', hint: '<case>', desc: 'Create a Jira ticket from a case', runs: 'Exports the case to Jira', later: false },
   { id: 'hold', name: '/hold', hint: '<case or kind>', desc: 'Hold a case, or every case of one kind', runs: '—', later: true },
@@ -31,7 +31,7 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
 
-export type DestTag = 'Case' | 'Finding' | 'Page' | 'Command' | 'Recent'
+export type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent'
 
 export interface BoardLink {
   key: string
@@ -58,6 +58,7 @@ export interface PaletteRow {
   disabled: boolean
   commandId?: CommandId
   caseId?: string
+  findingId?: string
   page?: string
   recent?: string
 }
@@ -98,6 +99,66 @@ export function writeRecent(userId: string, text: string): string[] {
 }
 
 const HUNT_TITLE_MAX = 60
+
+/** What the server reads (core/documents/extract.py); the picker offers these. */
+export const ATTACH_TYPES = ['.pdf', '.docx', '.pptx', '.xlsx', '.png', '.jpg', '.jpeg', '.md', '.markdown', '.txt', '.text', '.html', '.htm']
+export const MAX_ATTACH_BYTES = 25 * 1024 * 1024
+export const PASTED_NAME = 'Pasted text'
+
+/** A hypothesis proposed from the attached document by the coverage check; null until asked. */
+export type HuntProposal =
+  | { status: 'checking' }
+  | { status: 'proposed'; hypothesis: string; subjects?: Record<string, string[]>; approve?: boolean }
+  | { status: 'none'; reason: string }
+
+/** The intelligence attached to a /hunt: being read, refused with a reason, or read. */
+export type HuntAttachment =
+  | { status: 'reading'; name: string }
+  | { status: 'refused'; name: string; reason: string }
+  | {
+      status: 'ready'
+      name: string
+      file: File
+      pasted: boolean
+      pages: number
+      condensed: boolean
+      /** The text the hunt reads: extracted, or condensed to fit. */
+      text: string
+      proposal: HuntProposal | null
+    }
+
+/** Why a file is not worth sending, or null. The server holds the same two rules. */
+export function attachRefusal(file: { name: string; size: number }): string | null {
+  const dot = file.name.lastIndexOf('.')
+  const suffix = dot < 0 ? '' : file.name.slice(dot).toLowerCase()
+  if (!ATTACH_TYPES.includes(suffix)) {
+    return `${suffix || 'That'} files cannot be attached. Attach a PDF, DOCX, PPTX, XLSX, PNG, JPG, Markdown, text or HTML file.`
+  }
+  if (file.size > MAX_ATTACH_BYTES) return `File too large. The most that can be attached is ${MAX_ATTACH_BYTES / 1024 / 1024} MB.`
+  return null
+}
+
+/** The hypothesis a run starts with: what was typed, else what the document proposed. */
+export function huntHypothesis(arg: string, attachment: HuntAttachment | null): string {
+  const typed = arg.trim()
+  if (typed) return typed
+  return attachment?.status === 'ready' && attachment.proposal?.status === 'proposed' ? attachment.proposal.hypothesis : ''
+}
+
+/** The coverage check's answer as a proposal. A report already being hunted comes with none. */
+export function proposalFrom(answer: {
+  status?: string
+  proposal?: { hypothesis?: unknown; hypothesis_subjects?: Record<string, string[]>; approve_hypotheses?: boolean } | null
+}): HuntProposal {
+  const hypothesis = answer.proposal?.hypothesis
+  if (typeof hypothesis === 'string' && hypothesis.trim()) {
+    return { status: 'proposed', hypothesis, subjects: answer.proposal?.hypothesis_subjects, approve: answer.proposal?.approve_hypotheses }
+  }
+  if (answer.status === 'running') {
+    return { status: 'none', reason: 'A hunt is already running on what this document covers. Type a hypothesis to start another.' }
+  }
+  return { status: 'none', reason: 'No hypothesis could be proposed from this document. Type one to hunt with it.' }
+}
 
 /** A case title from a hypothesis: whole words only, never past ``max`` characters. */
 export function huntTitle(hypothesis: string, max = HUNT_TITLE_MAX): string {
@@ -143,20 +204,36 @@ export function commandPreview(
   id: LiveCommandId,
   arg: string,
   jira: JiraReadiness,
-): { line: string; disabled: boolean } {
+  attachment: HuntAttachment | null = null,
+): { line: string; disabled: boolean; note?: string } {
   const a = arg.trim()
   switch (id) {
     case 'investigate':
       return a
         ? { line: `Run incident response for ${a}`, disabled: false }
         : { line: 'Add a finding id or context', disabled: true }
-    case 'hunt':
-      return a
-        ? { line: `Start a threat hunt: ${a}`, disabled: false }
-        : { line: 'Add a hypothesis', disabled: true }
+    case 'hunt': {
+      if (attachment?.status === 'reading') return { line: `Reading ${attachment.name}…`, disabled: true }
+      if (attachment?.status === 'refused') return { line: attachment.reason, disabled: true }
+      const hypothesis = huntHypothesis(a, attachment)
+      if (hypothesis) {
+        return {
+          line: `Start a threat hunt: ${hypothesis}`,
+          disabled: false,
+          ...(!a && { note: 'Proposed from the document. Type your own to replace it.' }),
+        }
+      }
+      if (attachment?.status === 'ready') {
+        const proposal = attachment.proposal
+        return proposal?.status === 'none'
+          ? { line: proposal.reason, disabled: true }
+          : { line: 'Checking what the document covers…', disabled: true }
+      }
+      return { line: 'Add a hypothesis', disabled: true }
+    }
     case 'replay':
       return a
-        ? { line: `Open case ${a}`, disabled: false }
+        ? { line: `Watch the latest run on case ${a}`, disabled: false }
         : { line: 'Add a case id', disabled: true }
     case 'ask':
       return a
@@ -247,8 +324,9 @@ export function buildRows(
       key: `finding:${hit.id}`,
       label: hit.title || hit.id,
       hint: hit.id,
-      dest: 'Finding',
+      dest: 'Alert',
       disabled: false,
+      findingId: hit.id,
     })
   }
   for (const hit of hits?.textCases ?? []) pushCase(rows, seen, hit)

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.queue import new_run_id
 from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.documents.fence import fenced_document
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import disabled_message, is_enabled
@@ -727,6 +728,12 @@ class WorkflowsService:
 
         if context:
             parts.append(f"**Additional Context:** {context}")
+
+        document = parameters.get("document")
+        if document:
+            parts.append(
+                "\n".join(["**Attached document:**", "", *fenced_document(document)])
+            )
 
         if not parts:
             parts.append(
