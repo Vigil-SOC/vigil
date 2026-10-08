@@ -52,10 +52,15 @@ QUIET_LOGGERS = ("httpx", "httpcore")
 # A3-3: the exit code for "this cluster doesn't enforce NetworkPolicy". Not 1, so
 # an operator (and the kind CI) can tell a refusal from a crash.
 POLICY_REFUSED = 3
-# Medic usually starts before the gateway is Ready: the control (only) is retried.
+# Medic usually starts before the gateway is Ready: the control is retried.
 CONTROL_ATTEMPTS = 12
 CONTROL_RETRY_S = 5.0
-_control_wait = time.sleep
+# A refused target counts only if it stays refused (S7-2): kube-proxy also
+# rejects a Service with no endpoints yet, and the inbound Service's endpoints
+# can trail the outbound one's by a moment on a cluster that enforces nothing.
+TARGET_ATTEMPTS = 3
+TARGET_RETRY_S = 5.0
+_probe_wait = time.sleep
 
 
 @dataclass(frozen=True)
@@ -189,12 +194,15 @@ def sensors_for(env: Mapping[str, str], shape: str) -> list[Sensor]:
 
 
 def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
-    """A3-3. Proof = the allowed path connects AND the forbidden one is dropped.
+    """A3-3. Proof = the allowed path connects AND the forbidden one is dropped
+    or rejected.
 
     A timeout alone could be a dead pod network or a Service with no endpoints
     (IPVS drops those), so the control comes first (S7 review #1). On Helm the
     two are the gateway's two listeners on the same pods, so a connected control
-    also proves the target has live endpoints."""
+    also proves the target has live endpoints. A refusal (S7-2: plugins that
+    REJECT) must hold across TARGET_ATTEMPTS: endpoints that lag by a moment are
+    refused once, then connect."""
     hint = (
         "Check that the Medic gateway is Running and Ready and that DNS works "
         "from Medic's pod."
@@ -204,7 +212,7 @@ def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
         if checked is Verdict.CONNECTED:
             break
         if attempt < CONTROL_ATTEMPTS - 1:
-            _control_wait(CONTROL_RETRY_S)
+            _probe_wait(CONTROL_RETRY_S)
     if checked is not Verdict.CONNECTED:
         log.error(
             "Medic refuses to run: it can't prove NetworkPolicy is enforced: the "
@@ -214,9 +222,15 @@ def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
             hint,
         )
         return False
-    verdict = policy_probe(target)
-    if verdict is Verdict.BLOCKED:
-        log.info("NetworkPolicy is enforced: the probe to %s:%d was dropped", *target)
+    for attempt in range(TARGET_ATTEMPTS):
+        verdict = policy_probe(target)
+        if verdict is not Verdict.REFUSED:
+            break
+        if attempt < TARGET_ATTEMPTS - 1:
+            _probe_wait(TARGET_RETRY_S)
+    if verdict.enforced:
+        how = "dropped" if verdict is Verdict.BLOCKED else "refused every time"
+        log.info("NetworkPolicy is enforced: the probe to %s:%d was %s", *target, how)
         return True
     if verdict is Verdict.CONNECTED:
         log.error(
@@ -230,7 +244,7 @@ def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
     else:
         log.error(
             "Medic refuses to run: it can't prove NetworkPolicy is enforced (%s "
-            "for %s:%d; only a dropped connection proves it, A3-3). %s",
+            "for %s:%d; only a dropped or refused connection proves it, A3-3). %s",
             verdict.value,
             *target,
             hint,

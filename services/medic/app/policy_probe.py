@@ -1,10 +1,12 @@
 """Is NetworkPolicy enforced here? (A3-3, C3 §4.4, check 14).
 
-Medic tries one TCP connection its own egress policy must block. Policy-enforcing
-network plugins (Calico, Cilium) drop a denied packet, so only a timeout shows
-the policy at work. A connection shows the plugin ignores NetworkPolicy (kind's
-kindnet, flannel). A refusal or an unresolvable name shows nothing either way,
-so the caller treats every verdict but BLOCKED as "not enforced": fail closed.
+Medic tries one TCP connection its own egress policy must block. Most
+policy-enforcing network plugins drop a denied packet (a timeout); some can be
+set to REJECT it (Calico `Reject`), which connect() reports as refused (S7-2).
+Both show the policy at work, but only next to a control connection that works
+to the same pods: the caller checks that. A connection shows the plugin ignores
+NetworkPolicy (flannel, a bare CNI). Anything else (no route, an unresolvable
+name) shows nothing either way, so the caller refuses on it: fail closed.
 """
 
 from __future__ import annotations
@@ -18,13 +20,16 @@ TIMEOUT_S = 3.0
 
 class Verdict(enum.Enum):
     BLOCKED = "blocked"  # timed out: the policy dropped it
+    REFUSED = "refused"  # refused: the policy rejected it (or no listener/endpoint)
     CONNECTED = "connected"  # reached a target the policy must block
-    INCONCLUSIVE = "inconclusive"  # refused, unreachable: proves nothing
+    INCONCLUSIVE = "inconclusive"  # unreachable, reset, ...: proves nothing
     UNRESOLVED = "unresolved"  # the target's name didn't resolve
 
     @property
     def enforced(self) -> bool:
-        return self is Verdict.BLOCKED
+        """What a policy would produce. Only evidence with a working control,
+        and a refusal only once it has held (see cli._policy_enforced)."""
+        return self in (Verdict.BLOCKED, Verdict.REFUSED)
 
 
 def _resolve(host: str, port: int) -> list[tuple[str, int]]:
@@ -50,6 +55,8 @@ def probe(
         conn = connect(addrs[0], timeout)
     except TimeoutError:  # socket.timeout is TimeoutError on 3.10+
         return Verdict.BLOCKED
+    except ConnectionRefusedError:
+        return Verdict.REFUSED
     except OSError:
         return Verdict.INCONCLUSIVE
     conn.close()
