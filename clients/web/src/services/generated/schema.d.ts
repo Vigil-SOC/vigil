@@ -11135,12 +11135,19 @@ export interface components {
         };
         /**
          * OrchestratorConfigResponse
-         * @description Flat saved settings plus the profiles the Settings cards render.
-         *
-         *     ``profiles`` is not part of the stored object. POST takes
-         *     ``OrchestratorSettingsConfig`` and ignores the field.
+         * @description Flat saved settings, the profiles the Settings cards render, and the
+         *     model's ``defaults`` and ``bounds``. Only the flat keys are stored; POST takes
+         *     ``OrchestratorSettingsConfig`` and ignores the rest.
          */
         OrchestratorConfigResponse: {
+            /** Bounds */
+            bounds: {
+                [key: string]: components["schemas"]["OrchestratorFieldBounds"];
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: boolean | number | string;
+            };
             /**
              * Dry Run
              * @default false
@@ -11194,8 +11201,24 @@ export interface components {
             workdir_base: string;
         };
         /**
+         * OrchestratorFieldBounds
+         * @description Inclusive range and scrub step of one numeric setting.
+         */
+        OrchestratorFieldBounds: {
+            /** Max */
+            max: number;
+            /** Min */
+            min: number;
+            /** Step */
+            step: number;
+        };
+        /**
          * OrchestratorSettingsConfig
          * @description Orchestrator configuration for autonomous investigations.
+         *
+         *     The ``ge``/``le`` bounds are the one source: POST enforces them and GET
+         *     serves them (with ``step``) as ``bounds``. 0 is not "unlimited" to the
+         *     daemon (``_in_flight() >= max_concurrent_agents``), it is the tightest cap.
          */
         OrchestratorSettingsConfig: {
             /**

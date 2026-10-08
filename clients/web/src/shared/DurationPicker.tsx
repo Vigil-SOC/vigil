@@ -19,10 +19,19 @@ interface DurationPickerProps {
   onChange: (hours: number) => void
   /** Accessible name, e.g. "Respond within". */
   label: string
+  /** Tighter limits than the default (1 min to 999 h 59 min), in minutes. */
+  minMinutes?: number
+  maxMinutes?: number
 }
 
-export function DurationPicker({ value, onChange, label }: DurationPickerProps) {
-  const total = Math.min(Math.max(toMinutes(value), 0), MAX_TOTAL)
+export function DurationPicker({
+  value,
+  onChange,
+  label,
+  minMinutes = MIN_TOTAL,
+  maxMinutes = MAX_TOTAL,
+}: DurationPickerProps) {
+  const total = Math.min(Math.max(toMinutes(value), 0), maxMinutes)
   const h = Math.floor(total / 60)
   const m = total % 60
   const [open, setOpen] = useState(false)
@@ -49,7 +58,7 @@ export function DurationPicker({ value, onChange, label }: DurationPickerProps) 
 
   // every edit lands as a total in minutes, clamped to the bounds
   const commit = (minutes: number) => {
-    const clamped = Math.min(Math.max(minutes, MIN_TOTAL), MAX_TOTAL)
+    const clamped = Math.min(Math.max(minutes, minMinutes), maxMinutes)
     if (clamped !== minutes) setShaking(true)
     setDraft(null)
     onChange(clamped / 60)
@@ -60,12 +69,12 @@ export function DurationPicker({ value, onChange, label }: DurationPickerProps) 
     setDraft({ h: String(h), m: String(m), ...draft, [field]: digits })
     if (digits === '') return // mid-edit; the field settles on blur
     const n = Number(digits)
-    const cap = field === 'h' ? MAX_HOURS : 59
+    const cap = field === 'h' ? Math.floor(maxMinutes / 60) : 59
     const next = Math.min(n, cap)
     if (next !== n) setShaking(true)
     const nextTotal = field === 'h' ? next * 60 + m : h * 60 + next
-    if (nextTotal < MIN_TOTAL) {
-      setShaking(true) // a zero-length SLA is refused, the draft stays on screen
+    if (nextTotal < minMinutes || nextTotal > maxMinutes) {
+      setShaking(true) // a duration outside the bounds is refused, the draft stays on screen
       return
     }
     onChange(nextTotal / 60)
@@ -80,7 +89,7 @@ export function DurationPicker({ value, onChange, label }: DurationPickerProps) 
       e.preventDefault()
       const step = (field === 'h' ? 60 : 5) * (e.key === 'ArrowUp' ? 1 : -1)
       // a step past a bound is refused, not clamped, so it cannot eat the other field
-      if (total + step < MIN_TOTAL || total + step > MAX_TOTAL) setShaking(true)
+      if (total + step < minMinutes || total + step > maxMinutes) setShaking(true)
       else commit(total + step)
     }
   }

@@ -361,10 +361,26 @@ export interface ForceManualApproval {
   environment_wins: boolean
 }
 
-/** GET /config/orchestrator carries profiles for the cards. They are not stored. */
-export function stripOrchestratorProfiles<T>(data: T & { profiles?: unknown }): T {
+/** Inclusive range and scrub step of one numeric setting, served by GET /config/orchestrator. */
+export interface OrchestratorBound {
+  min: number
+  max: number
+  step: number
+}
+
+export type OrchestratorBounds = Partial<Record<keyof OrchestratorConfig, OrchestratorBound>>
+
+/**
+ * GET /config/orchestrator carries profiles, defaults and bounds for the screens.
+ * They are not stored.
+ */
+export function stripOrchestratorProfiles<T>(
+  data: T & { profiles?: unknown; defaults?: unknown; bounds?: unknown },
+): T {
   const rest = { ...data }
   delete rest.profiles
+  delete rest.defaults
+  delete rest.bounds
   return rest
 }
 
@@ -384,6 +400,7 @@ export const matchesProfile = (cfg: OrchestratorConfig, values: InvestigationPro
     ([k, v]) => cfg[k] === v,
   )
 
+/** Setup's fallback before the server answers; Settings shows the served `defaults`. */
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,
@@ -405,7 +422,10 @@ export interface OrchestratorStatus {
 }
 
 export function useOrchestrator() {
-  const [config, setConfig] = useState<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
+  // null until the server has answered: there is no client-side default to show
+  const [config, setConfig] = useState<OrchestratorConfig | null>(null)
+  const [defaults, setDefaults] = useState<OrchestratorConfig | null>(null)
+  const [bounds, setBounds] = useState<OrchestratorBounds>({})
   const [profiles, setProfiles] = useState<InvestigationProfiles>({})
   const [status, setStatus] = useState<OrchestratorStatus | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -416,22 +436,26 @@ export function useOrchestrator() {
     let cancelled = false
     setPhase('loading')
     Promise.all([
-      configApi.getOrchestrator().catch(() => ({ data: ORCHESTRATOR_DEFAULTS })),
+      configApi.getOrchestrator(),
       orchestratorApi.getStatus().catch(() => ({ data: null })),
     ])
       .then(([cfgRes, statusRes]) => {
         if (cancelled) return
-        const data = (cfgRes.data ?? {}) as Partial<OrchestratorConfig> & {
-          profiles?: InvestigationProfiles
-        }
-        const { profiles: nextProfiles, ...rest } = data
+        const { profiles: nextProfiles, defaults: nextDefaults, bounds: nextBounds, ...rest } =
+          cfgRes.data as OrchestratorConfig & {
+            profiles?: InvestigationProfiles
+            defaults?: OrchestratorConfig
+            bounds?: OrchestratorBounds
+          }
         setProfiles(nextProfiles ?? {})
-        setConfig({ ...ORCHESTRATOR_DEFAULTS, ...rest })
+        setDefaults(nextDefaults ?? null)
+        setBounds(nextBounds ?? {})
+        setConfig(rest)
         setStatus((statusRes.data as OrchestratorStatus | null) ?? null)
         setPhase('ready')
       })
       .catch(() => {
-        if (!cancelled) setPhase('ready') // fall back to defaults — never block the screen
+        if (!cancelled) setPhase('error')
       })
     return () => {
       cancelled = true
@@ -444,7 +468,7 @@ export function useOrchestrator() {
     [],
   )
 
-  return { config, setConfig, profiles, status, phase, reload, save, purgeAll }
+  return { config, setConfig, defaults, bounds, profiles, status, phase, reload, save, purgeAll }
 }
 
 export function useForceManualApproval() {
