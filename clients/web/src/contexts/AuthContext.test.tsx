@@ -45,8 +45,9 @@ function renderAt(path: string) {
 beforeEach(() => get.mockReset())
 
 describe('AuthProvider /auth/me handling', () => {
-  it('redirects to /login on a 401', async () => {
-    get.mockRejectedValueOnce({ response: { status: 401 } })
+  // 403 is the failed /auth/refresh retry before the csrf cookie exists
+  it.each([401, 403])('redirects to /login on a %i', async (status) => {
+    get.mockRejectedValueOnce({ response: { status } })
     renderAt('/cases')
     expect(await screen.findByText('login screen')).toBeInTheDocument()
   })

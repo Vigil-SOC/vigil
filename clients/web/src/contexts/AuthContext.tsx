@@ -82,8 +82,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [backendUnreachable, setBackendUnreachable] = useState(false);
 
   // Auth cookies are HttpOnly, so JS can't read them: call /auth/me and let the
-  // cookie identify the user. Only a 401 means not logged in; any other failure
-  // leaves the session unknown (backendUnreachable).
+  // cookie identify the user. If the API answered with a 4xx the user is not
+  // logged in (a 401 on /auth/me surfaces as the failed /auth/refresh retry's
+  // 401, or 403 before the csrf cookie exists); no answer or a 5xx leaves the
+  // session unknown (backendUnreachable).
   const loadUser = useCallback(async () => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Using mock dev user');
@@ -98,7 +100,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setUser(response.data);
     } catch (error: any) {
       // /auth/me also seeds the csrf_token cookie, so the login POST works
-      if (error?.response?.status !== 401) {
+      const status: number | undefined = error?.response?.status;
+      if (status === undefined || status >= 500) {
         setBackendUnreachable(true);
       }
     }
