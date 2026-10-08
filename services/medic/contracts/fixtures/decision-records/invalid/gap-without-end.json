@@ -1,0 +1,13 @@
+{
+  "$comment": "Refused: a gap that doesn't say when it ended.",
+  "v": 1,
+  "at": "2026-12-07T09:24:11Z",
+  "type": "gap",
+  "body": {
+    "from": "2026-12-07T09:20:30Z",
+    "reason": "stalled"
+  },
+  "seq": 1,
+  "prev": "4df3941d81577f2a8854b6c834ede3472d9dcd6c3899b6849c57a460a2138f33",
+  "hash": "3a2e1bb98b11c291977043dc5fb73863e3ebe6c9c0e77c0afd7e5ae81e1cb232"
+}
