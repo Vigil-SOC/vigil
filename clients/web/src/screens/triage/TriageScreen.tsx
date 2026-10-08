@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import { InfoTip } from '../../shared/InfoTip'
+import { NotMeasured } from '../../shared/NotMeasured'
+import SourceChip from '../../shared/SourceChip'
 import { EmptyState, FilterButton, FilterGroup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -23,8 +26,8 @@ const KINDS = [
 const STATES = [
   { value: '', label: 'Any' },
   { value: 'queued', label: 'Waiting' },
-  { value: 'launched', label: 'Launched' },
-  { value: 'merged', label: 'Merged' },
+  { value: 'launched', label: 'Picked up or started a case' },
+  { value: 'merged', label: 'Added to a case' },
   { value: 'expired', label: 'Expired' },
 ]
 
@@ -41,6 +44,18 @@ function fmtDuration(seconds: number): string {
 function fmtShare(share: number | null): string {
   if (share === null) return BLANK
   return `${(share * 100).toFixed(1)}%`
+}
+
+// created_at is naive UTC from the API; without the Z it would read as local time
+function fmtArrived(createdAt: string | null): string {
+  if (!createdAt) return BLANK
+  const date = new Date(`${createdAt}Z`)
+  return Number.isNaN(date.getTime()) ? BLANK : date.toLocaleString()
+}
+
+function alertText(row: TriageRow): string {
+  const text = row.kind === 'human_ask' || row.kind === 'schedule' ? row.document : row.description
+  return text || BLANK
 }
 
 function lagNote(source: TriageSource): string {
@@ -68,10 +83,13 @@ function EvidenceBody({ row }: { row: TriageRow }) {
 
 function Strip({ data }: { data: TriagePayload }) {
   const picked = data.strip.picked_up
+  const info = data.strip_info
+  const floor = info.trust_floor
   return (
     <div aria-label="Intake strip">
       <div className="kpi-strip">
         <div className="kpi" aria-label="Picked up automatically">
+          <InfoTip label="How picked up automatically is worked out" align="start" {...info.picked_up} />
           <div className="k-label">Picked up automatically</div>
           <div className={`k-val${picked.share === null ? ' unmeasured' : ''}`}>{fmtShare(picked.share)}</div>
           {picked.created_today > 0 && (
@@ -79,16 +97,18 @@ function Strip({ data }: { data: TriagePayload }) {
           )}
         </div>
         <div className="kpi" aria-label="Waiting in line">
+          <InfoTip label="How waiting in line is worked out" {...info.waiting} />
           <div className="k-label">Waiting in line</div>
           <div className="k-val">{data.strip.waiting}</div>
         </div>
         <div className="kpi" aria-label="Cases created today">
+          <InfoTip label="How cases created today is worked out" {...info.cases_created_today} />
           <div className="k-label">Cases created today</div>
           <div className="k-val">{data.strip.cases_created_today}</div>
         </div>
         <div className="kpi" aria-label="Trust floor">
           <div className="k-label">Trust floor</div>
-          <div className="k-val unmeasured">{data.strip.trust_floor}</div>
+          <NotMeasured className="k-val unmeasured" align="end" tip={`${floor.source} ${floor.calculation} ${floor.limit}`} />
         </div>
       </div>
       {data.sources.length > 0 && (
@@ -98,9 +118,7 @@ function Strip({ data }: { data: TriagePayload }) {
               <div className="k-label as-stored">{source.data_source}</div>
               <div className="k-val">{source.arrivals}</div>
               <div className="k-note">{lagNote(source)}</div>
-              <button type="button" className="btn ghost icon" aria-label={data.arrival_info} title={data.arrival_info}>
-                <Icon name="info" size={14} />
-              </button>
+              <InfoTip label={data.arrival_info} text={data.arrival_info} />
             </div>
           ))}
         </div>
@@ -109,35 +127,35 @@ function Strip({ data }: { data: TriagePayload }) {
   )
 }
 
-function Expanded({
-  row,
-  unmeasured,
-  panelRef,
-}: {
-  row: TriageRow
-  unmeasured: string
-  panelRef: RefObject<HTMLDivElement>
-}) {
+function BreakdownRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div ref={panelRef} className="card" aria-label="Expanded row" style={{ margin: '0 22px 18px' }}>
-      <div className="card-h"><h3>{row.kind_label}</h3></div>
-      <div className="px-[18px] py-3 text-[13px] text-tx-2 flex flex-col gap-2">
-        {row.description && <p>{row.description}</p>}
-        {row.document && <p>{row.document}</p>}
-        <p>
-          Severity {row.severity_band} · age {fmtDuration(row.age_seconds)} · ttl {fmtDuration(row.ttl_seconds)}
-          {' · '}{row.last_quarter ? 'Last quarter of its wait' : 'Not in the last quarter'}
-        </p>
-        <p>Score, trust, and weight: {unmeasured}</p>
-        {row.kind === 'detection' && <EvidenceBody row={row} />}
+    <div className="tq-row">
+      <span>{label}</span>
+      <span className="tq-val">{children}</span>
+    </div>
+  )
+}
+
+function Expanded({ row, data }: { row: TriageRow; data: TriagePayload }) {
+  const tips = data.breakdown_info
+  return (
+    <div className="tq-panel" aria-label="Expanded row">
+      <span className="tq-h">How the ranking was worked out</span>
+      <BreakdownRow label="Severity band">{row.severity_band}</BreakdownRow>
+      <BreakdownRow label="Age">{fmtDuration(row.age_seconds)}</BreakdownRow>
+      <BreakdownRow label="Time to live">{fmtDuration(row.ttl_seconds)}</BreakdownRow>
+      <BreakdownRow label="In the last quarter of its wait">{row.last_quarter ? 'Yes' : 'No'}</BreakdownRow>
+      <BreakdownRow label="Source trust"><NotMeasured align="end" tip={tips.trust} /></BreakdownRow>
+      <BreakdownRow label="Weight"><NotMeasured align="end" tip={tips.weight} /></BreakdownRow>
+      <BreakdownRow label="Score against a floor"><NotMeasured align="end" tip={tips.score} /></BreakdownRow>
+      {row.kind === 'detection' && <div className="tq-evidence"><EvidenceBody row={row} /></div>}
+      <div className="tq-actions">
         {row.source_link && (
-          <p><a href={row.source_link}>{row.source_link}</a></p>
+          <a href={row.source_link} target="_blank" rel="noopener noreferrer">Open in source</a>
         )}
-        <p>
-          <span title="Coming in a later release">
-            <button type="button" className="btn ghost" disabled>Rescue</button>
-          </span>
-        </p>
+        <span title="Coming in a later release">
+          <button type="button" className="btn ghost" disabled>Rescue</button>
+        </span>
       </div>
     </div>
   )
@@ -152,7 +170,6 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<TriagePayload | null>(null)
   const [openId, setOpenId] = useState<number | null>(null)
-  const expandedRef = useRef<HTMLDivElement>(null)
 
   const setFilter = (key: 'kind' | 'source' | 'state', value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -185,13 +202,9 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
     return () => clearInterval(id)
   }, [load])
 
-  useEffect(() => {
-    expandedRef.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [openId])
-
   const columns = useMemo<ColumnDef<TriageRow>[]>(() => [
     { key: 'kind', label: 'Kind', render: (row) => row.kind_label, sortVal: (row) => row.kind_label },
-    { key: 'source', label: 'Source', render: (row) => row.source || BLANK, sortVal: (row) => row.source },
+    { key: 'source', label: 'Source', render: (row) => row.source ? <SourceChip source={row.source} /> : BLANK, sortVal: (row) => row.source },
     {
       key: 'state',
       label: 'State',
@@ -213,6 +226,21 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
       },
       sortVal: (row) => row.state_label,
     },
+    {
+      key: 'alert',
+      label: 'Alert, in the source’s words',
+      render: (row) => {
+        const text = alertText(row)
+        return <span className="tq-alert" title={text === BLANK ? undefined : text}>{text}</span>
+      },
+      sortVal: (row) => alertText(row),
+    },
+    {
+      key: 'arrived',
+      label: 'Arrived',
+      render: (row) => fmtArrived(row.created_at),
+      sortVal: (row) => (row.created_at ? new Date(`${row.created_at}Z`).getTime() : 0),
+    },
     { key: 'severity', label: 'Severity', render: (row) => row.severity_band, sortVal: (row) => row.severity_band },
     { key: 'age', label: 'Age', render: (row) => fmtDuration(row.age_seconds), sortVal: (row) => row.age_seconds },
     { key: 'workflow', label: 'Workflow', render: (row) => row.workflow_id || BLANK, sortVal: (row) => row.workflow_id },
@@ -224,7 +252,6 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
     },
   ], [openCase])
   const tableSort = useTableSort(columns, { key: 'server', dir: 'asc' })
-  const open = data?.rows.find((row) => row.id === openId) ?? null
 
   const sourceOptions = useMemo(() => {
     const names = new Set<string>(['Schedule', 'Ask'])
@@ -244,9 +271,7 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
           <FilterGroup label="State" value={state} onSelect={(value) => setFilter('state', value)} options={STATES} />
         </FilterButton>
         {source && data && (
-          <button type="button" className="btn ghost icon" aria-label={data.arrival_info} title={data.arrival_info}>
-            <Icon name="info" size={14} />
-          </button>
+          <InfoTip label={data.arrival_info} text={data.arrival_info} align="start" />
         )}
         <div className="flex-1" />
         <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
@@ -270,11 +295,12 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
                 sort={tableSort.sort}
                 onSort={tableSort.toggle}
                 onRowClick={(row) => setOpenId((current) => current === row.id ? null : row.id)}
+                expandedKey={openId === null ? null : String(openId)}
+                renderExpanded={(row) => <Expanded row={row} data={data} />}
                 emptyMessage="Nothing in intake."
               />
             </div>
           </section>
-          {open && <Expanded row={open} unmeasured={data.unmeasured_text} panelRef={expandedRef} />}
         </>
       )}
     </>

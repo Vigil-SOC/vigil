@@ -1427,6 +1427,11 @@ export interface TriageSource {
   quiet: boolean | null
 }
 
+export interface TriageInfo {
+  source: string
+  calculation: string
+}
+
 export interface TriagePayload {
   rows: TriageRow[]
   strip: {
@@ -1441,6 +1446,13 @@ export interface TriagePayload {
   }
   sources: TriageSource[]
   arrival_info: string
+  strip_info: {
+    picked_up: TriageInfo
+    waiting: TriageInfo
+    cases_created_today: TriageInfo
+    trust_floor: TriageInfo & { limit: string }
+  }
+  breakdown_info: { trust: string; weight: string; score: string }
   unmeasured_text: string
 }
 

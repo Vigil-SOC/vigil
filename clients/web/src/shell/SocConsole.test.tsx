@@ -247,6 +247,13 @@ vi.mock('../services/api', () => ({
         },
         sources: [],
         arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
+        strip_info: {
+          picked_up: { source: 'Picked source', calculation: 'Picked calc' },
+          waiting: { source: 'Waiting source', calculation: 'Waiting calc' },
+          cases_created_today: { source: 'Cases source', calculation: 'Cases calc' },
+          trust_floor: { source: 'Floor source', calculation: 'Floor calc', limit: 'Floor limit' },
+        },
+        breakdown_info: { trust: 'Trust tip', weight: 'Weight tip', score: 'Score tip' },
         unmeasured_text: 'Not measured yet',
       },
     }),
