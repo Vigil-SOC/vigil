@@ -127,6 +127,9 @@ def test_child_env_is_an_allowlist(box: Path) -> None:
     assert env["VIGIL_MEDIC_ENABLED"] == "true"
     assert env["VIGIL_MEDIC_DATA_DIR"] == str(box / "data")
     assert env["PYTHONPATH"] == str(box / "app")
+    # L49: a host-native Medic says so, and reads the worker on loopback.
+    assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "start_sh"
+    assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "127.0.0.1:6990"
     assert set(env) <= {
         "PATH",
         "HOME",
@@ -136,12 +139,48 @@ def test_child_env_is_an_allowlist(box: Path) -> None:
         "PYTHONDONTWRITEBYTECODE",
         "VIGIL_MEDIC_ENABLED",
         "VIGIL_MEDIC_DATA_DIR",
+        "VIGIL_MEDIC_INSTALL_SHAPE",
+        "VIGIL_MEDIC_AGENT_WORKER_ADDR",
         # Set by the shells themselves, not passed through.
         "PWD",
         "SHLVL",
         "_",
         "OLDPWD",
     }
+
+
+def _child_env(box: Path, *extra: str) -> dict[str, str]:
+    (box / "data" / "mode").write_text("run")
+    proc = _start(box, *extra)
+    try:
+        _wait_for(lambda: _starts(box))
+        pid = _starts(box)[0][1]
+        _wait_for(lambda: (box / "data" / f"env.{pid}").exists())
+        return dict(
+            ln.split("=", 1)
+            for ln in (box / "data" / f"env.{pid}").read_text().splitlines()
+            if "=" in ln
+        )
+    finally:
+        _stop(proc)
+
+
+def test_agent_worker_address_is_passed_through(box: Path) -> None:
+    """start.sh hands over AGENT_HEALTH_PORT's address; the shape stays start_sh."""
+    env = _child_env(box, "--agent-worker", "127.0.0.1:7123")
+    assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "127.0.0.1:7123"
+    assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "start_sh"
+
+
+@pytest.mark.parametrize(
+    "addr", ["", "127.0.0.1", "http://127.0.0.1:6990", "127.0.0.1:69x0", "a b:1"]
+)
+def test_bad_agent_worker_address_exits_2(box: Path, addr: str) -> None:
+    out = subprocess.run(
+        _args(box, "--agent-worker", addr), capture_output=True, text=True, check=False
+    )
+    assert out.returncode == 2
+    assert not _starts(box)
 
 
 def test_term_stops_medic_and_does_not_restart(box: Path) -> None:
@@ -246,3 +285,51 @@ def test_real_medic_runs_checks_green_and_restarts_after_kill(box: Path) -> None
         assert _stop(proc) == 0
     # A clean stop leaves `check` red, so a stopped Medic never reads as healthy.
     assert _check(box).returncode != 0
+
+
+class _ReadyStub:
+    """The agent worker's /readyz on a free loopback port; counts the reads."""
+
+    def __init__(self) -> None:
+        import http.server
+        import threading
+
+        self.paths: list[str] = []
+        stub = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                stub.paths.append(self.path)
+                body = b'{"ready": true}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addr = f"127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_real_medic_reports_start_sh_and_reaches_the_worker(box: Path) -> None:
+    """L49: under the loop, the real Medic runs as start_sh and reads /readyz."""
+    (box / "app" / "services").symlink_to(REPO / "services")
+    stub = _ReadyStub()
+    proc = _start(box, "--agent-worker", stub.addr, python=sys.executable)
+    try:
+        _wait_for(lambda: "/readyz" in stub.paths, timeout=60)
+        _wait_for(lambda: "start_sh" in (box / "loop.log").read_text())
+    finally:
+        assert _stop(proc) == 0
+        stub.close()
+    log = (box / "loop.log").read_text()
+    assert "shape start_sh" in log, log
+    assert "can't start" not in log
