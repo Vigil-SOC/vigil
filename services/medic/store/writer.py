@@ -53,6 +53,31 @@ JOURNAL_SIZE_LIMIT = 16 * MIB
 
 ENVELOPE = ("seq", "prev", "hash")
 
+# Types append() refuses: each has one writer path. A forged anchor would make
+# deleting the rows it "covers" verify clean.
+WRITER_ONLY_TYPES = {
+    "store_reset": "store_reset is written only by reset()",
+    "anchor": "anchors are written only by the purge (G3)",
+}
+
+
+def _first_float(node: Any, path: str) -> str | None:
+    """JSON path of the first float in `node`, if any."""
+    if isinstance(node, float):
+        return path
+    if isinstance(node, dict):
+        items = ((f"{path}.{k}", v) for k, v in node.items())
+    elif isinstance(node, list):
+        items = ((f"{path}[{i}]", v) for i, v in enumerate(node))
+    else:
+        return None
+    for sub_path, value in items:
+        found = _first_float(value, sub_path)
+        if found:
+            return found
+    return None
+
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS records (
@@ -158,6 +183,10 @@ def verify_rows(
 
     The row checks stop at the first bad row; the contract's verify() then
     runs on the rows before it, so whichever problem comes first wins.
+
+    Limits of an unkeyed chain, caught only by the logged head (C4 §6.5):
+    deleting the newest rows leaves a valid chain, and an edited record with a
+    forged hash is named at the *next* seq (E-LINK).
     """
     records: list[dict[str, Any]] = []
     row_problem: tuple[str, int, str] | None = None
@@ -216,11 +245,19 @@ class DecisionWriter:
             raise RecordRefused(
                 "E-ENVELOPE", supplied[0], "the writer assigns seq, prev and hash"
             )
-        if record.get("type") == "store_reset":
-            raise RecordRefused(
-                "E-TYPE", "type", "store_reset is written only by reset()"
-            )
-        return self._write(lambda last: decision_chain.seal(record, last))
+        if record.get("type") in WRITER_ONLY_TYPES:
+            raise RecordRefused("E-TYPE", "type", WRITER_ONLY_TYPES[record.get("type")])
+        # Our own copy: the caller can't change the record between hash and insert.
+        try:
+            own = json.loads(json.dumps(record, allow_nan=False))
+        except (ValueError, TypeError) as err:  # NaN, a set, ...
+            raise RecordRefused("E-SCHEMA", "$", f"not JSON: {err}") from err
+        where = _first_float(own, "$")
+        if where:
+            # jsonschema calls 2.0 an integer, but Python hashes it as "2.0" and a
+            # canonical-JSON verifier elsewhere as "2" (G2: integers only).
+            raise RecordRefused("E-SCHEMA", where, "numbers are integers only")
+        return self._write(lambda last: decision_chain.seal(own, last))
 
     def reset(
         self,
@@ -258,6 +295,8 @@ class DecisionWriter:
             try:
                 conn.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as err:
+                if "locked" not in str(err) and "busy" not in str(err):
+                    raise
                 raise StoreBusy(
                     f"{self.root / DB_NAME}: another connection holds the write lock "
                     f"({err}); nothing was written"
@@ -266,12 +305,7 @@ class DecisionWriter:
                 row = conn.execute(
                     "SELECT record FROM records ORDER BY seq DESC LIMIT 1"
                 ).fetchone()
-                try:
-                    sealed = seal(json.loads(row[0]) if row else None)
-                except (ValueError, TypeError) as err:  # NaN, a set, ...
-                    raise RecordRefused(
-                        "E-SCHEMA", "$", f"not canonical JSON: {err}"
-                    ) from err
+                sealed = seal(json.loads(row[0]) if row else None)
                 text = self._check(sealed)
                 conn.execute(
                     "INSERT INTO records (seq, hash, record) VALUES (?, ?, ?)",
@@ -279,7 +313,10 @@ class DecisionWriter:
                 )
                 conn.execute("COMMIT")
             except BaseException:
-                conn.execute("ROLLBACK")
+                # A failed COMMIT (SQLITE_FULL, I/O) may already have rolled back;
+                # an unconditional ROLLBACK would then hide the real error.
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
                 raise
             return sealed
 
@@ -305,11 +342,13 @@ class DecisionWriter:
 
     def usage(self) -> StoreUsage:
         """Bytes used against the cap, and free disk against the reserve (stub)."""
-        used = sum(
-            (self.root / name).stat().st_size
-            for name in (DB_NAME, DB_NAME + "-wal", DB_NAME + "-shm")
-            if (self.root / name).exists()
-        )
+        used = 0
+        with self._mutex:
+            for name in (DB_NAME, DB_NAME + "-wal", DB_NAME + "-shm"):
+                try:
+                    used += (self.root / name).stat().st_size
+                except FileNotFoundError:
+                    pass
         return StoreUsage(
             used_bytes=used,
             cap_bytes=self._cap,
@@ -319,9 +358,10 @@ class DecisionWriter:
         )
 
     def pragmas(self) -> dict[str, Any]:
-        conn = self._open_conn()
         names = ("journal_mode", "synchronous", "auto_vacuum", "fullfsync")
-        return {n: conn.execute(f"PRAGMA {n}").fetchone()[0] for n in names}
+        with self._mutex:
+            conn = self._open_conn()
+            return {n: conn.execute(f"PRAGMA {n}").fetchone()[0] for n in names}
 
     # -- lifecycle ------------------------------------------------------------------
 
@@ -333,9 +373,11 @@ class DecisionWriter:
     def close(self) -> None:
         with self._mutex:
             if self._conn is not None:
-                self._conn.close()
-                self._conn = None
-                os.close(self._lock_fd)  # releases the flock
+                conn, self._conn = self._conn, None
+                try:
+                    conn.close()
+                finally:
+                    os.close(self._lock_fd)  # releases the flock
 
     def __enter__(self) -> Self:
         return self

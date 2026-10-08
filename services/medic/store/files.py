@@ -32,22 +32,35 @@ class StoreRefused(StoreError):
     """The store won't open: it isn't safe, or it isn't what Medic wrote."""
 
 
-def mode_problem(st: os.stat_result, *, euid: int, egid: int) -> str | None:
-    """C4 §6.1's rule, for the root and every file Medic keeps in it.
+def is_fsgroup_root(st: os.stat_result, *, egid: int) -> bool:
+    """Helm's signature (C4 §6.2): fsGroup leaves the volume root setgid, group Medic's gid."""
+    return (
+        stat.S_ISDIR(st.st_mode)
+        and bool(st.st_mode & stat.S_ISGID)
+        and st.st_gid == egid
+    )
 
-    Group bits are allowed only for Medic's own gid: on Helm, fsGroup makes the
-    volume 2770 with gid 10001 (C4 §6.2), and a kubelet relabel adds g+rw to
-    files. Nothing is ever allowed for "other".
+
+def mode_problem(
+    st: os.stat_result, *, euid: int, egid: int, fsgroup: bool
+) -> str | None:
+    """C4 §6.1's rule (PROVISIONAL S2-1), for the root and every file in it.
+
+    Nothing is ever allowed for "other". By default the brief's 0600/0700 holds:
+    no group bits, owner = Medic. Only on an fsGroup volume (`fsgroup`: the root
+    has the Helm signature) may Medic's own gid have group bits (a kubelet
+    relabel adds g+rw), and may the root itself be owned by another uid (a fresh
+    PVC's root is often root-owned; fsGroup changes the group, not the owner).
+    Not on plain group ownership: on macOS the primary group (`staff`) is shared.
     """
     mode = stat.S_IMODE(st.st_mode)
-    if st.st_uid != euid:
+    helm_root = fsgroup and is_fsgroup_root(st, egid=egid)
+    if st.st_uid != euid and not helm_root:
         return f"owned by uid {st.st_uid}, not Medic's uid {euid}"
     if mode & 0o007:
         return f"mode {mode:04o} lets everyone in"
-    if mode & 0o070 and st.st_gid != egid:
-        return (
-            f"mode {mode:04o} lets group {st.st_gid} in (only Medic's gid {egid} may)"
-        )
+    if mode & 0o070 and not (fsgroup and st.st_gid == egid):
+        return f"mode {mode:04o} lets group {st.st_gid} in"
     return None
 
 
@@ -55,12 +68,12 @@ def _fix(path: Path, is_dir: bool) -> str:
     return f"chmod {'700' if is_dir else '600'} {path}"
 
 
-def check_private(path: Path) -> None:
+def check_private(path: Path, *, fsgroup: bool) -> None:
     """Refuse a symlink, or a mode or owner looser than mode_problem allows."""
     st = path.lstat()
     if stat.S_ISLNK(st.st_mode):
         raise StoreRefused(f"{path} is a symlink; Medic's data root must hold none")
-    problem = mode_problem(st, euid=os.geteuid(), egid=os.getegid())
+    problem = mode_problem(st, euid=os.geteuid(), egid=os.getegid(), fsgroup=fsgroup)
     if problem:
         is_dir = stat.S_ISDIR(st.st_mode)
         raise StoreRefused(
@@ -73,7 +86,11 @@ def prepare_root(root: Path) -> None:
     """Create the root (0700) if it's missing, then check it and everything under it."""
     if not os.path.lexists(root):
         root.mkdir(mode=0o700, parents=True)
-    check_private(root)
+    root_st = root.lstat()
+    fsgroup = not stat.S_ISLNK(root_st.st_mode) and is_fsgroup_root(
+        root_st, egid=os.getegid()
+    )
+    check_private(root, fsgroup=fsgroup)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         for name in dirnames + filenames:
             path = Path(dirpath, name)
@@ -85,7 +102,7 @@ def prepare_root(root: Path) -> None:
     for name in SIDE_FILES:
         path = root / name
         if os.path.lexists(path):
-            check_private(path)
+            check_private(path, fsgroup=fsgroup)
 
 
 def create_private_file(path: Path) -> None:

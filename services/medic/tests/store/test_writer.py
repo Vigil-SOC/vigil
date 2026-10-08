@@ -170,6 +170,77 @@ def test_a_value_that_isnt_canonical_json_is_refused(data_dir: Path, bad) -> Non
     assert err.value.code == "E-SCHEMA"
 
 
+def test_a_whole_float_is_refused_though_jsonschema_calls_it_an_integer(
+    data_dir: Path,
+) -> None:
+    # Python hashes 2.0 as "2.0"; a canonical-JSON verifier elsewhere writes "2".
+    rec = draft(load("chain-01-pilot-day.jsonl")[1])
+    rec["body"] |= {"value": "wrong_lane", "suggested_lane": 2.0}
+    with open_writer(data_dir) as w, pytest.raises(RecordRefused) as err:
+        w.append(rec)
+    assert (err.value.code, err.value.where) == ("E-SCHEMA", "$.body.suggested_lane")
+
+
+def test_anchors_are_not_appendable_yet(data_dir: Path) -> None:
+    # A forged anchor would let someone delete the rows it "covers" unseen (G3 owns purge).
+    anchor = load("chain-02-after-purge.jsonl")[-1]
+    assert anchor["type"] == "anchor"
+    with open_writer(data_dir) as w, pytest.raises(RecordRefused) as err:
+        w.append(draft(anchor))
+    assert err.value.code == "E-TYPE"
+
+
+def test_the_caller_cannot_change_a_record_after_handing_it_over(
+    data_dir: Path,
+) -> None:
+    rec = draft(load("chain-01-pilot-day.jsonl")[0])
+    with open_writer(data_dir) as w:
+        sealed = w.append(rec)
+        rec["body"]["lane"]["value"] = 3
+        assert sealed["body"]["lane"]["value"] != 3
+    assert verify_store(data_dir).ok
+
+
+class _FailingCommit:
+    """A connection whose COMMIT fails the way SQLITE_FULL does: already rolled back."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+    def execute(self, sql: str, *args):
+        if sql == "COMMIT":
+            self._conn.execute("ROLLBACK")
+            raise sqlite3.OperationalError("database or disk is full")
+        return self._conn.execute(sql, *args)
+
+
+def test_a_failed_commit_surfaces_the_real_error_and_the_writer_recovers(
+    data_dir: Path,
+) -> None:
+    day = load("chain-01-pilot-day.jsonl")
+    with open_writer(data_dir) as w:
+        real = w._conn
+        w._conn = _FailingCommit(real)
+        with pytest.raises(sqlite3.OperationalError, match="disk is full"):
+            w.append(draft(day[0]))
+        w._conn = real
+        assert w.append(draft(day[0])) == day[0]
+
+
+def test_deleting_the_newest_rows_is_invisible_inside_the_store(
+    day_store: Path,
+) -> None:
+    # The known limit of an unkeyed chain: only the logged head (C4 §6.5) catches this.
+    conn = raw(day_store)
+    conn.execute("DELETE FROM records WHERE seq >= 13")
+    conn.close()
+    report = verify_store(day_store)
+    assert report.ok and report.head_seq == 12
+
+
 def test_a_record_naming_another_instance_is_refused(data_dir: Path) -> None:
     opened = draft(load("chain-01-pilot-day.jsonl")[0])
     opened["body"]["instance_id"] = "mi_0000000000000001"

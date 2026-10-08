@@ -22,7 +22,7 @@ from services.medic.store import (
     open_writer,
     verify_store,
 )
-from services.medic.store.files import mode_problem
+from services.medic.store.files import is_fsgroup_root, mode_problem
 from services.medic.store.writer import usage_state
 from services.medic.tests.store.chains import draft, load, seed_instance
 
@@ -128,23 +128,41 @@ def _st(mode: int, uid: int = 10001, gid: int = 10001) -> os.stat_result:
     return os.stat_result((mode, 0, 0, 1, uid, gid, 0, 0, 0, 0))
 
 
+DIR, REG = stat.S_IFDIR, stat.S_IFREG
+
+
 @pytest.mark.parametrize(
-    ("mode", "uid", "gid", "refused"),
+    ("mode", "uid", "gid", "fsgroup", "refused"),
     [
-        (stat.S_IFDIR | 0o700, 10001, 10001, False),
-        (stat.S_IFDIR | 0o2770, 10001, 10001, False),  # Helm fsGroup (C4 §6.2)
-        (stat.S_IFREG | 0o600, 10001, 10001, False),
-        (stat.S_IFREG | 0o660, 10001, 10001, False),  # fsGroup relabel, own gid
-        (stat.S_IFDIR | 0o750, 10001, 0, True),  # another group can read
-        (stat.S_IFREG | 0o640, 10001, 20, True),
-        (stat.S_IFDIR | 0o701, 10001, 10001, True),  # anyone
-        (stat.S_IFREG | 0o604, 10001, 10001, True),
-        (stat.S_IFDIR | 0o700, 0, 10001, True),  # owned by another uid
+        (DIR | 0o700, 10001, 10001, False, False),
+        (REG | 0o600, 10001, 10001, False, False),
+        # Helm fsGroup (C4 §6.2): the PVC root is 2770, gid 10001, often owned by root.
+        (DIR | 0o2770, 10001, 10001, True, False),
+        (DIR | 0o2770, 0, 10001, True, False),
+        (REG | 0o660, 10001, 10001, True, False),  # kubelet relabel adds g+rw
+        # Without the fsGroup signature, group bits are refused even for our own gid
+        # (on macOS the primary group is usually `staff`, shared by every user).
+        (REG | 0o640, 10001, 10001, False, True),
+        (DIR | 0o750, 10001, 10001, False, True),
+        (DIR | 0o2770, 0, 20, False, True),  # setgid, but not Medic's gid
+        (REG | 0o660, 0, 10001, True, True),  # a file owned by another uid
+        (REG | 0o640, 10001, 20, True, True),  # another group
+        (DIR | 0o2771, 10001, 10001, True, True),  # anyone
+        (REG | 0o604, 10001, 10001, False, True),
+        (DIR | 0o700, 0, 10001, False, True),  # owned by another uid
     ],
 )
-def test_the_mode_rule(mode: int, uid: int, gid: int, refused: bool) -> None:
-    problem = mode_problem(_st(mode, uid, gid), euid=10001, egid=10001)
+def test_the_mode_rule(mode, uid, gid, fsgroup, refused) -> None:
+    st = _st(mode, uid, gid)
+    problem = mode_problem(st, euid=10001, egid=10001, fsgroup=fsgroup)
     assert (problem is not None) is refused, problem
+
+
+def test_the_fsgroup_signature_is_a_setgid_root_with_our_gid() -> None:
+    assert is_fsgroup_root(_st(DIR | 0o2770), egid=10001)
+    assert not is_fsgroup_root(_st(DIR | 0o0770), egid=10001)
+    assert not is_fsgroup_root(_st(DIR | 0o2770, gid=20), egid=10001)
+    assert not is_fsgroup_root(_st(REG | 0o2770), egid=10001)
 
 
 # --- instance_id (X1 ⚑5a) ------------------------------------------------------------------
