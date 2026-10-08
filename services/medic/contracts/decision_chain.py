@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 GENESIS = "0" * 64
@@ -72,6 +73,16 @@ def seal(record: dict[str, Any], prev: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def _instant(ts: str) -> datetime:
+    """A schema `ts` as an instant: "…:00.5Z" is later than "…:00Z" though it sorts first."""
+    return datetime.fromisoformat(ts)
+
+
+def gap_ok(body: dict[str, Any]) -> bool:
+    """A `gap` must not end before it starts (E-GAP); writers check before appending."""
+    return _instant(body["from"]) <= _instant(body["to"])
+
+
 def _start_ok(first: dict[str, Any], anchors: dict[int, str]) -> bool:
     """The oldest remaining record must be the genesis, a store reset, or covered by an anchor."""
     if first["type"] == "store_reset":
@@ -87,7 +98,8 @@ def verify(records: Sequence[dict[str, Any]]) -> str:
 
     Error codes: E-HASH (a record was edited), E-SEQ (gap, duplicate or reorder),
     E-LINK (prev doesn't match the record before it), E-UNANCHORED (the oldest
-    record is neither genesis, a store reset, nor covered by an anchor).
+    record is neither genesis, a store reset, nor covered by an anchor), E-GAP (a
+    `gap` record ends before it starts; the schema can't compare two fields).
     """
     if not records:
         return GENESIS
@@ -99,6 +111,8 @@ def verify(records: Sequence[dict[str, Any]]) -> str:
     for i, rec in enumerate(records):
         if record_hash(rec) != rec["hash"]:
             raise ChainError("E-HASH", rec["seq"], "content does not match its hash")
+        if rec["type"] == "gap" and not gap_ok(rec["body"]):
+            raise ChainError("E-GAP", rec["seq"], "the gap ends before it starts")
         if i == 0:
             if not _start_ok(rec, anchors):
                 raise ChainError(
