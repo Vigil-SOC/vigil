@@ -141,8 +141,20 @@ def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
     snap = json.loads(stack.sql(SNAPSHOT))
     assert re.fullmatch(r"mi_[0-9a-f]{16}", snap["instance_id"])
     assert snap["api_version"] == "1.0" and snap["cycle"] >= 0
+    # S9-1: Medic listens only on medic-private, the gateway's network, never on
+    # medic-net beside the agents (K1 §6 G3).
     medic_log = stack.compose("logs", "--no-color", "medic", medic=True).stdout
-    assert "listening on 0.0.0.0:8470" in medic_log
+    assert re.search(r"listening on [0-9.]+:8470", medic_log), medic_log
+    assert "listening on 0.0.0.0" not in medic_log
+    probe = (
+        "import socket\n"
+        "try:\n"
+        "    socket.create_connection(('medic', 8470), timeout=3)\n"
+        "    print('open')\n"
+        "except OSError as e:\n"
+        "    print('closed', type(e).__name__)"
+    )
+    assert stack.py("agent-worker", probe, medic=True).startswith("closed")
     # The poll went backend -> gateway inbound -> Medic, with the key.
     logs = stack.compose("logs", "--no-color", "medic-gateway", medic=True).stdout
     assert '"dir": "inbound"' in logs or '"dir":"inbound"' in logs

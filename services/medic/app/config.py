@@ -120,10 +120,16 @@ def policy_control_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] |
 
 # Medic's API (X2, S9). The port is X2's default; the address is loopback unless
 # the shape says Medic is inside its own container or pod, where Compose's
-# networks and Helm's NetworkPolicy are the fence (C3). Fail safe: a host-native
-# Medic with no shape set still binds loopback only.
+# networks and Helm's NetworkPolicy are the fence (C3). On Compose it is narrowed
+# further to the one network that reaches the gateway (api_bind_peer). Fail
+# safe: a host-native Medic with no shape set still binds loopback only.
 API_PORT_VAR = "VIGIL_MEDIC_API_PORT"
 API_KEY_FILE_VAR = "VIGIL_MEDIC_API_KEY_FILE"
+# Compose: listen only on the network that reaches this name, the gateway's
+# medic-private alias, not on medic-net beside the agents (K1 §6 G3).
+API_BIND_PEER_VAR = "VIGIL_MEDIC_API_BIND_PEER"
+COMPOSE_BIND_PEER = "medic-gateway-out"
+_HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
 API_PORT_DEFAULT = 8470
 # Where Compose mounts the `medic_api_key` secret.
 COMPOSE_KEY_FILE = Path("/run/secrets/medic_api_key")
@@ -159,3 +165,14 @@ def api_key_file(env: Mapping[str, str], data_dir: Path) -> Path | None:
     if shape == "helm":
         return None
     return data_dir / "run" / "api_key"
+
+
+def api_bind_peer(env: Mapping[str, str]) -> str | None:
+    value = (env.get(API_BIND_PEER_VAR) or "").strip()
+    if value:
+        if not _HOST.fullmatch(value):
+            raise ConfigError(
+                f"{API_BIND_PEER_VAR} is not a host name (value not shown)"
+            )
+        return value
+    return COMPOSE_BIND_PEER if _explicit_shape(env) == "compose" else None

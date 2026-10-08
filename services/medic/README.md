@@ -34,7 +34,8 @@ with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 | `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`; elsewhere unset, and agent-serve isn't read unless it's set; `host:port` only |
 | `VIGIL_MEDIC_POLICY_PROBE_ADDR` | Helm only, and required there (the chart sets it): a `host:port` Medic's NetworkPolicy must block |
 | `VIGIL_MEDIC_POLICY_CONTROL_ADDR` | Helm only, and required there: a `host:port` on the same pods that the policy allows |
-| `VIGIL_MEDIC_API_PORT` | `8470`: where `GET /v1/status` listens. On `127.0.0.1`, or on every interface of the container or pod when `VIGIL_MEDIC_INSTALL_SHAPE` is set to `compose` or `helm` |
+| `VIGIL_MEDIC_API_PORT` | `8470`: where `GET /v1/status` listens. On `127.0.0.1` unless `VIGIL_MEDIC_INSTALL_SHAPE` is set to `compose` (the one address that reaches `VIGIL_MEDIC_API_BIND_PEER`) or `helm` (every interface of the pod) |
+| `VIGIL_MEDIC_API_BIND_PEER` | Compose: `medic-gateway-out`, the gateway's `medic-private` alias, so the API isn't on `medic-net` beside the agents. Elsewhere unset |
 | `VIGIL_MEDIC_API_KEY_FILE` | The file holding `X-Medic-Key` (43 base64url characters). Default: Compose `/run/secrets/medic_api_key`; host-native `<data dir>/run/api_key` (written by the restart loop); Helm none (the chart sets it) |
 
 **API (X2, S9 slice).** `run` serves `GET /v1/status` from a snapshot each cycle

@@ -42,7 +42,8 @@ KEY_RE = re.compile(rb"[A-Za-z0-9_-]{43}")  # 32 random bytes, base64url (X2)
 REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 CLIENT_TIMEOUT_S = 10.0
 MAX_CONNECTIONS = 16  # one caller (the backend or the gateway), ≤ 20 req/min (C7)
-RETRY_START_S = 60.0
+RETRY_FIRST_S = 5.0  # then doubling: the gateway may still be starting
+RETRY_MAX_S = 60.0
 
 
 class StatusBoard:
@@ -70,6 +71,15 @@ def read_key(path: Path) -> bytes | None:
     except OSError:
         return None
     return raw if KEY_RE.fullmatch(raw) else None
+
+
+def local_address_toward(peer: str) -> str:
+    """The local IPv4 address the kernel would use to reach `peer`. A UDP
+    connect sends nothing; it only picks the route."""
+    ip = socket.getaddrinfo(peer, None, socket.AF_INET, socket.SOCK_DGRAM)[0][4][0]
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect((ip, 9))
+        return s.getsockname()[0]
 
 
 def _cut(sock: socket.socket) -> None:
@@ -207,10 +217,13 @@ def make_server(
 
 
 class Api:
-    """Starts the listener when it can, and keeps trying once a minute when it can't.
+    """Starts the listener when it can, and keeps trying when it can't: after 5 s,
+    doubling to once a minute. Called from the main loop each cycle. Each distinct
+    problem is logged once; none of them is a reason for Medic to stop (C5).
 
-    Called from the main loop each cycle. Each distinct problem is logged once;
-    none of them is a reason for Medic to stop (C5)."""
+    With `bind_peer` (Compose: the gateway's medic-private alias), the listener
+    binds only the local address on the network that reaches that peer, not every
+    interface: Medic is also on medic-net, with the agents (K1 §6 G3)."""
 
     def __init__(
         self,
@@ -220,11 +233,14 @@ class Api:
         board: StatusBoard,
         wall: Callable[[], float],
         monotonic: Callable[[], float],
-        retry_s: float = RETRY_START_S,
+        bind_peer: str | None = None,
+        retry_s: float = RETRY_MAX_S,
     ) -> None:
         self.bind, self.key_file, self.board = bind, key_file, board
+        self.bind_peer = bind_peer
         self._wall, self._monotonic, self._retry_s = wall, monotonic, retry_s
         self._next_try: float | None = None
+        self._failures = 0
         self._said: str | None = None
         self.server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -244,16 +260,22 @@ class Api:
         now = self._monotonic()
         if self._next_try is not None and now < self._next_try:
             return
-        self._next_try = now + self._retry_s
+        if not self._try_start():
+            self._failures += 1
+            delay = RETRY_FIRST_S * 2 ** min(self._failures - 1, 8)
+            self._next_try = now + min(self._retry_s, delay)
+
+    def _try_start(self) -> bool:
         if self.key_file is None:
-            return self._say_once(
+            self._say_once(
                 "no-setting",
                 "Medic's API is off: %s isn't set, so no caller could be checked. "
                 "Medic keeps watching; the console will read Down.",
                 API_KEY_FILE_VAR,
             )
+            return False
         if read_key(self.key_file) is None:
-            return self._say_once(
+            self._say_once(
                 "no-key",
                 "Medic's API is off: no usable key at %s (32 random bytes, "
                 "base64url, 43 characters). Medic keeps watching; retrying every "
@@ -261,25 +283,43 @@ class Api:
                 self.key_file,
                 self._retry_s,
             )
+            return False
+        host, port = self.bind
+        if self.bind_peer is not None:
+            try:
+                host = local_address_toward(self.bind_peer)
+            except OSError as exc:
+                self._say_once(
+                    "peer",
+                    "Medic's API isn't listening yet: it listens only on the "
+                    "network that reaches %s, which doesn't resolve (%s; is the "
+                    "gateway up?). Medic keeps watching; retrying.",
+                    self.bind_peer,
+                    type(exc).__name__,
+                )
+                return False
         try:
             server = make_server(
-                self.bind, key_file=self.key_file, board=self.board, wall=self._wall
+                (host, port), key_file=self.key_file, board=self.board, wall=self._wall
             )
         except OSError as exc:
-            return self._say_once(
+            self._say_once(
                 "bind",
                 "Medic's API can't listen on %s:%d (%s). Medic keeps watching; "
-                "retrying every %.0f s.",
-                *self.bind,
+                "retrying every %.0f s at most.",
+                host,
+                port,
                 type(exc).__name__,
                 self._retry_s,
             )
-        self.server, self._said = server, None
+            return False
+        self.server, self._said, self._failures = server, None, 0
         self._thread = threading.Thread(
             target=server.serve_forever, name="medic-api", daemon=True
         )
         self._thread.start()
         log.info("Medic's API is listening on %s:%d", *server.server_address[:2])
+        return True
 
     def stop(self) -> None:
         if self.server is None:
