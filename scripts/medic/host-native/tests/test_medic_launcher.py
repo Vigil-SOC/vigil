@@ -25,6 +25,9 @@ REPO = HERE.parents[3]
 
 STUB_SUDO = """#!/bin/bash
 echo "$*" >> "$SANDBOX/sudo.calls"
+pwd >> "$SANDBOX/sudo.cwd"
+# Real sudo keeps the cwd; bash run as another user then warns on stderr.
+echo "shell-init: error retrieving current directory" >&2
 [ "${STUB_SUDO:-ok}" = fail ] && { echo "sudo: a password is required" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in -n) shift ;; -u) shift 2 ;; --) shift; break ;; *) break ;; esac
@@ -292,6 +295,7 @@ def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
     assert len(sudo) == 2
     assert all(c.startswith(f"-n -u vigil-medic -- {rt}/bin/medic-loop") for c in sudo)
     assert "--probe" in sudo[0] and f"--data-dir {sb / 'data'}" in sudo[1]
+    assert set(_calls(sb, "sudo.cwd").split()) == {"/"}
 
     # A second start while it runs doesn't start a second Medic.
     again = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true")

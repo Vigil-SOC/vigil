@@ -45,6 +45,10 @@ _medic_data_dir() {
     fi
 }
 
+# Run as vigil-medic from /: sudo keeps the caller's working directory, which
+# that user usually can't open (the checkout), and bash then warns on stderr.
+_medic_sudo() { (cd / && exec sudo -n -u "$_MEDIC_USER" -- "$@"); }
+
 # "<uid> <mode>": GNU stat, else BSD.
 _medic_stat() { stat -c '%u %a' "$1" 2>/dev/null || stat -f '%u %Lp' "$1" 2>/dev/null; }
 
@@ -147,12 +151,15 @@ medic_host_start() {
     # Privilege-model check 8: Medic's user can't read Vigil's secrets. Asked of
     # the real user through sudo, so it is the answer that matters, not a guess
     # from file modes.
-    local state="${VIGIL_DIR:-$HOME/.vigil}"
-    if ! readable=$(sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" --probe \
-        "$state/master.key" "$state/secrets.enc" "$state/jwt_secret" "$REPO_ROOT/.env" 2>&1); then
-        _medic_setup "no sudo rule lets $(id -un) run $runtime/bin/medic-loop as $_MEDIC_USER ($readable)"
+    local state="${VIGIL_DIR:-$HOME/.vigil}" err
+    err=$(mktemp) || return 1
+    if ! readable=$(_medic_sudo "$runtime/bin/medic-loop" --probe \
+        "$state/master.key" "$state/secrets.enc" "$state/jwt_secret" "$REPO_ROOT/.env" 2>"$err"); then
+        _medic_setup "no sudo rule lets $(id -un) run $runtime/bin/medic-loop as $_MEDIC_USER ($(head -c 300 "$err"))"
+        rm -f "$err"
         return 1
     fi
+    rm -f "$err"
     if [ -n "$readable" ]; then
         {
             echo "Medic not started: $_MEDIC_USER can read Vigil secrets (privilege-model check 8):"
@@ -197,8 +204,8 @@ medic_host_start() {
     fi
 
     rotate_log "$log"
-    nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
-        --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data" \
+    (cd / && exec nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
+        --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data") \
         < /dev/null > "$log" 2>&1 &
     echo $! > "$pidfile"
     echo "Medic: started as $_MEDIC_USER (log: logs/medic.log). Health:"

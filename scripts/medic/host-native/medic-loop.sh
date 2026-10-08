@@ -49,7 +49,7 @@ if [ "$MODE" = probe ]; then
     exit 0
 fi
 
-[ -n "$PY" ] && [ -n "$APP" ] && [ -n "$DATA" ] || usage
+if [ -z "$PY" ] || [ -z "$APP" ] || [ -z "$DATA" ]; then usage; fi
 for n in "$START" "$MAX" "$CAP" "$WINDOW"; do
     case "$n" in ''|*[!0-9]*) usage ;; esac
 done

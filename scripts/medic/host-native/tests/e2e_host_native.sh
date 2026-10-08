@@ -32,8 +32,9 @@ id vigil-medic >/dev/null 2>&1 && fail "vigil-medic already exists; use a fresh 
 mkdir -p logs
 RT=/opt/vigil-medic
 DATA=$(_medic_data_dir)
-# Outside $HOME, whose own mode differs by OS: only the State Directory's mode decides.
-STATE=$(mktemp -d)
+# In /tmp, not $HOME or macOS's per-user temp dir, whose own modes differ by OS:
+# only the State Directory's mode should decide.
+STATE=$(mktemp -d /tmp/vigil-e2e.XXXXXX)
 export VIGIL_DIR="$STATE" JWT_SECRET_KEY=e2e-leak-me
 for f in master.key secrets.enc jwt_secret; do
     (umask 077; echo "e2e-secret" > "$STATE/$f")
@@ -46,7 +47,7 @@ medic_pid() { pgrep -u vigil-medic -f 'services.medic run' | head -n 1; }
 
 # Check 12: off by default. Flag unset → silent, nothing started.
 out=$(VIGIL_MEDIC_ENABLED='' medic_host_start 2>&1) || fail "flag off returned non-zero"
-[ -z "$out" ] && [ ! -e logs/medic.pid ] || fail "flag off printed or started something: $out"
+if [ -n "$out" ] || [ -e logs/medic.pid ]; then fail "flag off printed or started something: $out"; fi
 pass "flag off: silent no-op (check 12)"
 
 # Opted in with no user: the warning, then setup commands. Run exactly those.
