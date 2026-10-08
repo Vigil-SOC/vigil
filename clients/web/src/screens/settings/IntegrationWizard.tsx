@@ -229,9 +229,9 @@ export default function IntegrationWizard({
   const lastRead = tested ? `last read ${relativeTime(tested.at)}` : 'never tested'
 
   return (
-    <div className="vg-skill-scrim" onMouseDown={onClose}>
+    <div className="vg-side-scrim" onMouseDown={onClose}>
       <aside
-        className="vg-skill-drawer"
+        className="vg-side-panel"
         role="dialog"
         aria-label={`Set up ${integration.name}`}
         onMouseDown={(e) => e.stopPropagation()}
@@ -242,9 +242,9 @@ export default function IntegrationWizard({
               {integration.name}
               <LevelBadge level={level} variant="pill" />
             </span>
-            <span className="vg-skill-hint">{[category, lastRead].filter(Boolean).join(' · ')}</span>
+            <span className="vg-side-hint">{[category, lastRead].filter(Boolean).join(' · ')}</span>
           </span>
-          <button type="button" className="vg-skill-close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="vg-side-close" aria-label="Close" onClick={onClose}>
             <Icon name="close" size={16} />
           </button>
         </div>
@@ -297,12 +297,12 @@ export default function IntegrationWizard({
           </div>
         )}
 
-        <div className="vg-skill-foot">
-          <button type="button" className="vg-skill-btn" onClick={onClose} disabled={saving}>
+        <div className="vg-side-foot">
+          <button type="button" className="vg-side-btn" onClick={onClose} disabled={saving}>
             {step === 0 ? 'Cancel' : 'Close'}
           </button>
           {step === 0 && (
-            <button type="button" className="vg-skill-btn primary" onClick={handleSave} disabled={saving}>
+            <button type="button" className="vg-side-btn primary" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving…' : 'Save and verify'}
             </button>
           )}

@@ -4703,7 +4703,7 @@
       color: var(--tx2);
    }
 
-   /* setup drawer: reuses the vg-skill-drawer shell; board SettingsIntegrations.dc.html */
+   /* setup drawer: reuses the vg-side-panel shell; board SettingsIntegrations.dc.html */
    .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
    .int-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.2px; color: var(--tx0); }
    .int-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
