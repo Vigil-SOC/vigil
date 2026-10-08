@@ -8264,6 +8264,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/runs/{run_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Findings */
+        post: operations["post_internal_runs_run_id_findings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/runs/{run_id}/handoff": {
         parameters: {
             query?: never;
@@ -9686,6 +9703,11 @@ export interface components {
              * @default
              */
             run_kind: string;
+        };
+        /** CitedFindings */
+        CitedFindings: {
+            /** Finding Ids */
+            finding_ids?: string[];
         };
         /**
          * ClaudeConfig
@@ -26922,6 +26944,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Decisions"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_findings: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CitedFindings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
