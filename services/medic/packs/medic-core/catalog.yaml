@@ -19,5 +19,13 @@ entries:
   # core/integrations/aws_security_hub/ingestion.py:115, azure_sentinel/ingestion.py:173 (constant text)
   - {logger: core.integrations.aws_security_hub.ingestion, template: 'boto3 not installed. Install: pip install boto3'}
   - {logger: core.integrations.azure_sentinel.ingestion, template: 'Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity'}
+  # core/federation/adapters/_siem_base.py:154
+  - {logger: core.federation.adapters._siem_base, template: '%s dropped %d of %d alert(s) that failed to transform%s'}
+  # core/federation/adapters/_base.py:88
+  - {logger: core.federation.adapters._base, template: "Federation %s: newest alert time %s is ahead of this host's clock (window end %s); capping the cursor there"}
   # core/ingestion/kafka_consumer_service.py:115
   - {logger: core.ingestion.kafka_consumer_service, template: 'Kafka consumer failed to start: %s'}
+  # services/daemon/processor.py:168 (constant text; the failure line beside it is an f-string)
+  - {logger: services.daemon.processor, template: 'Database service initialized'}
+  # services/daemon/processor.py:494
+  - {logger: services.daemon.processor, template: 'Dropped finding %s: database store failed'}

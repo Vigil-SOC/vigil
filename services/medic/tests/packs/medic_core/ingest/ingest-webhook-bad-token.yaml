@@ -1,0 +1,38 @@
+rule: ingest.webhook-bad-token
+defaults:
+  sensors:
+    - {id: http.daemon-status, covers: [daemon_status.poller], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_status.poller: {webhook_rejections: counter, webhook_findings: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-a-sender-keeps-failing-auth-and-nothing-gets-in
+    title: The sender rotated its token; every push is refused and none is accepted
+    end: +45m
+    series:
+      - signal: daemon_status.poller
+        key: webhook_rejections
+        labels: {endpoint: daemon/webhook, reason: bad_token}
+        steps: [[+0m, 0], [+5m, 10], [+10m, 25], [+15m, 40], [+20m, 55], [+25m, 70], [+30m, 85], [+35m, 100], [+40m, 115]]
+      - {signal: daemon_status.poller, key: webhook_findings, steps: [[+0s, 310]]}
+    expect:
+      - {at: +10m, rule: ingest.webhook-bad-token, group: {endpoint: daemon/webhook}, eval: unknown, state: inactive, note: no accepted pushes in 10 of 30 minutes decides nothing}
+      - {at: +30m, rule: ingest.webhook-bad-token, group: {endpoint: daemon/webhook}, eval: true, state: pending}
+      - {at: +40m, rule: ingest.webhook-bad-token, group: {endpoint: daemon/webhook}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.webhook-bad-token, group: {endpoint: daemon/webhook}, active_since: +30m, opened_at: +40m,
+          resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-while-pushes-still-get-in
+    title: Wrong-token noise (a scanner, a stale sender) beside a working sender is not this fault
+    end: +45m
+    series:
+      - signal: daemon_status.poller
+        key: webhook_rejections
+        labels: {endpoint: daemon/webhook, reason: bad_token}
+        steps: [[+0m, 0], [+10m, 40], [+20m, 80], [+30m, 120], [+40m, 160]]
+      - {signal: daemon_status.poller, key: webhook_findings, steps: [[+0m, 310], [+15m, 330], [+35m, 360]]}
+    expect:
+      - {at: +16m, rule: ingest.webhook-bad-token, group: {endpoint: daemon/webhook}, eval: false, state: inactive, note: an accepted push decides == 0}
+      - {at: +40m, rule: ingest.webhook-bad-token, group: {endpoint: daemon/webhook}, eval: false, state: inactive}
+    incidents: {}

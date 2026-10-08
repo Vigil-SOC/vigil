@@ -1,0 +1,34 @@
+rule: ingest.webhook-token-unset
+defaults:
+  sensors:
+    - {id: http.daemon-status, covers: [daemon_status.poller], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_status.poller: {webhook_rejections: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-pushes-are-refused-for-no-token
+    title: A sender retries its pushes; every one is refused with reason no_secret
+    end: +12m
+    series:
+      - {signal: daemon_status.poller, key: webhook_rejections, labels: {endpoint: daemon/webhook, reason: no_secret},
+         steps: [[+0m, 0], [+2m, 4], [+6m, 12], [+10m, 30]]}
+    expect:
+      - {at: +2m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: unknown, state: inactive}
+      - {at: +6m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: true, state: pending}
+      - {at: +8m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, active_since: +6m, opened_at: +8m,
+          resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-bad-tokens-and-old-refusals
+    title: Wrong-token rejections (anyone can send those) don't count; an old no_secret total doesn't move
+    end: +35m
+    series:
+      - {signal: daemon_status.poller, key: webhook_rejections, labels: {endpoint: daemon/webhook, reason: bad_token},
+         steps: [[+0m, 0], [+5m, 50], [+10m, 120]]}
+      - {signal: daemon_status.poller, key: webhook_rejections, labels: {endpoint: daemon/webhook, reason: no_secret},
+         steps: [[+0s, 2]]}
+    expect:
+      - {at: +10m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: unknown, state: inactive}
+      - {at: +35m, rule: ingest.webhook-token-unset, group: {endpoint: daemon/webhook}, eval: false, state: inactive}
+    incidents: {}

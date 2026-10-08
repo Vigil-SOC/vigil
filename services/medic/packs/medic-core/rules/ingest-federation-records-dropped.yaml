@@ -1,0 +1,22 @@
+# I-3.h · #1613: the runner drops records with no external_id / finding_id and
+# counts them per source.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.federation-records-dropped
+title: Federation is dropping records it can't identify
+revision: 1
+fault: {class: ingest, mode: I-3, causes: [I-3.h]}
+lane: 3
+detection: event
+signals:
+  dropped: {sample: {signal: federation_sources, key: sources.dropped_total, by: [source]}}
+group_by: [source]
+when: {fn: increase, signal: dropped, window: 1h, op: ">", value: 0}
+for: 2m
+keep_firing_for: 15m
+advice:
+  summary: Some alerts from this source were dropped because they carry no identifier Vigil can store them under.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report. Dropped
+    alerts are not retried; check the source's console for alerts in this period
+    that are missing from Vigil.

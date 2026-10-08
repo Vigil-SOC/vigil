@@ -1,0 +1,34 @@
+# I-4 · federation polling stopped without an error: the adapter task died (I-4.d),
+# the adapters never registered (I-4.c) or the runner reads the source as off
+# (I-4.e). No new success, no new failure.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.federation-source-stalled
+title: Federation source has stopped being polled
+revision: 1
+fault: {class: ingest, mode: I-4, causes: [I-4.c, I-4.d, I-4.e]}
+lane: 3
+detection: absence
+signals:
+  enabled:      {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
+  errors:       {sample: {signal: federation_sources, key: sources.consecutive_errors, by: [source]}}
+  last_success: {sample: {signal: federation_sources, key: sources.last_success_at, by: [source]}}
+group_by: [source]
+when:
+  all:
+    - {fn: latest, signal: enabled, op: "==", value: true}
+    - {fn: latest, signal: errors, op: "==", value: 0}
+    - any:
+        - {fn: age, signal: last_success, op: ">", value: {param: stall_after}}
+        - {fn: absent_for, signal: last_success, window: {param: never_polled_for}}
+for: 10m
+keep_firing_for: 10m
+params:
+  stall_after: {type: number, default: 3600, min: 900, max: 86400}
+  never_polled_for: {type: duration, default: 1h, min: 15m, max: 24h}
+advice:
+  summary: This enabled source has had neither a successful nor a failed poll for an hour, so Vigil has stopped polling it.
+  fix: >-
+    Restart soc-daemon; polling should resume within one interval. If it stops
+    again, or never starts, send this incident to DeepTempo Support with the
+    evidence report and the soc-daemon log from its start-up.
