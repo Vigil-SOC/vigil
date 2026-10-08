@@ -341,7 +341,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                         />
                         </div>
                       </td>
-                      <td style={{ minWidth: 140 }}>
+                      <td style={{ minWidth: 120 }}>
                         {row.inherit ? (
                           <span className="aim-muted">—</span>
                         ) : (

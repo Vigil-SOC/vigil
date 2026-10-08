@@ -45,7 +45,7 @@
 .aim-model > :first-child { flex: 0 0 150px; }
 .aim-model > :last-child { flex: 1 1 150px; }
 /* fixed width, so a long model id wraps instead of widening the table */
-.aim-fallback { width: 150px; }
+.aim-fallback { width: 160px; }
 .aim-fallback .field-select { padding: 7px 7px 7px 9px; gap: 4px; font-size: 12px; }
 .aim-fallback .field-select > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .aim-muted { color: var(--tx2); }
