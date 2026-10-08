@@ -1,0 +1,29 @@
+{{- if and .Values.medic.enabled (not .Values.medic.apiKey.existingSecret) }}
+{{- include "vigil.medic.required" . }}
+{{- /*
+X-Medic-Key (X2, V2-8): what the backend presents, through the gateway's inbound
+listener, to Medic's API. Minted at install (32 random bytes, base64url: X2's
+shape) and kept on every upgrade by reading it back, so it is never in values
+(C3 R6). Where lookup can't run (helm template, Argo CD, Flux) each render mints
+a new one; set medic.apiKey.existingSecret there instead.
+*/}}
+{{- $name := include "vigil.medic.apiKeySecret" . }}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $name }}
+{{- $key := "" }}
+{{- if and $old $old.data (hasKey $old.data "api_key") }}
+{{- $key = index $old.data "api_key" | b64dec }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9_-]{43}$" $key) }}
+{{- $key = randBytes 32 | replace "+" "-" | replace "/" "_" | trimSuffix "=" }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" (dict "context" . "component" "medic") | nindent 4 }}
+type: Opaque
+data:
+  api_key: {{ $key | b64enc }}
+{{- end }}
