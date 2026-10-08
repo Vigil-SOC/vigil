@@ -1674,60 +1674,6 @@
       min-height: 0;
    }
 
-   .case-composer {
-      flex: 0 0 auto;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      border-top: 1px solid var(--line);
-      background: var(--bg);
-   }
-
-   .case-composer .chat-body {
-      flex: 0 1 auto;
-      min-height: 0;
-      max-height: 150px;
-   }
-
-   .composer-modes {
-      display: flex;
-      gap: 4px;
-      padding: 8px 14px 0;
-   }
-
-   .composer-modes button {
-      height: 26px;
-      padding: 0 10px;
-      border-radius: 8px;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--tx-3);
-      font-size: 12px;
-      font-weight: 700;
-   }
-
-   .composer-modes button.on {
-      color: var(--accent-2);
-      background: var(--accent-dim);
-      border-color: var(--accent-line);
-   }
-
-   .composer-modes button:disabled {
-      opacity: 0.45;
-      cursor: default;
-   }
-
-   .composer-fold {
-      align-self: flex-start;
-      margin: 4px 14px 0;
-      padding: 0;
-      border: none;
-      background: none;
-      color: var(--tx-3);
-      font-size: 12px;
-      cursor: pointer;
-   }
-
    .cite-row {
       display: flex;
       flex-wrap: wrap;
