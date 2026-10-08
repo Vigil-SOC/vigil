@@ -434,6 +434,7 @@ describe('workflow catalog cards', () => {
     expect(name).toBeEnabled()
     fireEvent.change(description, { target: { value: 'Does a thing.' } })
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Steps (SKILL.md)'), { target: { value: '1. Do it.' } })
 
     fireEvent.change(name, { target: { value: 'executive-summary' } })
     expect(within(dialog).getByText(/already exists/)).toBeInTheDocument()
@@ -441,7 +442,7 @@ describe('workflow catalog cards', () => {
 
     fireEvent.change(name, { target: { value: 'new-skill' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(skillsApi.save).toHaveBeenCalledWith({ name: 'new-skill', description: 'Does a thing.', body: '' })
+    expect(skillsApi.save).toHaveBeenCalledWith({ name: 'new-skill', description: 'Does a thing.', body: '1. Do it.' })
   })
 
   it('imports a SKILL.md, opens the drawer on it, and shows the server reason when refused', async () => {
