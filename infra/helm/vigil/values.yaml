@@ -900,10 +900,20 @@ networkPolicies:
 # networkPolicies.enabled says.
 #
 # It needs a cluster that ENFORCES NetworkPolicy (Calico, Cilium, a managed
-# cluster with policy enforcement on). At start it tries a connection its policy
-# blocks (policyProbe.target); if that connects, or isn't dropped, it exits with
-# code 3 and says why, and the pod crash-loops. On kind's default kindnet or on
-# flannel it will not run.
+# cluster with policy enforcement on, kind's kindnet since it gained policy
+# support). At start it connects to the gateway (allowed) and then tries a
+# connection its policy blocks (policyProbe.target). Unless the first connects
+# and the second is dropped, it exits with code 3 and says why, and the pod
+# crash-loops: on flannel or any plugin without policy support it will not run.
+# Known limits:
+#   - Cilium matches ipBlock against node/host addresses only with
+#     policy-cidr-match-mode=nodes; without it, an API server on node IPs is
+#     unreachable from Medic.
+#   - NodeLocal DNSCache (169.254.20.10) isn't covered by `dns` below; Medic
+#     can't resolve names there and refuses to start.
+#   - kubeApi.cidrs looked up at install are pinned: if the API server's
+#     addresses change (EKS rotates its ENIs), run `helm upgrade` again.
+#   - IPv6-only clusters aren't supported yet (the gateway binds IPv4).
 medic:
   enabled: false
   image:

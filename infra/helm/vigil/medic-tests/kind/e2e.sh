@@ -2,8 +2,11 @@
 # Medic on a live kind cluster: C3 §7 checks 3, 14 (refuse variant) and 15, the
 # S2-6 volume test, and the /readyz fault → chained, redacted incident.
 #
-#   e2e.sh calico    # a CNI that enforces NetworkPolicy: Medic must run
-#   e2e.sh kindnet   # kind's default CNI ignores NetworkPolicy: Medic must refuse
+#   e2e.sh calico    # enforces NetworkPolicy: Medic must run (the full suite)
+#   e2e.sh kindnet   # kind's default CNI, which enforces it too since kind
+#                    # gained policy support: same suite as calico
+#   e2e.sh nopolicy  # a bare ptp CNI with no policy controller: NetworkPolicy
+#                    # is ignored, so Medic must refuse to start (exit 3)
 #
 # Needs docker, kind, kubectl, helm, and the two images built as
 # vigil-medic:kind and vigil-medic-gateway:kind (the workflow builds them).
@@ -13,7 +16,7 @@
 # select them as they would the real thing.
 set -euo pipefail
 
-MODE=${1:?usage: e2e.sh calico|kindnet}
+MODE=${1:?usage: e2e.sh calico|kindnet|nopolicy}
 CLUSTER=${CLUSTER:-medic-$MODE}
 NS=vigil
 REL=rel
@@ -48,15 +51,26 @@ reach() { $K -n "$NS" exec "deploy/$FN-medic" -- python -c "$CONNECT" "$1" "$2" 
 # --- cluster -------------------------------------------------------------------
 say "kind cluster $CLUSTER ($MODE)"
 cfg=$(mktemp)
-if [[ $MODE == calico ]]; then
-  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg"
-else
-  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n' >"$cfg"
-fi
+case $MODE in
+  calico) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg" ;;
+  nopolicy) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 10.244.0.0/16\n' >"$cfg" ;;
+  kindnet) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n' >"$cfg" ;;
+  *) echo "unknown mode $MODE" >&2; exit 2 ;;
+esac
 kind create cluster --name "$CLUSTER" --config "$cfg" --wait 0s
 if [[ $MODE == calico ]]; then
   $K apply -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO/manifests/calico.yaml" >/dev/null
   $K -n kube-system rollout status ds/calico-node --timeout=300s
+fi
+if [[ $MODE == nopolicy ]]; then
+  # One node, the node image's own ptp + host-local plugins, and nothing that
+  # reads NetworkPolicy objects: they are stored and ignored, as on flannel.
+  docker exec -i "$CLUSTER-control-plane" sh -c 'cat > /etc/cni/net.d/10-ptp.conflist' <<'CNI'
+{"cniVersion": "1.0.0", "name": "ptp", "plugins": [
+  {"type": "ptp", "ipMasq": true, "ipam": {"type": "host-local",
+   "ranges": [[{"subnet": "10.244.0.0/24"}]], "routes": [{"dst": "0.0.0.0/0"}]}},
+  {"type": "portmap", "capabilities": {"portMappings": true}}]}
+CNI
 fi
 $K wait --for=condition=Ready nodes --all --timeout=300s
 kind load docker-image vigil-medic:kind vigil-medic-gateway:kind --name "$CLUSTER"
@@ -137,13 +151,19 @@ pod_exit() { $K -n "$NS" get pods -l app.kubernetes.io/component=medic \
   -o jsonpath='{.items[0].status.containerStatuses[0].lastState.terminated.exitCode}'; }
 
 # --- kindnet: refuse to start (A3-3, check 14 refuse variant) --------------------
-if [[ $MODE == kindnet ]]; then
-  say "Medic must refuse to start: kindnet ignores NetworkPolicy"
+if [[ $MODE == nopolicy ]]; then
+  say "Medic must refuse to start: nothing enforces NetworkPolicy here"
   for _ in $(seq 60); do [[ -n $(pod_exit) ]] && break; sleep 3; done
   code=$(pod_exit)
   [[ $code == 3 ]] || fail "check 14: exit code ${code:-none}, expected 3"
   ok "check 14: Medic exited 3"
-  logs=$($K -n "$NS" logs "deploy/$FN-medic" --previous 2>/dev/null || $K -n "$NS" logs "deploy/$FN-medic")
+  # The first start can beat kube-proxy to the new backend Service: refused, so
+  # Medic refuses as "can't prove" (also exit 3). A later restart connects.
+  for _ in $(seq 40); do
+    logs=$($K -n "$NS" logs "deploy/$FN-medic" --previous 2>/dev/null || true)
+    grep -q "NetworkPolicy isn't enforced" <<<"$logs" && break
+    sleep 5
+  done
   grep -q "NetworkPolicy isn't enforced" <<<"$logs" || fail "check 14: no refusal message in: $logs"
   ok "check 14: message: $(grep -o "Medic refuses to run: NetworkPolicy isn't enforced[^.]*" <<<"$logs" | head -1)"
   [[ $($K -n "$NS" get pods -l app.kubernetes.io/component=medic -o jsonpath='{.items[0].status.containerStatuses[0].ready}') == false ]] \
@@ -154,7 +174,7 @@ if [[ $MODE == kindnet ]]; then
 fi
 
 # --- calico: runs, isolated, records the fault -----------------------------------
-say "Medic must run: Calico enforces NetworkPolicy"
+say "Medic must run: $MODE enforces NetworkPolicy"
 $K -n "$NS" rollout status "deploy/$FN-medic" "deploy/$FN-medic-gateway" --timeout=300s \
   || fail "Medic or the gateway didn't become Ready"
 [[ -z $(pod_exit) ]] || fail "Medic restarted (exit $(pod_exit))"
@@ -179,7 +199,15 @@ for v in "get secrets" "list configmaps" "create pods/exec" "create pods/portfor
 done
 [[ $($K auth can-i list pods --as="$SA" -n default 2>/dev/null || true) == no ]] || fail "check 3: reads another namespace"
 ok "check 3: reads only (pods, pods/log get, events, deployments, statefulsets); no secrets, exec, writes, other namespaces"
-$K auth can-i --list --as="$SA" -n "$NS" | sed 's/^/        /'
+# The whole list, not a sample: resource rows only, minus what every
+# authenticated identity gets from the cluster's defaults (self-reviews, and
+# clustertrustbundles since K8s 1.33's system:basic-user).
+granted=$($K auth can-i --list --as="$SA" -n "$NS" 2>/dev/null | awk 'NR > 1 && $1 !~ /^\[/ {print $1, $NF}' \
+  | grep -v -E '^(selfsubject[a-z]*reviews\.|clustertrustbundles\.)' | sort)
+expected=$(printf '%s\n' "deployments.apps [get list watch]" "events [get list watch]" \
+  "pods [get list watch]" "pods/log [get]" "statefulsets.apps [get list watch]" | sort)
+[[ $granted == "$expected" ]] || fail "check 3: can-i --list shows more than the Role: $granted"
+ok "check 3: can-i --list = exactly the Role's 5 rows (+ cluster-default self-reviews)"
 
 say "isolation from inside Medic (R1, R2)"
 gw_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=medic-gateway -o jsonpath='{.items[0].status.podIP}')
@@ -196,11 +224,18 @@ expect "$api_ep" "$api_port" connected "check 15 Kubernetes API"
 say "check 15: a wrong medic.kubeApi.cidrs cuts the API off"
 helm --kube-context "kind-$CLUSTER" upgrade "$REL" "$chart" -n "$NS" --reuse-values \
   --set 'medic.kubeApi.cidrs[0]=10.255.255.1/32' >/dev/null
-sleep 5
-expect "$api_ep" "$api_port" timeout "check 15 wrong cidrs"
+# Policy updates land asynchronously: poll rather than sleep.
+await() { # host port want label
+  local got
+  for _ in $(seq 20); do got=$(reach "$1" "$2" 3); [[ $got == "$3" ]] && break; done
+  [[ $got == "$3" ]] || fail "$4: $1:$2 → $got, expected $3"
+  ok "$4: $1:$2 → $got"
+}
+await "$api_ep" "$api_port" timeout "check 15 wrong cidrs"
 helm --kube-context "kind-$CLUSTER" upgrade "$REL" "$chart" -n "$NS" --reuse-values \
   --set 'medic.kubeApi.cidrs=null' >/dev/null
 $K -n "$NS" rollout status "deploy/$FN-medic" --timeout=300s >/dev/null
+await "$api_ep" "$api_port" connected "check 15 restored by lookup"
 
 say "S2-6 / S7-1: the chart's volume (kind local-path = hostPath, which ignores fsGroup)"
 root=$($K -n "$NS" exec "deploy/$FN-medic" -- stat -c '%u:%g %a' /var/lib/vigil-medic)

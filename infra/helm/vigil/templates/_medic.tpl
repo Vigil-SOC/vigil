@@ -7,12 +7,18 @@ networkPolicies.enabled is turned on (C3 §4.4, "the label trap"). commonLabels
 stay off the pod templates for the same reason.
 */}}
 
+{{/* Every Medic object name is <base>-medic<suffix>, the longest being
+     "-medic-agent-worker" (19), so the base leaves room for it within 63. */}}
+{{- define "vigil.medic.base" -}}
+{{- include "vigil.fullname" . | trunc 44 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "vigil.medic.fullname" -}}
-{{- printf "%s-medic" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-medic" (include "vigil.medic.base" .) -}}
 {{- end -}}
 
 {{- define "vigil.medicGateway.fullname" -}}
-{{- printf "%s-medic-gateway" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-medic-gateway" (include "vigil.medic.base" .) -}}
 {{- end -}}
 
 {{/* Usage: include "vigil.medic.selectorLabels" (dict "context" . "component" "medic") */}}
@@ -79,8 +85,9 @@ translated to its endpoint, hence the endpoint addresses.
   {{- fail "medic.kubeApi.cidrs is required: Medic's egress policy needs the Kubernetes API server's address, and it couldn't be looked up (helm template, Argo CD and Flux can't). Set it from `kubectl get endpointslice kubernetes -n default`, e.g. --set medic.kubeApi.cidrs[0]=10.0.0.1/32" -}}
 {{- end -}}
 {{- range $cidrs -}}
-  {{- if not (or (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$" .) (regexMatch "^[0-9a-fA-F:]+/([1-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$" .)) -}}
-    {{- fail (printf "medic.kubeApi.cidrs: %q isn't a CIDR with a non-zero prefix (the API server's address, not \"anywhere\")" .) -}}
+  {{- /* A floor, not just "not /0": 0.0.0.0/1 + 128.0.0.0/1 is the internet too. */ -}}
+  {{- if not (or (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/(2[4-9]|3[0-2])$" .) (regexMatch "^[0-9a-fA-F:]+/(12[0-8])$" .)) -}}
+    {{- fail (printf "medic.kubeApi.cidrs: %q isn't the API server's address: give a CIDR of /24 or narrower (IPv6 /120), normally the endpoint's /32" .) -}}
   {{- end -}}
 {{- end -}}
 {{- toJson $cidrs -}}
@@ -104,6 +111,21 @@ translated to its endpoint, hence the endpoint addresses.
 
 {{/* Fail early, with the key to set, on what a Medic install can't do without. */}}
 {{- define "vigil.medic.required" -}}
+{{- $ports := .Values.medic.kubeApi.ports -}}
+{{- if not (and (kindIs "slice" $ports) $ports) -}}
+{{- fail "medic.kubeApi.ports must be a non-empty list of TCP ports (default [443, 6443]): an empty rule would allow every port" -}}
+{{- end -}}
+{{- range $ports -}}
+{{- if not (regexMatch "^[0-9]{1,5}$" (toString .)) -}}
+{{- fail (printf "medic.kubeApi.ports: %v isn't a port number" .) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (and (kindIs "map" .Values.medic.dns.podLabels) .Values.medic.dns.podLabels) -}}
+{{- fail "medic.dns.podLabels must name the DNS pods (default k8s-app: kube-dns): empty selects every pod in medic.dns.namespace" -}}
+{{- end -}}
+{{- if and (not .Values.agentWorker.enabled) (not .Values.medic.agentWorkerAddr) -}}
+{{- fail "medic.agentWorkerAddr is required when agentWorker.enabled is false: Medic's one sensor reads the agent worker's /readyz" -}}
+{{- end -}}
 {{- $_ := required "medic.gateway.viewer.username is required when medic.enabled: the Viewer account the gateway logs in as" .Values.medic.gateway.viewer.username -}}
 {{- $_ := required "medic.gateway.viewer.passwordSecret.name is required when medic.enabled: an existing Secret holding the Viewer password (never put the password in values)" .Values.medic.gateway.viewer.passwordSecret.name -}}
 {{- end -}}
