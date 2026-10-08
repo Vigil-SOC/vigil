@@ -101,11 +101,12 @@ def record_start(
     if last_exit is None and ran_before:
         state = previous_beat["state"] if previous_beat else None
         ts = previous_beat["ts"] if previous_beat else 0
-        last_exit = {
-            "reason": _BEAT_REASON.get(state, "unknown"),
+        try:
             # The host-native loop's crash-looping beat is dated 0 on purpose.
-            "at": iso(ts if ts > 0 else now),
-        }
+            at = iso(ts if ts > 0 else now)
+        except (OverflowError, ValueError, OSError):  # a beat from nowhere
+            at = iso(now)
+        last_exit = {"reason": _BEAT_REASON.get(state, "unknown"), "at": at}
     kept = [t for t in _floats((doc or {}).get("restarts")) if now - t < DAY_S]
     if ran_before:
         kept.append(now)
