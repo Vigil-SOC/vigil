@@ -1,0 +1,34 @@
+# The read-only Docker proxy between Medic and the Docker socket (C3 §4.3, SP2).
+# Its own lock, like the gateway's: it imports nothing from core, services.medic
+# or any other service (.importlinter), and it has no runtime dependencies at
+# all (SP2 ⚑2 (a)): the component that holds the Docker socket has no
+# dependency tree to audit.
+[project]
+name = "vigil-medic-dockerproxy"
+version = "0.0.0"
+description = "Medic's read-only proxy to the Docker Engine API"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "import-linter==2.15",
+    "pytest>=8",
+    "ruff==0.16.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The repo root, so `services.medic_dockerproxy` imports the way it does at runtime.
+pythonpath = ["../.."]
+addopts = ["--import-mode=importlib"]
+markers = ["docker: needs a live Docker Engine (skipped when there is none)"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint.isort]
+known-first-party = ["services"]
