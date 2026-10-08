@@ -132,11 +132,12 @@ def run(
         shape = config.install_shape(env)
         host, port = config.agent_worker_addr(env, shape)
         probe_target = config.policy_probe_addr(env, shape)
+        probe_control = config.policy_control_addr(env, shape)
     except config.ConfigError as exc:
         log.error("Medic can't start: %s", exc)
         return 1
     # Before the store opens: a refusal writes nothing (no gap, no beat).
-    if probe_target is not None and not _policy_enforced(probe_target):
+    if probe_target is not None and not _policy_enforced(probe_target, probe_control):
         return POLICY_REFUSED
 
     # C4 §6.1: everything Medic creates is private to its own uid. Restored on
@@ -157,7 +158,25 @@ def run(
         os.umask(old_umask)
 
 
-def _policy_enforced(target: tuple[str, int]) -> bool:
+def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
+    """A3-3. Proof = the allowed path connects AND the forbidden one is dropped.
+
+    A timeout alone could be a dead pod network or a Service with no endpoints
+    (IPVS drops those), so the control comes first (S7 review #1)."""
+    hint = (
+        "Check that medic.policyProbe.target names a Service that is up and "
+        "that Medic's policy blocks, and that DNS and the gateway are reachable."
+    )
+    checked = policy_probe(control)
+    if checked is not Verdict.CONNECTED:
+        log.error(
+            "Medic refuses to run: it can't prove NetworkPolicy is enforced: the "
+            "control connection to %s:%d, which its policy allows, was %s (A3-3). %s",
+            *control,
+            checked.value,
+            hint,
+        )
+        return False
     verdict = policy_probe(target)
     if verdict is Verdict.BLOCKED:
         log.info("NetworkPolicy is enforced: the probe to %s:%d was dropped", *target)
@@ -174,11 +193,10 @@ def _policy_enforced(target: tuple[str, int]) -> bool:
     else:
         log.error(
             "Medic refuses to run: it can't prove NetworkPolicy is enforced (%s "
-            "for %s:%d; only a dropped connection proves it, A3-3). Check that "
-            "medic.policyProbe.target names a Service that is up and that "
-            "Medic's policy blocks.",
+            "for %s:%d; only a dropped connection proves it, A3-3). %s",
             verdict.value,
             *target,
+            hint,
         )
     return False
 

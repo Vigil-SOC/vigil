@@ -3,9 +3,10 @@ name: Medic Helm
 # Medic's Helm isolation (C3 §7 checks 2, 3, 14, 15; A3-3), in its own file
 # (skeleton decision #7). Two halves: a render test that needs only helm, and a
 # live run on kind, once with Calico (enforces NetworkPolicy: Medic must run,
-# isolated, and record the /readyz fault) and once with kind's default kindnet
-# (ignores NetworkPolicy: Medic must refuse to start). No repository condition:
-# nothing here needs a secret, so it runs on forks as well.
+# isolated, and record the /readyz fault) and once on a bare ptp CNI with no
+# policy controller (NetworkPolicy ignored: Medic must refuse to start). Not
+# kind's default kindnet for the refusal: it enforces NetworkPolicy now.
+# No repository condition: nothing here needs a secret, so it runs on forks.
 on:
   push:
     branches: [main]
@@ -94,7 +95,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cni: [calico, kindnet]
+        cni: [calico, nopolicy]
     steps:
       - uses: actions/checkout@v7
 
@@ -114,6 +115,6 @@ jobs:
           docker build -f infra/docker/Dockerfile.medic-gateway -t vigil-medic-gateway:kind .
 
       # calico: checks 3, 14 (runs), 15 live, S2-6 (a)+(b), the /readyz incident.
-      # kindnet: check 14, refuse variant (exit 3 with the message).
+      # nopolicy: check 14, refuse variant (exit 3 with the message).
       - name: e2e (${{ matrix.cni }})
         run: infra/helm/vigil/medic-tests/kind/e2e.sh ${{ matrix.cni }}

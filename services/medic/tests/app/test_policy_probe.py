@@ -131,49 +131,109 @@ def test_no_probe_off_helm(shape: str) -> None:
     assert config.policy_probe_addr(env, shape) is None
 
 
+# --- control target --------------------------------------------------------
+
+
+def test_control_required_on_helm() -> None:
+    env = {**HELM, config.POLICY_PROBE_VAR: "backend:6987"}
+    with pytest.raises(config.ConfigError) as exc:
+        config.policy_control_addr(env, "helm")
+    assert config.POLICY_CONTROL_VAR in str(exc.value)
+
+
+def test_control_parsed_on_helm_and_none_elsewhere() -> None:
+    env = {**HELM, config.POLICY_CONTROL_VAR: "rel-vigil-medic-gateway:8471"}
+    assert config.policy_control_addr(env, "helm") == ("rel-vigil-medic-gateway", 8471)
+    assert config.policy_control_addr(env, "compose") is None
+
+
 # --- run ------------------------------------------------------------------
 
-
-def test_run_refuses_when_policy_not_enforced(tmp_path: Path, caplog) -> None:
-    with socket.socket() as srv:
-        srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
-        host, port = srv.getsockname()
-        env = {
-            **HELM,
-            "VIGIL_MEDIC_DATA_DIR": str(tmp_path),
-            config.POLICY_PROBE_VAR: f"{host}:{port}",
-        }
-        clock = FakeClock()
-        with caplog.at_level(logging.INFO, logger="services.medic"):
-            code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
-    assert code == POLICY_REFUSED
-    assert POLICY_REFUSED not in (0, 1, 2)
-    text = caplog.text
-    assert "NetworkPolicy" in text and "isn't enforced" in text
-    assert "A3-3" in text
-    # Refused before anything is written: no store, no beat, no gap.
-    assert not heartbeat_path(tmp_path).exists()
-    assert not (tmp_path / "medic.db").exists()
+TARGET = ("rel-vigil-backend", 6987)
+CONTROL = ("rel-vigil-medic-gateway", 8471)
 
 
-def test_run_refuses_on_inconclusive(tmp_path: Path, caplog) -> None:
-    # A port just freed: connection refused. (Bound but not listening isn't the
-    # same on macOS: the SYN is dropped, which reads as a policy drop.)
-    with socket.socket() as srv:
-        srv.bind(("127.0.0.1", 0))
-        host, port = srv.getsockname()
-    env = {
+def _env(tmp_path: Path) -> dict[str, str]:
+    return {
         **HELM,
         "VIGIL_MEDIC_DATA_DIR": str(tmp_path),
-        config.POLICY_PROBE_VAR: f"{host}:{port}",
+        "VIGIL_MEDIC_AGENT_WORKER_ADDR": "127.0.0.1:9",
+        config.POLICY_PROBE_VAR: "{}:{}".format(*TARGET),
+        config.POLICY_CONTROL_VAR: "{}:{}".format(*CONTROL),
     }
+
+
+def _run(tmp_path: Path, monkeypatch, caplog, verdicts: dict) -> int:
+    from services.medic.app import cli
+
+    monkeypatch.setattr(cli, "policy_probe", lambda addr: verdicts[addr])
     clock = FakeClock()
     with caplog.at_level(logging.INFO, logger="services.medic"):
-        code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
+        return main(
+            ["run"], env=_env(tmp_path), clock=clock, sleep=clock.sleep, max_cycles=0
+        )
+
+
+def _wrote_nothing(tmp_path: Path) -> bool:
+    return (
+        not heartbeat_path(tmp_path).exists() and not (tmp_path / "medic.db").exists()
+    )
+
+
+def test_run_starts_when_control_connects_and_target_is_dropped(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {CONTROL: Verdict.CONNECTED, TARGET: Verdict.BLOCKED},
+    )
+    assert code == 0
+    assert "NetworkPolicy is enforced" in caplog.text
+    assert heartbeat_path(tmp_path).exists()
+
+
+def test_run_refuses_when_target_connects(tmp_path: Path, monkeypatch, caplog) -> None:
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {CONTROL: Verdict.CONNECTED, TARGET: Verdict.CONNECTED},
+    )
     assert code == POLICY_REFUSED
-    assert "can't prove" in caplog.text
-    assert not (tmp_path / "medic.db").exists()
+    assert POLICY_REFUSED not in (0, 1, 2)
+    assert "NetworkPolicy isn't enforced" in caplog.text and "A3-3" in caplog.text
+    assert _wrote_nothing(tmp_path)
+
+
+@pytest.mark.parametrize("verdict", [Verdict.INCONCLUSIVE, Verdict.UNRESOLVED])
+def test_run_refuses_when_target_proves_nothing(
+    tmp_path: Path, monkeypatch, caplog, verdict
+) -> None:
+    code = _run(
+        tmp_path, monkeypatch, caplog, {CONTROL: Verdict.CONNECTED, TARGET: verdict}
+    )
+    assert code == POLICY_REFUSED
+    assert "can't prove" in caplog.text and verdict.value in caplog.text
+    assert _wrote_nothing(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "control", [Verdict.BLOCKED, Verdict.INCONCLUSIVE, Verdict.UNRESOLVED]
+)
+def test_a_timeout_proves_nothing_unless_the_control_connects(
+    tmp_path: Path, monkeypatch, caplog, control
+) -> None:
+    # Review #1: a dead pod network or an endpoint-less Service under IPVS drops
+    # packets too. Only "the allowed path works, the forbidden one is dropped"
+    # is evidence of a policy.
+    code = _run(
+        tmp_path, monkeypatch, caplog, {CONTROL: control, TARGET: Verdict.BLOCKED}
+    )
+    assert code == POLICY_REFUSED
+    assert "control" in caplog.text and control.value in caplog.text
+    assert _wrote_nothing(tmp_path)
 
 
 def test_run_refuses_on_helm_without_a_target(tmp_path: Path, caplog) -> None:
@@ -183,22 +243,21 @@ def test_run_refuses_on_helm_without_a_target(tmp_path: Path, caplog) -> None:
         code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
     assert code == 1
     assert config.POLICY_PROBE_VAR in caplog.text
-    assert not (tmp_path / "medic.db").exists()
+    assert _wrote_nothing(tmp_path)
 
 
-def test_run_starts_when_policy_blocks(tmp_path: Path, monkeypatch, caplog) -> None:
-    from services.medic.app import cli
-
-    monkeypatch.setattr(cli, "policy_probe", lambda target: Verdict.BLOCKED)
-    env = {
-        **HELM,
-        "VIGIL_MEDIC_DATA_DIR": str(tmp_path),
-        config.POLICY_PROBE_VAR: "backend:6987",
-        "VIGIL_MEDIC_AGENT_WORKER_ADDR": "127.0.0.1:9",
-    }
-    clock = FakeClock()
-    with caplog.at_level(logging.INFO, logger="services.medic"):
-        code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
-    assert code == 0
-    assert "NetworkPolicy is enforced" in caplog.text
-    assert heartbeat_path(tmp_path).exists()
+def test_real_sockets_connected_target_refuses(tmp_path: Path, caplog) -> None:
+    with socket.socket() as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(4)
+        addr = "{}:{}".format(*srv.getsockname())
+        env = {
+            **_env(tmp_path),
+            config.POLICY_PROBE_VAR: addr,
+            config.POLICY_CONTROL_VAR: addr,
+        }
+        clock = FakeClock()
+        with caplog.at_level(logging.INFO, logger="services.medic"):
+            code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
+    assert code == POLICY_REFUSED
+    assert "isn't enforced" in caplog.text
