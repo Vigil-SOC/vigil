@@ -6,7 +6,7 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { money, timeLeft, when } from './caseFormat'
 import type { RunFold } from './caseFold'
-import type { CaseInvestigationRef } from './useCases'
+import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
 
 type Sla = { due: string; health: string } | null
 
@@ -48,6 +48,35 @@ function Details({ latest, workflowNames, sla, closed, fold }: {
         <dt>Entities</dt>
         <dd>{entities || '—'}</dd>
       </dl>
+    </Block>
+  )
+}
+
+const ALERTS_SHOWN = 3
+
+/** The alerts combined into this case; the first few, then "+N". */
+function Alerts({ items }: { items: CaseLinkedFinding[] }) {
+  const [all, setAll] = useState(false)
+  if (items.length === 0) return null
+  const shown = all ? items : items.slice(0, ALERTS_SHOWN)
+  return (
+    <Block title={`Alerts (${items.length})`}>
+      <ul className="case-linked">
+        {shown.map((item) => {
+          const text = item.title || item.description || item.finding_id
+          return (
+            <li key={item.finding_id}>
+              <span className="side-clamp" title={text}>{text}</span>
+              {item.source_link && <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>}
+            </li>
+          )
+        })}
+      </ul>
+      {items.length > ALERTS_SHOWN && (
+        <button type="button" className="side-more" onClick={() => setAll((v) => !v)}>
+          {all ? 'Show fewer' : `+${items.length - ALERTS_SHOWN}`}
+        </button>
+      )}
     </Block>
   )
 }
@@ -177,9 +206,10 @@ function People({ caseId, owner }: { caseId: string; owner: string }) {
   )
 }
 
-/** The Details, Cost, Known and People blocks of the case side panel. */
-export function CaseSide({ caseId, owner, latest, workflowNames, sla, closed, fold }: {
+/** The Details, Alerts, Cost, Known and People blocks of the case side panel. */
+export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, closed, fold }: {
   caseId: string
+  linked: CaseLinkedFinding[]
   owner: string
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>
@@ -190,6 +220,7 @@ export function CaseSide({ caseId, owner, latest, workflowNames, sla, closed, fo
   return (
     <>
       <Details latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
+      <Alerts items={linked} />
       <Cost latest={latest} />
       <Known fold={fold} />
       <People caseId={caseId} owner={owner} />

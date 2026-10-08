@@ -28,11 +28,13 @@ import {
   readFold,
   recallEntityCalls,
   recordChip,
+  stanceTotals,
   stoppedRun,
   strongestRows,
   visibilityGaps,
   wordDisplay,
   type CallRow,
+  type HypothesisRow,
   type RecallProvenance,
   type RecordChip,
   type RunFold,
@@ -105,22 +107,37 @@ function waiting(since: string): string {
   return min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`
 }
 
-function LinkedFindings({ items }: { items: CaseLinkedFinding[] }) {
-  if (items.length === 0) return null
+/** One explanation: the title stops at a line and the justification at two; the full text is on hover and when the row is opened. */
+function ExplanationRow({ row, rootCauseRunId }: { row: HypothesisRow; rootCauseRunId: string | null }) {
+  const [open, setOpen] = useState(false)
+  const word = explanationWord(row.status, row.supports, row.weakens)
+  const by = addedBy(row.provenance)
+  const title = row.statement || row.hypothesis_id
   return (
-    <details className="case-fold" open>
-      <summary>Alerts ({items.length})</summary>
-      <ul className="case-linked">
-        {items.map((item) => (
-          <li key={item.finding_id}>
-            <span>{item.title || item.description || item.finding_id}</span>
-            {item.source_link && (
-              <a href={item.source_link} target="_blank" rel="noreferrer">Open in source</a>
-            )}
-          </li>
-        ))}
-      </ul>
-    </details>
+    <li>
+      <div className={`case-expl-main${open ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v) } }}>
+        <div className="case-expl-line">
+          <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
+          <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`} title={title}>{title}</span>
+        </div>
+        {row.resolution_reason && <div className="case-expl-note" title={row.resolution_reason}>{row.resolution_reason}</div>}
+      </div>
+      <div className="case-expl-side">
+        <div>
+          <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
+        </div>
+        {by && <div className="case-expl-by">Added by {by}</div>}
+        {row.status === 'handed_off' && rootCauseRunId && (
+          <div className="case-expl-by">
+            <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
+              Root-cause run
+            </Link>
+          </div>
+        )}
+      </div>
+    </li>
   )
 }
 
@@ -289,9 +306,8 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   })
   let evidence = none
   if (fold?.kind === 'hunt') {
-    const links = fold.evidence.flatMap((row) => row.bears_on.map((link) => link.relation))
-    const stance = (relation: string) => fold.evidence.filter((row) => row.bears_on.some((link) => link.relation === relation)).length
-    evidence = links.length || fold.evidence.length ? `${stance('supports')} for · ${stance('weakens')} against · shown` : 'None shown'
+    const n = stanceTotals(fold)
+    evidence = fold.evidence.length ? `${n.supports} support · ${n.weakens} go against · ${n.neither} neither` : 'None shown'
   } else if (fold) {
     evidence = 'Findings, no for or against'
   }
@@ -794,7 +810,7 @@ export function CasePage({
             </div>
             <div className="dh-meta">
               <span>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : 'No workflow'}</span>
-              <span>{c.findings} alerts combined</span>
+              {c.findings > 0 && <span>Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}</span>}
               <span>Opened {created}</span>
               <span>
                 <Icon name="clock" size={13} /> Resolve by {sla ? when(sla.due) : '—'}
@@ -813,7 +829,7 @@ export function CasePage({
         )}
         <TabStrip
           label="Case sections"
-          tabs={TABS.map((name) => ({ id: name, label: name, count: tabCounts[name] }))}
+          tabs={TABS.map((name) => ({ id: name, label: name, count: name === 'Summary' ? undefined : tabCounts[name] }))}
           active={tab}
           onChange={setTab}
         />
@@ -889,34 +905,9 @@ export function CasePage({
                   <EmptyState compact icon="search" title="No explanations yet" />
                 ) : (
                   <ul className="case-expl-rows">
-                    {hypotheses.map((row) => {
-                      const word = explanationWord(row.status, row.supports, row.weakens)
-                      const by = addedBy(row.provenance)
-                      return (
-                        <li key={row.hypothesis_id}>
-                          <div className="case-expl-main">
-                            <div className="case-expl-line">
-                              <span className={`case-expl-pill ${EXPL_TONE[word] ?? 'neutral'}`}>{wordDisplay(word)}</span>
-                              <span className={`case-expl-text${word === 'ruled out' ? ' struck' : ''}`}>{row.statement || row.hypothesis_id}</span>
-                            </div>
-                            {row.resolution_reason && <div className="case-expl-note">{row.resolution_reason}</div>}
-                          </div>
-                          <div className="case-expl-side">
-                            <div>
-                              <span className="for">{row.supports} for</span> · <span className="against">{row.weakens} against</span>
-                            </div>
-                            {by && <div className="case-expl-by">Added by {by}</div>}
-                            {row.status === 'handed_off' && rootCauseRunId && (
-                              <div className="case-expl-by">
-                                <Link className="text-accent-2 hover:underline" aria-label={`Open run ${rootCauseRunId}`} to={`/workflows?run=${encodeURIComponent(rootCauseRunId)}`}>
-                                  Root-cause run
-                                </Link>
-                              </div>
-                            )}
-                          </div>
-                        </li>
-                      )
-                    })}
+                    {hypotheses.map((row) => (
+                      <ExplanationRow key={row.hypothesis_id} row={row} rootCauseRunId={rootCauseRunId} />
+                    ))}
                   </ul>
                 )}
               </section>
@@ -1029,8 +1020,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <LinkedFindings items={linkedFindings} />
-          <CaseSide key={id} caseId={id} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c?.ownerName || '—'} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" />

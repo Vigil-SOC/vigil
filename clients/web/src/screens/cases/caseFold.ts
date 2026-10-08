@@ -161,27 +161,39 @@ export function addedBy(provenance: string): string {
   return ADDED_BY[provenance] ?? provenance
 }
 
-export type Stance = 'supports' | 'weakens' | 'mixed' | 'neither'
+export type Stance = 'supports' | 'weakens' | 'neither'
 
-export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', mixed: 'Mixed', neither: 'Neither' }
+export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', neither: 'Neither' }
 
-export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not evidence' }
+export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not counted' }
 
 /** The word for one link's relation; an unknown relation shows as written. */
 export function relationWord(relation: string): string {
   return relation === 'supports' || relation === 'weakens' || relation === 'neither' ? STANCE_WORD[relation] : relation
 }
 
-// A row can bear on several explanations, and a hunt routinely supports one and weakens another, so the row's
-// stance is only a single word when its links agree; "neither" links take no side. Counts are per link.
-export function stanceOf(row: EvidenceRow): Stance {
-  const relations = row.bears_on.map((link) => link.relation)
-  const supports = relations.includes('supports')
-  const weakens = relations.includes('weakens')
-  if (supports && weakens) return 'mixed'
-  if (weakens) return 'weakens'
-  if (supports) return 'supports'
-  return 'neither'
+const LEAD_ORDER = ['proven', 'standing', 'forming', 'weakened']
+
+/** The explanation the evidence is read against when none is picked: best status, then most net support, then first listed. */
+export function leadingExplanation(fold: HuntFold): HypothesisRow | null {
+  const rank = (h: HypothesisRow) => {
+    const i = LEAD_ORDER.indexOf(explanationWord(h.status, h.supports, h.weakens))
+    return i < 0 ? LEAD_ORDER.length : i
+  }
+  return [...fold.hypotheses].sort((a, b) => rank(a) - rank(b) || b.supports - b.weakens - (a.supports - a.weakens))[0] ?? null
+}
+
+/** A row bears on several explanations; it is counted once, by its link to this one (neither when it has none). */
+export function stanceOn(row: EvidenceRow, hypothesisId: string | undefined): Stance {
+  const relation = row.bears_on.find((link) => link.hypothesis_id === hypothesisId)?.relation
+  return relation === 'supports' || relation === 'weakens' ? relation : 'neither'
+}
+
+/** Totals over the rows shown, each row once; critic (not_evidence) rows are listed but not counted. */
+export function stanceTotals(fold: HuntFold, hypothesisId = leadingExplanation(fold)?.hypothesis_id): Record<Stance, number> {
+  const totals = { supports: 0, weakens: 0, neither: 0 }
+  for (const row of fold.evidence) if (row.source_tier !== 'not_evidence') totals[stanceOn(row, hypothesisId)]++
+  return totals
 }
 
 /** Who made the move at this iteration; null when it fell outside the capped list. */
