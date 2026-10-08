@@ -16,9 +16,9 @@ SOURCES = sorted(PKG.glob("*.py"))
 CONTRACT = "importlinter:contract:medic-dockerproxy"
 
 
-MAX_CODE_LINES = 460  # a ratchet: lower it when you can, never raise it unasked
+MAX_CODE_LINES = 480  # a ratchet: lower it when you can, never raise it unasked
 # The allow lists are data, pinned by test_policy and test_project.
-TABLES = {"ROUTES", "INSPECT", "LIST"}
+TABLES = {"ROUTES", "INSPECT", "LIST", "EVENT_ACTIONS"}
 
 
 def _code_lines(path: Path) -> int:

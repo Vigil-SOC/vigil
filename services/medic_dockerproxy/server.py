@@ -23,6 +23,7 @@ MAX_JSON_BODY = 8 << 20
 MAX_CONNECTIONS = 32  # D4: ~7 follow streams + events + polls
 HEAD_TIMEOUT = 10.0
 UPSTREAM_TIMEOUT = 10.0  # connect, and a whole JSON reply
+WRITE_TIMEOUT = 10.0  # sending a projected JSON reply to Medic
 STATUS_RE = re.compile(r"HTTP/1\.[01] ([1-5][0-9]{2})( .*)?")
 SIZE_RE = re.compile(rb"[0-9A-Fa-f]{1,8}")
 LENGTH_RE = re.compile(r"[0-9]{1,10}")
@@ -102,8 +103,10 @@ async def refuse(cw: asyncio.StreamWriter, status: int, code: str) -> None:
 
 
 class Proxy:
-    # Bound on what one connection holds: the upstream reader pauses Docker at
-    # 2 x its limit, one chunk is in hand, and the client buffer stops at WRITE_HIGH.
+    # Bound on what a streaming connection holds: the upstream reader pauses
+    # Docker at 2 x its limit, one chunk is in hand, and the client buffer stops at
+    # WRITE_HIGH. A JSON route holds its projected reply (≤ MAX_JSON_BODY) for at
+    # most WRITE_TIMEOUT.
     max_buffer_per_connection = 3 * CHUNK + WRITE_HIGH
 
     def __init__(
@@ -111,11 +114,14 @@ class Proxy:
         socket_path: str,
         max_connections: int = MAX_CONNECTIONS,
         head_timeout: float = HEAD_TIMEOUT,
+        write_timeout: float = WRITE_TIMEOUT,
     ) -> None:
         self.socket_path = socket_path
         self.max_connections = max_connections
         self.head_timeout = head_timeout
+        self.write_timeout = write_timeout
         self.open = 0
+        self.waiting = 0  # over the cap, being told 503
         self._clients: set[asyncio.StreamWriter] = set()
         self._tasks: set[asyncio.Task] = set()
         self._server: asyncio.Server | None = None
@@ -145,18 +151,14 @@ class Proxy:
         self._tasks.add(task)
         try:
             if self.open >= self.max_connections:
-                logs.event("busy", level=logging.WARNING)
-                # Read the head first (briefly): closing on unread bytes sends a
-                # reset, and the client would see no answer at all.
+                if self.waiting >= self.max_connections:
+                    logs.event("shed", level=logging.WARNING)
+                    return  # beyond 2 x cap: close unread, hold nothing
+                self.waiting += 1
                 try:
-                    await asyncio.wait_for(cr.readuntil(b"\r\n\r\n"), 1)
-                except (
-                    TimeoutError,
-                    asyncio.IncompleteReadError,
-                    asyncio.LimitOverrunError,
-                ):
-                    pass
-                await refuse(cw, 503, "busy")
+                    await self._busy(cr, cw)
+                finally:
+                    self.waiting -= 1
                 return
             self.open += 1
             self._clients.add(cw)
@@ -165,11 +167,21 @@ class Proxy:
             finally:
                 self.open -= 1
                 self._clients.discard(cw)
-        except ConnectionError:
+        except (ConnectionError, TimeoutError):
             pass
         finally:
             self._tasks.discard(task)
             cw.close()
+
+    async def _busy(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter) -> None:
+        logs.event("busy", level=logging.WARNING)
+        # Read the head first (briefly): closing on unread bytes sends a reset,
+        # and the client would see no answer at all.
+        try:
+            await asyncio.wait_for(cr.readuntil(b"\r\n\r\n"), 1)
+        except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
+            pass
+        await refuse(cw, 503, "busy")
 
     async def _serve(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter) -> None:
         try:
@@ -215,7 +227,8 @@ class Proxy:
 
         # Until Docker ends the stream or Medic hangs up (or sends anything more:
         # one request per connection). Either way the Docker side is closed, so
-        # dockerd stops following.
+        # dockerd stops following. A half-close (SHUT_WR) after the request also
+        # reads as "gone": fail-safe, and Medic's client (httpx) doesn't do it.
         tasks = {asyncio.ensure_future(pump()), asyncio.ensure_future(cr.read(1))}
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -244,4 +257,5 @@ class Proxy:
         ):
             logs.event("upstream_reply_refused", level=logging.WARNING, route=route)
             return await refuse(cw, 502, "upstream_reply")
-        await send(cw, status, json.dumps(out, separators=(",", ":")).encode())
+        reply = json.dumps(out, separators=(",", ":")).encode()
+        await asyncio.wait_for(send(cw, status, reply), self.write_timeout)
