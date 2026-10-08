@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import http.client
+import ipaddress
 import os
 import signal
 import socket
@@ -49,8 +50,15 @@ def load_config(env: Mapping[str, str]) -> Config:
 
 
 def _bind(hp: tuple[str, int]) -> tuple[str, int]:
-    # One network's address (on Compose, the alias on medic-net), never 0.0.0.0.
-    return socket.gethostbyname(hp[0]), hp[1]
+    """One network's address (on Compose, the alias on medic-net), never 0.0.0.0:
+    checked after resolving, because "0" or "0.0" resolve to it too."""
+    try:
+        addr = socket.gethostbyname(hp[0])
+    except OSError:
+        raise ConfigError(f"{P}BIND host {hp[0]!r} does not resolve") from None
+    if ipaddress.ip_address(addr).is_unspecified:
+        raise ConfigError(f"{P}BIND must not resolve to a wildcard address")
+    return addr, hp[1]
 
 
 def check(cfg: Config) -> int:
@@ -59,7 +67,7 @@ def check(cfg: Config) -> int:
         conn = http.client.HTTPConnection(*_bind(cfg.bind), timeout=3)
         conn.request("GET", "/_ping")
         return 0 if conn.getresponse().status == 200 else 1
-    except OSError:
+    except (OSError, ConfigError):
         return 1
 
 
@@ -84,11 +92,12 @@ def main(argv: Sequence[str], env: Mapping[str, str] | None = None, stop=None) -
     env = os.environ if env is None else env  # noqa: ENV001 - the process boundary
     try:
         cfg = load_config(env)
+        if argv[0] == "check":
+            return check(cfg)
+        addr = _bind(cfg.bind)
     except ConfigError as e:
         print(f"medic-dockerproxy: {e}", file=sys.stderr)
         return 2
-    if argv[0] == "check":
-        return check(cfg)
     logs.setup(sys.stdout)
-    asyncio.run(serve(cfg, _bind(cfg.bind), stop))
+    asyncio.run(serve(cfg, addr, stop))
     return 0

@@ -52,7 +52,9 @@ def test_refuses_a_credential_in_its_environment(cfg_env, capsys, name):
 
 
 @pytest.mark.parametrize(
-    "bind", [None, "", "proxy", "proxy:http", "0.0.0.0:8472", ":8472", "[::]:8472"]
+    "bind",
+    [None, "", "proxy", "proxy:http", "0.0.0.0:8472", ":8472", "[::]:8472", "0:8472"]
+    + ["0.0:8472", "0x0:8472"],
 )
 def test_bad_bind_exits_2(cfg_env, capsys, bind):
     if bind is None:
