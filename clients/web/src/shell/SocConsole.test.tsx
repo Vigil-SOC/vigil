@@ -146,6 +146,7 @@ vi.mock('../services/api', () => ({
             : [],
         },
       })),
+    getRun: vi.fn(() => Promise.reject(new Error('no run'))),
   },
   // the bare client, for hooks that call routes without a named wrapper
   default: {
