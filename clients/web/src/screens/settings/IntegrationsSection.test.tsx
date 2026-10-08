@@ -321,6 +321,86 @@ describe('Integrations: Custom tab', () => {
   })
 })
 
+describe('Integrations: Add integration tab', () => {
+  const open = async () => {
+    renderSection('/settings?section=integrations&tab=add')
+    await screen.findByRole('group', { name: 'Category' })
+  }
+  const card = (name: string) => screen.getByText(name, { selector: '.int-card-name' }).closest('.int-card') as HTMLElement
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ json: async () => ({}) })))
+    vi.mocked(configApi.getIntegrations).mockResolvedValue({
+      data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
+    } as never)
+    vi.mocked(mcpApi.listServers).mockResolvedValue({
+      data: { servers: ['github', 'okta', 'virustotal', 'security-detections', 'slack'] },
+    } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: {
+        statuses: [
+          { name: 'github', status: 'running', enabled: true },
+          { name: 'okta', status: 'disconnected', enabled: false },
+          { name: 'virustotal', status: 'disconnected', enabled: false },
+          { name: 'security-detections', status: 'disconnected', enabled: false },
+          { name: 'slack', status: 'disconnected', enabled: false },
+        ],
+      },
+    } as never)
+  })
+
+  it('counts chips from the catalog, marks connected cards and leaves WIP servers out', async () => {
+    await open()
+    const chips = within(screen.getByRole('group', { name: 'Category' }))
+    // Slack is work in progress: no card, no count
+    expect(screen.queryByText('Slack', { selector: '.int-card-name' })).not.toBeInTheDocument()
+    // Entra ID is work in progress too: Okta alone makes Identity; Jira and PagerDuty make Incident Management
+    expect(chips.getByRole('button', { name: /Identity & Access/ })).toHaveTextContent('1')
+    expect(chips.getByRole('button', { name: /Incident Management/ })).toHaveTextContent('2')
+    expect(within(card('GitHub')).getByText('Connected')).toBeInTheDocument()
+    expect(within(card('GitHub')).queryByRole('button', { name: /Connect/ })).not.toBeInTheDocument()
+    expect(within(card('Okta')).getByText('Available')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Add integration/ })).toHaveAccessibleName(/^Add integration \d+$/)
+  })
+
+  it('filters by chip and search', async () => {
+    await open()
+    fireEvent.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: /Threat Intelligence/ }))
+    expect(screen.getByText('VirusTotal', { selector: '.int-card-name' })).toBeInTheDocument()
+    expect(screen.queryByText('Okta', { selector: '.int-card-name' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('Search integrations…'), { target: { value: 'zzzz' } })
+    expect(screen.getByText('No integrations match')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Clear filters/ }))
+    expect(screen.getByText('Okta', { selector: '.int-card-name' })).toBeInTheDocument()
+  })
+
+  it('Connect opens the setup drawer; a server with no setup fields is turned on instead', async () => {
+    vi.mocked(mcpApi.setServerEnabled).mockResolvedValue({ data: {} } as never)
+    await open()
+    fireEvent.click(within(card('Okta')).getByRole('button', { name: 'Connect Okta' }))
+    expect(await screen.findByText('Add connection')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    fireEvent.click(within(card('Security Detections')).getByRole('button', { name: 'Turn on Security Detections' }))
+    await waitFor(() => expect(mcpApi.setServerEnabled).toHaveBeenCalledWith('security-detections', true))
+  })
+
+  it('says so while loading and when it cannot load', async () => {
+    vi.mocked(mcpApi.listServers).mockRejectedValue(new Error('boom'))
+    renderSection('/settings?section=integrations&tab=add')
+    expect(screen.getByText('Loading integrations…')).toBeInTheDocument()
+    expect(await screen.findByText('Couldn’t load MCP servers')).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Category' })).not.toBeInTheDocument()
+  })
+
+  it('still offers the catalog when no server is running', async () => {
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: [] } } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: { statuses: [] } } as never)
+    await open()
+    expect(within(card('Okta')).getByRole('button', { name: 'Connect Okta' })).toBeInTheDocument()
+  })
+})
+
 describe('Integrations: tab key', () => {
   it('maps the old servers value to connected and keeps the rest', () => {
     expect(tabFromQuery('servers')).toBe('connected')

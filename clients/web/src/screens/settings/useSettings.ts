@@ -689,9 +689,9 @@ export function useModelAssignment() {
   }, [reloadKey])
 
   const assign = useCallback(
-    (component: string, providerId: string, modelId: string) =>
+    (component: string, providerId: string, modelId: string, settings: Record<string, unknown> = {}) =>
       aiConfigApi
-        .setComponent(component, { provider_id: providerId, model_id: modelId })
+        .setComponent(component, { provider_id: providerId, model_id: modelId, settings })
         .then(() =>
           setAssignments((prev) => ({
             ...prev,
@@ -699,7 +699,7 @@ export function useModelAssignment() {
               component,
               provider_id: providerId,
               model_id: modelId,
-              settings: {},
+              settings,
               updated_by: null,
               updated_at: null,
             },

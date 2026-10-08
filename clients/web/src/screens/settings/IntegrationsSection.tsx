@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { EmptyState, TextInput } from '../../shared/ui'
+import { EmptyState } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
@@ -18,6 +18,8 @@ import {
 } from './integrationsData'
 import { relativeTime, type ServerRow } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
+import AddIntegrationTab from './AddIntegrationTab'
+import { buildCatalog } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
@@ -38,7 +40,6 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const [tab, setTab] = useState<IntegrationsTab>(requested)
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
-  const [search, setSearch] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
   const [customCount, setCustomCount] = useState<number | null>(null)
@@ -74,20 +75,13 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     () => rows.filter((r) => r.connected).sort((a, b) => categoryRank(a.name) - categoryRank(b.name)),
     [rows],
   )
-  const addable = useMemo(() => {
-    const q = search.toLowerCase()
-    const match = (r: ServerRow) =>
-      !q || r.name.toLowerCase().includes(q) || (SERVER_DESCRIPTIONS.get(r.name) ?? '').toLowerCase().includes(q)
-    return rows
-      .filter((r) => !r.connected && match(r))
-      .sort((a, b) => categoryRank(a.name) - categoryRank(b.name))
-  }, [rows, search])
   const catalog = getAllIntegrations()
-  const connectedIds = new Set([
-    ...intCfg.enabled_integrations,
-    ...connected.flatMap((r) => (r.integration ? [r.integration.id] : [])),
-  ])
-  const available = catalog.filter((i) => !connectedIds.has(i.id)).length
+  const connectedIds = useMemo(
+    () => new Set([...intCfg.enabled_integrations, ...connected.flatMap((r) => (r.integration ? [r.integration.id] : []))]),
+    [intCfg.enabled_integrations, connected],
+  )
+  const entries = useMemo(() => buildCatalog(catalog, rows, connectedIds), [catalog, rows, connectedIds])
+  const available = entries.filter((e) => !e.connected).length
   const healthy = connected.filter((r) => r.level === 'good').length
 
   // gate M: MCP server on/off (agent tools)
@@ -255,54 +249,13 @@ export default function IntegrationsSection({ notify }: SectionProps) {
       )}
 
       {tab === 'add' && ready && (
-        <>
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="search" style={{ flex: 1, minWidth: 220, maxWidth: 420 }}>
-              <Icon name="search" size={15} />
-              <TextInput placeholder="Search integrations…" value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-            <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-          </div>
-          {addable.length === 0 && (
-            <EmptyState
-              compact
-              icon="filter"
-              title={search ? 'No integrations match this search' : 'Everything available is connected'}
-              body={search ? `No MCP servers match “${search}”.` : undefined}
-              primary={search ? { label: 'Clear search', onClick: () => setSearch(''), icon: 'close' } : undefined}
-            />
-          )}
-          {addable.length > 0 && (
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {addable.map((r) => (
-                <div key={r.name} className="card card-sq p-3.5 flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-semibold text-tx truncate flex-1">{displayName(r.name)}</span>
-                    {WIP_SERVERS.has(r.name) && <span className="chip" style={{ color: 'var(--high)', fontSize: 10 }}>WIP</span>}
-                    <RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} />
-                  </div>
-                  <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
-                    {SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'}
-                  </p>
-                  {r.note && <p className="text-[11px] text-tx-3 leading-snug line-clamp-2" title={r.note}>{r.note}</p>}
-                  <div className="flex items-center gap-1.5 mt-auto">
-                    <span className="text-xs text-tx-3 flex-1">{r.word}</span>
-                    {r.integration?.docs_url && (
-                      <a className="btn ghost icon" title="Documentation" href={r.integration.docs_url} target="_blank" rel="noreferrer">
-                        <Icon name="doc" size={14} />
-                      </a>
-                    )}
-                    {canConfigure(r) && (
-                      <button className="btn ghost icon" title="Configure credentials" onClick={() => setWizardFor(r.integration!)}>
-                        <Icon name="gear" size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+        <AddIntegrationTab
+          entries={entries}
+          busy={busy}
+          onConnect={setWizardFor}
+          onTurnOn={(name) => onToggleMcp(name, true)}
+          onRefresh={reload}
+        />
       )}
 
       {/* mounted on every tab so a draft survives a visit elsewhere */}
@@ -324,6 +277,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           integration={wizardFor}
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
           secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
+          lastTest={intCfg.last_test[wizardFor.id]}
+          category={categoryOf(rows.find((r) => r.integration?.id === wizardFor.id)?.name ?? '')}
+          onTested={reloadInt}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)

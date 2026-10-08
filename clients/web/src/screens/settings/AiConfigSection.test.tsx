@@ -6,14 +6,10 @@ import AiConfigSection from './AiConfigSection'
 vi.mock('./AiProvidersPanel', () => ({ default: () => <div>Providers panel</div> }))
 vi.mock('./AiModelsPanel', () => ({ default: () => <div>Models panel</div> }))
 vi.mock('./AiBudgetsPanel', () => ({ default: () => <div>Keys panel</div> }))
-vi.mock('./useSettings', async (orig) => ({
-  ...(await orig<typeof import('./useSettings')>()),
-  useModelAssignment: () => ({
-    components: [], assignments: {}, models: [], phase: 'loading', error: null,
-    reload: vi.fn(), assign: vi.fn(), clearAssign: vi.fn(),
-  }),
+vi.mock('./AiModelsOverview', () => ({
+  AGENT_MODEL_TABLE_ID: 'ai-model-for-each-agent',
+  default: () => <section id="ai-model-for-each-agent">Model for each agent</section>,
 }))
-vi.mock('../../services/api', () => ({ agentsApi: { listCustom: vi.fn(() => new Promise(() => {})) } }))
 
 function renderAt(path: string) {
   render(
@@ -24,10 +20,19 @@ function renderAt(path: string) {
 }
 
 describe('AiConfigSection tab from query', () => {
-  it('opens Model Assignment for ?tab=assignment', () => {
+  it('opens the Models tab for ?tab=catalogue', () => {
+    renderAt('/settings?section=ai-config&tab=catalogue')
+    expect(screen.getByRole('button', { name: 'Models' })).toHaveClass('active')
+    expect(screen.getByText('Models panel')).toBeInTheDocument()
+  })
+
+  it('scrolls to the per-agent model table for ?tab=assignment', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
     renderAt('/settings?section=ai-config&tab=assignment')
-    expect(screen.getByRole('button', { name: 'Model Assignment' })).toHaveClass('active')
-    expect(screen.queryByText('Providers panel')).not.toBeInTheDocument()
+    expect(screen.getByText('Model for each agent')).toBeInTheDocument()
+    expect(scroll).toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Providers & Keys' })).toHaveClass('active')
   })
 
   it.each(['/settings?section=ai-config', '/settings?section=ai-config&tab=nope'])(
