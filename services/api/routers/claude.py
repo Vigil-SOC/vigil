@@ -13,12 +13,19 @@ from pydantic import BaseModel, field_validator
 from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
+from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
 from core.cases.case_brief import case_brief
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
-from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
+from core.llm.chat_layers import (
+    chat_config,
+    granted_ids,
+    run_id_for,
+    tools_ceiling,
+    trim_servers,
+)
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
@@ -322,6 +329,13 @@ async def chat_stream(
         brief = await case_brief(request.case_id.strip(), workflows)
         if brief:
             system_prompt = f"{system_prompt}\n\n{brief}"
+    # Chat never goes through prompt_for_row, so a granted read_skill would have
+    # no index. Read per turn so a newly saved skill shows on the next message;
+    # skipped when an agent's own prompt already carries it.
+    if "<available_skills>" not in system_prompt:
+        skills = _skills_section(granted_ids(tools), None)
+        if skills:
+            system_prompt = f"{system_prompt}\n\n{skills}".strip()
 
     active_provider = provider_for(provider_id)
     if active_provider is None:

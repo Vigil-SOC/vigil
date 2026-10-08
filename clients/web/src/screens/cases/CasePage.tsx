@@ -15,6 +15,7 @@ import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
+import { EvidenceTrail } from './EvidenceTrail'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
 import { money, timeLeft, when } from './caseFormat'
@@ -28,6 +29,7 @@ import {
   recallEntityCalls,
   recordChip,
   stoppedRun,
+  strongestRows,
   visibilityGaps,
   wordDisplay,
   type CallRow,
@@ -37,7 +39,7 @@ import {
   type StoppedRun,
 } from './caseFold'
 import './cases.css'
-import type { CaseClosureView, CaseInvestigationRef, CaseLinkedFinding, Phase } from './useCases'
+import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -61,6 +63,15 @@ function Mark({ text }: { text: string }) {
       <Icon name="info" size={14} />
     </span>
   )
+}
+
+/** "Closed <time> by <who>"; a missing or unparseable time is dropped. */
+function closedBy(closure: CaseClosureView | null): string {
+  if (!closure) return ''
+  const at = closure.closed_at ? new Date(closure.closed_at) : null
+  const time = at && !Number.isNaN(at.getTime()) ? ` ${format(at, 'MMM d, yyyy · HH:mm')}` : ''
+  const who = closure.closed_by ? ` by ${closure.closed_by}` : ''
+  return time || who ? `Closed${time}${who}` : ''
 }
 
 function clock(value: string | null | undefined): string {
@@ -721,7 +732,6 @@ export function CasePage({
     }
   }
 
-  const findings = fold?.kind === 'lead' ? fold.findings : []
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
@@ -734,7 +744,7 @@ export function CasePage({
   const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, what a live run is doing, or who closed it.
   const reason =
-    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed && closure?.closed_by ? `Closed by ${closure.closed_by}` : ''
+    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed ? closedBy(closure) : ''
   const needsBlock = (
     <CaseNeeds
       items={needsItems}
@@ -811,23 +821,25 @@ export function CasePage({
             closed ? (
               <>
                 {needsBlock}
-                <section>
-                  <h3>Verdict</h3>
-                  <p>{closure?.verdict || '—'}</p>
-                  <p className="muted">
-                    {closure?.closure_category || '—'}
-                    {closure?.closed_by ? ` · closed by ${closure.closed_by}` : ''}
-                    {closure?.closed_by_kind ? ` (${closure.closed_by_kind})` : ''}
-                  </p>
-                </section>
-                <section>
-                  <h3>Strongest findings</h3>
-                  <FindingList fold={fold} />
+                <section className="case-closed" aria-label="Closed summary">
+                  <span className="case-closed-line">
+                    {[closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                  <h3>{closure?.verdict || '—'}</h3>
+                  <ClosedRows fold={fold} phase={foldPhase} />
+                  <div className="case-assess">
+                    <span>Your assessment</span>
+                    <button type="button" className="btn" disabled title={LATER}>Agree</button>
+                    <button type="button" className="btn" disabled title={LATER}>Disagree</button>
+                    <span className="case-assess-later">Coming in a later release</span>
+                    <div className="case-actions">
+                      <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
+                    </div>
+                  </div>
                 </section>
                 {doors}
-                <div className="case-actions">
-                  <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
-                </div>
               </>
             ) : (
               <>
@@ -903,36 +915,7 @@ export function CasePage({
             )
           )}
 
-          {tab === 'Evidence' && (
-            fold?.kind === 'hunt' ? (
-              fold.evidence.length === 0 ? (
-                <EmptyState compact icon="shield" title="No evidence yet" />
-              ) : (
-                <EvidenceTable
-                  focusId={focusEvidence}
-                  rows={fold.evidence.map((row) => ({
-                    id: row.evidence_id,
-                    step: String(row.iteration),
-                    observation: row.is_gap ? `${row.summary} (gap)` : row.summary,
-                    source: row.source_system,
-                    bears: row.bears_on.map((link) => `${link.relation} ${link.hypothesis_id}`).join(', ') || '—',
-                  }))}
-                />
-              )
-            ) : findings.length === 0 ? (
-              <EmptyState compact icon="shield" title="No evidence yet" />
-            ) : (
-              <EvidenceTable
-                rows={findings.map((row, i) => ({
-                  id: `${row.agent_id}-${i}`,
-                  step: String(i + 1),
-                  observation: row.answer || '—',
-                  source: row.agent_id,
-                  bears: '—',
-                }))}
-              />
-            )
-          )}
+          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
 
           {tab === 'Checked' && (
             !fold || fold.calls.length === 0 ? (
@@ -1158,6 +1141,24 @@ function LaterRow({ title, line }: { title: string; line: string }) {
   )
 }
 
+function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+  if (phase === 'loading') return <p className="muted">Loading the run…</p>
+  if (phase === 'error') return <p className="muted">The run could not be read.</p>
+  const rows = strongestRows(fold)
+  if (rows.length === 0) return <p className="muted">No findings yet.</p>
+  return (
+    <ul className="case-closed-rows">
+      {rows.map((row, i) => (
+        <li key={i}>
+          <span className="mono">{row.step === '—' ? '—' : `Step ${row.step}`}</span>
+          <span title={row.text}>{row.text}</span>
+          <b className={row.stance === 'For' ? 'good' : row.stance === 'Against' ? 'poor' : undefined}>{row.stance ?? '—'}</b>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 /** Two lines, then an ellipsis; the full text is on hover. */
 function Clamped({ text }: { text: string }) {
   return <span className="clamp2" title={text}>{text}</span>
@@ -1185,41 +1186,5 @@ function FindingList({ fold }: { fold: RunFold | null }) {
         <li key={i}><Clamped text={`${row.agent_id}: ${row.answer || '—'}`} /></li>
       ))}
     </ul>
-  )
-}
-
-function EvidenceTable({
-  rows,
-  focusId,
-}: {
-  rows: { id: string; step: string; observation: string; source: string; bears: string }[]
-  focusId?: string | null
-}) {
-  const focusRef = useRef<HTMLTableRowElement>(null)
-  useEffect(() => {
-    const node = focusRef.current
-    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
-  }, [focusId, rows])
-  return (
-    <div className="table-wrap">
-      <table className="tbl">
-        <thead><tr><th>Step</th><th>Observation</th><th>Source</th><th>Bears on</th></tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              ref={row.id === focusId ? focusRef : undefined}
-              className={row.id === focusId ? 'cite-target' : undefined}
-              data-evidence-id={row.id}
-            >
-              <td>{row.step}</td>
-              <td>{row.observation || '—'}</td>
-              <td>{row.source || '—'}</td>
-              <td>{row.bears}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   )
 }

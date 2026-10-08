@@ -35,6 +35,8 @@ export interface EvidenceRow {
   summary: string
   is_gap: boolean
   gap_detail: string | null
+  /** Stamped by the API on non-gap hunt rows; a display label, as configured now. */
+  source_tier: string | null
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
@@ -157,6 +159,34 @@ const ADDED_BY: Record<string, string> = {
 /** "Added by" words for a hypothesis provenance; the raw token when unknown, '' when absent. */
 export function addedBy(provenance: string): string {
   return ADDED_BY[provenance] ?? provenance
+}
+
+export type Stance = 'supports' | 'weakens' | 'mixed' | 'neither'
+
+export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', mixed: 'Mixed', neither: 'Neither' }
+
+export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not evidence' }
+
+/** The word for one link's relation; an unknown relation shows as written. */
+export function relationWord(relation: string): string {
+  return relation === 'supports' || relation === 'weakens' || relation === 'neither' ? STANCE_WORD[relation] : relation
+}
+
+// A row can bear on several explanations, and a hunt routinely supports one and weakens another, so the row's
+// stance is only a single word when its links agree; "neither" links take no side. Counts are per link.
+export function stanceOf(row: EvidenceRow): Stance {
+  const relations = row.bears_on.map((link) => link.relation)
+  const supports = relations.includes('supports')
+  const weakens = relations.includes('weakens')
+  if (supports && weakens) return 'mixed'
+  if (weakens) return 'weakens'
+  if (supports) return 'supports'
+  return 'neither'
+}
+
+/** Who made the move at this iteration; null when it fell outside the capped list. */
+export function workerAt(fold: HuntFold, iteration: number): string | null {
+  return fold.moves.find((move) => move.iteration === iteration)?.worker || null
 }
 
 export function recordChip(kind: string): RecordChip {
@@ -286,6 +316,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           summary: str(o.summary),
           is_gap: o.is_gap === true,
           gap_detail: typeof o.gap_detail === 'string' ? o.gap_detail : null,
+          source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
           bears_on: bears,
         }]
       })
@@ -426,4 +457,29 @@ export function agentRows(fold: RunFold | null): AgentRow[] {
     seen.add(move.worker)
     return [{ who: move.worker, doing: move.doing, tool: moveTool(fold, move), at: move.at }]
   })
+}
+
+export interface StrongRow {
+  step: string
+  text: string
+  stance: 'For' | 'Against' | null
+}
+
+/** Up to 3 rows for the closed summary: a hunt's evidence that bears on a hypothesis, or a lead's answers. */
+export function strongestRows(fold: RunFold | null): StrongRow[] {
+  if (!fold) return []
+  if (fold.kind === 'lead') {
+    return fold.findings.slice(0, 3).map((row) => ({ step: '—', text: row.answer || '—', stance: null }))
+  }
+  const rows = fold.evidence.flatMap((row, i) => {
+    if (row.is_gap) return []
+    const relation = row.bears_on.find((link) => link.relation === 'supports' || link.relation === 'weakens')?.relation
+    if (!relation) return []
+    const stance: StrongRow['stance'] = relation === 'supports' ? 'For' : 'Against'
+    return [{ i, step: String(row.iteration), text: row.summary || row.evidence_id, stance }]
+  })
+  // Keep one of each stance first so both sides show, then fill in order.
+  const picked = new Set([rows.find((r) => r.stance === 'For'), rows.find((r) => r.stance === 'Against')].filter(Boolean))
+  for (const r of rows) if (picked.size < 3) picked.add(r)
+  return rows.filter((r) => picked.has(r)).map(({ step, text, stance }) => ({ step, text, stance }))
 }

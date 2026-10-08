@@ -6701,13 +6701,6 @@
    white-space: nowrap;
 }
 
-.soc-console .sk-offered .btn.icon {
-   flex: none;
-   padding: 0;
-   border: 0;
-   vertical-align: middle;
-}
-
 .soc-console .sk-offered-list {
    min-width: 0;
    overflow: hidden;
@@ -6720,12 +6713,6 @@
    align-items: center;
    gap: 2px;
    min-width: 0;
-}
-
-.soc-console .sk-usage .btn.icon {
-   flex: none;
-   padding: 0;
-   border: 0;
 }
 
 .soc-console .sk-ro {

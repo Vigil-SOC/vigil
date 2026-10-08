@@ -98,7 +98,7 @@ export function SkillDrawer({
   // POST /api/skills overwrites an operator skill of the same name, so a taken name is refused here.
   const nameTaken = !nameLocked && !needsNewName && existingNames.includes(skillName.trim())
   const ready = creating || detail !== null
-  const saveDisabled = busy || !ready || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim()
+  const saveDisabled = busy || !ready || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim() || !body.trim()
 
   const save = () => {
     if (saveDisabled) return
@@ -200,6 +200,7 @@ export function SkillDrawer({
                 onChange={(e) => setDescription(e.target.value)}
               />
               <span className="vg-side-hint">Agents read this to decide whether the skill applies (1,024 characters at most)</span>
+              {!description.trim() && err('Describe when an agent should use this skill.')}
             </div>
             {openFile === null ? (
               <div className="vg-side-field">
@@ -211,6 +212,7 @@ export function SkillDrawer({
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
                 />
+                {!body.trim() && err('Add the steps an agent should follow.')}
               </div>
             ) : (
               <div className="vg-side-field">
