@@ -275,6 +275,8 @@ function WhoDoesIt({ entries, pre, stage, missing }: { entries: Entry[]; pre: Pa
     <Panel title="Who does it">
       {!pre.roles && <Muted>{missing}</Muted>}
       {pre.roles && shown.length === 0 && <Muted>{stage ? 'No role works this stage.' : pre.roles_note ?? 'No role runs this workflow.'}</Muted>}
+      {/* roles are present but the run would be refused: said whenever it is set, not only when empty */}
+      {!stage && shown.length > 0 && pre.roles_note && <Muted>{pre.roles_note}</Muted>}
       {shown.map((e) => {
         const meta = e.agent ? agentMeta(e.agent) : null
         return (

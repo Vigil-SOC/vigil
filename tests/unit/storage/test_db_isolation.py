@@ -10,6 +10,11 @@ unit test that touches the database is handed a throwaway one, so a test that
 forgets to clean up cannot reach the developer's data.
 """
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 
@@ -43,3 +48,54 @@ def test_the_throwaway_database_carries_the_orm_schema():
         "findings",
         "intake_triggers",
     } <= tables
+
+
+# Regression for #1849. The leak needs an unmarked test to run first in the same
+# process, so the pair below runs in a child pytest, in that order, and the
+# parent asserts the child passes. Inert unless the parent sets the flag.
+_INNER = "VIGIL_DB_ISOLATION_INNER"
+_inner_only = pytest.mark.skipif(not os.environ.get(_INNER), reason="child run only")
+
+
+@_inner_only
+def test_inner_unmarked_test_leaves_engine_on_blocked_host():
+    from core.storage.connection import get_db_manager
+
+    # What any unmarked test calling initialize() leaves behind.
+    get_db_manager().initialize()
+    assert "postgres-blocked-in-unit-tests" in str(get_db_manager().engine.url)
+
+
+@_inner_only
+@pytest.mark.database
+@pytest.mark.external_service
+def test_inner_throwaway_database_is_reachable():
+    from sqlalchemy import text
+
+    from core.storage.connection import get_db_manager
+
+    with get_db_manager().engine.connect() as conn:
+        assert conn.execute(text("SELECT 1")).scalar() == 1
+
+
+@pytest.mark.database
+@pytest.mark.external_service
+def test_throwaway_database_survives_an_engine_left_on_a_blocked_host():
+    this = Path(__file__).as_posix()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--no-cov",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            f"{this}::test_inner_unmarked_test_leaves_engine_on_blocked_host",
+            f"{this}::test_inner_throwaway_database_is_reachable",
+        ],
+        env={**os.environ, _INNER: "1"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-1000:]

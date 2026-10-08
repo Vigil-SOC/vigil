@@ -224,8 +224,8 @@ SKIP_FRONTEND=0
 SKIP_AGENT="${SKIP_AGENT:-0}"
 if ! command -v node &>/dev/null; then
     echo "Node.js not found. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
-elif ! node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" 2>/dev/null; then
-    echo "Node.js 18+ required. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
+elif ! node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)" 2>/dev/null; then
+    echo "Node.js 20+ required. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
 fi
 
 # --- Python environment ---
