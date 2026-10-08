@@ -28,6 +28,7 @@ n=$(wc -l < "$log" 2>/dev/null || echo 0)
 case " $* " in
     *" compose version "*) exit 0 ;;
     *" config backend "*)
+        [ -n "${FAKE_CONFIG_FAIL:-}" ] && { echo "config error" >&2; exit 15; }
         printf '    environment:\n      DEV_MODE: "%s"\n      JWT_SECRET_KEY: %s\n' \
             "${FAKE_DEV_MODE:-false}" "${FAKE_JWT-jwt-from-env}"
         exit 0 ;;
@@ -42,7 +43,9 @@ case " $* " in
         [ "$code" = 0 ] && echo "service account x: created"
         [ "$code" != 0 ] && echo "error $code" >&2
         exit "$code" ;;
-    *" ps "*) printf '%b' "${FAKE_RUNNING:-}"; exit 0 ;;
+    *" ps "*)
+        [ -n "${FAKE_PS_FAIL:-}" ] && exit 1
+        printf '%b' "${FAKE_RUNNING-backend\n}"; exit 0 ;;
 esac
 exit 0
 """
@@ -117,7 +120,8 @@ def test_full_run_creates_the_account_then_starts_medic(run) -> None:
     names = [s[0] for s in steps]
     assert names.index("build") < names.index("up") < names.index("exec")
     assert ["build", "medic", "medic-gateway", "medic-dockerproxy"] in steps
-    assert ["up", "-d", "backend"] in steps
+    # db-seed seeds the Viewer role; nothing else starts it (review S3).
+    assert ["up", "-d", "backend", "db-seed"] in steps
     user = run.secret("viewer_username")
     assert [
         "exec",
@@ -168,14 +172,21 @@ def test_nothing_printed_holds_a_secret_or_the_name(run) -> None:
 
 
 def test_retries_while_the_database_is_not_ready(run) -> None:
-    run.exec_codes(75, 1, 75, 0)  # 1: compose itself, e.g. container starting
+    run.exec_codes(75, 75, 0)
     done = run()
     assert done.returncode == 0, done.stderr
-    assert len(run.stdins()) == 4
+    assert len(run.stdins()) == 3
     assert _sub(run.compose_calls()[-1])[:3] == ["up", "-d", "medic"]
 
 
-@pytest.mark.parametrize("code", [64, 77])
+def test_waits_for_the_backend_container_before_the_account_step(run) -> None:
+    done = run(FAKE_RUNNING="")
+    assert done.returncode == 1
+    assert "backend" in done.stderr
+    assert run.stdins() == []
+
+
+@pytest.mark.parametrize("code", [1, 64, 70, 77])
 def test_a_refusal_stops_before_medic_starts(run, code) -> None:
     run.exec_codes(code)
     done = run()
@@ -218,13 +229,10 @@ def test_rotate_changes_the_password_and_recreates_medic_and_gateway(run) -> Non
     assert new != old
     assert run.secret("viewer_username") == user
     assert run.stdins()[-1] == new + "\n"
-    assert _sub(run.compose_calls()[-1]) == [
-        "up",
-        "-d",
-        "--force-recreate",
-        "medic",
-        "medic-gateway",
-    ]
+    steps = [_sub(c) for c in run.compose_calls()]
+    recreate = steps.index(["up", "-d", "--force-recreate", "medic", "medic-gateway"])
+    # Straight after the password changed: the gateway stops after 2 refusals.
+    assert steps[recreate - 1][0] == "exec"
 
 
 def test_rerun_is_idempotent(run) -> None:
@@ -296,3 +304,24 @@ def test_compose_env_holds_the_settings_and_no_secret(run) -> None:
     }
     for name in ("viewer_password", "api_key"):
         assert run.secret(name) not in text
+
+
+def test_a_secret_replaced_without_rotate_still_reaches_the_gateway(run) -> None:
+    """A deleted file is re-minted; the running gateway holds the old inode (S4)."""
+    assert run().returncode == 0
+    (run.secrets / "viewer_password").unlink()
+    assert run().returncode == 0
+    steps = [_sub(c) for c in run.compose_calls()]
+    assert ["up", "-d", "--force-recreate", "medic", "medic-gateway"] in steps
+
+
+def test_a_failing_compose_config_stops_the_run(run) -> None:
+    done = run(FAKE_CONFIG_FAIL="1")
+    assert done.returncode != 0
+    assert not any(_sub(c)[0] in ("build", "up") for c in run.compose_calls())
+
+
+def test_a_failing_compose_ps_stops_before_medic_starts(run) -> None:
+    done = run(FAKE_PS_FAIL="1")
+    assert done.returncode != 0
+    assert not any(_sub(c)[:3] == ["up", "-d", "medic"] for c in run.compose_calls())
