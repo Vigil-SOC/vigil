@@ -99,6 +99,7 @@ def test_prints_the_manual_step_and_the_up_command(tmp_path) -> None:
     assert "--profile medic" in out
     assert "infra/docker/medic/docker-compose.medic.yml" in out
     assert "VIGIL_MEDIC_DOCKER_GID=" in out
+    assert "VIGIL_MEDIC_ENABLED=true" in out
 
 
 def test_unknown_argument_is_refused(tmp_path) -> None:

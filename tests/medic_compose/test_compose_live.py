@@ -70,6 +70,8 @@ class Stack:
             MEDIC_S6_STUB_DIR=str(HERE),
             MEDIC_S6_CANARY=self.canary,
             AGENT_INTERNAL_TOKEN=self.token,
+            # C8: the flag is the master switch and defaults to off.
+            VIGIL_MEDIC_ENABLED="true",
             VIGIL_MEDIC_DOCKER_GID=os.environ.get("VIGIL_MEDIC_DOCKER_GID", ""),
         )
         if not self.env["VIGIL_MEDIC_DOCKER_GID"]:
@@ -175,12 +177,6 @@ def probe(healthy):
         "token": s.token,
         "container_id": s.cid("agent-worker"),
     }
-    # Let the gateway log in before probing the allowed path.
-    _wait(
-        "gateway login",
-        lambda: '"ok"' in s.medic_python(_GW_STATUS),
-        60,
-    )
     out = s.docker(
         "exec",
         "-i",
@@ -191,14 +187,6 @@ def probe(healthy):
         input=(HERE / "probe.py").read_text(),
     ).stdout
     return json.loads(out)
-
-
-_GW_STATUS = """
-import http.client
-c = http.client.HTTPConnection("medic-gateway", 8471, timeout=5)
-c.request("GET", "/_gw/status")
-print(c.getresponse().read().decode())
-"""
 
 
 def backend_seen(s: Stack) -> list[dict]:
@@ -288,6 +276,12 @@ def test_check10_gateway_refuses_every_bypass_shape(probe, healthy) -> None:
         ("POST", "/api/auth/refresh"),
         ("GET", "/api/federation/sources"),
     }, paths
+
+
+def test_gateway_logged_in_with_the_generated_password(probe) -> None:
+    # The stub backend accepts only the password enable-compose.sh wrote, so this
+    # proves the secret file reached the gateway (uid 10002) and nothing else did.
+    assert json.loads(probe["gw_status"]["body"])["state"] == "ok"
 
 
 def test_check10_client_auth_headers_are_stripped(probe, healthy) -> None:

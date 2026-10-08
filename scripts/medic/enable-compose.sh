@@ -127,7 +127,7 @@ cat <<EOF
 
 Then start Medic (both -f files and the profile, on every compose command that
 should keep it; add --profile daemon if you run the daemon):
-  VIGIL_MEDIC_DOCKER_GID=$docker_gid VIGIL_MEDIC_SECRETS_DIR=$dir \\
+  VIGIL_MEDIC_ENABLED=true VIGIL_MEDIC_DOCKER_GID=$docker_gid VIGIL_MEDIC_SECRETS_DIR=$dir \\
   docker compose -f $base \\
     -f $overlay --profile medic up -d
 EOF

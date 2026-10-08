@@ -302,3 +302,12 @@ def test_env_example_has_no_viewer_password() -> None:
         key, _, value = line.lstrip("# ").partition("=")
         if key.startswith("VIGIL_MEDIC") and ("PASSWORD" in key or "API_KEY" in key):
             assert not value.strip(), f"literal secret for {key} in env.example"
+
+
+def test_master_flag_is_off_unless_set(home) -> None:
+    # C8 rule 1: the flag is the master switch, so the profile alone (or
+    # `docker compose up medic` by name) must not start a running Medic.
+    unset = render("medic", home=home)["services"]["medic"]
+    assert env_of(unset)["VIGIL_MEDIC_ENABLED"] == "false"
+    on = render("medic", home=home, env={"VIGIL_MEDIC_ENABLED": "true"})
+    assert env_of(on["services"]["medic"])["VIGIL_MEDIC_ENABLED"] == "true"
