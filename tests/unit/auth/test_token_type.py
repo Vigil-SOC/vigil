@@ -195,3 +195,62 @@ def test_refresh_fails_closed_when_redis_is_unavailable(client, user, monkeypatc
     response = client.post(REFRESH, json={"refresh_token": _tokens(user)["refresh"]})
 
     assert response.status_code == 401
+
+
+LOGOUT = "/api/auth/logout"
+
+
+@pytest.fixture
+def blacklisted(monkeypatch):
+    jtis = []
+
+    async def _record(jti, expires_at):
+        jtis.append(jti)
+
+    monkeypatch.setattr("services.api.routers.auth.blacklist_jti", _record)
+    return jtis
+
+
+def _jti(token):
+    return AuthService.verify_jwt_token(token)["jti"]
+
+
+def test_logout_revokes_a_refresh_token_sent_in_the_body(client, user, blacklisted):
+    tokens = _tokens(user)
+
+    response = client.post(
+        LOGOUT,
+        json={"refresh_token": tokens["refresh"]},
+        headers={"Authorization": f"Bearer {tokens['access']}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert sorted(blacklisted) == sorted(
+        [_jti(tokens["access"]), _jti(tokens["refresh"])]
+    )
+
+
+def test_logout_without_a_body_revokes_the_access_token_only(client, user, blacklisted):
+    tokens = _tokens(user)
+
+    response = client.post(
+        LOGOUT, headers={"Authorization": f"Bearer {tokens['access']}"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert blacklisted == [_jti(tokens["access"])]
+
+
+def test_logout_leaves_another_users_refresh_token_alone(client, user, blacklisted):
+    tokens = _tokens(user)
+    other = User(
+        user_id="u-2", username="other", email="o@example.com", role_id="r-analyst"
+    )
+
+    client.post(
+        LOGOUT,
+        json={"refresh_token": AuthService.generate_jwt_token(other, "refresh")},
+        headers={"Authorization": f"Bearer {tokens['access']}"},
+    )
+
+    assert blacklisted == [_jti(tokens["access"])]

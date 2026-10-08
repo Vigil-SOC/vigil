@@ -13,11 +13,19 @@ from pydantic import BaseModel, field_validator
 from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
+from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
-from core.deps import provide_mcp_registry
+from core.cases.case_brief import case_brief
+from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
-from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
+from core.llm.chat_layers import (
+    chat_config,
+    granted_ids,
+    run_id_for,
+    tools_ceiling,
+    trim_servers,
+)
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
@@ -27,6 +35,7 @@ from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 from core.storage.models import User
+from core.workflows.workflows_service import WorkflowsService
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
 
@@ -289,6 +298,7 @@ async def chat_stream(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),
     registry: MCPRegistry = Depends(provide_mcp_registry),
+    workflows: WorkflowsService = Depends(provide_workflows),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
     # Before model resolution, whose agent lookup swallows errors.
@@ -314,6 +324,18 @@ async def chat_stream(
     system_prompt = _with_page_case(
         system_prompt, request.page_context, request.case_id
     )
+    # Rebuilt every turn, so a live run's new evidence is in the next answer.
+    if (request.case_id or "").strip():
+        brief = await case_brief(request.case_id.strip(), workflows)
+        if brief:
+            system_prompt = f"{system_prompt}\n\n{brief}"
+    # Chat never goes through prompt_for_row, so a granted read_skill would have
+    # no index. Read per turn so a newly saved skill shows on the next message;
+    # skipped when an agent's own prompt already carries it.
+    if "<available_skills>" not in system_prompt:
+        skills = _skills_section(granted_ids(tools), None)
+        if skills:
+            system_prompt = f"{system_prompt}\n\n{skills}".strip()
 
     active_provider = provider_for(provider_id)
     if active_provider is None:

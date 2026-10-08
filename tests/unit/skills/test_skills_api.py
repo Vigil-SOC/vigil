@@ -8,6 +8,7 @@ prompt built afterwards reads the file that was just written.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -16,7 +17,10 @@ from fastapi.testclient import TestClient
 
 from core.agents.prompts import render_base_prompt
 from core.config import Settings
+from core.llm.cost.budget import BudgetExceeded
+from core.llm.router.router import LLMRouter, ProviderSpec
 from core.skills.skill_library import LIBRARY_ROOT, parse_skill
+from services.api.errors import register_exception_handlers
 from services.api.routers import skills as skills_router
 
 pytestmark = pytest.mark.unit
@@ -359,7 +363,7 @@ def test_saving_a_builtin_as_a_copy_carries_the_folder_at_version_one(operator):
 
 def test_a_copy_refuses_bad_sources_taken_names_and_leaves_nothing_behind(operator):
     client, root = operator
-    body = {"description": "Mine.", "body": "", "source": FOLDER_SKILL}
+    body = {"description": "Mine.", "body": "Steps.", "source": FOLDER_SKILL}
     assert (
         client.post(
             "/api/skills", json={"name": "x", **body, "source": "nope"}
@@ -376,6 +380,16 @@ def test_a_copy_refuses_bad_sources_taken_names_and_leaves_nothing_behind(operat
     _write(client, "taken")
     assert client.post("/api/skills", json={"name": "taken", **body}).status_code == 400
     assert [p.name for p in root.iterdir()] == ["taken"]
+
+
+@pytest.mark.parametrize("blank", ["", "   \n"])
+def test_a_blank_body_is_refused_with_422_and_nothing_is_written(operator, blank):
+    client, root = operator
+    resp = client.post(
+        "/api/skills", json={"name": "empty-steps", "description": "d", "body": blank}
+    )
+    assert resp.status_code == 422
+    assert list(root.iterdir()) == []
 
 
 def test_a_stale_version_is_refused_with_409_and_nothing_is_written(operator):
@@ -440,7 +454,7 @@ def test_a_copy_leaves_hidden_files_behind_and_lists_what_it_copied(
     listed = client.get("/api/skills/wip").json()["files"]
     resp = client.post(
         "/api/skills",
-        json={"name": "wip-copy", "description": "d", "body": "", "source": "wip"},
+        json={"name": "wip-copy", "description": "d", "body": "Steps.", "source": "wip"},
     )
     assert resp.status_code == 200
     copied = client.get("/api/skills/wip-copy").json()["files"]
@@ -449,3 +463,128 @@ def test_a_copy_leaves_hidden_files_behind_and_lists_what_it_copied(
         ["SKILL.md", "evals", "cases.json"]
     )
     assert [p.name for p in root.iterdir()] == ["wip-copy"]
+
+
+# --- POST /api/skills/{name}/test: the drawer's "Test with a sample" -----------
+
+EVAL_LIBRARY = FIXTURES / "library"
+PROVIDER = ProviderSpec("p1", "ollama", None, None, "default-model", {})
+
+
+@pytest.fixture()
+def tester(monkeypatch):
+    """The fixture library mounted, ``chat_default`` resolved, dispatch stubbed."""
+    monkeypatch.setattr(skills_router, "skill_roots", lambda: [EVAL_LIBRARY, FIXTURES])
+    monkeypatch.setattr(
+        skills_router,
+        "get_registry",
+        lambda: SimpleNamespace(resolve_model_for_component=lambda c: ("p1", "m-1")),
+    )
+    monkeypatch.setattr(skills_router, "get_provider_spec", lambda pid: PROVIDER)
+    calls = []
+
+    def answer(turn):
+        if "finding-001" in turn:
+            return "SEVERITY: high\nTECHNIQUES: T1059.001, T1027\nVERDICT: ESCALATE"
+        return "SEVERITY: low"
+
+    async def dispatch(self, *, provider, messages, **kwargs):
+        calls.append((provider, kwargs))
+        return {"content": answer(messages[0]["content"])}
+
+    monkeypatch.setattr(LLMRouter, "dispatch", dispatch)
+    app = FastAPI()
+    app.include_router(skills_router.router, prefix="/api/skills")
+    register_exception_handlers(app)
+    return TestClient(app, raise_server_exceptions=False), calls
+
+
+def test_a_test_run_grades_each_case_on_the_chat_default_model(tester):
+    client, calls = tester
+    resp = client.post("/api/skills/evals-skill/test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["no_cases"] is False and body["model"] == "m-1"
+    by_name = {r["name"]: r for r in body["results"]}
+    assert len(by_name) == 3
+    assert by_name["high severity powershell finding escalates"] == {
+        "name": "high severity powershell finding escalates",
+        "passed": True,
+        "missing": [],
+    }
+    miss = by_name["medium severity brute force is monitored"]
+    assert miss["passed"] is False
+    assert miss["missing"] == ["SEVERITY: medium", "T1110.001", "VERDICT: MONITOR"]
+    assert {c[1]["model"] for c in calls} == {"m-1"}
+
+
+def test_a_skill_without_cases_says_so_and_needs_no_provider(tester, monkeypatch):
+    client, calls = tester
+    monkeypatch.setattr(skills_router, "get_registry", lambda: 1 / 0)
+    resp = client.post("/api/skills/minimal-skill/test")
+    assert resp.status_code == 200
+    assert resp.json() == {"no_cases": True, "model": None, "results": []}
+    assert calls == []
+
+
+def test_an_unknown_skill_is_not_found(tester):
+    assert tester[0].post("/api/skills/nope/test").status_code == 404
+
+
+def test_no_configured_provider_is_a_503_with_a_message(tester, monkeypatch):
+    client, calls = tester
+    monkeypatch.setattr(
+        skills_router,
+        "get_registry",
+        lambda: SimpleNamespace(resolve_model_for_component=lambda c: None),
+    )
+    resp = client.post("/api/skills/evals-skill/test")
+    assert resp.status_code == 503
+    assert "No LLM provider is configured" in resp.json()["detail"]
+    assert calls == []
+
+
+def test_a_dispatch_failure_is_an_error_not_a_failed_case(tester, monkeypatch):
+    client, _ = tester
+
+    async def boom(self, **kwargs):
+        raise ConnectionError("http://bifrost:8080 refused, key sk-secret")
+
+    monkeypatch.setattr(LLMRouter, "dispatch", boom)
+    resp = client.post("/api/skills/evals-skill/test")
+    assert resp.status_code == 502
+    assert "sk-secret" not in resp.text and "results" not in resp.json()
+
+
+def test_a_spent_budget_is_the_apps_402(tester, monkeypatch):
+    client, _ = tester
+
+    async def spent(self, **kwargs):
+        raise BudgetExceeded(tier="virtual_key")
+
+    monkeypatch.setattr(LLMRouter, "dispatch", spent)
+    assert client.post("/api/skills/evals-skill/test").status_code == 402
+
+
+@pytest.mark.parametrize(
+    "cases, status",
+    [
+        ("[]", 200),  # an empty list is "no cases"
+        ('[{"name": "n", "input": "x", "expect": "foo"}]', 400),  # expect not a list
+        ('[{"name": "n", "input": "x", "expect": [1]}]', 400),
+        ("not json", 400),
+    ],
+)
+def test_a_malformed_cases_file_is_refused_before_any_dispatch(
+    tester, tmp_path, monkeypatch, cases, status
+):
+    client, calls = tester
+    skill = tmp_path / "bad-cases"
+    (skill / "evals").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: bad-cases\ndescription: d\n---\nbody\n")
+    (skill / "evals" / "cases.json").write_text(cases)
+    monkeypatch.setattr(skills_router, "skill_roots", lambda: [tmp_path])
+    resp = client.post("/api/skills/bad-cases/test")
+    assert resp.status_code == status
+    assert (resp.json()["no_cases"] is True) if status == 200 else True
+    assert calls == []

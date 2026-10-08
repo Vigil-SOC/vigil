@@ -114,6 +114,40 @@ class TestBeginAndFinalize:
         assert row["result_summary"] == "All good."
         assert row["error"] is None
 
+    def test_set_status_pauses_with_reason_and_cost_and_a_terminal_still_finalizes(
+        self, service, clean_runs
+    ):
+        run_id = service.begin_run(workflow_id="test-wf-020", workflow_name="Test WF")
+        assert service.set_status(
+            run_id, "paused", reason="ran out of turns", cost_usd=1.3744
+        )
+        row = service.get_run(run_id)
+        assert row["status"] == "paused"
+        assert row["reason"] == "ran out of turns"
+        assert float(row["total_cost_usd"]) == pytest.approx(1.3744)
+        assert row["finished_at"] is None
+
+        # Running again clears the reason and keeps the cost it was not given.
+        assert service.set_status(run_id, "running", reason="")
+        row = service.get_run(run_id)
+        assert row["status"] == "running"
+        assert row["reason"] is None
+        assert float(row["total_cost_usd"]) == pytest.approx(1.3744)
+
+        service.finalize_run(run_id, status="completed", cost_usd=1.5, reason="done")
+        row = service.get_run(run_id)
+        assert row["status"] == "completed"
+        assert row["finished_at"] is not None
+        assert row["duration_ms"] is not None
+
+    def test_set_status_does_not_reopen_a_finished_run(self, service, clean_runs):
+        run_id = service.begin_run(workflow_id="test-wf-021", workflow_name="Test WF")
+        service.finalize_run(run_id, status="cancelled")
+        assert service.set_status(run_id, "running", cost_usd=2.0) is False
+        row = service.get_run(run_id)
+        assert row["status"] == "cancelled"
+        assert float(row["total_cost_usd"] or 0) == 0
+
     def test_finalize_failure_records_error(self, service, clean_runs):
         run_id = service.begin_run(
             workflow_id="test-wf-003",

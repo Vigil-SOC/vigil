@@ -462,7 +462,7 @@ export function renderCaseFile(projection: Projection, handoff: Handoff): string
     .filter((entry): entry is { relation: LinkRelation; record: EvidenceRecord } => entry.record !== undefined);
 
   const lines: string[] = [
-    `# IR case ${handoff.case_id} — ${projection.hunt.name}`,
+    `# Handoff — ${projection.hunt.name}`,
     "",
     `- **Hunt:** ${projection.hunt.hunt_id}`,
     `- **Hypothesis:** ${handoff.hypothesis_id}`,

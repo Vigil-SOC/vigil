@@ -63,6 +63,8 @@ export interface Decision {
   evidence: string[]
 }
 
+export type ToolChange = 'read_only' | 'asks_first' | 'on_its_own'
+
 export interface AgentTemplate {
   name: string
   handle: string
@@ -77,6 +79,8 @@ export interface AgentTemplate {
   category: string | null
   skills: number
   changes: 'read_only' | 'asks_first' | 'on_its_own' | null
+  /** the mark of each tool the agent holds */
+  toolChanges: Record<string, ToolChange>
   /** null when the stats query failed server-side */
   runs7d: number | null
   /** percent 0..100, null with no runs or a failed stats query */

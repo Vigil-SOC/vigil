@@ -1,4 +1,4 @@
-"""The containment grader and per-skill summary of ``scripts/skill_eval.py`` (#926).
+"""The containment grader (``core/skills/skill_eval.py``) and the CLI summary of ``scripts/skill_eval.py`` (#926).
 
 ``LLMRouter.dispatch`` is stubbed: nothing in ``tests/unit/`` reaches Bifrost.
 """
@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from core.llm.router.router import LLMRouter
+from core.skills import skill_eval as core_eval
+from core.skills.skill_library import as_user_turn
 
 pytestmark = pytest.mark.unit
 
@@ -26,15 +28,15 @@ _spec.loader.exec_module(skill_eval)
 
 def test_grade_reports_the_missing_strings_only():
     assert (
-        skill_eval.grade("SEVERITY: high\nVERDICT: ESCALATE", ["high", "ESCALATE"])
+        core_eval.grade("SEVERITY: high\nVERDICT: ESCALATE", ["high", "ESCALATE"])
         == []
     )
-    assert skill_eval.grade("SEVERITY: low", ["high", "low"]) == ["high"]
+    assert core_eval.grade("SEVERITY: low", ["high", "low"]) == ["high"]
 
 
 def test_an_object_input_is_sent_as_indented_json():
-    assert skill_eval.as_user_turn("hello") == "hello"
-    assert skill_eval.as_user_turn({"id": "f-1"}) == '{\n  "id": "f-1"\n}'
+    assert as_user_turn("hello") == "hello"
+    assert as_user_turn({"id": "f-1"}) == '{\n  "id": "f-1"\n}'
 
 
 def _stub_dispatch(monkeypatch, answer_for):
