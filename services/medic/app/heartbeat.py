@@ -90,7 +90,10 @@ def read_heartbeat(data_dir: Path) -> dict | None:
 
 def mark_stalled(data_dir: Path) -> None:
     """C5 §5.1 step 2: the watchdog says why the beats stopped, for the next
-    start's `gap` record. `ts` stays the last good beat."""
+    start's `gap` record. `ts` stays the last good beat.
+
+    Runs on the watchdog thread. A loop that wakes at that moment can still write a
+    "running" beat over it; the worst case is a gap recorded `off`, not `stalled`."""
     beat = read_heartbeat(data_dir)
     if beat is None:
         return
