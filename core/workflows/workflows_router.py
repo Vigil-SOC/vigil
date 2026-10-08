@@ -19,6 +19,7 @@ from core.deps import (
 )
 from core.documents.condense import condense
 from core.documents.extract import MAX_DOCUMENT_CHARS, DocumentRefused, extract_upload
+from core.memory.source_tier import InvestigationKind, resolve_source_tier
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -321,16 +322,18 @@ async def check_hunt_coverage(payload: HuntCoverageRequest):
     The same function as the ``check_hunt_coverage`` agent tool, imported here
     so the router does not pull a database session factory in at import.
     """
-    from core.memory.hunt_coverage import check_coverage
+    from core.memory.hunt_coverage import check_coverage, with_claim
 
     try:
-        return check_coverage(
+        result = check_coverage(
             report=payload.report,
             entity_keys=payload.entity_keys,
             techniques=payload.techniques,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    # The proposal speaks the report's own claim; the agent tool keeps the template.
+    return await with_claim(result, payload.report) if payload.report else result
 
 
 @router.post(
@@ -470,6 +473,18 @@ async def execute_workflow(
 # ---------------------------------------------------------------------------
 
 
+def _stamp_source_tiers(folded: Optional[Dict[str, Any]]) -> None:
+    """Label each hunt evidence row with its Source Tier, as configured now.
+
+    A display label, not stored: a gap row names no source, so it gets none.
+    """
+    for item in (folded or {}).get("evidence") or []:
+        if isinstance(item, dict) and not item.get("is_gap"):
+            item["source_tier"] = resolve_source_tier(
+                str(item.get("source_system") or ""), InvestigationKind.HUNT
+            ).value
+
+
 @router.get("/workflows/runs/{run_id}")
 async def get_workflow_run(
     run_id: str,
@@ -489,6 +504,7 @@ async def get_workflow_run(
     row["phases"] = run_service.list_phases(run_id)
     folded = await read_projection(run_id)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
+        _stamp_source_tiers(folded)
         row["hunt"] = folded
     else:
         row["projection"] = folded

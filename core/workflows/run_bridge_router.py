@@ -77,6 +77,10 @@ class TerminalUpdate(BaseModel):
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
 
 
+class CitedFindings(BaseModel):
+    finding_ids: List[str] = Field(default_factory=list)
+
+
 class StatusUpdate(BaseModel):
     status: Literal["running", "paused"]
     reason: Optional[str] = None
@@ -216,12 +220,56 @@ def record_handoff(
     _process_handoff(run_id, handoff, origin, _source_is_hunt(run_id), run_service)
 
 
-# Opens the case a handoff hands over and, for a hunt, tees up the backward run.
-# Both the /handoff push and the terminal that re-carries it land here, so each half
-# guards itself: the case on the handoff it files (_open_case), the root-cause run on
-# the handoff it traces back from (_rca_exists). One gate for both would tie the case
-# to a decision that is not about it, and would open a second case for every handoff
-# that tees up no root-cause run at all.
+# Alerts the hunt's evidence cites, pushed as each iteration lands. They are linked
+# onto the case the hunt was started on, which is what fills its alert count,
+# entities and IOCs. A hunt with no case of its own has nothing to link to yet.
+@router.post("/{run_id}/findings", status_code=204)
+def record_findings(
+    run_id: str,
+    cited: CitedFindings,
+    authorization: Optional[str] = Header(default=None),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> None:
+    authorise(authorization, "run findings")
+    case_id = _origin_case(run_id, run_service)
+    if case_id:
+        _link_findings(case_id, run_id, cited.finding_ids)
+
+
+# Once per finding: link_finding answers False for one already on the case, so a
+# push the agent layer repeats (a resume starts with nothing marked sent) adds no
+# second audit row. An id the hunt invented names no finding and is not linked.
+def _link_findings(case_id: str, run_id: str, finding_ids: List[str]) -> None:
+    from core.cases import case_journal_service
+    from core.storage.database_data_service import DatabaseDataService
+
+    data = DatabaseDataService()
+    for finding_id in dict.fromkeys(finding_ids):
+        try:
+            if not data.get_finding(finding_id):
+                continue
+            if case_journal_service.link_finding(data, case_id, finding_id):
+                _add_activity(
+                    case_id,
+                    "finding_added",
+                    f"Hunt {run_id} added alert {finding_id}",
+                    {"run_id": run_id, "finding_id": finding_id},
+                )
+        except Exception:  # noqa: BLE001 — the hunt carries on either way
+            logger.exception(
+                "could not link finding %s of %s to case %s",
+                finding_id,
+                run_id,
+                case_id,
+            )
+
+
+# Files the handoff on a case and, for a hunt, tees up the backward run. Both the
+# /handoff push and the terminal that re-carries it land here, so each half guards
+# itself: the case on the handoff it files (_open_case, _record_handoff), the
+# root-cause run on the handoff it traces back from (_rca_exists). One gate for both
+# would tie the case to a decision that is not about it, and would open a second case
+# for every handoff that tees up no root-cause run at all.
 def _process_handoff(
     run_id: str,
     handoff: TerminalHandoff,
@@ -229,9 +277,15 @@ def _process_handoff(
     start_rca: bool,
     run_service: WorkflowRunService,
 ) -> None:
-    opened_case = _open_case(run_id, handoff, origin)
+    # A hunt that already has a case hands off onto it: one case for the presenter
+    # to follow, and the root-cause run files back onto it.
+    if origin:
+        _record_handoff(origin, run_id, handoff)
+        case_id: Optional[str] = origin
+    else:
+        case_id = _open_case(run_id, handoff) or handoff.case_id
     if start_rca and not _rca_exists(run_id, handoff, run_service):
-        _start_root_cause(run_id, handoff, opened_case)
+        _start_root_cause(run_id, handoff, case_id)
 
 
 def _origin_case(run_id: str, run_service: WorkflowRunService) -> str:
@@ -304,15 +358,24 @@ def _case_exists(data: Any, case_id: str) -> bool:
         return False
 
 
-# A run that ended by handing work over opens the case that receives it. The agent
-# layer holds no case table, so the document travels and this side files it.
+# A title cut on a whole word, so a long hypothesis does not end mid-token.
+def _case_title(title: str, limit: int = 200) -> str:
+    title = " ".join(title.split())
+    if len(title) <= limit:
+        return title
+    head = title[: limit + 1]
+    # The character past the limit is a space when the limit lands on a word end.
+    return (head.rsplit(" ", 1)[0] if " " in head else title[:limit]).rstrip(" ,;:.-")
+
+
+# A hunt with no case of its own (scheduled hunts) opens the one that receives its
+# handoff. The agent layer holds no case table, so the document travels and this
+# side files it.
 #
 # Idempotent per handoff, and on its own account rather than the root-cause run's: a
 # handoff that tees up no backward run still arrives twice, and the second arrival
 # must find the case the first opened.
-def _open_case(
-    run_id: str, handoff: TerminalHandoff, origin: str = ""
-) -> Optional[str]:
+def _open_case(run_id: str, handoff: TerminalHandoff) -> Optional[str]:
     from core.storage.database_data_service import DatabaseDataService
 
     case_id = _handoff_case_id(run_id, handoff)
@@ -322,10 +385,10 @@ def _open_case(
 
     try:
         opened = data.create_case(
-            title=handoff.title[:200],
+            title=_case_title(handoff.title),
             finding_ids=[],
             priority="high",
-            description=_with_origin(handoff.markdown, origin),
+            description=f"{handoff.markdown}\n\n_Handed off by run {run_id}._\n",
             case_id=case_id,
         )
     except Exception:  # noqa: BLE001 — the run ended either way
@@ -334,10 +397,8 @@ def _open_case(
 
     opened_id = (opened or {}).get("case_id", "")
     if opened_id:
-        # Both directions, so neither case is a dead end. Once only: the second
-        # arrival returned above, so the origin case records one escalation.
-        if origin:
-            _record_handoff(origin, run_id, handoff, opened_id)
+        # Once only: the second arrival returned above.
+        _record_handoff(opened_id, run_id, handoff)
         return opened_id
 
     # Nothing came back after the lookup said there was no such case: the concurrent
@@ -406,12 +467,12 @@ def _rca_exists(
 def _start_root_cause(
     source_run_id: str,
     handoff: TerminalHandoff,
-    opened_case: Optional[str],
+    case_id: Optional[str],
 ) -> None:
     params = {
         "context": _rca_context(handoff),
-        # Files the RCA's report back onto the IR case the hunt opened.
-        "case_id": opened_case or handoff.case_id,
+        # Files the RCA's report back onto the case the handoff was written to.
+        "case_id": case_id,
     }
     try:
         result = asyncio.run(
@@ -496,23 +557,38 @@ def _rca_context(handoff: TerminalHandoff) -> str:
     )
 
 
-def _with_origin(markdown: str, origin: str) -> str:
-    return f"{markdown}\n\n_Escalated from case {origin}._\n" if origin else markdown
+# Once per handoff: it arrives pushed and again on the terminal, and on a hunt's own
+# case there is no new case whose existence says it was already filed.
+def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None:
+    from core.storage.database_data_service import DatabaseDataService
 
-
-def _record_handoff(
-    case_id: str, run_id: str, handoff: TerminalHandoff, opened: str
-) -> None:
     try:
+        case = DatabaseDataService().get_case(case_id) or {}
+        if any(
+            (a.get("details") or {}).get("handoff_id") == handoff.case_id
+            and (a.get("details") or {}).get("run_id") == run_id
+            for a in case.get("activities") or []
+            if a.get("activity_type") == "agent_run_handoff"
+        ):
+            return
         _add_activity(
             case_id,
             "agent_run_handoff",
-            f"Escalated to incident response as "
-            f"{opened or handoff.case_id}: {handoff.title}",
-            {"run_id": run_id, "case_id": opened, "handoff_id": handoff.case_id},
+            f"Handed off to incident response: {handoff.title}",
+            {"run_id": run_id, "handoff_id": handoff.case_id},
         )
-    except Exception:  # noqa: BLE001 — the case it opened is the deliverable
-        logger.exception("could not link %s back to case %s", opened, case_id)
+    except Exception:  # noqa: BLE001 — the handoff is filed either way
+        logger.exception("could not record the handoff of %s on %s", run_id, case_id)
+
+
+# What the analyst reads under a checkpoint's question. Never the class name or a
+# threshold: those are config, not an explanation.
+_CHECKPOINT_REASONS = {
+    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
+    "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
+    "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",
+}
 
 
 # A run parked on a checkpoint, as a question in the approvals inbox. Only the
@@ -533,7 +609,9 @@ def record_checkpoint(
         checkpoint_id=raised.checkpoint_id,
         title=raised.question[:120] or raised.checkpoint_class,
         description=raised.question,
-        reason=f"The run parked on a {raised.checkpoint_class} checkpoint",
+        reason=_CHECKPOINT_REASONS.get(
+            raised.checkpoint_class, "The run is waiting on your answer."
+        ),
         parameters={
             "checkpoint_class": raised.checkpoint_class,
             "run_kind": raised.run_kind,

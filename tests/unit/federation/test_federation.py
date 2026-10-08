@@ -718,3 +718,56 @@ async def test_fetch_outage_logs_error_once_then_a_recovery_line(monkeypatch, ca
         await tick(5)
     assert [r.levelname for r in caplog.records] == ["INFO"]
     assert "recovered after 5 failure(s)" in caplog.records[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/federation/sources — lag_seconds / quiet
+# ---------------------------------------------------------------------------
+
+
+def _row(source_id: str, **over: Any) -> Dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "enabled": True,
+        "interval_seconds": 300,
+        "cursor": {},
+        "last_success_at": None,
+        "consecutive_errors": 0,
+        **over,
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_sources_merges_lag_and_quiet(monkeypatch):
+    from services.api.routers import federation as fed_router
+
+    adapters = {n: _FakeAdapter() for n in ("healthy", "stale", "never", "unseeded")}
+    for name, adapter in adapters.items():
+        adapter.name = name
+    monkeypatch.setattr(fed_router.fed_registry, "list_adapters", lambda: list(adapters.values()))
+    monkeypatch.setattr(fed_router.fed_registry, "get_adapter", adapters.get)
+    monkeypatch.setattr(
+        fed_router.fed_store,
+        "list_sources",
+        lambda: [_row("healthy"), _row("stale"), _row("never")],
+    )
+    monkeypatch.setattr(
+        fed_router.fed_store, "get_global_settings", lambda: {"enabled": True}
+    )
+    monkeypatch.setattr(
+        fed_router,
+        "source_collection_lag",
+        lambda: [
+            {"source_id": "healthy", "lag_seconds": 42.0, "quiet": False},
+            {"source_id": "stale", "lag_seconds": 900.0, "quiet": True},
+            {"source_id": "never", "lag_seconds": None, "quiet": True},
+        ],
+    )
+
+    out = {s["source_id"]: s for s in (await fed_router.list_sources())["sources"]}
+
+    assert (out["healthy"]["lag_seconds"], out["healthy"]["quiet"]) == (42.0, False)
+    assert (out["stale"]["lag_seconds"], out["stale"]["quiet"]) == (900.0, True)
+    assert (out["never"]["lag_seconds"], out["never"]["quiet"]) == (None, True)
+    # Synthetic row for an adapter with no DB row yet.
+    assert (out["unseeded"]["lag_seconds"], out["unseeded"]["quiet"]) == (None, True)

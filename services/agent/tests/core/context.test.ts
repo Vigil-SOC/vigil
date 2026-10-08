@@ -334,11 +334,27 @@ describe("the current question is never folded away", () => {
     }
   });
 
+  // The measured case: the brief-bearing prompt (about 14,000 with the brief at its cap)
+  // and the 136-tool catalogue a stack with its default MCP servers declares (about 92,000).
+  it("answers a later question beside a capped brief and the measured catalogue", () => {
+    const prefix = prefixOf("s".repeat(14_000), catalogue(136, 600), []);
+    const question = "Which evidence supports the second explanation?";
+    const held: Message[] = [
+      { role: "assistant", content: "a1", tool_calls: [] },
+      ...Array.from({ length: 6 }, (_, at) => ({ role: at % 2 === 0 ? "user" : "assistant", content: `turn ${at} ${"x".repeat(3_000)}`, ...(at % 2 === 0 ? {} : { tool_calls: [] }) }) as Message),
+      { role: "user", content: question },
+    ];
+    const { messages } = assemble(prefix, "Q1", held, "", note);
+
+    expect(messages.at(-1)).toEqual({ role: "user", content: question });
+    expect(weight(prefix, messages)).toBeLessThanOrEqual(DEFAULT_FOLD.max_chars);
+  });
+
   it("says so when the prefix leaves no room for the question", () => {
     const held: Message[] = [{ role: "assistant", content: "a1", tool_calls: [] }, { role: "user", content: "q".repeat(5_000) }];
     const policy: FoldPolicy = { head: 1, tail: 1, max_messages: 40, max_chars: 4_000 };
 
-    expect(() => assemble(prefixOf("s", [], []), "Q1", held, "", note, policy)).toThrow(/no room for the current question/);
+    expect(() => assemble(prefixOf("s", [], []), "Q1", held, "", note, policy)).toThrow(/more than Ask can read at once/);
     // The same weight as the task does not throw: a task keeps today's behaviour.
     expect(() => assemble(prefixOf("s", [], []), "q".repeat(5_000), [], "", note, policy)).not.toThrow();
   });
