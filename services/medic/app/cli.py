@@ -31,9 +31,9 @@ from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
     TICK_S,
     Medic,
-    load_dev_rules,
-    load_dev_suppression,
     load_engine_state,
+    load_pack_rules,
+    load_pack_suppression,
     save_engine_state,
 )
 from services.medic.redact import install_log_redaction
@@ -362,7 +362,7 @@ def _run(
 
 
 def _build(writer, data_dir: Path, shape: str, sensors, clock) -> Medic:
-    rules, suppression = load_dev_rules(), load_dev_suppression()
+    rules, suppression = load_pack_rules(), load_pack_suppression()
     state = load_engine_state(data_dir)
     last_tick = (state or {}).get("last_tick")
     if isinstance(last_tick, int | float) and last_tick > clock.wall() + TICK_S:

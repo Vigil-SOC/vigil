@@ -1,0 +1,27 @@
+# P-1.i · agent-serve's /readyz is Postgres SELECT 1 only (services/agent/serve.ts:
+# 326-331). It answers 503 when serve can't reach Postgres, and the connection is
+# refused when the process has died (an unhandled rejection on a Postgres error
+# exits it, B3-70). Either way projections, replays and chat turns fail, and the
+# daemon stops reconciling run status from the ledger. Before F7c a down
+# agent-serve showed only as watcher.sensor-blind (S10). Read where the sensor is
+# configured: Compose by default, start_sh and Helm when the address is set.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-serve-not-ready
+title: The agent service (agent-serve) is not ready
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1.i]}
+lane: 3
+detection: event
+signals:
+  ready: {sample: {signal: agent_serve_readyz, key: ready}}
+when: {fn: latest, signal: ready, op: "==", value: false}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: agent-serve has been down or unable to reach its database for 2 minutes, so run status, replays and chat turns fail.
+  fix: >-
+    Check that agent-serve is running and that it can reach Postgres with its
+    configured credentials. If Postgres is healthy and agent-serve keeps
+    restarting or stays not ready, send this incident to DeepTempo Support with
+    the evidence report and the agent-serve log.

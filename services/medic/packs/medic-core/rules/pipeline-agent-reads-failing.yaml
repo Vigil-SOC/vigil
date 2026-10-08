@@ -1,0 +1,38 @@
+# P-1.c · soc-daemon can't read run projections from agent-serve (unreachable,
+# wrong AGENT_URL, or AGENT_INTERNAL_TOKEN missing or different), so run status
+# is never reconciled from the ledger and runs sit in "executing". The read
+# helper logs ERROR once when reads start failing and INFO when they recover, per
+# process (core/agents/projections.py:44-75). A restarted daemon never logs the
+# recovery line, so its start line clears the latch too (as F7b-4); if the fault
+# persists the new process logs the ERROR again.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.agent-reads-failing
+title: soc-daemon can't read run progress from agent-serve
+revision: 1
+fault: {class: pipeline, mode: P-1, causes: [P-1.c]}
+lane: 2
+detection: event
+signals:
+  failing:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: core.agents.projections}
+      level: [ERROR]
+      template: {re2: '^(could not read the %s for %s: %s|%s for %s answered %s)$'}
+  recovered:
+    log:
+      signal: log_soc_daemon
+      logger: {re2: '^(core\.agents\.projections|__main__)$'}
+      level: [INFO]
+      template: {re2: '^(agent service reads recovered|SOC Daemon initialized)$'}
+when: {fn: latch, set: failing, clear: recovered}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: soc-daemon can't read run progress from agent-serve, so investigation runs stay "executing" and are never closed.
+  fix: >-
+    On soc-daemon set AGENT_URL to agent-serve's address (Compose:
+    http://agent-serve:6989) and AGENT_INTERNAL_TOKEN to the same value
+    agent-serve uses, then restart soc-daemon. If both are right and agent-serve
+    is up, send this incident to DeepTempo Support with the evidence report.
