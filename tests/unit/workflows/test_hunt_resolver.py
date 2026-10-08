@@ -227,6 +227,7 @@ class TestRefusals:
     def test_resolves_a_definition_that_ships_no_belief(self):
         class _Empty:
             metadata: dict = {}
+            phases: list = []
             name = "x"
             description = ""
             use_case = ""
@@ -608,3 +609,30 @@ class TestTheCapabilityReport:
         # A fresh registry knows nothing of the server; refresh_from_client fills it.
         registry = MCPRegistry()
         assert "telemetry_search" in capability_report(registry)["bound"]
+
+
+class TestATurnedOffPhaseAgent:
+    # Compose refuses a turned-off phase agent, so a hunt that names one must too:
+    # "turned off" means one thing across workflow kinds.
+    @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
+    def test_refuses_the_run_and_says_which_agent(self, monkeypatch, workflow_id):
+        monkeypatch.setattr(
+            "core.workflows.playbook_resolver.disabled_agent_ids",
+            lambda: {"threat_hunter"},
+        )
+        with pytest.raises(UnknownPlaybook, match="threat_hunter is turned off"):
+            resolve_hunt(workflow_id)
+
+    @pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
+    def test_resolves_with_nothing_turned_off(self, monkeypatch, workflow_id):
+        monkeypatch.setattr(
+            "core.workflows.playbook_resolver.disabled_agent_ids", lambda: set()
+        )
+        assert resolve_hunt(workflow_id)
+
+    def test_ignores_an_agent_turned_off_that_no_phase_names(self, monkeypatch):
+        monkeypatch.setattr(
+            "core.workflows.playbook_resolver.disabled_agent_ids",
+            lambda: {"reporter"},
+        )
+        assert resolve_hunt("threat-hunt")
