@@ -200,6 +200,11 @@
   gap: 12px;
 }
 
+/* first run: decisions that do exist sit under the checklist, not against it */
+.home-screen .home-first-grid + .home-cards {
+  margin-top: 14px;
+}
+
 .home-screen .home-card,
 .home-screen .home-more {
   min-width: 0;
