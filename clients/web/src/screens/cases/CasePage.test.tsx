@@ -135,11 +135,11 @@ function renderCase(id: string) {
 }
 
 /** The case page alone, as the drawer renders it. */
-function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void } = {}) {
+function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () => void; seed?: string | null; onSeedConsumed?: () => void } = {}) {
   const ui = (caseId: string) => (
     <MemoryRouter>
       <ToastProvider>
-        <CasesDetail id={caseId} onBack={props.onBack ?? vi.fn()} onExpand={props.onExpand} pageKey="cases" />
+        <CasesDetail id={caseId} onBack={props.onBack ?? vi.fn()} onExpand={props.onExpand} pageKey="cases" seed={props.seed} onSeedConsumed={props.onSeedConsumed} />
       </ToastProvider>
     </MemoryRouter>
   )
@@ -729,6 +729,26 @@ describe('case page', () => {
       role: 'user',
       content: 'Investigate case case-hunt: "Hunt case" — high priority, status executing, 2 linked findings.\n\nWhy?\nbecause the login failed',
     })
+  })
+
+  it('sends an incoming seed as typed on the case thread, then clears it', async () => {
+    testState.cases = [{
+      case_id: 'case-hunt',
+      title: 'Hunt case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: ['f1'],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [],
+    }]
+    const onSeedConsumed = vi.fn()
+    renderDetail('case-hunt', { seed: 'what happened on web-01?', onSeedConsumed })
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.case_id).toBe('case-hunt')
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: 'what happened on web-01?' })
+    expect(onSeedConsumed).toHaveBeenCalled()
   })
 
   it('chips a hunt evidence id and opens that row, and drops the thread when the case changes', async () => {

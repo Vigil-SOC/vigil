@@ -100,7 +100,7 @@ function useRunKinds(): string[] {
 }
 
 
-export default function CasesScreen({ setViewFull, openCase }: ConsoleScreenProps) {
+export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
@@ -112,7 +112,7 @@ export default function CasesScreen({ setViewFull, openCase }: ConsoleScreenProp
   }, [selected, setViewFull])
 
   return selected ? (
-    <CasesDetail id={selected} onBack={backToList} pageKey="cases" />
+    <CasesDetail id={selected} onBack={backToList} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
   ) : (
     <CasesTable filters={filters} onFilters={setFilters} onSelect={openCase} />
   )
@@ -891,6 +891,8 @@ export function CasesDetail({
   onBack,
   onExpand,
   pageKey,
+  seed,
+  onSeedConsumed,
 }: {
   id: string
   /** Leave the case: back to the list, or close the drawer. */
@@ -898,6 +900,9 @@ export function CasesDetail({
   /** Set only in the drawer. */
   onExpand?: () => void
   pageKey: string
+  /** Command-bar text for this case's composer. */
+  seed?: string | null
+  onSeedConsumed?: () => void
 }) {
   const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail, refresh } =
     useCaseDetail(id)
@@ -920,6 +925,8 @@ export function CasesDetail({
         phase={phase}
         error={error}
         pageKey={pageKey}
+        seed={seed}
+        onSeedConsumed={onSeedConsumed}
         onBack={onBack}
         onExpand={onExpand}
         onEdit={() => setAction('edit')}

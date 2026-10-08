@@ -79,11 +79,14 @@ export default function CommandBar({
   onOpenChat,
   onOpenCase,
   onGo,
+  caseOpen = false,
 }: {
   boards: BoardLink[]
   onOpenChat: (prompt?: string) => void
   onOpenCase: (caseId: string) => void
   onGo: (screen: string) => void
+  /** A case is open, so asking goes to its composer instead of the dock. */
+  caseOpen?: boolean
 }) {
   const { user } = useAuth()
   const { notify } = useToast()
@@ -521,6 +524,12 @@ export default function CommandBar({
               )}
             </div>
           )}
+          <div className="vg-command-foot">
+            <span><kbd>↑↓</kbd> move</span>
+            <span><kbd>Enter</kbd> open</span>
+            <span><kbd>Tab</kbd> {caseOpen ? 'ask on this case' : 'ask Vigil'}</span>
+            <span><kbd>/</kbd> commands</span>
+          </div>
         </div>
       )}
     </div>
