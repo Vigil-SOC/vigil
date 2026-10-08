@@ -277,6 +277,139 @@ def test_catalog_entry_is_not_testable(client, saved):
     assert mcp.calls == []
 
 
+def _connector_probe(
+    monkeypatch, *, manifest, session=None, secret="s3cret", url="https://loglm.example"
+):
+    """Stub the connector's HTTP surface; returns the requests it saw."""
+    import httpx
+
+    from core.integrations.extension import session_service as ext
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.url.path == "/manifest.json":
+            return manifest(request) if callable(manifest) else httpx.Response(manifest)
+        if callable(session):
+            return session(request)
+        return httpx.Response(session, json={"token": "t"})
+
+    transport = httpx.MockTransport(handler)
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        ext.httpx, "AsyncClient", lambda **kw: real(transport=transport, **kw)
+    )
+    monkeypatch.setattr(
+        ext,
+        "get_config_service",
+        lambda: type(
+            "C",
+            (),
+            {
+                "get_integration_config": lambda self, i: {
+                    "enabled": False,
+                    "config": {"connectorUrl": url},
+                }
+            },
+        )(),
+    )
+    monkeypatch.setattr(ext, "_mint_secret", lambda _id: secret)
+    return seen
+
+
+def _loglm_post(client, saved):
+    return _post(
+        client,
+        "loglm",
+        _bridge({"loglm": {"connectorUrl": "https://loglm.example"}}),
+        _Client({}),
+        saved,
+    )
+
+
+def test_connector_probe_succeeds_before_the_integration_is_enabled(
+    client, saved, monkeypatch
+):
+    seen = _connector_probe(monkeypatch, manifest=200, session=200)
+    response = _loglm_post(client, saved)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert "agent access token was not checked" in body["message"]
+    assert seen == [("GET", "/manifest.json"), ("POST", "/session")]
+    assert saved.tests[0]["success"] is True
+    assert saved.tests[0]["integration_id"] == "loglm"
+
+
+def test_connector_probe_without_secret_skips_session(client, saved, monkeypatch):
+    seen = _connector_probe(monkeypatch, manifest=200, secret=None)
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is True
+    assert "sign-in was not checked" in body["message"]
+    assert seen == [("GET", "/manifest.json")]
+
+
+def test_connector_probe_bad_session_secret_fails(client, saved, monkeypatch):
+    _connector_probe(monkeypatch, manifest=200, session=401)
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is False
+    assert "401" in body["message"]
+    assert saved.tests[0]["success"] is False
+    assert "401" in saved.tests[0]["error"]
+
+
+def test_connector_probe_unreachable_fails(client, saved, monkeypatch):
+    import httpx
+
+    def refuse(request):
+        raise httpx.ConnectError("refused")
+
+    _connector_probe(monkeypatch, manifest=refuse)
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is False
+    assert "Could not reach the connector" in body["message"]
+    assert saved.tests[0]["success"] is False
+
+
+def test_connector_probe_manifest_error_fails(client, saved, monkeypatch):
+    seen = _connector_probe(monkeypatch, manifest=404)
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is False
+    assert "404" in body["message"]
+    assert seen == [("GET", "/manifest.json")]
+
+
+def test_connector_probe_unreadable_session_reply_fails(client, saved, monkeypatch):
+    import httpx
+
+    _connector_probe(
+        monkeypatch,
+        manifest=200,
+        session=lambda _request: httpx.Response(200, text="<html>login</html>"),
+    )
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is False
+    assert "unreadable session response" in body["message"]
+    assert saved.tests[0]["success"] is False
+
+
+def test_connector_probe_refuses_untrusted_url(client, saved, monkeypatch):
+    seen = _connector_probe(monkeypatch, manifest=200, url="http://loglm.internal")
+    body = _loglm_post(client, saved).json()
+
+    assert body["success"] is False
+    assert "not a trusted origin" in body["message"]
+    assert seen == []  # nothing was fetched
+    assert saved.tests[0]["success"] is False
+
+
 def test_unconfigured_descriptor_is_400(client, saved):
     mcp = _Client({"virustotal": (True, None, None)}, enabled=("virustotal",))
     response = _post(client, "virustotal", _bridge({}), mcp, saved)

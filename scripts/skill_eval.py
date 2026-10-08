@@ -22,24 +22,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.agents.prompts import render_base_prompt  # noqa: E402
 from core.config import get_settings  # noqa: E402
 from core.llm.router.router import LLMRouter, ProviderSpec  # noqa: E402
-from core.skills.skill_library import (  # noqa: E402
-    LIBRARY_ROOT,
-    Skill,
-    as_user_turn,
-    load_skills,
-    read_skill,
-)
+from core.skills.skill_eval import run_cases  # noqa: E402
+from core.skills.skill_library import LIBRARY_ROOT, Skill, load_skills  # noqa: E402
 
 # The env var a provider's key lives in; None for a keyless provider. Anything
 # not listed follows the <PROVIDER>_API_KEY pattern Bifrost's config uses.
@@ -48,37 +41,6 @@ KEY_ENV: Dict[str, Optional[str]] = {"ollama": None}
 
 def key_env_name(provider: str) -> Optional[str]:
     return KEY_ENV.get(provider, f"{provider.upper()}_API_KEY")
-
-
-def grade(content: str, expect: Sequence[str]) -> List[str]:
-    """The expected strings missing from the answer; empty means the case passed."""
-    return [s for s in expect if s not in content]
-
-
-def load_cases(skill: Skill) -> List[Dict[str, Any]]:
-    return json.loads((skill.path / "evals" / "cases.json").read_text(encoding="utf-8"))
-
-
-# The eval declares no tools, so the base prompt is rendered without the
-# read_skill grant and the body is inlined with a note saying so: a model told
-# to call a tool it does not hold answers with no content at all (Gemini
-# returns MALFORMED_FUNCTION_CALL), and the base prompt's static tool list
-# still tempts it to stop mid-turn on a lookup.
-_INLINE_NOTE = (
-    "The SKILL.md body of `{name}` follows, already read for you. No tool is "
-    "callable in this turn: answer in full from the input alone, following "
-    "the skill.\n\n"
-)
-
-
-def system_prompt_for(skill: Skill, role: str, root: Path) -> str:
-    body = read_skill(skill.name, roots=[root])["content"]
-    return (
-        render_base_prompt(role, tools=())
-        + "\n\n"
-        + _INLINE_NOTE.format(name=skill.name)
-        + body
-    )
 
 
 async def run_skill(
@@ -91,23 +53,23 @@ async def run_skill(
     max_tokens: int,
 ) -> Tuple[int, int]:
     """Run one skill's cases; returns (passed, total) and prints each failure."""
-    system_prompt = system_prompt_for(skill, role, root)
-    cases = load_cases(skill)
-    passed = 0
-    for case in cases:
-        result = await router.dispatch(
-            provider=provider,
-            messages=[{"role": "user", "content": as_user_turn(case["input"])}],
-            system_prompt=system_prompt,
-            max_tokens=max_tokens,
-        )
-        missing = grade(result.get("content") or "", case["expect"])
-        if missing:
-            print(f"  FAIL {skill.name} / {case['name']}: missing {missing}")
-        else:
-            passed += 1
-    print(f"{skill.name}: {passed}/{len(cases)} passed")
-    return passed, len(cases)
+    # One case at a time, as the CLI always has: a rate limit or a mid-run
+    # failure behaves as before.
+    results = await run_cases(
+        router,
+        provider,
+        skill,
+        role=role,
+        root=root,
+        max_tokens=max_tokens,
+        sequential=True,
+    )
+    for r in results:
+        if not r.passed:
+            print(f"  FAIL {skill.name} / {r.name}: missing {r.missing}")
+    passed = sum(r.passed for r in results)
+    print(f"{skill.name}: {passed}/{len(results)} passed")
+    return passed, len(results)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:

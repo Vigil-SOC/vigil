@@ -168,6 +168,10 @@
   background: var(--bg3);
 }
 
+.vg-command-later {
+  display: block;
+}
+
 .vg-command-row:disabled {
   opacity: 0.45;
   cursor: default;
@@ -341,6 +345,7 @@
 .vg-case-drawer {
   width: 75%;
   height: 100%;
+  container-type: size; /* the case composer caps its thread at 40cqh */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -498,10 +503,17 @@ input.vg-side-input {
   border-top: 1px solid var(--ln0);
 }
 
+.vg-skill-foot-end {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .vg-side-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   height: 34px;
   padding: 0 13px;
   box-sizing: border-box;
@@ -708,6 +720,59 @@ select.vg-side-input {
 .vg-side-err {
   font-size: 12.5px;
   color: var(--crit);
+}
+
+/* Test results: not on the SkillEditor board, built from the field and file-row styles. */
+.vg-skill-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vg-skill-spin {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--ln1);
+  border-top-color: var(--ac);
+  border-radius: 50%;
+  animation: soc-spin 0.7s linear infinite;
+}
+
+.vg-skill-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--tx0);
+}
+
+.vg-skill-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.vg-skill-result-mark {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ok);
+}
+
+.vg-skill-result[data-passed='false'] .vg-skill-result-mark {
+  color: var(--crit);
+}
+
+.vg-skill-missing {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
 }
 
 .vg-header-end {
