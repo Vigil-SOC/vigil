@@ -1,6 +1,7 @@
-# I-3.e · the processor started without its database service: it logs "Stored
-# finding" but stores nothing. Set by the start-up failure (an f-string, so
-# untrusted), cleared by the next start that connects.
+# I-3.e · the processor started without its database service, so every finding
+# takes the drop path (processor.py:316-323) and federation records each tick as a
+# failure. Set by the start-up failure (an f-string, so untrusted), cleared by the
+# next start that connects (each start logs exactly one of the two).
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.processor-without-database
