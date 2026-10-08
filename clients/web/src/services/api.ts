@@ -698,8 +698,9 @@ export const configApi = {
     stale_threshold: number
     workdir_base: string
   }) => {
-    const rest = { ...data }
-    delete (rest as { profiles?: unknown }).profiles
+    // GET also carries profiles, defaults and bounds; none are stored
+    const rest: Record<string, unknown> = { ...data }
+    for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
 
@@ -1085,10 +1086,10 @@ export const workflowApi = {
       timeout: LLM_TIMEOUT,
     })
   },
-  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
-  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered, each
+  // with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
-    api.post('/workflows/threat-hunt/coverage', body),
+    api.post('/workflows/threat-hunt/coverage', body, { timeout: LLM_TIMEOUT }),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving

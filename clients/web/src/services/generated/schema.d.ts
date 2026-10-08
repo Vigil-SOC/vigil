@@ -8264,6 +8264,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/runs/{run_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Findings */
+        post: operations["post_internal_runs_run_id_findings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/runs/{run_id}/handoff": {
         parameters: {
             query?: never;
@@ -9686,6 +9703,11 @@ export interface components {
              * @default
              */
             run_kind: string;
+        };
+        /** CitedFindings */
+        CitedFindings: {
+            /** Finding Ids */
+            finding_ids?: string[];
         };
         /**
          * ClaudeConfig
@@ -11135,12 +11157,19 @@ export interface components {
         };
         /**
          * OrchestratorConfigResponse
-         * @description Flat saved settings plus the profiles the Settings cards render.
-         *
-         *     ``profiles`` is not part of the stored object. POST takes
-         *     ``OrchestratorSettingsConfig`` and ignores the field.
+         * @description Flat saved settings, the profiles the Settings cards render, and the
+         *     model's ``defaults`` and ``bounds``. Only the flat keys are stored; POST takes
+         *     ``OrchestratorSettingsConfig`` and ignores the rest.
          */
         OrchestratorConfigResponse: {
+            /** Bounds */
+            bounds: {
+                [key: string]: components["schemas"]["OrchestratorFieldBounds"];
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: boolean | number | string;
+            };
             /**
              * Dry Run
              * @default false
@@ -11194,8 +11223,24 @@ export interface components {
             workdir_base: string;
         };
         /**
+         * OrchestratorFieldBounds
+         * @description Inclusive range and scrub step of one numeric setting.
+         */
+        OrchestratorFieldBounds: {
+            /** Max */
+            max: number;
+            /** Min */
+            min: number;
+            /** Step */
+            step: number;
+        };
+        /**
          * OrchestratorSettingsConfig
          * @description Orchestrator configuration for autonomous investigations.
+         *
+         *     The ``ge``/``le`` bounds are the one source: POST enforces them and GET
+         *     serves them (with ``step``) as ``bounds``. 0 is not "unlimited" to the
+         *     daemon (``_in_flight() >= max_concurrent_agents``), it is the tightest cap.
          */
         OrchestratorSettingsConfig: {
             /**
@@ -26899,6 +26944,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Decisions"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_findings: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CitedFindings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
