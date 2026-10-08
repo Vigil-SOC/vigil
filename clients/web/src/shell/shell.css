@@ -974,9 +974,8 @@ select.vg-side-input {
 
 .console-tour-ring {
   position: fixed;
-  border-radius: 10px;
-  box-shadow: 0 0 0 9999px var(--spot);
-  outline: 2px solid var(--ac);
+  border-radius: var(--radius-button);
+  box-shadow: 0 0 0 3px var(--ac), 0 0 0 9999px var(--spot);
   pointer-events: none;
 }
 
