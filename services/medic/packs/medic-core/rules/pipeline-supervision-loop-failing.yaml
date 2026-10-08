@@ -1,6 +1,8 @@
 # P-2.a · the orchestrator's supervision loop raises every tick (30 s at the
 # default loop_interval 60), so no stale or cost kill runs. The line is an
 # f-string with the exception text (orchestrator.py:1194), so untrusted.
+# ≥ 10 in 10 min assumes ORCHESTRATOR_LOOP_INTERVAL ≤ 120 s (default 60).
+# Outsider: no.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.supervision-loop-failing

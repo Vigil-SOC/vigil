@@ -4,6 +4,7 @@
 # the last 30 min, yet the process answering /health has been up for over 40 min
 # (uptime_seconds is the answering process's age). Trusted, 2 signals, one a
 # sample: passes the lane-1 gate (ENGINE_API §5). runbook: none (G4).
+# Outsider: no (a constant catalog line plus the daemon's own uptime).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.stale-daemon-on-health-port

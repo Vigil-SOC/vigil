@@ -1,10 +1,13 @@
 # P-2.c · every orchestrator slot is held (parked runs waiting for an answer can
 # hold one for up to 7 days, by design: #1550) while intake work queues. The
 # orchestrator logs nothing when it's at capacity (orchestrator.py:638,1067), and
-# the rule language can't compare two signals, so: work queued, runs in flight,
-# and none created or completed for 2 h. requires: D6 orchestrator_status
-# {enabled, queued}, daemon_status.orchestrator {active_agents,
+# the rule language can't compare two signals. In-flight > 0 isn't enough (a
+# parked scheduled hunt blocks only the next hunt: SCHEDULE_RUN_CEILING = 1), so
+# the rule needs free slots = max_concurrent_agents - _in_flight() (waiting
+# approvals included). requires: D6 orchestrator_status {enabled, queued},
+# daemon_status.orchestrator {free_slots (D2 ask: expose it in /status),
 # investigations_created, investigations_completed}.
+# Outsider: no (an outsider's findings fill the queue; the slots are held by runs).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.orchestrator-slots-held
@@ -16,14 +19,14 @@ detection: absence
 signals:
   enabled:   {sample: {signal: orchestrator_status, key: enabled}}
   queued:    {sample: {signal: orchestrator_status, key: queued}}
-  in_flight: {sample: {signal: daemon_status.orchestrator, key: active_agents}}
+  free:      {sample: {signal: daemon_status.orchestrator, key: free_slots}}
   created:   {sample: {signal: daemon_status.orchestrator, key: investigations_created}}
   completed: {sample: {signal: daemon_status.orchestrator, key: investigations_completed}}
 when:
   all:
     - {fn: latest, signal: enabled, op: "==", value: true}
     - {fn: latest, signal: queued, op: ">", value: 0}
-    - {fn: latest, signal: in_flight, op: ">", value: 0}
+    - {fn: latest, signal: free, op: "<=", value: 0}
     - {fn: increase, signal: created, window: {param: stalled_for}, op: "==", value: 0}
     - {fn: increase, signal: completed, window: {param: stalled_for}, op: "==", value: 0}
 for: 15m

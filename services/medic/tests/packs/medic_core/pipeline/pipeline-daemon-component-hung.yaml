@@ -25,7 +25,7 @@ cases:
       - {at: +15m, rule: pipeline.daemon-component-hung, eval: true, state: pending}
       - {at: +20m, rule: pipeline.daemon-component-hung, eval: true, state: firing, incident: A}
     incidents:
-      A: {rule: pipeline.daemon-component-hung, active_since: +15m, opened_at: +20m, resolving_since: null, resolved_at: null, routed_at: +20m}
+      A: {rule: pipeline.daemon-component-hung, active_since: +15m, opened_at: +20m, resolving_since: null, resolved_at: null, routed_at: +25m}
   - kind: fires
     id: v02-fires-when-the-scheduler-runs-nothing
     title: One scheduled task hangs; health_check (every 300 s) never runs again
@@ -41,7 +41,7 @@ cases:
       - {at: +20m, rule: pipeline.daemon-component-hung, eval: true, state: pending}
       - {at: +25m, rule: pipeline.daemon-component-hung, eval: true, state: firing, incident: A}
     incidents:
-      A: {rule: pipeline.daemon-component-hung, active_since: +20m, opened_at: +25m, resolving_since: null, resolved_at: null, routed_at: +25m}
+      A: {rule: pipeline.daemon-component-hung, active_since: +20m, opened_at: +25m, resolving_since: null, resolved_at: null, routed_at: +30m}
   - kind: silent
     id: v03-silent-while-both-do-work-or-nothing-arrives
     title: Both components work; later no findings arrive, so a flat processor is expected

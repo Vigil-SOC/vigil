@@ -3,13 +3,14 @@ defaults:
   sensors:
     - {id: http.daemon-status, covers: [daemon_status.processor], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
   types:
-    daemon_status.processor: {processed: counter, triaged: counter}
+    daemon_status.processor: {processed: counter, triaged: counter, auto_triage_enabled: bool}
 cases:
   - kind: fires
     id: v01-fires-when-nothing-is-triaged
     title: Findings are processed every 2 min; triage completes none
     end: +50m
     series:
+      - {signal: daemon_status.processor, key: auto_triage_enabled, steps: [[+0s, true]]}
       - {signal: daemon_status.processor, key: processed, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
       - {signal: daemon_status.processor, key: triaged, steps: [[+0s, 80]]}
     expect:
@@ -23,8 +24,21 @@ cases:
     title: Each processed finding is triaged
     end: +50m
     series:
+      - {signal: daemon_status.processor, key: auto_triage_enabled, steps: [[+0s, true]]}
       - {signal: daemon_status.processor, key: processed, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
       - {signal: daemon_status.processor, key: triaged, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+    expect:
+      - {at: +30m, rule: pipeline.triage-stalled, eval: false, state: inactive}
+      - {at: +50m, rule: pipeline.triage-stalled, eval: false, state: inactive}
+    incidents: {}
+  - kind: silent
+    id: v03-silent-when-auto-triage-is-off
+    title: The operator turned DAEMON_AUTO_TRIAGE off; nothing is triaged by design
+    end: +50m
+    series:
+      - {signal: daemon_status.processor, key: auto_triage_enabled, steps: [[+0s, false]]}
+      - {signal: daemon_status.processor, key: processed, steps: [[+0s, 100], [+2m, 101], [+4m, 102], [+6m, 103], [+8m, 104], [+10m, 105], [+12m, 106], [+14m, 107], [+16m, 108], [+18m, 109], [+20m, 110], [+22m, 111], [+24m, 112], [+26m, 113], [+28m, 114], [+30m, 115]]}
+      - {signal: daemon_status.processor, key: triaged, steps: [[+0s, 80]]}
     expect:
       - {at: +30m, rule: pipeline.triage-stalled, eval: false, state: inactive}
       - {at: +50m, rule: pipeline.triage-stalled, eval: false, state: inactive}

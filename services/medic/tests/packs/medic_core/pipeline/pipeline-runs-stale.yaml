@@ -2,14 +2,17 @@ rule: pipeline.runs-stale
 defaults:
   sensors:
     - {id: sql.investigations-stale, covers: [sql_investigations_stale], interval: 60s, service: postgres, states: [[+0s, ok]]}
+    - {id: http.orchestrator-status, covers: [orchestrator_status], interval: 60s, service: backend, states: [[+0s, ok]]}
   types:
     sql_investigations_stale: {stale_executing: gauge, oldest_last_activity_at: timestamp, oldest_never_active_since: timestamp}
+    orchestrator_status: {enabled: bool}
 cases:
   - kind: fires
     id: v01-fires-on-a-run-never-picked-up
     title: A run started 10 min before Medic's first read was never picked up (last_activity_at NULL)
     end: +45m
     series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, true]]}
       - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1]]}
       - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, null]]}
       - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, '2026-10-07T23:50:00Z']]}
@@ -24,6 +27,7 @@ cases:
     title: A run last moved 40 min ago, until it is cancelled
     end: +50m
     series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, true]]}
       - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1], [+15m, 0]]}
       - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, '2026-10-07T23:20:00Z'], [+15m, null]]}
       - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, null]]}
@@ -39,10 +43,24 @@ cases:
     title: Runs are briefly idle (over 5 min, under 30) and none is waiting to be picked up
     end: +45m
     series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, true]]}
       - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1]]}
       - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, '2026-10-07T23:50:00Z'], [+15m, '2026-10-08T00:10:00Z'], [+30m, '2026-10-08T00:25:00Z']]}
       - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, null]]}
     expect:
       - {at: +10m, rule: pipeline.runs-stale, eval: false, state: inactive}
+      - {at: +45m, rule: pipeline.runs-stale, eval: false, state: inactive}
+    incidents: {}
+  - kind: silent
+    id: v04-silent-when-the-orchestrator-is-off
+    title: The orchestrator is disabled with a run in flight; its row stays executing by design
+    end: +45m
+    series:
+      - {signal: orchestrator_status, key: enabled, steps: [[+0s, false]]}
+      - {signal: sql_investigations_stale, key: stale_executing, steps: [[+0s, 1]]}
+      - {signal: sql_investigations_stale, key: oldest_last_activity_at, steps: [[+0s, null]]}
+      - {signal: sql_investigations_stale, key: oldest_never_active_since, steps: [[+0s, '2026-10-07T23:50:00Z']]}
+    expect:
+      - {at: +25m, rule: pipeline.runs-stale, eval: false, state: inactive}
       - {at: +45m, rule: pipeline.runs-stale, eval: false, state: inactive}
     incidents: {}

@@ -3,6 +3,8 @@
 # can't persist (549) all add to /status processor.errors. LLM failures count
 # too; suppression.yaml makes this a child of class-2 incidents. requires: D6
 # daemon_status.processor errors.
+# Outsider: partly; malformed pushed findings (a valid webhook token or a
+# monitored SIEM) raise errors. Lane 3, ≥ 10 in 15 min.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.processor-errors

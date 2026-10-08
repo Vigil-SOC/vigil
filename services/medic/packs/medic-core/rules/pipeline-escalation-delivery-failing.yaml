@@ -1,6 +1,7 @@
 # P-5.a · a Slack or PagerDuty escalation failed, but the responder still counts
 # it as escalated (responder.py:198, 274-321). All four failure lines are
 # f-strings carrying the provider's reply, so untrusted.
+# Outsider: no (the reply text is Slack's or PagerDuty's).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.escalation-delivery-failing

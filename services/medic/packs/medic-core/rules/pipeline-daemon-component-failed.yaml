@@ -4,6 +4,7 @@
 # reads the per-component state, not the overall status. requires: D6
 # daemon_health components.<name> as an enum with "failed: <Exc>" folded to
 # "failed" (the raw value isn't label-safe).
+# Outsider: no.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.daemon-component-failed
