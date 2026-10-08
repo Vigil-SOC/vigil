@@ -2998,11 +2998,11 @@ const SKILL_GRANT_INFO = 'The grant offers the whole library.'
 const SKILL_USAGE_INFO = 'Skill reads are not recorded yet.'
 
 // The card's usage line; swap this one element when skill reads are recorded.
-function SkillUsage() {
+function SkillUsage({ align }: { align: 'start' | 'end' }) {
   return (
     <span className="sk-usage">
       Used by · Not measured yet
-      <InfoTip label={SKILL_USAGE_INFO} text={SKILL_USAGE_INFO} align="start" />
+      <InfoTip label={SKILL_USAGE_INFO} text={SKILL_USAGE_INFO} align={align} />
     </span>
   )
 }
@@ -3052,7 +3052,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-x-5 gap-y-[26px] px-[22px] pt-4 pb-24 [grid-template-columns:repeat(4,minmax(0,1fr))]">
-          {rows.map((s) => (
+          {rows.map((s, i) => (
             <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
               <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
                 <span className="sk-folder" aria-hidden="true">
@@ -3067,7 +3067,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
-                <SkillUsage />
+                {/* the last of the four columns opens its popover leftwards to stay on screen */}
+                <SkillUsage align={i % 4 === 3 ? 'end' : 'start'} />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
