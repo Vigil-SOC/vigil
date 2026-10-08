@@ -325,3 +325,19 @@ def test_an_unknown_id_is_none():
     assert (
         hunt_preflight.preflight(WorkflowsService(), None, "no-such-workflow") is None
     )
+
+
+@pytest.mark.parametrize("workflow_id", ["threat-hunt", "shadow-adjudication"])
+def test_a_turned_off_phase_agent_is_noted_before_the_run_starts(
+    monkeypatch, workflow_id
+):
+    off = {"threat_hunter"}
+    monkeypatch.setattr(
+        "core.workflows.playbook_resolver.disabled_agent_ids", lambda: off
+    )
+    report = _file(workflow_id)
+    assert "phase names agent threat_hunter is turned off" in report["roles_note"]
+    assert report["roles"]["lead"]  # same roles as ever; the note is the addition
+
+    off.clear()
+    assert _file(workflow_id)["roles_note"] is None
