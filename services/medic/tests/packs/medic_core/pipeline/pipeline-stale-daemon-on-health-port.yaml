@@ -25,7 +25,7 @@ cases:
           resolved_at: +36m, reason: cleared, routed_at: +3m}
   - kind: silent
     id: v02-silent-when-the-new-daemon-answers
-    title: Only the Prometheus port was taken; the new daemon (up 1 min) answers /health
+    title: A failed start, then a clean restart by start.sh; the daemon answering /health is the new one (up 1 min)
     end: +40m
     series:
       - {signal: daemon_health, key: uptime_seconds, steps: [[+0s, 60], [+10m, 660], [+20m, 1260], [+30m, 1860], [+40m, 2460]]}

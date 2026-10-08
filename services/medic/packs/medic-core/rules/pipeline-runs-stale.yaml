@@ -3,7 +3,9 @@
 # so a run that was never picked up (NULL) stays executing forever (P-1.d).
 # sql_investigations_stale (D1) lists both kinds; the NULL kind needs its own
 # timestamp (requires: D6 sql_investigations_stale.oldest_never_active_since =
-# the oldest such run's started_at/created_at).
+# the oldest such run's started_at/created_at). Only while the orchestrator is
+# enabled: disabling it stops reconciling but leaves rows "executing".
+# Outsider: no.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.runs-stale
@@ -16,12 +18,15 @@ signals:
   stale_count:  {sample: {signal: sql_investigations_stale, key: stale_executing}}
   oldest:       {sample: {signal: sql_investigations_stale, key: oldest_last_activity_at}}
   never_active: {sample: {signal: sql_investigations_stale, key: oldest_never_active_since}}
+  enabled:      {sample: {signal: orchestrator_status, key: enabled}}
 when:
-  any:
-    - all:
-        - {fn: latest, signal: stale_count, op: ">", value: 0}
-        - {fn: age, signal: oldest, op: ">", value: {param: stale_after}}
-    - {fn: age, signal: never_active, op: ">", value: {param: stale_after}}
+  all:
+    - {fn: latest, signal: enabled, op: "==", value: true}
+    - any:
+        - all:
+            - {fn: latest, signal: stale_count, op: ">", value: 0}
+            - {fn: age, signal: oldest, op: ">", value: {param: stale_after}}
+        - {fn: age, signal: never_active, op: ">", value: {param: stale_after}}
 for: 10m
 keep_firing_for: 30m
 params:

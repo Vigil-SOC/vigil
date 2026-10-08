@@ -2,6 +2,9 @@
 # processor processes nothing while findings arrive (E2 fixture), or the
 # scheduler runs no task for 20 min although health_check runs every 300 s
 # (scheduler.py:117-124). requires: D6 daemon_status.scheduler tasks_run.
+# A database outage stalls processing too: suppression.yaml makes this a child
+# of the ingest database rules. Outsider: pushed findings only make a hung
+# processor visible (arrivals > 0).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.daemon-component-hung

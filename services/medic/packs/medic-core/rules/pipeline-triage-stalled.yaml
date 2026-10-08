@@ -1,6 +1,11 @@
 # P-4.a/b/c · findings are processed but none is triaged (E2 fixture). The LLM
 # path is the usual cause (P-4.a): suppression.yaml makes this a child of any
-# class-2 incident, so the LLM fault shows instead.
+# class-2 incident, so the LLM fault shows instead. With DAEMON_AUTO_TRIAGE off
+# (a supported setting, core/config.py:266) triage never runs by design, so the
+# rule needs the setting: requires D6 daemon_status.processor
+# auto_triage_enabled (bool; Vigil exposes it in /status, D2 ask).
+# Outsider: indirectly; findings built to break triage raise processed with
+# triaged flat (lane 3).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.triage-stalled
@@ -12,8 +17,10 @@ detection: absence
 signals:
   processed: {sample: {signal: daemon_status.processor, key: processed}}
   triaged:   {sample: {signal: daemon_status.processor, key: triaged}}
+  auto:      {sample: {signal: daemon_status.processor, key: auto_triage_enabled}}
 when:
   all:
+    - {fn: latest, signal: auto, op: "==", value: true}
     - {fn: increase, signal: processed, window: 30m, op: ">=", value: {param: min_processed}}
     - {fn: increase, signal: triaged, window: 30m, op: "==", value: 0}
 for: 10m
