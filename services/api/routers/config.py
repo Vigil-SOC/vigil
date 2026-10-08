@@ -26,6 +26,7 @@ from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
+    credentials_to_resupply,
     redact_secrets,
     secret_fields_for,
     split_secrets,
@@ -40,6 +41,7 @@ from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
 from core.time import utcnow
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import (
     get_current_active_user,
     require_integrations_admin,
@@ -178,7 +180,7 @@ def get_demo_mode():
         }
     except Exception as e:
         logger.error(f"Error getting demo mode: {e}")
-        return {"enabled": False, "error": str(e)}
+        return {"enabled": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/demo-mode", dependencies=_SETTINGS_WRITE)
@@ -263,7 +265,7 @@ def get_claude_config():
         }
     except Exception as e:
         logger.error(f"Error getting Claude config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/claude", dependencies=_SETTINGS_WRITE)
@@ -358,7 +360,7 @@ def get_s3_config():
         return {"configured": False}
     except Exception as e:
         logger.error(f"Error getting S3 config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/s3", dependencies=_SETTINGS_WRITE)
@@ -765,7 +767,7 @@ def build_setup_steps(
                 "Pick a model per agent",
                 model_line,
                 distinct >= 2,
-                "/settings?section=ai-config",
+                "/settings?section=ai-config&tab=assignment",
             ),
         ],
         "alerts_exist": alerts_exist,
@@ -846,7 +848,7 @@ def get_integrations_config():
             "enabled_integrations": [],
             "integrations": {},
             "last_test": {},
-            "error": str(e),
+            "error": INTERNAL_ERROR_DETAIL,
         }
 
 
@@ -864,7 +866,10 @@ def set_integrations_config(
     from the dict that lands in the DB / JSON file. Empty strings are
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials. A failed secret write or integration-config
+    clobber stored credentials, unless a destination field (URL, host, ...) also
+    changed: then every stored secret must be re-entered (HTTP 400 otherwise),
+    so a saved credential is never carried to a destination its owner did not
+    choose. A failed secret write or integration-config
     row is HTTP 500; the detail names the integration and field, never the value.
 
     Args:
@@ -874,6 +879,23 @@ def set_integrations_config(
         Success status
     """
     config_service = _for_user(current_user)
+
+    # A stored credential is sent to whatever destination is saved, so moving
+    # one requires the caller to supply the credential again. Checked for every
+    # integration before anything is written.
+    for integration_id, raw_config in config.integrations.items():
+        stored = config_service.get_integration_config(integration_id) or {}
+        missing = credentials_to_resupply(
+            integration_id, stored.get("config") or {}, raw_config or {}
+        )
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Integration '{integration_id}' connects somewhere new; "
+                    f"enter its credential again ({', '.join(missing)}) to save."
+                ),
+            )
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
@@ -1239,7 +1261,7 @@ def get_github_config():
         }
     except Exception as e:
         logger.error(f"Error getting GitHub config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/github", dependencies=_SETTINGS_WRITE)
@@ -1288,7 +1310,7 @@ def get_postgresql_config():
         return {"configured": has_config, "connection_preview": preview}
     except Exception as e:
         logger.error(f"Error getting PostgreSQL config: {e}")
-        return {"configured": False, "error": str(e)}
+        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/postgresql", dependencies=_SETTINGS_WRITE)

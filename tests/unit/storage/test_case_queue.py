@@ -506,3 +506,47 @@ def test_needs_you_ids_sort_first_and_an_empty_set_keeps_sla_order(session):
     page, page_total = repo.queue(needs_you_ids={"waiting"}, limit=1, offset=1, now=NOW)
     assert page_total == 4
     assert _ids(page) == ["sooner"]
+
+
+def test_needs_you_only_keeps_the_set_and_an_empty_set_returns_nothing(session):
+    _case(session, "waiting")
+    _case(session, "other")
+    _case(session, "done", status="closed")
+    repo = CaseRepository(session)
+
+    rows, total = repo.queue(needs_you_ids={"waiting", "done"}, needs_you_only=True, now=NOW)
+    assert (_ids(rows), total) == (["waiting"], 1)
+
+    rows, total = repo.queue(needs_you_ids={"waiting", "done"}, needs_you_only=True, closed=True, now=NOW)
+    assert _ids(rows) == ["done"]
+
+    for empty in (set(), None):
+        assert repo.queue(needs_you_ids=empty, needs_you_only=True, now=NOW) == ([], 0)
+    assert repo.queue(needs_you_ids=set(), now=NOW)[1] == 2
+
+
+def test_workflow_ids_compose_with_workflow_and_empty_matches_none(session):
+    for case_id, workflow in (("h1", "hunt-a"), ("h2", "hunt-b"), ("i1", "triage")):
+        _case(session, case_id)
+        _inv(session, f"inv-{case_id}", case_id, workflow_id=workflow, created_at=NOW)
+    _case(session, "bare")
+    repo = CaseRepository(session)
+
+    rows, total = repo.queue(workflow_ids={"hunt-a", "hunt-b"}, now=NOW)
+    assert (sorted(_ids(rows)), total) == (["h1", "h2"], 2)
+
+    rows, _ = repo.queue(workflow_ids={"hunt-a", "hunt-b"}, workflow="hunt-b", now=NOW)
+    assert _ids(rows) == ["h2"]
+    assert repo.queue(workflow_ids={"hunt-a"}, workflow="triage", now=NOW) == ([], 0)
+    assert repo.queue(workflow_ids=set(), now=NOW) == ([], 0)
+
+
+def test_strip_needs_you_counts_open_cases_in_the_set(session):
+    _case(session, "waiting")
+    _case(session, "also")
+    _case(session, "done", status="closed")
+    repo = CaseRepository(session)
+
+    assert repo.strip(now=NOW, needs_you_ids={"waiting", "done", "missing"}).needs_you == 1
+    assert repo.strip(now=NOW, needs_you_ids=set()).needs_you == 0
+    assert repo.strip(now=NOW).needs_you == 0

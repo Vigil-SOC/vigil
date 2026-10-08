@@ -217,6 +217,11 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert payload["strip"]["cases_created_today"] == 1
     assert payload["strip"]["trust_floor"] == "Not measured yet"
     assert payload["unmeasured_text"] == "Not measured yet"
+    info = payload["strip_info"]
+    assert set(info) == {"picked_up", "waiting", "cases_created_today", "trust_floor"}
+    assert all(item["source"] and item["calculation"] for item in info.values())
+    assert info["trust_floor"]["limit"]
+    assert set(payload["breakdown_info"]) == {"trust", "weight", "score"}
 
     filtered = triage_payload(now=NOW, day=DAY, state="queued")
     assert filtered["strip"]["waiting"] == payload["strip"]["waiting"]

@@ -45,6 +45,10 @@ export interface HuntOptions {
   // Answers whether the escalation landed. false is retried on the next iteration,
   // which is the only cover a run that never writes a terminal has.
   onHandoff?: (runId: string, handoff: TerminalHandoff) => Promise<boolean>;
+  // Told what the hunt has spent after each iteration that leaves it going, so a
+  // live run's cost follows it and a parked one that was woken reads as running
+  // again. Fail-open like onHandoff: the ledger is the record.
+  onCost?: (runId: string, cost_usd: number) => Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -150,6 +154,15 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
           await fileHandoffs(options.onHandoff, run_id, ledger.projection, filed);
         } catch (error) {
           log.warn("hunt could not file its escalations", { run_id, ...errorFields(error) });
+        }
+      }
+      // Only an iteration that leaves the hunt going: one that parked it reports
+      // paused instead, and "running" here would flap on the way there.
+      if (options.onCost && iteration.hunt_status === "active") {
+        try {
+          await options.onCost(run_id, ledger.projection.hunt.cost_usd);
+        } catch (error) {
+          log.warn("hunt could not report its spend", { run_id, ...errorFields(error) });
         }
       }
       if (iteration.hunt_status === "terminal") {
@@ -338,7 +351,10 @@ async function parked(
   if (open !== undefined) {
     await announceOpen(harness.state, options.run_id, options.run_kind, open.checkpoint_id, options.announce ?? noAnnounce);
   }
-  return report(ledger, "waiting_approval", reason);
+  // The park's own reason where it has one: the console shows it on the run row, and
+  // the thrown message around it is directions for an operator.
+  const { status, parked_reason } = ledger.projection.hunt;
+  return report(ledger, "waiting_approval", status === "parked" && parked_reason ? parked_reason : reason);
 }
 
 // The hunt's own outcomes, as the ledger's. inconclusive is a completed run that

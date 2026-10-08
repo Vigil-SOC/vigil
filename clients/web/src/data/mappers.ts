@@ -341,6 +341,7 @@ export interface ApiWorkflow {
   /** absent means on; only an explicit false is off */
   enabled?: boolean
   updated_at?: string
+  can_disable?: boolean
 }
 
 /** the backend carries no presentation icon, so derive one from the name */
@@ -379,6 +380,7 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     enabled: w.enabled !== false,
     meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
     updatedAt: w.updated_at,
+    canDisable: w.can_disable ?? true,
   }
 }
 
@@ -395,6 +397,7 @@ export interface ApiAgent {
   component_category?: string | null
   skills?: number
   changes?: AgentTemplate['changes']
+  tool_changes?: AgentTemplate['toolChanges']
   runs_7d?: number | null
   /** fraction 0..1 */
   success_rate?: number | null
@@ -415,6 +418,7 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
     category: a.component_category ?? null,
     skills: a.skills ?? 0,
     changes: a.changes ?? null,
+    toolChanges: a.tool_changes ?? {},
     runs7d: a.runs_7d ?? null,
     successPct: a.success_rate == null ? null : a.success_rate * 100,
     successLevel: a.success_level ?? null,

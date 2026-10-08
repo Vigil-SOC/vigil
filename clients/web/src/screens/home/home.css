@@ -44,6 +44,10 @@
   font-size: 13px;
 }
 
+.home-screen a.btn {
+  text-decoration: none;
+}
+
 .home-screen .home-actions {
   display: flex;
   flex-wrap: wrap;
@@ -97,10 +101,217 @@
   gap: 8px;
 }
 
-.home-screen .home-alerts {
+.home-screen .home-share .info-tip,
+.home-screen .home-head h2 .info-tip {
+  margin-left: 4px;
+}
+
+.home-screen .home-clear {
+  margin-top: 14px;
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+
+.home-screen .home-clear h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--good);
+}
+
+.home-screen .home-clear p {
+  margin: 0;
+  color: var(--tx2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* first run: checklist left, empty state and demo stacked right */
+.home-screen .home-first-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.home-screen .home-ready {
+  padding: 18px 18px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--bg1);
+  border: 1px solid var(--ac-ln);
+  border-radius: 14px;
+}
+
+.home-screen .home-ready-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.home-screen .home-ready-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.home-screen .home-ready-head p {
+  margin: 3px 0 0;
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.home-screen .home-ready-count {
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-screen .home-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg4);
+  overflow: hidden;
+}
+
+.home-screen .home-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ac);
+}
+
+.home-screen .home-bar span.done {
+  background: var(--good);
+}
+
+.home-screen .home-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.home-screen .home-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.home-screen .home-check > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-screen .home-check h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-screen .home-check.done h3 {
+  color: var(--tx3);
+  text-decoration: line-through;
+}
+
+.home-screen .home-check p {
+  margin: 2px 0 0;
+  color: var(--tx3);
+  font-size: 12px;
+}
+
+.home-screen .home-check .btn {
+  flex-shrink: 0;
+}
+
+.home-screen .home-tick {
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1.5px solid var(--ln2);
+}
+
+.home-screen .home-check.done .home-tick {
+  background: var(--good);
+  border-color: var(--good);
+  color: var(--bg1);
+}
+
+.home-screen .home-first-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-self: start;
+}
+
+.home-screen .home-empty {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  border: 1.5px dashed var(--ln2);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--bg1) 70%, transparent);
+}
+
+.home-screen .home-empty-icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.home-screen .home-empty h3,
+.home-screen .home-notready h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-screen .home-empty p,
+.home-screen .home-notready p {
+  margin: 0;
+  color: var(--tx2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.home-screen .home-empty p {
+  max-width: 360px;
+}
+
+.home-screen .home-notready {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+
+.home-screen .home-notready-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin-top: 14px;
 }

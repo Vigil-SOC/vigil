@@ -276,6 +276,16 @@ describe("replaying what the hunt lead was shown", () => {
     expect((await get(`/runs/${HUNT}/replay`)).status).toBe(502);
   });
 
+  it("502s a ledger that does not open with a run event, and keeps serving", async () => {
+    await listen([]);
+    const [opened] = recordedHunt();
+    // Registered hunt kind, but the first event is not `run`: distil's fold throws.
+    await state.append(HUNT, [{ ...opened!, kind: "terminal" as never }]);
+    expect((await get(`/runs/${HUNT}/distil`)).status).toBe(502);
+    expect((await get(`/runs/${HUNT}/projection`)).status).toBe(502);
+    expect((await get("/runs/5a2c2d3e-0000-4000-8000-00000000dead/distil")).status).toBe(404);
+  });
+
   // Taking a query here did not loosen the siblings: they still match the raw url.
   it("leaves the other GET routes refusing a query string", async () => {
     await listen([]);
@@ -309,6 +319,15 @@ describe("reading a run's ledger", () => {
     expect(((await full.json()) as { events: { snapshot?: unknown }[] }).events[0]?.snapshot).toEqual({
       digest: "secret",
     });
+  });
+});
+
+describe("a route that throws", () => {
+  it("answers 500 rather than crashing the process", async () => {
+    await listen([]);
+    state.read = () => Promise.reject(new Error("connection reset"));
+    expect((await get(`/runs/${RUN}/events`)).status).toBe(500);
+    expect((await get("/runs/5a2c2d3e-0000-4000-8000-00000000dead/replay")).status).toBe(500);
   });
 });
 
