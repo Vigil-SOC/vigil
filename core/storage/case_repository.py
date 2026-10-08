@@ -247,6 +247,7 @@ class CaseQueueStrip:
     sla_at_risk: int
     closed_today: int
     agent_closure_share: float
+    needs_you: int = 0
 
 
 class CaseRepository:
@@ -444,14 +445,20 @@ class CaseRepository:
         live=None,
         latest=None,
         sla=None,
+        workflow_ids: Optional[set[str]] = None,
+        only_ids: Optional[set[str]] = None,
     ) -> Select:
-        """Queue filters. Joins are added only when the caller has not already."""
+        """Queue filters. Joins are added only when the caller has not already.
+
+        ``workflow_ids`` and ``only_ids`` restrict to those workflows / case ids.
+        ``None`` leaves the filter off, and an empty set matches no rows.
+        """
+        if (workflow or workflow_ids is not None) and latest is None:
+            latest = _latest_investigations()
+            stmt = stmt.outerjoin(latest, latest.c.inv_case_id == Case.case_id)
         if state and live is None:
             live = _live_investigations()
             stmt = stmt.outerjoin(live, live.c.live_case_id == Case.case_id)
-        if workflow and latest is None:
-            latest = _latest_investigations()
-            stmt = stmt.outerjoin(latest, latest.c.inv_case_id == Case.case_id)
         if sla_at_risk and sla is None:
             sla = _latest_slas()
             stmt = stmt.outerjoin(sla, sla.c.sla_case_id == Case.case_id)
@@ -459,6 +466,10 @@ class CaseRepository:
         clauses = []
         if workflow:
             clauses.append(latest.c.workflow_id == workflow)
+        if workflow_ids is not None:
+            clauses.append(latest.c.workflow_id.in_(sorted(workflow_ids)))
+        if only_ids is not None:
+            clauses.append(Case.case_id.in_(sorted(only_ids)))
         if data_source:
             clauses.append(_finding_source_exists(data_source))
         if sla_at_risk:
@@ -488,6 +499,8 @@ class CaseRepository:
         closed: Optional[bool] = None,
         now: Optional[datetime] = None,
         needs_you_ids: Optional[set[str]] = None,
+        needs_you_only: bool = False,
+        workflow_ids: Optional[set[str]] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
         """One page of the queue.
 
@@ -497,6 +510,10 @@ class CaseRepository:
         ``last_activity_at``. An empty set keeps that SLA order and does not
         emit ``IN ()``. Closed cases are omitted unless ``closed`` is set or
         ``state`` names one.
+
+        ``needs_you_only`` keeps just the cases in ``needs_you_ids``; an empty
+        set then returns no rows. ``workflow_ids`` keeps cases whose latest
+        investigation ran one of those workflows (an empty set returns none).
         """
         now = now or utcnow()
         latest = _latest_investigations()
@@ -577,6 +594,8 @@ class CaseRepository:
             live=live,
             latest=latest,
             sla=sla,
+            workflow_ids=workflow_ids,
+            only_ids=(needs_you_ids or set()) if needs_you_only else None,
         )
         total = self.session.execute(
             select(func.count()).select_from(stmt.subquery())
@@ -632,8 +651,15 @@ class CaseRepository:
             )
         return rows, int(total)
 
-    def strip(self, *, now: Optional[datetime] = None) -> CaseQueueStrip:
+    def strip(
+        self,
+        *,
+        now: Optional[datetime] = None,
+        needs_you_ids: Optional[set[str]] = None,
+    ) -> CaseQueueStrip:
         """Open cases by combined state, SLA at risk, closures today.
+
+        ``needs_you`` counts the open (not closed) cases in ``needs_you_ids``.
 
         At risk is the same SQL predicate as the queue filter, over cases
         that are not closed. Today's closures are ``case_closure_info`` rows
@@ -660,6 +686,17 @@ class CaseRepository:
             .where(Case.status != "closed", _sla_at_risk(sla, now))
         ).scalar_one()
 
+        waiting = 0
+        if needs_you_ids:
+            waiting = self.session.execute(
+                select(func.count())
+                .select_from(Case)
+                .where(
+                    Case.status != "closed",
+                    Case.case_id.in_(sorted(needs_you_ids)),
+                )
+            ).scalar_one()
+
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         today = (
@@ -682,4 +719,5 @@ class CaseRepository:
             sla_at_risk=int(at_risk),
             closed_today=closed_today,
             agent_closure_share=share,
+            needs_you=int(waiting),
         )

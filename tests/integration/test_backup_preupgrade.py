@@ -32,6 +32,18 @@ DATABASE = "vigil_r_preupgrade"
 PASSPHRASE = "pre-upgrade-pass"
 SKIP = "VIGIL_SKIP_PREUPGRADE_BACKUP"
 
+# Versions are derived from VERSION so a release bump never breaks these tests.
+# A restore only runs on the release that made the backup, and the restore here
+# runs on the checked-out code, so the stamped database must be on this release
+# (but not this exact version, so a re-stamp is observable) and the upgrade
+# target on the next one.
+CURRENT = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+_CORE = CURRENT.split("+", 1)[0].split("-", 1)[0]
+_MAJOR, _MINOR, _PATCH = (_CORE.split(".") + ["0", "0"])[:3]
+STAMPED = f"{_MAJOR}.{_MINOR}.{0 if _PATCH != '0' else 1}"
+SAME_RELEASE = f"{_MAJOR}.{_MINOR}.99"
+NEXT = f"{_MAJOR}.{int(_MINOR) + 1}.0"
+
 
 def _stamp(database: str, version: str | None) -> None:
     engine = create_engine(_url(database))
@@ -61,9 +73,9 @@ def _stamped(database: str) -> str | None:
 
 @pytest.fixture
 def instance(tmp_path: Path):
-    """A database stamped 0.6.3 with a default destination in ``backups.json``."""
+    """A database stamped STAMPED with a default destination in ``backups.json``."""
     _create_database(DATABASE, ledger=True)
-    _stamp(DATABASE, "0.6.3")
+    _stamp(DATABASE, STAMPED)
     root = tmp_path
     paths = _layout(root, secret=None)
     state = paths["state"]
@@ -131,13 +143,13 @@ def _manifest(env: dict[str, str], repo: Path, passphrase: Path) -> dict:
 def test_snapshot_records_the_stamp_and_restores_on_the_old_release(instance):
     env, repo, passphrase, _ = instance
 
-    proc = _pre_upgrade(env, "0.7.0")
+    proc = _pre_upgrade(env, NEXT)
 
     assert proc.returncode == 0, proc.stderr
     manifest = _manifest(env, repo, passphrase)
     assert manifest["kind"] == "pre-upgrade"
-    assert manifest["version"] == "0.6.3"
-    # The code under test is 0.6.x, as the rollback target would be.
+    assert manifest["version"] == STAMPED
+    # The code under test is on the stamped release, as the rollback target would be.
     tested = _restore(env, repo, passphrase, "--test")
     assert tested.returncode == 0, tested.stderr
 
@@ -147,7 +159,7 @@ def test_snapshot_records_the_stamp_and_restores_on_the_old_release(instance):
 )
 def test_nothing_due_takes_no_snapshot(instance, case):
     env, repo, _, state = instance
-    target = {"same-release": "0.6.9", "dev-build": "dev"}.get(case, "0.7.0")
+    target = {"same-release": SAME_RELEASE, "dev-build": "dev"}.get(case, NEXT)
     if case == "no-stamp":
         _stamp(DATABASE, None)
     if case == "no-destination":
@@ -163,7 +175,7 @@ def test_unusable_destinations_file_fails_instead_of_skipping(instance):
     env, _, _, state = instance
     (state / "backups.json").write_text("{not json", encoding="utf-8")
 
-    proc = _pre_upgrade(env, "0.7.0")
+    proc = _pre_upgrade(env, NEXT)
 
     assert proc.returncode != 0
     assert "no usable destination" in proc.stderr
@@ -179,8 +191,8 @@ def test_failed_snapshot_names_the_override_and_the_override_skips_it(instance):
         env={**env, "RESTIC_PASSWORD_FILE": str(other)},
     )
 
-    failed = _pre_upgrade(env, "0.7.0")
-    skipped = _pre_upgrade({**env, SKIP: "1"}, "0.7.0")
+    failed = _pre_upgrade(env, NEXT)
+    skipped = _pre_upgrade({**env, SKIP: "1"}, NEXT)
 
     assert failed.returncode != 0
     assert SKIP in failed.stderr
@@ -204,9 +216,8 @@ def test_init_database_stamps_only_after_create_all(instance):
 
     failed = _run([sys.executable, "-c", _INIT.format(fail=True)], env)
     assert failed.returncode != 0
-    assert _stamped(DATABASE) == "0.6.3"
+    assert _stamped(DATABASE) == STAMPED
 
     ok = _run([sys.executable, "-c", _INIT.format(fail=False)], env)
     assert ok.returncode == 0, ok.stderr
-    version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    assert _stamped(DATABASE) == version
+    assert _stamped(DATABASE) == CURRENT

@@ -51,10 +51,13 @@ def _clean():
 def client(authenticate_app):
     from core.api.v1.cases_router import router as cases_router
     from core.api.v1.findings_router import router as findings_router
+    from core.deps import provide_workflows
 
     app = FastAPI()
     app.include_router(findings_router, prefix="/api/v1/findings")
     app.include_router(cases_router, prefix="/api/v1/cases")
+    # GET /cases only reads the workflows service for ?kind=, which these tests never send.
+    app.dependency_overrides[provide_workflows] = lambda: None
     authenticate_app(app)
     return TestClient(app)
 

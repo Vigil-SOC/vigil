@@ -265,3 +265,81 @@ describe("a request bounded by weight, not only by turn count", () => {
     expect(messages.at(-1)!.content).toContain("x");
   });
 });
+
+// A chat's first question is the task and sits in the prefix; the later ones are only
+// messages in history, so a weight fold used to take the current one and the model
+// answered the last question it could still see.
+describe("the current question is never folded away", () => {
+  const note: Summarise = (folded) => `[${folded.length} folded]`;
+  const catalogue = (tools: number, each: number): ToolSchema[] =>
+    Array.from({ length: tools }, (_, at) => ({
+      id: `tool_${String(at).padStart(3, "0")}`,
+      description: "d".repeat(each),
+      parameters: { type: "object" },
+    }));
+  // One tool turn: the model asks, and a result of about result_cap comes back.
+  const loop = (turn: number): Message[] => [
+    { role: "assistant", content: "", tool_calls: [{ id: `c${turn}`, tool: "tool_000", args: "{}" }] },
+    { role: "tool", call_id: `c${turn}`, content: "r".repeat(20_000) },
+  ];
+  const weight = (prefix: ReturnType<typeof prefixOf>, messages: readonly Message[]) =>
+    sizeOf(messages) + JSON.stringify(prefix.tools).length;
+
+  it.each([
+    ["the 34 built-in tools", catalogue(34, 600)],
+    ["a larger MCP catalogue", catalogue(120, 600)],
+  ])("holds through three questions with %s", (_name, tools) => {
+    const prefix = prefixOf("system", tools, []);
+    const questions = ["Q1 which evidence?", "Q2 what next?", "Q3 who owns it?"];
+    let held: Message[] = [];
+
+    questions.forEach((question, at) => {
+      if (at > 0) held = [...held, { role: "user", content: question }];
+      for (let step = 0; step < 8; step += 1) {
+        const { messages } = assemble(prefix, questions[0]!, held, "", note);
+        if (at > 0) expect(messages.some((one) => one.content.includes(question))).toBe(true);
+        expect(weight(prefix, messages)).toBeLessThanOrEqual(DEFAULT_FOLD.max_chars);
+        held = [...held, ...loop(held.length)];
+      }
+      held = [...held, { role: "assistant", content: `answer ${at + 1}`, tool_calls: [] }];
+    });
+  });
+
+  it("keeps the question whole in a message of its own when it sits in an edge", () => {
+    const held: Message[] = [{ role: "assistant", content: "a1", tool_calls: [] }, { role: "user", content: "Q2" }];
+    const { messages } = assemble(prefixOf("s", [], []), "Q1", held, "", note);
+    expect(messages.at(-1)).toEqual({ role: "user", content: "Q2" });
+  });
+
+  it("puts a fold note and the question in one message, not two user turns in a row", () => {
+    const held: Message[] = [
+      { role: "assistant", content: "a1", tool_calls: [] },
+      { role: "user", content: "Q2" },
+      ...Array.from({ length: 6 }, (_, at) => loop(at)).flat(),
+    ];
+    const { messages } = foldHistory(held, note, { head: 1, tail: 2, max_messages: 0, max_chars: 1_000_000 });
+    const carried = messages.find((one) => one.content.includes("Q2"))!;
+
+    expect(carried.content.endsWith("Q2") || carried.content.includes("Q2\n\n[")).toBe(true);
+    messages.slice(1).forEach((one, at) => expect(one.role === "user" && messages[at]!.role === "user").toBe(false));
+  });
+
+  it("still holds the ceiling on a first ask, where the question is the task", () => {
+    const prefix = prefixOf("system", catalogue(34, 600), []);
+    let held: Message[] = [];
+    for (let step = 0; step < 12; step += 1) {
+      const { messages } = assemble(prefix, "Q1", held, "", note);
+      expect(weight(prefix, messages)).toBeLessThanOrEqual(DEFAULT_FOLD.max_chars);
+      held = [...held, ...loop(step)];
+    }
+  });
+
+  it("says so when the prefix leaves no room for the question", () => {
+    const held: Message[] = [{ role: "assistant", content: "a1", tool_calls: [] }, { role: "user", content: "q".repeat(5_000) }];
+    const policy: FoldPolicy = { head: 1, tail: 1, max_messages: 40, max_chars: 4_000 };
+
+    expect(() => assemble(prefixOf("s", [], []), "Q1", held, "", note, policy)).toThrow(/no room for the current question/);
+    // The same weight as the task does not throw: a task keeps today's behaviour.
+    expect(() => assemble(prefixOf("s", [], []), "q".repeat(5_000), [], "", note, policy)).not.toThrow();
+  });
+});

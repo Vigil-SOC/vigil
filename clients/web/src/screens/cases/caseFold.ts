@@ -25,6 +25,7 @@ export interface HypothesisRow {
   supports: number
   weakens: number
   resolution_reason: string | null
+  provenance: string
 }
 
 export interface EvidenceRow {
@@ -34,6 +35,8 @@ export interface EvidenceRow {
   summary: string
   is_gap: boolean
   gap_detail: string | null
+  /** Stamped by the API on non-gap hunt rows; a display label, as configured now. */
+  source_tier: string | null
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
@@ -44,16 +47,50 @@ export interface LeadGapRow {
   query_intent?: string
 }
 
+/** Where a recalled row came from: the investigation that concluded it. */
+export interface RecallProvenance {
+  kind: string
+  id: string
+  concludedAt: string
+}
+
+export interface RecalledSighting extends RecallProvenance {
+  entity: string
+  source: string
+  hits: number | null
+}
+
+export interface RecalledVerdict extends RecallProvenance {
+  outcome: string
+  statement: string
+}
+
+/** A Declared Gap from a prior investigation, not this run's Visibility Gap. */
+export interface RecalledGap extends RecallProvenance {
+  disposition: string
+  statement: string
+}
+
 export interface RecallView {
   keys: string[]
-  gaps: string[]
-  sightings: string[]
-  verdicts: string[]
+  gaps: RecalledGap[]
+  sightings: RecalledSighting[]
+  verdicts: RecalledVerdict[]
   unavailable: string | null
+}
+
+/** What the run row itself says, beside the fold of its ledger. */
+export interface RunMeta {
+  status: string
+  error: string
+  reason: string
+  /** The hunt's own status (`parked`, ...); empty for a run that is not a hunt. */
+  huntStatus: string
 }
 
 export interface HuntFold {
   kind: 'hunt'
+  run: RunMeta
   iteration: number
   doing: string
   worker: string
@@ -70,6 +107,7 @@ export interface HuntFold {
 
 export interface LeadFold {
   kind: 'lead'
+  run: RunMeta
   iterations: number
   doing: string
   worker: string
@@ -103,6 +141,52 @@ export function explanationWord(status: string, supports: number, weakens: numbe
   }
   if (status === 'inconclusive' || status === 'parked' || status === 'handed_off') return status
   return status
+}
+
+/** "handed_off" → "Handed off". */
+export function wordDisplay(word: string): string {
+  const text = word.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const ADDED_BY: Record<string, string> = {
+  hunt_spec: 'the hunt definition',
+  operator: 'you',
+  base_rate: 'the base rate',
+  deployment_gap: 'the deployment-gap check',
+}
+
+/** "Added by" words for a hypothesis provenance; the raw token when unknown, '' when absent. */
+export function addedBy(provenance: string): string {
+  return ADDED_BY[provenance] ?? provenance
+}
+
+export type Stance = 'supports' | 'weakens' | 'mixed' | 'neither'
+
+export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', mixed: 'Mixed', neither: 'Neither' }
+
+export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not evidence' }
+
+/** The word for one link's relation; an unknown relation shows as written. */
+export function relationWord(relation: string): string {
+  return relation === 'supports' || relation === 'weakens' || relation === 'neither' ? STANCE_WORD[relation] : relation
+}
+
+// A row can bear on several explanations, and a hunt routinely supports one and weakens another, so the row's
+// stance is only a single word when its links agree; "neither" links take no side. Counts are per link.
+export function stanceOf(row: EvidenceRow): Stance {
+  const relations = row.bears_on.map((link) => link.relation)
+  const supports = relations.includes('supports')
+  const weakens = relations.includes('weakens')
+  if (supports && weakens) return 'mixed'
+  if (weakens) return 'weakens'
+  if (supports) return 'supports'
+  return 'neither'
+}
+
+/** Who made the move at this iteration; null when it fell outside the capped list. */
+export function workerAt(fold: HuntFold, iteration: number): string | null {
+  return fold.moves.find((move) => move.iteration === iteration)?.worker || null
 }
 
 export function recordChip(kind: string): RecordChip {
@@ -156,34 +240,37 @@ function callsOf(raw: unknown): CallRow[] {
   })
 }
 
-function lineOf(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (!value || typeof value !== 'object') return ''
-  const o = value as Record<string, unknown>
-  if (typeof o.statement === 'string') {
-    return [typeof o.outcome === 'string' ? o.outcome : o.disposition, o.statement].filter(Boolean).join(' — ')
-  }
-  if (typeof o.entity_key === 'string') {
-    const hits = typeof o.hit_count === 'number' ? ` · ${o.hit_count}` : ''
-    return `${o.entity_key}${typeof o.source_system === 'string' ? ` · ${o.source_system}` : ''}${hits}`
-  }
-  return JSON.stringify(value)
+function provenanceOf(o: Record<string, unknown>): RecallProvenance {
+  return { kind: str(o.investigation_kind), id: str(o.investigation_id), concludedAt: str(o.concluded_at) }
+}
+
+/** Rows of one recalled kind; a bare string is a statement with no provenance. */
+function rowsOf<T>(raw: unknown, read: (o: Record<string, unknown>) => T | null): T[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item) => {
+    const o = typeof item === 'string' ? { statement: item } : item
+    if (!o || typeof o !== 'object') return []
+    const row = read(o as Record<string, unknown>)
+    return row ? [row] : []
+  })
 }
 
 function recallOf(raw: unknown): RecallView | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const keys = Array.isArray(o.keys) ? o.keys.flatMap((key) => (typeof key === 'string' ? [key] : [])) : []
-  const gaps = Array.isArray(o.gaps) ? o.gaps.map(lineOf).filter(Boolean) : []
-  const sightings = Array.isArray(o.sightings) ? o.sightings.map(lineOf).filter(Boolean) : []
-  const verdicts = Array.isArray(o.verdicts) ? o.verdicts.map(lineOf).filter(Boolean) : []
+  const gaps = rowsOf(o.gaps, (r) => (str(r.statement) ? { ...provenanceOf(r), disposition: str(r.disposition), statement: str(r.statement) } : null))
+  const sightings = rowsOf(o.sightings, (r) =>
+    str(r.entity_key) ? { ...provenanceOf(r), entity: str(r.entity_key), source: str(r.source_system), hits: num(r.hit_count) } : null,
+  )
+  const verdicts = rowsOf(o.verdicts, (r) => (str(r.statement) ? { ...provenanceOf(r), outcome: str(r.outcome), statement: str(r.statement) } : null))
   const unavailable = typeof o.unavailable === 'string' ? o.unavailable : null
   // A journaled empty result is known-to-be-none. An absent payload is not a recall.
   if (unavailable === null && !Array.isArray(o.keys)) return null
   return { keys, gaps, sightings, verdicts, unavailable }
 }
 
-function asHunt(raw: Record<string, unknown>): HuntFold {
+function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
   const moves = Array.isArray(raw.moves) ? raw.moves : []
   // The server sends moves newest first.
   const rows = moves.flatMap((item) => {
@@ -207,6 +294,7 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
           supports: num(o.supports) ?? 0,
           weakens: num(o.weakens) ?? 0,
           resolution_reason: typeof o.resolution_reason === 'string' ? o.resolution_reason : null,
+          provenance: str(o.provenance),
         }]
       })
     : []
@@ -228,12 +316,14 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
           summary: str(o.summary),
           is_gap: o.is_gap === true,
           gap_detail: typeof o.gap_detail === 'string' ? o.gap_detail : null,
+          source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
           bears_on: bears,
         }]
       })
     : []
   return {
     kind: 'hunt',
+    run,
     iteration: num(raw.iteration) ?? 0,
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
@@ -249,7 +339,7 @@ function asHunt(raw: Record<string, unknown>): HuntFold {
   }
 }
 
-function asLead(raw: Record<string, unknown>): LeadFold {
+function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
   const decisions = Array.isArray(raw.decisions) ? raw.decisions : []
   // Decisions arrive oldest first; keep moves newest first like a hunt's.
   const rows = decisions.flatMap((item) => {
@@ -278,6 +368,7 @@ function asLead(raw: Record<string, unknown>): LeadFold {
     : []
   return {
     kind: 'lead',
+    run,
     iterations: num(raw.iterations) ?? 0,
     doing: rows[0]?.doing ?? '',
     worker: rows[0]?.worker ?? '',
@@ -295,9 +386,35 @@ function asLead(raw: Record<string, unknown>): LeadFold {
 export function readFold(body: unknown): RunFold | null {
   if (!body || typeof body !== 'object') return null
   const row = body as Record<string, unknown>
-  if (row.hunt && typeof row.hunt === 'object') return asHunt(row.hunt as Record<string, unknown>)
-  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>)
+  const hunt = row.hunt && typeof row.hunt === 'object' ? (row.hunt as Record<string, unknown>) : null
+  const run = { status: str(row.status), error: str(row.error), reason: str(row.reason), huntStatus: str(hunt?.status) }
+  if (hunt) return asHunt(hunt, run)
+  if (row.projection && typeof row.projection === 'object') return asLead(row.projection as Record<string, unknown>, run)
   return null
+}
+
+/** A run that is not going on and did not conclude: parked or paused (it can wake), or failed (it cannot). */
+export interface StoppedRun {
+  state: 'paused' | 'stopped'
+  /** One plain sentence: the first of the joined reasons. */
+  line: string
+  /** The reason as the server wrote it; '' when none was recorded. */
+  raw: string
+}
+
+const ENDED = ['failed', 'cancelled', 'canceled']
+
+export function stoppedRun(fold: RunFold | null): StoppedRun | null {
+  if (!fold) return null
+  const { status, error, reason, huntStatus } = fold.run
+  const stopped = ENDED.includes(status)
+  if (!stopped && huntStatus !== 'parked' && status !== 'paused') return null
+  const raw = stopped ? error || fold.reason : fold.reason || reason
+  const first = raw.split(' | ')[0].trim()
+  const line = first
+    ? `${first.charAt(0).toUpperCase()}${first.slice(1)}${/[.!?]$/.test(first) ? '' : '.'}`
+    : stopped ? 'The run ended without concluding and did not say why.' : 'The run is paused and did not say why.'
+  return { state: stopped ? 'stopped' : 'paused', line, raw }
 }
 
 export function recallEntityCalls(fold: RunFold | null): CallRow[] {
@@ -340,4 +457,29 @@ export function agentRows(fold: RunFold | null): AgentRow[] {
     seen.add(move.worker)
     return [{ who: move.worker, doing: move.doing, tool: moveTool(fold, move), at: move.at }]
   })
+}
+
+export interface StrongRow {
+  step: string
+  text: string
+  stance: 'For' | 'Against' | null
+}
+
+/** Up to 3 rows for the closed summary: a hunt's evidence that bears on a hypothesis, or a lead's answers. */
+export function strongestRows(fold: RunFold | null): StrongRow[] {
+  if (!fold) return []
+  if (fold.kind === 'lead') {
+    return fold.findings.slice(0, 3).map((row) => ({ step: '—', text: row.answer || '—', stance: null }))
+  }
+  const rows = fold.evidence.flatMap((row, i) => {
+    if (row.is_gap) return []
+    const relation = row.bears_on.find((link) => link.relation === 'supports' || link.relation === 'weakens')?.relation
+    if (!relation) return []
+    const stance: StrongRow['stance'] = relation === 'supports' ? 'For' : 'Against'
+    return [{ i, step: String(row.iteration), text: row.summary || row.evidence_id, stance }]
+  })
+  // Keep one of each stance first so both sides show, then fill in order.
+  const picked = new Set([rows.find((r) => r.stance === 'For'), rows.find((r) => r.stance === 'Against')].filter(Boolean))
+  for (const r of rows) if (picked.size < 3) picked.add(r)
+  return rows.filter((r) => picked.has(r)).map(({ step, text, stance }) => ({ step, text, stance }))
 }
