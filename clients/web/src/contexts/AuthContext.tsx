@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import api from '../services/api';
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
@@ -58,6 +58,10 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  /** /auth/me failed for a reason other than 401, so the session state is unknown. */
+  backendUnreachable: boolean;
+  /** Re-runs the /auth/me load. */
+  retryLoadUser: () => Promise<void>;
   login: (usernameOrEmail: string, password: string, mfaCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<void>;
@@ -75,29 +79,40 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [backendUnreachable, setBackendUnreachable] = useState(false);
 
   // Auth cookies are HttpOnly, so JS can't read them: call /auth/me and let the
-  // cookie identify the user. A 401 just means not logged in.
-  useEffect(() => {
-    const loadUser = async () => {
-      if (DEV_MODE) {
-        console.log('DEV_MODE: Using mock dev user');
-        setUser(DEV_USER);
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        const response = await api.get('/auth/me');
-        setUser(response.data);
-      } catch {
-        // /auth/me also seeds the csrf_token cookie, so the login POST works
-      }
+  // cookie identify the user. Only a 401 means not logged in; any other failure
+  // leaves the session unknown (backendUnreachable).
+  const loadUser = useCallback(async () => {
+    if (DEV_MODE) {
+      console.log('DEV_MODE: Using mock dev user');
+      setUser(DEV_USER);
       setIsLoading(false);
-    };
+      return;
+    }
 
-    loadUser();
+    setBackendUnreachable(false);
+    try {
+      const response = await api.get('/auth/me');
+      setUser(response.data);
+    } catch (error: any) {
+      // /auth/me also seeds the csrf_token cookie, so the login POST works
+      if (error?.response?.status !== 401) {
+        setBackendUnreachable(true);
+      }
+    }
+    setIsLoading(false);
   }, []);
+
+  const retryLoadUser = useCallback(async () => {
+    setIsLoading(true);
+    await loadUser();
+  }, [loadUser]);
+
+  useEffect(() => {
+    loadUser();
+  }, [loadUser]);
 
   useEffect(() => {
     if (!user) return;
@@ -190,6 +205,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     user,
     isAuthenticated: !!user,
     isLoading,
+    backendUnreachable,
+    retryLoadUser,
     login,
     logout,
     refreshToken,

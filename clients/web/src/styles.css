@@ -6299,6 +6299,26 @@
    color: var(--tx-3);
 }
 
+.soc-unreachable {
+   max-width: min(420px, calc(100vw - 48px));
+   padding: 0 24px;
+   text-align: center;
+}
+
+.soc-unreachable-title {
+   margin: 0;
+   font-size: 18px;
+   font-weight: 650;
+   color: var(--tx);
+}
+
+.soc-unreachable-body {
+   margin: -10px 0 0;
+   font-size: 13px;
+   line-height: 1.5;
+   color: var(--tx-2);
+}
+
 @keyframes soc-loader-pulse {
    0%, 100% {
       opacity: .55;
