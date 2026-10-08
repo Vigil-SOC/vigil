@@ -26,9 +26,8 @@ from services.medic.tests.engine.runner import (
 # Part 2 (S4b2). v15 (one group per source), v24 and v27 (groups that never retire)
 # already hold on the part-1 engine, so they must pass now and keep passing.
 PART2 = {f"v{n}" for n in (13, 16, 17, 18, 19, 20, 23, 25, 26)}
-# Contract questions waiting on Craig (outputs/skeleton/S4b-notes.md, ⚑ list): the
-# engine follows semantics.md's text, which this vector contradicts.
-CONTRACT = {"v14": "⚑ S4b-1: §2 allows lower bounds on changes only for counters"}
+# Vectors waiting on a contract decision (outputs/skeleton/S4b-notes.md, ⚑ list).
+CONTRACT: dict[str, str] = {}
 RECORD = Draft202012Validator(
     json.loads((CONTRACTS / "decision-record.schema.json").read_text())
 )

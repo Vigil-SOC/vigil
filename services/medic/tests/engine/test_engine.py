@@ -48,7 +48,7 @@ def test_restart_doesnt_reopen_or_re_mint_the_incident() -> None:
 
 
 def test_unknown_while_resolving_never_resolves() -> None:
-    """No vector pins this (§4: "a blind watcher never auto-resolves"): v01 with the
+    """§4 "a blind watcher never auto-resolves" (vector v28 pins it too): v01 with the
     sensor stopped from +40m to +70m, inside keep_firing_for."""
     vector = load(VECTORS / "v01-hold-for-fires-and-resolves.yaml")
     vector["end"] = "+90m"

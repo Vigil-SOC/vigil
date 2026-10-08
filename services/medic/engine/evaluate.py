@@ -287,9 +287,7 @@ def _changes(node, ctx):
     if got is None:
         return UNKNOWN
     _, seq, full, vtype = got
-    counter = vtype == "counter"
-    if not full and not counter:
-        return UNKNOWN  # lower bounds apply to changes on counters only
+    counter = vtype == "counter"  # changes only grow with more reads: any type (§2)
     x = sum(
         a[2]["value"] != b[2]["value"]
         for a, b in itertools.pairwise(seq)
