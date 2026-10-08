@@ -593,3 +593,69 @@ def test_template_without_lookup_fails_unless_cidrs_set(chart) -> None:
 def test_cidrs_must_look_like_cidrs(chart) -> None:
     with pytest.raises(RenderError, match=r"medic\.kubeApi\.cidrs"):
         helm_template(chart, {**MEDIC_ON, "medic.kubeApi.cidrs[0]": "0.0.0.0/0"})
+
+
+# --- review fixes (S7 review #1-#4, name lengths) ---------------------------
+
+
+def test_probe_has_a_positive_control_the_policy_allows(on) -> None:
+    (c,) = medic_pod(on)["containers"]
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["VIGIL_MEDIC_POLICY_CONTROL_ADDR"] == f"{GATEWAY}:8471"
+
+
+@pytest.mark.parametrize(
+    "cidrs",
+    [["0.0.0.0/1", "128.0.0.0/1"], ["10.0.0.0/16"], ["::/1"], ["fd00::/64"]],
+)
+def test_kube_api_cidrs_have_a_prefix_floor(chart, cidrs) -> None:
+    values = {k: v for k, v in MEDIC_ON.items() if not k.startswith("medic.kubeApi")}
+    for i, cidr in enumerate(cidrs):
+        values[f"medic.kubeApi.cidrs[{i}]"] = cidr
+    with pytest.raises(RenderError, match=r"medic\.kubeApi\.cidrs"):
+        helm_template(chart, values)
+
+
+def test_kube_api_cidrs_accept_a_small_range(render) -> None:
+    render({**MEDIC_ON, "medic.kubeApi.cidrs[0]": "10.0.0.0/28"})
+
+
+@pytest.mark.parametrize(
+    "key, value, error",
+    [
+        ("medic.kubeApi.ports", "null", r"medic\.kubeApi\.ports"),
+        ("medic.dns.podLabels", "null", r"medic\.dns\.podLabels"),
+        ("agentWorker.enabled", "false", r"medic\.agentWorkerAddr"),
+    ],
+)
+def test_values_that_would_widen_or_break_a_policy_fail(
+    chart, key, value, error
+) -> None:
+    with pytest.raises(RenderError, match=error):
+        helm_template(chart, {**MEDIC_ON, key: value})
+
+
+def test_agent_worker_off_with_an_address_renders(render) -> None:
+    docs = render(
+        {**MEDIC_ON, "agentWorker.enabled": "false", "medic.agentWorkerAddr": "aw:6990"}
+    )
+    (c,) = medic_pod(docs)["containers"]
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "aw:6990"
+
+
+def test_long_release_names_fit_63(chart) -> None:
+    long = "r" * 53  # helm's own release-name limit
+    args = ["helm", "template", long, str(chart), "--namespace", NAMESPACE]
+    for key, value in MEDIC_ON.items():
+        args += ["--set", f"{key}={value}"]
+    proc = subprocess.run(args, capture_output=True, text=True, check=True)
+    docs = [d for d in yaml.safe_load_all(proc.stdout) if d]
+    names = [d["metadata"]["name"] for d in docs if "medic" in str(d["metadata"])]
+    assert names and all(len(n) <= 63 for n in names), [n for n in names if len(n) > 63]
+    pairs = {
+        (d["kind"], d["metadata"]["name"])
+        for d in docs
+        if "medic" in d["metadata"]["name"]
+    }
+    assert len(pairs) == 14  # nothing collided when truncated

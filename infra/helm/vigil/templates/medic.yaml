@@ -140,9 +140,13 @@ spec:
               value: /var/lib/vigil-medic/data
             - name: VIGIL_MEDIC_AGENT_WORKER_ADDR
               value: {{ .Values.medic.agentWorkerAddr | default (printf "%s-agent-worker:6990" $fn) | quote }}
-            # A3-3: a host:port this pod's policy blocks. Reached → Medic exits 3.
+            # A3-3: a host:port this pod's policy blocks, and one it allows (the
+            # gateway). Enforced = the control connects and the probe is dropped;
+            # anything else → Medic exits 3.
             - name: VIGIL_MEDIC_POLICY_PROBE_ADDR
               value: {{ .Values.medic.policyProbe.target | default (printf "%s:%v" (include "vigil.backend.fullname" .) .Values.backend.service.port) | quote }}
+            - name: VIGIL_MEDIC_POLICY_CONTROL_ADDR
+              value: {{ printf "%s:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.outPort" .) | quote }}
           ports:
             - name: api
               containerPort: {{ include "vigil.medic.apiPort" . }}

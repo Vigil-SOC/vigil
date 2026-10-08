@@ -12,6 +12,8 @@ SHAPE_VAR = "VIGIL_MEDIC_INSTALL_SHAPE"
 AGENT_WORKER_VAR = "VIGIL_MEDIC_AGENT_WORKER_ADDR"
 # A3-3: on Helm, a host:port Medic's egress policy must block (the chart sets it).
 POLICY_PROBE_VAR = "VIGIL_MEDIC_POLICY_PROBE_ADDR"
+# ...and a host:port it allows (the gateway): the positive control.
+POLICY_CONTROL_VAR = "VIGIL_MEDIC_POLICY_CONTROL_ADDR"
 
 SHAPES = ("start_sh", "compose", "helm")
 DEFAULT_SHAPE = "compose"  # PROVISIONAL (S4-2): S6/S7/S8 set it per shape
@@ -78,17 +80,29 @@ def agent_worker_addr(env: Mapping[str, str], shape: str) -> tuple[str, int]:
     return _host_port(AGENT_WORKER_VAR, value)
 
 
+def _helm_addr(env: Mapping[str, str], shape: str, var: str, what: str):
+    if shape != "helm":
+        return None
+    value = (env.get(var) or "").strip()
+    if not value:
+        raise ConfigError(
+            f"{var} is required on Helm: it names {what} (the chart sets it)"
+        )
+    return _host_port(var, value)
+
+
 def policy_probe_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
     """Helm only, and required there: no target means no proof (A3-3, fail closed).
 
     Compose isolates Medic by Docker network (`medic-net`); host-native can't be
     isolated at all (C3 §4.7). Neither has a NetworkPolicy to test."""
-    if shape != "helm":
-        return None
-    value = (env.get(POLICY_PROBE_VAR) or "").strip()
-    if not value:
-        raise ConfigError(
-            f"{POLICY_PROBE_VAR} is required on Helm: it names the host:port "
-            "Medic's NetworkPolicy must block (the chart sets it)"
-        )
-    return _host_port(POLICY_PROBE_VAR, value)
+    return _helm_addr(
+        env, shape, POLICY_PROBE_VAR, "the host:port Medic's NetworkPolicy must block"
+    )
+
+
+def policy_control_addr(env: Mapping[str, str], shape: str) -> tuple[str, int] | None:
+    """The host:port Medic's policy allows: a dropped probe only counts if this connects."""
+    return _helm_addr(
+        env, shape, POLICY_CONTROL_VAR, "a host:port Medic's NetworkPolicy allows"
+    )
