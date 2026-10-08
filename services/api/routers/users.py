@@ -57,6 +57,19 @@ class ChangeUserRoleRequest(BaseModel):
     role_id: str
 
 
+# A service account (Medic's gateway, D2-17) is exempt from lockout, which is
+# safe only while it can read no more than a Viewer.
+SERVICE_ACCOUNT_ROLE_ID = "role-viewer"
+
+
+def _refuse_service_account_role(user: User, role_id: str) -> None:
+    if user.service_account is True and role_id != SERVICE_ACCOUNT_ROLE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A service account can only hold the Viewer role",
+        )
+
+
 def _can_assign_role(current_user: User, target_role: Role, session: Session) -> bool:
     """Return True only if current_user holds every permission granted by target_role.
 
@@ -302,6 +315,7 @@ def _apply_user_update(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot assign a role with more privileges than your own",
             )
+        _refuse_service_account_role(user, request.role_id)
         user.role_id = request.role_id
 
     if request.is_active is not None:
@@ -442,6 +456,7 @@ def _apply_role_change(
             detail="Cannot assign a role with more privileges than your own",
         )
 
+    _refuse_service_account_role(user, role_id)
     old_role_id = user.role_id
     user.role_id = role_id
     # Flush so the read-back sees server defaults; the request's unit
