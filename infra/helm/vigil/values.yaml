@@ -489,6 +489,7 @@ dbInit:
     - 38_custom_agent_fallback_model.sql
     - 40_drop_custom_workflow_graph_layout.sql
     - 40_skill_reads.sql
+    - 41_medic_last_seen.sql
     - 41_workflow_runs_progress.sql
     - 42_drop_finding_status.sql
     - 43_users_service_account.sql

@@ -2321,6 +2321,32 @@
       "nullable": false
     }
   },
+  "medic_last_seen": {
+    "failure_kind": {
+      "data_type": "character varying(8)",
+      "nullable": true
+    },
+    "first_failed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "smallint",
+      "nullable": false
+    },
+    "last_seen_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "status_snapshot": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
   "roles": {
     "created_at": {
       "data_type": "timestamp without time zone",
