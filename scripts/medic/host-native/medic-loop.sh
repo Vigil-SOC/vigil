@@ -8,8 +8,8 @@
 #   medic-loop --python P --app DIR --data-dir DIR --check    `python -m services.medic check`
 #   medic-loop --probe PATH...                                print the PATHs this user can read
 #
-# --agent-worker: where the agent worker's /readyz listens (default 127.0.0.1:6990;
-# start.sh passes AGENT_HEALTH_PORT's). Medic always runs with install shape
+# --agent-worker: where the agent worker's /readyz listens (default 127.0.0.1:6990,
+# where scripts/agent_up.sh starts it). Medic always runs with install shape
 # start_sh (L49).
 # Tuning (C5 §5.2 defaults): --backoff-start 5 --backoff-max 300 (seconds, doubling
 # per restart, back to the start after a run of --cap-window or longer);

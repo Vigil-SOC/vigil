@@ -169,6 +169,15 @@ def test_only_medic_settings_are_taken_from_compose_env(sb: Path) -> None:
     assert env["VIGIL_MEDIC_X"] == "$(touch /tmp/s11-pwned)"
 
 
+def test_compose_env_cannot_name_compose_files(sb: Path) -> None:
+    """A compose file can run anything through Docker: only Vigil's env names one."""
+    base, overlay = _files(sb)
+    _compose_env(sb, ENABLED + "VIGIL_MEDIC_COMPOSE_OVERRIDE=/tmp/evil.yml\n")
+    ((args, env),) = _dc(sb, "dc ps")
+    assert args == ["compose", "-f", base, "-f", overlay, "ps"]
+    assert "VIGIL_MEDIC_COMPOSE_OVERRIDE" not in env
+
+
 def test_overlay_missing_means_no_overlay(sb: Path) -> None:
     base, overlay = _files(sb)
     Path(overlay).unlink()
