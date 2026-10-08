@@ -27,7 +27,8 @@ n=$(wc -l < "$log" 2>/dev/null || echo 0)
 ( IFS='|'; printf '%s\n' "$*" ) >> "$log"
 case " $* " in
     *" compose version "*) exit 0 ;;
-    *" config backend "*)
+    *" config "*" backend "*|*" config backend "*)
+        env | grep -E '^(VIGIL_MEDIC_ENABLED|JWT_SECRET_KEY|OLLAMA_URL)=' | sort > "$FAKE_DIR/config_env"
         [ -n "${FAKE_CONFIG_FAIL:-}" ] && { echo "config error" >&2; exit 15; }
         printf '    environment:\n      DEV_MODE: "%s"\n      JWT_SECRET_KEY: %s\n' \
             "${FAKE_DEV_MODE:-false}" "${FAKE_JWT-jwt-from-env}"
@@ -44,7 +45,9 @@ case " $* " in
         [ "$code" != 0 ] && echo "error $code" >&2
         exit "$code" ;;
     *" ps "*)
-        [ -n "${FAKE_PS_FAIL:-}" ] && exit 1
+        # This call is already logged, so the first ps counts 1.
+        ps_n=$(grep -c '|ps|' "$log")
+        [ -n "${FAKE_PS_FAIL:-}" ] && [ "$ps_n" -gt "${FAKE_PS_FAIL_AFTER:-0}" ] && exit 1
         printf '%b' "${FAKE_RUNNING-backend\n}"; exit 0 ;;
 esac
 exit 0
@@ -322,6 +325,60 @@ def test_a_failing_compose_config_stops_the_run(run) -> None:
 
 
 def test_a_failing_compose_ps_stops_before_medic_starts(run) -> None:
+    # The first ps (waiting for the backend) works; the members ps fails.
+    done = run(FAKE_PS_FAIL="1", FAKE_PS_FAIL_AFTER="1")
+    assert done.returncode != 0
+    # Failed at the members step, not while waiting for the backend.
+    assert "isn't running" not in done.stderr
+    assert any(_sub(c)[:2] == ["exec", "-T"] for c in run.compose_calls())
+    assert not any(_sub(c)[:3] == ["up", "-d", "medic"] for c in run.compose_calls())
+
+
+def test_a_failing_ps_while_waiting_is_a_compose_error_not_a_stopped_backend(run):
     done = run(FAKE_PS_FAIL="1")
     assert done.returncode != 0
-    assert not any(_sub(c)[:3] == ["up", "-d", "medic"] for c in run.compose_calls())
+    assert "isn't running" not in done.stderr
+    assert len([c for c in run.compose_calls() if "ps" in c]) == 1
+
+
+def _dotenv(run, text: str) -> str:
+    path = run.tmp / "dotenv"
+    path.write_text(text)
+    return str(path)
+
+
+def _config_env(run) -> dict:
+    lines = (run.fake / "config_env").read_text().splitlines()
+    return dict(line.split("=", 1) for line in lines)
+
+
+def test_dotenv_from_env_example_does_not_switch_medic_off(run) -> None:
+    """env.example ships VIGIL_MEDIC_ENABLED="false"; compose.env must win."""
+    dotenv = _dotenv(run, 'VIGIL_MEDIC_ENABLED="false"\nJWT_SECRET_KEY="from-dotenv"\n')
+    done = run(VIGIL_MEDIC_DOTENV=dotenv, FAKE_JWT="x")
+    assert done.returncode == 0, done.stderr
+    env = _config_env(run)
+    assert env["VIGIL_MEDIC_ENABLED"] == "true"
+    assert env["JWT_SECRET_KEY"] == "from-dotenv"
+
+
+def test_exported_variables_beat_dotenv(run) -> None:
+    """The documented flow exports JWT_SECRET_KEY; a blank .env line mustn't erase it."""
+    dotenv = _dotenv(run, 'JWT_SECRET_KEY=""\nOLLAMA_URL="http://gpu-box:11434"\n')
+    done = run(VIGIL_MEDIC_DOTENV=dotenv, JWT_SECRET_KEY="exported")
+    assert done.returncode == 0, done.stderr
+    env = _config_env(run)
+    assert env["JWT_SECRET_KEY"] == "exported"
+    # .env values the shell didn't set still arrive (review S1).
+    assert env["OLLAMA_URL"] == "http://gpu-box:11434"
+
+
+def test_a_secrets_only_rotate_is_finished_by_the_next_full_run(run) -> None:
+    assert run().returncode == 0
+    assert run("--secrets-only", "--rotate").returncode == 0
+    assert run().returncode == 0
+    steps = [_sub(c) for c in run.compose_calls()]
+    last_exec = max(i for i, s in enumerate(steps) if s[0] == "exec")
+    assert ["up", "-d", "--force-recreate", "medic", "medic-gateway"] in steps[
+        last_exec:
+    ]
