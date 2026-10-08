@@ -90,7 +90,8 @@ class History:
             )
             if obs["outcome"] != "ok" or entry is not None:
                 items.append((t, obs, entry))
-        return Reads(items, self.interval.get(spec["signal"]))
+        oks = [t for t, obs, _ in rows if obs["outcome"] == "ok"]
+        return Reads(items, self.interval.get(spec["signal"]), oks)
 
     def log_reads(self, spec: dict, group_by: list, group: dict, now: float):
         """(matching lines, ok heartbeat times, interval) for this group."""
