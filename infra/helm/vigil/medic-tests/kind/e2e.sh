@@ -108,7 +108,8 @@ spec:
           imagePullPolicy: Never
           command: ["python", "-c", $(printf '%s' "$STUB" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), "$3", "$4"]
           env: [{name: CANARY, value: "$CANARY"}]
-          ports: [{containerPort: $3}]
+          # Named like the real pods: the backend Service targets port "http".
+          ports: [{name: http, containerPort: $3}]
 EOF
 }
 stub stub-backend backend 6987 200
@@ -202,7 +203,8 @@ ok "check 3: reads only (pods, pods/log get, events, deployments, statefulsets);
 # The whole list, not a sample: resource rows only, minus what every
 # authenticated identity gets from the cluster's defaults (self-reviews, and
 # clustertrustbundles since K8s 1.33's system:basic-user).
-granted=$($K auth can-i --list --as="$SA" -n "$NS" 2>/dev/null | awk 'NR > 1 && $1 !~ /^\[/ {print $1, $NF}' \
+granted=$($K auth can-i --list --as="$SA" -n "$NS" 2>/dev/null \
+  | awk 'NR > 1 && $1 !~ /^\[/ && match($0, /\[[^]]*\] *$/) {v = substr($0, RSTART); sub(/ *$/, "", v); print $1, v}' \
   | grep -v -E '^(selfsubject[a-z]*reviews\.|clustertrustbundles\.)' | sort)
 expected=$(printf '%s\n' "deployments.apps [get list watch]" "events [get list watch]" \
   "pods [get list watch]" "pods/log [get]" "statefulsets.apps [get list watch]" | sort)
@@ -233,8 +235,9 @@ await() { # host port want label
 }
 await "$api_ep" "$api_port" timeout "check 15 wrong cidrs"
 helm --kube-context "kind-$CLUSTER" upgrade "$REL" "$chart" -n "$NS" --reuse-values \
-  --set 'medic.kubeApi.cidrs=null' >/dev/null
-$K -n "$NS" rollout status "deploy/$FN-medic" --timeout=300s >/dev/null
+  --set 'medic.kubeApi.cidrs={}' >/dev/null
+restored=$($K -n "$NS" get networkpolicy "$FN-medic" -o jsonpath='{.spec.egress[*].to[*].ipBlock.cidr}')
+[[ $restored == "$api_ep/32" ]] || fail "check 15: an empty medic.kubeApi.cidrs left $restored, not the lookup's $api_ep/32"
 await "$api_ep" "$api_port" connected "check 15 restored by lookup"
 
 say "S2-6 / S7-1: the chart's volume (kind local-path = hostPath, which ignores fsGroup)"

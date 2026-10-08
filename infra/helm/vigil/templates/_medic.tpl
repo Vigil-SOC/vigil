@@ -62,8 +62,9 @@ translated to its endpoint, hence the endpoint addresses.
 */}}
 {{- define "vigil.medic.kubeApiCidrs" -}}
 {{- $cidrs := list -}}
+{{- /* Blank entries are ignored: `--set medic.kubeApi.cidrs={}` gives [""]. */ -}}
 {{- range .Values.medic.kubeApi.cidrs -}}
-{{- $cidrs = append $cidrs (toString .) -}}
+{{- if . -}}{{- $cidrs = append $cidrs (toString .) -}}{{- end -}}
 {{- end -}}
 {{- if not $cidrs -}}
   {{- $slice := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "kubernetes" -}}

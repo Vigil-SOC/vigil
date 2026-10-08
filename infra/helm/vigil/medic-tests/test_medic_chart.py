@@ -659,3 +659,11 @@ def test_long_release_names_fit_63(chart) -> None:
         if "medic" in d["metadata"]["name"]
     }
     assert len(pairs) == 14  # nothing collided when truncated
+
+
+def test_blank_cidrs_mean_look_it_up(chart) -> None:
+    # `--set medic.kubeApi.cidrs={}` renders [""]: that's "unset", so lookup
+    # runs, and under `helm template` (no lookup) the value is required.
+    values = {k: v for k, v in MEDIC_ON.items() if not k.startswith("medic.kubeApi")}
+    with pytest.raises(RenderError, match=r"medic\.kubeApi\.cidrs is required"):
+        helm_template(chart, {**values, "medic.kubeApi.cidrs": "{}"})
