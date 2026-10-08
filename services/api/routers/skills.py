@@ -8,16 +8,18 @@ go only to that operator root. The bundled library is never modified.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import (
+    UPLOAD_MAX,
     Skill,
     SkillConflict,
     SkillError,
     SkillNotFound,
     delete_operator_skill,
+    install_uploaded_skill,
     is_bundled,
     load_skills,
     operator_skills_root,
@@ -163,6 +165,20 @@ async def save_skill(req: SkillWriteRequest):
             source=req.source,
             expected_version=req.version,
         )
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return _response(skill)
+
+
+@router.post("/upload", response_model=SkillResponse)
+async def upload_skill(file: UploadFile = File(...)):
+    """Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+
+    A name already taken is refused (409); nothing is overwritten.
+    """
+    data = await file.read(UPLOAD_MAX + 1)  # one byte over is enough to refuse it
+    try:
+        skill = install_uploaded_skill(file.filename or "", data)
     except SkillError as exc:
         raise _http(exc) from exc
     return _response(skill)
