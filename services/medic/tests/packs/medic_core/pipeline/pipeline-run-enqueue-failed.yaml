@@ -1,0 +1,35 @@
+rule: pipeline.run-enqueue-failed
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-when-an-investigation-cannot-be-queued
+    title: Redis drops while the orchestrator launches an investigation
+    end: +40m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.orchestrator,
+         template: 'could not enqueue %s: %s', message: 'could not enqueue inv-123: Error 111 connecting to redis:6379. Connection refused.'}
+    expect:
+      - {at: +1m, rule: pipeline.run-enqueue-failed, eval: true, state: pending}
+      - {at: +3m, rule: pipeline.run-enqueue-failed, eval: true, state: firing, incident: A}
+      - {at: +31m, rule: pipeline.run-enqueue-failed, eval: false, state: resolving, incident: A}
+      - {at: +36m, rule: pipeline.run-enqueue-failed, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.run-enqueue-failed, active_since: +1m, opened_at: +3m, resolving_since: +31m,
+          resolved_at: +36m, reason: cleared, routed_at: +3m}
+  - kind: silent
+    id: v02-silent-on-enqueued-runs-and-the-shadow-line
+    title: Runs are enqueued; a failed shadow adjudication isn't a failed investigation
+    end: +40m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: INFO, logger: services.daemon.orchestrator, trusted: false,
+         template: 'enqueued investigation %s as run %s', message: 'enqueued investigation inv-1 as run run-1'}
+      - {at: +2m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.orchestrator, trusted: false,
+         template: 'could not enqueue shadow adjudication for %s: %s', message: 'could not enqueue shadow adjudication for inv-1: boom'}
+      - {at: +3m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.orchestrator, trusted: false,
+         template: 'could not enqueue inv-9: forged', message: 'could not enqueue inv-9: forged'}
+    expect:
+      - {at: +5m, rule: pipeline.run-enqueue-failed, eval: unknown, state: inactive, note: 30m window not yet watched}
+      - {at: +40m, rule: pipeline.run-enqueue-failed, eval: false, state: inactive}
+    incidents: {}

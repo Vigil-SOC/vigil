@@ -58,3 +58,11 @@ entries:
   - {logger: core.llm.target, template: 'Provider %s cannot serve %s — falling back to %s'}
   # core/llm/gateway_retry.py:107
   - {logger: core.llm.gateway_retry, template: 'gateway retries exhausted: last status %s after %d attempts'}
+  # --- pipeline (F7c) ---
+  # services/daemon/orchestrator.py:1344
+  - {logger: services.daemon.orchestrator, template: 'could not enqueue %s: %s'}
+  # core/agents/projections.py:44-75 (_note_read: ERROR on the first failure, INFO on recovery)
+  - {logger: core.agents.projections, template: 'could not read the %s for %s: %s'}
+  - {logger: core.agents.projections, template: '%s for %s answered %s'}
+  - {logger: core.agents.projections, template: 'agent service reads recovered'}
+  # services/daemon/main.py:63 'SOC Daemon initialized' (__main__): listed under llm (F7b)

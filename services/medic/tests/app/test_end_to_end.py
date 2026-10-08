@@ -175,12 +175,32 @@ def test_readyz_failure_opens_after_the_hold_and_resolves_after_recovery(
     # `route` is written once, by the engine (S4b2-2): routed at open, no update.
     assert opened["body"]["route"] == "routed"
     assert not [r for r in stored(tmp_path) if r["body"].get("change") == "routed"]
-    # agent-serve was probed too; it has no rule, so it adds no incident.
+    # agent-serve was probed too; it stayed ready, so its rule adds no incident.
     assert set(serve.paths) == {"/readyz"} and serve.hits >= 10
 
     report = verify_store(tmp_path)
     assert report.ok and report.count == len(stored(tmp_path))
     assert stub.hits >= 10
+
+
+def test_a_not_ready_agent_serve_opens_its_own_incident(
+    tmp_path: Path, stub: Stub
+) -> None:
+    # S10 → F7c: a down agent-serve showed only as watcher.sensor-blind; the pack
+    # now has a rule for it, and a ready worker keeps the worker's rule quiet.
+    serve = Stub()
+    try:
+        clock = FakeClock()
+        script = _outage(serve, 0, 10_000)
+        assert _run(tmp_path, stub, clock, script, 20, serve=serve) == 0
+    finally:
+        serve.close()
+    opened = [r for r in stored(tmp_path) if r["type"] == "incident_opened"]
+    assert [r["body"]["rule"]["id"] for r in opened] == [
+        "pipeline.agent-serve-not-ready"
+    ]
+    assert opened[0]["body"]["lane"] == {"value": 3, "reason": "rule"}
+    assert verify_store(tmp_path).ok
 
 
 def test_a_short_blip_opens_nothing(tmp_path: Path, stub: Stub) -> None:
@@ -207,11 +227,15 @@ def test_a_restart_carries_an_open_incident_to_its_resolution(
     tmp_path: Path, stub: Stub
 ) -> None:
     clock = FakeClock()
-    assert _run(tmp_path, stub, clock, _outage(stub, 0, 10_000), 20) == 0
-    (opened,) = [r for r in stored(tmp_path) if r["type"] == "incident_opened"]
+    serve = Stub()  # a healthy agent-serve, so only the worker's rule opens
+    try:
+        assert _run(tmp_path, stub, clock, _outage(stub, 0, 10_000), 20, serve) == 0
+        (opened,) = [r for r in stored(tmp_path) if r["type"] == "incident_opened"]
 
-    clock.advance(60)  # off for a minute, then back with a healthy worker
-    assert _run(tmp_path, stub, clock, _outage(stub, 0, 0), 40) == 0
+        clock.advance(60)  # off for a minute, then back with a healthy worker
+        assert _run(tmp_path, stub, clock, _outage(stub, 0, 0), 40, serve) == 0
+    finally:
+        serve.close()
 
     records = stored(tmp_path)
     assert [r["type"] for r in records].count("incident_opened") == 1
@@ -253,8 +277,9 @@ def test_a_recording_replays_to_the_same_engine_records(
     instance = (tmp_path / "live" / INSTANCE_NAME).read_text().strip()
     replay(
         seen,
-        wiring.load_dev_rules(),
+        wiring.load_pack_rules(),
         tmp_path / "replay",
+        suppression=wiring.load_pack_suppression(),
         arrived=arrived,
         instance_id=instance,
         start=datetime.fromtimestamp(start, UTC),
@@ -288,7 +313,7 @@ async def test_what_a_sensor_reads_passes_the_k2_choke_before_the_engine(
     past the wiring: the pipeline's default choke redacts before the engine."""
     import json as _json
 
-    from services.medic.app.wiring import Medic, load_dev_rules
+    from services.medic.app.wiring import Medic, load_pack_rules
     from services.medic.sensors import Reading, Value
     from services.medic.store import open_writer
     from services.medic.tests.sensors.harness import FakeSensor
@@ -313,7 +338,7 @@ async def test_what_a_sensor_reads_passes_the_k2_choke_before_the_engine(
     with open_writer(tmp_path) as writer:
         medic = Medic(
             writer=writer,
-            rules=load_dev_rules(),
+            rules=load_pack_rules(),
             sensors=[leaky],
             clock=clock,
             shape="compose",

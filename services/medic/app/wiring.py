@@ -38,32 +38,32 @@ from services.medic.store import DecisionWriter, StoreError
 log = logging.getLogger("services.medic")
 
 TICK_S = 15  # semantics.md §1
-DEV_RULES_DIR = Path(__file__).resolve().parents[1] / "rules" / "dev"
-DEV_SUPPRESSION = DEV_RULES_DIR / "suppression.yaml"
+# Dev mode reads the bundled pack's source tree (F4) through the S4b loader; F6
+# replaces this with the signed pack, its catalog and the last-known-good rules.
+PACK_SOURCE = Path(__file__).resolve().parents[1] / "packs" / "medic-core"
 GROUP_CAP = 64  # live groups per rule (semantics.md §3)
 ENGINE_STATE_VERSION = 1
 
 
-def load_dev_rules(directory: Path = DEV_RULES_DIR) -> list[LoadedRule]:
-    """Dev-mode rules through the S4b loader. No pack loader, no signatures (F6)."""
-    return [
-        load_rule_file(p)
-        for p in sorted(directory.glob("*.yaml"))
-        if p.name != DEV_SUPPRESSION.name
-    ]
+def load_pack_rules(pack: Path = PACK_SOURCE) -> list[LoadedRule]:
+    """The pack's rules, unsigned (dev mode). No pack loader or catalog yet (F6)."""
+    return [load_rule_file(p) for p in sorted((pack / "rules").glob("*.yaml"))]
 
 
-def load_dev_suppression(path: Path = DEV_SUPPRESSION) -> list[dict[str, Any]]:
-    """The dev set's suppression.yaml entries (E3 §6); the pack's, once F6 loads
-    packs. The engine shape-checks every entry and refuses a malformed one."""
+def load_pack_suppression(pack: Path = PACK_SOURCE) -> list[dict[str, Any]]:
+    """The pack's suppression.yaml entries (E3 §6), without their `why` notes. The
+    engine shape-checks every entry and refuses a malformed one."""
+    path = pack / "suppression.yaml"
     if not path.exists():
         return []
-    entries = yaml.safe_load(path.read_text())
-    if entries is None:
-        return []
+    doc = yaml.safe_load(path.read_text())
+    entries = doc.get("entries") if isinstance(doc, dict) else None
     if not isinstance(entries, list):
-        raise TypeError(f"{path.name}: expected a list of suppression entries")
-    return entries
+        raise TypeError(f"{path.name}: expected a mapping with a list of entries")
+    return [
+        {k: v for k, v in e.items() if k != "why"} if isinstance(e, dict) else e
+        for e in entries
+    ]
 
 
 class EngineSink:

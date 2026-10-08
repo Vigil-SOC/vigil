@@ -1,0 +1,54 @@
+rule: pipeline.agent-reads-failing
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-from-the-first-failed-read-until-recovery
+    title: AGENT_INTERNAL_TOKEN differs; agent-serve answers 401 until the token is fixed
+    end: +30m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: core.agents.projections,
+         template: '%s for %s answered %s', message: 'projection for run-7 answered 401'}
+      - {at: +20m, signal: log_soc_daemon, level: INFO, logger: core.agents.projections,
+         template: agent service reads recovered, message: agent service reads recovered}
+    expect:
+      - {at: +1m, rule: pipeline.agent-reads-failing, eval: true, state: pending}
+      - {at: +3m, rule: pipeline.agent-reads-failing, eval: true, state: firing, incident: A}
+      - {at: +20m, rule: pipeline.agent-reads-failing, eval: false, state: resolving, incident: A}
+      - {at: +25m, rule: pipeline.agent-reads-failing, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.agent-reads-failing, active_since: +1m, opened_at: +3m, resolving_since: +20m,
+          resolved_at: +25m, reason: cleared, routed_at: +8m}
+  - kind: fires
+    id: v02-a-restart-clears-and-a-persisting-fault-sets-again
+    title: Unreachable agent-serve; soc-daemon is restarted, still can't read, then is fixed and restarted
+    end: +40m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: core.agents.projections,
+         template: 'could not read the %s for %s: %s', message: 'could not read the projection for run-7: All connection attempts failed'}
+      - {at: +10m, signal: log_soc_daemon, level: INFO, logger: __main__, template: SOC Daemon initialized, message: SOC Daemon initialized}
+      - {at: +11m, signal: log_soc_daemon, level: ERROR, logger: core.agents.projections,
+         template: 'could not read the %s for %s: %s', message: 'could not read the projection for run-7: All connection attempts failed'}
+      - {at: +25m, signal: log_soc_daemon, level: INFO, logger: __main__, template: SOC Daemon initialized, message: SOC Daemon initialized}
+    expect:
+      - {at: +3m, rule: pipeline.agent-reads-failing, eval: true, state: firing, incident: A}
+      - {at: +10m, rule: pipeline.agent-reads-failing, eval: false, state: resolving, incident: A}
+      - {at: +11m, rule: pipeline.agent-reads-failing, eval: true, state: firing, incident: A}
+      - {at: +25m, rule: pipeline.agent-reads-failing, eval: false, state: resolving, incident: A}
+      - {at: +30m, rule: pipeline.agent-reads-failing, eval: false, state: inactive}
+    incidents:
+      A: {rule: pipeline.agent-reads-failing, active_since: +1m, opened_at: +3m, resolving_since: +25m,
+          resolved_at: +30m, reason: cleared, routed_at: +8m}
+  - kind: silent
+    id: v03-silent-on-good-reads-and-forged-lines
+    title: Reads work; an f-string line with the same text isn't the catalog line
+    end: +10m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: core.agents.projections, trusted: false,
+         template: 'projection for run-1 answered 401', message: 'projection for run-1 answered 401'}
+      - {at: +2m, signal: log_soc_daemon, level: INFO, logger: __main__, template: SOC Daemon initialized, message: SOC Daemon initialized}
+    expect:
+      - {at: +1m, rule: pipeline.agent-reads-failing, eval: false, state: inactive}
+      - {at: +10m, rule: pipeline.agent-reads-failing, eval: false, state: inactive}
+    incidents: {}
