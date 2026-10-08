@@ -216,15 +216,12 @@ set +a
 env_files=()
 [ -f "$dotenv" ] && env_files+=(--env-file "$dotenv")
 env_files+=(--env-file "$settings")
-override=()
-IFS=: read -r -a extra_files <<< "${VIGIL_MEDIC_COMPOSE_OVERRIDE:-}"
-for f in ${extra_files[@]+"${extra_files[@]}"}; do
-    [ -n "$f" ] && override+=(-f "$f")
-done
 
 # Every compose call with Medic on: Vigil's .env, Medic's settings, the overlay.
+# lib.sh's dc adds the overlay and VIGIL_MEDIC_COMPOSE_OVERRIDE's files itself
+# now that compose.env exists (V1-4), as it does for start.sh.
 dcm() {
-    dc "${env_files[@]}" -f "$overlay" ${override[@]+"${override[@]}"} --profile medic "$@"
+    dc "${env_files[@]}" --profile medic "$@"
 }
 
 # Prints a secret on stdout, for a pipe only. On Linux a re-run finds the file
@@ -366,8 +363,9 @@ env_hint=""
 [ -f "$REPO_ROOT/.env" ] && env_hint="--env-file $REPO_ROOT/.env "
 cat <<EOF
 
-From now on, pass Medic's settings and overlay on every compose command that
-should keep it (add --profile daemon if you run the daemon):
+./start.sh and Vigil's service controls keep Medic's overlay from now on. A
+docker compose command you type yourself needs Medic's settings and overlay
+(add --profile daemon if you run the daemon):
   docker compose ${env_hint}--env-file $settings \\
     -f $base \\
     -f $overlay --profile medic up -d
