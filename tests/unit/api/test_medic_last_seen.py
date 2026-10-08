@@ -153,14 +153,14 @@ def test_recovery_clears_the_failure(on):
 
 def test_kill_medic_reads_down_within_five_minutes(on):
     """Fake clock, one poll a minute: running, then Medic dies just after a
-    success; the stored row must read Down by kill + 300 s."""
+    success; the stored row must read Down by kill + 270 s (V2-2)."""
     kill = _at(1)
     for tick in range(0, 660, 60):
         now = _at(tick)
         mls.poll_once(on, now=now, fetch=_ok if now < kill else _fail("refused"))
         for second in range(tick, tick + 60, 5):
             if mls.current_status(on, now=_at(second)) is MedicStatus.DOWN:
-                assert _at(second) - kill <= timedelta(seconds=300)
+                assert _at(second) - kill <= timedelta(seconds=270)
                 return
     raise AssertionError("never Down")
 
