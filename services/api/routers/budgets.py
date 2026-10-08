@@ -25,6 +25,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth.permissions import permission_gate
 from core.llm.cost.budget import get_active_vk, get_settings, set_settings
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -78,7 +79,11 @@ async def get_budget_settings() -> Dict[str, Any]:
     return get_settings()
 
 
-@router.put("/analytics/budget", response_model=BudgetSettingsResponse)
+@router.put(
+    "/analytics/budget",
+    response_model=BudgetSettingsResponse,
+    dependencies=[permission_gate("settings.write")],
+)
 async def put_budget_settings(
     payload: BudgetSettingsUpdate,
     current_user: User = Depends(get_current_active_user),

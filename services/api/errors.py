@@ -22,6 +22,10 @@ from core.telemetry import current_trace_ids
 
 logger = logging.getLogger(__name__)
 
+# What a handler that returns an error field in a 200 body says instead of the
+# exception text; the real one goes to the log.
+INTERNAL_ERROR_DETAIL = "Internal server error"
+
 # Bifrost's own text can name the key and the spend. That stays in the log.
 # The ceiling an operator can raise is the virtual key under AI Config.
 BUDGET_EXCEEDED_DETAIL = (

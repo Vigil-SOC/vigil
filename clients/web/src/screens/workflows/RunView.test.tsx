@@ -13,6 +13,9 @@ vi.mock('../../services/api', () => ({
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'wf-1', name: 'Beacon hunt', description: 'd', steps: [] }] } })),
     getRun: vi.fn(),
     listRuns: vi.fn(),
+    // the reader pane opens on the first workflow; these tests never let it load
+    get: vi.fn(() => new Promise(() => {})),
+    preflight: vi.fn(() => new Promise(() => {})),
     replayRun: vi.fn(() => Promise.reject({ response: { status: 404 } })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },

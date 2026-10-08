@@ -82,6 +82,16 @@ describe("the root-cause projection", () => {
     expect(folded.recent_searches[0]).toMatchObject({ tool: PROVER_TOOL, rows: 2, failed: false });
   });
 
+  it("puts the no-telemetry notice in notices on a completed run", () => {
+    const text = "This deployment has no telemetry search, so the trace could not look.";
+    const folded = rootCauseProjection(RUN, [
+      event("run", { run_kind: "root_cause", budgets: { max_calls: 1024, max_cost_usd: 15, max_wall_ms: 5_400_000 } }),
+      event("notice", { text }),
+      event("terminal", { outcome: "completed", reason: "r" }),
+    ]);
+    expect(folded.notices).toEqual([text]);
+  });
+
   it("names a who only on a proven step, as the report does", () => {
     const folded = rootCauseProjection(RUN, [
       event("step", step({ who: "alice", event: "alice opened invoice.lnk", origin: true, origin_status: "proven" })),
