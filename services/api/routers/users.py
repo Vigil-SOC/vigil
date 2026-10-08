@@ -290,6 +290,12 @@ def _apply_user_update(
         user.full_name = request.full_name
 
     if request.email is not None:
+        if user.service_account is True:
+            # A reachable address is the first step to a password reset.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="A service account's email can't be changed",
+            )
         existing = (
             session.query(User)
             .filter(User.email == request.email, User.user_id != user_id)
