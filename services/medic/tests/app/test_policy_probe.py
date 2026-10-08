@@ -163,10 +163,15 @@ def _env(tmp_path: Path) -> dict[str, str]:
     }
 
 
-def _run(tmp_path: Path, monkeypatch, caplog, verdicts: dict) -> int:
+def _run(tmp_path: Path, monkeypatch, caplog, verdicts: dict, waits=None) -> int:
     from services.medic.app import cli
 
-    monkeypatch.setattr(cli, "policy_probe", lambda addr: verdicts[addr])
+    def probe(addr):
+        v = verdicts[addr]
+        return v.pop(0) if isinstance(v, list) else v
+
+    monkeypatch.setattr(cli, "policy_probe", probe)
+    monkeypatch.setattr(cli, "_control_wait", ([] if waits is None else waits).append)
     clock = FakeClock()
     with caplog.at_level(logging.INFO, logger="services.medic"):
         return main(
@@ -261,3 +266,39 @@ def test_real_sockets_connected_target_refuses(tmp_path: Path, caplog) -> None:
             code = main(["run"], env=env, clock=clock, sleep=clock.sleep, max_cycles=0)
     assert code == POLICY_REFUSED
     assert "isn't enforced" in caplog.text
+
+
+def test_control_is_retried_while_the_gateway_starts(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    # Medic usually starts before the gateway is Ready (re-review): retry the
+    # control only, for a bounded time, then decide.
+    from services.medic.app import cli
+
+    waits: list[float] = []
+    control = [Verdict.INCONCLUSIVE, Verdict.BLOCKED, Verdict.CONNECTED]
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {CONTROL: control, TARGET: Verdict.BLOCKED},
+        waits,
+    )
+    assert code == 0
+    assert waits == [cli.CONTROL_RETRY_S, cli.CONTROL_RETRY_S]
+
+
+def test_control_retry_is_bounded(tmp_path: Path, monkeypatch, caplog) -> None:
+    from services.medic.app import cli
+
+    waits: list[float] = []
+    code = _run(
+        tmp_path,
+        monkeypatch,
+        caplog,
+        {CONTROL: Verdict.INCONCLUSIVE, TARGET: Verdict.BLOCKED},
+        waits,
+    )
+    assert code == POLICY_REFUSED
+    assert len(waits) == cli.CONTROL_ATTEMPTS - 1
+    assert cli.CONTROL_ATTEMPTS * cli.CONTROL_RETRY_S <= 120

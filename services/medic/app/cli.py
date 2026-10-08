@@ -47,6 +47,10 @@ QUIET_LOGGERS = ("httpx", "httpcore")
 # A3-3: the exit code for "this cluster doesn't enforce NetworkPolicy". Not 1, so
 # an operator (and the kind CI) can tell a refusal from a crash.
 POLICY_REFUSED = 3
+# Medic usually starts before the gateway is Ready: the control (only) is retried.
+CONTROL_ATTEMPTS = 12
+CONTROL_RETRY_S = 5.0
+_control_wait = time.sleep
 
 
 @dataclass(frozen=True)
@@ -162,12 +166,19 @@ def _policy_enforced(target: tuple[str, int], control: tuple[str, int]) -> bool:
     """A3-3. Proof = the allowed path connects AND the forbidden one is dropped.
 
     A timeout alone could be a dead pod network or a Service with no endpoints
-    (IPVS drops those), so the control comes first (S7 review #1)."""
+    (IPVS drops those), so the control comes first (S7 review #1). On Helm the
+    two are the gateway's two listeners on the same pods, so a connected control
+    also proves the target has live endpoints."""
     hint = (
-        "Check that medic.policyProbe.target names a Service that is up and "
-        "that Medic's policy blocks, and that DNS and the gateway are reachable."
+        "Check that the Medic gateway is Running and Ready and that DNS works "
+        "from Medic's pod."
     )
-    checked = policy_probe(control)
+    for attempt in range(CONTROL_ATTEMPTS):
+        checked = policy_probe(control)
+        if checked is Verdict.CONNECTED:
+            break
+        if attempt < CONTROL_ATTEMPTS - 1:
+            _control_wait(CONTROL_RETRY_S)
     if checked is not Verdict.CONNECTED:
         log.error(
             "Medic refuses to run: it can't prove NetworkPolicy is enforced: the "

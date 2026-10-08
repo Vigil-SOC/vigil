@@ -280,15 +280,18 @@ def test_medic_env_names_its_shape_and_targets(on) -> None:
     # only adds group bits, never clears "other").
     assert env["VIGIL_MEDIC_DATA_DIR"] == "/var/lib/vigil-medic/data"
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == f"{MEDIC}-agent-worker:6990"
-    # A3-3: by default the probe tries the backend, the thing C3 R1 forbids.
-    assert env["VIGIL_MEDIC_POLICY_PROBE_ADDR"] == "rel-vigil-backend:6987"
+    # A3-3: the probe tries the gateway's inbound listener, which only the
+    # backend may reach; the control is the outbound listener on the same pods,
+    # so "control connects" proves the target has live endpoints (re-review).
+    assert env["VIGIL_MEDIC_POLICY_PROBE_ADDR"] == f"{GATEWAY}-in:8470"
+    assert env["VIGIL_MEDIC_POLICY_CONTROL_ADDR"] == f"{GATEWAY}:8471"
 
 
-def test_probe_target_is_explicit_in_values(render) -> None:
-    docs = render({**MEDIC_ON, "medic.policyProbe.target": "rel-vigil-redis:6379"})
-    (c,) = medic_pod(docs)["containers"]
-    env = {e["name"]: e.get("value") for e in c["env"]}
-    assert env["VIGIL_MEDIC_POLICY_PROBE_ADDR"] == "rel-vigil-redis:6379"
+def test_probe_target_cant_be_overridden(chart) -> None:
+    # Any other target can only weaken the proof: a dead address always times
+    # out, which would read as "enforced" (S7-8).
+    with pytest.raises(RenderError, match=r"medic\.policyProbe"):
+        helm_template(chart, {**MEDIC_ON, "medic.policyProbe.target": "10.9.9.9:1"})
 
 
 def test_no_service_links(on) -> None:
@@ -527,6 +530,23 @@ def test_medic_egress_is_gateway_agent_worker_dns_and_kube_api(all_on) -> None:
         assert r.get("ports"), "an egress rule with no ports allows every port"
 
 
+def test_probe_target_is_one_medics_own_policy_blocks(on) -> None:
+    # The target (gateway inbound 8470) must not be in Medic's egress, the
+    # control (gateway outbound 8471) must be, and they share pods.
+    egress = named(on, "NetworkPolicy", MEDIC)["spec"]["egress"]
+    gw_ports = [
+        p["port"]
+        for r in egress
+        if _allowed_pods([r], on) == {GATEWAY}
+        for p in r["ports"]
+    ]
+    assert gw_ports == [8471]
+    assert (
+        named(on, "Service", f"{GATEWAY}-in")["spec"]["selector"]
+        == named(on, "Service", GATEWAY)["spec"]["selector"]
+    )
+
+
 def test_medic_egress_never_allows_the_backend_or_bifrost(all_on) -> None:
     egress = named(all_on, "NetworkPolicy", MEDIC)["spec"]["egress"]
     allowed = _allowed_pods(egress, all_on)
@@ -625,7 +645,8 @@ def test_kube_api_cidrs_accept_a_small_range(render) -> None:
     [
         ("medic.kubeApi.ports", "null", r"medic\.kubeApi\.ports"),
         ("medic.dns.podLabels", "null", r"medic\.dns\.podLabels"),
-        ("agentWorker.enabled", "false", r"medic\.agentWorkerAddr"),
+        ("agentWorker.enabled", "false", r"agentWorker\.enabled"),
+        ("medic.kubeApi.ports[0]", "99999", r"medic\.kubeApi\.ports"),
     ],
 )
 def test_values_that_would_widen_or_break_a_policy_fail(
@@ -633,15 +654,6 @@ def test_values_that_would_widen_or_break_a_policy_fail(
 ) -> None:
     with pytest.raises(RenderError, match=error):
         helm_template(chart, {**MEDIC_ON, key: value})
-
-
-def test_agent_worker_off_with_an_address_renders(render) -> None:
-    docs = render(
-        {**MEDIC_ON, "agentWorker.enabled": "false", "medic.agentWorkerAddr": "aw:6990"}
-    )
-    (c,) = medic_pod(docs)["containers"]
-    env = {e["name"]: e.get("value") for e in c["env"]}
-    assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "aw:6990"
 
 
 def test_long_release_names_fit_63(chart) -> None:

@@ -902,7 +902,7 @@ networkPolicies:
 # It needs a cluster that ENFORCES NetworkPolicy (Calico, Cilium, a managed
 # cluster with policy enforcement on, kind's kindnet since it gained policy
 # support). At start it connects to the gateway (allowed) and then tries a
-# connection its policy blocks (policyProbe.target). Unless the first connects
+# connection its policy blocks (see below). Unless the first connects
 # and the second is dropped, it exits with code 3 and says why, and the pod
 # crash-loops: on flannel or any plugin without policy support it will not run.
 # Known limits:
@@ -936,13 +936,13 @@ medic:
     storageClassName: ""   # empty → the cluster default
     accessModes:
       - ReadWriteOnce      # ReadWriteOncePod where the storage driver has it
-  # host:port of a Service Medic's policy must block. Empty → the backend
-  # Service, the one thing Medic must never reach directly. Must be up and
-  # listening: a refused connection proves nothing, and Medic won't start.
-  policyProbe:
-    target: ""
+  # The NetworkPolicy probe is not configurable: Medic connects to the gateway's
+  # outbound listener (<fullname>-medic-gateway:8471, allowed) and then tries
+  # its inbound one (<fullname>-medic-gateway-in:8470, which only the backend
+  # may reach). Same pods, so both have endpoints or neither does.
   # Where Medic reads the agent worker's /readyz. Empty → a Service this chart
-  # renders for it (<fullname>-medic-agent-worker:6990).
+  # renders for it (<fullname>-medic-agent-worker:6990). Needs
+  # agentWorker.enabled: the egress policy allows only the chart's agent worker.
   agentWorkerAddr: ""
   # The Kubernetes API server's address(es), as CIDRs, for Medic's egress policy
   # (TCP `ports` only). Filled at install by looking up the `kubernetes`
