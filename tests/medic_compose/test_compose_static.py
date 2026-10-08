@@ -109,6 +109,12 @@ def test_profile_without_overlay_fails_loudly(home) -> None:
     assert "medic-net" in done.stderr or "medic-private" in done.stderr
 
 
+def test_main_file_declares_no_medic_network() -> None:
+    # Declared only in the overlay, so the profile alone can't start Medic.
+    raw = yaml.safe_load(BASE.read_text(encoding="utf-8"))
+    assert not set(MEDIC_NETWORKS) & set(raw.get("networks") or {})
+
+
 def test_overlay_touches_only_medic_net() -> None:
     raw = yaml.safe_load(OVERLAY.read_text(encoding="utf-8"))
     assert set(raw) == {"services", "networks"}
