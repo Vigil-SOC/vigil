@@ -1,34 +1,37 @@
-"""V2 on a running Compose stack: Off, Running, killed → Down within 5 min, kept.
+"""V2 + S9 on a running Compose stack: Off, Running, killed → Down, kept, back.
 
-Opt-in (it builds the backend image and runs a stack for about 10 minutes):
+Opt-in (it builds the backend and Medic images and runs a stack for about 12
+minutes):
 
     VIGIL_MEDIC_COMPOSE_LIVE=1 python -m pytest tests/medic_compose/test_last_seen_live.py
 
-The real backend, Postgres, db-seed, Redis and gateway; V1's stubs for the rest
-(`compose.v1.yml`), and a stub for Medic's API (`compose.v2.yml`: the skeleton's
-Medic has no API listener yet). Real timings: one poll a minute, Down at 5 min.
+The real backend, Postgres, db-seed, Redis, gateway and **Medic** (S9 serves
+`GET /v1/status`; V2 ran this against a stub); V1's stubs for the rest
+(`compose.v1.yml`). Real timings: one poll a minute, Down at 5 min.
 
 1. Flag off: the backend says ``off`` and writes no row.
-2. `scripts/medic/enable-compose.sh`: the backend polls through the gateway's
-   inbound listener with the API key and says ``running``.
+2. `scripts/medic/enable-compose.sh`: the backend polls the real Medic through
+   the gateway's inbound listener with the API key and says ``running``.
 3. Medic stopped: ``down`` within 300 s of the kill, failure kind ``refused``.
 4. The backend restarted: still ``down``, same ``first_failed_at``.
-5. Medic started again: ``running``, the failure cleared.
-Own project (`medic-v2`), torn down at the end; nothing outside it is touched.
+5. Medic started again: ``running``, the failure cleared, its restart counted.
+Own project (`medic-s9`), torn down at the end; nothing outside it is touched.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import time
 
 import pytest
 
 from tests.medic_compose.compose import ENABLE, HAVE_COMPOSE
-from tests.medic_compose.test_enable_live import HERE, INSTALL, OVERRIDE, Stack
+from tests.medic_compose.test_enable_live import INSTALL, OVERRIDE, Stack
 
-PROJECT = os.environ.get("VIGIL_MEDIC_V2_PROJECT", "medic-v2")
+PROJECT = os.environ.get("VIGIL_MEDIC_LAST_SEEN_PROJECT", "medic-s9")
 
 pytestmark = [
     pytest.mark.integration,
@@ -51,6 +54,16 @@ ROW = (
     "coalesce(failure_kind, '-'), coalesce(status_snapshot->>'state', '-') "
     "FROM medic_last_seen"
 )
+SNAPSHOT = "SELECT coalesce(status_snapshot::text, '-') FROM medic_last_seen"
+# Medic's own C5 states (X2 `Status.state`); down/off/unknown are the backend's.
+MEDIC_STATES = (
+    "running",
+    "degraded",
+    "not_recording",
+    "blind",
+    "starting",
+    "crash_looping",
+)
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +71,7 @@ def stack(tmp_path_factory):
     s = Stack(
         tmp_path_factory.mktemp("medic-v2-home"),
         project=PROJECT,
-        files=(OVERRIDE, HERE / "compose.v2.yml"),
+        files=(OVERRIDE,),
     )
     try:
         s.compose("build", "backend")
@@ -121,8 +134,15 @@ def test_flag_off_reads_off_and_writes_nothing(off) -> None:
 
 
 def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
-    last, failed, kind, state = stack.sql(ROW).split("|")
-    assert (failed, kind, state) == ("-", "-", "running")
+    _, failed, kind, state = stack.sql(ROW).split("|")
+    assert (failed, kind) == ("-", "-")
+    # The real Medic's own view, typed by the backend (V2-9).
+    assert state in MEDIC_STATES
+    snap = json.loads(stack.sql(SNAPSHOT))
+    assert re.fullmatch(r"mi_[0-9a-f]{16}", snap["instance_id"])
+    assert snap["api_version"] == "1.0" and snap["cycle"] >= 0
+    medic_log = stack.compose("logs", "--no-color", "medic", medic=True).stdout
+    assert "listening on 0.0.0.0:8470" in medic_log
     # The poll went backend -> gateway inbound -> Medic, with the key.
     logs = stack.compose("logs", "--no-color", "medic-gateway", medic=True).stdout
     assert '"dir": "inbound"' in logs or '"dir":"inbound"' in logs
@@ -149,6 +169,10 @@ def test_medic_back_reads_running_and_clears_the_failure(stack, killed) -> None:
     _log(stack, "recovered")
     _, failed, kind, _ = stack.sql(ROW).split("|")
     assert (failed, kind) == ("-", "-")
+    # Medic knows it was stopped and started again (C5 §5.4 card fields).
+    snap = json.loads(stack.sql(SNAPSHOT))
+    assert snap["restarts_24h"] >= 1
+    assert snap["last_exit"]["reason"] == "clean"
 
 
 def test_the_api_key_is_in_no_log(stack, killed) -> None:

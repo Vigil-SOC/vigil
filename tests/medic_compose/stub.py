@@ -10,9 +10,6 @@ can prove what the gateway let through. stdlib only; runs in python:3.12-slim.
 - agent-worker (6990) / agent-serve (6989): `/readyz` 200 "ready", or 503
   "not ready" while /tmp/not-ready exists. The 503 carries STUB_CANARY in its
   body and a Set-Cookie header: Medic must keep it out of its store and logs.
-- medic-api (8470): Medic's `GET /v1/status` (X2), which the skeleton's Medic
-  doesn't serve yet: 200 with a valid status when `X-Medic-Key` matches
-  /run/secrets/medic_api_key, else 401 problem JSON (V2's live test).
 - anything else: 200 `{}` on HTTP ports, accept-and-close on raw TCP ones.
 """
 
@@ -35,7 +32,6 @@ PORTS = {
     "agent-serve": [6989],
     "soc-daemon": [8081, 9090, 9091],
     "bifrost": [8080],
-    "medic-api": [8470],
 }
 RAW_PORTS = {"redis": [6379], "postgres": [5432]}
 NOT_READY = Path("/tmp/not-ready")
@@ -100,37 +96,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"Set-Cookie": f"session={CANARY}", "X-Debug": CANARY},
                 )
             return self._reply(200, "ready")
-        if ROLE == "medic-api":
-            return self._medic_api()
         return self._reply(200, {})
-
-    def _medic_api(self) -> None:
-        key = Path("/run/secrets/medic_api_key").read_text().strip()
-        if self.headers.get("X-Medic-Key") != key:
-            return self._reply(401, {"code": "unauthorized", "status": 401})
-        if (self.command, self.path) != ("GET", "/v1/status"):
-            return self._reply(404, {"code": "not_found", "status": 404})
-        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        return self._reply(
-            200,
-            {
-                "api_version": "1.0",
-                "instance_id": "mi_0000000000000002",
-                "state": "running",
-                "now": ts,
-                "heartbeat_at": ts,
-                "cycle": 1,
-                "started_at": ts,
-                "uptime_s": 1,
-                "restarts_24h": 0,
-                "last_exit": None,
-                "dev_mode": True,
-                "store": {},
-                "sensors": {"reporting": 1, "cant_see": 0, "off": 0},
-                "pack": None,
-                "chain_head": None,
-            },
-        )
 
     def _backend(self, body: bytes) -> None:
         if self.command == "POST" and self.path in (
