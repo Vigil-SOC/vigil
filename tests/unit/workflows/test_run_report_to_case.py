@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import (
     TerminalHandoff,
     TerminalUpdate,
@@ -143,55 +144,66 @@ class TestTheReportReachesTheCase:
         assert runs.finalized["status"] == "completed"
 
 
-class TestEscalationsLinkBothWays:
+class TestAHandoffLandsOnTheCaseTheRunCameFrom:
     HANDOFF = TerminalHandoff(
-        case_id="case-25aac39c", title="beaconing host", markdown="# IR case"
+        case_id="case-25aac39c", title="beaconing host", markdown="# Handoff — hunt"
     )
 
-    def test_opens_its_own_case_so_the_escalation_stays_triageable(self):
-        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
-        _terminate(
-            TerminalUpdate(
-                outcome="completed", summary=REPORT, handoffs=[self.HANDOFF]
-            ),
-            {"case_id": "case-1"},
-            cases,
-        )
-
-        assert [case["title"] for case in cases.created] == ["beaconing host"]
-
-    def test_names_the_case_it_came_out_of(self):
-        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
-        _terminate(
-            TerminalUpdate(
-                outcome="completed", summary=REPORT, handoffs=[self.HANDOFF]
-            ),
-            {"case_id": "case-1"},
-            cases,
-        )
-
-        assert "Escalated from case case-1" in cases.created[0]["description"]
-
-    def test_and_the_case_it_came_out_of_names_it(self):
-        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
-        _terminate(
-            TerminalUpdate(
-                outcome="completed", summary=REPORT, handoffs=[self.HANDOFF]
-            ),
-            {"case_id": "case-1"},
-            cases,
-        )
-
-        handoffs = [
+    def _handoffs(self, cases: _Cases, case_id: str) -> List[Dict[str, Any]]:
+        return [
             a
-            for a in _activities(cases, "case-1")
+            for a in _activities(cases, case_id)
             if a["activity_type"] == "agent_run_handoff"
         ]
-        assert len(handoffs) == 1
-        assert handoffs[0]["details"]["case_id"] == cases.created[0]["case_id"]
 
-    # A hunt run from nowhere still escalates; there is simply nothing to link to.
-    def test_an_escalation_with_no_origin_opens_a_case_and_links_nothing(self):
+    def test_opens_no_second_case_and_records_one_handoff_on_the_origin(self):
+        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
+        _terminate(
+            TerminalUpdate(
+                outcome="completed", summary=REPORT, handoffs=[self.HANDOFF]
+            ),
+            {"case_id": "case-1"},
+            cases,
+        )
+
+        assert cases.created == []
+        [handoff] = self._handoffs(cases, "case-1")
+        assert handoff["details"] == {
+            "run_id": "run-1",
+            "handoff_id": "case-25aac39c",
+        }
+
+    # Pushed the moment the hunt journals it, then again on the terminal.
+    def test_a_second_arrival_records_no_second_handoff(self):
+        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
+        update = TerminalUpdate(
+            outcome="completed", summary=REPORT, handoffs=[self.HANDOFF]
+        )
+        _terminate(update, {"case_id": "case-1"}, cases)
+        _terminate(update, {"case_id": "case-1"}, cases)
+
+        assert len(self._handoffs(cases, "case-1")) == 1
+
+    def test_the_root_cause_run_is_filed_onto_the_origin_case(self):
+        cases = _Cases({"case-1": {"case_id": "case-1", "activities": []}})
+        with patch.object(rbr, "_source_is_hunt", return_value=True), patch.object(
+            rbr, "_rca_exists", return_value=False
+        ), patch.object(rbr, "_start_root_cause") as start_rca:
+            _terminate(
+                TerminalUpdate(outcome="completed", handoffs=[self.HANDOFF]),
+                {"case_id": "case-1"},
+                cases,
+            )
+
+        assert start_rca.call_args.args[2] == "case-1"
+
+
+class TestAHuntWithNoCaseOpensOne:
+    HANDOFF = TerminalHandoff(
+        case_id="case-25aac39c", title="beaconing host", markdown="# Handoff — hunt"
+    )
+
+    def test_names_the_run_that_handed_off_and_records_it(self):
         cases = _Cases({})
         _terminate(
             TerminalUpdate(
@@ -201,5 +213,31 @@ class TestEscalationsLinkBothWays:
             cases,
         )
 
+        [opened] = cases.created
+        assert opened["title"] == "beaconing host"
+        assert "Handed off by run run-1" in opened["description"]
+        [activity] = _activities(cases, opened["case_id"])
+        assert activity["activity_type"] == "agent_run_handoff"
+        assert activity["details"]["run_id"] == "run-1"
+
+    def test_a_repeat_delivery_opens_no_second_case(self):
+        cases = _Cases({})
+        update = TerminalUpdate(outcome="completed", handoffs=[self.HANDOFF])
+        _terminate(update, {}, cases)
+        # The real table loses the second insert on the derived primary key.
+        cases.cases[rbr._handoff_case_id("run-1", self.HANDOFF)] = cases.created[0]
+        _terminate(update, {}, cases)
+
         assert len(cases.created) == 1
-        assert "Escalated from case" not in cases.created[0]["description"]
+
+
+class TestTheTitleIsCutOnAWholeWord:
+    def test_leaves_a_short_title_alone(self):
+        assert rbr._case_title("rare  beacon") == "rare beacon"
+
+    def test_never_ends_mid_word(self):
+        title = rbr._case_title("alpha beta gamma delta", limit=12)
+        assert title == "alpha beta"
+
+    def test_a_single_long_word_is_cut_at_the_limit(self):
+        assert rbr._case_title("x" * 50, limit=20) == "x" * 20

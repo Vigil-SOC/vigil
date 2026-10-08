@@ -5,11 +5,12 @@ from services.daemon.orchestrator import shadow_run_id_for
 from core.cases.case_state import (
     budget_health,
     case_run_refs,
+    closure_view,
     combined_state,
     detail_fields,
     investigation_ref,
 )
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.storage.models import CaseClosureInfo, Investigation, WorkflowRun
 
@@ -72,6 +73,7 @@ def test_detail_fields_carry_the_closure_the_summary_reads():
     assert fields["combined_state"] == "closed"
     assert fields["closure"]["closed_by_kind"] == "analyst"
     assert fields["closure"]["verdict"] == "the scanner"
+    assert fields["closure"]["closed_at"] is None
     assert fields["investigations"][0]["live"] is False
 
 
@@ -126,3 +128,14 @@ def test_an_in_flight_run_reads_as_live_and_a_finished_one_does_not():
         "closed", [], None, [_run("r4", "running", datetime(2026, 10, 7))]
     )
     assert closed["combined_state"] == "closed"
+
+
+def test_closure_view_carries_closed_at_as_iso():
+    closed_at = datetime(2026, 6, 15, 15, 48, tzinfo=timezone.utc)
+    closure = CaseClosureInfo(
+        case_id="case-1",
+        closure_category="resolved",
+        closed_by="ada",
+        closed_at=closed_at,
+    )
+    assert closure_view(closure)["closed_at"] == closed_at.isoformat()
