@@ -123,18 +123,20 @@ def test_one_failure_after_a_recent_success_is_still_running():
 def test_not_seen_for_two_polls_and_not_yet_down_is_unknown():
     seen = _seen(last=T0, failed=_at(60), kind="refused")
     assert ms.medic_status(_on(), seen, _at(120)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(299)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(269)) is ms.MedicStatus.UNKNOWN
 
 
 @pytest.mark.parametrize("kind", ["refused", "timeout", "401", "5xx"])
-def test_failing_and_unseen_for_five_minutes_is_down(kind):
+def test_failing_and_unseen_for_270_s_is_down(kind):
+    # V2-2: 270 s, not 300, so a kill shows Down inside 5 min with a poll to spare.
     seen = _seen(last=T0, failed=_at(60), kind=kind)
-    assert ms.medic_status(_on(), seen, _at(300)) is ms.MedicStatus.DOWN
+    assert ms.DOWN_AFTER_S == 270
+    assert ms.medic_status(_on(), seen, _at(270)) is ms.MedicStatus.DOWN
 
 
 def test_killed_medic_reads_down_within_five_minutes_of_the_kill():
     """Polls every 60 s with a fake clock: the kill lands just after a success,
-    the worst case, and Down must still show by kill + 300 s."""
+    the worst case, and Down must still show by kill + 270 s."""
     kill = _at(1)
     last, failed = T0, None
     status = None
@@ -147,7 +149,7 @@ def test_killed_medic_reads_down_within_five_minutes_of_the_kill():
         for second in range(tick, tick + ms.POLL_INTERVAL_S):
             status = ms.medic_status(_on(), _seen(last, failed, "refused"), _at(second))
             if status is ms.MedicStatus.DOWN:
-                assert _at(second) - kill <= timedelta(seconds=300)
+                assert _at(second) - kill <= timedelta(seconds=270)
                 return
     raise AssertionError(f"never Down; last {status}")
 
@@ -157,14 +159,14 @@ def test_a_backend_back_after_a_long_gap_does_not_flash_down():
     restarting Medic gets the same grace as any other outage."""
     seen = _seen(last=T0, failed=_at(86_400), kind="refused")
     assert ms.medic_status(_on(), seen, _at(86_400)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(86_400 + 229)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(86_400 + 230)) is ms.MedicStatus.DOWN
+    assert ms.medic_status(_on(), seen, _at(86_400 + 199)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(86_400 + 200)) is ms.MedicStatus.DOWN
 
 
 def test_never_seen_and_failing_is_down_after_the_grace():
     seen = _seen(failed=T0, kind="timeout")
-    assert ms.medic_status(_on(), seen, _at(229)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(230)) is ms.MedicStatus.DOWN
+    assert ms.medic_status(_on(), seen, _at(199)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(200)) is ms.MedicStatus.DOWN
 
 
 def test_a_stale_row_without_failures_is_unknown_not_down():
@@ -180,7 +182,7 @@ def test_off_wins_over_any_row():
 
 @pytest.mark.parametrize("rhythm", [60, 70])  # 70: polls further apart than planned
 @pytest.mark.parametrize("kill_after", [1, 30, 59])
-def test_down_by_kill_plus_300_for_any_kill_time(kill_after, rhythm):
+def test_down_by_kill_plus_270_for_any_kill_time(kill_after, rhythm):
     kill = _at(120 + kill_after)
     last = _at(120)  # the last tick before the kill answered
     failed = None
@@ -191,7 +193,7 @@ def test_down_by_kill_plus_300_for_any_kill_time(kill_after, rhythm):
         for second in range(tick, tick + rhythm):
             seen = ms.LastSeen(last, failed, "timeout", updated_at=_at(tick))
             if ms.medic_status(_on(), seen, _at(second)) is ms.MedicStatus.DOWN:
-                assert _at(second) - kill <= timedelta(seconds=300)
+                assert _at(second) - kill <= timedelta(seconds=270)
                 return
         tick += rhythm
     raise AssertionError("never Down")
@@ -199,8 +201,8 @@ def test_down_by_kill_plus_300_for_any_kill_time(kill_after, rhythm):
 
 def test_a_row_nobody_has_written_for_three_polls_is_unknown():
     """Medic was off (or every poller stopped): an old failure says nothing now."""
-    seen = ms.LastSeen(T0, _at(60), "refused", updated_at=_at(120))
-    assert ms.medic_status(_on(), seen, _at(299)) is ms.MedicStatus.UNKNOWN
-    assert ms.medic_status(_on(), seen, _at(300)) is ms.MedicStatus.UNKNOWN
-    fresh = ms.LastSeen(T0, _at(60), "refused", updated_at=_at(299))
-    assert ms.medic_status(_on(), fresh, _at(300)) is ms.MedicStatus.DOWN
+    seen = ms.LastSeen(T0, _at(60), "refused", updated_at=_at(90))
+    assert ms.medic_status(_on(), seen, _at(269)) is ms.MedicStatus.UNKNOWN
+    assert ms.medic_status(_on(), seen, _at(270)) is ms.MedicStatus.UNKNOWN
+    fresh = ms.LastSeen(T0, _at(60), "refused", updated_at=_at(269))
+    assert ms.medic_status(_on(), fresh, _at(270)) is ms.MedicStatus.DOWN

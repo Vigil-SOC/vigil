@@ -7,12 +7,12 @@ minutes):
 
 The real backend, Postgres, db-seed, Redis, gateway and **Medic** (S9 serves
 `GET /v1/status`; V2 ran this against a stub); V1's stubs for the rest
-(`compose.v1.yml`). Real timings: one poll a minute, Down at 5 min.
+(`compose.v1.yml`). Real timings: one poll a minute, Down at 270 s (V2-2).
 
 1. Flag off: the backend says ``off`` and writes no row.
 2. `scripts/medic/enable-compose.sh`: the backend polls the real Medic through
    the gateway's inbound listener with the API key and says ``running``.
-3. Medic stopped: ``down`` within 300 s of the kill, failure kind ``refused``.
+3. Medic stopped: ``down`` within 270 s of the kill, failure kind ``refused``.
 4. The backend restarted: still ``down``, same ``first_failed_at``.
 5. Medic started again: ``running``, the failure cleared, its restart counted.
 Own project (`medic-s9`), torn down at the end; nothing outside it is touched.
@@ -170,8 +170,8 @@ def test_enabled_reads_running_through_the_gateway(stack, running) -> None:
     assert "/v1/status" in logs
 
 
-def test_killed_medic_reads_down_within_five_minutes(killed) -> None:
-    assert killed["elapsed"] <= 300, killed
+def test_killed_medic_reads_down_within_270_s(killed) -> None:
+    assert killed["elapsed"] <= 270, killed
     _, failed, kind, _ = killed["row"].split("|")
     assert failed != "-" and kind == "refused"
 
