@@ -171,6 +171,35 @@ class TestPhaseApprovalAcrossTheBridge:
         )
         assert len(pending) == 1
 
+    def test_a_checkpoint_row_explains_itself_without_config(
+        self, clean_tables, internal
+    ):
+        """A checkpoint compares no confidence, so no threshold belongs on it."""
+        from core.response.approval_service import ActionStatus, ApprovalService
+        from core.workflows.run_bridge_router import (
+            CheckpointRaised,
+            record_checkpoint,
+        )
+
+        run_id = _run()
+        record_checkpoint(
+            run_id,
+            CheckpointRaised(
+                checkpoint_id="cp-1",
+                checkpoint_class="hypothesis_approval",
+                question="Approve and start this hunt on 1 hypothesis",
+            ),
+            internal,
+            ApprovalService(),
+        )
+
+        [row] = ApprovalService().list_actions(
+            status=ActionStatus.PENDING, workflow_run_id=run_id
+        )
+        assert row.reason == "Vigil wants your go-ahead on the hypothesis it will test."
+        assert "confidence_threshold" not in row.reason
+        assert "hypothesis_approval" not in row.reason
+
     def test_an_approval_comes_back_as_a_decision_the_ledger_can_take(
         self, clean_tables, internal
     ):

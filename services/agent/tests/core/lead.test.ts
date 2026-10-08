@@ -13,6 +13,7 @@ import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import type { Answers } from "../../core/answers.js";
 import { CALL_BUDGET } from "../../workflows/hunt/adapters.js";
+import { leadProjection } from "../../workflows/lead/projection.js";
 import { grantsOf, runLead, type LeadKinds, type LeadOptions } from "../../workflows/lead/workflow.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
@@ -109,7 +110,7 @@ describe("an arch drives the loop", () => {
 
     const events = await state.read(RUN);
     expect(events.map((event) => event.kind)).toEqual([
-      "run", "spend", "spend", "decision", "spend", "spend", "dispatch", "finding", "spend", "spend", "decision", "terminal",
+      "run", "unbound", "spend", "spend", "decision", "spend", "spend", "dispatch", "finding", "spend", "spend", "decision", "terminal",
     ]);
     // The lead's model turn is timed onto each decision.
     for (const decision of events.filter((event) => event.kind === "decision")) {
@@ -303,7 +304,7 @@ describe("an arch drives the loop", () => {
       threat_intel: ["lookup_indicators"],
     });
     expect(grantsOf(specFor("investigate", "case.playbook.yaml", "case.config.yaml"))).toEqual({
-      lead: ["case_records", "get_finding"],
+      lead: ["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators"],
     });
   });
 });
@@ -340,6 +341,34 @@ describe("an investigation recalls on the entities it was opened on", () => {
   });
 });
 
+describe("a capability the deployment cannot answer", () => {
+  const unbound = async (state: InProcessState<LeadKinds>) =>
+    (await state.read(RUN)).filter((event) => event.kind === "unbound").map((event) => event.payload);
+
+  it("journals nothing when every capability the lead asked for is bound", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const state = new InProcessState<LeadKinds>();
+    await runLead(harnessOf(spec, SINGLE, state), options("investigate", spec));
+
+    expect(await unbound(state)).toEqual([]);
+  });
+
+  it("journals one blind spot per unbound capability, once, and a resume does not repeat it", async () => {
+    const full = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const spec = { ...full, tools: full.tools.filter((tool) => tool.id !== "get_finding") };
+    const state = new InProcessState<LeadKinds>();
+    const gated: ScriptedTurn = { calls: [{ tool: "case_records", args: "{}" }] };
+    const parked = await runLead(harnessOf(spec, [gated], state), options("investigate", spec));
+    expect(parked.status).toBe("waiting_approval");
+
+    expect(await unbound(state)).toEqual([{ capability: "get_finding", reason: "no tool in this deployment answers get_finding" }]);
+    expect(leadProjection(RUN, await state.read(RUN)).unbound).toHaveLength(1);
+
+    await runLead(harnessOf(spec, [gated], state), options("investigate", spec));
+    expect(await unbound(state)).toHaveLength(1);
+  });
+});
+
 describe("the lead opening task carries this run's prompt", () => {
   it("puts spec.prompt under What this run is about so the trigger id is in sight", async () => {
     const spec = {
@@ -353,7 +382,7 @@ describe("the lead opening task carries this run's prompt", () => {
     const opening = (harness.provider as ScriptedProvider).requests[0]?.messages.find((message) => message.role === "user");
     expect(opening?.content).toContain("## What this run is about");
     expect(opening?.content).toContain("f-20260215-abc123");
-    expect(grantsOf(spec).lead).toEqual(["case_records", "get_finding"]);
+    expect(grantsOf(spec).lead).toEqual(["case_records", "get_finding", "splunk_search", "search_findings", "lookup_indicators"]);
   });
 });
 

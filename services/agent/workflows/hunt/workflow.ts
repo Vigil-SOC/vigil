@@ -19,6 +19,7 @@ import type { DirectiveQueue } from "./ports.js";
 import { buildReport, renderReport, type HuntReport as HuntDeliverable } from "./report.js";
 import type { Handoff, HuntOutcome } from "./types.js";
 import { expandFrom } from "./expand.js";
+import { citedFindings } from "./findings.js";
 import { errorFields, logger } from "../../core/log.js";
 import { registryOf } from "../../core/registry.js";
 import { toolsFrom } from "../../tools/remote.js";
@@ -45,6 +46,15 @@ export interface HuntOptions {
   // Answers whether the escalation landed. false is retried on the next iteration,
   // which is the only cover a run that never writes a terminal has.
   onHandoff?: (runId: string, handoff: TerminalHandoff) => Promise<boolean>;
+  // Told which alerts the hunt's evidence cites, as each iteration lands, so the case
+  // the hunt was started on lists them. Fail-open like onHandoff, and answers whether
+  // it landed: false is asked again on the next iteration. The backend links a finding
+  // once however often it is told.
+  onFindings?: (runId: string, findingIds: readonly string[]) => Promise<boolean>;
+  // Told what the hunt has spent after each iteration that leaves it going, so a
+  // live run's cost follows it and a parked one that was woken reads as running
+  // again. Fail-open like onHandoff: the ledger is the record.
+  onCost?: (runId: string, cost_usd: number) => Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -126,6 +136,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
   // is one request per escalation on the first iteration after a resume, and the
   // backend keys a case on the handoff, so that request opens nothing new.
   const filed = new Set<string>();
+  const linked = new Set<string>();
 
   for (;;) {
     // Handing the run back, not ending it. This signal fires for exactly one
@@ -150,6 +161,22 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
           await fileHandoffs(options.onHandoff, run_id, ledger.projection, filed);
         } catch (error) {
           log.warn("hunt could not file its escalations", { run_id, ...errorFields(error) });
+        }
+      }
+      if (options.onFindings) {
+        try {
+          await linkFindings(options.onFindings, run_id, ledger.projection, linked);
+        } catch (error) {
+          log.warn("hunt could not link the alerts it cites", { run_id, ...errorFields(error) });
+        }
+      }
+      // Only an iteration that leaves the hunt going: one that parked it reports
+      // paused instead, and "running" here would flap on the way there.
+      if (options.onCost && iteration.hunt_status === "active") {
+        try {
+          await options.onCost(run_id, ledger.projection.hunt.cost_usd);
+        } catch (error) {
+          log.warn("hunt could not report its spend", { run_id, ...errorFields(error) });
         }
       }
       if (iteration.hunt_status === "terminal") {
@@ -307,6 +334,18 @@ async function fileHandoffs(
   }
 }
 
+// Alerts cited since the last look, in one push. Marked linked only once the backend
+// has answered that it landed, so a refusal is asked again rather than lost.
+async function linkFindings(
+  onFindings: (runId: string, findingIds: readonly string[]) => Promise<boolean>,
+  runId: string,
+  projection: Projection,
+  linked: Set<string>,
+): Promise<void> {
+  const fresh = citedFindings(projection).filter((id) => !linked.has(id));
+  if (fresh.length > 0 && (await onFindings(runId, fresh))) for (const id of fresh) linked.add(id);
+}
+
 // What the workers were granted and nothing else: a chain runs with no decision
 // behind it, so it must not reach a tool no role may call.
 function enrichmentTools(harness: Harness<HuntKinds>, spec: RunSpec): Tool[] {
@@ -338,7 +377,10 @@ async function parked(
   if (open !== undefined) {
     await announceOpen(harness.state, options.run_id, options.run_kind, open.checkpoint_id, options.announce ?? noAnnounce);
   }
-  return report(ledger, "waiting_approval", reason);
+  // The park's own reason where it has one: the console shows it on the run row, and
+  // the thrown message around it is directions for an operator.
+  const { status, parked_reason } = ledger.projection.hunt;
+  return report(ledger, "waiting_approval", status === "parked" && parked_reason ? parked_reason : reason);
 }
 
 // The hunt's own outcomes, as the ledger's. inconclusive is a completed run that

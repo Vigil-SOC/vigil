@@ -26,7 +26,11 @@ vi.mock('../../services/api', () => {
       })),
       setEnabled: vi.fn(() => Promise.resolve({ data: {} })),
       forkAgent: vi.fn(() => Promise.resolve({ data: {} })),
+      getAgent: vi.fn(() => Promise.resolve({ data: { id: 'triage', name: 'Triage agent', system_prompt: 'You triage.', recommended_tools: [], max_tokens: 2048 } })),
+      getCustom: vi.fn(() => Promise.resolve({ data: { id: 'custom-triage-agent-copy', name: 'Triage agent (copy)', role: 'Triage', system_prompt_override: 'You triage.', forked_from: 'triage' } })),
+      getAvailableTools: vi.fn(() => Promise.resolve({ data: { tools: [], changes: {} } })),
     },
+    aiConfigApi: { listModels: vi.fn(() => Promise.resolve({ data: { models: [] } })) },
     findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
     casesApi: { getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })) },
   }
@@ -104,9 +108,28 @@ describe('agents table', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t turn Hunter on: boom')
   })
 
-  it('forks a built-in on row click', async () => {
+  it('opens a built-in in the drawer on a row click or its icon, and creates nothing', async () => {
+    await openAgents()
+    expect(within(row('Triage agent')).getByRole('button', { name: 'Open Triage agent' })).toHaveAttribute('title', 'Open Triage agent')
+    fireEvent.click(screen.getByText('Triage agent'))
+    expect(await screen.findByRole('dialog', { name: 'Edit agent' })).toBeInTheDocument()
+    expect(agentsApi.getAgent).toHaveBeenCalledWith('triage')
+    expect(agentsApi.getCustom).not.toHaveBeenCalled()
+    expect(await screen.findByText(/Built in\. Saving creates your own editable copy/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(within(row('Reporting agent')).getByRole('button', { name: 'Open Reporting agent' }))
+    expect(await screen.findByRole('button', { name: 'Save my copy' })).toBeInTheDocument()
+    expect(agentsApi.forkAgent).not.toHaveBeenCalled()
+  })
+
+  it('reopens on the new copy, in custom mode, after Save my copy', async () => {
+    vi.mocked(agentsApi.forkAgent).mockResolvedValueOnce({ data: { id: 'custom-triage-agent-copy' } } as never)
     await openAgents()
     fireEvent.click(screen.getByText('Triage agent'))
-    expect(agentsApi.forkAgent).toHaveBeenCalledWith('triage')
+    fireEvent.click(await screen.findByRole('button', { name: 'Save my copy' }))
+    await waitFor(() => expect(agentsApi.getCustom).toHaveBeenCalledWith('custom-triage-agent-copy'))
+    expect(agentsApi.forkAgent).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument()
+    expect(screen.queryByText(/Built in\. Saving creates/)).toBeNull()
   })
 })

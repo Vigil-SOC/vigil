@@ -83,3 +83,58 @@ class TestANamespacedIdStillNamesItsProvider:
             "anthropic",
             "claude-sonnet-4-5",
         )
+
+
+class TestAClaudeIdServedThroughOpenRouter:
+    """``anthropic/claude-haiku-5.5`` on an openrouter provider stays openrouter's
+    and is priced from OpenRouter's sheet, else the vendor's (#1931)."""
+
+    def _record(self, provider_type, model_id, in_rate=1e-6, out_rate=5e-6):
+        from core.llm.providers.discovery import ModelMeta
+        from core.llm.providers.registry import clear_live_meta, record_live_meta
+
+        clear_live_meta()
+        record_live_meta(
+            provider_type,
+            [
+                ModelMeta(
+                    id=model_id,
+                    display_name=model_id,
+                    input_cost_per_token=in_rate,
+                    output_cost_per_token=out_rate,
+                )
+            ],
+            rates_only=True,
+        )
+
+    def test_the_vendor_prefix_is_not_a_provider_to_price_as(self):
+        assert priced_as("openrouter", "anthropic/claude-haiku-5.5") == (
+            "openrouter",
+            "anthropic/claude-haiku-5.5",
+        )
+        assert priced_as("bifrost", "openrouter/anthropic/claude-haiku-5.5") == (
+            "openrouter",
+            "anthropic/claude-haiku-5.5",
+        )
+
+    def test_openrouters_own_sheet_wins(self):
+        self._record("openrouter", "anthropic/claude-haiku-5.5", 2e-6, 9e-6)
+
+        rates = get_registry().get_rates("anthropic/claude-haiku-5.5", "openrouter")
+
+        assert (rates["input"], rates["pricing_source"]) == (2e-6, "exact")
+
+    def test_falls_back_to_the_vendors_sheet_with_dots_as_dashes(self):
+        self._record("anthropic", "claude-haiku-5-5")
+
+        rates = get_registry().get_rates("anthropic/claude-haiku-5.5", "openrouter")
+
+        assert (rates["input"], rates["output"]) == (1e-6, 5e-6)
+        assert rates["pricing_source"] == "exact"
+
+    def test_an_id_no_sheet_prices_stays_unknown(self):
+        self._record("anthropic", "claude-haiku-5-5")
+
+        rates = get_registry().get_rates("anthropic/claude-nope-9.9", "openrouter")
+
+        assert rates["pricing_source"] == "unknown"

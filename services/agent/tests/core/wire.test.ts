@@ -545,6 +545,35 @@ describe("the Settings virtual key", () => {
   });
 });
 
+// OpenRouter reads the reasoning depth off `reasoning.effort`; without it the
+// model runs at its own default and the run is not the one that was configured.
+describe("reasoning effort", () => {
+  async function bodySent(provider: string, effort?: "low" | "medium" | "high"): Promise<Body> {
+    const sent: Body[] = [];
+    const create = async (body: Body) => {
+      sent.push(body);
+      return completion({ role: "assistant", content: "ok" });
+    };
+    const client = { chat: { completions: { create } } } as unknown as OpenAI;
+    const surface = openAiSurface(client, "anthropic/claude-haiku-5.5", limiter(), provider, `${provider}/anthropic/claude-haiku-5.5`, undefined, effort);
+    await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    return sent[0]!;
+  }
+
+  it("goes to OpenRouter as reasoning.effort", async () => {
+    expect(await bodySent("openrouter", "high")).toMatchObject({ model: "openrouter/anthropic/claude-haiku-5.5", reasoning: { effort: "high" } });
+  });
+
+  it("goes to Anthropic as output_config.effort", async () => {
+    expect(await bodySent("anthropic", "low")).toMatchObject({ output_config: { effort: "low" } });
+  });
+
+  it("is left off when unset, or for a provider with no such field", async () => {
+    expect(await bodySent("openrouter")).not.toHaveProperty("reasoning");
+    expect(await bodySent("openai", "high")).not.toHaveProperty("reasoning");
+  });
+});
+
 async function usage(reported: Record<string, unknown>): Promise<TokenCounts> {
   const surface = surfaceOf(async () => completion({ role: "assistant", content: "ok" }, reported));
   return (await turn(surface, { messages: [], tools: [] })).tokens;
