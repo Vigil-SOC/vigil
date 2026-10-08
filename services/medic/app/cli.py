@@ -75,7 +75,7 @@ def run(
         value = config.flag_value(env)
         shown = "unset" if value is None else repr(value)
         hint = "" if config.is_recognised(value) else " (not a recognised value)"
-        # Exit 0 (PROVISIONAL, S1 ⚑1): off is a choice, not a failure.
+        # Exit 0 (decided S1-1): off is a choice, not a failure.
         log.warning(
             "Medic is off: %s is %s%s. Set %s=true to run it. Exiting.",
             config.ENABLED_VAR,
