@@ -7,8 +7,10 @@ readiness incident) is test_compose_live.py.
 Enabling Medic takes two switches: `--profile medic` and the overlay
 `infra/docker/medic/docker-compose.medic.yml`, which declares `medic-net` and
 puts the daemon and agents on it (S6-1). With the profile off and no overlay,
-the rendered config must be byte-for-byte what it is without Medic (C8: off by
-default, and off changes nothing).
+the rendered config must be what it is without Medic except for one line: the
+backend's `VIGIL_MEDIC_ENABLED` (default false), so the console says Off, not
+Down (V1-2, decided over S6-1's byte-identical render, 2026-10-08). C8's "off
+changes nothing" still holds in behaviour.
 """
 
 from __future__ import annotations
@@ -68,6 +70,12 @@ def _without_medic(tmp_path: Path) -> Path:
     raw = yaml.safe_load(BASE.read_text(encoding="utf-8"))
     for name in MEDIC_SERVICES:
         raw["services"].pop(name, None)
+    # ...and every Medic setting on Vigil's own services.
+    for spec in raw["services"].values():
+        env = spec.get("environment")
+        if isinstance(env, dict):
+            for key in [k for k in env if k.startswith("VIGIL_MEDIC_")]:
+                env.pop(key)
     raw.get("volumes", {}).pop("medic_data", None)
     for name in ("medic_viewer_password", "medic_api_key"):
         raw.get("secrets", {}).pop(name, None)
@@ -81,9 +89,16 @@ def _without_medic(tmp_path: Path) -> Path:
 @pytest.mark.parametrize(
     "profiles", [(), OTHER_PROFILES], ids=["default", "all-other-profiles"]
 )
-def test_profile_off_renders_exactly_as_without_medic(profiles, home, tmp_path) -> None:
+def test_profile_off_renders_as_without_medic_but_the_backend_flag(
+    profiles, home, tmp_path
+) -> None:
     with_medic = render(*profiles, home=home, overlay=False)
     without = render(*profiles, home=home, overlay=False, base=_without_medic(tmp_path))
+    # The one allowed difference (V1-2): the backend reads the switch, off.
+    assert (
+        with_medic["services"]["backend"]["environment"].pop("VIGIL_MEDIC_ENABLED")
+        == "false"
+    )
     assert json.dumps(with_medic, sort_keys=True) == json.dumps(without, sort_keys=True)
 
 
@@ -120,6 +135,10 @@ def test_overlay_touches_only_medic_net() -> None:
     assert set(raw) == {"services", "networks"}
     assert set(raw["networks"]) == set(MEDIC_NETWORKS)
     for name, spec in raw["services"].items():
+        if name == "backend":
+            # V2: where to poll Medic and the key to poll with. Never a network.
+            assert set(spec) == {"environment", "secrets"}, name
+            continue
         assert name in MEDIC_NET_MEMBERS - set(MEDIC_SERVICES), name
         assert set(spec) == {"networks"}, f"{name}: the overlay only adds medic-net"
         assert list(spec["networks"]) == ["medic-net"], name
@@ -353,3 +372,57 @@ def test_gateway_has_no_default_viewer_name(home) -> None:
         "medic", home=home, env={"VIGIL_MEDIC_VIEWER_USER": "medic-a1b2c3d4e5f6"}
     )["services"]["medic-gateway"]
     assert env_of(named)["VIGIL_MEDIC_GATEWAY_VIEWER_USER"] == "medic-a1b2c3d4e5f6"
+
+
+# --- V2: the backend polls Medic's status through the gateway (C5 §5.3) -------
+
+
+def test_backend_polls_medic_through_the_gateways_inbound_listener(on) -> None:
+    backend, gateway = on["services"]["backend"], on["services"]["medic-gateway"]
+    env = env_of(backend)
+    host, port = env["VIGIL_MEDIC_API_URL"].removeprefix("http://").split(":")
+    # The alias the inbound listener binds to, on the one network both share.
+    assert gateway["networks"]["deeptempo-network"]["aliases"] == [host]
+    assert env_of(gateway)["VIGIL_MEDIC_GATEWAY_IN_BIND"] == f"{host}:{port}"
+    assert "deeptempo-network" in networks_of(backend)
+    # Still never on Medic's own networks (C3 rule 5).
+    assert not networks_of(backend) & set(MEDIC_NETWORKS)
+
+
+def test_backend_reads_the_key_medic_checks_from_a_file(on) -> None:
+    backend, medic = on["services"]["backend"], on["services"]["medic"]
+    [mount] = [s for s in backend.get("secrets", []) if s["source"] == "medic_api_key"]
+    assert (
+        env_of(backend)["VIGIL_MEDIC_API_KEY_FILE"] == f"/run/secrets/{mount['source']}"
+    )
+    assert any(s["source"] == "medic_api_key" for s in medic["secrets"])
+    # A file, never env: not in `docker inspect`, not in a support bundle.
+    assert not any(
+        "KEY" in k and k != "VIGIL_MEDIC_API_KEY_FILE"
+        for k in env_of(backend)
+        if k.startswith("VIGIL_MEDIC")
+    )
+
+
+def test_without_medic_the_backend_has_no_medic_path(home) -> None:
+    backend = render(home=home, overlay=False)["services"]["backend"]
+    assert "VIGIL_MEDIC_API_URL" not in env_of(backend)
+    assert not backend.get("secrets")
+
+
+def test_the_docker_group_has_one_name() -> None:
+    """S5p said DOCKER_GID, S6 VIGIL_MEDIC_DOCKER_GID: only the second exists."""
+    import re
+
+    bare = re.compile(r"(?<![A-Z_])DOCKER_GID\b")
+    places = [
+        BASE,
+        OVERLAY,
+        *(REPO / "scripts" / "medic").rglob("*.sh"),
+        *(REPO / "services" / "medic_dockerproxy").rglob("*.md"),
+        *(REPO / "docs" / "medic").rglob("*.md"),
+        *(REPO / "infra" / "helm" / "vigil").rglob("*.yaml"),
+    ]
+    found = [str(p) for p in places if bare.search(p.read_text(encoding="utf-8"))]
+    assert found == []
+    assert "${VIGIL_MEDIC_DOCKER_GID:-0}" in BASE.read_text(encoding="utf-8")
