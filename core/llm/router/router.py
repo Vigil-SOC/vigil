@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from core.config import get_settings
 from core.llm.cost.calls import compute_call_cost
+from core.llm.defaults import effort_kwargs
 from core.llm.router.format import (
     anthropic_messages_to_openai,
     anthropic_tools_to_openai,
@@ -17,7 +18,6 @@ from core.llm.security import (
     scan_for_injection,
     wrap_tool_result,
 )
-from core.llm.defaults import effort_kwargs
 from core.secrets import get_secret
 from core.telemetry import record_budget_unenforced, record_llm_call
 
