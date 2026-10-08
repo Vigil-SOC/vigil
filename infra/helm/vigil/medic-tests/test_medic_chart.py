@@ -824,7 +824,6 @@ def test_the_backends_key_read_needs_its_fsgroup(chart) -> None:
     helm_template(chart, {"podSecurityContext.fsGroup": "null"})  # Medic off: fine
 
 
-
 def test_gateway_admits_the_backend_on_the_inbound_port(all_on) -> None:
     policy = named(all_on, "NetworkPolicy", GATEWAY)
     backend_labels = pod_labels(named(all_on, "Deployment", BACKEND))
