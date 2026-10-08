@@ -23,8 +23,5 @@ entries:
   # core/integrations/aws_security_hub/ingestion.py:115, azure_sentinel/ingestion.py:173 (constant text)
   - {logger: core.integrations.aws_security_hub.ingestion, template: 'boto3 not installed. Install: pip install boto3'}
   - {logger: core.integrations.azure_sentinel.ingestion, template: 'Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity'}
-  # core/integrations/splunk/adapter.py:132, services/daemon/poller.py:406
-  - {logger: core.integrations.splunk.adapter, template: 'Splunk query failed (%s): %s'}
-  - {logger: services.daemon.poller, template: 'Splunk query failed (%s): %s'}
   # core/ingestion/kafka_consumer_service.py:115
   - {logger: core.ingestion.kafka_consumer_service, template: 'Kafka consumer failed to start: %s'}

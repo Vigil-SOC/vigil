@@ -3,13 +3,14 @@ defaults:
   sensors:
     - {id: http.federation, covers: [federation_sources], interval: 60s, service: backend, states: [[+0s, ok]]}
   types:
-    federation_sources: {sources.enabled: bool, sources.is_configured: bool}
+    federation_sources: {global.enabled: bool, sources.enabled: bool, sources.is_configured: bool}
 cases:
   - kind: fires
     id: v01-fires-when-the-row-is-on-and-the-integration-off
     title: The Sentinel federation row is enabled; its integration is not configured
     end: +25m
     series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
       - {signal: federation_sources, key: sources.enabled, labels: {source: sentinel}, steps: [[+0s, true]]}
       - {signal: federation_sources, key: sources.is_configured, labels: {source: sentinel}, steps: [[+0s, false]]}
     expect:
@@ -17,12 +18,13 @@ cases:
       - {at: +15m, rule: ingest.federation-integration-disabled, group: {source: sentinel}, eval: true, state: firing, incident: A}
     incidents:
       A: {rule: ingest.federation-integration-disabled, group: {source: sentinel}, active_since: +0s, opened_at: +15m,
-          resolving_since: null, resolved_at: null, routed_at: +20m}
+          resolving_since: null, resolved_at: null, routed_at: +15m}
   - kind: silent
     id: v02-silent-when-the-two-agree
     title: A configured source and a source that is off on both sides are consistent
     end: +20m
     series:
+      - {signal: federation_sources, key: global.enabled, steps: [[+0s, true]]}
       - {signal: federation_sources, key: sources.enabled, labels: {source: splunk}, steps: [[+0s, true]]}
       - {signal: federation_sources, key: sources.is_configured, labels: {source: splunk}, steps: [[+0s, true]]}
       - {signal: federation_sources, key: sources.enabled, labels: {source: defender}, steps: [[+0s, false]]}
