@@ -115,6 +115,8 @@ def test_inbound_body_up_to_8_mib(env):
         (b"GET", b"/v1/incidents?lane=4", 400),
         (b"GET", b"/v1/incidents?opened_after=2026-10-01", 400),
         (b"GET", b"/v1/status?x=1", 400),
+        (b"GET", b"/v1/export", 400),
+        (b"GET", b"/v1/export?from=2026-10-01T00:00:00Z", 400),
         (b"GET", b"/api/health", 403),
         (b"POST", b"/v1/pack/import", 403),
         (b"POST", b"/api/auth/password-reset/confirm", 403),
@@ -137,6 +139,7 @@ def test_inbound_everything_else_refused(env, method, target, status):
         (b"X-Medic-Admin: admin\r\n", b"{}", 400),
         (b"X-Medic-Admin: user:" + b"a" * 124 + b"\r\n", b"{}", 400),
         (b"X-HTTP-Method-Override: DELETE\r\n", b"{}", 400),
+        (b"Content-Length: \xb2\r\n", b"", 400),  # isdigit() but not int()
     ],
 )
 def test_feedback_post_framing_is_strict(env, extra, body, status):
@@ -239,6 +242,8 @@ def test_inbound_parameters_match_the_x2_spec(route):
         p["name"]: _schema(p["schema"], record, spec) for p in ps if p["in"] == "path"
     }
     assert set(route.query) == set(query)
+    required = {p["name"] for p in ps if p["in"] == "query" and p.get("required")}
+    assert set(route.required) == required
     assert set(route.segs) == set(segs)
     for name, schema in {**query, **segs}.items():
         regex = route.query[name][0] if name in route.query else route.segs[name]
