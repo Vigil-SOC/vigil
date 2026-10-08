@@ -1,0 +1,30 @@
+rule: ingest.splunk-notable-query-failed
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-while-the-notable-query-keeps-failing
+    title: The notable query fails every 2-minute tick for 20 minutes, then works again
+    end: +50m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: WARNING, logger: core.integrations.splunk.adapter,
+         template: 'Splunk query failed (%s): %s', message: 'Splunk query failed (search index=notable): HTTP 403',
+         repeat: {every: 2m, until: +20m}}
+    expect:
+      - {at: +3m, rule: ingest.splunk-notable-query-failed, eval: true, state: pending}
+      - {at: +13m, rule: ingest.splunk-notable-query-failed, eval: true, state: firing, incident: A}
+      - {at: +47m, rule: ingest.splunk-notable-query-failed, eval: false, state: resolving, incident: A, note: the line at +17m leaves the 30m window}
+    incidents:
+      A: {rule: ingest.splunk-notable-query-failed, active_since: +3m, opened_at: +13m, resolving_since: +47m, resolved_at: null}
+  - kind: silent
+    id: v02-silent-on-one-transient-failure
+    title: A single failed query is not a pattern
+    end: +40m
+    logs:
+      - {at: +5m, signal: log_soc_daemon, level: WARNING, logger: services.daemon.poller,
+         template: 'Splunk query failed (%s): %s', message: 'Splunk query failed (search index=notable): timed out'}
+    expect:
+      - {at: +10m, rule: ingest.splunk-notable-query-failed, eval: unknown, state: inactive, note: 1 line seen and the window not yet watched}
+      - {at: +40m, rule: ingest.splunk-notable-query-failed, eval: false, state: inactive}
+    incidents: {}
