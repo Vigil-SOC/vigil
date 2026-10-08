@@ -327,3 +327,29 @@ def test_master_flag_is_off_unless_set(home) -> None:
     assert env_of(unset)["VIGIL_MEDIC_ENABLED"] == "false"
     on = render("medic", home=home, env={"VIGIL_MEDIC_ENABLED": "true"})
     assert env_of(on["services"]["medic"])["VIGIL_MEDIC_ENABLED"] == "true"
+
+
+# --- V1: the backend reads the same switch (Off ≠ Down) ---------------------
+
+
+@pytest.mark.parametrize("value", [None, "true", "false"])
+@pytest.mark.parametrize("profiles", [(), ("medic",)])
+def test_backend_reads_the_same_flag_as_medic(home, value, profiles) -> None:
+    # C8: flag on without the profile must read as "down" (loud), so the
+    # backend gets the flag from the main file, not from the overlay.
+    env = {} if value is None else {"VIGIL_MEDIC_ENABLED": value}
+    cfg = render(*profiles, home=home, overlay=bool(profiles), env=env)["services"]
+    expected = value or "false"
+    assert env_of(cfg["backend"])["VIGIL_MEDIC_ENABLED"] == expected
+    if profiles:
+        assert env_of(cfg["medic"])["VIGIL_MEDIC_ENABLED"] == expected
+
+
+def test_gateway_has_no_default_viewer_name(home) -> None:
+    # D2-17: unset, the gateway refuses to start rather than try a guessable name.
+    unset = render("medic", home=home)["services"]["medic-gateway"]
+    assert env_of(unset)["VIGIL_MEDIC_GATEWAY_VIEWER_USER"] == ""
+    named = render(
+        "medic", home=home, env={"VIGIL_MEDIC_VIEWER_USER": "medic-a1b2c3d4e5f6"}
+    )["services"]["medic-gateway"]
+    assert env_of(named)["VIGIL_MEDIC_GATEWAY_VIEWER_USER"] == "medic-a1b2c3d4e5f6"
