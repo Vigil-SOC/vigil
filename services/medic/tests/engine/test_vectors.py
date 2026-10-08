@@ -25,7 +25,10 @@ from services.medic.tests.engine.runner import (
 
 # Part 2 (S4b2). v15 (one group per source), v24 and v27 (groups that never retire)
 # already hold on the part-1 engine, so they must pass now and keep passing.
-PART2 = {f"v{n}" for n in (13, 14, 16, 17, 18, 19, 20, 23, 25, 26)}
+PART2 = {f"v{n}" for n in (13, 16, 17, 18, 19, 20, 23, 25, 26)}
+# Contract questions waiting on Craig (outputs/skeleton/S4b-notes.md, ⚑ list): the
+# engine follows semantics.md's text, which this vector contradicts.
+CONTRACT = {"v14": "⚑ S4b-1: §2 allows lower bounds on changes only for counters"}
 RECORD = Draft202012Validator(
     json.loads((CONTRACTS / "decision-record.schema.json").read_text())
 )
@@ -35,6 +38,8 @@ def _param(path: Path):
     marks = []
     if path.stem[:3] in PART2:
         marks = [pytest.mark.xfail(strict=True, reason="S4b2: engine core part 2")]
+    if path.stem[:3] in CONTRACT:
+        marks = [pytest.mark.xfail(strict=True, reason=CONTRACT[path.stem[:3]])]
     return pytest.param(path, id=path.stem, marks=marks)
 
 
@@ -124,3 +129,42 @@ def test_same_inputs_give_byte_identical_records(path: Path) -> None:
     first, second = run(vector).records, run(vector).records
     canon = decision_chain.canonical
     assert canon(first) == canon(second)
+
+
+NEXT = {  # incident record -> the records that may follow it
+    "incident_opened": {"resolving", "evidence_added"},
+    "resolving": {"refiring", "evidence_added", "incident_resolved"},
+    "refiring": {"resolving", "evidence_added"},
+}
+
+
+@pytest.mark.parametrize("path", VECTORS, ids=lambda p: p.stem)
+def test_record_sequences_are_legal(path: Path) -> None:
+    """Each incident: opened once, legal transitions (§4), nothing after resolved,
+    and evidence for at most one observation per rule signal (decision-record.md
+    §3, N4). Records don't name the rule signal, so that last check is a count."""
+    vector = load(path)
+    signals = {r.id: len(r.rule["signals"]) for r in rules_of(vector)}
+    last: dict[str, str] = {}
+    keys: set[tuple] = set()
+    items: dict[str, int] = {}
+    limit: dict[str, int] = {}
+    for rec in run(vector).records:
+        body = rec["body"]
+        iid = body["incident_id"]
+        if rec["type"] == "incident_opened":
+            assert iid not in last, f"{iid} opened twice"
+            key = (body["rule"]["id"], str(body["group"]), body["active_since"])
+            assert key not in keys, f"{key} opened twice"
+            keys.add(key)
+            items[iid] = len(body["evidence"])
+            limit[iid] = signals.get(body["rule"]["id"], 1)
+            last[iid] = "incident_opened"
+        else:
+            step = body.get("change", rec["type"])
+            assert last.get(iid) in NEXT and step in NEXT[last[iid]], (iid, step)
+            if step == "evidence_added":
+                items[iid] += len(body["evidence"])
+            else:
+                last[iid] = "closed" if step == "incident_resolved" else step
+        assert items[iid] <= limit[iid], f"{iid}: more evidence than rule signals"

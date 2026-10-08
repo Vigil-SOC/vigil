@@ -57,10 +57,10 @@ def decide(op: str, x: float, value, covered: bool) -> bool | None:
     holds = OPS[op](x, value)
     if covered:
         return holds
-    if op in (">", ">=", "!="):  # once true for x, true for every larger y
+    if op in (">", ">="):  # once true for x, true for every larger y
         return True if holds else UNKNOWN
-    if op == "==":  # fails for every y ≥ x only when x is already past it
-        return False if x > value else UNKNOWN
+    if op in ("==", "!="):  # decided only once x is already past the value
+        return (op == "!=") if x > value else UNKNOWN
     return UNKNOWN if holds else False  # < and <=: once false, false for every y
 
 
@@ -157,6 +157,7 @@ class Context:
         self.rule, self.group, self.now, self.history = rule, group, now, history
         self.group_by = rule.rule.get("group_by", [])
         self.evidence: dict[str, tuple[float, dict, dict | None]] = {}
+        self.untrusted = False  # a `trust: untrusted` value was used (ENGINE_API §5)
 
     def value(self, v):
         return self.rule.param(v["param"]) if isinstance(v, dict) else v
@@ -177,6 +178,8 @@ class Context:
         """Evidence: per signal, the newest observation the evaluation used (G2)."""
         if name not in self.evidence or read[0] >= self.evidence[name][0]:
             self.evidence[name] = read
+        if read[2] is not None and read[2].get("trust") == "untrusted":
+            self.untrusted = True
 
 
 def evaluate(node: dict, ctx: Context) -> bool | None:
@@ -186,7 +189,10 @@ def evaluate(node: dict, ctx: Context) -> bool | None:
         return k_any([evaluate(n, ctx) for n in node["any"]])
     if "not" in node:
         return k_not(evaluate(node["not"], ctx))
-    return _FNS[node["fn"]](node, ctx)
+    try:
+        return _FNS[node["fn"]](node, ctx)
+    except (TypeError, ValueError):  # a value of the wrong type: can't evaluate
+        return UNKNOWN
 
 
 def _latest(node, ctx, age: bool = False):
@@ -211,7 +217,8 @@ def _from_baseline(base: float | None, times: list[float], lo: float, ctx, gap) 
 
 
 def _window(node, ctx):
-    """(W, [baseline] + present reads in (T − W, T], fully covered) or None if stale."""
+    """(W, [baseline] + present reads in (T − W, T], fully covered, value type), or
+    None if stale."""
     reads = ctx.samples(node["signal"])
     if reads is None or not reads.fresh(ctx.now):
         return None
@@ -223,7 +230,8 @@ def _window(node, ctx):
         ctx.note(node["signal"], inside[-1])
     oks = [r[0] for r in reads.ok()]
     full = _from_baseline(before[0][0] if before else None, oks, lo, ctx, gap)
-    return w, before + inside, full
+    vtype = next((r[2]["type"] for r in reversed(reads.items) if r[2]), None)
+    return w, before + inside, full, vtype
 
 
 def _same_epoch(a, b) -> bool:
@@ -241,8 +249,8 @@ def _increase(node, ctx, per_second: bool = False):
     got = _window(node, ctx)
     if got is None:
         return UNKNOWN
-    w, seq, full = got
-    if seq and seq[-1][2]["type"] != "counter":
+    w, seq, full, vtype = got
+    if vtype != "counter":
         if not full:
             return UNKNOWN  # a gauge's rise has no lower bound
         x = seq[-1][2]["value"] - seq[0][2]["value"]
@@ -256,8 +264,8 @@ def _changes(node, ctx):
     got = _window(node, ctx)
     if got is None:
         return UNKNOWN
-    _, seq, full = got
-    counter = bool(seq) and seq[-1][2]["type"] == "counter"
+    _, seq, full, vtype = got
+    counter = vtype == "counter"
     if not full and not counter:
         return UNKNOWN  # lower bounds apply to changes on counters only
     x = sum(
