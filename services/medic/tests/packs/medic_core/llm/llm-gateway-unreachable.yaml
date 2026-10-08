@@ -1,8 +1,8 @@
 rule: llm.gateway-unreachable
 cases:
-- id: mirror-reconcile-outage
-  fires: true
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-mirror-reconcile-outage
+  title: Mirror reconcile outage
   end: +25m
   sensors:
   - {id: log.backend, covers: [log_backend], interval: 15s, service: backend, states: [[+0s, ok]]}
@@ -24,10 +24,9 @@ cases:
   - {at: +17m, rule: llm.gateway-unreachable, eval: false, state: resolving, incident: A}
   incidents:
     A: {rule: llm.gateway-unreachable, active_since: +2m, opened_at: +4m, resolving_since: +17m, resolved_at: +22m, reason: cleared, routed_at: +4m}
-- id: backend-restart-clears-then-still-down-resets
-  fires: true
-  why: The backend restarts (clear), but Bifrost is still down, so the new process logs the entry ERROR again and a new incident opens.
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v02-backend-restart-clears-then-still-down-resets
+  title: 'The backend restarts (clear), but Bifrost is still down, so the new process logs the entry ERROR again and a new incident opens.'
   end: +20m
   sensors:
   - {id: log.backend, covers: [log_backend], interval: 15s, service: backend, states: [[+0s, ok]]}
@@ -54,10 +53,9 @@ cases:
   - {at: +7m, rule: llm.gateway-unreachable, eval: true, state: firing, incident: A}
   incidents:
     A: {rule: llm.gateway-unreachable, active_since: +1m, opened_at: +3m, resolving_since: null, resolved_at: null, routed_at: +3m}
-- id: rate-refresh-outage-is-not-this-rule
-  fires: false
-  why: The rate refresher's #1689 line comes from another logger and template.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v03-rate-refresh-outage-is-not-this-rule
+  title: 'The rate refresher''s'
   end: +10m
   sensors:
   - {id: log.backend, covers: [log_backend], interval: 15s, service: backend, states: [[+0s, ok]]}
@@ -68,6 +66,8 @@ cases:
     template: 'Gateway rate refresh failed, LLM calls are recorded unpriced: %s'
     message: 'Gateway rate refresh failed, LLM calls are recorded unpriced: ConnectError'
     at: +2m
+    trusted: false
   expect:
+  - {at: +2m, rule: llm.gateway-unreachable, eval: false, state: inactive}
   - {at: +6m, rule: llm.gateway-unreachable, eval: false, state: inactive}
   incidents: {}

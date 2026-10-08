@@ -1,9 +1,8 @@
 rule: llm.calls-failing
 cases:
-- id: sustained-unnamed-failures
-  fires: true
-  why: Bifrost 500s every 30 s for 20 minutes (e.g. a request shape a new model family needs, L-1.j).
-  start: '2026-10-08T10:00:00Z'
+- kind: fires
+  id: v01-sustained-unnamed-failures
+  title: 'Bifrost 500s every 30 s for 20 minutes (e.g. a request shape a new model family needs, L-1.j). As a suppression child it routes after the 5 m hold (E3 §6.2).'
   end: +35m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -12,40 +11,17 @@ cases:
     level: ERROR
     logger: services.worker.jobs
     template: 'llm_call failed (returning error dict): %s'
-    message: "llm_call failed (returning error dict): InternalServerError: Error code: 500 - failed to convert bifrost request"
+    message: 'llm_call failed (returning error dict): InternalServerError: Error code: 500 - failed to convert bifrost request'
     at: +1m
     repeat: {every: 30s, until: +20m}
   expect:
   - {at: +18m, rule: llm.calls-failing, eval: true, state: firing, incident: A}
   - {at: +23m, rule: llm.calls-failing, eval: false, state: resolving, incident: A}
   incidents:
-    A: {rule: llm.calls-failing, active_since: +3m, opened_at: +18m, resolving_since: +23m, resolved_at: +33m, reason: cleared, routed_at: +18m}
-- id: specific-rule-suppresses-it
-  fires: true
-  why: Ollama answers 404 "not found, try pulling" every 30 s; the unservable-model incident routes and this one is recorded but suppressed.
-  start: '2026-10-08T10:00:00Z'
-  end: +25m
-  also: [llm.model-unservable]
-  suppression: pack
-  sensors:
-  - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
-  logs:
-  - signal: llm_worker_errors_as_success
-    level: ERROR
-    logger: services.worker.jobs
-    template: 'llm_call failed (returning error dict): %s'
-    message: 'llm_call failed (returning error dict): APIStatusError: Error code: 404 - model "llama3.2" not found, try pulling it first'
-    at: +1m
-    repeat: {every: 30s, until: +20m}
-  expect:
-  - {at: +18m, rule: llm.calls-failing, eval: true, state: firing, incident: B, suppressed: true}
-  incidents:
-    A: {rule: llm.model-unservable, active_since: +1m30s, opened_at: +3m30s, resolving_since: null, resolved_at: null, routed_at: +3m30s}
-    B: {rule: llm.calls-failing, active_since: +3m, opened_at: +18m, resolving_since: +23m, resolved_at: null, routed_at: null, suppressed_by: A}
-- id: prompt-injection-blocks-are-not-failures
-  fires: false
-  why: Alert content can trigger PromptInjectionBlocked at will; the class filter leaves it out.
-  start: '2026-10-08T10:00:00Z'
+    A: {rule: llm.calls-failing, active_since: +3m, opened_at: +18m, resolving_since: +23m, resolved_at: +33m, reason: cleared, routed_at: +23m}
+- kind: silent
+  id: v02-prompt-injection-blocks-are-not-failures
+  title: Alert content can trigger PromptInjectionBlocked at will; the class filter leaves it out.
   end: +20m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -58,12 +34,12 @@ cases:
     at: +1m
     repeat: {every: 30s, until: +20m}
   expect:
+  - {at: +5m, rule: llm.calls-failing, eval: false, state: inactive}
   - {at: +15m, rule: llm.calls-failing, eval: false, state: inactive}
   incidents: {}
-- id: oversized-findings-are-not-path-failures
-  fires: false
-  why: A plain 400 (an oversized finding, which an outsider can send) isn't on the allowlist.
-  start: '2026-10-08T10:00:00Z'
+- kind: silent
+  id: v03-oversized-findings-are-not-path-failures
+  title: 'A plain 400 (an oversized finding, which an outsider can send) isn''t on the allowlist.'
   end: +25m
   sensors:
   - {id: log.llm-worker-errors, covers: [llm_worker_errors_as_success], interval: 15s, service: llm-worker, states: [[+0s, ok]]}
@@ -76,5 +52,6 @@ cases:
     at: +1m
     repeat: {every: 30s, until: +24m}
   expect:
+  - {at: +5m, rule: llm.calls-failing, eval: false, state: inactive}
   - {at: +20m, rule: llm.calls-failing, eval: false, state: inactive}
   incidents: {}
