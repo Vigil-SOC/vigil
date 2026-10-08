@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -224,3 +225,70 @@ def _iso(ts: float) -> str:
     from datetime import UTC, datetime
 
     return datetime.fromtimestamp(int(ts), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.mark.parametrize(
+    "doc",
+    ['{"v": 1, "engine": ["x"]}', '{"v": 1, "engine": {"v": 1, "machines": 3}}', "{"],
+)
+def test_a_malformed_engine_state_starts_fresh_not_a_crash_loop(
+    tmp_path: Path, doc: str
+) -> None:
+    clock = FakeClock()
+    assert _run(tmp_path, clock, 1) == 0
+    (tmp_path / "run" / "engine-state.json").write_text(doc)
+    clock.advance(60)
+    assert _run(tmp_path, clock, 1) == 0
+    assert _beat(tmp_path)["state"] == "stopped"
+
+
+def test_a_future_engine_state_is_dropped(tmp_path: Path) -> None:
+    # A persisted last_tick ahead of the clock would stop every evaluation.
+    clock = FakeClock()
+    assert _run(tmp_path, clock, 1) == 0
+    path = tmp_path / "run" / "engine-state.json"
+    doc = json.loads(path.read_text())
+    doc["engine"]["last_tick"] = clock.wall() + 86_400
+    path.write_text(json.dumps(doc))
+    assert _run(tmp_path, clock, 2) == 0
+    saved = json.loads(path.read_text())["engine"]["last_tick"]
+    assert saved <= clock.wall()
+
+
+def test_an_unexpected_error_exits_1_logged_and_marked_stopped(
+    tmp_path: Path, caplog, monkeypatch
+) -> None:
+    from services.medic.app import wiring
+
+    def boom(self) -> list:
+        raise RuntimeError("password=canaryBoom55aa engine bug")
+
+    monkeypatch.setattr(wiring.Medic, "evaluate", boom)
+    with caplog.at_level(logging.ERROR):
+        assert _run(tmp_path, FakeClock(), 3) == 1
+    assert "RuntimeError" in caplog.text
+    assert "canaryBoom55aa" not in caplog.text
+    assert _beat(tmp_path)["state"] == "stopped"
+
+
+def test_a_gap_starts_after_the_newest_record_when_beats_failed(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    assert _run(tmp_path, clock, 1) == 0
+    beat = _beat(tmp_path)
+    with open_writer(tmp_path) as writer:  # records kept landing after the last beat
+        writer.append(
+            {
+                "v": 1,
+                "at": _iso(beat["ts"] + 600),
+                "type": "gap",
+                "body": {
+                    "from": _iso(beat["ts"] + 500),
+                    "to": _iso(beat["ts"] + 600),
+                    "reason": "off",
+                },
+            }
+        )
+    gap = pending_gap(tmp_path, now=beat["ts"] + 3600)
+    assert gap["from"] == _iso(beat["ts"] + 600)

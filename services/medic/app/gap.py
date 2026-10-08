@@ -49,19 +49,22 @@ def pending_gap(data_dir: Path, *, now: float) -> dict[str, Any] | None:
         reason = "off"
     else:
         return None
+    if (
+        last is not None
+        and last["type"] == "gap"
+        and last["body"]["from"] == iso(min(since, now))
+    ):
+        return None  # already written; Medic died before its new heartbeat
+    if last is not None:
+        # Records that landed after the last beat (heartbeat writes failing)
+        # mean Medic was watching then: the gap starts after the newest.
+        since = max(since, datetime.fromisoformat(last["at"]).timestamp())
     if since > now:
         # The clock stepped back. A gap that ends before it starts would fail
         # verify() (E-GAP), so it is recorded as zero length at the restart.
         log.warning("Last sign of life is %.0f s in the future", since - now)
         since = now
-    gap = {"from": iso(since), "to": iso(now), "reason": reason}
-    if (
-        last is not None
-        and last["type"] == "gap"
-        and last["body"]["from"] == gap["from"]
-    ):
-        return None  # already written; Medic died before its new heartbeat
-    return gap
+    return {"from": iso(since), "to": iso(now), "reason": reason}
 
 
 def write_gap(writer: DecisionWriter, gap: dict[str, Any] | None) -> None:

@@ -77,6 +77,7 @@ class Medic:
         self.pipeline = Pipeline(self.bus, self.sink)
         self.scheduler = Scheduler(sensors, SensorContext(shape=shape), self.bus, clock)
         self.unstored = 0  # records the store refused or couldn't take
+        self._stepped_back = False
 
     async def cycle(self) -> list[dict[str, Any]]:
         """Start due sensors, hand finished reads to the engine, evaluate the tick."""
@@ -87,8 +88,13 @@ class Medic:
     def evaluate(self) -> list[dict[str, Any]]:
         """Run the engine on the latest grid tick not yet evaluated; store its records."""
         tick = int(self.clock.wall()) // TICK_S * TICK_S
-        if self.engine.last_tick is not None and tick <= self.engine.last_tick:
+        last = self.engine.last_tick
+        if last is not None and tick <= last:
+            if tick < last - TICK_S and not self._stepped_back:
+                self._stepped_back = True
+                log.warning("Wall clock is %d s behind the last tick", last - tick)
             return []  # same tick again, or the wall clock stepped back
+        self._stepped_back = False
         stored = []
         for record in self.engine.tick(datetime.fromtimestamp(tick, UTC)):
             routed = {"v": 1, **self.router.route(record)}
@@ -144,7 +150,11 @@ def load_engine_state(data_dir: Path) -> dict[str, Any] | None:
     except (OSError, ValueError) as exc:
         log.warning("Engine state unreadable, starting fresh: %s", type(exc).__name__)
         return None
-    if not isinstance(doc, dict) or doc.get("v") != ENGINE_STATE_VERSION:
+    if (
+        not isinstance(doc, dict)
+        or doc.get("v") != ENGINE_STATE_VERSION
+        or not isinstance(doc.get("engine"), dict)
+    ):
         log.warning("Engine state has an unknown version, starting fresh")
         return None
     return doc.get("engine")

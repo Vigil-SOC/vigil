@@ -243,11 +243,10 @@ def test_a_recording_replays_to_the_same_engine_records(
         start=datetime.fromtimestamp(start, UTC),
         seconds=int(clock.wall() - start),
     )
-    again = stored(tmp_path / "replay")
-    strip = ("seq", "prev", "hash")
-    assert [{k: v for k, v in r.items() if k not in strip} for r in again] == [
-        {k: v for k, v in r.items() if k not in strip} for r in live
-    ]
+    # The live store holds engine records only here (first start: no gap), so
+    # the two stores must match record for record, seq/prev/hash included.
+    assert stored(tmp_path / "live") == live
+    assert stored(tmp_path / "replay") == live
 
 
 def test_medics_own_log_is_redacted_while_it_runs(
