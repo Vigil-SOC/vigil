@@ -97,7 +97,15 @@ try:
     out["internet_dns"] = "resolved"
 except OSError:
     out["internet_dns"] = "failed"
-# Members Medic must reach on medic-net.
+# The host side of each Medic network's bridge (its IPAM gateway): Docker
+# publishes ports like the backend's 0.0.0.0:6987 on every host address, this
+# one included, so an internal network must drop traffic to it too.
+out["host_gateway"] = {
+    f"{gw}:{port}": connect(gw, port)
+    for gw in ARGS["gateways"]
+    for port in ARGS["host_ports"]
+}
+# Members Medic must reach on its two networks.
 out["members"] = {
     f"{h}:{p}": connect(h, p)
     for h, p in [

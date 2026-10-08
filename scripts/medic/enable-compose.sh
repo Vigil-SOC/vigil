@@ -16,12 +16,15 @@
 #    it) and the exact `up` command, with this host's Docker socket gid.
 #
 #   --secrets-only  step 1 and 4 only: no Docker
-#   --rotate        replace existing secrets. Change the Viewer account's
-#                   password to match before the gateway's next login, or it
-#                   stops after two refusals (S5-4).
+#   --rotate        replace existing secrets. Running containers keep the old
+#                   value (Compose bind-mounts the old file), so change the
+#                   Viewer account's password, then recreate medic and
+#                   medic-gateway (the script prints the command). Otherwise the
+#                   gateway stops after two refusals (S5-4).
 #
-# Secrets dir: $VIGIL_MEDIC_SECRETS_DIR, default ~/.vigil/medic-secrets; the
-# compose file reads the same variable with the same default.
+# Secrets dir: $VIGIL_MEDIC_SECRETS_DIR (an absolute path), default
+# ~/.vigil-medic/secrets, deliberately not inside Vigil's ~/.vigil; the compose
+# file reads the same variable with the same default.
 set -euo pipefail
 
 usage() {
@@ -42,7 +45,16 @@ done
 # shellcheck source=SCRIPTDIR/../lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib.sh"
 
-dir="${VIGIL_MEDIC_SECRETS_DIR:-$HOME/.vigil/medic-secrets}"
+dir="${VIGIL_MEDIC_SECRETS_DIR:-${HOME:-}/.vigil-medic/secrets}"
+case "$dir" in
+    /*) ;;
+    *)
+        # Compose would resolve a relative path against infra/docker/, this
+        # script against the current directory: two different places.
+        echo "error: VIGIL_MEDIC_SECRETS_DIR must be an absolute path" >&2
+        exit 1
+        ;;
+esac
 viewer_user="${VIGIL_MEDIC_VIEWER_USER:-medic-viewer}"
 base="$REPO_ROOT/infra/docker/docker-compose.yml"
 overlay="$REPO_ROOT/infra/docker/medic/docker-compose.medic.yml"
@@ -60,29 +72,48 @@ else
     mkdir -p "$(dirname "$dir")"
     mkdir -m 0700 "$dir"
 fi
+if [ ! -w "$dir" ] || [ ! -x "$dir" ]; then
+    echo "error: $dir isn't writable by $(id -un) (created by another user, e.g. with sudo?)" >&2
+    exit 1
+fi
 
-# 256 bits as 64 hex characters: alphanumeric, so it survives any login form.
-new_secret() {
-    od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
+is_secret() {
+    printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'
 }
 
+# Sets $made to kept|created. Called directly, never inside $(...): bash turns
+# `set -e` off in command substitutions, which would hide a failed write.
 # Plain variables, not an associative array: macOS ships bash 3.2.
 make_secret() {
-    local name="$1" file="$dir/$1" tmp
+    local name="$1" file="$dir/$1" tmp value
     if [ -s "$file" ] && [ "$rotate" = 0 ]; then
-        echo kept
+        # Unreadable here means it was handed to the container's uid (Linux).
+        if [ -r "$file" ] && ! is_secret "$(cat "$file")"; then
+            echo "error: $file isn't a secret this script wrote; re-run with --rotate" >&2
+            exit 1
+        fi
+        made=kept
         return
     fi
+    # 256 bits as 64 hex characters: alphanumeric, so it survives any login form.
+    value="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+    is_secret "$value" || {
+        echo "error: couldn't read 32 random bytes from /dev/urandom" >&2
+        exit 1
+    }
     # mktemp creates the file 0600 in the same dir, so the rename is atomic and
     # the secret is never readable by anyone else, even briefly.
     tmp="$(mktemp "$dir/.$name.XXXXXX")"
-    printf '%s\n' "$(new_secret)" > "$tmp"
+    printf '%s\n' "$value" > "$tmp"
     chmod 0600 "$tmp"
     mv -f "$tmp" "$file"
-    echo created
+    made=created
 }
-viewer_outcome="$(make_secret viewer_password)"
-api_outcome="$(make_secret api_key)"
+made=
+make_secret viewer_password
+viewer_outcome="$made"
+make_secret api_key
+api_outcome="$made"
 
 if [ -n "${VIGIL_MEDIC_DOCKER_GID:-}" ]; then
     docker_gid="$VIGIL_MEDIC_DOCKER_GID"
@@ -131,3 +162,12 @@ should keep it; add --profile daemon if you run the daemon):
   docker compose -f $base \\
     -f $overlay --profile medic up -d
 EOF
+if [ "$rotate" = 1 ]; then
+    cat <<EOF2
+
+After --rotate: running containers still hold the old files. Once the Viewer
+account has the new password, recreate them (same variables and files as above):
+  docker compose -f $base -f $overlay --profile medic \\
+    up -d --force-recreate medic medic-gateway
+EOF2
+fi
