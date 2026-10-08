@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from services.medic.redact import REDACTION_VERSION, Redactor
+from services.medic.redact.secret_names import NAMES
 
 MEDIC = Path(__file__).resolve().parents[2]
 CASES = json.loads((MEDIC / "contracts/fixtures/redaction/cases.json").read_text())
@@ -59,10 +60,17 @@ def test_version_is_schema_safe() -> None:
 
 
 def test_secret_names_copy_matches_the_support_bundle_list() -> None:
-    # Medic can't read scripts/ at runtime (it ships services/ only), so it keeps a
-    # copy; this pins the copy to the original while both live in one repo.
-    ours = (MEDIC / "redact/secret-names.txt").read_text()
+    # Medic can't read scripts/ at runtime (its image ships services/medic/ only),
+    # so it keeps a copy; this pins the copy to the original while both live here.
     theirs = REPO / "scripts/vigil-support/secret-names.txt"
     if not theirs.exists():
         pytest.skip("not in the Vigil repo")
-    assert ours == theirs.read_text()
+    assert list(NAMES) == [
+        n.strip() for n in theirs.read_text().splitlines() if n.strip()
+    ]
+
+
+def test_redact_ships_only_python() -> None:
+    # The image build drops *.txt (.dockerignore); a data file here would be
+    # missing at runtime and Medic would die at import.
+    assert {p.suffix for p in (MEDIC / "redact").iterdir() if p.is_file()} == {".py"}
