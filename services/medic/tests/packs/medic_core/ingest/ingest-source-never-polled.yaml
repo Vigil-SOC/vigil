@@ -1,0 +1,33 @@
+rule: ingest.source-never-polled
+defaults:
+  sensors:
+    - {id: http.daemon-status, covers: [daemon_status.poller], interval: 30s, service: soc-daemon, states: [[+0s, ok]]}
+  types:
+    daemon_status.poller: {polls: counter}
+cases:
+  - kind: fires
+    id: v01-fires-when-the-poll-counter-is-flat
+    title: The legacy CrowdStrike loop stopped; its poll counter never moves
+    end: +40m
+    series:
+      - {signal: daemon_status.poller, key: polls, labels: {source: crowdstrike}, steps: [[+0s, 12]]}
+    expect:
+      - {at: +10m, rule: ingest.source-never-polled, group: {source: crowdstrike}, eval: unknown, state: inactive, note: flat for 10 of 30 minutes decides nothing}
+      - {at: +30m, rule: ingest.source-never-polled, group: {source: crowdstrike}, eval: true, state: pending}
+      - {at: +35m, rule: ingest.source-never-polled, group: {source: crowdstrike}, eval: true, state: firing, incident: A}
+    incidents:
+      A: {rule: ingest.source-never-polled, group: {source: crowdstrike}, active_since: +30m, opened_at: +35m,
+          resolving_since: null, resolved_at: null}
+  - kind: silent
+    id: v02-silent-while-the-counter-moves
+    title: Splunk is polled every minute
+    end: +40m
+    series:
+      - signal: daemon_status.poller
+        key: polls
+        labels: {source: splunk}
+        steps: [[+0m, 0], [+5m, 5], [+10m, 10], [+15m, 15], [+20m, 20], [+25m, 25], [+30m, 30], [+35m, 35]]
+    expect:
+      - {at: +6m, rule: ingest.source-never-polled, group: {source: splunk}, eval: false, state: inactive}
+      - {at: +36m, rule: ingest.source-never-polled, group: {source: splunk}, eval: false, state: inactive}
+    incidents: {}

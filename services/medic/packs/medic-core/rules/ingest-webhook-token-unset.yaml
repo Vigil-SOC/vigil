@@ -1,0 +1,30 @@
+# I-5.a · no DAEMON_WEBHOOK_TOKEN: the daemon webhook rejects every push with
+# reason no_secret. Reads the poller's webhook_rejections per endpoint and reason
+# (requires: D6).
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.webhook-token-unset
+title: Daemon webhook rejects every push because no token is set
+revision: 1
+fault: {class: ingest, mode: I-5, causes: [I-5.a]}
+lane: 2
+detection: event
+signals:
+  rejected:
+    sample:
+      signal: daemon_status.poller
+      key: webhook_rejections
+      by: [endpoint]
+      labels: {reason: no_secret}
+group_by: [endpoint]
+when: {fn: increase, signal: rejected, window: 30m, op: ">=", value: {param: min_rejections}}
+for: 2m
+keep_firing_for: 30m
+params:
+  min_rejections: {type: number, default: 10, min: 1, max: 1000}
+advice:
+  summary: Something is pushing alerts to the soc-daemon webhook, and every push is refused because no webhook token is set.
+  fix: >-
+    Set DAEMON_WEBHOOK_TOKEN in the soc-daemon environment, restart soc-daemon,
+    and give the same token to the sender. If you don't use push ingestion, block
+    port 8081 from the senders instead.

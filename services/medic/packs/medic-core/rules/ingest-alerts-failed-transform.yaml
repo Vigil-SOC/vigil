@@ -1,0 +1,26 @@
+# I-3.a · the SIEM base adapter logs one WARNING per batch with dropped alerts
+# that failed to transform, then moves the cursor past them.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.alerts-failed-transform
+title: Alerts from a source fail to transform and are skipped
+revision: 1
+fault: {class: ingest, mode: I-3, causes: [I-3.a]}
+lane: 3
+detection: event
+signals:
+  dropped:
+    log:
+      signal: log_soc_daemon
+      logger: {eq: core.federation.adapters._siem_base}
+      level: [WARNING]
+      template: {eq: '%s dropped %d of %d alert(s) that failed to transform%s'}
+when: {fn: count, signal: dropped, window: 1h, op: ">=", value: 1}
+for: 2m
+keep_firing_for: 15m
+advice:
+  summary: Vigil skipped some alerts from a source because it couldn't read their format; they won't be fetched again.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report: the
+    vendor's alert format has likely changed. If you can, include one sample
+    alert from the source's console for this period.

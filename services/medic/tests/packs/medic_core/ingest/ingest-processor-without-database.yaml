@@ -1,0 +1,36 @@
+rule: ingest.processor-without-database
+defaults:
+  sensors:
+    - {id: log.soc-daemon, covers: [log_soc_daemon], interval: 15s, service: soc-daemon, states: [[+0s, ok]]}
+cases:
+  - kind: fires
+    id: v01-fires-from-the-failed-start-until-a-good-one
+    title: soc-daemon starts while Postgres is down, and is restarted once it is up
+    end: +30m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.processor, trusted: false,
+         template: 'Failed to initialize database service: connection to server at "<redacted-host>", port 5432 failed: Connection refused',
+         message: 'Failed to initialize database service: connection to server at "<redacted-host>", port 5432 failed: Connection refused'}
+      - {at: +20m, signal: log_soc_daemon, level: INFO, logger: services.daemon.processor,
+         template: Database service initialized, message: Database service initialized}
+    expect:
+      - {at: +1m, rule: ingest.processor-without-database, eval: true, state: pending}
+      - {at: +3m, rule: ingest.processor-without-database, eval: true, state: firing, incident: A}
+      - {at: +20m, rule: ingest.processor-without-database, eval: false, state: resolving, incident: A}
+      - {at: +25m, rule: ingest.processor-without-database, eval: false, state: inactive}
+    incidents:
+      A: {rule: ingest.processor-without-database, active_since: +1m, opened_at: +3m, resolving_since: +20m,
+          resolved_at: +25m, reason: cleared, routed_at: +3m}
+  - kind: silent
+    id: v02-silent-on-a-good-start-and-the-schedulers-line
+    title: The processor connects; the scheduler's identical failure line is another component's
+    end: +10m
+    logs:
+      - {at: +1m, signal: log_soc_daemon, level: INFO, logger: services.daemon.processor,
+         template: Database service initialized, message: Database service initialized}
+      - {at: +2m, signal: log_soc_daemon, level: ERROR, logger: services.daemon.scheduler, trusted: false,
+         template: 'Failed to initialize database service: timeout', message: 'Failed to initialize database service: timeout'}
+    expect:
+      - {at: +2m, rule: ingest.processor-without-database, eval: false, state: inactive}
+      - {at: +10m, rule: ingest.processor-without-database, eval: false, state: inactive}
+    incidents: {}
