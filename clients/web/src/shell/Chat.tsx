@@ -7,9 +7,10 @@ import {
 import { format } from 'date-fns'
 import { Markdown } from '../shared/Markdown'
 import { Icon } from '../shared/icons'
+import { VigilMark } from '../shared/VigilLogo'
+import { TITLES } from '../data/data'
 import { Cost } from '../shared/cost'
 import api, {
-  agentsApi,
   conversationsApi,
   reasoningApi,
   streamFetch,
@@ -20,14 +21,6 @@ import { notificationService } from '../services/notifications'
 import { useConversations } from './useConversations'
 import { Popup } from '../shared/ui'
 
-interface ChatAgent {
-  id: string
-  name: string
-  specialization?: string
-  description?: string
-  icon?: string
-  color?: string
-}
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
   role: Role
@@ -133,11 +126,18 @@ interface HistRow {
   count: number
   ts: number | null
   archived?: boolean
+  /** "Case X", the page's nav title, or "General" */
+  context: string
 }
 function histTime(ts: number | null): string {
   if (ts == null) return ''
   const d = new Date(ts)
-  return isNaN(d.getTime()) ? '' : format(d, 'MMM d, HH:mm')
+  return isNaN(d.getTime()) ? '' : format(d, 'HH:mm')
+}
+function histContext(caseId?: string | null, pageContext?: string | null): string {
+  if (caseId) return `Case ${caseId}`
+  const titles = TITLES as Record<string, [string, string] | undefined>
+  return (pageContext && titles[pageContext]?.[0]) || 'General'
 }
 /* user + assistant turns only */
 function toChatMsgs(msgs: ConversationDetail['messages']): ChatMsg[] {
@@ -236,21 +236,39 @@ function VigilMessage({
   text,
   evidenceIds,
   onCite,
+  onTrace,
 }: {
   text: string
   ms?: number
   evidenceIds?: readonly string[]
   onCite?: (id: string) => void
+  /** dock only: opens the reasoning trace; the case composer keeps its "More" */
+  onTrace?: () => void
 }) {
-  return (
-    <div className="msg vigil">
+  const copy = (
+    <button title="Copy" onClick={() => navigator.clipboard?.writeText(text)}><Icon name="copy" size={15} /></button>
+  )
+  const content = (
+    <>
       <div className="body"><Markdown>{text}</Markdown></div>
       {evidenceIds && <CiteRow text={text} ids={evidenceIds} onCite={onCite} />}
       <div className="msg-actions">
-        <button title="Copy" onClick={() => navigator.clipboard?.writeText(text)}><Icon name="copy" size={15} /></button>
-        <button title="More"><Icon name="more" size={15} /></button>
+        {copy}
+        {onTrace ? (
+          <button title="Reasoning trace" aria-label="Reasoning trace" onClick={onTrace}><Icon name="reason" size={15} /></button>
+        ) : (
+          <button title="More"><Icon name="more" size={15} /></button>
+        )}
       </div>
+    </>
+  )
+  return onTrace ? (
+    <div className="msg vigil">
+      <span className="msg-av"><VigilMark /></span>
+      <div className="msg-main">{content}</div>
     </div>
+  ) : (
+    <div className="msg vigil">{content}</div>
   )
 }
 
@@ -290,8 +308,6 @@ export default function Chat({
   const [streamText, setStreamText] = useState('')
   // true between a `tool_processing` event and the next `text` chunk
   const [isProcessingTools, setIsProcessingTools] = useState(false)
-  const [agents, setAgents] = useState<ChatAgent[]>([])
-  const [agentsInfoOpen, setAgentsInfoOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [histQuery, setHistQuery] = useState('')
   // the server is the source of truth; this shows when it can't be reached
@@ -349,21 +365,30 @@ export default function Chat({
     }
   }, [open, pinned])
 
-  // any of the dock's own dialogs (they own their Esc + focus handling)
-  const anyPopupOpen = historyOpen || agentsInfoOpen || traceOpen
+  // a row click or new conversation unmounts the focused control
+  useEffect(() => {
+    if (!historyOpen && open && !pinned && !panelRef.current?.contains(document.activeElement)) {
+      taRef.current?.focus()
+    }
+  }, [historyOpen, open, pinned])
 
-  // never while a Popup is open: it handles its own Esc, and closing the dock
-  // too would dismiss both at once
+  // the trace dialog owns its Esc + focus handling
+  const anyPopupOpen = traceOpen
+
+  // never while the trace Popup is open: it handles its own Esc, and closing
+  // the dock too would dismiss both at once. Esc steps back one layer: rename
+  // field, mention list, history view, then the dock.
   useEffect(() => {
     if (!open || pinned) return
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Escape' || anyPopupOpen) return
-      if (mentionHits) setMentionHits(null)
+      if (e.key !== 'Escape' || anyPopupOpen || renamingId) return
+      if (historyOpen) setHistoryOpen(false)
+      else if (mentionHits) setMentionHits(null)
       else onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, pinned, mentionHits, onClose, anyPopupOpen])
+  }, [open, pinned, mentionHits, onClose, anyPopupOpen, historyOpen, renamingId])
 
   // unless a Popup is up, which traps focus itself
   const onPanelKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -387,16 +412,6 @@ export default function Chat({
       first.focus()
     }
   }
-
-  useEffect(() => {
-    agentsApi
-      .listAgents()
-      .then((res) => {
-        const raw = (res.data?.agents || []) as ChatAgent[]
-        setAgents(raw.map((a) => ({ id: a.id, name: a.name, specialization: a.specialization, description: a.description, icon: a.icon, color: a.color })))
-      })
-      .catch(() => {})
-  }, [])
 
   useEffect(() => {
     const el = bodyRef.current
@@ -462,6 +477,7 @@ export default function Chat({
       return
     }
     if (loading) return
+    setHistoryOpen(false)
     const gen = turnGen.current
     localTurn.current = true
     if (lockedCaseId) {
@@ -877,7 +893,17 @@ export default function Chat({
   const transcript = (
     <div className="chat-body" ref={bodyRef}>
       {messages.length === 0 && !loading && (
-        <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
+        pinned ? (
+          <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
+        ) : (
+          <div className="chat-empty dock">
+            <div className="ce-head">
+              <VigilMark className="ce-mark" />
+              <span>Ask about what you are looking at</span>
+            </div>
+            <p>Ask about this page or any case. Conversations are private to you and kept in your history.</p>
+          </div>
+        )
       )}
       {messages.map((m, i) =>
         m.role === 'user' ? (
@@ -885,48 +911,73 @@ export default function Chat({
         ) : m.role === 'error' ? (
           <div className="msg vigil err" key={i}><div className="body">{m.text}</div></div>
         ) : (
-          <VigilMessage key={i} text={m.text} ms={m.ms} evidenceIds={evidenceIds} onCite={onCite} />
+          <VigilMessage key={i} text={m.text} ms={m.ms} evidenceIds={evidenceIds} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
         )
       )}
       {loading && (
         <div className="msg vigil">
-          {/* always-on processing indicator so the user knows Vigil is still
-              working — the phase label tracks reasoning → responding */}
-          <div className="vigil-status" aria-live="polite">
-            <span className="vs-dots" aria-hidden="true"><i /><i /><i /></span>
-            <span className="vs-label">
-              {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
-              …
-            </span>
+          {!pinned && <span className="msg-av"><VigilMark /></span>}
+          <div className="msg-main">
+            {/* always-on processing indicator so the user knows Vigil is still
+                working — the phase label tracks reasoning → responding */}
+            <div className="vigil-status" aria-live="polite">
+              {pinned ? (
+                <span className="vs-dots" aria-hidden="true"><i /><i /><i /></span>
+              ) : (
+                <Icon name="sparkle" size={14} className="vs-spark" />
+              )}
+              <span className="vs-label">
+                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
+                …
+              </span>
+            </div>
+            {streamText && (
+              <>
+                <div className="body"><Markdown>{streamText}</Markdown></div>
+                <CiteRow text={streamText} ids={evidenceIds} onCite={onCite} />
+              </>
+            )}
           </div>
-          {streamText && (
-            <>
-              <div className="body"><Markdown>{streamText}</Markdown></div>
-              <CiteRow text={streamText} ids={evidenceIds} onCite={onCite} />
-            </>
-          )}
         </div>
       )}
     </div>
   )
 
+  const mentionOpen = !lockedCaseId && mentionHits
+  const addAt = () => {
+    setDraft((d) => (d && !/\s$/.test(d) ? `${d} @` : `${d}@`))
+    taRef.current?.focus()
+  }
+
   const foot = (
     <div className="chat-foot">
       <div className="chat-input">
-        {!lockedCaseId && mentionHits && (
+        {mentionOpen && (
           <div className="chat-mention" role="listbox" aria-label="Matching cases">
+            <span className="cm-head">Mention</span>
             {mentionHits.length === 0 ? (
-              <div className="cm-empty">No matching cases</div>
+              <div className="cm-empty">{token?.trim() ? 'No matching cases' : 'Type a case id or title'}</div>
             ) : (
               mentionHits.map((hit) => (
                 <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
-                  <span>{hit.title}</span>
-                  <span className="cm-id">{hit.id}</span>
+                  <span className="cm-tile"><Icon name="cases" size={14} /></span>
+                  <span className="cm-text">
+                    <span className="cm-title">{hit.title}</span>
+                    <span className="cm-id">{hit.id}</span>
+                  </span>
                 </button>
               ))
             )}
           </div>
         )}
+        {!pinned && caseId ? (
+          <span className="chat-case" data-testid="attached-case">
+            <span>@{caseId}</span>
+            <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>
+              <Icon name="x2" size={12} />
+            </button>
+          </span>
+        ) : null}
         <textarea
           ref={taRef}
           rows={1}
@@ -937,22 +988,170 @@ export default function Chat({
           onKeyDown={onKeyDown}
         />
         <div className="ci-row">
-          {caseId && !lockedCaseId ? (
-            <span className="chat-case" data-testid="attached-case">
-              <span>{caseId}</span>
-              <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
-            </span>
-          ) : null}
+          {/* the case composer shows no chip; the dock's chip sits above the textarea */}
+          {pinned ? null : (
+            <button type="button" className="ci-at" aria-label="Mention a case" title="Mention a case" onClick={addAt}>@</button>
+          )}
           <div className="ci-grow" />
           {pinned && <span className="composer-note">Private to you · Ask only</span>}
           {loading ? (
-            <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
+            <button className="ci-send busy" title="Stop" onClick={stop}>
+              {pinned ? <Icon name="x2" size={15} /> : <span className="ci-stop" />}
+            </button>
           ) : (
             <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
           )}
         </div>
       </div>
+      {!pinned && <div className="chat-hint">Saved privately to your history · @ attaches · Enter sends</div>}
     </div>
+  )
+
+  // history view rows: the server list, or the localStorage cache when offline
+  const offline = histPhase === 'error'
+  const histRows: HistRow[] = offline
+    ? history.map((c) => ({
+        id: c.id,
+        title: c.title || 'Untitled conversation',
+        count: c.messages?.length || 0,
+        ts: c.ts || null,
+        context: 'General',
+      }))
+    : serverConvos.map((c) => ({
+        id: c.id,
+        title: c.title || 'Untitled conversation',
+        count: c.message_count,
+        ts: c.last_message_at
+          ? Date.parse(c.last_message_at)
+          : c.updated_at
+            ? Date.parse(c.updated_at)
+            : null,
+        archived: c.archived,
+        context: histContext(c.case_id, c.page_context),
+      }))
+  const histGroups: Array<{ label: string; rows: HistRow[] }> = []
+  for (const r of histRows) {
+    const label = dayLabel(r.ts)
+    const last = histGroups[histGroups.length - 1]
+    if (last?.label === label) last.rows.push(r)
+    else histGroups.push({ label, rows: [r] })
+  }
+  const convoTitle =
+    histRows.find((r) => r.id === sessionRef.current)?.title ||
+    messages.find((m) => m.role === 'user')?.text.replace(/\s+/g, ' ').trim() ||
+    'New conversation'
+
+  const historyView = (
+    <>
+      <div className="chist-top">
+        <p className="chist-privacy">Private to you in this workspace. Saved on the server.</p>
+        <label className="chist-search">
+          <Icon name="search" size={14} />
+          <input
+            aria-label="Search conversations"
+            placeholder="Search conversations…"
+            value={histQuery}
+            disabled={offline}
+            autoFocus
+            onChange={(e) => setHistQuery(e.target.value)}
+          />
+        </label>
+        <label className="chist-archtoggle">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            disabled={offline}
+          />
+          Show archived
+        </label>
+        {offline && <span className="chist-note">Offline — showing cached conversations.</span>}
+      </div>
+      <div className="chist-list">
+        {histPhase === 'loading' ? (
+          <div className="chist-empty">Loading…</div>
+        ) : histRows.length === 0 ? (
+          <div className="chist-empty">
+            {histQuery.trim()
+              ? 'No conversations match.'
+              : 'No past conversations yet. Your chats are saved automatically so you can reopen them on any device.'}
+          </div>
+        ) : (
+          histGroups.map((g) => (
+            <div key={g.label} className="chist-group">
+              <div className="chist-day">{g.label}</div>
+              {g.rows.map((c) => (
+                <div
+                  key={c.id}
+                  className={`chist-row${c.id === sessionRef.current ? ' current' : ''}${c.archived ? ' archived' : ''}`}
+                >
+                  {renamingId === c.id ? (
+                    <input
+                      className="chist-rename"
+                      aria-label="Rename conversation"
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          commitRename(c.id)
+                        } else if (e.key === 'Escape') {
+                          // only cancels the rename, not the history view
+                          e.stopPropagation()
+                          setRenamingId(null)
+                        }
+                      }}
+                      onBlur={() => commitRename(c.id)}
+                    />
+                  ) : (
+                    <button className="chist-main" onClick={() => openConversation(c.id)}>
+                      <span className="chist-title">{c.title}</span>
+                      <span className="chist-meta">
+                        <span className="chist-ctx">{c.context}</span>
+                        {c.ts != null && histTime(c.ts) && <span>{histTime(c.ts)}</span>}
+                        <span>{c.count} message{c.count === 1 ? '' : 's'}</span>
+                      </span>
+                    </button>
+                  )}
+                  <div className="chist-actions">
+                    <button
+                      className="chist-act"
+                      title="Rename"
+                      aria-label="Rename"
+                      disabled={offline}
+                      onClick={() => {
+                        setRenamingId(c.id)
+                        setRenameDraft(c.title)
+                      }}
+                    >
+                      <Icon name="edit" size={14} />
+                    </button>
+                    <button
+                      className="chist-act"
+                      title={c.archived ? 'Unarchive' : 'Archive'}
+                      aria-label={c.archived ? 'Unarchive' : 'Archive'}
+                      disabled={offline}
+                      onClick={() => archiveConversation(c.id, !c.archived)}
+                    >
+                      <Icon name="folder" size={14} />
+                    </button>
+                    <button
+                      className="chist-act chist-del"
+                      title="Delete"
+                      aria-label="Delete"
+                      onClick={() => deleteConversation(c.id)}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </>
   )
 
   return (
@@ -980,177 +1179,58 @@ export default function Chat({
       ref={panelRef}
       className={`chat${open ? ' open' : ''}`}
       role="dialog"
-      aria-label="Vigil Assistant"
+      aria-label="Ask Vigil"
       aria-hidden={!open}
       onKeyDown={onPanelKeyDown}
     >
       <div className="chat-head">
-        <span className="ch-ico"><Icon name="brain" /></span>
-        <h3 className="ch-title">Vigil Assistant</h3>
+        <span className="ch-ico"><VigilMark /></span>
+        <h3 className="ch-title">Ask Vigil</h3>
+        <span className="ch-convo" title={convoTitle}>{convoTitle}</span>
         <div className="hbtns">
-          <button title="History" onClick={() => { setHistoryOpen(true); reloadHistory() }}><Icon name="clock" /></button>
-          <button title="Reasoning trace" onClick={openReasoningTrace}><Icon name="reason" /></button>
-          <button title="SOC Agents" onClick={() => setAgentsInfoOpen(true)}><Icon name="note" /></button>
-          <button title="Clear chat" onClick={reset} disabled={loading || messages.length === 0}><Icon name="trash" /></button>
-          <button type="button" title="Close assistant" aria-label="Close Vigil Assistant" onClick={onClose}><Icon name="close" /></button>
+          <button
+            type="button"
+            title="Conversation history"
+            aria-label="Conversation history"
+            aria-pressed={historyOpen}
+            onClick={() => {
+              setHistoryOpen((v) => !v)
+              reloadHistory()
+            }}
+          >
+            <Icon name="clock" />
+          </button>
+          <button
+            type="button"
+            title="New conversation"
+            aria-label="New conversation"
+            disabled={loading}
+            onClick={() => {
+              reset()
+              setHistoryOpen(false)
+            }}
+          >
+            <Icon name="plus" />
+          </button>
+          <button type="button" title="Close Ask Vigil" aria-label="Close Ask Vigil" onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>
-      <div className="chat-note">
-        <span>Private to you</span>
-        {pageTitle ? <span>Using {pageTitle}</span> : null}
-      </div>
-      {transcript}
-      {foot}
+      {historyOpen ? (
+        historyView
+      ) : (
+        <>
+          {pageTitle ? (
+            <div className="chat-ctx">
+              <span className="cx-label">Using this page</span>
+              <span className="cx-pill"><Icon name="target" size={12} /><span>{pageTitle}</span></span>
+            </div>
+          ) : null}
+          {transcript}
+          {foot}
+        </>
+      )}
     </aside>
     )}
-
-    {/* Conversation history — server-backed (cross-device); falls back to the
-        localStorage cache when the server can't be reached. */}
-    <Popup open={historyOpen} onClose={() => setHistoryOpen(false)} title="Conversation history" width={460}>
-      {(() => {
-        const offline = histPhase === 'error'
-        const rows: HistRow[] = offline
-          ? history.map((c) => ({
-              id: c.id,
-              title: c.title || 'Untitled conversation',
-              count: c.messages?.length || 0,
-              ts: c.ts || null,
-            }))
-          : serverConvos.map((c) => ({
-              id: c.id,
-              title: c.title || 'Untitled conversation',
-              count: c.message_count,
-              ts: c.last_message_at
-                ? Date.parse(c.last_message_at)
-                : c.updated_at
-                  ? Date.parse(c.updated_at)
-                  : null,
-              archived: c.archived,
-            }))
-        return (
-          <>
-            <div className="chist-toolbar">
-              <input
-                className="chist-search"
-                aria-label="Search history"
-                placeholder="Search history"
-                value={histQuery}
-                disabled={offline}
-                onChange={(e) => setHistQuery(e.target.value)}
-              />
-              {offline && <span className="muted">Offline — showing cached conversations.</span>}
-              <label className="chist-archtoggle">
-                <input
-                  type="checkbox"
-                  checked={showArchived}
-                  onChange={(e) => setShowArchived(e.target.checked)}
-                  disabled={offline}
-                />
-                Show archived
-              </label>
-            </div>
-            {histPhase === 'loading' ? (
-              <div className="muted">Loading…</div>
-            ) : rows.length === 0 ? (
-              <div className="muted">
-                No past conversations yet. Your chats are saved automatically so you can
-                reopen them on any device.
-              </div>
-            ) : (
-              <div className="chat-history">
-                {rows.map((c, i) => {
-                  const label = dayLabel(c.ts)
-                  const prev = i > 0 ? dayLabel(rows[i - 1].ts) : null
-                  return (
-                  <div key={c.id}>
-                    {label !== prev && <div className="chist-day">{label}</div>}
-                  <div
-                    className={`chist-row${c.id === sessionRef.current ? ' current' : ''}${c.archived ? ' archived' : ''}`}
-                  >
-                    {renamingId === c.id ? (
-                      <input
-                        className="chist-rename"
-                        autoFocus
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            commitRename(c.id)
-                          } else if (e.key === 'Escape') {
-                            setRenamingId(null)
-                          }
-                        }}
-                        onBlur={() => commitRename(c.id)}
-                      />
-                    ) : (
-                      <button className="chist-main" onClick={() => openConversation(c.id)}>
-                        <span className="chist-title">{c.title}</span>
-                        <span className="chist-meta">
-                          {c.count} message{c.count === 1 ? '' : 's'}
-                          {c.ts != null && histTime(c.ts) ? ` · ${histTime(c.ts)}` : ''}
-                        </span>
-                      </button>
-                    )}
-                    <div className="chist-actions">
-                      <button
-                        className="chist-act"
-                        title="Rename"
-                        disabled={offline}
-                        onClick={() => {
-                          setRenamingId(c.id)
-                          setRenameDraft(c.title)
-                        }}
-                      >
-                        <Icon name="edit" size={14} />
-                      </button>
-                      <button
-                        className="chist-act"
-                        title={c.archived ? 'Unarchive' : 'Archive'}
-                        disabled={offline}
-                        onClick={() => archiveConversation(c.id, !c.archived)}
-                      >
-                        <Icon name="folder" size={14} />
-                      </button>
-                      <button
-                        className="chist-act chist-del"
-                        title="Delete"
-                        onClick={() => deleteConversation(c.id)}
-                      >
-                        <Icon name="trash" size={14} />
-                      </button>
-                    </div>
-                  </div>
-                  </div>
-                  )
-                })}
-              </div>
-            )}
-          </>
-        )
-      })()}
-    </Popup>
-
-    {/* SOC Agents reference — rendered outside the transformed .chat aside so
-        the fixed overlay positions against the viewport */}
-    <Popup open={agentsInfoOpen} onClose={() => setAgentsInfoOpen(false)} title="SOC Agents" width={460}>
-      {agents.length === 0 ? (
-        <div className="muted">No agents available.</div>
-      ) : (
-        <div className="agent-cards">
-          {agents.map((a) => (
-            <div key={a.id} className="agent-card" style={{ borderLeftColor: a.color || 'var(--accent)' }}>
-              <div className="ac-head">
-                {a.icon && <span className="ac-ico" style={{ color: a.color }}>{a.icon}</span>}
-                <span className="ac-name">{a.name}</span>
-                {a.specialization && <span className="ac-spec">{a.specialization}</span>}
-              </div>
-              {a.description && <p className="ac-desc">{a.description}</p>}
-            </div>
-          ))}
-        </div>
-      )}
-    </Popup>
 
     {/* Reasoning trace — per-interaction chain-of-thought for this session */}
     <Popup open={traceOpen} onClose={() => setTraceOpen(false)} title="Reasoning trace" width={760}>

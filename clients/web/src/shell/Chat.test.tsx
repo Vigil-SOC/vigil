@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { format } from 'date-fns'
 import Chat from './Chat'
 import api, { conversationsApi, reasoningApi, streamFetch } from '../services/api'
@@ -12,6 +12,8 @@ const historyState = vi.hoisted(() => ({
     last_message_at: string | null
     updated_at: string | null
     archived: boolean
+    case_id: string | null
+    page_context: string | null
   }>,
 }))
 
@@ -29,6 +31,7 @@ vi.mock('../services/api', () => ({
   analyticsApi: { estimateCost: vi.fn(() => new Promise(() => undefined)) },
   claudeApi: { getModels: vi.fn(() => new Promise(() => undefined)) },
   conversationsApi: {
+    list: vi.fn(() => new Promise(() => undefined)),
     get: vi.fn(),
     list: vi.fn(),
     delete: vi.fn(),
@@ -51,6 +54,8 @@ beforeEach(() => {
   vi.mocked(conversationsApi.update).mockReset()
   vi.mocked(conversationsApi.update).mockResolvedValue({ data: {} } as never)
   vi.mocked(conversationsApi.get).mockReset()
+  vi.mocked(reasoningApi.getSessionSummary).mockReset()
+  vi.mocked(reasoningApi.getSessionSummary).mockResolvedValue(null)
 })
 
 function renderChat(props: { pageKey?: string; pageTitle?: string } = {}) {
@@ -71,11 +76,58 @@ function emptyStream(): Response {
   } as unknown as Response
 }
 
+function replyStream(text: string): Response {
+  const chunk = new TextEncoder().encode(`data: ${JSON.stringify({ type: 'text', content: text })}\n`)
+  let sent = false
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: () =>
+          Promise.resolve(sent ? { done: true, value: undefined } : ((sent = true), { done: false, value: chunk })),
+      }),
+    },
+  } as unknown as Response
+}
+
 describe('Ask Vigil dock', () => {
+  it('has an Ask Vigil header with history, new conversation and close only', () => {
+    renderChat()
+    const dialog = screen.getByRole('dialog', { name: 'Ask Vigil' })
+    const head = dialog.querySelector('.chat-head') as HTMLElement
+    expect(within(head).getByRole('heading', { name: 'Ask Vigil' })).toBeInTheDocument()
+    expect(within(head).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Conversation history',
+      'New conversation',
+      'Close Ask Vigil',
+    ])
+    expect(screen.queryByTitle('SOC Agents')).toBeNull()
+    expect(within(head).getByText('New conversation', { selector: '.ch-convo' })).toBeInTheDocument()
+  })
+
+  it('shows the page chip, the saved-privately line and an @ button but no slash', () => {
+    renderChat()
+    expect(screen.getByText('Using this page')).toBeInTheDocument()
+    expect(document.querySelector('.cx-pill')).toHaveTextContent('Overview')
+    expect(screen.getByText('Saved privately to your history · @ attaches · Enter sends')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '/' })).toBeNull()
+    expect(screen.queryByText('Private to you')).toBeNull()
+  })
+
+  it('puts @ in the draft from the @ button and prompts for a case', async () => {
+    renderChat()
+    const box = screen.getByPlaceholderText(/Ask Vigil/) as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'look at' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a case' }))
+    expect(box.value).toBe('look at @')
+    expect(box).toHaveFocus()
+    expect(await screen.findByText('Type a case id or title')).toBeInTheDocument()
+    expect(screen.queryByText('No matching cases')).toBeNull()
+  })
+
   it('drops the model, prompt, cost, and agent controls', () => {
     renderChat()
-    expect(screen.getByText('Private to you')).toBeInTheDocument()
-    expect(screen.getByText('Using Overview')).toBeInTheDocument()
     expect(screen.queryByTitle('Chat settings')).toBeNull()
     expect(screen.queryByPlaceholderText(/Override default system prompt/)).toBeNull()
     expect(screen.queryByText(/k tokens/)).toBeNull()
@@ -108,7 +160,7 @@ describe('Ask Vigil dock', () => {
     fireEvent.change(box, { target: { value: '@loader' } })
     fireEvent.click(await screen.findByRole('option', { name: /CASE-9/ }))
 
-    expect(screen.getByTestId('attached-case')).toHaveTextContent('CASE-9')
+    expect(screen.getByTestId('attached-case')).toHaveTextContent('@CASE-9')
     expect(conversationsApi.update).not.toHaveBeenCalled()
 
     fireEvent.change(box, { target: { value: '@NOPE-1' } })
@@ -157,24 +209,76 @@ describe('Ask Vigil dock', () => {
     )
   })
 
-  it('groups history into calendar days and reopens that conversation', async () => {
+  it('opens history inside the dock, grouped by day with a context per row, and reopens a conversation', async () => {
     const older = '2026-03-01T15:00:00Z'
     const newer = '2026-03-02T15:00:00Z'
+    const row = (id: string, title: string, at: string, case_id: string | null, page_context: string | null) => ({
+      id, title, message_count: 2, last_message_at: at, updated_at: null, archived: false, case_id, page_context,
+    })
     historyState.items = [
-      { id: 'newer', title: 'Monday thread', message_count: 2, last_message_at: newer, updated_at: null, archived: false },
-      { id: 'older', title: 'Sunday thread', message_count: 1, last_message_at: older, updated_at: null, archived: false },
+      row('newer', 'Monday thread', newer, 'CASE-9', 'cases'),
+      row('page', 'Triage thread', older, null, 'triage'),
+      row('none', 'Sunday thread', older, null, null),
     ]
     vi.mocked(conversationsApi.get).mockResolvedValue({
       data: { id: 'newer', messages: [], case_id: null },
     } as never)
 
     renderChat()
-    fireEvent.click(screen.getByTitle('History'))
+    const toggle = screen.getByRole('button', { name: 'Conversation history' })
+    fireEvent.click(toggle)
 
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('dialog', { name: 'Conversation history' })).toBeNull()
+    expect(screen.getByText('Private to you in this workspace. Saved on the server.')).toBeInTheDocument()
     expect(screen.getByText(format(new Date(newer), 'MMM d, yyyy'))).toBeInTheDocument()
     expect(screen.getByText(format(new Date(older), 'MMM d, yyyy'))).toBeInTheDocument()
+    expect(screen.getByText('Case CASE-9')).toBeInTheDocument()
+    expect(screen.getByText('Triage')).toBeInTheDocument()
+    expect(screen.getByText('General')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/Ask Vigil/)).toBeNull()
+
     fireEvent.click(screen.getByText('Monday thread'))
     await waitFor(() => expect(conversationsApi.get).toHaveBeenCalledWith('newer'))
+    await screen.findByPlaceholderText(/Ask Vigil/)
+    expect(screen.getByText('Monday thread', { selector: '.ch-convo' })).toBeInTheDocument()
+  })
+
+  it('says when a search matches no conversation, and Esc returns to the conversation', () => {
+    const onClose = vi.fn()
+    render(<Chat open onClose={onClose} pageKey="overview" pageTitle="Overview" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }))
+    fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: 'zzz' } })
+    expect(screen.getByText('No conversations match.')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByPlaceholderText(/Ask Vigil/)).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the transcript on New conversation', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(replyStream('All quiet.'))
+    renderChat()
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'status?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    // the Reasoning trace button marks the settled reply, not the streaming one
+    await screen.findByTitle('Reasoning trace', {}, { timeout: 5000 })
+    expect(screen.getByText('All quiet.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }))
+    expect(screen.queryByText('All quiet.')).toBeNull()
+    expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
+  })
+})
+
+describe('case composer', () => {
+  it('keeps its private note and has no @ button', () => {
+    render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-9" />)
+    expect(screen.getByText('Private to you · Ask only')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Mention a case' })).toBeNull()
+    expect(screen.queryByText(/Saved privately/)).toBeNull()
   })
 })
 
@@ -222,9 +326,12 @@ describe('reasoning trace cost', () => {
     })
     vi.mocked(reasoningApi.listInteractions).mockResolvedValue({ interactions: [] })
 
-    render(<Chat open onClose={vi.fn()} pageKey="overview" pageTitle="Overview" />)
+    vi.mocked(streamFetch).mockResolvedValue(replyStream('All quiet.'))
 
-    fireEvent.click(screen.getByTitle('Reasoning trace'))
+    renderChat()
+    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'status?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(await screen.findByTitle('Reasoning trace', {}, { timeout: 5000 }))
 
     expect(await screen.findByText('not priced')).toBeInTheDocument()
     const header = document.querySelector('.trace-sum')

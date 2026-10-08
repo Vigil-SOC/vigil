@@ -66,6 +66,8 @@ export const ICON = {
   bot: '<rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M12 4v4M9 13h.01M15 13h.01M2 14v2M22 14v2"/>',
   user: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   home: '<path d="M4 10.5L12 4l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 11.2v1.6"/>',
+  cases: '<path d="M3.5 7h6.8l2.2 2.2h8V19h-17zM3.5 7V5.2h6.8"/>',
 }
 
 export type IconName = keyof typeof ICON
