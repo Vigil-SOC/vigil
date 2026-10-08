@@ -78,6 +78,11 @@ LOCKOUT_DURATION_MINUTES = get_settings().auth_lockout_duration_minutes
 PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
 
 
+def _is_service_account(user: User) -> bool:
+    """Only an explicit True exempts from lockout; anything else fails closed."""
+    return user.service_account is True
+
+
 class AccountLockedError(Exception):
     """Raised when authentication is refused because the account is locked."""
 
@@ -248,7 +253,11 @@ class AuthService:
                 # correct password — otherwise an attacker who eventually
                 # guesses right would bypass the wait.
                 now = utcnow()
-                if user.locked_until and user.locked_until > now:
+                if (
+                    user.locked_until
+                    and user.locked_until > now
+                    and not _is_service_account(user)
+                ):
                     logger.warning(
                         "Login rejected, account locked: %s until %s",
                         user.username,
@@ -291,6 +300,19 @@ class AuthService:
             if not user:
                 return
             user.failed_login_count = (user.failed_login_count or 0) + 1
+            if _is_service_account(user):
+                # Never locked (D2-17): a lock would let anyone who learns the
+                # name blind Medic's gateway. Safe only because the password is
+                # long, random and held by the gateway alone. Still counted, and
+                # logged once at the threshold so brute force stays visible.
+                if user.failed_login_count == LOCKOUT_THRESHOLD:
+                    logger.warning(
+                        "Service account %s reached %d failed logins; "
+                        "service accounts are not locked out",
+                        user.username,
+                        user.failed_login_count,
+                    )
+                return
             if user.failed_login_count >= LOCKOUT_THRESHOLD:
                 user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
                 logger.warning(
