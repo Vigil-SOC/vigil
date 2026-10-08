@@ -22,9 +22,9 @@ defaults, and flag names redact.awk doesn't know (e.g. `--requirepass`).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import re2
+
+from services.medic.redact.secret_names import NAMES
 
 REDACTED = "[REDACTED]"
 # Bumped whenever a rule changes what is redacted; stamped on every observation.
@@ -95,16 +95,7 @@ _ALLOW = frozenset(
 )
 
 
-def _load_names() -> frozenset[str]:
-    text = (Path(__file__).parent / "secret-names.txt").read_text()
-    return frozenset(
-        line.strip().replace("_", "").replace("-", "").lower()
-        for line in text.splitlines()
-        if line.strip()
-    )
-
-
-_NAMES = _load_names()
+_NAMES = frozenset(n.replace("_", "").replace("-", "").lower() for n in NAMES)
 
 
 def _isword(c: str) -> bool:
