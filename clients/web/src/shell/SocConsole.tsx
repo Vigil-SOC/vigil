@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
@@ -7,7 +7,6 @@ import { useAuth } from '../contexts/AuthContext'
 import { approvalsApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
-import { LevelBadge } from '../shared/LevelBadge'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
@@ -49,10 +48,12 @@ import {
 } from './statusLine'
 
 const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
+// a rule is drawn only between two groups that both have a visible item
+const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
 const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
-const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
-const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
+const AUTONOMY_ACT = 'Act · reversible changes on its own'
+const AUTONOMY_ASSIST = 'Assist · asks before changes'
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
@@ -79,6 +80,9 @@ const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
 }
 
 const CHAT_WIDTH = 400
+
+const setupTip = (left: number) =>
+  `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup guide.`
 
 export default function SocConsole() {
   return (
@@ -140,6 +144,8 @@ function SocConsoleInner() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
+  // open setup steps; null when unread or failed, so no chip and no menu count
+  const [setupLeft, setSetupLeft] = useState<number | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
@@ -297,6 +303,22 @@ function SocConsoleInner() {
     }
   }, [])
 
+  // re-read on each screen change so finishing a step shows without a reload
+  useEffect(() => {
+    let live = true
+    configApi
+      .getSetupSteps()
+      .then((res) => {
+        if (live) setSetupLeft(res.data.steps.filter((step) => !step.done).length)
+      })
+      .catch(() => {
+        if (live) setSetupLeft(null)
+      })
+    return () => {
+      live = false
+    }
+  }, [current])
+
   useEffect(() => {
     let live = true
     configApi
@@ -379,6 +401,9 @@ function SocConsoleInner() {
     }),
   ]
   const moreCurrent = more.some((item) => valid && item[2] === current)
+  const navGroups = NAV_GROUPS.map((keys) =>
+    keys.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
+  ).filter((group) => group.length > 0)
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
@@ -397,9 +422,11 @@ function SocConsoleInner() {
           go(key, key === 'decisions' && parked > 0 ? { search: '?tab=approvals' } : undefined)
         }}
       >
-        <Icon name={icon} size={16} />
+        <Icon name={icon} size={14} />
         <span>{label}</span>
-        {count > 0 && <span className="vg-nav-count">{count > 99 ? '99+' : count}</span>}
+        {count > 0 && (
+          <span className={`vg-nav-count${key === 'home' ? '' : ' quiet'}`}>{count > 99 ? '99+' : count}</span>
+        )}
       </button>
     )
   }
@@ -410,7 +437,9 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || (current === 'cases' && !viewFull))
+  // these draw their own heading; Home's headline is its heading, and the Cases list draws its page head
+  const ownsHeading = current === 'workflows' || current === 'settings' || current === 'home' || current === 'cases'
+  const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -441,7 +470,13 @@ function SocConsoleInner() {
           <div className="vg-header-end">
             {assist !== null && (
               <div className="vg-autonomy">
-                <button type="button" className="vg-autonomy-link" onClick={() => goSettings('autoinvestigate')}>
+                <button
+                  type="button"
+                  className="vg-autonomy-link"
+                  aria-label={`Autonomy · ${assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}`}
+                  onClick={() => goSettings('autoinvestigate')}
+                >
+                  <span className="vg-autonomy-label">Autonomy</span>
                   {assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}
                 </button>
                 <InfoTip
@@ -452,58 +487,69 @@ function SocConsoleInner() {
                 />
               </div>
             )}
-            <UserMenu onShowTour={startTour} />
+            <UserMenu onShowTour={startTour} setupLeft={setupLeft} />
           </div>
         </header>}
         {!wallMode && <nav className="vg-nav" aria-label="Primary">
-          {primary.map(navButton)}
+          {navGroups.map((group, i) => (
+            <Fragment key={group[0][2]}>
+              {i > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
+              {group.map(navButton)}
+            </Fragment>
+          ))}
           {more.length > 0 && (
-            <div className="vg-more" ref={moreRef}>
-              <button
-                type="button"
-                className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
-                aria-haspopup="menu"
-                aria-expanded={moreOpen}
-                aria-label="More"
-                onClick={() => setMoreOpen((open) => !open)}
-              >
-                <Icon name="more" size={16} />
-                <span>More</span>
-              </button>
-              {moreOpen && (
-                <div className="vg-more-menu" role="menu" aria-label="More screens">
-                  {more.map(navButton)}
-                </div>
-              )}
-            </div>
-          )}
-        </nav>}
-        <div
-          className={`vg-status${status?.level === 'poor' ? ' is-poor' : ''}`}
-          role={status ? 'status' : undefined}
-          aria-label={status ? 'System status' : undefined}
-          data-level={status?.level}
-        >
-          {status && (
             <>
-              <LevelBadge level={status.level} className="vg-status-level" />
-              <span>{status.sentence}</span>
+              {navGroups.length > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
+              <div className="vg-more" ref={moreRef}>
+                <button
+                  type="button"
+                  className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
+                  aria-haspopup="menu"
+                  aria-expanded={moreOpen}
+                  aria-label="More"
+                  onClick={() => setMoreOpen((open) => !open)}
+                >
+                  <Icon name="more" size={14} />
+                  <span>More</span>
+                </button>
+                {moreOpen && (
+                  <div className="vg-more-menu" role="menu" aria-label="More screens">
+                    {more.map(navButton)}
+                  </div>
+                )}
+              </div>
             </>
           )}
-        </div>
+          <div className="vg-nav-end">
+            {status && (
+              <div
+                className={`vg-status-chip${status.level === 'poor' ? ' is-poor' : ''}`}
+                role="status"
+                aria-label="System status"
+                data-level={status.level}
+                title={status.sentence}
+              >
+                <span className="vg-status-dot" aria-hidden="true" />
+                <span className="vg-status-text">{status.sentence}</span>
+              </div>
+            )}
+            {setupLeft !== null && setupLeft > 0 && (
+              <Link
+                to="/setup"
+                className="vg-setup-chip"
+                title={setupTip(setupLeft)}
+                aria-label={setupTip(setupLeft)}
+              >
+                <Icon name="check" size={13} />
+                Finish setup
+                <span className="vg-setup-count">{setupLeft} left</span>
+              </Link>
+            )}
+          </div>
+        </nav>}
 
         {/* main */}
         <div className={mainClass}>
-          {/* Agents & workflows, Settings and the Cases list draw their own headings */}
-          {!wallMode && !ownsHeading && (
-            <header className="topbar">
-              <div className="title">
-                <h1>{title}</h1>
-                <p>{sub}</p>
-              </div>
-              <div className="grow" />
-            </header>
-          )}
           {demoOn && (
             <div className="demo-banner" role="status">
               The data on screen is demo data.
@@ -511,6 +557,12 @@ function SocConsoleInner() {
           )}
           <main className="view" style={{ overflowY: viewFull ? 'hidden' : 'auto' }}>
             <div className="screen" style={viewFull ? { height: '100%' } : undefined}>
+              {showHeading && (
+                <header className="vg-page-head">
+                  <h1>{title}</h1>
+                  <p>{sub}</p>
+                </header>
+              )}
               <ErrorBoundary resetKey={valid ? current : 'notfound'}>
                 {!valid ? (
                   resolvingExtension ? (

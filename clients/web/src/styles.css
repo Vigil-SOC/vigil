@@ -169,85 +169,6 @@
       margin-right: var(--chat-w);
    }
 
-   .user-pop {
-      min-width: 224px;
-      background: var(--bg-2);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 6px;
-      box-shadow: 0 18px 44px -18px #000;
-   }
-
-   .user-pop-head {
-      padding: 9px 11px 7px;
-   }
-
-   .user-pop-name {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--tx);
-   }
-
-   .user-pop-email {
-      font-size: 12px;
-      color: var(--tx-3);
-      margin-top: 2px;
-      word-break: break-all;
-   }
-
-   .user-pop-role {
-      font-size: 11px;
-      color: var(--tx-3);
-      margin-top: 4px;
-      text-transform: capitalize;
-   }
-
-   .user-pop-sep {
-      height: 1px;
-      background: var(--line);
-      margin: 5px 0;
-   }
-
-   .user-pop button {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      width: 100%;
-      text-align: left;
-      background: none;
-      border: none;
-      color: var(--tx-2);
-      padding: 8px 11px;
-      border-radius: 8px;
-      font-size: 12.5px;
-   }
-
-   .user-pop button:hover {
-      background: var(--hover);
-      color: var(--tx);
-   }
-
-   .user-pop button.danger {
-      color: var(--crit);
-   }
-
-   .user-pop button.danger:hover {
-      background: var(--crit-dim);
-   }
-
-   .user-pop-count {
-      color: var(--tx-3);
-   }
-
-   .user-pop-mfa {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      padding: 8px 11px;
-      font-size: 12px;
-      color: var(--ok);
-   }
-
    /* ---------- access denied (permission-gated screen) ---------- */
    .access-denied {
       min-height: 60vh;
@@ -348,32 +269,6 @@
 
    .notfound .nf-path {
       color: var(--tx-2);
-   }
-
-   /* ---------- topbar ---------- */
-   .topbar {
-      height: 60px;
-      flex: 0 0 60px;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 0 22px;
-      border-bottom: 1px solid var(--line);
-      background: var(--bg-1);
-   }
-
-   .topbar .title h1 {
-      font-size: 18px;
-   }
-
-   .topbar .title p {
-      margin: 1px 0 0;
-      font-size: 12.5px;
-      color: var(--tx-3);
-   }
-
-   .topbar .grow {
-      flex: 1;
    }
 
    .search {
@@ -805,7 +700,7 @@
    }
 
    /* fixed-height list tables: rows scroll inside; sticky header + toolbar/pager
-     stay put instead of the whole table growing. Offsets cover topbar +
+     stay put instead of the whole table growing. Offsets cover the page heading +
      toolbar + pager (+ the KPI band for the Findings variant). */
    .list-scroll {
       overflow-y: auto;
@@ -823,7 +718,7 @@
    }
 
    /* Auto Ops investigation queue: bounded so the controls bar + KPI strip stay
-     put and only the rows scroll (offset covers topbar + bar-row + KPI strip +
+     put and only the rows scroll (offset covers the page heading + bar-row + KPI strip +
      the card header above). */
    .list-scroll.list-scroll-autoops {
       max-height: clamp(240px, calc(100vh - 300px), 1600px);

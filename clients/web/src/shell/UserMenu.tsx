@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { configApi, consoleApi } from '../services/api'
+import { consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 
@@ -17,15 +17,20 @@ function feedbackHref(screen: string, version: string): string {
   return url.toString()
 }
 
-export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
+export default function UserMenu({
+  onShowTour,
+  setupLeft,
+}: {
+  onShowTour: () => void
+  /** open setup steps from the shell's read; null hides the count */
+  setupLeft: number | null
+}) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { screen } = useParams<{ screen?: string }>()
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
   const [version, setVersion] = useState('')
-  // open setup steps; null when unread, so the row shows no count
-  const [setupLeft, setSetupLeft] = useState<number | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
@@ -50,23 +55,6 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
       live = false
     }
   }, [])
-
-  // re-read on each open so finishing a step shows without a reload
-  useEffect(() => {
-    if (!open) return
-    let live = true
-    configApi
-      .getSetupSteps()
-      .then((res) => {
-        if (live) setSetupLeft(res.data.steps.filter((s) => !s.done).length)
-      })
-      .catch(() => {
-        if (live) setSetupLeft(null)
-      })
-    return () => {
-      live = false
-    }
-  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -122,49 +110,37 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
         style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 80 }}
       >
         <div className="user-pop-head">
-          <div className="user-pop-name">{displayName}</div>
-          <div className="user-pop-email">{user.email}</div>
-          <div className="user-pop-role">Role: {role}</div>
+          <span className="user-pop-initials" aria-hidden="true">{initials}</span>
+          <span className="user-pop-who">
+            <span className="user-pop-name">{displayName}</span>
+            <span className="user-pop-sub">
+              <span className="user-pop-role">{role}</span>
+              {user.mfa_enabled ? ' · MFA enabled' : ''}
+            </span>
+          </span>
         </div>
         <div className="user-pop-sep" />
-        <div className="user-pop-about">About Vigil{version ? ` · ${version}` : ''}</div>
-        <a role="menuitem" href={feedbackHref(current, version)} target="_blank" rel="noreferrer">
-          Share feedback
-        </a>
-        <div className="user-pop-sep" />
-        <button
-          role="menuitem"
-          aria-pressed={scheme === 'dark'}
-          onClick={() => setScheme('dark')}
-        >
-          <Icon name="moon" size={15} /> Dark
-        </button>
-        <button
-          role="menuitem"
-          aria-pressed={scheme === 'light'}
-          onClick={() => setScheme('light')}
-        >
-          <Icon name="sun" size={15} /> Light
-        </button>
-        <div className="user-pop-sep" />
-        <button role="menuitem" onClick={() => { setOpen(false); onShowTour() }}>
-          <Icon name="info" size={15} /> Take the tour
-        </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/setup') }}>
           <Icon name="flow" size={15} />
-          <span>
-            Setup guide
-            {setupLeft ? <span className="user-pop-count"> · {setupLeft} left</span> : null}
-          </span>
+          Setup guide
+          {setupLeft ? <span className="user-pop-note">{setupLeft} left</span> : null}
+        </button>
+        <button role="menuitem" onClick={() => { setOpen(false); onShowTour() }}>
+          <Icon name="play" size={15} /> Take the tour
+        </button>
+        <a role="menuitem" href={feedbackHref(current, version)} target="_blank" rel="noreferrer">
+          <Icon name="note" size={15} />
+          Share feedback
+          <span className="user-pop-note">About Vigil{version ? ` · ${version}` : ''}</span>
+        </a>
+        <button role="menuitem" onClick={() => setScheme(scheme === 'dark' ? 'light' : 'dark')}>
+          <Icon name={scheme === 'dark' ? 'sun' : 'moon'} size={15} />
+          {scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings
         </button>
-        {user.mfa_enabled && (
-          <div className="user-pop-mfa"><Icon name="shield" size={15} /> MFA enabled</div>
-        )}
-        <div className="user-pop-sep" />
-        <button role="menuitem" className="danger" onClick={handleLogout}>
+        <button role="menuitem" className="signout" onClick={handleLogout}>
           <Icon name="logout" size={15} /> Sign out
         </button>
       </div>
