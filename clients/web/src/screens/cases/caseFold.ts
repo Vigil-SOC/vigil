@@ -458,3 +458,28 @@ export function agentRows(fold: RunFold | null): AgentRow[] {
     return [{ who: move.worker, doing: move.doing, tool: moveTool(fold, move), at: move.at }]
   })
 }
+
+export interface StrongRow {
+  step: string
+  text: string
+  stance: 'For' | 'Against' | null
+}
+
+/** Up to 3 rows for the closed summary: a hunt's evidence that bears on a hypothesis, or a lead's answers. */
+export function strongestRows(fold: RunFold | null): StrongRow[] {
+  if (!fold) return []
+  if (fold.kind === 'lead') {
+    return fold.findings.slice(0, 3).map((row) => ({ step: '—', text: row.answer || '—', stance: null }))
+  }
+  const rows = fold.evidence.flatMap((row, i) => {
+    if (row.is_gap) return []
+    const relation = row.bears_on.find((link) => link.relation === 'supports' || link.relation === 'weakens')?.relation
+    if (!relation) return []
+    const stance: StrongRow['stance'] = relation === 'supports' ? 'For' : 'Against'
+    return [{ i, step: String(row.iteration), text: row.summary || row.evidence_id, stance }]
+  })
+  // Keep one of each stance first so both sides show, then fill in order.
+  const picked = new Set([rows.find((r) => r.stance === 'For'), rows.find((r) => r.stance === 'Against')].filter(Boolean))
+  for (const r of rows) if (picked.size < 3) picked.add(r)
+  return rows.filter((r) => picked.has(r)).map(({ step, text, stance }) => ({ step, text, stance }))
+}
