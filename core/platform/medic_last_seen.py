@@ -229,8 +229,8 @@ def poll_once(
 ) -> bool:
     """Poll Medic and record the result, unless another replica just did.
 
-    Returns True if this call polled. The lock is held across the request (at
-    most ``REQUEST_TIMEOUT_S``), so a replica that ticks meanwhile skips. Times
+    Returns True if this call polled. The lock is held across the request
+    (``REQUEST_TIMEOUT_S`` per connect and per read), so a replica that ticks meanwhile skips. Times
     are Postgres's ``now()``, so every replica reads and writes one clock
     (still the backend's side, never Medic's); ``now`` overrides it in tests.
     """
@@ -323,7 +323,7 @@ async def run_poller(settings: Settings, interval: float = POLL_INTERVAL_S) -> N
     """A fixed cadence: a slow (timed-out) poll doesn't push the next one back.
 
     Cancelling it at shutdown leaves an in-flight poll to finish in its thread
-    (at most ``REQUEST_TIMEOUT_S``); its transaction then commits or rolls back.
+    (``REQUEST_TIMEOUT_S`` per connect and read); its transaction then commits or rolls back.
     """
     loop = asyncio.get_running_loop()
     due = loop.time()
@@ -332,7 +332,9 @@ async def run_poller(settings: Settings, interval: float = POLL_INTERVAL_S) -> N
             await asyncio.to_thread(poll_once, settings)
         except Exception as exc:  # noqa: BLE001 - the next tick tries again
             logger.warning("Medic status poll skipped: %s", type(exc).__name__)
-        due += interval
+        # After a stall (a hung connect, a suspended host) skip the missed ticks
+        # rather than run them back to back.
+        due = max(due + interval, loop.time())
         await asyncio.sleep(max(0.0, due - loop.time()))
 
 

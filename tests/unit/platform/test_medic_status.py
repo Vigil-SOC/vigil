@@ -178,14 +178,14 @@ def test_off_wins_over_any_row():
     assert ms.medic_status(_settings("false"), seen, _at(900)) is ms.MedicStatus.OFF
 
 
-@pytest.mark.parametrize("rhythm", [60, 70])  # 70: each failing poll times out (10 s)
+@pytest.mark.parametrize("rhythm", [60, 70])  # 70: polls further apart than planned
 @pytest.mark.parametrize("kill_after", [1, 30, 59])
 def test_down_by_kill_plus_300_for_any_kill_time(kill_after, rhythm):
-    last = T0
-    kill = _at(kill_after)
+    kill = _at(120 + kill_after)
+    last = _at(120)  # the last tick before the kill answered
     failed = None
-    tick = rhythm
-    while tick < 900:
+    tick = 120 + rhythm
+    while tick < 1200:
         if failed is None:
             failed = _at(tick)
         for second in range(tick, tick + rhythm):

@@ -30,7 +30,9 @@ POLL_INTERVAL_S = 60
 POLL_TIMEOUT_S = 10
 DOWN_AFTER_S = 300
 _POLL = timedelta(seconds=POLL_INTERVAL_S)
-# The longest a failure can go unnoticed: one interval plus a timed-out request.
+# How far before the first failure an outage may have begun: one interval, plus
+# a margin for a replica's skipped tick. A conservative bound; it only matters
+# when there's no recent success to count from.
 _NOTICE_LAG = timedelta(seconds=POLL_INTERVAL_S + POLL_TIMEOUT_S)
 _RUNNING_FOR = 2 * _POLL
 # Nobody has written the row for this long (Medic was off, or no poller ran):
@@ -74,9 +76,8 @@ def medic_status(
     if seen.updated_at is not None and now - seen.updated_at >= _STALE_AFTER:
         return MedicStatus.UNKNOWN
     if seen.first_failed_at is not None:
-        # The outage started at the last success. The first failure is noticed
-        # at most one interval plus a timeout later, so it alone counts from
-        # that far back: a Medic last seen long ago (the backend was off) that
+        # The outage started at the last success. Without one, the first
+        # failure counts from _NOTICE_LAG before it: a Medic last seen long ago (the backend was off) that
         # refuses once on restart gets the same grace as any other outage.
         since = seen.first_failed_at - _NOTICE_LAG
         if seen.last_seen_at is not None:
