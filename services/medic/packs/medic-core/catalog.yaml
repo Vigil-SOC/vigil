@@ -7,19 +7,15 @@ kind: TemplateCatalog
 vigil_commit: 8f98bdf6
 entries:
   # --- ingest (F7a) ---
-  # core/integrations/_base/config_gap.py:24-50, called with each integration's logger
+  # core/integrations/_base/config_gap.py:24-38, called with each integration's logger
   - {logger: core.integrations.elastic.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
   - {logger: core.integrations.elastic.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
-  - {logger: core.integrations.elastic.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
   - {logger: core.integrations.opensearch.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
   - {logger: core.integrations.opensearch.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
-  - {logger: core.integrations.opensearch.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
   - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
   - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
-  - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
   - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
   - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
-  - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
   # core/integrations/aws_security_hub/ingestion.py:115, azure_sentinel/ingestion.py:173 (constant text)
   - {logger: core.integrations.aws_security_hub.ingestion, template: 'boto3 not installed. Install: pip install boto3'}
   - {logger: core.integrations.azure_sentinel.ingestion, template: 'Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity'}
