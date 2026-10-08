@@ -1,6 +1,6 @@
 # Medic evaluation semantics (engine API 1.0)
 
-**Status:** E3 contract, Accepted (Craig, 2026-10-07: defaults 1a, static suppression 2a, automatic upgrade windows 3a, lower-bound windows 4a). Rule shape: `rule.schema.json` + `ENGINE_API.md` (E2). Inputs: `observation.schema.json` (D3). Executable examples: `vectors/*.yaml`. Each one is a timeline of observations plus the expected states. **If a vector and this text disagree, this text wins and the vector is fixed.**
+**Status:** E3 contract, Accepted (Craig, 2026-10-07: defaults 1a, static suppression 2a, automatic upgrade windows 3a, lower-bound windows 4a). **Amended 2026-10-07 by S4b** (⚑ S4b-1, 2, 4 decided (a) by Craig: `changes` lower bounds on any type, per-series staleness, only `ok` heartbeats cover; vector v28). Rule shape: `rule.schema.json` + `ENGINE_API.md` (E2). Inputs: `observation.schema.json` (D3). Executable examples: `vectors/*.yaml`. Each one is a timeline of observations plus the expected states. **If a vector and this text disagree, this text wins and the vector is fixed.**
 
 ## 1. The tick
 
@@ -13,7 +13,7 @@
 
 Each condition, at tick T and for one group, is **true**, **false** or **unknown**.
 
-**Staleness.** A sample signal is *fresh* if its newest `ok` observation has t ≥ T − 2 × interval. The interval is the covering sensor's `interval_s`.
+**Staleness.** A sample **series** (one `key` and label set) is *fresh* if its newest `ok` observation **that carries it** has t ≥ T − 2 × interval. The interval is the covering sensor's `interval_s`. An `ok` read that doesn't carry the series (a source that dropped out of a sensor still reading others) isn't a read of that series: the series goes stale, so it is unknown, never absent (S4b-2, decided 2026-10-07).
 
 **Functions** (series = the values of one `key` and label set, after any group filter):
 
@@ -25,13 +25,13 @@ Each condition, at tick T and for one group, is **true**, **false** or **unknown
 | `rate` | `increase` ÷ W seconds | as `increase` |
 | `changes` | number of consecutive pairs (baseline included) whose values differ. For counters, pairs across an epoch change are not counted, so a restart is neither a change nor a reset of "flat" | as `increase` |
 | `count` | matching log lines with t in (T − W, T], de-duplicated by `line_hash` | the window is not fully covered and the lower bound doesn't decide the comparison |
-| `absent_for` | true if the signal was **covered** for the whole window (consecutive `ok` reads or heartbeats never more than 2 × interval apart, starting by T − W + 2 × interval) and had no present value or matching line in it. False if anything was present | the signal was not covered for the whole window |
+| `absent_for` | true if the **signal** was **covered** for the whole window (consecutive `ok` reads of the signal, or heartbeats, never more than 2 × interval apart, starting by T − W + 2 × interval; any read of the signal counts, so a source that dropped out is absent, unlike staleness) and had no present value or matching line in it. False if anything was present | the signal was not covered for the whole window |
 | `latch` | true if the newest `set` line is newer than the newest `clear` line, per group. Equal times: clear wins. Latch state is **persisted** (C4), so a watcher restart keeps it, and it outlives the 7-day raw history | never. A watcher that starts after the `set` line can't know about it until the next `set` line (a reminder) arrives |
 
-**Coverage and lower bounds** (`increase`, `rate`, `changes` on counters, `count`). A window is **fully covered** if both hold:
+**Coverage and lower bounds** (`increase` and `rate` on counters, `changes` on any value type, `count`; a count of changes can only grow as more reads are seen, S4b-1, decided 2026-10-07). A window is **fully covered** if both hold:
 
 - there is a baseline no older than T − W − 2 × interval (for `count`: the log sensor's heartbeats reach back that far);
-- consecutive `ok` reads (or heartbeats) inside the window are never more than 2 × interval apart.
+- consecutive `ok` reads (or heartbeats) inside the window are never more than 2 × interval apart. Only a heartbeat in state `ok` covers; `degraded`, `blind` and `stopped` mean reads are failing (S4b-4, decided 2026-10-07).
 
 If the window is not fully covered, the value computed from what was seen is a **lower bound** x. It starts from the first sample in the window when there is no baseline. The comparison is **true** if it holds for every value ≥ x, **false** if it fails for every value ≥ x, and **unknown** otherwise. Examples:
 
