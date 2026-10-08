@@ -1,0 +1,28 @@
+# I-4 · the legacy poller's per-source counter is absent or flat: its loop never
+# started (I-4.a), the integration was enabled after start (I-4.b) or the whole
+# poller gather ended (I-4.g). Needs the poller sensor to report only the sources
+# the legacy loop owns (requires: D6), or a federation-owned source false-alarms.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.source-never-polled
+title: Legacy poller for a source has stopped polling
+revision: 1
+fault: {class: ingest, mode: I-4, causes: [I-4.a, I-4.b, I-4.g]}
+lane: 3
+detection: absence
+signals:
+  polls: {sample: {signal: daemon_status.poller, key: polls, by: [source]}}
+group_by: [source]
+when:
+  any:
+    - {fn: absent_for, signal: polls, window: 30m}
+    - {fn: changes, signal: polls, window: 30m, op: "==", value: 0}
+for: 5m
+keep_firing_for: 5m
+advice:
+  summary: The daemon hasn't polled this source for 30 minutes.
+  fix: >-
+    If you enabled or changed this integration since soc-daemon started, restart
+    soc-daemon. Check the soc-daemon log from its start-up for a line saying the
+    service failed to initialise, and fix the setting it names. If polling
+    doesn't resume, send this incident to DeepTempo Support.
