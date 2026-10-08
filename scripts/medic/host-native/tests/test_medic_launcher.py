@@ -524,3 +524,23 @@ def test_start_sh_hooks_medic_into_daemon_mode_only() -> None:
 def test_shutdown_all_stops_medic_by_pidfile() -> None:
     text = (REPO / "shutdown_all.sh").read_text()
     assert "logs/medic.pid" in text.split("# Kill by process pattern", 1)[0]
+
+
+def test_backend_env_makes_an_existing_key_private(sb: Path) -> None:
+    key = sb / "state" / "medic_api_key"
+    key.write_text("Z" * 43)
+    key.chmod(0o644)
+    _bash(sb, BACKEND_ENV, VIGIL_MEDIC_ENABLED="true")
+    assert key.stat().st_mode & 0o777 == 0o600
+    assert key.read_text() == "Z" * 43
+
+
+def test_a_key_minted_while_medic_runs_says_restart(sb: Path) -> None:
+    out = _bash(sb, BACKEND_ENV + "; " + RUN, VIGIL_MEDIC_ENABLED="true")
+    assert "rc=0" in out.stdout, out.stdout + out.stderr
+    (sb / "state" / "medic_api_key").unlink()
+    again = _bash(sb, BACKEND_ENV + "; " + RUN, VIGIL_MEDIC_ENABLED="true")
+    text = again.stdout + again.stderr
+    assert "already running" in text and "re-created" in text
+    same = _bash(sb, BACKEND_ENV + "; " + RUN, VIGIL_MEDIC_ENABLED="true")
+    assert "re-created" not in same.stdout + same.stderr

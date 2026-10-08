@@ -8,6 +8,7 @@ import json
 import logging
 import socket
 import threading
+import time
 
 import pytest
 
@@ -195,6 +196,8 @@ def test_no_snapshot_yet_is_503_busy(key_file, clock) -> None:
 
 
 def test_snapshot_age_limit(server, clock) -> None:
+    # X2: "a snapshot no older than 15 s", plus a cycle's own run time.
+    assert SNAPSHOT_MAX_AGE_S <= 15 + 5
     clock.advance(SNAPSHOT_MAX_AGE_S)
     status, _, body = call(server, headers={"X-Medic-Key": KEY})
     assert status == 200
@@ -366,3 +369,62 @@ def test_first_retries_are_quick_then_once_a_minute(tmp_path, board, clock) -> N
         clock.advance(1)
     gaps = [b - a for a, b in itertools.pairwise(tries)]
     assert gaps[:4] == [5, 10, 20, 40] and set(gaps[4:]) == {60}
+
+
+def test_more_than_four_in_flight_is_503_busy(key_file, board, clock) -> None:
+    """X2 Busy: over 4 requests in flight answer 503 busy with Retry-After, never
+    a dropped connection (the backend would read that as refused)."""
+    import services.medic.api.server as srv_mod
+
+    gate = threading.Event()
+    real_read = board.read
+
+    def slow_read():
+        gate.wait(5)
+        return real_read()
+
+    board.read = slow_read
+    srv = make_server(("127.0.0.1", 0), key_file=key_file, board=board, wall=clock.wall)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    results = []
+    try:
+        threads = [
+            threading.Thread(
+                target=lambda: results.append(call(srv, headers={"X-Medic-Key": KEY}))
+            )
+            for _ in range(srv_mod.MAX_IN_FLIGHT)
+        ]
+        for t in threads:
+            t.start()
+        deadline = time.monotonic() + 5
+        while srv.in_flight._value > 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        status, headers, body = call(srv, headers={"X-Medic-Key": KEY})
+        doc = assert_problem(status, headers, body, 503, "busy")
+        assert headers["retry-after"] == str(doc["retry_after_s"])
+        gate.set()
+        for t in threads:
+            t.join(5)
+        assert [r[0] for r in results] == [200] * srv_mod.MAX_IN_FLIGHT
+    finally:
+        gate.set()
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.mark.parametrize("peer", ["a" * 64, "x" * 63 + "." + "y" * 64])
+def test_a_peer_that_cannot_be_encoded_never_raises(
+    key_file, board, clock, peer, caplog
+):
+    api = _api(key_file, board, clock, _free_port(), bind_peer=peer)
+    with caplog.at_level(logging.WARNING, logger="services.medic"):
+        api.ensure()  # UnicodeError from the IDNA codec must not escape
+    assert not api.running
+    assert "isn't listening yet" in caplog.text
+
+
+def test_the_listener_tick_is_the_loops() -> None:
+    from services.medic.api import server
+    from services.medic.app.wiring import TICK_S
+
+    assert server.TICK_S == TICK_S

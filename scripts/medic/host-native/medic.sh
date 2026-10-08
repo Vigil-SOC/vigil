@@ -132,7 +132,10 @@ _medic_key_ok() { [[ "$(cat "$1" 2>/dev/null)" =~ ^[A-Za-z0-9_-]{43}$ ]]; }
 medic_host_backend_env() {
     medic_host_enabled || return 0
     local key="${VIGIL_MEDIC_API_KEY_FILE:-${VIGIL_DIR:-$HOME/.vigil}/medic_api_key}"
-    if ! _medic_key_ok "$key"; then
+    if _medic_key_ok "$key"; then
+        chmod 0600 "$key" 2>/dev/null || true
+    else
+        _MEDIC_KEY_MINTED=1
         # 32 random bytes, base64url without padding: 43 characters (X2).
         if ! (umask 077 && mkdir -p "$(dirname "$key")" \
             && head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' > "$key.$$" \
@@ -164,6 +167,12 @@ medic_host_start() {
     # The args check: a stale pidfile's PID may now be someone else's.
     if [ -f "$pidfile" ] && ps -o args= -p "$(cat "$pidfile")" 2>/dev/null | grep -q medic-loop; then
         echo "Medic: already running (pid $(cat "$pidfile"))."
+        # A key minted by this start is one the running Medic doesn't hold.
+        if [ "${_MEDIC_KEY_MINTED:-0}" = 1 ]; then
+            echo "Medic: its API key was just re-created, and the running Medic still" \
+                "holds the old one, so the console will read Down. Restart it:" \
+                "./shutdown_all.sh, then ./start.sh -d." >&2
+        fi
         return 0
     fi
     # A loop that outlived its sudo (SIGKILL, OOM) has no pidfile and Vigil's user
