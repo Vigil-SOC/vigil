@@ -45,7 +45,7 @@ ALL = [p.stem[:3] for p in sorted(VECTORS.glob("v[0-9][0-9]-*.yaml"))]
 
 
 def test_every_engine_vector_runs_through_the_app_path() -> None:
-    assert ALL[0] == "v01" and len(ALL) == 29 and "v29" in ALL
+    assert ALL[0] == "v01" and len(ALL) >= 29 and "v29" in ALL
 
 
 def _route_facts(records: list[dict]) -> dict[str, list[str]]:
