@@ -16,7 +16,7 @@ const api = axios.create({
 
 // LLM-backed calls can legitimately run for minutes. Streaming endpoints pass
 // 0 to disable the timeout for the life of the SSE connection.
-const LLM_TIMEOUT = 180_000
+export const LLM_TIMEOUT = 180_000
 
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
@@ -454,8 +454,8 @@ export const slaPoliciesApi = {
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
   
-  getUsage: (policyId: string) =>
-    api.get(`/sla-policies/${policyId}/usage`),
+  getUsage: (policyId: string, params?: { since?: string }) =>
+    api.get(`/sla-policies/${policyId}/usage`, { params }),
   
   getCases: (policyId: string, params?: {
     status?: string
@@ -528,9 +528,11 @@ export const agentsApi = {
     api.patch(`/agents/custom/${agent_id}`, data),
   deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
   getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
-  // built-ins are never mutated; a fork is a new editable copy
-  forkAgent: (source_agent_id: string, new_name?: string) =>
-    api.post(`/agents/${source_agent_id}/fork`, { new_name }),
+  // any agent, built-in or custom, with its prompt, model and fallback
+  getAgent: (agent_id: string) => api.get(`/agents/agents/${agent_id}`),
+  // built-ins are never mutated; a fork is a new editable copy, with these fields replacing the source's
+  forkAgent: (source_agent_id: string, overrides: Partial<CustomAgentPayload> = {}) =>
+    api.post(`/agents/${source_agent_id}/fork`, overrides),
 
   generateCustom: (data: {
     description: string
@@ -685,8 +687,9 @@ export const configApi = {
     stale_threshold: number
     workdir_base: string
   }) => {
-    const rest = { ...data }
-    delete (rest as { profiles?: unknown }).profiles
+    // GET also carries profiles, defaults and bounds; none are stored
+    const rest: Record<string, unknown> = { ...data }
+    for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
 
@@ -1183,10 +1186,15 @@ export interface FederationSourceView {
   interval_seconds: number
   max_items: number
   min_severity: string | null
+  cursor: Record<string, unknown> | null
   last_poll_at: string | null
   last_success_at: string | null
   last_error: string | null
   consecutive_errors: number
+  /** Seconds since the last successful poll; null until one has succeeded. Absent on a PATCH response. */
+  lag_seconds?: number | null
+  /** The server's read of "has not kept up with interval_seconds". Absent on a PATCH response. */
+  quiet?: boolean
   is_configured: boolean
   default_interval_seconds: number
 }

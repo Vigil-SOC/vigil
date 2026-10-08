@@ -3797,7 +3797,9 @@ export interface paths {
          *
          *     Includes adapters that don't yet have a row (so the UI can show "configure
          *     me" entries without the daemon being up). Adapters whose integration is
-         *     not configured are still listed but flagged ``is_configured=false``.
+         *     not configured are still listed but flagged ``is_configured=false``. Each
+         *     row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
+         *     from :func:`core.federation.lag.source_collection_lag`.
          */
         get: operations["get_api_federation_sources"];
         put?: never;
@@ -6077,6 +6079,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Skill
+         * @description Run the saved skill's ``evals/cases.json`` through the chat model.
+         *
+         *     The model is the one assigned to ``chat_default``. A skill with no cases
+         *     answers ``no_cases`` without touching a provider. A dispatch failure is an
+         *     HTTP error, never a failed case.
+         */
+        post: operations["post_api_skills_name_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sla-policies/": {
         parameters: {
             query?: never;
@@ -6229,6 +6255,7 @@ export interface paths {
          *
          *     Args:
          *         policy_id: The policy ID
+         *         since: Count only cases whose SLA was created at or after this time
          *
          *     Returns:
          *         Usage statistics
@@ -8771,6 +8798,8 @@ export interface components {
          * @description What the closed summary shows. ``verdict`` is the stated reason.
          */
         CaseClosureView: {
+            /** Closed At */
+            closed_at?: string | null;
             /** Closed By */
             closed_by: string;
             /** Closed By Kind */
@@ -10408,11 +10437,41 @@ export interface components {
         /**
          * ForkAgentRequest
          * @description Optional payload when forking. `new_name` lets the UI set the copy's
-         *     name up front instead of taking the default "<source> (copy)".
+         *     name up front instead of taking the default "<source> (copy)". Any
+         *     editable field that is sent (even as null) replaces the source's value
+         *     in the same insert.
          */
         ForkAgentRequest: {
+            /** Color */
+            color?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Enable Thinking */
+            enable_thinking?: boolean | null;
+            /** Extra Principles */
+            extra_principles?: string | null;
+            /** Fallback Model */
+            fallback_model?: string | null;
+            /** Icon */
+            icon?: string | null;
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Methodology */
+            methodology?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name?: string | null;
             /** New Name */
             new_name?: string | null;
+            /** Recommended Tools */
+            recommended_tools?: string[] | null;
+            /** Role */
+            role?: string | null;
+            /** Specialization */
+            specialization?: string | null;
+            /** System Prompt Override */
+            system_prompt_override?: string | null;
         };
         /**
          * GeneralConfig
@@ -11076,12 +11135,19 @@ export interface components {
         };
         /**
          * OrchestratorConfigResponse
-         * @description Flat saved settings plus the profiles the Settings cards render.
-         *
-         *     ``profiles`` is not part of the stored object. POST takes
-         *     ``OrchestratorSettingsConfig`` and ignores the field.
+         * @description Flat saved settings, the profiles the Settings cards render, and the
+         *     model's ``defaults`` and ``bounds``. Only the flat keys are stored; POST takes
+         *     ``OrchestratorSettingsConfig`` and ignores the rest.
          */
         OrchestratorConfigResponse: {
+            /** Bounds */
+            bounds: {
+                [key: string]: components["schemas"]["OrchestratorFieldBounds"];
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: boolean | number | string;
+            };
             /**
              * Dry Run
              * @default false
@@ -11135,8 +11201,24 @@ export interface components {
             workdir_base: string;
         };
         /**
+         * OrchestratorFieldBounds
+         * @description Inclusive range and scrub step of one numeric setting.
+         */
+        OrchestratorFieldBounds: {
+            /** Max */
+            max: number;
+            /** Min */
+            min: number;
+            /** Step */
+            step: number;
+        };
+        /**
          * OrchestratorSettingsConfig
          * @description Orchestrator configuration for autonomous investigations.
+         *
+         *     The ``ge``/``le`` bounds are the one source: POST enforces them and GET
+         *     serves them (with ``step``) as ``bounds``. 0 is not "unlimited" to the
+         *     daemon (``_in_flight() >= max_concurrent_agents``), it is the tightest cap.
          */
         OrchestratorSettingsConfig: {
             /**
@@ -11716,6 +11798,15 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** SkillCaseResult */
+        SkillCaseResult: {
+            /** Missing */
+            missing: string[];
+            /** Name */
+            name: string;
+            /** Passed */
+            passed: boolean;
+        };
         /** SkillDetail */
         SkillDetail: {
             /** Body */
@@ -11763,6 +11854,15 @@ export interface components {
             name: string;
             /** Source Path */
             source_path: string;
+        };
+        /** SkillTestResponse */
+        SkillTestResponse: {
+            /** Model */
+            model?: string | null;
+            /** No Cases */
+            no_cases: boolean;
+            /** Results */
+            results: components["schemas"]["SkillCaseResult"][];
         };
         /** SkillWriteRequest */
         SkillWriteRequest: {
@@ -23271,6 +23371,39 @@ export interface operations {
             };
         };
     };
+    post_api_skills_name_test: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_sla-policies": {
         parameters: {
             query?: {
@@ -23515,7 +23648,9 @@ export interface operations {
     };
     "get_api_sla-policies_policy_id_usage": {
         parameters: {
-            query?: never;
+            query?: {
+                since?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };

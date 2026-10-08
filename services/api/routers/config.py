@@ -2,10 +2,10 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.auth.permissions import permission_gate
@@ -1408,23 +1408,54 @@ def set_ai_operations_config(
 
 
 class OrchestratorSettingsConfig(BaseModel):
-    """Orchestrator configuration for autonomous investigations."""
+    """Orchestrator configuration for autonomous investigations.
+
+    The ``ge``/``le`` bounds are the one source: POST enforces them and GET
+    serves them (with ``step``) as ``bounds``. 0 is not "unlimited" to the
+    daemon (``_in_flight() >= max_concurrent_agents``), it is the tightest cap.
+    """
 
     # Opt-in; also feeds ORCHESTRATOR_DEFAULTS. Matches GET /api/orchestrator/status,
     # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
-    max_concurrent_agents: int = 3
-    max_iterations_per_agent: int = 50
-    max_runtime_per_investigation: int = 3600
-    max_cost_per_investigation: float = 5.0
-    max_total_hourly_cost: float = 20.0
-    loop_interval: int = 60
-    stale_threshold: int = 300
-    workdir_base: str = "data/investigations"
+    max_concurrent_agents: int = Field(3, ge=1, le=10, json_schema_extra={"step": 1})
+    max_iterations_per_agent: int = Field(
+        50, ge=1, le=500, json_schema_extra={"step": 1}
+    )
+    max_runtime_per_investigation: int = Field(
+        3600, ge=60, le=86400, json_schema_extra={"step": 60}
+    )
+    max_cost_per_investigation: float = Field(
+        5.0, ge=0.5, le=100, json_schema_extra={"step": 0.5}
+    )
+    max_total_hourly_cost: float = Field(
+        20.0, ge=1, le=500, json_schema_extra={"step": 1}
+    )
+    loop_interval: int = Field(60, ge=10, le=600, json_schema_extra={"step": 10})
+    stale_threshold: int = Field(300, ge=60, le=86400, json_schema_extra={"step": 60})
+    workdir_base: str = Field("data/investigations", min_length=1)
 
 
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
+
+
+class OrchestratorFieldBounds(BaseModel):
+    """Inclusive range and scrub step of one numeric setting."""
+
+    min: float
+    max: float
+    step: float
+
+
+def _orchestrator_bounds() -> Dict[str, Dict[str, float]]:
+    """Bounds read back from the model's JSON schema, so there is no second dict."""
+    props = OrchestratorSettingsConfig.model_json_schema()["properties"]
+    return {
+        name: {"min": p["minimum"], "max": p["maximum"], "step": p["step"]}
+        for name, p in props.items()
+        if "minimum" in p
+    }
 
 
 class InvestigationProfileValues(BaseModel):
@@ -1492,20 +1523,30 @@ INVESTIGATION_PROFILES = InvestigationProfiles.model_validate(
 )
 
 
-class OrchestratorConfigResponse(OrchestratorSettingsConfig):
-    """Flat saved settings plus the profiles the Settings cards render.
-
-    ``profiles`` is not part of the stored object. POST takes
-    ``OrchestratorSettingsConfig`` and ignores the field.
-    """
-
-    profiles: InvestigationProfiles
+# The saved values with the bounds stripped. A config saved before the bounds
+# existed (0 meant "unlimited" in the old form) must still load so it can be
+# corrected, and a response model that enforced the bounds would 500 on it.
+OrchestratorConfigResponse = create_model(
+    "OrchestratorConfigResponse",
+    __doc__="""Flat saved settings, the profiles the Settings cards render, and the
+    model's ``defaults`` and ``bounds``. Only the flat keys are stored; POST takes
+    ``OrchestratorSettingsConfig`` and ignores the rest.""",
+    profiles=(InvestigationProfiles, ...),
+    defaults=(Dict[str, Union[bool, int, float, str]], ...),
+    bounds=(Dict[str, OrchestratorFieldBounds], ...),
+    **{
+        name: (field.annotation, field.default)
+        for name, field in OrchestratorSettingsConfig.model_fields.items()
+    },
+)
 
 
 def _orchestrator_payload(stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**ORCHESTRATOR_DEFAULTS, **(stored or {})}
     flat = {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
     flat["profiles"] = INVESTIGATION_PROFILES.model_dump()
+    flat["defaults"] = dict(ORCHESTRATOR_DEFAULTS)
+    flat["bounds"] = _orchestrator_bounds()
     return flat
 
 
