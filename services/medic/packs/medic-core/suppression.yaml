@@ -14,3 +14,13 @@ entries:
     children: {rule: ingest.federation-source-stalled}
     match: [source]
     why: A source whose integration is off is skipped, so its last success stalls with no error. Show the configuration fault.
+  # --- pipeline (children; parents from the llm rules, added by F7b) ---
+  - parent: {class: llm}
+    children: {mode: P-4}
+    why: Triage stalls whenever the LLM path is down (B5 P-4.a). Show the LLM fault, not the stall.
+  - parent: {mode: L-5}
+    children: {cause: P-2.e}
+    why: A spent budget abandons runs (B5 P-2.e).
+  - parent: {mode: L-3}
+    children: {cause: P-2.e}
+    why: LLM jobs with no consumer stall runs (B5 P-2.e).

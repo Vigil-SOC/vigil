@@ -1,0 +1,33 @@
+# L-1.a (from E2's fixture llm-provider-keyless-default). Ollama and Vertex rows carry
+# no API key by design (core/llm/bifrost/admin.py:64-71: Ollama's key is a URL, Vertex's a
+# service-account file), so the provider type guard keeps this quiet on those installs
+# (has_api_key = api_key_ref is set, core/storage/schemas/ai.py:113).
+# requires: D6-5 llm_providers providers.provider_type (enum) beside the three E2 keys.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.default-provider-keyless
+title: Default LLM provider has no API key
+revision: 1
+fault: {class: llm, mode: L-1, causes: [L-1.a]}
+lane: 2
+detection: event
+signals:
+  is_default: {sample: {signal: llm_providers, key: providers.is_default, by: [provider]}}
+  is_active: {sample: {signal: llm_providers, key: providers.is_active, by: [provider]}}
+  has_key: {sample: {signal: llm_providers, key: providers.has_api_key, by: [provider]}}
+  kind: {sample: {signal: llm_providers, key: providers.provider_type, by: [provider]}}
+group_by: [provider]
+when:
+  all:
+    - {fn: latest, signal: is_default, op: "==", value: true}
+    - {fn: latest, signal: is_active, op: "==", value: true}
+    - {fn: latest, signal: has_key, op: "==", value: false}
+    - {fn: latest, signal: kind, op: "!=", value: ollama}
+    - {fn: latest, signal: kind, op: "!=", value: vertex}
+for: 5m
+keep_firing_for: 5m
+advice:
+  summary: The default LLM provider is active but has no API key, so chat and triage calls will fail.
+  fix: >-
+    Open Settings, LLM providers. Add an API key to the default provider, or make
+    a provider that has a key the default.
