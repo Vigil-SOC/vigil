@@ -15,6 +15,11 @@ format changes. Every secret becomes the fixed string `[REDACTED]`: no length, n
 fragment. Regexes run on google-re2 (linear time, A3-1); the parsing around them is
 plain Python, as it is plain awk in the original.
 
+Known gaps, shared with redact.awk (full K2; found by the S3 review): Cookie /
+Set-Cookie values, Redis `AUTH <pw>`, URL-encoded `password%3D…`, JWTs not starting
+`eyJ`, `client_secret <value>` without a separator, `-p <pw>`, Bearer values under
+23 characters, URL passwords containing a space.
+
 Out of scope here (full K2): indentation-aware YAML block scalars (the rest of the
 text is dropped instead), `${X:-default}`
 defaults, and flag names redact.awk doesn't know (e.g. `--requirepass`).
