@@ -79,7 +79,15 @@ export default function AiConfigSection({ notify }: SectionProps) {
 }
 
 /* ---------------- Model assignment ---------------- */
-interface RowState { inherit: boolean; providerId: string; modelId: string }
+// '' is the model's own default effort: the key is left out of settings.
+type Effort = '' | 'low' | 'medium' | 'high'
+const EFFORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'default', label: 'Model default' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+]
+interface RowState { inherit: boolean; providerId: string; modelId: string; effort: Effort }
 
 function ModelAssignmentPanel({ notify }: SectionProps) {
   const { components, assignments, models, phase, error, reload, assign, clearAssign } = useModelAssignment()
@@ -98,8 +106,8 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
     for (const c of components) {
       const a = assignments[c]
       next[c] = a
-        ? { inherit: false, providerId: a.provider_id, modelId: a.model_id }
-        : { inherit: c !== CHAT_DEFAULT_KEY, providerId: '', modelId: '' }
+        ? { inherit: false, providerId: a.provider_id, modelId: a.model_id, effort: (a.settings?.effort as Effort) || '' }
+        : { inherit: c !== CHAT_DEFAULT_KEY, providerId: '', modelId: '', effort: '' }
     }
     setRows(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,8 +124,12 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
       }
       if (!next.providerId || !next.modelId) return
       const a = assignments[component]
-      if (a && a.provider_id === next.providerId && a.model_id === next.modelId) return
-      await assign(component, next.providerId, next.modelId)
+      const savedEffort = (a?.settings?.effort as Effort) || ''
+      if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort === next.effort) return
+      // Other settings keys are carried over; the PUT replaces the whole object.
+      const rest = { ...a?.settings }
+      delete rest.effort
+      await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
@@ -136,7 +148,7 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
     <SettingsCard
       wide
       title="Model Assignment"
-      desc="Pick a provider + model for each system component. Unassigned rows fall back to the chat_default assignment. The model list is live-queried from each provider."
+      desc="Pick a provider + model, and optionally a reasoning effort, for each system component. Unassigned rows fall back to the chat_default assignment. The model list is live-queried from each provider."
     >
       {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading AI config…" />}
       {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
@@ -148,17 +160,17 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
           <div className="table-wrap">
             <table className="tbl">
               <thead>
-                <tr><th>Component</th><th>Provider</th><th>Model</th><th>Inherit</th></tr>
+                <tr><th>Component</th><th>Provider</th><th>Model</th><th>Effort</th><th>Inherit</th></tr>
               </thead>
               <tbody>
                 {components.map((c) => {
                   const meta = COMPONENT_LABELS[c] || { label: c, description: '' }
-                  const row = rows[c] || { inherit: true, providerId: '', modelId: '' }
+                  const row = rows[c] || { inherit: true, providerId: '', modelId: '', effort: '' as Effort }
                   const isChatDefault = c === CHAT_DEFAULT_KEY
                   const providerModels = row.providerId ? modelsByProvider[row.providerId] || [] : []
                   return (
                     <tr key={c}>
-                      <td style={{ verticalAlign: 'top', maxWidth: 280 }}>
+                      <td style={{ verticalAlign: 'top', maxWidth: 280, whiteSpace: 'normal' }}>
                         <div className="font-medium">{meta.label}</div>
                         <div className="text-xs text-tx-3">{meta.description}</div>
                       </td>
@@ -179,11 +191,22 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
                           onSelect={(v) => update(c, { modelId: v })}
                         />
                       </td>
+                      <td style={{ minWidth: 130 }}>
+                        {row.inherit ? (
+                          <span className="text-xs text-tx-3">Inherited</span>
+                        ) : (
+                          <Select
+                            value={row.effort || 'default'}
+                            options={EFFORT_OPTIONS}
+                            onSelect={(v) => update(c, { effort: v === 'default' ? '' : (v as Effort) })}
+                          />
+                        )}
+                      </td>
                       <td style={{ verticalAlign: 'top' }}>
                         <Toggle
                           checked={row.inherit}
                           disabled={isChatDefault}
-                          onChange={(on) => update(c, { inherit: on, ...(on ? { providerId: '', modelId: '' } : {}) })}
+                          onChange={(on) => update(c, { inherit: on, ...(on ? { providerId: '', modelId: '', effort: '' as Effort } : {}) })}
                         />
                       </td>
                     </tr>

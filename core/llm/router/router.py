@@ -17,6 +17,7 @@ from core.llm.security import (
     scan_for_injection,
     wrap_tool_result,
 )
+from core.llm.defaults import effort_kwargs
 from core.secrets import get_secret
 from core.telemetry import record_budget_unenforced, record_llm_call
 
@@ -281,6 +282,7 @@ class LLMRouter:
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
         interaction_id: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a chat completion via Bifrost.
 
@@ -318,6 +320,7 @@ class LLMRouter:
                 tools=tools,
                 enable_thinking=enable_thinking,
                 extra_headers=extra_headers_or_none,
+                effort=effort,
             )
         )
 
@@ -335,6 +338,7 @@ class LLMRouter:
         tools: Optional[List[Dict[str, Any]]],
         enable_thinking: bool = False,
         extra_headers: Optional[Dict[str, str]] = None,
+        effort: Optional[str] = None,
     ) -> Dict[str, Any]:
         from openai import AsyncOpenAI  # lazy — avoids hard dep for tests
 
@@ -364,6 +368,9 @@ class LLMRouter:
         # the caller's explicit thinking choice across the Bifrost boundary.
         if provider.provider_type == "ollama":
             kwargs["reasoning_effort"] = "medium" if enable_thinking else "none"
+        # Not OpenAI fields, so they ride in extra_body.
+        if extra := effort_kwargs(provider.provider_type, effort):
+            kwargs["extra_body"] = extra
         if temperature is not None:
             kwargs["temperature"] = temperature
         if tools:
@@ -427,6 +434,7 @@ class LLMRouter:
         interaction_id: Optional[str] = None,
         include_usage: bool = False,
         enable_thinking: bool = False,
+        effort: Optional[str] = None,
     ):
         """Yield raw OpenAI stream chunks (tool-call deltas, finish_reason,
         usage) for non-Anthropic Bifrost providers."""
@@ -452,6 +460,8 @@ class LLMRouter:
         }
         if provider.provider_type == "ollama":
             kwargs["reasoning_effort"] = "medium" if enable_thinking else "none"
+        if extra := effort_kwargs(provider.provider_type, effort):
+            kwargs["extra_body"] = extra
         if include_usage:
             kwargs["stream_options"] = {"include_usage": True}
         if temperature is not None:
@@ -491,6 +501,7 @@ class LLMRouter:
         tools: Optional[List[Dict[str, Any]]] = None,
         interaction_id: Optional[str] = None,
         enable_thinking: bool = False,
+        effort: Optional[str] = None,
     ):
         """Yield OpenAI-format text chunks for non-Anthropic Bifrost providers."""
         async for chunk in self.stream_openai_raw(
@@ -503,6 +514,7 @@ class LLMRouter:
             tools=tools,
             interaction_id=interaction_id,
             enable_thinking=enable_thinking,
+            effort=effort,
         ):
             if not chunk.choices:
                 continue

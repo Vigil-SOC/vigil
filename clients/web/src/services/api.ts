@@ -721,7 +721,7 @@ export const extensionsApi = {
 
 export interface LLMProvider {
   provider_id: string
-  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex'
+  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex' | 'openrouter'
   name: string
   base_url: string | null
   has_api_key: boolean
