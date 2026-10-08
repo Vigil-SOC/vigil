@@ -3,6 +3,7 @@
 # it's abandoned. Logged once at start (services/agent/worker.ts:657-661); the
 # worker logs no start line otherwise, so nothing can clear it: the incident
 # holds for 24 h after the line. Agent lines are never catalog-trusted (D3).
+# Outsider: no (agent-worker's environment).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.runs-url-unset
@@ -11,6 +12,7 @@ revision: 1
 fault: {class: pipeline, mode: P-1, causes: [P-1.g]}
 lane: 2
 detection: event
+input_trust: untrusted
 signals:
   unset:
     log:

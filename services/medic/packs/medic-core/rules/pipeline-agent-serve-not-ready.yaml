@@ -5,6 +5,7 @@
 # daemon stops reconciling run status from the ledger. Before F7c a down
 # agent-serve showed only as watcher.sensor-blind (S10). Read where the sensor is
 # configured: Compose by default, start_sh and Helm when the address is set.
+# Outsider: no (Postgres reachability from agent-serve, or the process dying).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.agent-serve-not-ready

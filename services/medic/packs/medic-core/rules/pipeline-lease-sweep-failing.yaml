@@ -2,6 +2,8 @@
 # services/agent/worker.ts:624-631), so runs orphaned by a crash are never
 # resumed. No recovery line; a good sweep logs nothing. B5 says lane 1 (restart
 # agent-worker), but one log line can't route to lane 1 (ENGINE_API §5): lane 3.
+# ≥ 10 in 10 min assumes the default sweep (VIGIL_SWEEP_MS ≤ 60 s).
+# Outsider: no (the sweep is a Postgres query on Vigil's own tables).
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.lease-sweep-failing
@@ -10,6 +12,7 @@ revision: 1
 fault: {class: pipeline, mode: P-2, causes: [P-2.i]}
 lane: 3
 detection: event
+input_trust: untrusted
 signals:
   failed:
     log:
