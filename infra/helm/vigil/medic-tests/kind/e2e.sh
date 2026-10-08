@@ -34,7 +34,7 @@ fail() { printf '   FAIL %s\n' "$*" >&2; dump; exit 1; }
 dump() {
   $K -n "$NS" get pods -o wide >&2 || true
   $K -n "$NS" logs "deploy/$FN-medic" --tail=40 >&2 || true
-  $K -n "$NS" logs "deploy/$FN-medic" --previous --tail=40 2>/dev/null >&2 || true
+  $K -n "$NS" logs "deploy/$FN-medic" --previous --tail=40 >&2 2>/dev/null || true
 }
 cleanup() { [[ ${KEEP:-0} == 1 ]] || kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -178,7 +178,15 @@ fi
 say "Medic must run: $MODE enforces NetworkPolicy"
 $K -n "$NS" rollout status "deploy/$FN-medic" "deploy/$FN-medic-gateway" --timeout=300s \
   || fail "Medic or the gateway didn't become Ready"
-[[ -z $(pod_exit) ]] || fail "Medic restarted (exit $(pod_exit))"
+# A brand-new pod can start before the CNI has programmed its policy (seen on
+# kindnet): the probe then connects and Medic refuses, once, fail-closed. Allow
+# that (exit 3 only), log what it said, and require the restart to run.
+early=$(pod_exit)
+if [[ -n $early ]]; then
+  [[ $early == 3 ]] || fail "Medic crashed (exit $early)"
+  first=$($K -n "$NS" logs "deploy/$FN-medic" --previous 2>/dev/null | grep -o "Medic refuses to run: [^(]*" | head -1 || true)
+  printf '   note: an early start refused (exit 3): %s\n' "$first"
+fi
 $K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced" || fail "no enforced line"
 ok "check 14: Medic Running and Ready; log: NetworkPolicy is enforced"
 
@@ -214,7 +222,7 @@ ok "check 3: can-i --list = exactly the Role's 5 rows (+ cluster-default self-re
 say "isolation from inside Medic (R1, R2)"
 gw_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=medic-gateway -o jsonpath='{.items[0].status.podIP}')
 be_ip=$($K -n "$NS" get pod -l app.kubernetes.io/component=backend -o jsonpath='{.items[0].status.podIP}')
-expect() { local got; got=$(reach "$1" "$2"); [[ $got == "$3" ]] || fail "$4: $1:$2 → $got, expected $3"; ok "$4: $1:$2 → $got"; }
+expect() { local got; got=$(reach "$1" "$2") || got="exec failed"; [[ $got == "$3" ]] || fail "$4: $1:$2 → $got, expected $3"; ok "$4: $1:$2 → $got"; }
 expect "$FN-backend" 6987 timeout "R1 backend Service"
 expect "$be_ip" 6987 timeout "R1 backend pod"
 expect "$gw_ip" 8471 connected "gateway outbound"
@@ -229,7 +237,11 @@ helm --kube-context "kind-$CLUSTER" upgrade "$REL" "$chart" -n "$NS" --reuse-val
 # Policy updates land asynchronously: poll rather than sleep.
 await() { # host port want label
   local got
-  for _ in $(seq 20); do got=$(reach "$1" "$2" 3); [[ $got == "$3" ]] && break; done
+  for _ in $(seq 20); do
+    got=$(reach "$1" "$2" 3) || got="exec failed"
+    [[ $got == "$3" ]] && break
+    sleep 1
+  done
   [[ $got == "$3" ]] || fail "$4: $1:$2 → $got, expected $3"
   ok "$4: $1:$2 → $got"
 }

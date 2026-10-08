@@ -117,15 +117,18 @@ translated to its endpoint, hence the endpoint addresses.
 {{- fail "medic.kubeApi.ports must be a non-empty list of TCP ports (default [443, 6443]): an empty rule would allow every port" -}}
 {{- end -}}
 {{- range $ports -}}
-{{- if not (regexMatch "^[0-9]{1,5}$" (toString .)) -}}
-{{- fail (printf "medic.kubeApi.ports: %v isn't a port number" .) -}}
+{{- if not (and (regexMatch "^[0-9]{1,5}$" (toString .)) (le (int .) 65535) (ge (int .) 1)) -}}
+{{- fail (printf "medic.kubeApi.ports: %v isn't a port number (1-65535)" .) -}}
 {{- end -}}
 {{- end -}}
 {{- if not (and (kindIs "map" .Values.medic.dns.podLabels) .Values.medic.dns.podLabels) -}}
 {{- fail "medic.dns.podLabels must name the DNS pods (default k8s-app: kube-dns): empty selects every pod in medic.dns.namespace" -}}
 {{- end -}}
-{{- if and (not .Values.agentWorker.enabled) (not .Values.medic.agentWorkerAddr) -}}
-{{- fail "medic.agentWorkerAddr is required when agentWorker.enabled is false: Medic's one sensor reads the agent worker's /readyz" -}}
+{{- if not .Values.agentWorker.enabled -}}
+{{- fail "medic.enabled needs agentWorker.enabled: Medic's one sensor reads the agent worker's /readyz, and its egress policy can only allow the chart's own agent worker pods" -}}
+{{- end -}}
+{{- if .Values.medic.policyProbe -}}
+{{- fail "medic.policyProbe can't be set: the probe target is fixed (the gateway's inbound listener), because any other target could only weaken the NetworkPolicy proof" -}}
 {{- end -}}
 {{- $_ := required "medic.gateway.viewer.username is required when medic.enabled: the Viewer account the gateway logs in as" .Values.medic.gateway.viewer.username -}}
 {{- $_ := required "medic.gateway.viewer.passwordSecret.name is required when medic.enabled: an existing Secret holding the Viewer password (never put the password in values)" .Values.medic.gateway.viewer.passwordSecret.name -}}
