@@ -7,17 +7,25 @@
 #                    # gained policy support: same suite as calico
 #   e2e.sh nopolicy  # a bare ptp CNI with no policy controller: NetworkPolicy
 #                    # is ignored, so Medic must refuse to start (exit 3)
+#   e2e.sh backend   # Calico + the REAL backend (in-chart Postgres and Redis):
+#                    # the backend reads Medic Running through the gateway with
+#                    # the chart's key Secret, and Down <= 270 s after Medic
+#                    # stops (V2-8). Local only: needs the backend image.
+# calico also runs the REJECT leg: Calico set to reject denied traffic, and
+# Medic must still read the policy as enforced (S7-2).
 #
-# Needs docker, kind, kubectl, helm, and the two images built as
-# vigil-medic:kind and vigil-medic-gateway:kind (the workflow builds them).
-# CLUSTER names the kind cluster (default medic-<mode>); KEEP=1 leaves it up.
+# Needs docker, kind, kubectl, helm, and the images built as vigil-medic:$TAG and
+# vigil-medic-gateway:$TAG (TAG default kind; the workflow builds them), plus
+# vigil-backend:$TAG for backend. CLUSTER names the kind cluster (default
+# medic-<mode>); KEEP=1 leaves it up.
 # Only stub pods stand in for Vigil: the backend and agent worker are tiny HTTP
 # servers wearing the chart's labels, so the chart's own Services and policies
 # select them as they would the real thing.
 set -euo pipefail
 
-MODE=${1:?usage: e2e.sh calico|kindnet|nopolicy}
+MODE=${1:?usage: e2e.sh calico|kindnet|nopolicy|backend}
 CLUSTER=${CLUSTER:-medic-$MODE}
+TAG=${TAG:-kind}
 NS=vigil
 REL=rel
 FN=$REL-vigil
@@ -52,13 +60,13 @@ reach() { $K -n "$NS" exec "deploy/$FN-medic" -- python -c "$CONNECT" "$1" "$2" 
 say "kind cluster $CLUSTER ($MODE)"
 cfg=$(mktemp)
 case $MODE in
-  calico) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg" ;;
+  calico | backend) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 192.168.0.0/16\n' >"$cfg" ;;
   nopolicy) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: 10.244.0.0/16\n' >"$cfg" ;;
   kindnet) printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n' >"$cfg" ;;
   *) echo "unknown mode $MODE" >&2; exit 2 ;;
 esac
 kind create cluster --name "$CLUSTER" --config "$cfg" --wait 0s
-if [[ $MODE == calico ]]; then
+if [[ $MODE == calico || $MODE == backend ]]; then
   $K apply -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO/manifests/calico.yaml" >/dev/null
   $K -n kube-system rollout status ds/calico-node --timeout=300s
 fi
@@ -73,7 +81,13 @@ if [[ $MODE == nopolicy ]]; then
 CNI
 fi
 $K wait --for=condition=Ready nodes --all --timeout=300s
-kind load docker-image vigil-medic:kind vigil-medic-gateway:kind --name "$CLUSTER"
+kind load docker-image "vigil-medic:$TAG" "vigil-medic-gateway:$TAG" --name "$CLUSTER"
+if [[ $MODE == backend ]]; then
+  for img in postgres:16-alpine redis:7-alpine; do
+    docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
+  done
+  kind load docker-image "vigil-backend:$TAG" postgres:16-alpine redis:7-alpine --name "$CLUSTER"
+fi
 
 # --- stubs and secrets -----------------------------------------------------------
 $K create namespace "$NS"
@@ -104,7 +118,7 @@ spec:
     spec:
       containers:
         - name: stub
-          image: vigil-medic:kind
+          image: vigil-medic:$TAG
           imagePullPolicy: Never
           command: ["python", "-c", $(printf '%s' "$STUB" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), "$3", "$4"]
           env: [{name: CANARY, value: "$CANARY"}]
@@ -112,9 +126,13 @@ spec:
           ports: [{name: http, containerPort: $3}]
 EOF
 }
-stub stub-backend backend 6987 200
 stub stub-agent-worker agent-worker 6990 503
-$K -n "$NS" rollout status deploy/stub-backend deploy/stub-agent-worker --timeout=180s
+if [[ $MODE == backend ]]; then
+  $K -n "$NS" rollout status deploy/stub-agent-worker --timeout=180s
+else
+  stub stub-backend backend 6987 200
+  $K -n "$NS" rollout status deploy/stub-backend deploy/stub-agent-worker --timeout=180s
+fi
 
 # --- install -------------------------------------------------------------------
 say "helm install (medic on, chart policies on, kubeApi.cidrs by lookup)"
@@ -128,20 +146,31 @@ p = sys.argv[1]
 text = open(p).read()
 open(p, "w").write(re.split(r"^dependencies:", text, flags=re.M)[0])
 PY
+if [[ $MODE == backend ]]; then
+  # The real backend, with the chart's own Postgres (+ db-init) and Redis.
+  vigil_set=(--set backend.replicaCount=1
+    --set backend.image.repository=vigil-backend --set backend.image.tag="$TAG"
+    --set backend.image.pullPolicy=Never
+    --set postgresql.persistence.enabled=false --set redis.persistence.enabled=false
+    --set secrets.postgresPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
+    --set secrets.jwtSecretKey="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
+else
+  vigil_set=(--set backend.replicaCount=0 --set dbInit.enabled=false
+    --set postgresql.enabled=false --set postgresql.external.host=none
+    --set redis.enabled=false --set redis.external.url=redis://none:6379/0
+    --set secrets.postgresPassword=unused)
+fi
 helm --kube-context "kind-$CLUSTER" install "$REL" "$chart" -n "$NS" \
   --set medic.enabled=true \
-  --set medic.image.repository=vigil-medic,medic.image.tag=kind,medic.image.pullPolicy=Never \
-  --set medic.gateway.image.repository=vigil-medic-gateway,medic.gateway.image.tag=kind \
+  --set medic.image.repository=vigil-medic,medic.image.tag="$TAG",medic.image.pullPolicy=Never \
+  --set medic.gateway.image.repository=vigil-medic-gateway,medic.gateway.image.tag="$TAG" \
   --set medic.gateway.image.pullPolicy=Never \
   --set medic.gateway.viewer.username=medic-viewer \
   --set medic.gateway.viewer.passwordSecret.name=medic-viewer \
   --set networkPolicies.enabled=true \
-  --set backend.replicaCount=0 --set agentWorker.replicaCount=0 \
+  --set agentWorker.replicaCount=0 \
   --set daemon.enabled=false --set llmWorker.enabled=false --set agentServe.enabled=false \
-  --set dbInit.enabled=false \
-  --set postgresql.enabled=false --set postgresql.external.host=none \
-  --set redis.enabled=false --set redis.external.url=redis://none:6379/0 \
-  --set secrets.postgresPassword=unused >/dev/null
+  "${vigil_set[@]}" >/dev/null
 api_cidrs=$($K -n "$NS" get networkpolicy "$FN-medic" -o jsonpath='{.spec.egress[*].to[*].ipBlock.cidr}')
 api_ep=$($K get endpointslice kubernetes -n default -o jsonpath='{.endpoints[0].addresses[0]}')
 api_port=$($K get endpointslice kubernetes -n default -o jsonpath='{.ports[0].port}')
@@ -189,6 +218,41 @@ if [[ -n $early ]]; then
 fi
 $K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced" || fail "no enforced line"
 ok "check 14: Medic Running and Ready; log: NetworkPolicy is enforced"
+
+# --- backend: the real backend reads Medic's status (V2-8, V2-2) -----------------
+if [[ $MODE == backend ]]; then
+  say "the real backend polls Medic through the gateway with the chart's key"
+  $K -n "$NS" rollout status "deploy/$FN-backend" --timeout=600s || fail "backend not Ready"
+  STATUS='from core.storage.connection import init_database
+init_database(create_tables=False)
+from core.platform.medic_last_seen import current_status
+print(current_status().value)'
+  status() { $K -n "$NS" exec "deploy/$FN-backend" -- python -c "$STATUS" 2>/dev/null | tail -1; }
+  # shellcheck disable=SC2016 # expanded in the pod, not here
+  key_mode=$($K -n "$NS" exec "deploy/$FN-backend" -- sh -c 'stat -L -c "%u:%g %a" "$VIGIL_MEDIC_API_KEY_FILE"')
+  ok "backend's key file: $key_mode (secret volume, the pod's fsGroup)"
+  got=""
+  for _ in $(seq 60); do got=$(status || true); [[ $got == running ]] && break; sleep 5; done
+  [[ $got == running ]] || fail "the backend reads Medic as '${got:-nothing}', not running"
+  ok "backend reads Medic: running"
+  $K -n "$NS" logs "deploy/$FN-medic-gateway" | grep -q '/v1/status' \
+    || fail "the gateway's inbound log has no /v1/status"
+  ok "the poll went backend → gateway inbound → Medic"
+  say "kill Medic: Down within 270 s (V2-2)"
+  $K -n "$NS" scale "deploy/$FN-medic" --replicas=0 >/dev/null
+  t0=$(date +%s)
+  for _ in $(seq 100); do got=$(status || true); [[ $got == down ]] && break; sleep 3; done
+  took=$(( $(date +%s) - t0 ))
+  [[ $got == down ]] || fail "still '${got:-nothing}' ${took}s after Medic stopped"
+  (( took <= 270 )) || fail "Down took ${took}s (> 270 s)"
+  ok "Down ${took}s after Medic stopped"
+  $K -n "$NS" scale "deploy/$FN-medic" --replicas=1 >/dev/null
+  for _ in $(seq 60); do got=$(status || true); [[ $got == running ]] && break; sleep 5; done
+  [[ $got == running ]] || fail "after a restart the backend reads '${got:-nothing}'"
+  ok "Medic back: running"
+  say "PASS: $PASS checks ($MODE)"
+  exit 0
+fi
 
 say "check 3: Medic's identity"
 SA=system:serviceaccount:$NS:$FN-medic
@@ -309,7 +373,7 @@ spec:
   securityContext: {runAsUser: 10001, runAsGroup: 10001, runAsNonRoot: true $3}
   containers:
     - name: medic
-      image: vigil-medic:kind
+      image: vigil-medic:$TAG
       imagePullPolicy: Never
       command: ["sh", "-c", "umask 077; stat -c '/d is %u:%g %a' /d; python -c \"\$OPEN\""]
       env: [{name: OPEN, value: $OPEN_JSON}]
@@ -333,5 +397,20 @@ s26_case() { # name volumeType fsGroup(yes|no) expect-root expect-data
 s26_case s26-local-fsgroup local yes refused opened
 s26_case s26-hostpath-nofsgroup hostPath no refused opened
 s26_case s26-local-nofsgroup local no refused opened
+
+# --- S7-2: a plugin that REJECTs denied traffic still counts as enforcing --------
+if [[ $MODE == calico ]]; then
+  say "S7-2: Calico set to Reject; Medic must still start"
+  felix='{"spec":{"iptablesFilterDenyAction":"Reject","nftablesFilterDenyAction":"Reject"}}'
+  $K patch felixconfiguration default --type merge -p "$felix" >/dev/null 2>&1 \
+    || printf 'apiVersion: crd.projectcalico.org/v1\nkind: FelixConfiguration\nmetadata: {name: default}\nspec: {iptablesFilterDenyAction: Reject, nftablesFilterDenyAction: Reject}\n' \
+      | $K apply -f - >/dev/null
+  await "$gw_ip" 8470 refused "S7-2 gateway inbound under Reject"
+  $K -n "$NS" rollout restart "deploy/$FN-medic" >/dev/null
+  $K -n "$NS" rollout status "deploy/$FN-medic" --timeout=300s || fail "S7-2: Medic didn't come back under Reject"
+  $K -n "$NS" logs "deploy/$FN-medic" | grep -q "NetworkPolicy is enforced: the probe to .* was refused every time" \
+    || fail "S7-2: no 'refused every time' line"
+  ok "S7-2: under Reject Medic logs 'refused every time' and is Ready"
+fi
 
 say "PASS: $PASS checks ($MODE)"
