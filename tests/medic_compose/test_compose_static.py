@@ -7,8 +7,10 @@ readiness incident) is test_compose_live.py.
 Enabling Medic takes two switches: `--profile medic` and the overlay
 `infra/docker/medic/docker-compose.medic.yml`, which declares `medic-net` and
 puts the daemon and agents on it (S6-1). With the profile off and no overlay,
-the rendered config must be byte-for-byte what it is without Medic (C8: off by
-default, and off changes nothing).
+the rendered config must be what it is without Medic except for one line: the
+backend's `VIGIL_MEDIC_ENABLED` (default false), so the console says Off, not
+Down (V1-2, decided over S6-1's byte-identical render, 2026-10-08). C8's "off
+changes nothing" still holds in behaviour.
 """
 
 from __future__ import annotations
@@ -68,6 +70,12 @@ def _without_medic(tmp_path: Path) -> Path:
     raw = yaml.safe_load(BASE.read_text(encoding="utf-8"))
     for name in MEDIC_SERVICES:
         raw["services"].pop(name, None)
+    # ...and every Medic setting on Vigil's own services.
+    for spec in raw["services"].values():
+        env = spec.get("environment")
+        if isinstance(env, dict):
+            for key in [k for k in env if k.startswith("VIGIL_MEDIC_")]:
+                env.pop(key)
     raw.get("volumes", {}).pop("medic_data", None)
     for name in ("medic_viewer_password", "medic_api_key"):
         raw.get("secrets", {}).pop(name, None)
@@ -81,9 +89,16 @@ def _without_medic(tmp_path: Path) -> Path:
 @pytest.mark.parametrize(
     "profiles", [(), OTHER_PROFILES], ids=["default", "all-other-profiles"]
 )
-def test_profile_off_renders_exactly_as_without_medic(profiles, home, tmp_path) -> None:
+def test_profile_off_renders_as_without_medic_but_the_backend_flag(
+    profiles, home, tmp_path
+) -> None:
     with_medic = render(*profiles, home=home, overlay=False)
     without = render(*profiles, home=home, overlay=False, base=_without_medic(tmp_path))
+    # The one allowed difference (V1-2): the backend reads the switch, off.
+    assert (
+        with_medic["services"]["backend"]["environment"].pop("VIGIL_MEDIC_ENABLED")
+        == "false"
+    )
     assert json.dumps(with_medic, sort_keys=True) == json.dumps(without, sort_keys=True)
 
 
@@ -393,3 +408,21 @@ def test_without_medic_the_backend_has_no_medic_path(home) -> None:
     backend = render(home=home, overlay=False)["services"]["backend"]
     assert "VIGIL_MEDIC_API_URL" not in env_of(backend)
     assert not backend.get("secrets")
+
+
+def test_the_docker_group_has_one_name() -> None:
+    """S5p said DOCKER_GID, S6 VIGIL_MEDIC_DOCKER_GID: only the second exists."""
+    import re
+
+    bare = re.compile(r"(?<![A-Z_])DOCKER_GID\b")
+    places = [
+        BASE,
+        OVERLAY,
+        *(REPO / "scripts" / "medic").rglob("*.sh"),
+        *(REPO / "services" / "medic_dockerproxy").rglob("*.md"),
+        *(REPO / "docs" / "medic").rglob("*.md"),
+        *(REPO / "infra" / "helm" / "vigil").rglob("*.yaml"),
+    ]
+    found = [str(p) for p in places if bare.search(p.read_text(encoding="utf-8"))]
+    assert found == []
+    assert "${VIGIL_MEDIC_DOCKER_GID:-0}" in BASE.read_text(encoding="utf-8")

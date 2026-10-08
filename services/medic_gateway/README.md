@@ -24,8 +24,8 @@ that credential.
 |---|---|
 | `VIGIL_MEDIC_GATEWAY_BACKEND` | `backend:6987` |
 | `VIGIL_MEDIC_GATEWAY_MEDIC` | `medic:8470` |
-| `VIGIL_MEDIC_GATEWAY_OUT_BIND` | `medic-gateway:8471` (an alias on `medic-net`) |
-| `VIGIL_MEDIC_GATEWAY_IN_BIND` | `gateway-in:8470` (an alias on `deeptempo-network`) |
+| `VIGIL_MEDIC_GATEWAY_OUT_BIND` | `medic-gateway-out:8471` (an alias on `medic-private`) |
+| `VIGIL_MEDIC_GATEWAY_IN_BIND` | `medic-gateway-in:8470` (an alias on `deeptempo-network`) |
 | `VIGIL_MEDIC_GATEWAY_VIEWER_USER` | the service account's username |
 | `VIGIL_MEDIC_GATEWAY_VIEWER_PASSWORD_FILE` | default `/run/secrets/medic_viewer_password` |
 | `VIGIL_CONTEXT_PATH` | Vigil's own; the gateway adds it to every upstream path |
