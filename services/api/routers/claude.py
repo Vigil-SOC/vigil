@@ -13,12 +13,19 @@ from pydantic import BaseModel, field_validator
 from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
+from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
 from core.cases.case_brief import case_brief
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
-from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
+from core.llm.chat_layers import (
+    _declare,
+    chat_config,
+    run_id_for,
+    tools_ceiling,
+    trim_servers,
+)
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
@@ -333,6 +340,27 @@ async def chat_stream(
     # MISP, Shodan, …) so the assistant can call them the moment their server is
     # connected — refreshed per turn, no restart.
     mcp_tools = live_mcp_tools(registry) or None
+
+    # The skills index for the tools this turn actually declares (#1883).
+    # Chat grants read_skill (every static tool when tools is None, or the
+    # agent's recommended_tools) but never went through prompt_for_row, so
+    # the model held a tool pointing at an <available_skills> list it was
+    # never given. Gate on the declared ids -- the same _declare inputs
+    # chat_config and refit use; read_skill is a built-in, so trim_servers
+    # dropping MCP servers cannot change the gate. _skills_section with
+    # skills=None reads load_skills(skill_roots()) per call, so a skill
+    # saved in the console is offered on the next message, no restart.
+    # An agent prompt from prompt_for_row already carries the block; do
+    # not add a second one.
+    if "<available_skills>" not in system_prompt:
+        granted_ids = [tool["id"] for tool in _declare(tools, mcp_tools)]
+        skills_section = _skills_section(granted_ids, None)
+        if skills_section:
+            system_prompt = (
+                f"{system_prompt}\n\n{skills_section}"
+                if system_prompt
+                else skills_section
+            )
 
     session_id = request.session_id or str(uuid.uuid4())
     payload = {
