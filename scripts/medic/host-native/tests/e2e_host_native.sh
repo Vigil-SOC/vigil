@@ -76,28 +76,26 @@ grep -q "DEV_MODE is on" <<<"$out" || fail "no DEV_MODE refusal: $out"
 [ -e logs/medic.pid ] && fail "DEV_MODE refusal left a pidfile"
 pass "DEV_MODE refused (T-37)"
 
-# A stand-in agent worker /readyz on a free loopback port, handed over the way
-# start.sh does (AGENT_HEALTH_PORT); it records each path it serves.
+# A stand-in agent worker /readyz on 127.0.0.1:6990, where scripts/agent_up.sh
+# starts the real one (free on a CI runner); it records each path it serves.
 READY_LOG="$STATE/readyz.hits"
-python3 - "$READY_LOG" > "$STATE/readyz.port" 2>/dev/null <<'PY' &
+python3 - "$READY_LOG" "$STATE/readyz.up" > "$STATE/readyz.err" 2>&1 <<'PY' &
 import http.server, sys
-hits = sys.argv[1]
+hits, up = sys.argv[1], sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         open(hits, "a").write(self.path + "\n")
         self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers()
         self.wfile.write(b"ok")
     def log_message(self, *a): pass
-s = http.server.HTTPServer(("127.0.0.1", 0), H)
-print(s.server_address[1], flush=True)
+s = http.server.HTTPServer(("127.0.0.1", 6990), H)
+open(up, "w").write("up\n")
 s.serve_forever()
 PY
 READY_PID=$!
 trap 'kill "$READY_PID" 2>/dev/null' EXIT
-port_known() { [ -s "$STATE/readyz.port" ]; }
-wait_for 10 port_known || fail "the /readyz stand-in didn't start"
-export AGENT_HEALTH_PORT
-AGENT_HEALTH_PORT=$(cat "$STATE/readyz.port")
+ready_up() { [ -s "$STATE/readyz.up" ]; }
+wait_for 30 ready_up || fail "the /readyz stand-in didn't start: $(cat "$STATE/readyz.err")"
 
 # Start for real.
 medic_host_start || fail "medic_host_start failed"
@@ -114,9 +112,9 @@ pass "data dir $DATA is vigil-medic 0700"
 
 # L49: install shape start_sh, and the worker reached on loopback.
 read_ready() { grep -qx /readyz "$READY_LOG" 2>/dev/null; }
-wait_for 60 read_ready || fail "Medic never read the agent worker's /readyz on 127.0.0.1:$AGENT_HEALTH_PORT"
+wait_for 60 read_ready || fail "Medic never read the agent worker's /readyz on 127.0.0.1:6990"
 grep -q "shape start_sh" logs/medic.log || fail "Medic didn't report install shape start_sh"
-pass "reports start_sh and reads /readyz on 127.0.0.1:$AGENT_HEALTH_PORT (L49)"
+pass "reports start_sh and reads /readyz on 127.0.0.1:6990 (L49)"
 
 # Check 8, as the running user.
 for f in master.key secrets.enc jwt_secret; do

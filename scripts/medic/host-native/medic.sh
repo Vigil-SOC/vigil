@@ -233,10 +233,11 @@ medic_host_start() {
     fi
 
     rotate_log "$log"
-    # L49: the worker's /readyz on loopback, at the port Vigil gave it.
+    # L49: the worker's /readyz on loopback. scripts/agent_up.sh always starts
+    # it on 6990 (AGENT_HEALTH_PORT in .env doesn't move it), so neither does this.
     (cd / && exec nohup sudo -n -u "$_MEDIC_USER" -- "$runtime/bin/medic-loop" \
         --python "$runtime/venv/bin/python" --app "$runtime/app" --data-dir "$data" \
-        --agent-worker "127.0.0.1:${AGENT_HEALTH_PORT:-6990}") \
+        --agent-worker 127.0.0.1:6990) \
         < /dev/null > "$log" 2>&1 &
     echo $! > "$pidfile"
     echo "Medic: started as $_MEDIC_USER (log: logs/medic.log). Health:"

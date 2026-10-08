@@ -384,24 +384,18 @@ def test_starts_medic_as_vigil_medic_from_its_own_venv(sb: Path) -> None:
     assert "stopped" in (sb / "repo" / "logs" / "medic.log").read_text()
 
 
-def test_agent_health_port_reaches_the_loop(sb: Path) -> None:
-    """Vigil's worker listens on AGENT_HEALTH_PORT; Medic must read that port."""
+def test_worker_address_ignores_agent_health_port(sb: Path) -> None:
+    """scripts/agent_up.sh always starts the worker on 6990, whatever .env says."""
     out = _bash(sb, RUN, VIGIL_MEDIC_ENABLED="true", AGENT_HEALTH_PORT="7001")
-    try:
-        assert "rc=0" in out.stdout, out.stdout + out.stderr
-        # The loop is launched in the background: its sudo call lands a bit later.
-        _wait_for(lambda: len(_calls(sb, "sudo.calls").splitlines()) == 2)
-        assert (
-            "--agent-worker 127.0.0.1:7001" in _calls(sb, "sudo.calls").splitlines()[1]
-        )
-    finally:
-        pid = int((sb / "repo" / "logs" / "medic.pid").read_text())
-        os.kill(pid, signal.SIGTERM)
-        _wait_for(
-            lambda: (
-                subprocess.run(["kill", "-0", str(pid)], check=False).returncode != 0
-            )
-        )
+    assert "rc=0" in out.stdout, out.stdout + out.stderr
+    # The loop is launched in the background: its sudo call lands a bit later.
+    _wait_for(lambda: len(_calls(sb, "sudo.calls").splitlines()) == 2)
+    assert "--agent-worker 127.0.0.1:6990" in _calls(sb, "sudo.calls").splitlines()[1]
+
+
+def test_agent_up_still_pins_the_worker_port() -> None:
+    """If agent_up.sh ever honours AGENT_HEALTH_PORT, medic.sh must follow it."""
+    assert "AGENT_HEALTH_PORT=6990" in (REPO / "scripts" / "agent_up.sh").read_text()
 
 
 # --- The hooks in start.sh and shutdown_all.sh ---------------------------------

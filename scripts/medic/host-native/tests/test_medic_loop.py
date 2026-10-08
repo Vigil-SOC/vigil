@@ -166,7 +166,7 @@ def _child_env(box: Path, *extra: str) -> dict[str, str]:
 
 
 def test_agent_worker_address_is_passed_through(box: Path) -> None:
-    """start.sh hands over AGENT_HEALTH_PORT's address; the shape stays start_sh."""
+    """The address is an option (tests use a free port); the shape stays start_sh."""
     env = _child_env(box, "--agent-worker", "127.0.0.1:7123")
     assert env["VIGIL_MEDIC_AGENT_WORKER_ADDR"] == "127.0.0.1:7123"
     assert env["VIGIL_MEDIC_INSTALL_SHAPE"] == "start_sh"
