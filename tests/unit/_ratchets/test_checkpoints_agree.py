@@ -69,11 +69,11 @@ def test_the_lead_the_reader_names_holds_what_the_arch_grants(kind, arch):
 
 
 def test_the_investigate_lead_is_the_arch_lead():
-    from core.workflows.playbook_resolver import INVESTIGATE_TOOLS
+    from core.workflows.playbook_resolver import INVESTIGATE_CAPABILITIES
 
     lead = yaml.safe_load((ARCH / "investigate.yaml").read_text())["roles"]["lead"]
 
-    assert set(INVESTIGATE_TOOLS) == set(lead["tools"])
+    assert set(INVESTIGATE_CAPABILITIES) == set(lead["needs"])
 
 
 # The reader shows the roster as the helpers; a name the arch lacks would read as

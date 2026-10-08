@@ -55,6 +55,9 @@ CONTROLS = [
     "worker monitor reported 3 events",
     "/usr/bin/vigil --port 6987 --log-level info --workers 4",
     "image: sha256:" + "0123456789abcdef" * 4,
+    "ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}",
+    "- OPENAI_API_KEY=${OPENAI_API_KEY}",
+    "- ${VIGIL_BACKUP_PASSPHRASE_FILE:-/etc/hostname}:/backup/passphrase:ro",
 ]
 
 
@@ -267,6 +270,70 @@ EDGE_CASES = [
 @pytest.mark.parametrize(("line", "expected"), EDGE_CASES)
 def test_edge_cases(awk, line, expected):
     assert run_awk(awk, line + "\n") == expected + "\n"
+
+
+REFERENCE_CASES = [
+    (
+        "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunter2hunter2}",
+        "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-[REDACTED]}",
+        1,
+    ),
+    (
+        "- POSTGRES_PASSWORD=${POSTGRES_PASSWORD-hunter2hunter2}",
+        "- POSTGRES_PASSWORD=${POSTGRES_PASSWORD-[REDACTED]}",
+        1,
+    ),
+    (
+        'POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-hunter2hunter2}"',
+        'POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-[REDACTED]}"',
+        1,
+    ),
+    ("API_TOKEN: $API_TOKEN", "API_TOKEN: $API_TOKEN", 0),
+    ("API_TOKEN: ${API_TOKEN:?must be set}", "API_TOKEN: ${API_TOKEN:?must be set}", 0),
+    ("API_TOKEN: ${API_TOKEN:-${OTHER}}", "API_TOKEN: [REDACTED]", 1),
+    ("API_TOKEN: abc${X}", "API_TOKEN: [REDACTED]", 1),
+    ("API_TOKEN: pa$$word", "API_TOKEN: [REDACTED]", 1),
+    ("url: x?password=${POSTGRES_PASSWORD}", "url: x?password=${POSTGRES_PASSWORD}", 0),
+    ("vigil --password ${PGPASSWORD} --x", "vigil --password ${PGPASSWORD} --x", 0),
+    (
+        "vigil --password=${PGPASSWORD:-hunter2hunter2}",
+        "vigil --password=${PGPASSWORD:-[REDACTED]}",
+        1,
+    ),
+]
+
+
+@pytest.mark.parametrize("awk", AWKS)
+@pytest.mark.parametrize(("line", "expected", "count"), REFERENCE_CASES)
+def test_variable_references_stay_readable(awk, line, expected, count, tmp_path):
+    counts = tmp_path / "counts.tsv"
+    out = run_awk(awk, line + "\n", counts=counts)
+    assert out == expected + "\n"
+    assert "hunter2hunter2" not in out
+    assert counts.read_text() == f"probe\t{count}\n"
+
+
+@pytest.mark.parametrize("awk", AWKS)
+def test_reference_default_is_learned_and_replaced_elsewhere(awk, tmp_path):
+    compose = "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-planted-default-pw}\n"
+    learned = run_awk(awk, compose, extra=("-v", "learn=1")).splitlines()
+    assert learned == ["planted-default-pw"]
+    log = "db: auth failed with planted-default-pw for vigil\n"
+    out = run_awk(awk, compose + log, values=learned, counts=tmp_path / "counts.tsv")
+    assert out == (
+        "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-[REDACTED]}\n"
+        "db: auth failed with [REDACTED] for vigil\n"
+    )
+
+
+@pytest.mark.parametrize("awk", AWKS)
+def test_key_after_a_slash_is_a_path_component(awk):
+    line = (
+        "volumes: /backup/passphrase:ro /run/secrets/token=x password: hunter2hunter2"
+    )
+    assert run_awk(awk, line + "\n") == (
+        "volumes: /backup/passphrase:ro /run/secrets/token=x password: [REDACTED]\n"
+    )
 
 
 @pytest.mark.parametrize("awk", AWKS)

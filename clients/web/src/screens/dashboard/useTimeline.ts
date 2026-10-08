@@ -1,5 +1,5 @@
 /* Technique isn't in the range payload, so `tech` is left blank. */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { timelineApi } from '../../services/api'
 import type { TimelineEvent, TimelineKind } from './attackData'
 import type { Phase } from '../cases/useCases'
@@ -18,17 +18,30 @@ const sevOf = (s?: string): TimelineEvent['sev'] => {
 }
 const kindOf = (t?: string): TimelineKind => (t === 'case' ? 'case' : t === 'alert' ? 'alert' : 'finding')
 
-export function useTimeline() {
+export function useTimeline(start?: string, end?: string, enabled = true) {
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
   useEffect(() => {
     let cancelled = false
+
+    if (!enabled) {
+      setEvents([])
+      setPhase('ready')
+      setError(null)
+      return () => {
+        cancelled = true
+      }
+    }
+
     setPhase('loading')
     setError(null)
+    setEvents([])
     timelineApi
-      .getTimelineRange({ limit: 200 })
+      .getTimelineRange({ limit: 200, start, end })
       .then((res) => {
         if (cancelled) return
         const list = (res.data?.events || []) as RangeEvent[]
@@ -53,7 +66,7 @@ export function useTimeline() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [start, end, enabled, reloadKey])
 
-  return { events, phase, error }
+  return { events, phase, error, reload }
 }

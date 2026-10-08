@@ -31,4 +31,9 @@ export interface ConsoleScreenProps {
   setViewFull: (full: boolean) => void
   /** Overview's wall mode. Hides the nav row and the top bar. */
   setWallMode?: (wall: boolean) => void
+  /** Text for the open case's composer, typed in the command bar. */
+  caseSeed?: string | null
+  onCaseSeedConsumed?: () => void
+  /** Starts the console tour. Absent where the shell can't run it. */
+  startTour?: () => void
 }
