@@ -239,6 +239,7 @@ class CaseQueueRow:
     response_completed_at: Optional[datetime]
     resolution_completed_at: Optional[datetime]
     is_paused: bool
+    description: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -539,6 +540,7 @@ class CaseRepository:
             select(
                 Case.case_id,
                 Case.title,
+                Case.description,
                 Case.status,
                 Case.priority,
                 Case.assignee,
@@ -647,6 +649,7 @@ class CaseRepository:
                     response_completed_at=record["response_completed_at"],
                     resolution_completed_at=record["resolution_completed_at"],
                     is_paused=bool(record["is_paused"]),
+                    description=record["description"],
                 )
             )
         return rows, int(total)

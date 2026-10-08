@@ -1225,6 +1225,17 @@
             ],
             "title": "Cost Usd"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
           "findings_count": {
             "default": 0,
             "title": "Findings Count",
@@ -1290,6 +1301,11 @@
               }
             ],
             "title": "Priority"
+          },
+          "sla_paused": {
+            "default": false,
+            "title": "Sla Paused",
+            "type": "boolean"
           },
           "sla_seconds_left": {
             "anyOf": [

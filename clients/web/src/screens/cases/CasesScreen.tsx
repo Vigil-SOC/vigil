@@ -18,7 +18,11 @@ import {
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select, activateOnKey } from '../../shared/ui'
 import { FilterChip } from '../../shared/FilterChip'
 import { PageHead } from '../../shared/PageHead'
-import { statePill, type PillTone } from '../../shared/StatePill'
+import { StatePill, statePill, type PillTone } from '../../shared/StatePill'
+import { SeverityMark } from '../../shared/SeverityMark'
+import { LevelBadge, slaLevel } from '../../shared/LevelBadge'
+import { InfoTip } from '../../shared/InfoTip'
+import { MeterBar } from '../../shared/MeterBar'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
@@ -53,11 +57,31 @@ const STATE_OPTIONS = [
   { value: 'closed', label: 'Closed' },
 ]
 
-function budgetCell(c: CaseRow): string {
-  if (c.costUsd == null && c.maxCostUsd == null) return '—'
-  const cost = c.costUsd == null ? '—' : c.costUsd.toFixed(2)
-  const max = c.maxCostUsd == null ? '—' : c.maxCostUsd.toFixed(2)
-  return c.budgetHealth ? `${cost}/${max} ${c.budgetHealth}` : `${cost}/${max}`
+/** Share of the cost cap used, 0–100. Null with no cap or no spend figure: never a made-up number. */
+function limitPct(c: CaseRow): number | null {
+  if (c.costUsd == null || c.maxCostUsd == null || c.maxCostUsd <= 0) return null
+  return Math.min(100, Math.max(0, (c.costUsd / c.maxCostUsd) * 100))
+}
+
+/** "4 alerts · step 9 · active 3h ago · age 2d": one line, the description is on hover. */
+function metaLine(c: CaseRow): string {
+  return [
+    `${c.findings} alert${c.findings === 1 ? '' : 's'}`,
+    c.iterations != null && `step ${c.iterations}`,
+    c.lastActive !== '—' && `active ${c.lastActive} ago`,
+    c.age !== '—' && `age ${c.age}`,
+  ].filter(Boolean).join(' · ')
+}
+
+const TIME_LEFT_TIP = {
+  source: 'The SLA policy attached to the case.',
+  calculation: 'Resolution due minus now. Good while under 75% of the response or resolution window has passed, Fair from 75%, Poor from 90% or once past due.',
+  limit: 'Paused while the case is on hold. Set per priority in Settings → SLA.',
+}
+const LIMIT_USED_TIP = {
+  source: 'Cost of the case’s latest investigation and its cost cap.',
+  calculation: 'Cost so far divided by the cap. Good under 75%, Fair from 75%, Poor from 90%.',
+  limit: 'Cases whose run has no cost cap show —.',
 }
 
 const STATE_WORDS = STATE_OPTIONS.filter((o) => o.value && o.value !== 'closed')
@@ -77,9 +101,9 @@ const KIND_WORDS: Record<string, string> = {
 }
 const kindWord = (kind: string) => KIND_WORDS[kind] ?? cap(kind.replace(/_/g, ' '))
 
-/** Distinct run kinds in the workflow catalog, known ones first. Empty while it loads or if it fails. */
-function useRunKinds(): string[] {
-  const [kinds, setKinds] = useState<string[]>([])
+/** The workflow catalog: distinct run kinds (known ones first) and workflow id → name. Empty while it loads or if it fails. */
+function useWorkflowCatalog(): { kinds: string[]; names: Record<string, string> } {
+  const [catalog, setCatalog] = useState<{ kinds: string[]; names: Record<string, string> }>({ kinds: [], names: {} })
   useEffect(() => {
     let cancelled = false
     workflowApi
@@ -87,18 +111,21 @@ function useRunKinds(): string[] {
       .then((res) => {
         if (cancelled) return
         const found = new Set<string>()
-        for (const w of res.data?.workflows ?? []) if (w.run_kind) found.add(w.run_kind)
+        const names: Record<string, string> = {}
+        for (const w of res.data?.workflows ?? []) {
+          if (w.run_kind) found.add(w.run_kind)
+          if (w.id && w.name) names[w.id] = w.name
+        }
         const known = Object.keys(KIND_WORDS)
-        setKinds([...known.filter((k) => found.has(k)), ...[...found].filter((k) => !known.includes(k)).sort()])
+        setCatalog({ kinds: [...known.filter((k) => found.has(k)), ...[...found].filter((k) => !known.includes(k)).sort()], names })
       })
       .catch(() => {})
     return () => {
       cancelled = true
     }
   }, [])
-  return kinds
+  return catalog
 }
-
 
 export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
@@ -118,14 +145,12 @@ export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSee
   )
 }
 
-/* small state row spanning the whole table */
+/* small state row spanning the whole grid */
 function StateRow({ children }: { children: ReactNode }) {
   return (
-    <tr>
-      <td colSpan={13}>
-        {children}
-      </td>
-    </tr>
+    <div role="row" className="cg-state">
+      <div role="cell">{children}</div>
+    </div>
   )
 }
 
@@ -139,7 +164,7 @@ function CasesTable({
   onSelect: (id: string) => void
 }) {
   const { rows, total, strip, phase, error, reload } = useCases(filters)
-  const kinds = useRunKinds()
+  const { kinds, names: workflowNames } = useWorkflowCatalog()
   const me = useAuth().user?.username ?? ''
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Advanced search replaces the page until cleared. Results stay in API order.
@@ -180,6 +205,8 @@ function CasesTable({
   const agentShare = strip.closed_today
     ? `${Math.round(strip.agent_closure_share * 100)}%`
     : '—'
+
+  const kindName = (c: CaseRow) => (c.workflowId && workflowNames[c.workflowId]) || c.workflowId || '—'
 
   return (
     <>
@@ -286,26 +313,21 @@ function CasesTable({
           <button className="btn ghost" onClick={() => setResults(null)}>Clear search</button>
         </div>
       )}
-      <div className="table-wrap list-scroll">
-        <table className="tbl cases-tbl">
-          <thead>
-            <tr>
-              <th>Case ID</th>
-              <th>Title</th>
-              <th>State</th>
-              <th>Priority</th>
-              <th>Assignee</th>
-              <th>Findings</th>
-              <th>Workflow</th>
-              <th>Iterations</th>
-              <th>Budget</th>
-              <th>Comments</th>
-              <th>Age</th>
-              <th>SLA</th>
-              <th>Last activity</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="cases-card list-scroll">
+        <div className="cases-grid" role="table" aria-label="Cases">
+          <div className="cg-row cg-head" role="row">
+            <span role="columnheader"><span className="sr-only">Select</span></span>
+            <span role="columnheader">Case</span>
+            <span role="columnheader">What it is</span>
+            <span role="columnheader">Kind</span>
+            <span role="columnheader">Severity</span>
+            <span role="columnheader">Status</span>
+            <span role="columnheader">Owner</span>
+            <span role="columnheader" className="cg-th-info">Time left (SLA)<InfoTip label="How time left is calculated" {...TIME_LEFT_TIP} /></span>
+            <span role="columnheader" className="cg-th-info">Limit used<InfoTip label="How limit used is calculated" {...LIMIT_USED_TIP} /></span>
+            <span role="columnheader"><span className="sr-only">Comments</span></span>
+          </div>
+          <div role="rowgroup">
             {phase === 'loading' && <StateRow><EmptyState loading table compact icon="folder" title="Loading cases…" /></StateRow>}
             {phase === 'error' && (
               <StateRow>
@@ -324,54 +346,76 @@ function CasesTable({
               </StateRow>
             )}
             {phase === 'ready' &&
-              display.map((c) => (
-                <tr
-                  key={c.id}
-                  className="clickable"
-                  tabIndex={0}
-                  onClick={() => onSelect(c.id)}
-                  onKeyDown={(e) => { if (e.target === e.currentTarget) activateOnKey(() => onSelect(c.id))(e) }}
-                >
-                  <td><span className="id-cell">{c.id}</span></td>
-                  <td className="case-title" title={c.title}>
-                    {c.needsYou && <span className="tag">Needs you</span>}
-                    {c.title}
-                  </td>
-                  <td><span className={`status ${c.status}`}>{c.status}</span></td>
-                  <td><span className={`prio ${c.prio}`}>{cap(c.prio)}</span></td>
-                  <td><span className="assignee"><span className="avatar">{c.owner}</span><span className="muted">{c.ownerName}</span></span></td>
-                  <td><b>{c.findings}</b></td>
-                  <td className="muted">{c.workflowId || '—'}</td>
-                  <td className="muted">{c.iterations ?? '—'}</td>
-                  <td className="muted">{budgetCell(c)}</td>
-                  <td>{c.comments ?? 0}</td>
-                  <td className="muted">{c.age}</td>
-                  <td><span className={`sla ${c.slaState}`}>{c.sla}</span></td>
-                  <td className="muted">{c.updated}</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
+              display.map((c) => {
+                const pct = limitPct(c)
+                const level = slaLevel(c.budgetHealth)
+                return (
+                  <div
+                    key={c.id}
+                    role="row"
+                    className={`cg-row cg-case${c.needsYou ? ' needs' : ''}`}
+                    tabIndex={0}
+                    onClick={() => onSelect(c.id)}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget) activateOnKey(() => onSelect(c.id))(e) }}
+                  >
+                    <span role="cell" title="Coming in a later release" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" className="cg-check" disabled aria-label={`Select case ${c.id}`} />
+                    </span>
+                    <span role="cell" className="cg-id">{c.id}</span>
+                    <span role="cell" className="cg-what" title={c.desc || c.title}>
+                      <span className="cg-title">{c.title}</span>
+                      <span className="cg-sub">{metaLine(c)}</span>
+                    </span>
+                    <span role="cell" className="cg-kind" title={kindName(c)}>{kindName(c)}</span>
+                    <span role="cell"><SeverityMark level={c.prio} /></span>
+                    <span role="cell"><StatePill state={c.status} needs={c.needsYou} /></span>
+                    <span role="cell" className="cg-owner">
+                      <span className="cg-avatar" aria-hidden="true">{c.owner}</span>
+                      <span className="cg-owner-name">
+                        {c.ownerName === 'unassigned' ? 'Unassigned' : c.ownerName}
+                        {me && c.ownerName === me && ' (you)'}
+                      </span>
+                    </span>
+                    <span role="cell" className="cg-time">
+                      <span>{c.timeLeft}</span>
+                      {!c.slaPaused && c.timeLeft !== '—' && <LevelBadge level={slaLevel(c.slaHealth)} variant="pill" />}
+                    </span>
+                    <span role="cell" className="cg-limit">
+                      {pct == null ? '—' : (
+                        <>
+                          <MeterBar pct={pct} level={level} label={`Limit used by ${c.id}`} />
+                          <span className="cg-pct">{Math.round(pct)}%</span>
+                        </>
+                      )}
+                    </span>
+                    <span role="cell" className={`cg-comments${c.comments ? '' : ' none'}`}>
+                      <Icon name="comment" size={13} />
+                      {c.comments ?? 0}
+                    </span>
+                  </div>
+                )
+              })}
+          </div>
+        </div>
       </div>
       {!showingSearch && (
-        <div className="pager">
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            Rows per page:
+        <div className="cases-pager">
+          <label>
+            Rows per page
             <select
-              className="pg-size"
               aria-label="Rows per page"
               value={filters.limit}
               onChange={(e) => setFilters({ limit: Number(e.target.value) })}
             >
               {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-          </span>
+          </label>
           <span>
             {total === 0 ? '0 of 0' : `${pageStart}–${pageEnd} of ${total}`}
           </span>
-          <span style={{ display: 'flex', gap: 6 }}>
-            <button className="pg-btn" aria-label="Previous page" disabled={filters.offset <= 0} onClick={() => setFilters({ offset: Math.max(0, filters.offset - filters.limit) })}><Icon name="chevL" size={14} /></button>
-            <button className="pg-btn" aria-label="Next page" disabled={filters.offset + rows.length >= total} onClick={() => setFilters({ offset: filters.offset + filters.limit })}><Icon name="chevR" size={14} /></button>
+          <span className="cases-pager-nav">
+            <button aria-label="Previous page" disabled={filters.offset <= 0} onClick={() => setFilters({ offset: Math.max(0, filters.offset - filters.limit) })}><Icon name="chevL" size={14} /></button>
+            <button aria-label="Next page" disabled={filters.offset + rows.length >= total} onClick={() => setFilters({ offset: filters.offset + filters.limit })}><Icon name="chevR" size={14} /></button>
           </span>
         </div>
       )}
