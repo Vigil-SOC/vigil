@@ -252,7 +252,7 @@ async def update_custom_workflow(
     payload: CustomWorkflowUpdate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
 ):
-    """Update an existing custom workflow. Increments version."""
+    """Update an existing custom workflow. Increments version only when its definition changes."""
     try:
         updates = {k: v for k, v in payload.model_dump().items() if v is not None}
         updated = service.update(workflow_id, updates)
