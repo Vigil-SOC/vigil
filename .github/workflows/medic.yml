@@ -17,6 +17,10 @@ on:
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
+      - "scripts/medic/**"
+      - "start.sh"
+      - "shutdown_all.sh"
+      - "scripts/lib.sh"
   pull_request:
     paths:
       - "services/medic/**"
@@ -28,6 +32,10 @@ on:
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
+      - "scripts/medic/**"
+      - "start.sh"
+      - "shutdown_all.sh"
+      - "scripts/lib.sh"
   workflow_dispatch:
 
 permissions:
@@ -305,3 +313,45 @@ jobs:
           done
           docker logs dp
           exit 1
+
+  # Host-native opt-in (S8; C3 §4.7, C5 ENG #3): `start.sh -d` runs Medic as its
+  # own OS user under a restart loop. The unit tests stub sudo; the e2e script
+  # then does it for real, creating the vigil-medic user, a sudo rule and two
+  # directories, which is why it runs only on a throwaway runner. macOS too:
+  # that's where host-native Vigil mostly runs.
+  medic-host-native:
+    name: Medic host-native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Shell syntax
+        run: for f in start.sh shutdown_all.sh scripts/medic/host-native/*.sh scripts/medic/host-native/tests/*.sh; do bash -n "$f"; done
+
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/medic/host-native/*.sh scripts/medic/host-native/tests/*.sh
+
+      - name: Install Medic's locked dependencies
+        run: uv sync --project services/medic --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic --frozen ruff check scripts/medic/host-native
+          uv run --project services/medic --frozen ruff format --check scripts/medic/host-native
+
+      - name: Pytest
+        run: uv run --project services/medic --frozen pytest -p no:cacheprovider scripts/medic/host-native/tests
+
+      # Checks 8, 12 and the host-native half of 9, as a real vigil-medic user.
+      - name: End to end
+        run: scripts/medic/host-native/tests/e2e_host_native.sh
