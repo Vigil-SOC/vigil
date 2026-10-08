@@ -128,7 +128,8 @@ def killed(stack, running):
     stack.compose("stop", "medic", medic=True)
     t_kill = time.monotonic()
     # Postgres's clock, the one the status rule reads (V2-3), once Medic is gone.
-    stopped_at = _ts(stack.sql("SELECT now()::text"))
+    # TIMESTAMP (no zone), as the poller writes now() into last_seen_at.
+    stopped_at = _ts(stack.sql("SELECT now()::timestamp::text"))
     stack.wait(lambda: _status(stack), lambda o: o == "down", timeout=420)
     elapsed = time.monotonic() - t_kill
     _log(stack, f"down after {elapsed:.0f}s")
