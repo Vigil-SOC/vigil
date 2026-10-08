@@ -2636,6 +2636,10 @@
       "data_type": "character varying(50)",
       "nullable": false
     },
+    "service_account": {
+      "data_type": "boolean",
+      "nullable": false
+    },
     "updated_at": {
       "data_type": "timestamp without time zone",
       "nullable": false
