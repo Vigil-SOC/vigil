@@ -76,6 +76,10 @@ class Engine:
         if state.get("v") != 1:
             raise ValueError("unknown engine state version")
         self.machines: dict[str, dict[str, dict]] = state["machines"]
+        for m in (m for slots in self.machines.values() for m in slots.values()):
+            if m.get("incident_id") and "opened_at" not in m:  # part-1 state:
+                since = m["active_since"]  # it routed when it opened (no §6 then)
+                m |= {"opened_at": since, "hold_end": since, "routed_at": since}
         self.last_tick: float | None = state.get("last_tick")
         self.history = History(state.get("latches", {}))
         # sensor -> [start of its current covered run, newest ok read, interval_s]
@@ -116,10 +120,10 @@ class Engine:
         self.last_tick = now
         ready = [o for o in self.pending if ev.ts(o["observed_at"]) <= now]
         self.pending = [o for o in self.pending if ev.ts(o["observed_at"]) > now]
-        found: dict[str, dict[str, float]] = {}  # rule -> new group key -> first t
+        found: dict[str, dict] = {}  # rule -> new group key -> [first t, last t]
         for obs in sorted(ready, key=lambda o: (ev.ts(o["t"]), o["id"])):
             self._ingest(obs, found)
-        self._place(found)
+        self._place(found, now)
         records, rows, opens, retired = self._retire_removed_rules(now), [], [], []
         upgrading = self.upgrade.active(now)
         for rule_id in sorted({r.id for r in self.active} | {BLIND}):
@@ -232,21 +236,26 @@ class Engine:
         elif key in over:
             over[key] = max(over[key], t)
         else:
-            new = found.setdefault(r.id, {})
-            new[key] = min(new.get(key, t), t)
+            first, last = found.setdefault(r.id, {}).setdefault(key, [t, t])
+            found[r.id][key] = [min(first, t), max(last, t)]
 
-    def _place(self, found: dict[str, dict[str, float]]) -> None:
+    def _place(self, found: dict[str, dict[str, list[float]]], now: float) -> None:
         """New groups get their own machine in order of first appearance (ties by
         label values) until the rule has `group_cap` live groups; the rest join the
-        overflow group, which is true if any of them is true (§3)."""
+        overflow group, which is true if any of them is true (§3). A group whose
+        newest observation is already 24 h old isn't live: that is re-fed history of
+        a group that retired before a restart, and it stays retired."""
         for rule_id, new in sorted(found.items()):
             slots, okey = self.machines[rule_id], _overflow_key(self.by_id[rule_id])
-            for key in sorted(new, key=lambda k: (new[k], k)):
+            for key in sorted(new, key=lambda k: (new[k][0], k)):
+                last = new[key][1]
+                if now - last >= RETIRE_S:
+                    continue
                 if len(slots) - (okey in slots) < self.group_cap:
-                    slots[key] = {"state": "inactive", "seen": new[key]}
+                    slots[key] = {"state": "inactive", "seen": last}
                 else:
                     over = slots.setdefault(okey, {"state": "inactive", "members": {}})
-                    over["members"][key] = new[key]
+                    over["members"][key] = last
 
     def _latch(self, r: LoadedRule, name: str, spec: dict, obs: dict, t: float) -> None:
         """A matching set or clear line advances the latch of its group (or all, "*")."""
