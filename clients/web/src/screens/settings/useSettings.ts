@@ -688,22 +688,14 @@ export function useModelAssignment() {
     }
   }, [reloadKey])
 
+  // The PUT replaces `settings` whole, so callers carry the keys they keep. The
+  // response is what was stored, so the row mirrors the server's call.
   const assign = useCallback(
     (component: string, providerId: string, modelId: string, settings: Record<string, unknown> = {}) =>
       aiConfigApi
         .setComponent(component, { provider_id: providerId, model_id: modelId, settings })
-        .then(() =>
-          setAssignments((prev) => ({
-            ...prev,
-            [component]: {
-              component,
-              provider_id: providerId,
-              model_id: modelId,
-              settings,
-              updated_by: null,
-              updated_at: null,
-            },
-          })),
+        .then((res) =>
+          setAssignments((prev) => ({ ...prev, [component]: res.data })),
         ),
     [],
   )

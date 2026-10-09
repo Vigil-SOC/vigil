@@ -51,7 +51,7 @@ export default function DescribeDialog({ onClose, onDrafted }: { onClose: () => 
         {error && <div role="alert" className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!ready} style={{ opacity: ready ? 1 : 0.5 }} onClick={generate}><Icon name="sparkle" /> {busy ? 'Generating…' : 'Generate'}</button>
+          <button className="btn primary" disabled={!ready} onClick={generate}><Icon name="sparkle" /> {busy ? 'Generating…' : 'Generate'}</button>
         </div>
       </div>
     </Popup>

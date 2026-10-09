@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import HomeScreen, { parseCreatedAt } from './HomeScreen'
+import HomeScreen, { dropChips, parseCreatedAt } from './HomeScreen'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -80,6 +80,74 @@ afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
   sessionStorage.clear()
+})
+
+function triageWith(rows: unknown[], share: number | null = 0.5) {
+  vi.mocked(triageApi.get).mockResolvedValue({
+    data: { strip: { picked_up: { launched_or_merged: 1, created_today: 2, share } }, rows },
+  } as never)
+}
+
+const today = () => new Date().toISOString().slice(0, 19)
+const droppedRow = (over: Record<string, unknown> = {}) => ({
+  kind: 'detection',
+  state: 'expired',
+  source: 'Okta',
+  finding_id: 'f-9',
+  decided_at: today(),
+  ...over,
+})
+
+describe('Home suggestion chips', () => {
+  beforeEach(() => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+  })
+
+  it('shows two chips for an alert that expired today, and a click fills the bar with the exact text', async () => {
+    triageWith([droppedRow()])
+    const fillCommand = vi.fn()
+    renderHome({ fillCommand })
+    fireEvent.click(await screen.findByRole('button', { name: '/investigate f-9' }))
+    expect(fillCommand).toHaveBeenLastCalledWith('/investigate f-9')
+    fireEvent.click(screen.getByRole('button', { name: 'Why was the Okta alert dropped?' }))
+    expect(fillCommand).toHaveBeenLastCalledWith('/ask Why was the Okta alert dropped? Finding f-9')
+    expect(screen.getByText('·')).toBeInTheDocument()
+    expect(screen.getByText(/50% of alerts picked up automatically today/)).toBeInTheDocument()
+  })
+
+  it('names the finding when the row has no source', async () => {
+    triageWith([droppedRow({ source: '' })])
+    const fillCommand = vi.fn()
+    renderHome({ fillCommand })
+    fireEvent.click(await screen.findByRole('button', { name: 'Why was alert f-9 dropped?' }))
+    expect(fillCommand).toHaveBeenCalledWith('/ask Why was alert f-9 dropped? Finding f-9')
+  })
+
+  it('shows no chips and no dot without a matching row, and none without fillCommand', async () => {
+    triageWith([droppedRow({ decided_at: '2020-01-01T00:00:00' }), droppedRow({ state: 'decided' }), droppedRow({ kind: 'approval' })])
+    const { unmount } = renderHome({ fillCommand: vi.fn() })
+    expect(await screen.findByText(/50% of alerts/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /investigate|dropped/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('·')).not.toBeInTheDocument()
+    unmount()
+
+    triageWith([droppedRow()])
+    renderHome()
+    expect(await screen.findByText(/50% of alerts/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /investigate|dropped/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('·')).not.toBeInTheDocument()
+  })
+
+  it('picks the newest of today (UTC) from zone-less or zoned timestamps', () => {
+    const now = Date.UTC(2026, 9, 7, 12, 0, 0)
+    const rows = [
+      droppedRow({ finding_id: 'old', decided_at: '2026-10-06T23:59:59' }),
+      droppedRow({ finding_id: 'a', decided_at: '2026-10-07T01:00:00' }),
+      droppedRow({ finding_id: 'b', decided_at: '2026-10-07T09:00:00Z' }),
+      droppedRow({ finding_id: null }),
+    ] as never
+    expect(dropChips(rows, now)[0].text).toBe('/investigate b')
+  })
 })
 
 describe('Home', () => {
@@ -218,6 +286,26 @@ describe('Home', () => {
       'Pick a model per agent',
     ])
     expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '2'])
+  })
+
+  it('serves the custom skill step as a fifth card whose Add opens the Skills tab, and counts it on first run', async () => {
+    const skill = { id: 'custom_skill', title: 'Add a custom skill', state_line: 'Teach Vigil your team’s playbooks', done: false, href: '/workflows?tab=skills' }
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [...doneSteps.map((step) => ({ ...step, done: false })), skill], alerts_exist: 5, demo_enabled: false },
+    } as never)
+    const { unmount } = renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Add a custom skill' })).closest('li') as HTMLElement
+    expect(within(card).getByRole('link', { name: 'Add' })).toHaveAttribute('href', '/workflows?tab=skills')
+    expect(card.querySelector('.home-step-no')).toHaveTextContent('5')
+    expect((document.querySelector('.home-steps') as HTMLElement).style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))')
+    unmount()
+
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [...doneSteps, { ...skill, done: true, state_line: '1 custom skill' }], alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+    expect(await screen.findByText('5 of 5 done')).toBeInTheDocument()
   })
 
   it('says there is nothing to suggest when no step is open', async () => {

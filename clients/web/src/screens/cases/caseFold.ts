@@ -472,6 +472,17 @@ export function stoppedRun(fold: RunFold | null): StoppedRun | null {
   return { state: stopped ? 'stopped' : 'paused', line, raw }
 }
 
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+/** The header's sentence for a live run: where it stands, from what the fold already holds. */
+export function runSentence(fold: RunFold | null): string {
+  if (!fold) return ''
+  if (fold.kind === 'lead') return `Step ${fold.iterations} · ${plural(fold.findings.length, 'finding')} so far`
+  return `Step ${fold.iteration} · ${plural(fold.hypotheses.length, 'explanation')} · ${plural(fold.evidenceCount, 'evidence row')} so far`
+}
+
 export function recallEntityCalls(fold: RunFold | null): CallRow[] {
   if (!fold) return []
   return fold.calls.filter((call) => call.tool === 'recall_entity')

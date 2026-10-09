@@ -9,7 +9,7 @@ import {
   IN_FLIGHT, callFailure, callLine, fmtDuration, useInvestigateReplay,
   type CallFailure, type HuntView, type InvestigateDecisionView, type RootCauseBudgets, type RootCauseEntry, type WfRunDetail,
 } from './runRead'
-import { Heading, HuntPanels, InvestigatePanels, OtherPanels, RootCausePanels } from './WatchPanels'
+import { Heading, HuntPanels, InvestigatePanels, OtherPanels, Prose, RootCausePanels } from './WatchPanels'
 
 /** What each kind of run is reduced to: one row per decision. `calls` is null when
  *  the record cannot say which calls followed (an older agent service). */
@@ -215,26 +215,26 @@ function CallLine({ call }: { call: CallRow }) {
 }
 
 /** What a root-cause entry says for itself. Nothing here is a rationale: the trace journals none. */
-function EntryBody({ entry, call, selected }: { entry: RootCauseEntry; call: CallRow | undefined; selected: boolean }) {
-  const clamp = selected ? '' : 'line-clamp-2'
+function EntryBody({ entry, call }: { entry: RootCauseEntry; call: CallRow | undefined }) {
+  const prose = 'text-[12px] leading-[1.4] text-[var(--tx1)]'
   switch (entry.kind) {
     case 'search':
       return (
         <>
           {call && <CallLine call={call} />}
-          {entry.args !== '' && <span className={`font-mono text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${clamp}`} title={entry.args}>{entry.args}</span>}
+          {entry.args !== '' && <Prose text={entry.args} className={`font-mono ${prose}`} />}
         </>
       )
     case 'step':
       return (
         <>
-          <span className={`text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${clamp}`} title={entry.event}>Recorded {entry.step_id} · {entry.event}</span>
+          <Prose text={`Recorded ${entry.step_id} · ${entry.event}`} className={prose} />
           {entry.who !== '' && <span className="text-[11px] text-[var(--tx2)] break-words">{entry.who}</span>}
           {entry.cause_id !== null && <span className="text-[11px] text-[var(--tx2)] break-words">caused by {entry.cause_id}</span>}
         </>
       )
     case 'notice':
-      return <span className={`text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${clamp}`} title={entry.text}>{entry.text}</span>
+      return <Prose text={entry.text} className={prose} />
     default: {
       const never: never = entry
       return never
@@ -268,13 +268,8 @@ function Trace({ step, open, onToggle }: { step: Step; open: boolean; onToggle: 
   )
 }
 
-function Words({ label, text, selected }: { label: string; text: string; selected: boolean }) {
-  return (
-    <span className={`text-[12px] leading-[1.4] text-[var(--tx1)] break-words ${selected ? '' : 'line-clamp-2'}`} title={text}>
-      <span className="text-[11px] uppercase tracking-[0.06em] text-[var(--tx2)] mr-1.5">{label}</span>
-      {text}
-    </span>
-  )
+function Words({ label, text }: { label: string; text: string }) {
+  return <Prose label={label} text={text} className="text-[12px] leading-[1.4] text-[var(--tx1)]" />
 }
 
 function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, cardRef }: {
@@ -303,7 +298,7 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
             {time && <span className="font-mono">{time}</span>}
           </span>
         </button>
-        {shown && step.entry && <EntryBody entry={step.entry} call={step.calls?.[0]} selected={selected} />}
+        {shown && step.entry && <EntryBody entry={step.entry} call={step.calls?.[0]} />}
         {shown && !step.entry && mark === 'running' && step.calls?.length === 0 && (
           <span className="text-[12px] font-semibold text-[var(--tx2)]">Working on it…</span>
         )}
@@ -311,8 +306,8 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
         {shown && !step.entry && (
           <>
             {/* the run's error can stand in for the rationale; it is never the model's words */}
-            {!(error && (step.rationale === '' || step.rationale === error)) && <Words label="model text" text={step.rationale || '—'} selected={selected} />}
-            {error && <Words label="error" text={error} selected={selected} />}
+            {!(error && (step.rationale === '' || step.rationale === error)) && <Words label="model text" text={step.rationale || '—'} />}
+            {error && <Words label="error" text={error} />}
           </>
         )}
       </div>
@@ -351,8 +346,8 @@ function Segments({ n, cursor, playing, onJump, labels }: { n: number; cursor: n
 /** The player and the three columns. Owns the one selected step the panels read. */
 function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: boolean; halt: Halt | null; note: string | null; panels: (at: number) => ReactNode }) {
   const last = steps.length - 1
-  // a run in flight follows its newest step until the viewer moves; a finished one starts at 1
-  const [cursor, setCursor] = useState(live ? last : 0)
+  // a run opens on its newest step; a live one follows it until the viewer moves, and Replay restarts from step 1
+  const [cursor, setCursor] = useState(last)
   const [follow, setFollow] = useState(live)
   const [playing, setPlaying] = useState(false)
   const [opened, setOpened] = useState<Record<string, boolean>>({})
