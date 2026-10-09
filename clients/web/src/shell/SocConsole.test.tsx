@@ -1141,9 +1141,9 @@ describe('SocConsole', () => {
     it('starts the tour from the setup hand-off even when it was seen, and clears the request', () => {
       localStorage.setItem(CONSOLE_TOUR_SEEN_KEY, '1')
       renderConsole('/dashboard', { startTour: true })
-      expect(screen.getByRole('dialog', { name: 'Primary nav' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
       expect(screen.getByTestId('console-location')).toHaveAttribute('data-state', 'null')
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }))
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
 
