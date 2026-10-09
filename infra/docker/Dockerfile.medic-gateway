@@ -1,0 +1,46 @@
+# infra/docker/Dockerfile.medic-gateway
+# =============================================================================
+# Medic gateway: the only path between Medic and the Vigil backend (C3 §4.6)
+#
+# Final image runs:  python -m services.medic_gateway run
+# Health check:      python -m services.medic_gateway check   (both listeners answer)
+# Listens on:        VIGIL_MEDIC_GATEWAY_OUT_BIND (Medic -> backend, e.g. :8471)
+#                    VIGIL_MEDIC_GATEWAY_IN_BIND  (backend -> Medic API, e.g. :8470)
+#                    each bound to one network's address, never 0.0.0.0 (SP1 ⚑6)
+#
+# A separate container, never a sidecar (K1 §6 C6). stdlib only: no venv, no
+# third-party package, no core, no Medic code. Runs as uid/gid 10002, not Medic's
+# 10001, so it can't read Medic's data even if a volume were mounted by mistake.
+# Read-only root filesystem: it writes nothing. The Viewer password arrives as a
+# file (VIGIL_MEDIC_GATEWAY_VIEWER_PASSWORD_FILE, default
+# /run/secrets/medic_viewer_password); it refuses to start if one is in env.
+# =============================================================================
+
+# PYTHON_VERSION as in the other images: .python-version is the repo's pin.
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ARG VIGIL_VERSION=
+LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
+
+RUN groupadd -g 10002 medicgw \
+    && useradd -u 10002 -g 10002 -M -d /nonexistent -s /usr/sbin/nologin medicgw
+
+# Code stays root-owned. Only the modules: the tests stay out of the image.
+WORKDIR /app
+COPY services/medic_gateway/*.py ./services/medic_gateway/
+COPY VERSION ./VERSION
+# Compiled now, because a read-only root filesystem can't take __pycache__ later.
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi \
+    && python -m compileall -q /app/services/medic_gateway
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER 10002:10002
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-m", "services.medic_gateway", "check"]
+
+CMD ["python", "-m", "services.medic_gateway", "run"]

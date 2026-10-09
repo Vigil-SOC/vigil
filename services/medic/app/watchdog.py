@@ -30,9 +30,11 @@ class Watchdog:
         exit_fn: Callable[[int], None] = os._exit,
         after_s: float = WATCHDOG_AFTER_S,
         poll_s: float = 10.0,
+        on_stall: Callable[[], None] | None = None,
     ) -> None:
         self._monotonic = monotonic
         self._exit = exit_fn
+        self._on_stall = on_stall
         self._after_s = after_s
         self._poll_s = poll_s
         self._last = monotonic()
@@ -53,13 +55,19 @@ class Watchdog:
         stack = (
             "".join(traceback.format_stack(frame)) if frame else "(main thread gone)"
         )
-        # TODO(S2): record a `stalled` event for the gap anchor (C5 §5.1 step 2).
         log.error(
             "main loop stalled for %.0f s (limit %.0f s); exiting. Stack:\n%s",
             stalled_for,
             self._after_s,
             stack,
         )
+        # C5 §5.1 step 2: say why, so the next start records a `stalled` gap. The
+        # store isn't touched from here: the hung loop may hold its writer.
+        if self._on_stall is not None:
+            try:
+                self._on_stall()
+            except Exception as exc:  # noqa: BLE001 (exit whatever happens)
+                log.error("could not mark the stall: %s", type(exc).__name__)
         self._exit(STALL_EXIT_CODE)
         return True
 
