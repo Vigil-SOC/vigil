@@ -21,6 +21,8 @@ export interface ColumnDef<T> {
   visible?: boolean
   /** header content when `label` should not be rendered as text (e.g. an actions column) */
   headless?: boolean
+  /** replaces the label in an unsortable header, e.g. a label with an ⓘ */
+  header?: ReactNode
 }
 
 export type SortState = { key: string; dir: 'asc' | 'desc' }
@@ -49,7 +51,7 @@ export function sortRows<T>(rows: T[], columns: ColumnDef<T>[], sort: SortState)
 function SortHeader<T>(
   { col, sort, onSort }: { col: ColumnDef<T>; sort: SortState; onSort: (k: string) => void },
 ) {
-  if (!col.sortVal) return <th>{col.headless ? null : col.label}</th>
+  if (!col.sortVal) return <th>{col.headless ? null : col.header ?? col.label}</th>
   const active = sort.key === col.key
   return (
     <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col.key)}>
@@ -67,8 +69,9 @@ export interface DataTableProps<T> {
   rowKey: (row: T) => string
   phase?: TablePhase
   error?: string | null
-  sort: SortState
-  onSort: (key: string) => void
+  /** omit both for a table that keeps its rows in the order given */
+  sort?: SortState
+  onSort?: (key: string) => void
   onRowClick?: (row: T) => void
   /** key of the row whose `renderExpanded` panel is drawn full-width directly under it */
   expandedKey?: string | null
@@ -79,8 +82,10 @@ export interface DataTableProps<T> {
   onRetry?: () => void
 }
 
+const NO_SORT: SortState = { key: '', dir: 'asc' }
+
 export function DataTable<T>({
-  columns, rows, rowKey, phase = 'ready', error, sort, onSort,
+  columns, rows, rowKey, phase = 'ready', error, sort = NO_SORT, onSort = () => {},
   onRowClick, expandedKey = null, renderExpanded, className = 'tbl', emptyMessage = 'No rows found.',
   loadingMessage = 'Loading…', onRetry,
 }: DataTableProps<T>) {
