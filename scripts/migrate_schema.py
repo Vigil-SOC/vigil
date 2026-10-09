@@ -489,6 +489,37 @@ def add_federation_dropped_total(conn):
     """))
 
 
+# Machine logins (Medic's gateway): exempt from lockout, Viewer only (D2-17).
+@migration("Add users.service_account")
+def add_users_service_account(conn):
+    if not _table_exists(conn, 'users'):
+        return
+    conn.execute(text("""
+        ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS service_account BOOLEAN NOT NULL DEFAULT FALSE;
+    """))
+
+
+# When the backend last reached Medic: one row, written by its poller (D2-18).
+# The same statement as infra/database/init/41_medic_last_seen.sql.
+@migration("Add medic_last_seen")
+def add_medic_last_seen(conn):
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS medic_last_seen (
+            id SMALLINT PRIMARY KEY DEFAULT 1
+                CONSTRAINT medic_last_seen_one_row CHECK (id = 1),
+            last_seen_at TIMESTAMP,
+            first_failed_at TIMESTAMP,
+            failure_kind VARCHAR(8) CONSTRAINT medic_last_seen_failure_kind
+                CHECK (failure_kind IN ('refused', 'timeout', '401', '5xx')),
+            status_snapshot JSONB CONSTRAINT medic_last_seen_snapshot_typed
+                CHECK (jsonb_typeof(status_snapshot) = 'object'
+                       AND octet_length(status_snapshot::text) <= 4096),
+            updated_at TIMESTAMP NOT NULL
+        );
+    """))
+
+
 @migration("Set case_templates.usage_count server default to 0")
 def set_case_template_usage_count_default(conn):
     if not _table_exists(conn, 'case_templates'):
@@ -570,6 +601,26 @@ def seed_default_roles(conn):
         """), {"role_id": role_id, "name": name, "desc": description,
                "perms": permissions, "is_sys": is_system})
     logger.info("  Seeded default roles: admin, analyst, viewer")
+
+
+# medic.read / medic.admin for the default roles (C6/V3); existing keys win, so a
+# grant an operator turned off stays off. The same statement as
+# infra/database/init/42_medic_permissions.sql.
+@migration("Grant medic.read / medic.admin to the default roles")
+def grant_medic_permissions(conn):
+    if not _table_exists(conn, 'roles'):
+        return
+    conn.execute(text("""
+        UPDATE roles AS r
+        SET permissions = g.grants || r.permissions,
+            updated_at = NOW()
+        FROM (VALUES
+            ('role-admin', '{"medic.read": true, "medic.admin": true}'::jsonb),
+            ('role-manager', '{"medic.read": true}'::jsonb)
+        ) AS g (role_id, grants)
+        WHERE r.role_id = g.role_id
+          AND NOT r.permissions ?& ARRAY(SELECT jsonb_object_keys(g.grants));
+    """))
 
 
 # ---------------------------------------------------------------------------

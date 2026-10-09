@@ -431,6 +431,9 @@ dbInit:
     - 37_workflow_runs_outcome.sql
     - 38_custom_agent_fallback_model.sql
     - 39_case_findings_finding_index.sql
+    - 40_users_service_account.sql
+    - 41_medic_last_seen.sql
+    - 42_medic_permissions.sql
   resources:
     requests:
       cpu: 50m

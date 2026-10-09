@@ -18,6 +18,10 @@ from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 
 APPROVE_PERMISSION = "ai_decisions.approve"
+# Medic, the install's health watcher: view it, and every write (feedback, pack,
+# export). Seeded by 42_medic_permissions.sql; pinned by test_medic_route_matrix.
+MEDIC_READ_PERMISSION = "medic.read"
+MEDIC_ADMIN_PERMISSION = "medic.admin"
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 

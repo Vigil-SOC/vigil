@@ -654,6 +654,7 @@ async def _startup(app: FastAPI):
         )
     else:
         await _connect_external_services(app.state.mcp_client, app.state.mcp_registry)
+        _start_medic_poller(app)
 
     # Load custom agents from DB into the AgentManager so built-in + custom
     # agents are visible in one merged list. Lookup misses for "custom-*" IDs
@@ -667,8 +668,28 @@ async def _startup(app: FastAPI):
         logger.warning(f"Could not preload custom agents: {e}")
 
 
+def _start_medic_poller(app) -> None:
+    """Medic's last-seen poller (C5 §5.3): a task in every backend process, of
+    which one polls per minute (an advisory lock). None with Medic off."""
+    from core.platform.medic_last_seen import start_poller
+
+    app.state.medic_poller = start_poller(get_settings())
+
+
+async def _stop_medic_poller(app) -> None:
+    task = getattr(app.state, "medic_poller", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 async def _shutdown(app: FastAPI):
     """Clean up LLM gateway and MCP connections on shutdown."""
+    await _stop_medic_poller(app)
     logger.info("Shutting down LLM Gateway...")
     try:
         from core.llm.gateway.gateway import close_llm_gateway
