@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/rule/v1",
+  "title": "Medic rule v1 (engine API 1.x)",
+  "description": "One detection rule, written as YAML and parsed as data. Structure only: the checks JSON Schema can't express (signal references, function/type fit, RE2 compilation, nesting depth, limits, lane-1 gate, derived input_trust) are in contracts/ENGINE_API.md §5 and contracts/rule_check.py.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "id", "title", "revision", "fault", "lane", "signals", "when", "advice"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "medic.rules/v1"},
+    "kind": {"const": "Rule"},
+    "id": {"type": "string", "pattern": "^(ingest|llm|pipeline)\\.[a-z0-9][a-z0-9-]{1,62}$"},
+    "title": {"type": "string", "minLength": 5, "maxLength": 120},
+    "revision": {"description": "Bumped on every change to the rule's behaviour.", "type": "integer", "minimum": 1},
+    "engine_api": {"description": "Minimum engine API this rule needs, MAJOR.MINOR. Default 1.0. An engine with the same MAJOR and a lower MINOR skips the rule and reports it as not evaluated.", "type": "string", "pattern": "^1\\.(0|[1-9][0-9]{0,2})$"},
+    "fault": {
+      "type": "object",
+      "required": ["class", "mode", "causes"],
+      "additionalProperties": false,
+      "properties": {
+        "class": {"description": "v1 watch list (SW-CONTEXT §3).", "enum": ["ingest", "llm", "pipeline"]},
+        "mode": {"type": "string", "pattern": "^[ILP]-[0-9]{1,2}$"},
+        "causes": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^[ILP]-[0-9]{1,2}(\\.[a-z])?$"}}
+      }
+    },
+    "lane": {"enum": [1, 2, 3]},
+    "detection": {"description": "Whether the rule fires on something happening (event) or on something expected not happening (absence). Default event. The router copies it to the decision record's detection_type, which A4's time-to-detect bar uses (X1 #3, ⚑4a).", "enum": ["event", "absence"]},
+    "input_trust": {"description": "Authors may only raise trust to 'untrusted'. The engine derives the effective value (ENGINE_API.md §4).", "const": "untrusted"},
+    "shapes": {"description": "Install shapes the rule applies to. Default: all.", "type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["start_sh", "compose", "helm"]}},
+    "signals": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 8,
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/signal"}
+    },
+    "group_by": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/name"}},
+    "when": {"$ref": "#/$defs/node"},
+    "for": {"$ref": "#/$defs/duration"},
+    "keep_firing_for": {"$ref": "#/$defs/duration"},
+    "params": {
+      "description": "Site-overridable numbers and durations, bounded by min and max (K3 decides where overrides live).",
+      "type": "object",
+      "maxProperties": 8,
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "default", "min", "max"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {"enum": ["duration", "number"]},
+          "default": {"type": ["string", "number"]},
+          "min": {"type": ["string", "number"]},
+          "max": {"type": ["string", "number"]}
+        }
+      }
+    },
+    "advice": {
+      "type": "object",
+      "required": ["summary", "fix"],
+      "additionalProperties": false,
+      "properties": {
+        "summary": {"$ref": "#/$defs/static_text", "maxLength": 200},
+        "fix": {"$ref": "#/$defs/static_text", "maxLength": 1000}
+      }
+    }
+  },
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"},
+    "duration": {"type": "string", "pattern": "^[0-9]{1,6}(s|m|h)$"},
+    "signal_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}(\\.[a-z][a-z0-9_]{0,63})?$"},
+    "static_text": {
+      "description": "Fix and summary text is static (K1 T-05): nothing that looks like interpolation or markup that evaluates.",
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "\\{\\{|\\{%|\\$\\{|%\\(|`|<script"}
+    },
+    "match": {
+      "description": "Exactly one way to match a string field. re2 is RE2 syntax, compiled linear-time.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "eq": {"type": "string", "minLength": 1, "maxLength": 500},
+        "prefix": {"type": "string", "minLength": 1, "maxLength": 200},
+        "re2": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "signal": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "sample": {
+          "type": "object",
+          "required": ["signal", "key"],
+          "additionalProperties": false,
+          "properties": {
+            "signal": {"$ref": "#/$defs/signal_id"},
+            "key": {"description": "observation value.key", "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,63}(\\.[a-z_][a-z0-9_]{0,63}){0,5}$"},
+            "by": {"description": "Label names kept as group-by keys.", "type": "array", "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/name"}},
+            "labels": {"description": "Keep only values whose labels equal these.", "type": "object", "maxProperties": 4, "propertyNames": {"$ref": "#/$defs/name"}, "additionalProperties": {"type": "string", "pattern": "^[A-Za-z0-9_.:/@+-]{1,128}$"}}
+          }
+        },
+        "log": {
+          "type": "object",
+          "required": ["signal"],
+          "additionalProperties": false,
+          "properties": {
+            "signal": {"$ref": "#/$defs/signal_id"},
+            "logger": {"$ref": "#/$defs/match"},
+            "level": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]}},
+            "template": {"$ref": "#/$defs/match"},
+            "fingerprint": {"type": "string", "pattern": "^fp1_[0-9a-f]{16}$"},
+            "exc_type": {"$ref": "#/$defs/match"},
+            "message": {"$ref": "#/$defs/match"},
+            "args": {"type": "object", "maxProperties": 4, "propertyNames": {"pattern": "^[0-7]$"}, "additionalProperties": {"$ref": "#/$defs/match"}},
+            "trusted_only": {"description": "Default true: count only lines with template_trust=catalog. false makes the rule untrusted.", "type": "boolean"},
+            "keys": {
+              "description": "Group-by labels taken from the line.",
+              "type": "object",
+              "maxProperties": 3,
+              "propertyNames": {"$ref": "#/$defs/name"},
+              "additionalProperties": {"enum": ["logger", "exc_type", "fingerprint", "args[0]", "args[1]", "args[2]", "args[3]"]}
+            }
+          },
+          "anyOf": [{"required": ["template"]}, {"required": ["fingerprint"]}, {"required": ["message"]}, {"required": ["exc_type"]}]
+        }
+      }
+    },
+    "value": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "string", "pattern": "^[A-Za-z0-9_.:/@+-]{1,128}$"},
+        {"type": "object", "required": ["param"], "additionalProperties": false, "properties": {"param": {"$ref": "#/$defs/name"}}}
+      ]
+    },
+    "window": {"oneOf": [{"$ref": "#/$defs/duration"}, {"type": "object", "required": ["param"], "additionalProperties": false, "properties": {"param": {"$ref": "#/$defs/name"}}}]},
+    "node": {
+      "oneOf": [
+        {"type": "object", "required": ["all"], "additionalProperties": false, "properties": {"all": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/$defs/node"}}}},
+        {"type": "object", "required": ["any"], "additionalProperties": false, "properties": {"any": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/$defs/node"}}}},
+        {"type": "object", "required": ["not"], "additionalProperties": false, "properties": {"not": {"$ref": "#/$defs/node"}}},
+        {"$ref": "#/$defs/cond"}
+      ]
+    },
+    "cond": {
+      "type": "object",
+      "required": ["fn"],
+      "additionalProperties": false,
+      "properties": {
+        "fn": {"enum": ["latest", "age", "increase", "rate", "changes", "count", "absent_for", "latch"]},
+        "signal": {"$ref": "#/$defs/name"},
+        "window": {"$ref": "#/$defs/window"},
+        "op": {"enum": ["==", "!=", "<", "<=", ">", ">="]},
+        "value": {"$ref": "#/$defs/value"},
+        "set": {"$ref": "#/$defs/name"},
+        "clear": {"$ref": "#/$defs/name"}
+      },
+      "allOf": [
+        {"if": {"properties": {"fn": {"enum": ["latest", "age"]}}}, "then": {"required": ["signal", "op", "value"], "not": {"anyOf": [{"required": ["window"]}, {"required": ["set"]}, {"required": ["clear"]}]}}},
+        {"if": {"properties": {"fn": {"enum": ["increase", "rate", "changes", "count"]}}}, "then": {"required": ["signal", "window", "op", "value"], "not": {"anyOf": [{"required": ["set"]}, {"required": ["clear"]}]}}},
+        {"if": {"properties": {"fn": {"const": "absent_for"}}}, "then": {"required": ["signal", "window"], "not": {"anyOf": [{"required": ["op"]}, {"required": ["value"]}, {"required": ["set"]}, {"required": ["clear"]}]}}},
+        {"if": {"properties": {"fn": {"const": "latch"}}}, "then": {"required": ["set", "clear"], "not": {"anyOf": [{"required": ["signal"]}, {"required": ["window"]}, {"required": ["op"]}, {"required": ["value"]}]}}}
+      ]
+    }
+  }
+}

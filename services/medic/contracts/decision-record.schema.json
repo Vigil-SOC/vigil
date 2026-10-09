@@ -1,0 +1,1359 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/decision-record/v1",
+  "title": "Medic decision record v1",
+  "description": "One record in the decision log (C4 S1 + S2): append-only and hash-chained per store. Every leaf field carries x-medic-type, one of enum, number, id, timestamp, hash, redacted_excerpt, pack_text (K1 T-04; tests/test_decision_record.py fails on an untagged leaf). Numbers are integers only, so the canonical JSON that is hashed is the same in every language. Incidents are E3's (one per rule x group). Lane and routing rules: contracts/decision-record.md section 2 and lane_ref.py. Chain rules: section 4 and decision_chain.py.",
+  "type": "object",
+  "required": [
+    "v",
+    "seq",
+    "at",
+    "type",
+    "prev",
+    "hash",
+    "body"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1,
+      "x-medic-type": "enum"
+    },
+    "seq": {
+      "description": "Strictly increasing per store, no gaps (C4 6.3).",
+      "type": "integer",
+      "minimum": 0,
+      "x-medic-type": "number"
+    },
+    "at": {
+      "description": "When the record happened (UTC). Engine records (incident_opened/updated/resolved) carry the evaluation tick T from the observation stream, never the wall clock (A3-5), so replay is byte-identical. Every other type carries the watcher's wall clock when it was written.",
+      "$ref": "#/$defs/ts"
+    },
+    "type": {
+      "enum": [
+        "incident_opened",
+        "incident_updated",
+        "incident_resolved",
+        "feedback",
+        "adjudication",
+        "anchor",
+        "store_reset",
+        "pack_event"
+      ],
+      "x-medic-type": "enum"
+    },
+    "prev": {
+      "description": "hash of the record with seq - 1; 64 zeros for the first record ever written.",
+      "$ref": "#/$defs/hash"
+    },
+    "hash": {
+      "description": "sha256 of the canonical JSON of this record without the hash field (decision_chain.py).",
+      "$ref": "#/$defs/hash"
+    },
+    "body": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "incident_opened"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/incident_opened"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "incident_updated"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/incident_updated"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "incident_resolved"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/incident_resolved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "feedback"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/feedback"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "adjudication"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/adjudication"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "anchor"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/anchor"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "store_reset"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/store_reset"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "pack_event"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/pack_event"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "incident_opened",
+              "incident_updated",
+              "incident_resolved"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "at": {
+            "$ref": "#/$defs/ts_tick"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "ts": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
+      "x-medic-type": "timestamp"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "x-medic-type": "hash"
+    },
+    "id": {
+      "description": "Opaque identifier or label value (D3 label_value rules).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:/@+-]{1,128}$",
+      "x-medic-type": "id"
+    },
+    "incident_id": {
+      "type": "string",
+      "pattern": "^inc_[0-9A-Za-z]{8,32}$",
+      "x-medic-type": "id",
+      "description": "Derived, never random (A3-5): decision_chain.incident_id(instance_id, rule id, group, active_since)."
+    },
+    "rule_id": {
+      "type": "string",
+      "pattern": "^(ingest|llm|pipeline|watcher)\\.[a-z0-9][a-z0-9-]{1,62}$",
+      "x-medic-type": "id"
+    },
+    "observation_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}:[A-Za-z0-9]{8,32}:[0-9]{1,18}$",
+      "x-medic-type": "id"
+    },
+    "signal_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}(\\.[a-z][a-z0-9_]{0,63})?$",
+      "x-medic-type": "id"
+    },
+    "decimal": {
+      "description": "Non-integer numbers travel as decimal strings so the hash is language-independent.",
+      "type": "string",
+      "pattern": "^-?[0-9]{1,15}(\\.[0-9]{1,6})?$",
+      "x-medic-type": "number"
+    },
+    "lane": {
+      "type": "object",
+      "required": [
+        "value",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "x-medic-type": "enum"
+        },
+        "reason": {
+          "enum": [
+            "rule",
+            "lane1_gate_failed",
+            "unknown_signature"
+          ],
+          "x-medic-type": "enum"
+        }
+      }
+    },
+    "excerpt": {
+      "description": "A redacted excerpt (K2) of at most 500 characters. The only free-ish text allowed from Vigil or an admin.",
+      "type": "object",
+      "required": [
+        "text",
+        "redaction_version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "x-medic-type": "redacted_excerpt"
+        },
+        "redaction_version": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]{1,32}$",
+          "x-medic-type": "id"
+        }
+      }
+    },
+    "scalar": {
+      "description": "An evidence value: integer, boolean, decimal string or label-safe id.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "x-medic-type": "number"
+        },
+        {
+          "type": "boolean",
+          "x-medic-type": "enum"
+        },
+        {
+          "$ref": "#/$defs/decimal"
+        },
+        {
+          "$ref": "#/$defs/id"
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "observation_id",
+        "signal",
+        "t"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {
+          "$ref": "#/$defs/observation_id"
+        },
+        "signal": {
+          "$ref": "#/$defs/signal_id"
+        },
+        "t": {
+          "$ref": "#/$defs/ts"
+        },
+        "key": {
+          "$ref": "#/$defs/id"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^fp1_[0-9a-f]{16}$",
+          "x-medic-type": "id"
+        },
+        "excerpt": {
+          "$ref": "#/$defs/excerpt"
+        }
+      }
+    },
+    "evidence_list": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "action": {
+      "enum": [
+        "record",
+        "notify_admin",
+        "propose_runbook",
+        "run_runbook",
+        "prepare_support_bundle"
+      ],
+      "x-medic-type": "enum"
+    },
+    "would_have": {
+      "description": "What each autonomy level would have done. L0 = Phase 0 observe; L1 = admin clicks to run; L2 = the watcher runs it alone (Phase 1).",
+      "type": "object",
+      "required": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "L0": {
+          "const": "record",
+          "x-medic-type": "enum"
+        },
+        "L1": {
+          "$ref": "#/$defs/action"
+        },
+        "L2": {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/action"
+            },
+            "not_eligible": {
+              "enum": [
+                "not_lane1",
+                "no_runbook",
+                "runtime_untrusted"
+              ],
+              "x-medic-type": "enum"
+            }
+          }
+        }
+      }
+    },
+    "incident_opened": {
+      "type": "object",
+      "required": [
+        "incident_id",
+        "subject",
+        "instance_id",
+        "install_shape",
+        "rule",
+        "fault",
+        "detection_type",
+        "active_since",
+        "route",
+        "lane",
+        "evidence",
+        "advice",
+        "runbook",
+        "would_have"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "$ref": "#/$defs/incident_id"
+        },
+        "subject": {
+          "description": "vigil = a fault in Vigil; watcher = the watcher's own state (E3 watcher.sensor-blind). Watcher incidents are routed like any other but left out of gate lane metrics and the lane-3 case rate.",
+          "enum": [
+            "vigil",
+            "watcher"
+          ],
+          "x-medic-type": "enum"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "install_shape": {
+          "enum": [
+            "start_sh",
+            "compose",
+            "helm"
+          ],
+          "x-medic-type": "enum"
+        },
+        "rule": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "revision",
+                "pack_id",
+                "pack_version",
+                "engine_api",
+                "input_trust"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/rule_id"
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "x-medic-type": "number"
+                },
+                "pack_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "pack_version": {
+                  "$ref": "#/$defs/id"
+                },
+                "engine_api": {
+                  "type": "string",
+                  "pattern": "^1\\.(0|[1-9][0-9]{0,2})$",
+                  "x-medic-type": "id"
+                },
+                "input_trust": {
+                  "enum": [
+                    "trusted",
+                    "untrusted"
+                  ],
+                  "x-medic-type": "enum"
+                }
+              }
+            },
+            {
+              "type": "null",
+              "x-medic-type": "enum"
+            }
+          ]
+        },
+        "fault": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "class",
+                "mode",
+                "causes"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "class": {
+                  "enum": [
+                    "ingest",
+                    "llm",
+                    "pipeline"
+                  ],
+                  "x-medic-type": "enum"
+                },
+                "mode": {
+                  "type": "string",
+                  "pattern": "^[ILP]-[0-9]{1,2}$",
+                  "x-medic-type": "id"
+                },
+                "causes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[ILP]-[0-9]{1,2}(\\.[a-z])?$",
+                    "x-medic-type": "id"
+                  }
+                }
+              }
+            },
+            {
+              "type": "null",
+              "x-medic-type": "enum"
+            }
+          ]
+        },
+        "detection_type": {
+          "enum": [
+            "event",
+            "absence"
+          ],
+          "x-medic-type": "enum"
+        },
+        "group": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "x-medic-type": "id"
+              },
+              "value": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          }
+        },
+        "lane": {
+          "$ref": "#/$defs/lane"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence_list"
+        },
+        "advice": {
+          "description": "Static, signed advice copied from the pack (G2 ENG #5), so a record still explains itself after the pack rotates.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "summary",
+                "fix"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "x-medic-type": "pack_text"
+                },
+                "fix": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000,
+                  "x-medic-type": "pack_text"
+                }
+              }
+            },
+            {
+              "type": "null",
+              "x-medic-type": "enum"
+            }
+          ]
+        },
+        "runbook": {
+          "description": "G4 descriptor the fix would use, or null for none.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "verify_after_s"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/id"
+                },
+                "verify_after_s": {
+                  "type": "integer",
+                  "minimum": 30,
+                  "maximum": 86400,
+                  "x-medic-type": "number"
+                }
+              }
+            },
+            {
+              "type": "null",
+              "x-medic-type": "enum"
+            }
+          ]
+        },
+        "would_have": {
+          "$ref": "#/$defs/would_have"
+        },
+        "active_since": {
+          "$ref": "#/$defs/ts_tick"
+        },
+        "route": {
+          "description": "routed = routed at open (no rule's suppression child); held = a suppression child in its 5-min hold (E3 6.2). Later routing is an incident_updated record.",
+          "enum": [
+            "routed",
+            "held"
+          ],
+          "x-medic-type": "enum"
+        },
+        "held_by_upgrade_until": {
+          "description": "E3 7: the incident opened late because an upgrade window held pending until this time.",
+          "$ref": "#/$defs/ts"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lane": {
+                "properties": {
+                  "reason": {
+                    "const": "unknown_signature"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rule": {
+                "type": "null"
+              },
+              "fault": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "rule": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "subject": {
+                "const": "vigil"
+              },
+              "lane": {
+                "properties": {
+                  "reason": {
+                    "not": {
+                      "const": "unknown_signature"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fault": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "subject": {
+                "const": "watcher"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fault": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "incident_updated": {
+      "type": "object",
+      "required": [
+        "incident_id",
+        "change"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "$ref": "#/$defs/incident_id"
+        },
+        "change": {
+          "enum": [
+            "evidence_added",
+            "resolving",
+            "refiring",
+            "routed",
+            "suppressed",
+            "unsuppressed",
+            "reopened",
+            "escalation_simulated"
+          ],
+          "x-medic-type": "enum",
+          "description": "resolving = E3 firing -> resolving (record at = resolving_since); refiring = resolving -> firing (same incident)."
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence_list"
+        },
+        "suppressed_by": {
+          "description": "The parent incident (E3 6.1); its nearest firing parent when chained.",
+          "$ref": "#/$defs/incident_id"
+        },
+        "reopen_count": {
+          "description": "E3 5: flapping damping reopened this incident.",
+          "type": "integer",
+          "minimum": 1,
+          "x-medic-type": "number"
+        },
+        "simulated_failures": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "x-medic-type": "number"
+        },
+        "eval": {
+          "$ref": "#/$defs/eval"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "evidence_added"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "evidence"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "suppressed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "suppressed_by"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "reopened"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reopen_count"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "escalation_simulated"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "simulated_failures"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "enum": [
+                  "resolving",
+                  "refiring"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "eval"
+            ]
+          }
+        }
+      ]
+    },
+    "incident_resolved": {
+      "type": "object",
+      "required": [
+        "incident_id",
+        "how"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "$ref": "#/$defs/incident_id"
+        },
+        "how": {
+          "description": "E3 4 resolve reasons, plus closed_quietly for a suppressed child that resolves before it is freed (E3 6.3).",
+          "enum": [
+            "cleared",
+            "rule_retired",
+            "group_retired",
+            "closed_quietly"
+          ],
+          "x-medic-type": "enum"
+        },
+        "eval": {
+          "$ref": "#/$defs/eval"
+        }
+      }
+    },
+    "feedback": {
+      "description": "Admin feedback (H2). admin comes from the backend session, never the request body (K1 T-17).",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "value",
+        "source",
+        "admin"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "$ref": "#/$defs/incident_id"
+        },
+        "value": {
+          "enum": [
+            "agree",
+            "disagree",
+            "wrong_lane",
+            "false_alarm"
+          ],
+          "x-medic-type": "enum"
+        },
+        "suggested_lane": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "x-medic-type": "enum"
+        },
+        "source": {
+          "enum": [
+            "live",
+            "replay"
+          ],
+          "x-medic-type": "enum"
+        },
+        "admin": {
+          "$ref": "#/$defs/id"
+        },
+        "comment": {
+          "$ref": "#/$defs/excerpt"
+        },
+        "replay_head": {
+          "description": "Head hash of the replay store (E6) the admin was judging. Required when source is replay, forbidden when live (S0 review R12).",
+          "$ref": "#/$defs/hash"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "suggested_lane"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "const": "wrong_lane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "replay"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "replay_head"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "live"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "replay_head"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "adjudication": {
+      "description": "Ground-truth verdict for scoring (I1, A4). Never shown as admin feedback.",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "verdict",
+        "by",
+        "basis"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "$ref": "#/$defs/incident_id"
+        },
+        "verdict": {
+          "enum": [
+            "true_fault",
+            "false_alarm",
+            "watcher_caused",
+            "unknown"
+          ],
+          "x-medic-type": "enum"
+        },
+        "true_lane": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "x-medic-type": "enum"
+        },
+        "by": {
+          "$ref": "#/$defs/id"
+        },
+        "basis": {
+          "enum": [
+            "admin_mark",
+            "weekly_readout",
+            "log_review"
+          ],
+          "x-medic-type": "enum"
+        }
+      }
+    },
+    "anchor": {
+      "description": "Written before a purge deletes records (C4 6.5). Verification starts at the oldest anchor.",
+      "type": "object",
+      "required": [
+        "reason",
+        "deleted_first_seq",
+        "deleted_last_seq",
+        "deleted_count",
+        "deleted_from",
+        "deleted_to",
+        "last_deleted_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "enum": [
+            "retention",
+            "early_purge"
+          ],
+          "x-medic-type": "enum"
+        },
+        "deleted_first_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "x-medic-type": "number"
+        },
+        "deleted_last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "x-medic-type": "number"
+        },
+        "deleted_count": {
+          "type": "integer",
+          "minimum": 1,
+          "x-medic-type": "number"
+        },
+        "deleted_from": {
+          "$ref": "#/$defs/ts"
+        },
+        "deleted_to": {
+          "$ref": "#/$defs/ts"
+        },
+        "last_deleted_hash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "store_reset": {
+      "description": "First record of a fresh store after corruption (C4 6.3).",
+      "type": "object",
+      "required": [
+        "reason",
+        "previous_head",
+        "instance_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "enum": [
+            "corruption"
+          ],
+          "x-medic-type": "enum"
+        },
+        "moved_aside": {
+          "type": "string",
+          "pattern": "^medic\\.[A-Za-z0-9_.-]{1,96}$",
+          "x-medic-type": "id"
+        },
+        "previous_head": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "seq",
+                "hash"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "x-medic-type": "number"
+                },
+                "hash": {
+                  "$ref": "#/$defs/hash"
+                }
+              }
+            },
+            {
+              "type": "null",
+              "x-medic-type": "enum"
+            }
+          ]
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        }
+      }
+    },
+    "eval": {
+      "description": "E3 three-valued evaluation at the tick that caused this transition.",
+      "enum": [
+        "true",
+        "false",
+        "unknown"
+      ],
+      "x-medic-type": "enum"
+    },
+    "instance_id": {
+      "description": "Random at the watcher's first start, persisted beside the store (not inside it), kept across store_reset; never derived from a host or cluster name (X1 ⚑5a).",
+      "type": "string",
+      "pattern": "^mi_[0-9a-f]{16}$",
+      "x-medic-type": "id"
+    },
+    "pack_event": {
+      "description": "Pack lifecycle in the chain (X1 ⚑3a): what was active when, who changed it, and which rules were not evaluated. A4's per-rule exposure reads it.",
+      "type": "object",
+      "required": [
+        "event",
+        "pack"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "imported: a pack became active (F3 bundled seed or admin import). reverted: admin swap to last-known-good or the bundled baseline (F4 §4). override: admin re-import of a version withdrawn on this site (F4 §4, T-23). rule_skipped: a rule in the active pack is not evaluated (E2 §1: needs a newer engine minor).",
+          "enum": [
+            "imported",
+            "reverted",
+            "override",
+            "rule_skipped"
+          ],
+          "x-medic-type": "enum"
+        },
+        "pack": {
+          "$ref": "#/$defs/pack_ref"
+        },
+        "previous": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/pack_ref"
+            },
+            {
+              "type": "null",
+              "x-medic-type": "enum"
+            }
+          ]
+        },
+        "source": {
+          "enum": [
+            "bundled",
+            "admin_import"
+          ],
+          "x-medic-type": "enum"
+        },
+        "by": {
+          "description": "Session identity of the admin (never the request body; K1 T-17). Absent for automatic events.",
+          "$ref": "#/$defs/id"
+        },
+        "rule": {
+          "$ref": "#/$defs/rule_id"
+        },
+        "reason": {
+          "enum": [
+            "needs_engine_minor"
+          ],
+          "x-medic-type": "enum"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "imported"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "source",
+              "previous"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "rule"
+                  ]
+                },
+                {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "enum": [
+                  "reverted",
+                  "override"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "by",
+              "previous"
+            ],
+            "properties": {
+              "previous": {
+                "$ref": "#/$defs/pack_ref"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "source"
+                  ]
+                },
+                {
+                  "required": [
+                    "rule"
+                  ]
+                },
+                {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "rule_skipped"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "rule",
+              "reason"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "source"
+                  ]
+                },
+                {
+                  "required": [
+                    "by"
+                  ]
+                },
+                {
+                  "required": [
+                    "previous"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "const": "admin_import"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "by"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "const": "bundled"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "by"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ts_tick": {
+      "description": "An evaluation tick (E3 §1): whole seconds on the 15 s grid, no fraction, so the same instant has one spelling (A3-5; S0 review R5).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:(00|15|30|45)Z$",
+      "x-medic-type": "timestamp"
+    },
+    "pack_ref": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "version": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    }
+  }
+}

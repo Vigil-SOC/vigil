@@ -1,0 +1,1315 @@
+openapi: 3.1.0
+info:
+  title: Medic API
+  version: "1.0.0"
+  summary: Medic's read-only API, plus one admin write (decision feedback).
+  description: |
+    Contract X2 (2026-10-07). G3 builds this API inside the Medic process; H3 (the backend
+    proxy) is its only caller. ADR: outputs/X2-medic-api-adr.md.
+
+    Rules that the schema alone can't express:
+    - **One caller.** Medic binds to `medic-net` (Compose), the pod IP behind a deny-all
+      ingress NetworkPolicy that admits only the backend (Helm), or loopback (host-native).
+      Every request needs `X-Medic-Key`, compared in constant time. A request without a valid
+      key gets `401 unauthorized` before routing, even on an unknown path.
+    - **Permissions live in H3.** Medic has one caller and one secret, so it can't tell roles
+      apart. Each operation names the Vigil permission H3 must check (`x-medic-permission`).
+      Medic does enforce *rateability* itself (which incidents and values accept feedback).
+    - **Feedback identity comes from the session.** H3 sets `X-Medic-Admin` from the
+      logged-in user (`user:<Vigil user id>`) and drops any client-supplied value. The body has
+      no identity field, and Medic rejects unknown body fields (K1 T-17).
+    - **No HTML, no free text from Vigil except redacted excerpts.** Every leaf field carries
+      `x-medic-type` (same tags as G2, plus `admin_input` on the one request body). Free text
+      is either `redacted_excerpt` (K2) or `pack_text` (signed pack content).
+    - **Records are G2's.** Decision records are served exactly as stored
+      (`decision-record.schema.json`), never re-shaped.
+    - **Pagination** is keyset (cursor). Cursors are opaque, bound to the query's filters,
+      and stay valid while records are appended. `limit` defaults to 50; maximums are per route.
+    - **Clients treat unknown enum values as "unknown"** and ignore unknown fields, so adding
+      either is a MINOR change (see the ADR, versioning).
+    - Every response carries `Cache-Control: no-store`, `X-Request-Id` (echoed if the caller
+      sent one matching `^[A-Za-z0-9-]{1,64}$`, otherwise generated) and `X-Medic-Api-Version`.
+  license:
+    name: Apache-2.0
+servers:
+  - url: "http://{host}:{port}"
+    description: |
+      Compose: the backend calls the gateway (`medic-gateway`), whose inbound path list is
+      exactly this file's operations. Helm: `<fullname>-medic` Service. Host-native: 127.0.0.1.
+      The default port 8470 (`VIGIL_MEDIC_API_PORT`) is PROVISIONAL until C6.
+    variables:
+      host:
+        default: medic
+      port:
+        default: "8470"
+security:
+  - medicKey: []
+tags:
+  - name: status
+  - name: incidents
+  - name: decisions
+  - name: sensors
+  - name: pack
+  - name: export
+  - name: feedback
+
+components:
+  examples:
+    RecordOpened:
+      summary: chain-01 seq 0 (fixtures/decision-records/valid/chain-01-pilot-day.jsonl)
+      value: &rec_opened
+        at: "2026-12-07T09:15:00Z"
+        body:
+          active_since: "2026-12-07T09:13:00Z"
+          advice:
+            fix: "Open Settings > Integrations, open the integration named in the evidence, fill in the missing fields and save. Polling resumes on the next cycle."
+            summary: An integration is enabled but its configuration is incomplete.
+          detection_type: event
+          evidence:
+            - excerpt:
+                redaction_version: k2-1.0
+                text: "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed"
+              fingerprint: fp1_3f9a2c1b0d4e5f60
+              observation_id: "log.soc-daemon:a1b2c3d4e5:1042"
+              signal: log_soc_daemon
+              t: "2026-12-07T09:12:58Z"
+          fault: { causes: [I-1.b], class: ingest, mode: I-1 }
+          group: [{ name: integration, value: h_ff9cf5afca192342 }]
+          incident_id: inc_50eeae0570ffe3e235dd00c0
+          install_shape: helm
+          instance_id: mi_3f9a2c1b0d4e5f60
+          lane: { reason: rule, value: 2 }
+          route: routed
+          rule:
+            engine_api: "1.0"
+            id: ingest.integration-config-incomplete
+            input_trust: untrusted
+            pack_id: medic-core
+            pack_version: 0.1.0
+            revision: 1
+          runbook: null
+          subject: vigil
+          would_have:
+            L0: record
+            L1: notify_admin
+            L2: { action: notify_admin, not_eligible: not_lane1 }
+        hash: 4df3941d81577f2a8854b6c834ede3472d9dcd6c3899b6849c57a460a2138f33
+        prev: "0000000000000000000000000000000000000000000000000000000000000000"
+        seq: 0
+        type: incident_opened
+        v: 1
+    RecordFeedback:
+      summary: chain-01 seq 1
+      value: &rec_feedback
+        at: "2026-12-07T09:40:00Z"
+        body:
+          admin: "user:7f3c"
+          comment: { redaction_version: k2-1.0, text: "Fixed, the key had expired." }
+          incident_id: inc_50eeae0570ffe3e235dd00c0
+          source: live
+          value: agree
+        hash: 5c6c91c9127605d954407c07b14bd84be1b9ef62e592e02e98b5ff96bd8a4d02
+        prev: 4df3941d81577f2a8854b6c834ede3472d9dcd6c3899b6849c57a460a2138f33
+        seq: 1
+        type: feedback
+        v: 1
+    RecordResolving:
+      summary: chain-01 seq 2
+      value: &rec_resolving
+        at: "2026-12-07T09:36:15Z"
+        body: { change: resolving, eval: "false", incident_id: inc_50eeae0570ffe3e235dd00c0 }
+        hash: 84f03c93cfe73f3fcc012ffdde60ab4d531b5f18705e04b2dc4c19b9b68ee7ff
+        prev: 5c6c91c9127605d954407c07b14bd84be1b9ef62e592e02e98b5ff96bd8a4d02
+        seq: 2
+        type: incident_updated
+        v: 1
+    RecordResolved:
+      summary: chain-01 seq 3
+      value: &rec_resolved
+        at: "2026-12-07T09:41:15Z"
+        body: { eval: "false", how: cleared, incident_id: inc_50eeae0570ffe3e235dd00c0 }
+        hash: 76792190d1855c71c2b6b076ba494b9b4f8f795f24a8e2a767823e571fea4f7d
+        prev: 84f03c93cfe73f3fcc012ffdde60ab4d531b5f18705e04b2dc4c19b9b68ee7ff
+        seq: 3
+        type: incident_resolved
+        v: 1
+    IncidentSummaryResolved:
+      summary: The chain-01 lane-2 incident, derived from seq 0-3
+      value: &inc_resolved
+        incident_id: inc_50eeae0570ffe3e235dd00c0
+        subject: vigil
+        rule: { id: ingest.integration-config-incomplete, revision: 1, pack_id: medic-core, pack_version: 0.1.0 }
+        title: An integration is enabled but its configuration is incomplete.
+        lane: { value: 2, reason: rule }
+        state: resolved
+        last_eval: "false"
+        opened_at: "2026-12-07T09:15:00Z"
+        active_since: "2026-12-07T09:13:00Z"
+        routed_at: "2026-12-07T09:15:00Z"
+        held_until: null
+        suppressed_by: null
+        suppressed_children: { count: 0, incident_ids: [] }
+        reopen_count: 0
+        escalation_simulated: false
+        resolved_at: "2026-12-07T09:41:15Z"
+        resolved_how: cleared
+        group: [{ name: integration, value: h_ff9cf5afca192342 }]
+        install_shape: helm
+        detection_type: event
+        has_fix: true
+        rateable: true
+        allowed_feedback: [agree, disagree, wrong_lane, false_alarm]
+        ratings:
+          - { admin: "user:7f3c", value: agree, at: "2026-12-07T09:40:00Z", seq: 1 }
+        last_seq: 3
+
+  securitySchemes:
+    medicKey:
+      type: apiKey
+      in: header
+      name: X-Medic-Key
+      description: |
+        Per-install shared secret (A3-2b): 32 random bytes, base64url, generated at enable time
+        and regenerated on re-enable; held by the backend and Medic only. On Compose the gateway
+        forwards this header and nothing else of the caller's (A3 PRD §6.1). Constant-time
+        compare. Never logged by Medic, the gateway or the backend.
+
+  parameters:
+    IncidentId:
+      name: incident_id
+      in: path
+      required: true
+      schema: { $ref: "./decision-record.schema.json#/$defs/incident_id" }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque `next_cursor` from the previous page, bound to the same filters.
+      schema: { $ref: "#/components/schemas/Cursor" }
+
+  headers:
+    RequestId:
+      description: Echoed from the request if well-formed, otherwise generated by Medic.
+      schema: { type: string, pattern: "^[A-Za-z0-9-]{1,64}$" }
+
+  responses:
+    BadRequest:
+      description: A parameter is malformed, out of range, or combined illegally
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            limit:
+              value:
+                type: "urn:medic:error:invalid_parameter"
+                status: 400
+                code: invalid_parameter
+                field: limit
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+            cursor:
+              value:
+                type: "urn:medic:error:invalid_cursor"
+                status: 400
+                code: invalid_cursor
+                field: cursor
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    Unauthorized:
+      description: Missing or wrong `X-Medic-Key`
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            no_key:
+              value:
+                type: "urn:medic:error:unauthorized"
+                status: 401
+                code: unauthorized
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    NotFound:
+      description: No such incident or record (or a purged one)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            missing:
+              value:
+                type: "urn:medic:error:not_found"
+                status: 404
+                code: not_found
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    TooLarge:
+      description: Request body over 4 KB
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            big:
+              value:
+                type: "urn:medic:error:payload_too_large"
+                status: 413
+                code: payload_too_large
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    UnsupportedMediaType:
+      description: Body isn't `application/json`
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            form:
+              value:
+                type: "urn:medic:error:unsupported_media_type"
+                status: 415
+                code: unsupported_media_type
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    InvalidBody:
+      description: Body fails `FeedbackRequest` (including any unknown field such as `admin`), or `X-Medic-Admin` is missing or malformed
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            forged_admin:
+              value:
+                type: "urn:medic:error:invalid_body"
+                status: 422
+                code: invalid_body
+                field: /admin
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+            no_identity:
+              value:
+                type: "urn:medic:error:missing_admin_identity"
+                status: 422
+                code: missing_admin_identity
+                field: X-Medic-Admin
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    Busy:
+      description: Medic is shedding load (more than 4 requests in flight, or a read hit its statement timeout; T-29)
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            busy:
+              value:
+                type: "urn:medic:error:busy"
+                status: 503
+                code: busy
+                retry_after_s: 2
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+    NotRecording:
+      description: The store can't take writes (`recording_stopped` or `migration_blocked`, C4 §6.6), or Medic is busy
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            stopped:
+              value:
+                type: "urn:medic:error:store_not_recording"
+                status: 503
+                code: store_not_recording
+                request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+
+  schemas:
+    Cursor:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{1,256}$"
+      x-medic-type: id
+
+    Error:
+      description: |
+        RFC 9457 problem details with a closed `code`. No message text: Medic never echoes
+        input, and the console maps `code` (and `reason`) to its own words. Each code has one
+        status: unauthorized 401 · not_found 404 · method_not_allowed 405 · invalid_parameter 400 ·
+        invalid_cursor 400 · invalid_body 422 · missing_admin_identity 422 · not_rateable 409 ·
+        payload_too_large 413 · unsupported_media_type 415 · busy 503 · store_not_recording 503 ·
+        internal 500.
+      type: object
+      required: [type, status, code, request_id]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          pattern: "^urn:medic:error:[a-z_]{1,40}$"
+          x-medic-type: id
+        status:
+          type: integer
+          enum: [400, 401, 404, 405, 409, 413, 415, 422, 500, 503]
+          x-medic-type: enum
+        code:
+          type: string
+          enum:
+            - unauthorized
+            - not_found
+            - method_not_allowed
+            - invalid_parameter
+            - invalid_cursor
+            - invalid_body
+            - missing_admin_identity
+            - not_rateable
+            - payload_too_large
+            - unsupported_media_type
+            - busy
+            - store_not_recording
+            - internal
+          x-medic-type: enum
+        field:
+          description: The offending query parameter, header name, or body JSON Pointer.
+          type: string
+          pattern: "^[A-Za-z0-9_/.-]{1,64}$"
+          x-medic-type: id
+        reason:
+          description: For not_rateable only.
+          type: string
+          enum: [suppressed, closed_quietly, not_routed, value_not_offered]
+          x-medic-type: enum
+        retry_after_s:
+          type: integer
+          minimum: 1
+          x-medic-type: number
+        request_id:
+          type: string
+          pattern: "^[A-Za-z0-9-]{1,64}$"
+          x-medic-type: id
+
+    ChainHead:
+      type: object
+      required: [seq, hash]
+      additionalProperties: false
+      properties:
+        seq: { type: integer, minimum: 0, x-medic-type: number }
+        hash: { $ref: "./decision-record.schema.json#/$defs/hash" }
+
+    Status:
+      type: object
+      required: [api_version, instance_id, state, now, heartbeat_at, cycle, started_at, uptime_s,
+                 restarts_24h, last_exit, dev_mode, store, sensors, pack, chain_head]
+      additionalProperties: false
+      properties:
+        api_version:
+          type: string
+          pattern: "^1\\.[0-9]{1,3}$"
+          x-medic-type: id
+        instance_id: { $ref: "./decision-record.schema.json#/$defs/instance_id" }
+        state:
+          description: Medic's self-assessed C5 state (worst wins). Down, Off and Unknown are the backend's.
+          type: string
+          enum: [running, degraded, not_recording, blind, starting, crash_looping]
+          x-medic-type: enum
+        now:
+          description: Medic's wall clock, so the backend can spot clock skew.
+          $ref: "./decision-record.schema.json#/$defs/ts"
+        heartbeat_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        cycle: { type: integer, minimum: 0, x-medic-type: number }
+        started_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        uptime_s: { type: integer, minimum: 0, x-medic-type: number }
+        restarts_24h: { type: integer, minimum: 0, x-medic-type: number }
+        last_exit:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - type: object
+              required: [reason, at]
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  enum: [clean, signal, oom, watchdog_stall, crash, unknown]
+                  x-medic-type: enum
+                at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        dev_mode:
+          description: Unsigned content allowed; results don't count toward the gate (UX-9).
+          type: boolean
+          x-medic-type: enum
+        store: { $ref: "#/components/schemas/StoreHealth" }
+        sensors:
+          type: object
+          required: [reporting, cant_see, "off"]
+          additionalProperties: false
+          properties:
+            reporting: { type: integer, minimum: 0, x-medic-type: number }
+            cant_see: { type: integer, minimum: 0, x-medic-type: number }
+            "off": { type: integer, minimum: 0, x-medic-type: number }
+        pack:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/PackBrief"
+        chain_head:
+          description: null only for an empty store.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/ChainHead"
+
+    StoreHealth:
+      description: C4 §6.6. Several states can hold at once.
+      type: object
+      required: [states, backend, bytes_used, cap_bytes, reserve_left_bytes, disk_free_bytes,
+                 oldest_record_at, newest_record_at, decisions_lost]
+      additionalProperties: false
+      properties:
+        states:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            enum: [ok, near_cap, on_reserve, recording_stopped, reset_after_corruption,
+                   backend_mismatch, purge_refused_clock, migration_blocked]
+            x-medic-type: enum
+        backend:
+          description: Only sqlite in Phase 0 (network filesystems refused, A3).
+          type: string
+          enum: [sqlite]
+          x-medic-type: enum
+        bytes_used: { type: integer, minimum: 0, x-medic-type: number }
+        cap_bytes: { type: integer, minimum: 0, x-medic-type: number }
+        reserve_left_bytes: { type: integer, minimum: 0, x-medic-type: number }
+        disk_free_bytes: { type: integer, minimum: 0, x-medic-type: number }
+        oldest_record_at:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts"
+        newest_record_at:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts"
+        decisions_lost: { type: integer, minimum: 0, x-medic-type: number }
+
+    PackBrief:
+      type: object
+      required: [id, version, channel, expires_at, stale, in_vigil_range]
+      additionalProperties: false
+      properties:
+        id: { $ref: "./decision-record.schema.json#/$defs/id" }
+        version: { $ref: "./decision-record.schema.json#/$defs/id" }
+        channel:
+          type: string
+          enum: [stable, beta, dev]
+          x-medic-type: enum
+        expires_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        stale:
+          description: Past `expires_at` and still running (F3 #2).
+          type: boolean
+          x-medic-type: enum
+        in_vigil_range: { type: boolean, x-medic-type: enum }
+
+    IncidentSummary:
+      description: |
+        Medic's derived view of one incident, computed from its records. The records stay the
+        source of truth; anything here can be re-derived from `GET /v1/decisions?incident_id=`.
+      type: object
+      required: [incident_id, subject, rule, title, lane, state, last_eval, opened_at, active_since,
+                 routed_at, held_until, suppressed_by, suppressed_children, reopen_count,
+                 escalation_simulated, resolved_at, resolved_how, group, install_shape,
+                 detection_type, has_fix, rateable, allowed_feedback, ratings, last_seq]
+      additionalProperties: false
+      properties:
+        incident_id: { $ref: "./decision-record.schema.json#/$defs/incident_id" }
+        subject: { $ref: "./decision-record.schema.json#/$defs/incident_opened/properties/subject" }
+        rule:
+          type: object
+          required: [id, revision, pack_id, pack_version]
+          additionalProperties: false
+          properties:
+            id:
+              description: null for an unknown signature (G1 R4).
+              oneOf:
+                - type: "null"
+                  x-medic-type: enum
+                - $ref: "./decision-record.schema.json#/$defs/rule_id"
+            revision: { type: integer, minimum: 0, x-medic-type: number }
+            pack_id: { $ref: "./decision-record.schema.json#/$defs/id" }
+            pack_version: { $ref: "./decision-record.schema.json#/$defs/id" }
+        title:
+          description: The rule's title from a pack Medic still holds; otherwise the record's `advice.summary` (UX-10).
+          type: string
+          maxLength: 200
+          x-medic-type: pack_text
+        lane: { $ref: "./decision-record.schema.json#/$defs/lane" }
+        state:
+          type: string
+          enum: [firing, resolving, held, suppressed, resolved]
+          x-medic-type: enum
+        last_eval:
+          description: The latest evaluation; "unknown" is shown as "Can't evaluate", never healthy (UX-11).
+          $ref: "./decision-record.schema.json#/$defs/eval"
+        opened_at: { $ref: "./decision-record.schema.json#/$defs/ts_tick" }
+        active_since: { $ref: "./decision-record.schema.json#/$defs/ts_tick" }
+        routed_at:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts_tick"
+        held_until:
+          description: Upgrade hold (E3 §7) end, if held by an upgrade.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts"
+        suppressed_by:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/incident_id"
+        suppressed_children:
+          type: object
+          required: [count, incident_ids]
+          additionalProperties: false
+          properties:
+            count: { type: integer, minimum: 0, x-medic-type: number }
+            incident_ids:
+              description: The first 20; `count` is the total.
+              type: array
+              maxItems: 20
+              items: { $ref: "./decision-record.schema.json#/$defs/incident_id" }
+        reopen_count: { type: integer, minimum: 0, x-medic-type: number }
+        escalation_simulated: { type: boolean, x-medic-type: enum }
+        resolved_at:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts_tick"
+        resolved_how:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/incident_resolved/properties/how"
+        group: { $ref: "./decision-record.schema.json#/$defs/incident_opened/properties/group" }
+        install_shape: { $ref: "./decision-record.schema.json#/$defs/incident_opened/properties/install_shape" }
+        detection_type: { $ref: "./decision-record.schema.json#/$defs/incident_opened/properties/detection_type" }
+        has_fix:
+          description: The incident carries fix text (UX "Fix is wrong" button).
+          type: boolean
+          x-medic-type: enum
+        rateable: { type: boolean, x-medic-type: enum }
+        allowed_feedback:
+          description: Exactly the values POST feedback accepts now; empty when not rateable (UX-21).
+          type: array
+          uniqueItems: true
+          maxItems: 4
+          items: { $ref: "./decision-record.schema.json#/$defs/feedback/properties/value" }
+        ratings:
+          description: Each admin's current (latest) live rating (UX-19). H3 picks "your rating" by session.
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/Rating" }
+        last_seq:
+          description: seq of the newest record about this incident (cheap change detection).
+          type: integer
+          minimum: 0
+          x-medic-type: number
+
+    Rating:
+      type: object
+      required: [admin, value, at, seq]
+      additionalProperties: false
+      properties:
+        admin: { $ref: "./decision-record.schema.json#/$defs/id" }
+        value: { $ref: "./decision-record.schema.json#/$defs/feedback/properties/value" }
+        suggested_lane: { $ref: "./decision-record.schema.json#/$defs/feedback/properties/suggested_lane" }
+        at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        seq: { type: integer, minimum: 0, x-medic-type: number }
+
+    IncidentPage:
+      type: object
+      required: [items, next_cursor, counts]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/IncidentSummary" }
+        next_cursor:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/Cursor"
+        counts:
+          description: Over all incidents matching the filters except `unrated` (UX-13).
+          type: object
+          required: [incidents, rateable, rated]
+          additionalProperties: false
+          properties:
+            incidents: { type: integer, minimum: 0, x-medic-type: number }
+            rateable: { type: integer, minimum: 0, x-medic-type: number }
+            rated: { type: integer, minimum: 0, x-medic-type: number }
+
+    IncidentDetail:
+      type: object
+      required: [summary, opened]
+      additionalProperties: false
+      properties:
+        summary: { $ref: "#/components/schemas/IncidentSummary" }
+        opened:
+          description: The incident_opened record, exactly as stored (evidence, advice, would_have).
+          $ref: "./decision-record.schema.json"
+
+    DecisionPage:
+      type: object
+      required: [items, next_cursor, oldest_seq]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "./decision-record.schema.json" }
+        next_cursor:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/Cursor"
+        oldest_seq:
+          description: The oldest seq still held (after purges); null for an empty store.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - type: integer
+              minimum: 0
+              x-medic-type: number
+
+    FeedbackRequest:
+      description: No identity and no `source` field (v1 is live only); unknown fields → 422.
+      type: object
+      required: [value]
+      additionalProperties: false
+      properties:
+        value: { $ref: "./decision-record.schema.json#/$defs/feedback/properties/value" }
+        suggested_lane:
+          description: Only with value wrong_lane.
+          $ref: "./decision-record.schema.json#/$defs/feedback/properties/suggested_lane"
+        comment:
+          description: Raw admin text, at most 500 characters; K2-redacted before it is stored.
+          type: string
+          minLength: 1
+          maxLength: 500
+          x-medic-type: admin_input
+      allOf:
+        - if: { required: [suggested_lane] }
+          then: { properties: { value: { const: wrong_lane } } }
+
+    FeedbackAccepted:
+      type: object
+      required: [record]
+      additionalProperties: false
+      properties:
+        record: { $ref: "./decision-record.schema.json" }
+
+    Sensor:
+      type: object
+      required: [id, state, since, last_good_at, reason, dropped_last_hour, watcher_incident_id]
+      additionalProperties: false
+      properties:
+        id: { $ref: "./decision-record.schema.json#/$defs/signal_id" }
+        state:
+          type: string
+          enum: [reporting, cant_see, "off"]
+          x-medic-type: enum
+        since:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts"
+        last_good_at:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts"
+        reason:
+          description: Why it can't see (PROVISIONAL list; D5 owns it). null when reporting.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - type: string
+              enum: [auth_401, auth_403, unreachable, timeout, http_5xx, parse_error, not_found,
+                     disabled_by_config, redis_fault, unknown]
+              x-medic-type: enum
+        dropped_last_hour:
+          description: Lines or samples dropped by bounded buffers (T-08). null = not measured, never 0.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - type: integer
+              minimum: 0
+              x-medic-type: number
+        watcher_incident_id:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/incident_id"
+
+    SensorList:
+      type: object
+      required: [as_of, items]
+      additionalProperties: false
+      properties:
+        as_of: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        items:
+          type: array
+          maxItems: 128
+          items: { $ref: "#/components/schemas/Sensor" }
+
+    PackFacts:
+      type: object
+      required: [pack, vigil, source, imported_by, activated_at, stale, in_vigil_range, rules_skipped]
+      additionalProperties: false
+      properties:
+        pack: { $ref: "./pack-manifest.schema.json#/$defs/pack_identity" }
+        vigil: { $ref: "./pack-manifest.schema.json#/$defs/vigil_range" }
+        source:
+          type: string
+          enum: [bundled, admin_import]
+          x-medic-type: enum
+        imported_by:
+          description: Admin session identity for admin_import; null for bundled.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/id"
+        activated_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        stale: { type: boolean, x-medic-type: enum }
+        in_vigil_range: { type: boolean, x-medic-type: enum }
+        rules_skipped:
+          description: Rules not evaluated because they need a newer engine minor (E2 §1).
+          type: integer
+          minimum: 0
+          x-medic-type: number
+
+    PackState:
+      type: object
+      required: [active, previous, bundled, withdrawn, revoked_notice, trust_root, suppression_7d]
+      additionalProperties: false
+      properties:
+        active:
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/PackFacts"
+        previous:
+          description: Last-known-good (C4 keeps two packs).
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/PackFacts"
+        bundled:
+          description: The release's bundled pack when it isn't the active one (for "switch to bundled", F3 #3a).
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "#/components/schemas/PackFacts"
+        withdrawn:
+          description: Versions withdrawn on this site by a revert (re-import needs an override, UX-27).
+          type: array
+          maxItems: 50
+          items: { $ref: "./decision-record.schema.json#/$defs/pack_ref" }
+        revoked_notice:
+          description: Set when a pack was dropped because its signing key was revoked (UX-28), until acknowledged.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - type: object
+              required: [removed, running, at]
+              additionalProperties: false
+              properties:
+                removed: { $ref: "./decision-record.schema.json#/$defs/pack_ref" }
+                running: { $ref: "./decision-record.schema.json#/$defs/pack_ref" }
+                at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        trust_root:
+          type: object
+          required: [version, expires_at]
+          additionalProperties: false
+          properties:
+            version: { type: integer, minimum: 1, x-medic-type: number }
+            expires_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        suppression_7d:
+          description: Incidents suppressed per suppressing rule over the last 7 days (UX-26, T-23).
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [rule, suppressed]
+            additionalProperties: false
+            properties:
+              rule: { $ref: "./decision-record.schema.json#/$defs/rule_id" }
+              suppressed: { type: integer, minimum: 1, x-medic-type: number }
+
+    EvidenceReport:
+      description: |
+        Envelope only. H5 replaces this with a $ref to `evidence-report.schema.json` (A3-4).
+        `metrics` holds counts, rates, rule IDs and enums only: no logs, evidence or comments (UX-29).
+      type: object
+      required: [format, instance_id, period, generated_at, chain_head, anchors, metrics]
+      properties:
+        format:
+          type: string
+          const: medic.evidence/v1
+          x-medic-type: enum
+        instance_id: { $ref: "./decision-record.schema.json#/$defs/instance_id" }
+        period:
+          type: object
+          required: [from, to]
+          additionalProperties: false
+          properties:
+            from: { $ref: "./decision-record.schema.json#/$defs/ts" }
+            to: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        generated_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        chain_head: { $ref: "#/components/schemas/ChainHead" }
+        anchors:
+          description: Purge anchors in the period (H5, T-17).
+          type: integer
+          minimum: 0
+          x-medic-type: number
+        metrics:
+          description: Owned by H5.
+          type: object
+
+paths:
+  /v1/status:
+    get:
+      operationId: getStatus
+      tags: [status]
+      summary: Medic's view of its own health (C5 §5.4)
+      description: |
+        Polled by the backend every 60 s (C5 §5.3), and by H3 for the console, served from a
+        snapshot no older than 15 s. Medic reports only the states it can know about itself.
+        `down`, `off` and `unknown` are derived by the backend (C5 §5.4) and never appear here.
+      x-medic-permission: read
+      responses:
+        "200":
+          description: Current status
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+              examples:
+                degraded:
+                  value:
+                    api_version: "1.0"
+                    instance_id: mi_3f9a2c1b0d4e5f60
+                    state: degraded
+                    now: "2026-12-07T14:02:31Z"
+                    heartbeat_at: "2026-12-07T14:02:30Z"
+                    cycle: 20841
+                    started_at: "2026-12-04T09:58:02Z"
+                    uptime_s: 273269
+                    restarts_24h: 2
+                    last_exit: { reason: oom, at: "2026-12-07T08:11:40Z" }
+                    dev_mode: false
+                    store:
+                      states: [ok]
+                      backend: sqlite
+                      bytes_used: 222298112
+                      cap_bytes: 1073741824
+                      reserve_left_bytes: 67108864
+                      disk_free_bytes: 41875931136
+                      oldest_record_at: "2026-11-30T00:00:12Z"
+                      newest_record_at: "2026-12-07T14:01:45Z"
+                      decisions_lost: 0
+                    sensors: { reporting: 11, cant_see: 1, "off": 2 }
+                    pack:
+                      id: medic-core
+                      version: 0.4.1
+                      channel: stable
+                      expires_at: "2027-01-17T00:00:00Z"
+                      stale: false
+                      in_vigil_range: true
+                    chain_head:
+                      seq: 4211
+                      hash: 76792190d1855c71c2b6b076ba494b9b4f8f795f24a8e2a767823e571fea4f7d
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/incidents:
+    get:
+      operationId: listIncidents
+      tags: [incidents]
+      summary: Incident list for the Incidents tab (H2 §4)
+      description: |
+        One item per E3 incident (rule x group), newest `opened_at` first (ties by
+        `incident_id`). By default a suppressed child is **not** a row of its own: it appears in
+        its parent's `suppressed_children` (UX-12). `counts` covers every incident matching the
+        filters except `unrated`, so the header "Rated X of Y" (UX-13) doesn't change with that
+        filter or with paging.
+      x-medic-permission: read
+      parameters:
+        - name: state
+          in: query
+          description: "open = firing, resolving, held or suppressed; resolved = resolved."
+          schema: { type: string, enum: [open, resolved, all], default: open }
+        - name: lane
+          in: query
+          schema: { type: integer, enum: [1, 2, 3] }
+        - name: subject
+          in: query
+          schema: { type: string, enum: [vigil, watcher] }
+        - name: unrated
+          in: query
+          description: true = rateable incidents with no feedback from any admin.
+          schema: { type: boolean, default: false }
+        - name: include_suppressed
+          in: query
+          description: true = also list suppressed children as rows (eval tooling, not the console).
+          schema: { type: boolean, default: false }
+        - name: opened_after
+          in: query
+          schema: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        - name: opened_before
+          in: query
+          schema: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: One page of incidents
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentPage" }
+              examples:
+                one_page:
+                  value:
+                    items:
+                      - *inc_resolved
+                    next_cursor: null
+                    counts: { incidents: 1, rateable: 1, rated: 1 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/incidents/{incident_id}:
+    get:
+      operationId: getIncident
+      tags: [incidents]
+      summary: One incident, with its full incident_opened record (H2 §5)
+      description: |
+        The timeline (UX-16) is `GET /v1/decisions?incident_id=...`, which pages through every
+        record about this incident in `seq` order, feedback and adjudication included.
+      x-medic-permission: read
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      responses:
+        "200":
+          description: The incident
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentDetail" }
+              examples:
+                resolved_lane2:
+                  value:
+                    summary: *inc_resolved
+                    opened: *rec_opened
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/incidents/{incident_id}/feedback:
+    post:
+      operationId: postFeedback
+      tags: [feedback]
+      summary: Record an admin's rating of an incident (the only write)
+      description: |
+        Appends one G2 `feedback` record through the single writer (C4 §6.7) with
+        `source: live` and `admin` taken from `X-Medic-Admin`. Changing a rating appends again;
+        the latest record per admin is that admin's current rating (UX-19). Medic redacts the
+        comment with K2 before writing and returns the stored record, so the console shows what
+        was kept (UX-20).
+
+        Medic refuses (409 `not_rateable`) when the incident is suppressed, closed quietly or not
+        yet routed, or when the value isn't in the incident's `allowed_feedback`: `disagree`
+        needs fix text, and watcher incidents take only `agree` and `false_alarm` (UX-21, H2 ⚑1).
+        Not idempotent: H3 must not retry it.
+      x-medic-permission: admin
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+      requestBody:
+        required: true
+        description: At most 4 KB; `application/json` only.
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FeedbackRequest" }
+            examples:
+              agree_with_comment:
+                value: { value: agree, comment: "Fixed, the key had expired." }
+              wrong_lane:
+                value: { value: wrong_lane, suggested_lane: 3 }
+      responses:
+        "201":
+          description: The stored feedback record, exactly as written to the chain
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedbackAccepted" }
+              examples:
+                stored:
+                  value:
+                    record: *rec_feedback
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The incident or value doesn't accept feedback
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                suppressed:
+                  value:
+                    type: "urn:medic:error:not_rateable"
+                    status: 409
+                    code: not_rateable
+                    reason: suppressed
+                    request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidBody" }
+        "503": { $ref: "#/components/responses/NotRecording" }
+
+  /v1/decisions:
+    get:
+      operationId: listDecisions
+      tags: [decisions]
+      summary: The decision log (G2 records), oldest seq first
+      description: |
+        Pages through the hash chain in `seq` order. Used for the incident timeline
+        (`incident_id`), for H5 and eval tooling (`from_seq`), and to verify the chain from
+        outside. Records are returned byte-for-byte as stored. `oldest_seq` is the oldest record
+        still held, so a caller that asked for an earlier `from_seq` can see that a purge
+        (anchor) intervened.
+      x-medic-permission: read
+      parameters:
+        - name: incident_id
+          in: query
+          schema: { $ref: "./decision-record.schema.json#/$defs/incident_id" }
+        - name: type
+          in: query
+          description: Repeatable; any of the G2 record types.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 8
+            items: { $ref: "./decision-record.schema.json#/properties/type" }
+        - name: from_seq
+          in: query
+          description: Start at this seq (inclusive). Not allowed together with `cursor`.
+          schema: { type: integer, minimum: 0 }
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          description: Max 100 (a record can be 16 KB, G2 §3).
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: One page of decision records
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionPage" }
+              examples:
+                timeline:
+                  value:
+                    items:
+                      - *rec_opened
+                      - *rec_feedback
+                      - *rec_resolving
+                      - *rec_resolved
+                    next_cursor: null
+                    oldest_seq: 0
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/decisions/{seq}:
+    get:
+      operationId: getDecision
+      tags: [decisions]
+      summary: One decision record by seq
+      x-medic-permission: read
+      parameters:
+        - name: seq
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: The record, exactly as stored
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "./decision-record.schema.json" }
+              examples:
+                feedback:
+                  $ref: "#/components/examples/RecordFeedback"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/sensors:
+    get:
+      operationId: listSensors
+      tags: [sensors]
+      summary: Sensor states for the "Can't see" tab (UX-24; T-08, T-09)
+      description: |
+        One item per sensor. Not paginated (at most 128). A sensor that can't be read is
+        `cant_see`, never `reporting` with a zero; a drop count that wasn't measured is `null`,
+        never 0.
+      x-medic-permission: read
+      responses:
+        "200":
+          description: All sensors
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SensorList" }
+              examples:
+                one_blind:
+                  value:
+                    as_of: "2026-12-07T14:02:30Z"
+                    items:
+                      - id: federation_sources
+                        state: reporting
+                        since: "2026-12-04T09:58:40Z"
+                        last_good_at: "2026-12-07T14:02:15Z"
+                        reason: null
+                        dropped_last_hour: 0
+                        watcher_incident_id: null
+                      - id: daemon_status.poller
+                        state: cant_see
+                        since: "2026-12-07T12:30:00Z"
+                        last_good_at: "2026-12-07T12:29:45Z"
+                        reason: unreachable
+                        dropped_last_hour: null
+                        watcher_incident_id: inc_63b352cea67712745f3b504c
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/pack:
+    get:
+      operationId: getPack
+      tags: [pack]
+      summary: Content pack facts for the Content pack tab (UX-25, UX-26, UX-28)
+      description: |
+        Read-only. Import, revert, switch-to-bundled and the revoked-key acknowledgement are
+        **not** in this contract (X2 ⚑3): they are added under `/v1/pack/` by F6.
+      x-medic-permission: read
+      responses:
+        "200":
+          description: Active, previous and bundled packs, plus trust and suppression facts
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackState" }
+              examples:
+                imported:
+                  value:
+                    active:
+                      pack:
+                        id: medic-core
+                        version: 0.4.1
+                        channel: stable
+                        created_at: "2026-11-18T10:00:00Z"
+                        expires_at: "2027-01-17T00:00:00Z"
+                        publisher: deeptempo
+                      vigil: { min: 1.9.0, max_exclusive: 1.11.0 }
+                      source: admin_import
+                      imported_by: "user:7f3c"
+                      activated_at: "2026-11-20T15:31:02Z"
+                      stale: false
+                      in_vigil_range: true
+                      rules_skipped: 0
+                    previous:
+                      pack:
+                        id: medic-core
+                        version: 0.4.0
+                        channel: stable
+                        created_at: "2026-11-04T10:00:00Z"
+                        expires_at: "2027-01-03T00:00:00Z"
+                        publisher: deeptempo
+                      vigil: { min: 1.9.0, max_exclusive: 1.11.0 }
+                      source: bundled
+                      imported_by: null
+                      activated_at: "2026-11-12T08:00:00Z"
+                      stale: false
+                      in_vigil_range: true
+                      rules_skipped: 0
+                    bundled: null
+                    withdrawn: []
+                    revoked_notice: null
+                    trust_root: { version: 1, expires_at: "2027-10-01T00:00:00Z" }
+                    suppression_7d:
+                      - { rule: llm.key-rejected, suppressed: 2 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Busy" }
+
+  /v1/export:
+    get:
+      operationId: getEvidenceExport
+      tags: [export]
+      summary: Evidence report for a period (H5; UX-29)
+      description: |
+        Returns H5's closed-schema report as one JSON document. Read-only: Medic records
+        nothing. The console previews these exact bytes and downloads the same bytes it
+        previewed (no second fetch), so `X-Medic-Sha256` matches the saved file. **H5 owns the
+        body schema** (`contracts/evidence-report.schema.json`, A3-4, not yet written); until it
+        lands, `EvidenceReport` below is only the envelope, and G3's export route is blocked on H5.
+      x-medic-permission: admin
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        - name: to
+          in: query
+          required: true
+          description: Exclusive; must be after `from`, at most 31 days later, and not in the future.
+          schema: { $ref: "./decision-record.schema.json#/$defs/ts" }
+      responses:
+        "200":
+          description: The report bytes
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+            X-Medic-Sha256:
+              description: sha256 (hex) of the exact response body bytes.
+              schema: { $ref: "./decision-record.schema.json#/$defs/hash" }
+            Content-Disposition:
+              description: 'attachment; filename="medic-evidence-<instance_id>-<from date>-<to date>.json"'
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidenceReport" }
+              examples:
+                week:
+                  value:
+                    format: medic.evidence/v1
+                    instance_id: mi_3f9a2c1b0d4e5f60
+                    period: { from: "2026-11-30T00:00:00Z", to: "2026-12-07T00:00:00Z" }
+                    generated_at: "2026-12-07T14:05:12Z"
+                    chain_head:
+                      seq: 4211
+                      hash: 76792190d1855c71c2b6b076ba494b9b4f8f795f24a8e2a767823e571fea4f7d
+                    anchors: 0
+                    metrics: {}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Busy" }
