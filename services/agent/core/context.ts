@@ -194,7 +194,7 @@ export function transientTail(working: string): Message[] {
 // by core/cases/case_brief.py), sized by a build-side cap that knows neither the
 // model nor the catalogue it will sit beside. When the prefix alone crosses the
 // ceiling, the brief is the one part that can shed: whole lines from the end of
-// the block, which is where its oldest rows sit (alerts and evidence are listed
+// the block, which is where its oldest rows sit (the block lists its rows
 // newest first), keeping the markers and everything outside them untouched.
 const BRIEF_OPEN = "<case_data>";
 const BRIEF_CLOSE = "</case_data>";
