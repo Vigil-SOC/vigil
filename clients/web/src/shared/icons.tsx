@@ -65,6 +65,7 @@ export const ICON = {
   moon: '<path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/>',
   bot: '<rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M12 4v4M9 13h.01M15 13h.01M2 14v2M22 14v2"/>',
   user: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  feedback: '<path d="M4 9.5v5h3.2L13 18.5v-13L7.2 9.5zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>',
   home: '<path d="M4 10.5L12 4l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>',
 }
 
