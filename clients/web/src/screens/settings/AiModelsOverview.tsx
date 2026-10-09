@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
-import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { agentsApi, type AIModelInfo, type ComponentAssignment } from '../../services/api'
@@ -17,7 +16,7 @@ import type { BifrostKey } from '../../services/bifrostApi'
 import { bifrostStaysOnSite, residencyCopy } from '../setup/providerResidency'
 import { useBifrostProviders } from './useBifrost'
 import { useModelAssignment } from './useSettings'
-import { COMPONENT_LABELS, CHAT_DEFAULT_KEY } from '../../config/aiComponents'
+import { COMPONENT_LABELS, CHAT_DEFAULT_KEY, FALLBACK_KEY } from '../../config/aiComponents'
 import type { SectionProps } from './types'
 import './aiModels.css'
 
@@ -182,6 +181,10 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
+  // Components with a save in flight. A row's lock must not clear another row's.
+  const [saving, setSaving] = useState<string[]>([])
+  const lock = (component: string, on: boolean) =>
+    setSaving((s) => (on ? [...s, component] : s.filter((x) => x !== component)))
   const persist = async (component: string, next: RowState) => {
     try {
       if (next.inherit) {
@@ -194,13 +197,38 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       if (!next.providerId || !next.modelId) return
       const a = assignments[component]
       if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort(a) === next.effort) return
-      // Other settings keys are carried over; the PUT replaces the whole object.
-      const rest = { ...a?.settings }
-      delete rest.effort
-      await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
+      lock(component, true) // the fallback PUT would carry this row's old model
+      try {
+        // Other settings keys are carried over; the PUT replaces the whole object.
+        const rest = { ...a?.settings }
+        delete rest.effort
+        // A fallback never crosses a provider or equals the new model; null clears it.
+        if (rest[FALLBACK_KEY] && (a?.provider_id !== next.providerId || rest[FALLBACK_KEY] === next.modelId)) {
+          rest[FALLBACK_KEY] = null
+        }
+        await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
+      } finally {
+        lock(component, false)
+      }
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
+    }
+  }
+
+  // Saves on select, no confirm: a fallback only acts once the model is unavailable.
+  const setFallback = async (component: string, fallback: string) => {
+    const a = assignments[component]
+    if (!a) return
+    lock(component, true)
+    try {
+      // The PUT replaces the whole settings object, so the effort rides along.
+      await assign(component, a.provider_id, a.model_id, { ...a.settings, [FALLBACK_KEY]: fallback || null })
+      notify('ok', `${component} fallback ${fallback ? 'saved' : 'cleared'}.`)
+    } catch (e) {
+      notify('err', (e as { message?: string })?.message || `Failed to save ${component} fallback.`)
+    } finally {
+      lock(component, false)
     }
   }
 
@@ -231,6 +259,19 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const confirm = () => {
     if (pending) persist(pending.component, pending.next)
     setPending(null)
+  }
+
+  // An inheriting row runs on chat_default's row, so it shows that fallback
+  const fallbackOf = (c: string) =>
+    (assignments[rows[c]?.inherit ? CHAT_DEFAULT_KEY : c]?.settings?.[FALLBACK_KEY] as string | undefined) || ''
+  // The row's provider models but the selected one; a stored fallback the provider
+  // no longer lists stays in the list so it still shows
+  const fallbackModels = (c: string) => {
+    const a = assignments[rows[c]?.inherit ? CHAT_DEFAULT_KEY : c]
+    const list = (modelsByProvider[a?.provider_id ?? ''] || []).filter((m) => m.model_id !== a?.model_id)
+    const stored = fallbackOf(c)
+    if (stored && !list.some((m) => m.model_id === stored)) list.push({ model_id: stored } as AIModelInfo)
+    return list
   }
 
   const custom = useCustomAgents(notify)
@@ -268,37 +309,51 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                   const providerModels = row.providerId ? modelsByProvider[row.providerId] || [] : []
                   return (
                     <tr key={c}>
-                      <td style={{ minWidth: 220, maxWidth: 300 }}>
+                      <td style={{ minWidth: 200, maxWidth: 300 }}>
                         <div className="aim-who">{meta.label}</div>
                         <div className="aim-note">{meta.description}</div>
                       </td>
-                      <td style={{ minWidth: 400 }}>
+                      <td style={{ minWidth: 340 }}>
                         <div className="aim-model">
                           <Select
                             value={row.providerId}
                             placeholder="Select provider"
+                            disabled={saving.includes(c)}
                             options={providerIds.map((pid) => ({ value: pid, label: pid }))}
                             onSelect={(v) => update(c, { providerId: v, modelId: '' })}
                           />
                           <Select
                             value={row.modelId}
                             placeholder="Select model"
+                            searchable
+                            disabled={saving.includes(c)}
                             options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
                             onSelect={(v) => update(c, { modelId: v })}
                           />
                         </div>
                       </td>
-                      <td className="aim-muted">
-                        —{' '}
-                        <InfoTip label="About the fallback" text="A fallback is set on custom agents, not on these components." />
+                      <td>
+                        <div className="aim-fallback">
+                        <Select
+                          value={fallbackOf(c)}
+                          placeholder="Stops"
+                          disabled={!assignments[c] || row.inherit || saving.includes(c)}
+                          options={[
+                            { value: '', label: 'Stops' },
+                            ...fallbackModels(c).map((m) => ({ value: m.model_id, label: m.display_name || m.model_id })),
+                          ]}
+                          onSelect={(v) => setFallback(c, v)}
+                        />
+                        </div>
                       </td>
-                      <td style={{ minWidth: 140 }}>
+                      <td style={{ minWidth: 120 }}>
                         {row.inherit ? (
                           <span className="aim-muted">—</span>
                         ) : (
                           <Select
                             value={row.effort || 'default'}
                             options={EFFORT_OPTIONS}
+                            disabled={saving.includes(c)}
                             onSelect={(v) => update(c, { effort: v === 'default' ? '' : (v as Effort) })}
                           />
                         )}

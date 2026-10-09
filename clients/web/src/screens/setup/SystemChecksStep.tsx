@@ -49,8 +49,8 @@ const NEEDS: { icon: IconName; title: string; sub: string }[] = [
 const readHealth = async (): Promise<Result> => {
   const res = await consoleApi.getHealth()
   const status = (res.data as { status?: string } | undefined)?.status
-  if (status && status !== 'healthy') return { phase: 'needs', detail: `Status is ${status}` }
-  return { phase: 'passed', detail: status || 'Reachable' }
+  if (status !== 'healthy') return { phase: 'needs', detail: `Status is ${status ?? 'unknown'}` }
+  return { phase: 'passed', detail: status }
 }
 
 const readDatabase: Read = async (storage) => {
@@ -78,7 +78,9 @@ const readProvider = async (): Promise<Result> => {
 
 const readFederation = async (): Promise<Result> => {
   const read = (await federationApi.getHealth()).data as FederationRead | undefined
-  const failing = failingFederationSource(read ?? null)
+  // no body is a failed read, not an empty list
+  if (!read) throw new Error('no federation health body')
+  const failing = failingFederationSource(read)
   if (failing) {
     return {
       phase: 'needs',
@@ -97,7 +99,9 @@ const readFederation = async (): Promise<Result> => {
 
 const readMcp = async (): Promise<Result> => {
   const read = (await mcpApi.getStatuses()).data as McpRead | undefined
-  const down = stoppedMcpServer(read ?? null)
+  // no body is a failed read, not "None enabled"
+  if (!read) throw new Error('no MCP status body')
+  const down = stoppedMcpServer(read)
   if (down) {
     return {
       phase: 'needs',
