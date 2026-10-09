@@ -1,0 +1,7 @@
+id: lanes-04-lane1-gate-fails-at-routing
+description: A lane-1 rule reaches the router with one untrusted log signal. E-LANE1 should have refused it at load time, so this means a defective or tampered pack. The router's own check (E2 ENG 4) sends it to lane 3 (R3).
+until: 3600
+incidents:
+  - {id: a, rule: pipeline.orphan-port-holder, lane: 1, trust: untrusted, signals: 1, samples: 0, opened_at: 0, runbook: {id: kill-orphan-port-holder, verify_after_s: 120}}
+expect:
+  a: {lane: {value: 3, reason: lane1_gate_failed}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}

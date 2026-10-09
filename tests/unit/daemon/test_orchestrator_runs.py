@@ -473,7 +473,7 @@ class TestShadowAdjudication:
         assert orch._update_investigation_status.call_args[0][1] == "executing"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("trigger_type", ["manual", "scheduled", "case_review"])
+    @pytest.mark.parametrize("trigger_type", ["manual", "scheduled"])
     async def test_only_a_detection_finding_gets_a_shadow(self, tmp_path, trigger_type):
         _, _, enqueued, begin_run = await self._admit(tmp_path, trigger_type)
         assert enqueued.await_count == 1

@@ -100,7 +100,11 @@ describe("verdict review", () => {
     expect(started.ledger.projection.hunt.outcome).toBeNull();
 
     await expect(controllerFor(started.ledger, [CONCLUDE]).advanceIteration()).rejects.toThrow(HuntParked);
-    await expect(controllerFor(started.ledger, [CONCLUDE]).advanceIteration()).rejects.toThrow(/approve .*reject/s);
+    // Names the question and nothing internal: no hunt id, no directive syntax.
+    const reason = await controllerFor(started.ledger, [CONCLUDE]).advanceIteration().catch((error: Error) => error.message);
+    expect(reason).toMatch(/^Waiting for your approval: Mark h-\w+ proven\?/);
+    expect(reason).not.toContain(started.ledger.projection.hunt.hunt_id);
+    expect(reason).not.toMatch(/directive/);
   });
 
   it("survives process death: a controller from the ledger alone still shows it pending", async () => {
@@ -566,7 +570,7 @@ describe("HANDOFF_IR", () => {
     // What an IR responder is handed: the claim, the numbers, the records, and
     // what the hunt could not see. Journaled, not written beside a ledger path.
     const caseFile = record.case_markdown!;
-    expect(caseFile).toMatch(/# IR case/);
+    expect(caseFile).toMatch(/# Handoff — /);
     expect(caseFile).toMatch(/h one/);
     expect(caseFile).toMatch(/2 corroborating source system\(s\)/);
     expect(caseFile).toContain(citations[0]!);
@@ -711,6 +715,6 @@ describe("a supervised hunt end to end", () => {
     expect(replayed.hypotheses.get(hypothesisId)!.status).toBe("handed_off");
     expect(replayed.resolutions).toHaveLength(3);
     expect(replayed.resolutions.every((resolution) => resolution.actor !== AUTO_ACTOR)).toBe(true);
-    expect(replayed.handoffs[0]!.case_markdown).toMatch(/# IR case/);
+    expect(replayed.handoffs[0]!.case_markdown).toMatch(/# Handoff — /);
   });
 });

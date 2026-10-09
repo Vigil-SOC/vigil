@@ -1,0 +1,133 @@
+id: v21-kleene-any-all
+title: any(true, unknown) fires; all(true, unknown) stays unknown
+covers:
+- §2 Kleene
+start: '2026-10-07T10:00:00Z'
+end: +10m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: pipeline.failures-any
+    title: Vector rule pipeline.failures-any
+    revision: 1
+    fault:
+      class: pipeline
+      mode: P-1
+      causes:
+      - P-1.e
+    lane: 3
+    signals: &id001
+      failed:
+        sample:
+          signal: redis_queues
+          key: bull_agent_runs.failed
+      errors:
+        sample:
+          signal: daemon_status.processor
+          key: errors
+    when:
+      any: &id002
+      - fn: latest
+        signal: failed
+        op: '>'
+        value: 10
+      - fn: latest
+        signal: errors
+        op: '>'
+        value: 10
+    for: 0s
+    advice: &id003
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: pipeline.failures-all
+    title: Vector rule pipeline.failures-all
+    revision: 1
+    fault:
+      class: pipeline
+      mode: P-1
+      causes:
+      - P-1.e
+    lane: 3
+    signals: *id001
+    when:
+      all: *id002
+    for: 0s
+    advice: *id003
+sensors:
+- id: redis.queues
+  covers:
+  - redis_queues
+  interval: 15s
+  service: redis
+  states:
+  - - +0s
+    - ok
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - error
+types:
+  redis_queues:
+    bull_agent_runs.failed: gauge
+  daemon_status.processor:
+    errors: counter
+series:
+- signal: redis_queues
+  key: bull_agent_runs.failed
+  steps:
+  - - +0s
+    - 20
+- signal: daemon_status.processor
+  key: errors
+  steps:
+  - - +0s
+    - 0
+expect:
+- at: +1m
+  rule: pipeline.failures-any
+  eval: true
+  state: firing
+  incident: A
+- at: +1m
+  rule: pipeline.failures-all
+  eval: unknown
+  state: inactive
+- at: +10m
+  rule: pipeline.failures-all
+  eval: unknown
+  state: inactive
+- at: +3m
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.daemon
+  incident: SB
+incidents:
+  A:
+    rule: pipeline.failures-any
+    active_since: +0s
+    opened_at: +0s
+    resolving_since: null
+    resolved_at: null
+    routed_at: +0s
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +30s
+    opened_at: +2m30s
+    resolving_since: null
+    resolved_at: null
+    group:
+      sensor: http.daemon
+    routed_at: +2m30s
