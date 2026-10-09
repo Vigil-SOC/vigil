@@ -1,0 +1,122 @@
+id: v13-incident-flapping
+title: Third opening in 60m reopens the last incident and holds it 30m
+covers:
+- §5 flapping
+start: '2026-10-07T10:00:00Z'
+end: +72m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: llm.queue-backlog
+    title: Vector rule llm.queue-backlog
+    revision: 1
+    fault:
+      class: llm
+      mode: L-3
+      causes:
+      - L-3.a
+    lane: 3
+    signals:
+      depth:
+        sample:
+          signal: redis_queues
+          key: arq_llm.zcard
+    when:
+      fn: latest
+      signal: depth
+      op: '>'
+      value: 100
+    for: 0s
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: redis.queues
+  covers:
+  - redis_queues
+  interval: 15s
+  service: redis
+  states:
+  - - +0s
+    - ok
+types:
+  redis_queues:
+    arq_llm.zcard: gauge
+series:
+- signal: redis_queues
+  key: arq_llm.zcard
+  steps:
+  - - +0s
+    - 0
+  - - +5m
+    - 150
+  - - +10m
+    - 0
+  - - +20m
+    - 150
+  - - +25m
+    - 0
+  - - +35m
+    - 150
+  - - +40m
+    - 0
+expect:
+- at: +5m
+  rule: llm.queue-backlog
+  eval: true
+  state: firing
+  incident: A
+- at: +10m
+  rule: llm.queue-backlog
+  eval: false
+  state: inactive
+- at: +20m
+  rule: llm.queue-backlog
+  eval: true
+  state: firing
+  incident: B
+- at: +25m
+  rule: llm.queue-backlog
+  eval: false
+  state: inactive
+- at: +35m
+  rule: llm.queue-backlog
+  eval: true
+  state: firing
+  incident: B
+  note: 'third opening in 60m: B reopened, flapping'
+- at: +40m
+  rule: llm.queue-backlog
+  eval: false
+  state: resolving
+  incident: B
+- at: +69m45s
+  rule: llm.queue-backlog
+  eval: false
+  state: resolving
+  incident: B
+- at: +70m
+  rule: llm.queue-backlog
+  eval: false
+  state: inactive
+incidents:
+  A:
+    rule: llm.queue-backlog
+    active_since: +5m
+    opened_at: +5m
+    resolving_since: +10m
+    resolved_at: +10m
+    reason: cleared
+    routed_at: +5m
+  B:
+    rule: llm.queue-backlog
+    active_since: +20m
+    opened_at: +20m
+    resolving_since: +40m
+    resolved_at: +70m
+    reason: cleared
+    flapping: true
+    reopen_count: 1
+    routed_at: +20m

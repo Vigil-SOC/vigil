@@ -1,0 +1,20 @@
+{
+  "$comment": "Refused: suggested_lane on an 'agree'.",
+  "v": 1,
+  "at": "2026-12-07T09:40:00Z",
+  "type": "feedback",
+  "body": {
+    "incident_id": "inc_50eeae0570ffe3e235dd00c0",
+    "value": "agree",
+    "source": "live",
+    "admin": "user:7f3c",
+    "comment": {
+      "text": "Fixed, the key had expired.",
+      "redaction_version": "k2-1.0"
+    },
+    "suggested_lane": 1
+  },
+  "seq": 1,
+  "prev": "4df3941d81577f2a8854b6c834ede3472d9dcd6c3899b6849c57a460a2138f33",
+  "hash": "5c6c91c9127605d954407c07b14bd84be1b9ef62e592e02e98b5ff96bd8a4d02"
+}

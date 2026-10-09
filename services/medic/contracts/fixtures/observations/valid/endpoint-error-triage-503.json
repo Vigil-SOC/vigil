@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "id": "http.triage:01JA8Z3K4M:3",
+  "kind": "sample",
+  "signal": "triage",
+  "sensor": {
+    "id": "http.triage",
+    "run": "01JA8Z3K4M",
+    "seq": 3
+  },
+  "target": {
+    "service": "backend",
+    "instance": "deeptempo-backend",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:30Z",
+  "observed_at": "2026-10-07T10:00:30Z",
+  "source_ts": null,
+  "outcome": "error",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "values": [],
+  "error": {
+    "class": "http_status",
+    "http_status": 503,
+    "detail": "upstream database unavailable"
+  }
+}

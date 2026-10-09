@@ -1,23 +1,29 @@
 # Versions and `files` must match requirements-dev.txt and CI, or this formats
 # into a state CI rejects.
+#
+# services/medic/contracts/ is excluded from black, isort and flake8: it is copied
+# verbatim from the Medic contracts and gated by ruff in .github/workflows/medic.yml.
 repos:
   - repo: https://github.com/psf/black
     rev: 26.5.1
     hooks:
       - id: black
         files: ^(services|core)/
+        exclude: ^services/medic/contracts/
 
   - repo: https://github.com/PyCQA/isort
     rev: 8.0.1
     hooks:
       - id: isort
         files: ^(services|core)/
+        exclude: ^services/medic/contracts/
 
   - repo: https://github.com/PyCQA/flake8
     rev: 7.4.1
     hooks:
       - id: flake8
         files: ^(services|core)/
+        exclude: ^services/medic/contracts/
 
   # The committed frontend types are generated from the API's OpenAPI spec, and
   # CI's Generated API Types check fails when they lag it. A route docstring is

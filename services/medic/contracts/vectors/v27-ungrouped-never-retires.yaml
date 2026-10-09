@@ -1,0 +1,73 @@
+id: v27-ungrouped-never-retires
+title: A rule without group_by has one {} group, which never retires even after 25 h with no observations
+covers:
+- §3 group lifetime
+start: '2026-10-07T10:00:00Z'
+end: +25h
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.kafka-consumer-erroring
+    title: Vector rule ingest.kafka-consumer-erroring
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 3
+    signals:
+      errors:
+        sample:
+          signal: federation_sources
+          key: sources.consecutive_errors
+    when:
+      fn: latest
+      signal: errors
+      op: '>'
+      value: 3
+    for: 0s
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.federation
+  covers:
+  - federation_sources
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  federation_sources:
+    sources.consecutive_errors: gauge
+series:
+- signal: federation_sources
+  key: sources.consecutive_errors
+  to: +10m
+  steps:
+  - - +0s
+    - 5
+expect:
+- at: +1m
+  rule: ingest.kafka-consumer-erroring
+  eval: true
+  state: firing
+  incident: A
+- at: +25h
+  rule: ingest.kafka-consumer-erroring
+  eval: unknown
+  state: firing
+  incident: A
+  note: '{} never retires; unknown keeps it firing'
+incidents:
+  A:
+    rule: ingest.kafka-consumer-erroring
+    active_since: +0s
+    opened_at: +0s
+    resolving_since: null
+    resolved_at: null
+    routed_at: +0s
