@@ -6,7 +6,15 @@ import type { ConsoleScreenProps } from '../../shared/types'
 import SettingsScreen from './SettingsScreen'
 
 vi.mock('./AiConfigSection', () => ({ default: () => <div>AI panel</div> }))
-vi.mock('./IntegrationsSection', () => ({ default: () => <div>Integrations panel</div> }))
+// Integrations renders its own page head (it carries the head actions), so the stub does too
+vi.mock('./IntegrationsSection', () => ({
+  default: () => (
+    <>
+      <header className="page-head"><h2>Integrations</h2><p>Stub description.</p></header>
+      <div>Integrations panel</div>
+    </>
+  ),
+}))
 const integrationsState = vi.hoisted(() => ({ attention: [] as unknown[] }))
 vi.mock('./IntegrationsState', () => ({
   IntegrationsStateProvider: ({ children }: { children: unknown }) => children,

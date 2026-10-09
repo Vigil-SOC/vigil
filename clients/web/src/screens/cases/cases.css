@@ -10,6 +10,7 @@
   --stack-radius: 10px;
   --stack-gap: 1px;
   min-height: 0; /* lets .detail-body scroll so the composer stays on screen in the drawer */
+  height: 100%; /* the full-page route's parent is a block, so flex: 1 alone leaves the pinned composer short of, or past, the bottom */
 }
 
 .case-page .detail-head {
@@ -222,7 +223,7 @@
   border-left: 1px solid var(--ln0);
   background: var(--bg1);
   overflow-y: auto;
-  padding: 16px 18px 72px; /* clear of the floating Ask Vigil button */
+  padding: 16px 18px 110px; /* clear of the floating Ask Vigil button (110px, as the Watch page pads it) */
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1073,8 +1074,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: none;
   width: 100%;
-  padding: 6px 24px 0;
+  padding: 6px 24px 4px;
+  line-height: 1.4;
   border: 0;
   background: transparent;
   color: var(--tx3);
@@ -1098,9 +1101,12 @@
   min-height: 0;
   max-height: min(150px, 40vh);
   max-height: min(150px, 40cqh); /* never over 40% of the drawer (a size container, shell.css); off a drawer cqh is the viewport */
-  padding: 8px 24px 4px;
+  padding: 8px 14px 8px 24px; /* the right pad leaves room for the stable thin scrollbar so the thread ends where the input does */
   gap: 10px;
   overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  mask-image: linear-gradient(to bottom, transparent, #000 8px, #000 calc(100% - 8px), transparent); /* a bubble scrolled past either edge fades out instead of showing a cut edge */
 }
 
 .case-composer .msg {
@@ -1257,7 +1263,7 @@
 @container (max-width: 480px) {
   .case-composer .composer-box { padding-inline: 14px; }
   .case-composer .composer-fold { padding-inline: 14px; }
-  .case-composer .chat-body { padding-inline: 14px; }
+  .case-composer .chat-body { padding-inline: 14px 4px; }
   .case-composer .chat-input { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
   .case-composer .composer-note { grid-row: 2; grid-column: 1 / -1; white-space: normal; padding-bottom: 2px; }
   .case-composer .ci-send { grid-row: 1; grid-column: 2; }

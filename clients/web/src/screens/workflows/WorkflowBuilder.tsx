@@ -376,7 +376,7 @@ export default function WorkflowBuilder({ initial, autoGenerate, onClose, onSave
             {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
             <div className="flex justify-end gap-2.5 pt-1">
               <button className="btn ghost" onClick={() => setGenOpen(false)}>Cancel</button>
-              <button className="btn primary" disabled={!genPrompt.trim() || generating} style={{ opacity: !genPrompt.trim() || generating ? 0.5 : 1 }} onClick={generate}><Icon name="sparkle" /> {generating ? 'Generating…' : 'Generate'}</button>
+              <button className="btn primary" disabled={!genPrompt.trim() || generating} onClick={generate}><Icon name="sparkle" /> {generating ? 'Generating…' : 'Generate'}</button>
             </div>
           </div>
         </Popup>
