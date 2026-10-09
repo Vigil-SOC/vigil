@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import SetupScreen from './SetupScreen'
 import { SETUP_DISMISSED_KEY } from './setupDismissed'
-import { federationApi, mcpApi } from '../../services/api'
+import { configApi, federationApi, mcpApi } from '../../services/api'
 import { TEST_POLL_MS, TEST_POLL_TRIES } from './SourceCollection'
 
 const auth = vi.hoisted(() => ({
@@ -319,6 +319,27 @@ describe('SetupScreen', () => {
       expect(await screen.findByText(/^Connected to /)).toBeInTheDocument()
       expect(screen.queryByRole('switch')).not.toBeInTheDocument()
       expect(federationApi.listSources).not.toHaveBeenCalled()
+    })
+
+    it('a second save merges with the first, not the config read at mount', async () => {
+      vi.mocked(mcpApi.listServers).mockResolvedValue({
+        data: { servers: ['crowdstrike', 'opensearch'] },
+      } as never)
+      vi.mocked(configApi.setIntegrations).mockClear()
+      renderSetup()
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await screen.findByText('CrowdStrike Falcon'))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      await screen.findByText('Connected to CrowdStrike Falcon')
+      fireEvent.click(screen.getByRole('button', { name: 'Connect another' }))
+      fireEvent.click(await screen.findByText(/OpenSearch/))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      await screen.findByText(/^Connected to OpenSearch/)
+      const calls = vi.mocked(configApi.setIntegrations).mock.calls
+      const second = calls[calls.length - 1][0] as { enabled_integrations: string[] }
+      expect(second.enabled_integrations).toEqual(
+        expect.arrayContaining(['crowdstrike', 'opensearch']),
+      )
     })
   })
 })
