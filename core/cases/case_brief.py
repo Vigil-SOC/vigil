@@ -26,8 +26,9 @@ LINE_CHARS = 240
 FINDING_CHARS = 600
 # The brief rides in the system prompt on every turn and shares the agent layer's
 # request ceiling (DEFAULT_FOLD.max_chars, 120,000, services/agent/core/context.ts)
-# with the tool catalogue (about 92,000 with the default MCP servers) and the
-# history the question is asked against. Past this it sheds rows.
+# with the tool catalogue (about 23,000: the built-ins plus the two integration
+# tools, fixed however many MCP servers are connected) and the history the
+# question is asked against. Past this it sheds rows.
 MAX_BRIEF_CHARS = 12_000
 
 OPEN, CLOSE = "<case_data>", "</case_data>"
