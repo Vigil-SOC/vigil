@@ -10,11 +10,22 @@ const FEEDBACK_BASE =
   import.meta.env.VITE_FEEDBACK_URL ||
   'https://github.com/Vigil-SOC/vigil/issues/new?labels=console-feedback'
 
-function feedbackHref(screen: string, version: string): string {
+export function feedbackHref(screen: string, version: string): string {
   const url = new URL(FEEDBACK_BASE)
   url.searchParams.set('title', `Console feedback: ${screen}`)
   url.searchParams.set('body', `Screen: ${screen}\nVersion: ${version || 'unknown'}\n\n`)
   return url.toString()
+}
+
+/** two-letter avatar text; /auth/me can send null/omitted full_name even though the TS type is string */
+export function userInitials(user: { full_name?: string | null; username?: string }): string {
+  return (user.full_name?.trim() || user.username || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
 }
 
 export default function UserMenu({
@@ -83,13 +94,7 @@ export default function UserMenu({
 
   // /auth/me can send null/omitted full_name even though the TS type is string
   const displayName = user.full_name?.trim() || user.username || ''
-  const initials = displayName
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
+  const initials = userInitials(user)
   const role = user.role_id.replace(/^role-/, '').replace(/-/g, ' ')
   const current = screen || 'console'
 

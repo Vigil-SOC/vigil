@@ -547,6 +547,16 @@ input.vg-side-input {
   cursor: default;
 }
 
+/* same disabled treatment as .btn.primary: placeholder text on a quiet fill, not a dimmed accent */
+.vg-side-btn.primary:disabled {
+  background: var(--bg3);
+  border-color: var(--ln1);
+  color: var(--tx3);
+  opacity: 1;
+  cursor: not-allowed;
+  filter: none;
+}
+
 .vg-side-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1045,27 +1055,7 @@ select.vg-side-input {
 
 /* Replaces the old title bar; scrolls with the screen. Home draws its own. */
 .vg-page-head {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
   padding: 20px 22px 0;
-}
-
-.vg-page-head h1 {
-  margin: 0;
-  color: var(--tx0);
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
-  line-height: 1.25;
-}
-
-.vg-page-head p {
-  max-width: 760px;
-  margin: 0;
-  color: var(--tx1);
-  font-size: 13px;
-  line-height: 1.5;
 }
 
 /* Profile menu: docs/design/console/boards/MainP2.dc.html */
@@ -1184,52 +1174,65 @@ select.vg-side-input {
 
 .console-tour-ring {
   position: fixed;
-  border-radius: 10px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
-  outline: 2px solid var(--ac);
+  border-radius: var(--radius-button);
+  box-shadow: 0 0 0 3px var(--ac), 0 0 0 9999px var(--spot);
   pointer-events: none;
 }
 
+/* 16px radius is the board's; the token scale stops at 14px. */
 .console-tour-card {
   position: fixed;
-  width: 300px;
-  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 330px;
+  padding: 16px;
   background: var(--bg2);
-  border: 1px solid var(--ln2);
-  border-radius: 12px;
-  box-shadow: 0 16px 40px var(--shadow);
+  border: 1px solid var(--ac-ln);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px var(--shadow);
   color: var(--tx1);
   font-family: var(--font-ui);
   pointer-events: auto;
 }
 
 .console-tour-card h2 {
-  margin: 0 0 6px;
+  margin: 0;
   color: var(--tx0);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .console-tour-card p {
   margin: 0;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
-.console-tour-step {
-  margin-bottom: 6px;
-  color: var(--tx2);
+.console-tour-card .console-tour-step {
+  color: var(--ac);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .console-tour-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 4px;
+}
+
+.console-tour-skip {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .console-tour-spacer {

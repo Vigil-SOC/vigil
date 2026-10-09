@@ -1,0 +1,282 @@
+/* Setup wizard shell. Board: docs/design/console/boards/Onboarding.dc.html. Tokens only. */
+.su-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg0);
+  color: var(--tx0);
+  font-family: var(--font-ui);
+}
+
+.su-top {
+  flex: 0 0 var(--size-header-row);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 20px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--ln0);
+}
+
+.su-top-end,
+.su-brand {
+  display: flex;
+  align-items: center;
+}
+
+.su-top-end {
+  gap: 10px;
+}
+
+.su-brand-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 10px 0 12px;
+  background: var(--ln2);
+}
+
+.su-brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tx1);
+}
+
+.su-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--size-button-sm);
+  padding: 0 12px;
+  border: 1px solid var(--ln1);
+  border-radius: var(--radius-button);
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.su-feedback:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.su-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.su-rail {
+  flex: 0 0 300px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 26px 18px 20px;
+  overflow-y: auto;
+  background: var(--bg1);
+  border-right: 1px solid var(--ln0);
+}
+
+.su-rail-head {
+  padding: 0 10px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+}
+
+.su-rail-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-panel);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.su-rail-item:hover {
+  background: var(--bg3);
+}
+
+.su-rail-item.on {
+  background: var(--ac-bg);
+  border-color: var(--ac-ln);
+}
+
+.su-rail-n {
+  flex: 0 0 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-round);
+  background: var(--bg3);
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.su-rail-item.on .su-rail-n {
+  background: var(--ac);
+  color: var(--ac-tx);
+}
+
+.su-rail-item.passed .su-rail-n {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.su-rail-t {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-rail-s {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-rail-gap {
+  flex: 1;
+}
+
+.su-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-radius: var(--radius-card);
+  background: var(--bg2);
+}
+
+.su-guide-t {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-guide-t svg {
+  color: var(--ac);
+}
+
+.su-guide p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-demo {
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+  cursor: pointer;
+}
+
+.su-demo:hover:not(:disabled) {
+  color: var(--tx0);
+}
+
+.su-demo:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.su-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.su-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 48px;
+}
+
+.su-col {
+  max-width: 940px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.su-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ac);
+}
+
+.su-head h1 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  line-height: 1.2;
+  color: var(--tx0);
+}
+
+.su-head p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tx1);
+}
+
+.su-foot {
+  flex: 0 0 68px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 48px;
+  background: var(--bg1);
+  border-top: 1px solid var(--ln0);
+}
+
+.su-foot-note {
+  flex: 1;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.su-foot .btn {
+  height: var(--size-button);
+  padding: 0 14px;
+  border-radius: var(--radius-button);
+  font-weight: 600;
+}
+
+.su-foot .btn.ghost {
+  border-color: transparent;
+  color: var(--tx1);
+}
+
+.su-foot .btn.ghost:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+/* the toast viewport sits bottom-right; keep it off the footer's buttons */
+.su-root .toast-viewport {
+  bottom: 84px;
+}

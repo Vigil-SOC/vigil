@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { approvalsApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
+import { PageHead } from '../shared/PageHead'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
@@ -251,8 +252,12 @@ function SocConsoleInner() {
     prepareStop(tourIndex)
   }, [tourOn, tourIndex, prepareStop, wallMode, chatOpen, viewFull])
 
-  // screens that deep-link a detail re-assert viewFull from their own URL state
+  // screens that deep-link a detail re-assert viewFull from their own URL state; a child's effect
+  // runs before this one on first mount, so only a change of screen may clear what it set
+  const shownScreen = useRef(current)
   useEffect(() => {
+    if (shownScreen.current === current) return
+    shownScreen.current = current
     setViewFull(false)
     setWallMode(false)
   }, [current])
@@ -437,8 +442,9 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  // these draw their own heading; Home's headline is its heading, and the Cases list draws its page head
-  const ownsHeading = current === 'workflows' || current === 'settings' || current === 'home' || current === 'cases'
+  // these draw their own heading; Home's headline is its heading, and the Cases and Triage lists draw their page heads
+  const ownsHeading =
+    current === 'workflows' || current === 'settings' || current === 'home' || current === 'cases' || current === 'triage'
   const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
@@ -561,10 +567,9 @@ function SocConsoleInner() {
           <main className="view" style={{ overflowY: viewFull ? 'hidden' : 'auto' }}>
             <div className="screen" style={viewFull ? { height: '100%' } : undefined}>
               {showHeading && (
-                <header className="vg-page-head">
-                  <h1>{title}</h1>
-                  <p>{sub}</p>
-                </header>
+                <div className="vg-page-head">
+                  <PageHead title={title} description={sub} level="h1" />
+                </div>
               )}
               <ErrorBoundary resetKey={valid ? current : 'notfound'}>
                 {!valid ? (

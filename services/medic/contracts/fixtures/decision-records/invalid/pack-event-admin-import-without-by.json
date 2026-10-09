@@ -1,0 +1,18 @@
+{
+  "$comment": "Refused: an admin import that doesn't record who imported it (F3: importer identity).",
+  "v": 1,
+  "at": "2026-12-10T16:05:00Z",
+  "type": "pack_event",
+  "body": {
+    "event": "imported",
+    "pack": {
+      "id": "medic-core",
+      "version": "0.1.0"
+    },
+    "previous": null,
+    "source": "admin_import"
+  },
+  "seq": 11,
+  "prev": "0e377c397ee82c9fda86fcbed0965b2927b03c8d3627e6fc72c4b02eb78eafa6",
+  "hash": "b111de0041242576a2c43f7f7fd35f750e2b7dd029c0e7195b6c9287ff68d2e8"
+}

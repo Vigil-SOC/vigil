@@ -184,7 +184,7 @@ Boards: `Agents`, `AgentEditor`, `SkillEditor`, `WorkflowRun`. Fastest path: tod
 
 Boards: `Settings`, `SettingsIntegrations`, `SettingsCustom`, `SettingsCollection`, `SettingsSLA`, `SettingsLimits`, `SettingsData`. Seven screens; Team and access and Feedback are phase 2.
 
-- **SE-P1. AI models**: per-agent model with fallback (B12), provider and hosted-or-local, gateway budget as today; caching, context and tool-result size where today's config carries them. Changes confirm and journal through today's config audit.
+- **SE-P1. AI models**: per-agent model with fallback (B12; built-in components keep a same-provider fallback in `ai_model_configs.settings`, #1816), provider and hosted-or-local, gateway budget as today; caching, context and tool-result size where today's config carries them. Changes confirm and journal through today's config audit.
 - **SE-P2. Integrations**: today's list and setup wizard restyled, with status, last successful read, and whether a source-console link template is present (B5). Vigil's own MCP credentials as today, with hold-to-revoke. Custom integration builder as today under its own screen.
 - **SE-P3. Alert collection**: federation sources with cursor, lag and expected interval (B3), poll now; rule sources; Kafka and ingestion under Data and uploads.
 - **SE-P4. SLA policies**: today's policies screen restyled; escalation steps as today's escalation rules.

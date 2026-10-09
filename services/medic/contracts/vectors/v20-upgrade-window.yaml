@@ -1,0 +1,122 @@
+id: v20-upgrade-window
+title: A version change holds new incidents for 15 min; transients vanish, persistent faults fire at the end
+covers:
+- §7 upgrade windows
+start: '2026-10-07T10:00:00Z'
+end: +40m
+rules:
+- ref: ingest-kafka-decode-errors.yaml
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.kafka-disconnected
+    title: Vector rule ingest.kafka-disconnected
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 3
+    signals:
+      connected:
+        sample:
+          signal: daemon_status.kafka
+          key: connected
+    when:
+      fn: latest
+      signal: connected
+      op: ==
+      value: false
+    for: 2m
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+- id: http.version
+  covers:
+  - version
+  interval: 60s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+  version:
+    version: enum
+series:
+- signal: version
+  key: version
+  steps:
+  - - +0s
+    - 1.8.0
+  - - +20m
+    - 1.9.0
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 0
+  - - +18m
+    - 10
+- signal: daemon_status.kafka
+  key: missing_id_errors
+  steps:
+  - - +0s
+    - 0
+- signal: daemon_status.kafka
+  key: connected
+  steps:
+  - - +0s
+    - true
+  - - +22m
+    - false
+expect:
+- at: +18m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: pending
+- at: +28m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: pending
+  note: for elapsed, but inside the upgrade window
+- at: +33m
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: inactive
+  note: 'transient: never fired'
+- at: +30m
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: pending
+- at: +35m
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: firing
+  incident: A
+  note: window over at +35m
+incidents:
+  A:
+    rule: ingest.kafka-disconnected
+    active_since: +22m
+    opened_at: +35m
+    resolving_since: null
+    resolved_at: null
+    held_by_upgrade_until: +35m
+    routed_at: +35m
