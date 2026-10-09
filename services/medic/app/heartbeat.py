@@ -13,7 +13,7 @@ import os
 import tempfile
 from pathlib import Path
 
-# C5 time budget (ENG #2): a beat every 30 s, stale after 4 missed beats,
+# C5 time budget (ENG #2): a beat at least every 30 s (S4 beats every 15 s cycle), stale after 4 missed beats,
 # 300 s grace for start-up, and the watchdog later than the probe budget so on
 # Helm the kubelet acts first.
 BEAT_INTERVAL_S = 30
@@ -26,6 +26,13 @@ WATCHDOG_AFTER_S = 180
 FUTURE_SLACK_S = 60
 
 FORMAT_VERSION = 1
+
+# The states `check` calls healthy. `degraded` is C5 K-d: a dependency fault is
+# reported in the state, never as a failed check. Every other state fails with
+# its own name (S10, handoff from S8): `stopped`, `stalled`, the host-native
+# loop's `crash-looping`, and anything unknown.
+HEALTHY_STATES = ("running", "degraded")
+KNOWN_UNHEALTHY = ("stopped", "stalled", "crash-looping")
 
 
 def heartbeat_path(data_dir: Path) -> Path:
@@ -66,24 +73,68 @@ def write_heartbeat(
         raise
 
 
+def _parse(path: Path) -> dict:
+    record = json.loads(path.read_text())
+    out = {
+        "ts": float(record["ts"]),
+        "started_at": float(record["started_at"]),
+        "cycle": int(record["cycle"]),
+        "pid": int(record.get("pid", 0)),
+        "state": record.get("state"),
+    }
+    if not (math.isfinite(out["ts"]) and math.isfinite(out["started_at"])):
+        raise ValueError("non-finite time")
+    return out
+
+
+def read_heartbeat(data_dir: Path) -> dict | None:
+    """The last beat (ts, started_at, cycle, pid, state), or None if missing or bad."""
+    try:
+        return _parse(heartbeat_path(data_dir))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def mark_stalled(data_dir: Path) -> None:
+    """C5 §5.1 step 2: the watchdog says why the beats stopped, for the next
+    start's `gap` record. `ts` stays the last good beat.
+
+    Runs on the watchdog thread. A loop that wakes at that moment can still write a
+    "running" beat over it; the worst case is a gap recorded `off`, not `stalled`."""
+    beat = read_heartbeat(data_dir)
+    if beat is None:
+        return
+    write_heartbeat(
+        data_dir,
+        cycle=beat["cycle"],
+        now=beat["ts"],
+        started_at=beat["started_at"],
+        pid=beat["pid"],
+        state="stalled",
+    )
+
+
 def check_heartbeat(data_dir: Path, *, now: float) -> tuple[bool, str]:
     """Return (healthy, reason). Healthy only if the beat is fresh."""
     path = heartbeat_path(data_dir)
     try:
-        record = json.loads(path.read_text())
-        ts = float(record["ts"])
-        started_at = float(record["started_at"])
-        cycle = int(record["cycle"])
-        state = str(record.get("state", "running"))
-        if not (math.isfinite(ts) and math.isfinite(started_at)):
-            raise ValueError("non-finite time")
+        beat = _parse(path)
     except FileNotFoundError:
         return False, f"no heartbeat at {path}"
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return False, f"heartbeat unreadable at {path}: {type(exc).__name__}"
+    ts, started_at, cycle, state = (
+        beat["ts"],
+        beat["started_at"],
+        beat["cycle"],
+        beat["state"],
+    )
 
-    if state == "stopped":
-        return False, f"Medic stopped (cycle {cycle})"
+    if state in KNOWN_UNHEALTHY:
+        return False, f"Medic {state} (cycle {cycle})"
+    if state not in HEALTHY_STATES:
+        shown = repr(state[:32]) if isinstance(state, str) else "missing"
+        return False, f"unknown heartbeat state {shown} (cycle {cycle})"
     age = now - ts
     if age < -FUTURE_SLACK_S:
         return False, f"heartbeat is {-age:.0f} s in the future (clock fault?)"
