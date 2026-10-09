@@ -1,6 +1,6 @@
 # Medic evaluation semantics (engine API 1.0)
 
-**Status:** E3 contract, Accepted (Craig, 2026-10-07: defaults 1a, static suppression 2a, automatic upgrade windows 3a, lower-bound windows 4a). Rule shape: `rule.schema.json` + `ENGINE_API.md` (E2). Inputs: `observation.schema.json` (D3). Executable examples: `vectors/*.yaml`. Each one is a timeline of observations plus the expected states. **If a vector and this text disagree, this text wins and the vector is fixed.**
+**Status:** E3 contract, Accepted (Craig, 2026-10-07: defaults 1a, static suppression 2a, automatic upgrade windows 3a, lower-bound windows 4a). **Amended 2026-10-07 by S4b** (⚑ S4b-1, 2, 4 decided (a) by Craig: `changes` lower bounds on any type, per-series staleness, only `ok` heartbeats cover; vector v28). **Amended 2026-10-08 by S10** (⚑ S4b2-3, 4, 6 decided by Craig: `closed_quietly` in §4/§6.3 and v17/v18; the upgrade hold capped at 60 min in §7, vector v29). Rule shape: `rule.schema.json` + `ENGINE_API.md` (E2). Inputs: `observation.schema.json` (D3). Executable examples: `vectors/*.yaml`. Each one is a timeline of observations plus the expected states. **If a vector and this text disagree, this text wins and the vector is fixed.**
 
 ## 1. The tick
 
@@ -13,7 +13,7 @@
 
 Each condition, at tick T and for one group, is **true**, **false** or **unknown**.
 
-**Staleness.** A sample signal is *fresh* if its newest `ok` observation has t ≥ T − 2 × interval. The interval is the covering sensor's `interval_s`.
+**Staleness.** A sample **series** (one `key` and label set) is *fresh* if its newest `ok` observation **that carries it** has t ≥ T − 2 × interval. The interval is the covering sensor's `interval_s`. An `ok` read that doesn't carry the series (a source that dropped out of a sensor still reading others) isn't a read of that series: the series goes stale, so it is unknown, never absent (S4b-2, decided 2026-10-07).
 
 **Functions** (series = the values of one `key` and label set, after any group filter):
 
@@ -25,13 +25,13 @@ Each condition, at tick T and for one group, is **true**, **false** or **unknown
 | `rate` | `increase` ÷ W seconds | as `increase` |
 | `changes` | number of consecutive pairs (baseline included) whose values differ. For counters, pairs across an epoch change are not counted, so a restart is neither a change nor a reset of "flat" | as `increase` |
 | `count` | matching log lines with t in (T − W, T], de-duplicated by `line_hash` | the window is not fully covered and the lower bound doesn't decide the comparison |
-| `absent_for` | true if the signal was **covered** for the whole window (consecutive `ok` reads or heartbeats never more than 2 × interval apart, starting by T − W + 2 × interval) and had no present value or matching line in it. False if anything was present | the signal was not covered for the whole window |
+| `absent_for` | true if the **signal** was **covered** for the whole window (consecutive `ok` reads of the signal, or heartbeats, never more than 2 × interval apart, starting by T − W + 2 × interval; any read of the signal counts, so a source that dropped out is absent, unlike staleness) and had no present value or matching line in it. False if anything was present | the signal was not covered for the whole window |
 | `latch` | true if the newest `set` line is newer than the newest `clear` line, per group. Equal times: clear wins. Latch state is **persisted** (C4), so a watcher restart keeps it, and it outlives the 7-day raw history | never. A watcher that starts after the `set` line can't know about it until the next `set` line (a reminder) arrives |
 
-**Coverage and lower bounds** (`increase`, `rate`, `changes` on counters, `count`). A window is **fully covered** if both hold:
+**Coverage and lower bounds** (`increase` and `rate` on counters, `changes` on any value type, `count`; a count of changes can only grow as more reads are seen, S4b-1, decided 2026-10-07). A window is **fully covered** if both hold:
 
 - there is a baseline no older than T − W − 2 × interval (for `count`: the log sensor's heartbeats reach back that far);
-- consecutive `ok` reads (or heartbeats) inside the window are never more than 2 × interval apart.
+- consecutive `ok` reads (or heartbeats) inside the window are never more than 2 × interval apart. Only a heartbeat in state `ok` covers; `degraded`, `blind` and `stopped` mean reads are failing (S4b-4, decided 2026-10-07).
 
 If the window is not fully covered, the value computed from what was seen is a **lower bound** x. It starts from the first sample in the window when there is no baseline. The comparison is **true** if it holds for every value ≥ x, **false** if it fails for every value ≥ x, and **unknown** otherwise. Examples:
 
@@ -77,7 +77,7 @@ inactive ───────▶ pending ────────────�
 - **firing → resolving** on the first **false** tick, with `resolving_since` = T. An unknown tick keeps the incident firing.
   - A true tick in resolving returns to firing; it's the same incident.
   - Resolution needs a **false** tick (not unknown) with T − `resolving_since` ≥ `keep_firing_for`. Unknown ticks hold the incident open. **A blind watcher never auto-resolves.** With `keep_firing_for: 0s`, the first false tick resolves the incident at once, and the state is back to inactive.
-- **Resolve reasons:** `cleared` (the normal case), `rule_retired` (the pack update removed the rule), `group_retired` (§3). The two retirements end the incident at once, with no `resolving` phase. A changed `revision` keeps open incidents open.
+- **Resolve reasons:** `cleared` (the normal case), `closed_quietly` (a suppressed child that resolves without ever routing, §6.3; amended 2026-10-08, ⚑ S4b2-3), `rule_retired` (the pack update removed the rule), `group_retired` (§3). The two retirements end the incident at once, with no `resolving` phase, and win over `closed_quietly`. A changed `revision` keeps open incidents open.
 - **Defaults when a rule omits them:** `for` **2 m**, `keep_firing_for` **5 m** (⚑ 1).
 - **Persistence.** All of this state is persisted with each transition (C4). A restart resumes it; it never resets it.
 
@@ -102,7 +102,7 @@ This is separate from **signal flapping**: a rule can *detect* a flapping signal
 
 1. **The child is suppressed** while any parent incident is **open** (firing or resolving; any group, unless `match` applies). It still runs through the state machine, and its decision record (G2) gets `suppressed_by`. It is **not routed** (G1) and is **not counted** as a separate alarm in I1 metrics.
 2. **Routing hold.** A rule that appears as a child anywhere waits **5 min** after firing before it routes. A parent that fires within that hold suppresses it retroactively, because symptoms often cross their `for` before the root cause does.
-3. **The child outlives the parent.** When the last parent resolves, a child that is **still firing with its condition true 10 min later** is unsuppressed and routes on its own (it wasn't only a symptom). A child that is resolving, or resolves within those 10 min, closes quietly.
+3. **The child outlives the parent.** When the last parent resolves, a child that is **still firing with its condition true 10 min later** is unsuppressed and routes on its own (it wasn't only a symptom). A child that is resolving at that mark waits: if it refires true it routes then, and if it resolves it never routes. A child that resolves while still suppressed, within those 10 min or after them, **closes quietly**: its `incident_resolved` says `how: closed_quietly` (G2), not `cleared` (amended 2026-10-08, ⚑ S4b2-3, S4b2-5).
 4. **Routing times.** An incident that is no rule's child routes when it opens. A child routes when its 5-min hold ends, if no parent incident is open. Every incident routes no earlier than the end of an upgrade window.
 5. **The loader refuses cycles** (F6). With chained suppression, the child points at its nearest firing parent.
 
@@ -113,7 +113,7 @@ The engine opens an **upgrade window** when:
 - the `version` signal changes; or
 - restart markers for **2 or more Vigil services fall within 5 min** of each other (an epoch change, a container `started_at` change, or an `uptime_seconds` drop).
 
-The window lasts **15 min after the last such restart** (⚑ 4). During it, **pending can't promote to firing**, firing incidents carry on, and every evaluation is recorded as normal. When the window closes, any rule that is still true fires at once, because its `active_since` was kept. **An upgrade delays an alert; it never hides one** that persists. Admin-declared maintenance windows use the same mechanism. Where they are configured is K3's call; they're not in Phase 0.
+The window lasts **15 min after the last such restart** (⚑ 4). **A chain of windows** (each marker arriving before the window it extends has closed) **holds for at most 60 min after the chain's first marker**: a `version` value that keeps flipping can't hold alerts indefinitely. At the cap the window is over for every rule, **`watcher.sensor-blind` included**; later markers in the same chain extend nothing. A marker after the chain's window has closed (15 min with none) starts a new chain with its own cap (amended 2026-10-08, ⚑ S4b2-6, vector v29). During it, **pending can't promote to firing**, firing incidents carry on, and every evaluation is recorded as normal. When the window closes, any rule that is still true fires at once, because its `active_since` was kept. **An upgrade delays an alert; it never hides one** that persists. Admin-declared maintenance windows use the same mechanism. Where they are configured is K3's call; they're not in Phase 0.
 
 ## 8. What the vectors pin
 

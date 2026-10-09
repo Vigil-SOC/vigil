@@ -2,6 +2,8 @@
 # Start Vigil SOC
 # Usage: ./start.sh [-d|--daemon] [--with <profile>] [--all]
 source "$(dirname "$0")/scripts/lib.sh"
+# Medic (System Watcher), host-native opt-in: a no-op unless VIGIL_MEDIC_ENABLED is on.
+source "$(dirname "$0")/scripts/medic/host-native/medic.sh"
 
 # Version shown in the startup banner, read from the repo VERSION file.
 VERSION="$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")"
@@ -343,6 +345,7 @@ if [ "$DAEMON" -eq 0 ]; then
 
     start_frontend
     start_agent_layer
+    medic_host_foreground_notice
     print_ready
     echo "Press Ctrl+C to stop"
 
@@ -358,6 +361,8 @@ else
         echo "Backend already running. Use ./shutdown_all.sh to stop."; exit 1;
     }
 
+    # Medic opted in: where the backend finds Medic's status (S9). Before uvicorn.
+    medic_host_backend_env || true
     rotate_log logs/backend.log
     nohup uvicorn services.api.main:app --host "$BIND_HOST" --port 6987 --reload \
         --reload-dir services --reload-dir core --reload-dir tools \
@@ -384,6 +389,7 @@ else
     echo $! > logs/llm_worker.pid
 
     start_agent_layer
+    medic_host_start || true
 
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
         # Absolute log dir: the `cd clients/web` only applies inside the
