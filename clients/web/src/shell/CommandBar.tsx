@@ -19,6 +19,8 @@ import {
   moveEnabled,
   PASTED_NAME,
   proposalFrom,
+  runningHunt,
+  type RunningHunt,
   readRecents,
   removeRecent,
   tagText,
@@ -194,6 +196,7 @@ export default function CommandBar({
   const previewView = preview ? commandPreview(preview.id, preview.arg, jira, attachment) : null
   const previewKey = preview ? `${preview.id}:${preview.arg}` : ''
   const previewDisabled = previewView?.disabled ?? true
+  const alreadyRunning = preview?.id === 'hunt' && !preview.arg.trim() ? runningHunt(attachment) : null
 
   const highlightedKey = open ? rows[highlighted]?.key : undefined
   useEffect(() => {
@@ -261,6 +264,15 @@ export default function CommandBar({
     const file = event.dataTransfer.files?.[0]
     if (file) void attach(file)
   }
+
+  // The door to the hunt already running on the attached document.
+  const openRunning = useCallback((hunt: RunningHunt) => {
+    if (hunt.caseId) onOpenCase(hunt.caseId)
+    else if (hunt.runId) onGo('workflows', { search: `?run=${encodeURIComponent(hunt.runId)}` })
+    else return
+    setOpen(false)
+    setPreview(null)
+  }, [onGo, onOpenCase])
 
   const remember = useCallback((text: string) => {
     if (!userId) return
@@ -614,6 +626,11 @@ export default function CommandBar({
                     </button>
                   )}
                   {previewView.note && <span className="vg-command-note">{previewView.note}</span>}
+                  {alreadyRunning && (alreadyRunning.caseId || alreadyRunning.runId) && (
+                    <button type="button" className="btn" onClick={() => openRunning(alreadyRunning)}>
+                      Open its case
+                    </button>
+                  )}
                   {pasting !== null && (
                     <div className="vg-command-paste">
                       <textarea

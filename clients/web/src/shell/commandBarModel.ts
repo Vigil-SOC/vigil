@@ -135,10 +135,13 @@ export const ATTACH_TYPES = ['.pdf', '.docx', '.pptx', '.xlsx', '.png', '.jpg', 
 export const MAX_ATTACH_BYTES = 25 * 1024 * 1024
 export const PASTED_NAME = 'Pasted text'
 
+/** The hunt already on this document: its case when it has one, else its run. */
+export type RunningHunt = { caseId?: string; runId?: string }
+
 /** A hypothesis proposed from the attached document by the coverage check; null until asked. */
 export type HuntProposal =
   | { status: 'checking' }
-  | { status: 'proposed'; hypothesis: string; subjects?: Record<string, string[]>; approve?: boolean }
+  | { status: 'proposed'; hypothesis: string; subjects?: Record<string, string[]>; approve?: boolean; running?: RunningHunt }
   | { status: 'none'; reason: string }
 
 /** The intelligence attached to a /hunt: being read, refused with a reason, or read. */
@@ -175,14 +178,27 @@ export function huntHypothesis(arg: string, attachment: HuntAttachment | null): 
   return attachment?.status === 'ready' && attachment.proposal?.status === 'proposed' ? attachment.proposal.hypothesis : ''
 }
 
-/** The coverage check's answer as a proposal. A report already being hunted comes with none. */
+/** The hunt already running on the attached document, when its proposal says so. */
+export function runningHunt(attachment: HuntAttachment | null): RunningHunt | null {
+  return attachment?.status === 'ready' && attachment.proposal?.status === 'proposed' ? attachment.proposal.running ?? null : null
+}
+
+/** The coverage check's answer as a proposal. A report already being hunted still gets one, and names that hunt. */
 export function proposalFrom(answer: {
   status?: string
+  in_flight?: { run_id?: string | null; case_id?: string | null }[]
   proposal?: { hypothesis?: unknown; hypothesis_subjects?: Record<string, string[]>; approve_hypotheses?: boolean } | null
 }): HuntProposal {
   const hypothesis = answer.proposal?.hypothesis
   if (typeof hypothesis === 'string' && hypothesis.trim()) {
-    return { status: 'proposed', hypothesis, subjects: answer.proposal?.hypothesis_subjects, approve: answer.proposal?.approve_hypotheses }
+    const hunt = answer.in_flight?.[0]
+    return {
+      status: 'proposed',
+      hypothesis,
+      subjects: answer.proposal?.hypothesis_subjects,
+      approve: answer.proposal?.approve_hypotheses,
+      ...(answer.status === 'running' && { running: { caseId: hunt?.case_id ?? undefined, runId: hunt?.run_id ?? undefined } }),
+    }
   }
   if (answer.status === 'running') {
     return { status: 'none', reason: 'A hunt is already running on what this document covers. Type a hypothesis to start another.' }
@@ -282,7 +298,11 @@ export function commandPreview(
         return {
           line: `Start a threat hunt: ${hypothesis}`,
           disabled: false,
-          ...(!a && { note: 'Proposed from the document. Type your own to replace it.' }),
+          ...(!a && {
+            note: runningHunt(attachment)
+              ? 'A hunt is already running on what this document covers.'
+              : 'Proposed from the document. Type your own to replace it.',
+          }),
         }
       }
       if (attachment?.status === 'ready') {

@@ -1,19 +1,16 @@
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { EmptyState, Field, Popup, Select, TextInput } from '../../shared/ui'
+import { EmptyState, Field, Popup, Select, SettingsCard, TextInput } from '../../shared/ui'
 import { useDetectionRules, type AddSourcePayload, type DetectionSource } from './useSettings'
 import type { SectionProps } from './types'
 
 // Rule formats come back from the detection-rules API as free-form strings, so
-// the lookup has to admit a miss rather than claim every string has a colour.
-const FORMAT_COLORS = new Map([
-  ['sigma', '#2196f3'],
-  ['splunk', '#4caf50'],
-  ['elastic', '#ff9800'],
-  ['kql', '#9c27b0'],
-  ['auto', '#607d8b'],
-])
-const formatColor = (format: string) => FORMAT_COLORS.get(format) ?? 'var(--tx-3)'
+// only the known ones get a tint (the `fmt-*` classes, on tokens); any other stays neutral.
+const KNOWN_FORMATS = new Set(['sigma', 'splunk', 'elastic', 'kql', 'auto'])
+const formatClass = (format: string) => (KNOWN_FORMATS.has(format) ? ` fmt-${format}` : '')
+
+// Show a repo as host/path, the way the board does; local sources keep their path.
+const whereOf = (url: string) => url.replace(/^https?:\/\//, '').replace(/\.git$/, '')
 
 const SOURCE_TYPE_OPTIONS = [
   { value: 'git', label: 'Git Repository' },
@@ -48,9 +45,17 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [confirmDel, setConfirmDel] = useState<DetectionSource | null>(null)
 
-  if (phase === 'loading') return <EmptyState loading icon="shield" title="Loading detection rules…" />
+  const title = 'Detection rule sources'
+  const desc = 'Rules agents can search and compare against when they explain coverage.'
+  if (phase === 'loading' && !stats) { // a reload keeps the table on screen
+    return <SettingsCard title={title} desc={desc}><EmptyState compact loading icon="shield" title="Loading detection rules…" /></SettingsCard>
+  }
   if (phase === 'error') {
-    return <EmptyState error icon="alert" title="Couldn’t load detection rules" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+    return (
+      <SettingsCard title={title} desc={desc}>
+        <EmptyState compact error icon="alert" title="Couldn’t load detection rules" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+      </SettingsCard>
+    )
   }
 
   const onUpdateSource = async (id: string) => {
@@ -114,82 +119,80 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const addValid = !!form.name && (form.source_type === 'git' ? !!form.url : !!form.path)
 
   return (
-    <div className="flex flex-col gap-4" style={{ maxWidth: 1100 }}>
-      <div className="flex items-start gap-3 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-[14.5px] font-semibold text-tx flex items-center gap-2">
-            <Icon name="shield" size={16} /> Detection Rule Sources
-          </h3>
-          {stats && (
-            <div className="flex gap-2 flex-wrap mt-2">
-              <span className="chip" style={{ color: 'var(--accent-2)' }}>{fmtNum(stats.total_rules)} total rules</span>
-              {Object.entries(stats.by_format).map(([fmt, count]) => (
-                <span key={fmt} className="chip" style={{ color: formatColor(fmt) }}>
-                  {fmt}: {fmtNum(count)}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-          <button className="btn ghost" onClick={onUpdateAll} disabled={!!updating}>
-            <Icon name="download" /> {updating === 'all' ? 'Updating…' : 'Update All'}
-          </button>
-          <button className="btn primary" onClick={() => setAddOpen(true)}><Icon name="plus" /> Add Source</button>
-        </div>
-      </div>
+    <>
+      <SettingsCard
+        title={title}
+        desc={desc}
+        actions={
+          <>
+            <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
+            <button className="btn ghost" onClick={onUpdateAll} disabled={!!updating}>
+              <Icon name="download" /> {updating === 'all' ? 'Updating…' : 'Update All'}
+            </button>
+            <button className="btn ghost" onClick={() => setAddOpen(true)}><Icon name="plus" /> Add source</button>
+          </>
+        }
+      >
+        {stats && (
+          <div className="flex gap-2 flex-wrap mb-2">
+            <span className="chip" style={{ color: 'var(--accent-2)' }}>{fmtNum(stats.total_rules)} total rules</span>
+            {Object.entries(stats.by_format).map(([fmt, count]) => (
+              <span key={fmt} className={`chip${formatClass(fmt)}`}>{fmt}: {fmtNum(count)}</span>
+            ))}
+          </div>
+        )}
 
-      {sources.length === 0 ? (
-        <EmptyState
-          compact
-          icon="shield"
-          title="No detection rule sources configured"
-          body="Add a Git repository or local directory, or let the service seed defaults on first load."
-          primary={{ label: 'Add source', onClick: () => setAddOpen(true), icon: 'plus' }}
-          secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }}
-        />
-      ) : (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
-          {sources.map((s) => (
-            <div key={s.id} className="card card-sq p-3.5 flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <Icon name={s.type === 'git' ? 'fork' : 'folder'} size={15} />
-                <span className="text-[13px] font-semibold text-tx flex-1 truncate">{s.name}</span>
-                <span
-                  className={`status ${s.status === 'ready' ? 'closed' : s.status === 'error' ? 'open' : 'investigating'}`}
-                >
-                  {s.status}
-                </span>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                <span className="chip" style={{ color: formatColor(s.format) }}>{s.format}</span>
-                <span className="chip">{fmtNum(s.rule_count)} rules</span>
-              </div>
-              {s.git_url && <div className="text-xs text-tx-3 break-all font-mono">{s.git_url}</div>}
-              {s.last_updated && (
-                <div className="text-xs text-tx-faint">Last updated: {new Date(s.last_updated).toLocaleString()}</div>
-              )}
-              <div className="flex items-center justify-between mt-auto pt-1">
-                <button className="btn ghost" disabled={!!updating} onClick={() => onUpdateSource(s.id)}>
-                  <Icon name="download" /> {updating === s.id ? 'Working…' : s.status === 'not_cloned' ? 'Clone' : 'Update'}
-                </button>
-                <button className="btn ghost icon" title="Remove source" onClick={() => setConfirmDel(s)}>
-                  <Icon name="trash" size={15} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+        {sources.length === 0 ? (
+          <EmptyState
+            compact
+            icon="shield"
+            title="No detection rule sources configured"
+            body="Add a Git repository or local directory, or let the service seed defaults on first load."
+            primary={{ label: 'Add source', onClick: () => setAddOpen(true), icon: 'plus' }}
+            secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }}
+          />
+        ) : (
+          <table className="tbl data-table data-rules">
+            <thead>
+              <tr><th>Rule source</th><th>Format</th><th>Where</th><th>Rules</th><th aria-label="Actions" /></tr>
+            </thead>
+            <tbody>
+              {sources.map((s) => {
+                const where = whereOf(s.git_url || '')
+                const updated = s.last_updated ? `Last updated ${new Date(s.last_updated).toLocaleString()}` : ''
+                return (
+                  <tr key={s.id}>
+                    <td className="data-clip" title={updated || undefined}>
+                      <b>{s.name}</b>
+                      {s.status !== 'ready' && (
+                        <span className={`level-pill ${s.status === 'error' ? 'poor' : 'idle'} ml-2`}>
+                          {s.status === 'not_cloned' ? 'Not cloned' : s.status}
+                        </span>
+                      )}
+                    </td>
+                    <td><span className={`chip${formatClass(s.format)}`}>{s.format}</span></td>
+                    <td className="data-clip font-mono" title={s.git_url || undefined}>{where || '—'}</td>
+                    <td>{fmtNum(s.rule_count)}</td>
+                    <td className="data-act">
+                      <button className="data-link" disabled={!!updating} onClick={() => onUpdateSource(s.id)}>
+                        {updating === s.id ? 'Working…' : s.status === 'not_cloned' ? 'Clone' : 'Update'}
+                      </button>
+                      <button className="btn ghost icon" title="Remove source" aria-label={`Remove ${s.name}`} onClick={() => setConfirmDel(s)}>
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
 
-      <div className="settings-banner info">
-        <Icon name="info" size={14} />
-        <span>
+        <p className="text-xs text-tx-3 mt-3">
           Sources feed the Security-Detections MCP server. When Claude analyzes findings it searches across{' '}
           {stats ? fmtNum(stats.total_rules) : '…'} rules. Updating a source restarts the MCP server to rebuild its index.
-        </span>
-      </div>
+        </p>
+      </SettingsCard>
 
       {/* Add source dialog */}
       <Popup open={addOpen} onClose={() => setAddOpen(false)} title="Add Detection Rule Source" width={480}>
@@ -240,6 +243,6 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           <button className="btn danger" onClick={() => onDelete(true)}>Remove &amp; delete files</button>
         </div>
       </Popup>
-    </div>
+    </>
   )
 }

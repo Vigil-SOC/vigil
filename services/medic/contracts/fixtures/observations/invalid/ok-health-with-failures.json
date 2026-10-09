@@ -1,0 +1,39 @@
+{
+  "v": 1,
+  "id": "http.daemon_status:01JA8Z3K4M:15",
+  "kind": "sensor_health",
+  "signal": "sensor_health",
+  "sensor": {
+    "id": "http.daemon_status",
+    "run": "01JA8Z3K4M",
+    "seq": 15
+  },
+  "target": {
+    "service": "medic",
+    "instance": "deeptempo-medic",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:15Z",
+  "observed_at": "2026-10-07T10:00:15Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "health": {
+    "sensor": "http.daemon_status",
+    "state": "ok",
+    "reported_by": "sensor",
+    "covers": [
+      "daemon_status.kafka",
+      "daemon_status.poller"
+    ],
+    "interval_s": 15,
+    "last_ok_at": "2026-10-07T10:00:15Z",
+    "consecutive_failures": 2,
+    "counters": {
+      "reads": 488,
+      "failures": 0,
+      "dropped": 0,
+      "redactor_failures": 0
+    }
+  },
+  "$comment": "ok means the last read worked"
+}

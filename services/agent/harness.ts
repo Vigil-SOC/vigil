@@ -87,7 +87,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // a different account entirely. The same provider is handed to pricing: the
     // gateway bills nothing of its own, and a catalog left to guess from the
     // model's name priced a paid "llama" on a commercial host at $0.
-    provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec), vk),
+    provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec), vk, spec.effort),
     registry: registryOf(toolsFrom(spec.tools), grantsFor(kind, spec)),
     dispatch: remoteDispatch({ url: tools, token: internalToken(), ...(principal === undefined ? {} : { principal }) }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),
