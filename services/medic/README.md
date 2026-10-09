@@ -8,14 +8,53 @@ It is **off by default**. `VIGIL_MEDIC_ENABLED=true` turns it on; anything else
 and `run` logs why and exits 0.
 
 ```
-python -m services.medic run     # the service: heartbeat loop + watchdog
-python -m services.medic check   # exit 0 only if the heartbeat is fresh (< 120 s)
+python -m services.medic run     # the service (below)
+python -m services.medic check   # exit 0 only if the heartbeat is fresh (< 120 s) and says running (or degraded)
 ```
+
+`run` works in 15 s cycles: the sensors that are due read (`http_ready` on the
+agent worker's `/readyz`, and on Compose agent-serve's), every observation passes
+the K2 redaction choke, the engine evaluates the tick (suppression, group cap,
+upgrade windows) and decides when each incident routes (`route`), router R1 gives
+it its rule's lane, and the store's single writer chains the record into
+`medic.db`. Each cycle then saves
+the engine state and writes the heartbeat; a loop that stops cycling for 180 s
+is ended by the watchdog. On start, if the last heartbeat shows Medic was
+stalled or off, one `gap` record goes into the chain first. Rules and
+`suppression.yaml` are the dev-mode set in `rules/dev/` (no pack loader yet, F6).
+`check` fails on any heartbeat state but `running` or `degraded` (C5 K-d), each
+with its own reason (`stopped`, `stalled`, `crash-looping`, unknown).
 
 | Setting | Default |
 |---|---|
 | `VIGIL_MEDIC_ENABLED` | off |
 | `VIGIL_MEDIC_DATA_DIR` | `/var/lib/vigil-medic` (macOS: `/Library/Application Support/vigil-medic`) |
+| `VIGIL_MEDIC_INSTALL_SHAPE` | `compose` (`start_sh`, `compose` or `helm`) |
+| `VIGIL_MEDIC_AGENT_WORKER_ADDR` | `agent-worker:6990` (`start_sh`: `127.0.0.1:6990`); `host:port` only |
+| `VIGIL_MEDIC_AGENT_SERVE_ADDR` | Compose: `agent-serve:6989`; elsewhere unset, and agent-serve isn't read unless it's set; `host:port` only |
+| `VIGIL_MEDIC_POLICY_PROBE_ADDR` | Helm only, and required there (the chart sets it): a `host:port` Medic's NetworkPolicy must block |
+| `VIGIL_MEDIC_POLICY_CONTROL_ADDR` | Helm only, and required there: a `host:port` on the same pods that the policy allows |
+| `VIGIL_MEDIC_API_PORT` | `8470`: where `GET /v1/status` listens. On `127.0.0.1` unless `VIGIL_MEDIC_INSTALL_SHAPE` is set to `compose` (the one address that reaches `VIGIL_MEDIC_API_BIND_PEER`) or `helm` (every interface of the pod) |
+| `VIGIL_MEDIC_API_BIND_PEER` | Compose: `medic-gateway-out`, the gateway's `medic-private` alias, so the API isn't on `medic-net` beside the agents. Elsewhere unset |
+| `VIGIL_MEDIC_API_KEY_FILE` | The file holding `X-Medic-Key` (43 base64url characters). Default: Compose `/run/secrets/medic_api_key`; host-native `<data dir>/run/api_key` (written by the restart loop); Helm none (the chart sets it) |
+
+**API (X2, S9 slice).** `run` serves `GET /v1/status` from a snapshot each cycle
+publishes (never older than one 15 s tick; older than two and it answers `503
+busy`). Every request needs `X-Medic-Key`, compared in constant time with the
+key file, which is re-read per request; anything else is `401`, then `404` for
+any other path and `405` for any other method, as RFC 9457 problem JSON. The
+other X2 operations are G3's. A listener that can't start (no key, port taken)
+is logged once and retried every minute; it never stops Medic or fails `check`.
+
+On Helm, `run` first connects to the control (retried for up to a minute while
+it starts), then tries the probe target once. Only "control connected, target
+dropped" proves NetworkPolicy is enforced; anything else, and Medic logs why
+and exits **3** before opening its store (A3-3).
+
+Data directory: `medic.db` (+ `-wal`, `-shm`), `medic.lock`, `instance_id`,
+`run/heartbeat`, `run/engine-state.json`, `run/starts.json` (restarts and the last
+exit reason for `/v1/status`), and host-native only `run/api_key`. `python -m services.medic.store verify`
+checks the chain.
 
 ## Isolation
 

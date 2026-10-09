@@ -1,0 +1,10 @@
+# Test-only override for tests/medic_compose/test_start_path_live.py. Never for
+# installs. Medic's images get this run's own tags, so building them can't swap
+# the `:local` images another stack (or another test run) is using.
+services:
+  medic:
+    image: vigil-medic:medic-s11
+  medic-gateway:
+    image: vigil-medic-gateway:medic-s11
+  medic-dockerproxy:
+    image: vigil-medic-dockerproxy:medic-s11
