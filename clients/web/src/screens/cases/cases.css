@@ -10,7 +10,7 @@
   --stack-radius: 10px;
   --stack-gap: 1px;
   min-height: 0; /* lets .detail-body scroll so the composer stays on screen in the drawer */
-  max-height: 100%; /* on the full-page route the parent is a block, so cap it there or the pinned composer falls off the bottom */
+  height: 100%; /* the full-page route's parent is a block, so flex: 1 alone leaves the pinned composer short of, or past, the bottom */
 }
 
 .case-page .detail-head {
@@ -1101,11 +1101,12 @@
   min-height: 0;
   max-height: min(150px, 40vh);
   max-height: min(150px, 40cqh); /* never over 40% of the drawer (a size container, shell.css); off a drawer cqh is the viewport */
-  padding: 4px 14px 6px 24px; /* the right pad leaves room for the stable thin scrollbar so the thread ends where the input does */
+  padding: 8px 14px 8px 24px; /* the right pad leaves room for the stable thin scrollbar so the thread ends where the input does */
   gap: 10px;
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
+  mask-image: linear-gradient(to bottom, transparent, #000 8px, #000 calc(100% - 8px), transparent); /* a bubble scrolled past either edge fades out instead of showing a cut edge */
 }
 
 .case-composer .msg {
