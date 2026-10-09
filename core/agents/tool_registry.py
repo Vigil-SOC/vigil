@@ -6,13 +6,17 @@ from __future__ import annotations
 import inspect
 import logging
 from dataclasses import asdict
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, username_has_permission
 from core.integrations.mcp.surface import current_caller
+from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
+
+if TYPE_CHECKING:
+    from core.integrations.mcp.registry import MCPRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,11 @@ except ImportError as exc:
     logger.warning("Backend tool schemas unavailable: %s", exc)
     BACKEND_TOOLS: Tuple[Dict[str, Any], ...] = ()
 
-MANIFEST: Dict[str, Dict[str, Any]] = {tool["name"]: tool for tool in BACKEND_TOOLS}
+# The integration tools are chat's alone (#1959), so they are not in ALL_TOOLS.
+# call_integration_tool is unwrapped by tools_router into the call it stands for.
+MANIFEST: Dict[str, Dict[str, Any]] = {
+    tool["name"]: tool for tool in (*BACKEND_TOOLS, *INTEGRATION_TOOLS)
+}
 
 Args = Dict[str, Any]
 
@@ -537,8 +545,14 @@ _OWNED = frozenset(
 async def execute_backend_tool(
     tool_name: str,
     tool_input: Optional[Args],
+    registry: Optional["MCPRegistry"] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
+
+    if tool_name == FIND_INTEGRATION_TOOLS and registry is not None:
+        from core.agents.integration_tools import find_integration_tools
+
+        return find_integration_tools(registry, **args), True
 
     if tool_name == "case_records":
         return _case_records(args), True

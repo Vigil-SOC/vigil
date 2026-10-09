@@ -31,11 +31,13 @@ export interface ConsoleScreenProps {
   setViewFull: (full: boolean) => void
   /** Overview's wall mode. Hides the nav row and the top bar. */
   setWallMode?: (wall: boolean) => void
-  /** The chat dock is open. Overview hides its alert rail then. */
-  chatOpen?: boolean
   /** Text for the open case's composer, typed in the command bar. */
   caseSeed?: string | null
   onCaseSeedConsumed?: () => void
   /** Starts the console tour. Absent where the shell can't run it. */
   startTour?: () => void
+  /** Puts text in the header's command bar and opens it. Absent where the shell has no bar. */
+  fillCommand?: (text: string) => void
+  /** The chat dock is open. Overview hides its alert rail then. */
+  chatOpen?: boolean
 }

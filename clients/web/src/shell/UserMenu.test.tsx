@@ -3,13 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import UserMenu from './UserMenu'
-import { configApi } from '../services/api'
 
 vi.mock('../services/api', () => ({
   configApi: {
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
     setTheme: () => Promise.resolve({ data: {} }),
-    getSetupSteps: vi.fn(),
   },
   consoleApi: {
     getHealth: () => Promise.resolve({ data: { version: '9.9.9', status: 'healthy' } }),
@@ -31,13 +29,13 @@ vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => auth,
 }))
 
-function renderMenu(path = '/cases', onShowTour = vi.fn()) {
+function renderMenu(path = '/cases', onShowTour = vi.fn(), setupLeft: number | null = null) {
   return render(
     <ColorSchemeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/setup" element={<div>setup-route</div>} />
-          <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} />} />
+          <Route path="/:screen" element={<UserMenu onShowTour={onShowTour} setupLeft={setupLeft} />} />
         </Routes>
       </MemoryRouter>
     </ColorSchemeProvider>,
@@ -48,9 +46,8 @@ describe('UserMenu', () => {
   beforeEach(() => {
     auth.user.username = 'dev-user'
     auth.user.full_name = 'Test User'
-    vi.mocked(configApi.getSetupSteps).mockReset().mockResolvedValue({
-      data: { steps: [], alerts_exist: 0, demo_enabled: false },
-    } as never)
+    auth.user.mfa_enabled = false
+    auth.logout.mockReset().mockResolvedValue(undefined)
   })
 
   it('renders initials and labels from full_name', async () => {
@@ -59,7 +56,7 @@ describe('UserMenu', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
     expect(screen.getAllByText('Test User').length).toBeGreaterThan(0)
     expect(await screen.findByText('About Vigil · 9.9.9')).toBeInTheDocument()
-    const feedback = screen.getByRole('menuitem', { name: 'Share feedback' })
+    const feedback = screen.getByRole('menuitem', { name: /^Share feedback/ })
     const href = feedback.getAttribute('href') || ''
     const url = new URL(href)
     expect(url.origin + url.pathname).toBe('https://github.com/Vigil-SOC/vigil/issues/new')
@@ -84,31 +81,55 @@ describe('UserMenu', () => {
     expect(screen.getByText('setup-route')).toBeInTheDocument()
   })
 
-  it('counts the open setup steps and shows no count at 0', async () => {
-    const step = (done: boolean) => ({ id: 'x', title: 'x', state_line: '', done, href: '/x' })
-    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
-      data: { steps: [step(true), step(false), step(false)], alerts_exist: 0, demo_enabled: false },
-    } as never)
-    const { unmount } = renderMenu()
-    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    expect(await screen.findByRole('menuitem', { name: 'Setup guide · 2 left' })).toBeInTheDocument()
-    unmount()
-
-    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
-      data: { steps: [step(true)], alerts_exist: 0, demo_enabled: false },
-    } as never)
+  it('lays the menu out as the board does, with one theme toggle', async () => {
     renderMenu()
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalledTimes(2))
-    expect(screen.getByRole('menuitem', { name: 'Setup guide' })).toBeInTheDocument()
+    const menu = await screen.findByRole('menu', { name: 'Account' })
+    const rows = screen.getAllByRole('menuitem').map((row) => row.textContent?.trim())
+    expect(rows).toEqual([
+      'Setup guide',
+      'Take the tour',
+      expect.stringMatching(/^Share feedbackAbout Vigil · 9\.9\.9$/),
+      'Switch to light mode',
+      'Settings',
+      'Sign out',
+    ])
+    expect(menu).toHaveTextContent('admin')
+    expect(menu).not.toHaveTextContent('dev@localhost')
+    expect(menu).not.toHaveTextContent('Role:')
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to light mode' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to dark mode' }))
+    expect(screen.getByRole('menuitem', { name: 'Switch to light mode' })).toBeInTheDocument()
   })
 
-  it('shows no count when the setup read fails', async () => {
-    vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('boom'))
+  it('folds MFA into the identity line', async () => {
+    auth.user.mfa_enabled = true
     renderMenu()
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
-    expect(screen.getByRole('menuitem', { name: 'Setup guide' })).toBeInTheDocument()
+    expect(await screen.findByRole('menu', { name: 'Account' })).toHaveTextContent('admin · MFA enabled')
+  })
+
+  it('shows the setup count from the shell and none at 0 or unread', () => {
+    const { unmount } = renderMenu('/cases', vi.fn(), 2)
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByRole('menuitem', { name: 'Setup guide 2 left' })).toBeInTheDocument()
+    unmount()
+
+    for (const left of [0, null]) {
+      const view = renderMenu('/cases', vi.fn(), left)
+      fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+      expect(screen.getByRole('menuitem', { name: 'Setup guide' })).toBeInTheDocument()
+      view.unmount()
+    }
+  })
+
+  it('signs out and returns to the login page', async () => {
+    renderMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }))
+    await waitFor(() => expect(auth.logout).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('menu', { name: 'Account' })).not.toBeInTheDocument()
   })
 
   it.each([null, undefined, '', '   '])(

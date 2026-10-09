@@ -189,7 +189,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         )}
 
         <p className="text-xs text-tx-3 mt-3">
-          Sources feed the Security-Detections MCP server. When Claude analyzes findings it searches across{' '}
+          Sources feed the Security-Detections MCP server. When an agent analyzes findings it searches across{' '}
           {stats ? fmtNum(stats.total_rules) : '…'} rules. Updating a source restarts the MCP server to rebuild its index.
         </p>
       </SettingsCard>

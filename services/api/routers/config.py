@@ -38,6 +38,12 @@ from core.response.approval_service import APPROVAL_CONFIG_KEY
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
+from core.skills.skill_library import (
+    is_bundled,
+    load_skills,
+    operator_skills_root,
+    skill_roots,
+)
 from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
@@ -713,8 +719,13 @@ def build_setup_steps(
     descriptor_count: int,
     alerts_exist: int,
     demo_enabled: bool,
+    skills_root_set: bool = False,
+    custom_skills: int = 0,
 ) -> dict:
-    """Four setup steps from config that already exists. No ranking, no dismissal."""
+    """Four or five setup steps from config that already exists. No ranking, no dismissal.
+
+    The custom skill step is served only when ``VIGIL_SKILLS_PATH`` is set, so it can always be finished.
+    """
     integrations = loaded.get("integrations") or {}
     connected = len(integrations)
     slack = (secrets_set.get("slack") or {}).get("bot_token") is True
@@ -732,45 +743,60 @@ def build_setup_steps(
     else:
         model_line = "Agents use more than one model"
     integrations_href = "/settings?section=integrations"
+    steps = [
+        _step(
+            "connect_tools",
+            "Connect more tools",
+            f"{connected} of {descriptor_count} integrations connected",
+            connected >= 1,
+            integrations_href,
+        ),
+        _step(
+            "notify",
+            "Where Vigil pings you",
+            (
+                "Slack or PagerDuty route is set"
+                if notify_done
+                else "No Slack or PagerDuty route yet"
+            ),
+            notify_done,
+            integrations_href,
+        ),
+        _step(
+            "rules",
+            "Link detection rules",
+            (
+                "Detection rules are on disk"
+                if rules_done
+                else "No detection rules on disk"
+            ),
+            rules_done,
+            "/settings?section=data&tab=detection",
+        ),
+        _step(
+            "per_agent",
+            "Pick a model per agent",
+            model_line,
+            distinct >= 2,
+            "/settings?section=ai-config&tab=assignment",
+        ),
+    ]
+    if skills_root_set:
+        steps.append(
+            _step(
+                "custom_skill",
+                "Add a custom skill",
+                (
+                    "Teach Vigil your team’s playbooks"
+                    if custom_skills == 0
+                    else f"{custom_skills} custom skill{'s' if custom_skills != 1 else ''}"
+                ),
+                custom_skills >= 1,
+                "/workflows?tab=skills",
+            )
+        )
     return {
-        "steps": [
-            _step(
-                "connect_tools",
-                "Connect more tools",
-                f"{connected} of {descriptor_count} integrations connected",
-                connected >= 1,
-                integrations_href,
-            ),
-            _step(
-                "notify",
-                "Where Vigil pings you",
-                (
-                    "Slack or PagerDuty route is set"
-                    if notify_done
-                    else "No Slack or PagerDuty route yet"
-                ),
-                notify_done,
-                integrations_href,
-            ),
-            _step(
-                "rules",
-                "Link detection rules",
-                (
-                    "Detection rules are on disk"
-                    if rules_done
-                    else "No detection rules on disk"
-                ),
-                rules_done,
-                "/settings?section=data&tab=detection",
-            ),
-            _step(
-                "per_agent",
-                "Pick a model per agent",
-                model_line,
-                distinct >= 2,
-                "/settings?section=ai-config&tab=assignment",
-            ),
-        ],
+        "steps": steps,
         "alerts_exist": alerts_exist,
         "demo_enabled": demo_enabled,
     }
@@ -781,8 +807,14 @@ def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
 ):
-    """Home's setup list: tools, a notify route, rules on disk, and model variety."""
+    """Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill."""
     loaded = load_integrations_config(get_config_service())
+    skills_root_set = operator_skills_root() is not None
+    try:
+        custom_skills = sum(1 for s in load_skills(skill_roots()) if not is_bundled(s))
+    except Exception:  # a bad skills folder must not fail the setup read
+        logger.warning("Could not count custom skills", exc_info=True)
+        custom_skills = 0
     return build_setup_steps(
         loaded=loaded,
         secrets_set=_secrets_set_map(loaded.get("integrations") or {}),
@@ -791,6 +823,8 @@ def get_setup_steps(
         descriptor_count=len(iter_descriptors()),
         alerts_exist=findings_data_service.count_findings(),
         demo_enabled=is_demo_mode(),
+        skills_root_set=skills_root_set,
+        custom_skills=custom_skills,
     )
 
 

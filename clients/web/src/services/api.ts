@@ -1018,6 +1018,15 @@ export interface WorkflowPhase {
   parallel_group?: string | null
 }
 
+/** What POST /workflows/generate returns: a definition that is not saved anywhere. */
+export interface GeneratedDraft {
+  name: string
+  description: string
+  use_case?: string
+  trigger_examples?: string[]
+  phases: WorkflowPhase[]
+}
+
 /** What a hunt lead was shown before one decision. Mirrors `Digest` in
  *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
 export interface ReplayDigest {
@@ -1134,7 +1143,6 @@ export const workflowApi = {
     use_case?: string
     trigger_examples?: string[]
     phases: WorkflowPhase[]
-    graph_layout?: Record<string, any>
     created_by?: string
   }) => api.post('/workflows/custom', data),
   updateCustom: (id: string, data: Partial<{
@@ -1143,7 +1151,6 @@ export const workflowApi = {
     use_case: string
     trigger_examples: string[]
     phases: WorkflowPhase[]
-    graph_layout: Record<string, any>
     is_active: boolean
   }>) => api.put(`/workflows/custom/${id}`, data),
   deleteCustom: (id: string) => api.delete(`/workflows/custom/${id}`),
@@ -1463,6 +1470,15 @@ export interface TriagePayload {
     waiting: number
     cases_created_today: number
     trust_floor: string
+  }
+  /** rows that pass the filters, before the row cap */
+  matched: number
+  /** every intake row, before the filters and the row cap; zero entries are left out */
+  counts: {
+    total: number
+    kind: Record<string, number>
+    source: Record<string, number>
+    state: Record<string, number>
   }
   sources: TriageSource[]
   arrival_info: string
