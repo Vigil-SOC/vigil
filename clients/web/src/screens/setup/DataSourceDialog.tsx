@@ -128,6 +128,7 @@ const DataSourceDialog = () => {
   if (selected) {
     return (
       <IntegrationWizard
+        variant="setup"
         integration={selected}
         existingConfig={cfg.current.integrations[selected.id] ?? {}}
         onClose={() => setSelected(null)}

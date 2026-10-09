@@ -284,6 +284,7 @@ class DatabaseDataService:
                     anomaly_score=_optional_score(finding_data.get("anomaly_score")),
                     timestamp=finding_data.get("timestamp") or None,
                     data_source=finding_data.get("data_source", "imported"),
+                    title=finding_data.get("title"),
                     description=finding_data.get("description"),
                     entity_context=finding_data.get("entity_context"),
                     evidence_links=finding_data.get("evidence_links"),

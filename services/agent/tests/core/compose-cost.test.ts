@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
 import { InProcessState } from "../../core/state.js";
 import { DEFAULT_BUDGETS, DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
+import { composeProjection } from "../../workflows/compose/projection.js";
 import { runCompose } from "../../workflows/compose/workflow.js";
 import type { Mirror, TerminalResult } from "../../workflows/compose/mirror.js";
 import type { ComposeKinds } from "../../workflows/compose/vocabulary.js";
@@ -67,7 +68,9 @@ function recordingMirror(): Mirror & { terminals: TerminalResult[] } {
     terminals,
     phase: async () => {},
     terminal: async (_runId, result) => void terminals.push(result),
+    status: async () => true,
     handoff: async () => true,
+    findings: async () => true,
     decisions: async () => [],
   };
 }
@@ -98,5 +101,29 @@ describe("a compose run's terminal", () => {
   it("reports zero for a run that spent nothing, rather than leaving the console without a figure", async () => {
     const terminal = await run("run-compose-free", [0]);
     expect(terminal.cost_usd).toBe(0);
+  });
+});
+
+// A tool a phase named that the deployment lacks is dropped from its grant, and the
+// run says so once at open rather than carrying on as though nothing was asked.
+describe("a phase tool this deployment lacks", () => {
+  const withMissing = (): RunSpec => {
+    const spec = composeSpecFor();
+    const [phase] = spec.phases;
+    return { ...spec, phases: [{ ...(phase as RunSpec["phases"][number]), unavailable: [{ tool: "okta_get_user", reason: "no tool in this deployment answers okta_get_user" }] }] };
+  };
+  const gaps = async (state: InProcessState<ComposeKinds>) =>
+    (await state.read("run-gap")).filter((event) => event.kind === "unbound").map((event) => event.payload);
+
+  it("journals a blind spot at open, once across a resume, and still runs the phase", async () => {
+    const state = new InProcessState<ComposeKinds>();
+    const spec = withMissing();
+    const first = await runCompose(answering()("compose", spec, state), { run_id: "run-gap", spec });
+    expect(first.status).toBe("completed");
+    expect(await gaps(state)).toEqual([{ capability: "okta_get_user", reason: "Report: no tool in this deployment answers okta_get_user", phase_id: "only" }]);
+
+    await runCompose(answering()("compose", spec, state), { run_id: "run-gap", spec });
+    expect(await gaps(state)).toHaveLength(1);
+    expect(composeProjection("run-gap", await state.read("run-gap"))).toMatchObject({ run_kind: "compose", unbound: [{ capability: "okta_get_user" }] });
   });
 });

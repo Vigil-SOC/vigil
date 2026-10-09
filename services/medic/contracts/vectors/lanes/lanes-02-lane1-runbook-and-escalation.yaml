@@ -1,0 +1,9 @@
+id: lanes-02-lane1-runbook-and-escalation
+description: Two trusted lane-1 incidents with a G4 runbook. L1 proposes it and L2 would run it. a clears inside 2 verify windows, so no escalation. b is still open 600 s after routing, so the record gets a simulated escalation (R6; Phase 1 1C5). The lane itself doesn't change.
+until: 3600
+incidents:
+  - {id: a, rule: pipeline.agent-worker-down, lane: 1, trust: trusted, signals: 2, samples: 1, opened_at: 0, resolved_at: 240, runbook: {id: restart-agent-worker, verify_after_s: 300}}
+  - {id: b, rule: pipeline.agent-worker-down, lane: 1, trust: trusted, signals: 2, samples: 1, opened_at: 1000, runbook: {id: restart-agent-worker, verify_after_s: 300}}
+expect:
+  a: {lane: {value: 1, reason: rule}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: propose_runbook, L2: {action: run_runbook}}, escalation: null}
+  b: {lane: {value: 1, reason: rule}, routed_at: 1000, suppressed_by: null, would_have: {L0: record, L1: propose_runbook, L2: {action: run_runbook}}, escalation: {at: 1600, simulated_failures: 2}}

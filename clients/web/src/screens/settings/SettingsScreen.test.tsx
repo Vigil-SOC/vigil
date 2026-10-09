@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -7,6 +7,11 @@ import SettingsScreen from './SettingsScreen'
 
 vi.mock('./AiConfigSection', () => ({ default: () => <div>AI panel</div> }))
 vi.mock('./IntegrationsSection', () => ({ default: () => <div>Integrations panel</div> }))
+const integrationsState = vi.hoisted(() => ({ attention: [] as unknown[] }))
+vi.mock('./IntegrationsState', () => ({
+  IntegrationsStateProvider: ({ children }: { children: unknown }) => children,
+  useIntegrationsState: () => integrationsState,
+}))
 vi.mock('./FederationSection', () => ({ default: () => <div>Federation panel</div> }))
 vi.mock('./SlaPoliciesSection', () => ({ default: () => <div>SLA panel</div> }))
 vi.mock('./AutoInvestigateSection', () => ({ default: () => <div>Autonomy panel</div> }))
@@ -15,8 +20,7 @@ vi.mock('./SystemSection', () => ({ default: () => <div>System panel</div> }))
 vi.mock('./GeneralSection', () => ({ default: () => <div>General panel</div> }))
 vi.mock('./DeveloperSection', () => ({ default: () => <div>Developer panel</div> }))
 vi.mock('./UsersSection', () => ({ default: () => <div>Users panel</div> }))
-vi.mock('./DataIngestion', () => ({ default: () => <div>Ingestion panel</div> }))
-vi.mock('./DetectionRulesPanel', () => ({ default: () => <div>Detection panel</div> }))
+vi.mock('./DataUploadsSection', () => ({ default: () => <div>Data panel</div> }))
 
 const screenProps: ConsoleScreenProps = {
   openChat: vi.fn(),
@@ -49,6 +53,17 @@ function tabs() {
 }
 
 describe('settings nav', () => {
+  it('counts integrations that need attention on the Integrations item only', () => {
+    integrationsState.attention = [{}, {}]
+    renderAt('/settings?section=system')
+    expect(nav().getByRole('button', { name: /Integrations/ })).toHaveTextContent('2')
+    expect(nav().getByRole('button', { name: 'System' })).not.toHaveTextContent('2')
+    integrationsState.attention = []
+    cleanup()
+    renderAt('/settings?section=system')
+    expect(nav().getByRole('button', { name: 'Integrations' })).not.toHaveTextContent(/\d/)
+  })
+
   it('groups the existing panels under the seven screens', () => {
     renderAt('/settings')
     const labels = ['AI models', 'Integrations', 'Alert collection', 'SLA policies', 'Limits & autonomy', 'Data & uploads', 'System']
@@ -118,15 +133,11 @@ describe('settings nav', () => {
     expect(screen.queryByText('System panel')).not.toBeInTheDocument()
   })
 
-  it('puts upload and detection rules on Data & uploads, with the retention line', () => {
+  it('opens Data & uploads as one page, for old section and tab links alike', () => {
     renderAt('/settings?section=data&tab=detection')
-    expect(screen.getByText('Retention: Not measured yet')).toBeInTheDocument()
-    expect(tabs().getByRole('button', { name: 'Detection Rules' })).toHaveClass('active')
-    expect(screen.getByText('Detection panel')).toBeInTheDocument()
-    expect(screen.queryByText('Ingestion panel')).not.toBeInTheDocument()
-
-    fireEvent.click(tabs().getByRole('button', { name: 'Manual Upload' }))
-    expect(screen.getByText('Ingestion panel')).toBeInTheDocument()
+    expect(nav().getByRole('button', { name: 'Data & uploads' })).toHaveClass('active')
+    expect(screen.getByText('Data panel')).toBeInTheDocument()
+    expect(document.querySelector('.tabs')).toBeNull()
   })
 
   it('keeps the sections goSettings already opens', () => {

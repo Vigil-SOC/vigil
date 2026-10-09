@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import pLimit from "p-limit";
-import type { DispatchPayload, NewEvent, RunKind, RunOutcome } from "../../contracts/events.js";
+import type { DispatchPayload, NewEvent, RunKind, RunOutcome, UnboundPayload } from "../../contracts/events.js";
 import { journalAnswers, noAnswers, type Answers } from "../../core/answers.js";
 import { announceOpen, noAnnounce, type Announce } from "../../core/checkpoints.js";
 import { commitTurn, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
 import { drain, streamTurn } from "../../core/stream.js";
-import { SpecError, type RoleSpec, type RunSpec } from "../../core/spec.js";
+import { SpecError, unboundCapabilities, type RoleSpec, type RunSpec } from "../../core/spec.js";
 import { topologyFor, type Assignment, type Round } from "../../core/topology.js";
-import { callsOf } from "../hunt/adapters.js";
+import { scrub } from "../../core/security.js";
+import { CALL_BUDGET, callsOf } from "../hunt/adapters.js";
 
 // What every arch's lead emits. Everything past action is arch-specific and read
 // only when the arch declared it, so one loop drives a swarm and a single lead.
@@ -31,7 +32,7 @@ export interface FindingPayload {
   answer: unknown;
 }
 
-export type LeadKinds = { decision: DecisionPayload; finding: FindingPayload };
+export type LeadKinds = { decision: DecisionPayload; finding: FindingPayload; unbound: UnboundPayload };
 type Event = NewEvent<LeadKinds>;
 
 export interface LeadOptions {
@@ -89,7 +90,9 @@ export async function runLead(harness: Harness<LeadKinds>, options: LeadOptions)
     await journalAnswers(harness.state, run_id, options.run_kind, options.answers ?? noAnswers);
 
     const started = performance.now();
-    const outcome = await drain(streamTurn<Decision, LeadKinds>(turnFor(options, "lead", lead, brief(spec)), harness));
+    // Rendered from the ledger each turn, never journaled: a resume derives the same text.
+    const task = `${brief(spec)}${held(await harness.state.read(run_id), spec)}`;
+    const outcome = await drain(streamTurn<Decision, LeadKinds>(turnFor(options, "lead", lead, task), cueing(harness, brief(spec))));
     const durationMs = Math.round(performance.now() - started);
     if (outcome.status === "waiting_approval") {
       // Announced every time the run is looked at, not only when it first parks:
@@ -218,6 +221,77 @@ function openingKeys(spec: RunSpec): readonly string[] {
   return [...new Set(held.filter((key): key is string => typeof key === "string" && key !== ""))].sort();
 }
 
+// The recall cue is the task, and the task now grows each iteration. Pinned to the
+// opening brief so the cue-shaped read asks the same question on every turn.
+function cueing(harness: Harness<LeadKinds>, cue: string): Harness<LeadKinds> {
+  return { ...harness, memory: { ...harness.memory, recall: (_, limit) => harness.memory.recall(cue, limit) } };
+}
+
+type Ledger = Awaited<ReturnType<Harness<LeadKinds>["state"]["read"]>>;
+
+interface Iteration {
+  decision: DecisionPayload;
+  intent: string | null;
+  calls: { tool: string; arguments: string; result: string }[];
+}
+
+// What the lead has done so far, paired from the ledger: a decision, then the
+// lead's own dispatch committed with it. Worker dispatches are not the lead's calls.
+function recordsOf(events: Ledger): Iteration[] {
+  const records: Iteration[] = [];
+  for (const one of events) {
+    if (one.kind === "decision") {
+      records.push({ decision: one.payload, intent: null, calls: [] });
+      continue;
+    }
+    const last = records.at(-1);
+    if (one.kind !== "dispatch" || last === undefined || one.payload.agent_id !== "lead") continue;
+    last.intent = one.payload.query_intent ?? null;
+    last.calls = (one.payload.calls ?? []).filter(isCall);
+  }
+  return records;
+}
+
+function isCall(value: unknown): value is Iteration["calls"][number] {
+  const call = value as Partial<Iteration["calls"][number]> | null;
+  return typeof call?.tool === "string" && typeof call.arguments === "string" && typeof call.result === "string";
+}
+
+// Ids come from position alone (it3, it3.1), so they are the same on a resume.
+// Arguments are model-authored and unscrubbed in the journal; results were scrubbed
+// when they were wrapped.
+function render(at: number, record: Iteration): string {
+  const id = `it${at + 1}`;
+  const { action, rationale } = record.decision;
+  const decision = [`action: ${action}`, record.intent && `query_intent: ${scrub(record.intent, CALL_BUDGET)}`, `rationale: ${scrub(rationale, CALL_BUDGET)}`];
+  const calls = record.calls.map((call, index) => block(`${id}.${index + 1}`, [`tool: ${scrub(call.tool, 100)}`, `arguments: ${scrub(call.arguments, CALL_BUDGET)}`, call.result]));
+  return [block(id, decision), ...calls].join("\n\n");
+}
+
+function block(id: string, lines: readonly (string | null)[]): string {
+  return `<vigil:record id="${id}">\n${lines.filter((line) => line).join("\n")}\n</vigil:record>`;
+}
+
+// Total characters the section may take: records are clamped one dispatch at a time,
+// so record_window alone would still let forty of them reach hundreds of thousands.
+const HELD_CAP = 4 * CALL_BUDGET;
+
+// "What this run already holds": the newest record_window iterations, oldest first,
+// within HELD_CAP. Empty before the first iteration, so the opening turn is the brief alone.
+function held(events: Ledger, spec: RunSpec): string {
+  const records = recordsOf(events);
+  if (records.length === 0) return "";
+
+  const rendered = records.map((record, at) => render(at, record));
+  let from = Math.max(0, records.length - (spec.digest["record_window"] ?? Infinity));
+  let size = rendered.slice(from).reduce((sum, text) => sum + text.length, 0);
+  // The newest record is always kept: it is what the next decision follows from.
+  while (from < records.length - 1 && size > HELD_CAP) size -= (rendered[from++] as string).length;
+
+  const dropped = from === 0 ? "" : `${from} older record(s) dropped: it1${from > 1 ? ` to it${from}` : ""}\n\n`;
+  return `\n\n## What this run already holds\nYour earlier iterations, oldest first. Cite a record by its id.\n\n${dropped}${rendered.slice(from).join("\n\n")}`;
+}
+
 // The playbook's half, rendered once: what this run is about and what an analyst
 // should know. The fold that replaces it with a digest is a later slice.
 function brief(spec: RunSpec): string {
@@ -236,6 +310,10 @@ function event(options: LeadOptions, kind: Event["kind"], payload: Event["payloa
 }
 
 async function open(harness: Harness<LeadKinds>, options: LeadOptions): Promise<void> {
+  // Journalled with the opening, so a resume (which skips open) cannot declare them twice.
+  const unbound = unboundCapabilities(options.spec.roles, options.spec.tools).map((capability) =>
+    event(options, "unbound", { capability, reason: `no tool in this deployment answers ${capability}` }),
+  );
   await harness.state.append(options.run_id, [
     event(options, "run", {
       run_kind: options.run_kind,
@@ -245,6 +323,7 @@ async function open(harness: Harness<LeadKinds>, options: LeadOptions): Promise<
       tenant_id: null,
       started_by: options.started_by ?? "worker",
     }),
+    ...unbound,
   ]);
 }
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { consoleApi } from '../services/api'
+import { configApi, consoleApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 
@@ -35,6 +35,8 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
   const [version, setVersion] = useState('')
+  // open setup steps; null when unread, so the row shows no count
+  const [setupLeft, setSetupLeft] = useState<number | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
@@ -59,6 +61,23 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
       live = false
     }
   }, [])
+
+  // re-read on each open so finishing a step shows without a reload
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    configApi
+      .getSetupSteps()
+      .then((res) => {
+        if (live) setSetupLeft(res.data.steps.filter((s) => !s.done).length)
+      })
+      .catch(() => {
+        if (live) setSetupLeft(null)
+      })
+    return () => {
+      live = false
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -113,7 +132,7 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
           <div className="user-pop-role">Role: {role}</div>
         </div>
         <div className="user-pop-sep" />
-        <div className="user-pop-about">About{version ? ` · ${version}` : ''}</div>
+        <div className="user-pop-about">About Vigil{version ? ` · ${version}` : ''}</div>
         <a role="menuitem" href={feedbackHref(current, version)} target="_blank" rel="noreferrer">
           Share feedback
         </a>
@@ -134,10 +153,14 @@ export default function UserMenu({ onShowTour }: { onShowTour: () => void }) {
         </button>
         <div className="user-pop-sep" />
         <button role="menuitem" onClick={() => { setOpen(false); onShowTour() }}>
-          <Icon name="info" size={15} /> Console tour
+          <Icon name="info" size={15} /> Take the tour
         </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/setup') }}>
-          <Icon name="flow" size={15} /> Setup
+          <Icon name="flow" size={15} />
+          <span>
+            Setup guide
+            {setupLeft ? <span className="user-pop-count"> · {setupLeft} left</span> : null}
+          </span>
         </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings

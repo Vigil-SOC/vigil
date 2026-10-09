@@ -44,30 +44,53 @@ describe('the header', () => {
     render(<WatchRun d={{ ...hunt('completed'), workflow_version: null }} onBack={vi.fn()} />)
     expect(screen.getByText(/version not recorded/)).toBeInTheDocument()
   })
+
+  it('names the workflow by its display name, and does not end on a hunt name that is the workflow id', () => {
+    render(<WatchRun d={{ ...hunt('completed', [move(1)], { name: 'threat-hunt' }), workflow_name: 'threat-hunt', trigger_context: { case_id: 'c-1' } } as unknown as WfRunDetail} onBack={vi.fn()} />)
+    // the run id sits in its own span, so read the line whole
+    const line = screen.getByText('run-1'.slice(0, 8)).parentElement as HTMLElement
+    expect(line.textContent).toBe('Run run-1 · Threat hunt version 3 · case c-1. Replayed step by step from the record.')
+  })
 })
 
 describe('a hunt', () => {
-  it('lays the moves out in ledger order and starts a finished run at step 1, paused', async () => {
+  it('lays the moves out in ledger order and opens a finished run on its final step, paused', async () => {
     render(<WatchRun d={hunt('completed')} onBack={vi.fn()} />)
 
-    expect(caption()).toBe('Step 1 of 3 · Investigate')
+    expect(caption()).toBe('Step 3 of 3 · Expand')
     const cards = screen.getAllByTitle(/^Go to step/)
     expect(cards.map((c) => c.textContent)).toEqual([
       expect.stringContaining('Investigate'), expect.stringContaining('Expand'), expect.stringContaining('Expand'),
     ])
     expect(cards[0]).toHaveTextContent('13:11')
-    // the cursor step is done; the ones past it are pending, and say nothing yet
-    expect(screen.getAllByRole('img', { name: 'Done' })).toHaveLength(1)
-    expect(screen.getAllByRole('img', { name: 'Not started' })).toHaveLength(2)
-    expect(screen.queryByText('why 2')).not.toBeInTheDocument()
+    // every step is on screen and done; nothing plays on its own
+    expect(screen.getAllByRole('img', { name: 'Done' })).toHaveLength(3)
+    expect(screen.queryByRole('img', { name: 'Not started' })).not.toBeInTheDocument()
+    expect(screen.getByText('why 2')).toBeInTheDocument()
     await tick(STEP_MS * 3)
-    expect(caption()).toBe('Step 1 of 3 · Investigate')
+    expect(caption()).toBe('Step 3 of 3 · Expand')
   })
 
-  it('plays on a timer, stops at the last step, and replays from the start', async () => {
+  it('holds the active step card to two lines, with Show all once it overflows', () => {
+    const heights = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(300)
+    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(34)
+    render(<WatchRun d={hunt('completed', [move(1, { rationale: 'a very long rationale '.repeat(40) })])} onBack={vi.fn()} />)
+
+    const card = screen.getByTitle('Go to step 1').parentElement as HTMLElement
+    const text = card.querySelector('span.line-clamp-2') as HTMLElement
+    expect(text).toHaveTextContent('model text')
+    fireEvent.click(within(card).getByRole('button', { name: 'Show all' }))
+    expect(text).not.toHaveClass('line-clamp-2')
+    fireEvent.click(within(card).getByRole('button', { name: 'Show less' }))
+    expect(text).toHaveClass('line-clamp-2')
+    heights.mockRestore(); client.mockRestore()
+  })
+
+  it('replays from the start on the play button, stops at the last step, and can go again', async () => {
     render(<WatchRun d={hunt('completed')} onBack={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Play the replay' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replay from the start' }))
+    expect(caption()).toBe('Step 1 of 3 · Investigate')
     await tick(STEP_MS)
     expect(caption()).toBe('Step 2 of 3 · Expand')
     await tick(STEP_MS)
@@ -83,7 +106,7 @@ describe('a hunt', () => {
   it('pauses, and a segment jumps to its step', async () => {
     render(<WatchRun d={hunt('completed')} onBack={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Play the replay' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replay from the start' }))
     await tick(STEP_MS)
     fireEvent.click(screen.getByRole('button', { name: 'Pause the replay' }))
     await tick(STEP_MS * 3)
@@ -110,7 +133,7 @@ describe('a hunt', () => {
   it('draws a paused run waiting on a person: warn mark, stopped caption, waiting clock, no spinner', () => {
     const open = { checkpoint_id: 'c1', checkpoint_class: 'scope_extension', question: 'Widen?' }
     render(<WatchRun d={hunt('paused', [move(2), move(1)], { open_checkpoint: open })} onBack={vi.fn()} />)
-    expect(screen.getByText('Stopped · needs you', { selector: 'span.whitespace-nowrap' })).toBeInTheDocument()
+    expect(screen.getByText('Stopped · needs you', { selector: 'span.truncate' })).toBeInTheDocument()
     expect(screen.getByText(/13:12 · waiting on you/)).toBeInTheDocument()
     expect(screen.getAllByRole('img', { name: 'Needs you' })).toHaveLength(1)
     expect(screen.queryByRole('img', { name: 'Working on it' })).not.toBeInTheDocument()
@@ -120,17 +143,64 @@ describe('a hunt', () => {
     expect(screen.getByText('why 2')).toBeInTheDocument()
   })
 
-  it('reads a paused status as waiting even before a checkpoint is on the projection, and wins over a failed call', () => {
-    const calls = [{ question: 'q', tool: 'virustotal', result_length: 1, cost_usd: 0, iteration: 1, failed: 'timeout' }]
-    render(<WatchRun d={hunt('paused', [move(1)], { calls })} onBack={vi.fn()} />)
-    expect(screen.getAllByRole('img', { name: 'Needs you' })).toHaveLength(1)
-    expect(screen.queryByRole('img', { name: 'Failed' })).not.toBeInTheDocument()
+  it('reads a paused run with no checkpoint as paused, with its reason, not as needing you', () => {
+    render(<WatchRun d={hunt('paused', [move(2), move(1)], { reason: 'waiting for the vendor feed' })} onBack={vi.fn()} />)
+    expect(screen.getByText('Paused · waiting for the vendor feed')).toBeInTheDocument()
+    expect(screen.getByText(/13:12 · paused/)).toBeInTheDocument()
+    expect(screen.getAllByRole('img', { name: 'Paused' })).toHaveLength(1)
+    expect(screen.queryByRole('img', { name: 'Needs you' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/in progress/)).not.toBeInTheDocument()
   })
 
-  it('marks a hunt step failed when a call carries its failure, and its line reads timed out', () => {
+  it('shows a parked hunt as paused though its run row still says running', () => {
+    render(<WatchRun d={hunt('running', [move(2), move(1)], { status: 'parked', reason: 'budget reached' })} onBack={vi.fn()} />)
+    expect(screen.getByText('Paused · budget reached')).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Working on it' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Needs you' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/in progress/)).not.toBeInTheDocument()
+  })
+
+  it('shows a failed run as stopped with its error, the last step failed and the error labelled as one', () => {
+    const d = { ...hunt('failed', [move(2), move(1)]), error: 'agent service unreachable' }
+    render(<WatchRun d={d} onBack={vi.fn()} />)
+    fireEvent.click(screen.getByRole('listitem', { name: /^Step 2:/ }))
+    expect(screen.getByText('Stopped · agent service unreachable', { selector: 'span.truncate' })).toBeInTheDocument()
+    expect(screen.getAllByRole('img', { name: 'Failed' })).toHaveLength(1)
+    expect(screen.getByText('agent service unreachable', { selector: 'span.line-clamp-2, span.break-words' })).toBeInTheDocument()
+    // the model's own words keep their label, the error gets its own
+    expect(screen.getAllByText('model text')).toHaveLength(2)
+    expect(screen.getAllByText('error')).toHaveLength(1)
+  })
+
+  it('labels a rationale that is only the run’s error as an error, not as model text', () => {
+    const d = { ...hunt('failed', [move(1, { rationale: 'boom' })]), error: 'boom' }
+    render(<WatchRun d={d} onBack={vi.fn()} />)
+    expect(screen.queryByText('model text')).not.toBeInTheDocument()
+    expect(screen.getByText('error')).toBeInTheDocument()
+  })
+
+  it('goes back to following a live run when the viewer scrubs to its newest step, and when playback ends there', async () => {
+    const { rerender } = render(<WatchRun d={hunt('running', [move(3), move(2), move(1)])} onBack={vi.fn()} />)
+    fireEvent.click(screen.getByRole('listitem', { name: /^Step 1:/ }))
+    rerender(<WatchRun d={hunt('running', [move(4), move(3), move(2), move(1)])} onBack={vi.fn()} />)
+    expect(caption()).toBe('Step 1 of 4 · Investigate')
+
+    fireEvent.click(screen.getByRole('listitem', { name: /^Step 4:/ }))
+    rerender(<WatchRun d={hunt('running', [move(5), move(4), move(3), move(2), move(1)])} onBack={vi.fn()} />)
+    expect(caption()).toBe('Step 5 of 5 · Expand')
+
+    fireEvent.click(screen.getByRole('listitem', { name: /^Step 4:/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play the replay' }))
+    await tick(STEP_MS)
+    rerender(<WatchRun d={hunt('running', [move(6), move(5), move(4), move(3), move(2), move(1)])} onBack={vi.fn()} />)
+    expect(caption()).toBe('Step 6 of 6 · Expand')
+  })
+
+  it('leaves a hunt step done when a call failed, and its line reads timed out', () => {
     const calls = [{ question: 'q', tool: 'virustotal', result_length: 40, cost_usd: 0, duration_ms: 30000, iteration: 1, failed: 'timeout' }]
     render(<WatchRun d={hunt('completed', [move(1, { duration_ms: 900 })], { calls })} onBack={vi.fn()} />)
-    expect(screen.getByRole('img', { name: 'Failed' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Failed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Done' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Thought for 900ms/ }))
     expect(screen.getByText(/timed out/)).toBeInTheDocument()
   })
@@ -139,7 +209,7 @@ describe('a hunt', () => {
     const d = hunt('completed', [move(52), move(51)], { iteration: 52 })
     render(<WatchRun d={d} onBack={vi.fn()} />)
     expect(screen.getByText('Showing the last 2 steps')).toBeInTheDocument()
-    expect(caption()).toBe('Step 1 of 2 · Expand')
+    expect(caption()).toBe('Step 2 of 2 · Expand')
   })
 
   it('ties calls to the move that asked for them, and does not claim none when it cannot tell', () => {
@@ -171,9 +241,14 @@ describe('a hunt', () => {
     expect(screen.queryByRole('button', { name: /replay/i })).not.toBeInTheDocument()
   })
 
+  it('does not double the period when a stop reason already ends in one', () => {
+    render(<WatchRun d={{ ...hunt('failed', []), error: 'ran out of turns, or abort.' } as unknown as WfRunDetail} onBack={vi.fn()} />)
+    expect(screen.getByText('Stopped · ran out of turns, or abort. No steps were recorded for this run.')).toBeInTheDocument()
+  })
+
   it('stops its timer when the page goes away', async () => {
     const { unmount } = render(<WatchRun d={hunt('completed')} onBack={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Play the replay' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replay from the start' }))
     unmount()
     expect(vi.getTimerCount()).toBe(0)
   })
@@ -185,7 +260,7 @@ describe('an investigate run', () => {
   const investigate = (status = 'completed') =>
     ({ run_id: 'run-2', status, workflow_name: 'Alert triage', projection: { run_kind: 'investigate' } }) as unknown as WfRunDetail
 
-  it('reads its decisions from the replay, and marks a step whose call failed', async () => {
+  it('reads its decisions from the replay; a step whose call failed stays done and the failure shows on the call', async () => {
     vi.mocked(workflowApi.replayRun).mockResolvedValue({
       data: {
         run_kind: 'investigate',
@@ -198,8 +273,9 @@ describe('an investigate run', () => {
     } as never)
     render(<WatchRun d={investigate()} onBack={vi.fn()} />)
 
-    expect(await screen.findByText('Step 1 of 2 · Validate')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Failed' })).toBeInTheDocument()
+    expect(await screen.findByText('Step 2 of 2 · Stop')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('listitem', { name: /^Step 1:/ }))
+    expect(screen.queryByRole('img', { name: 'Failed' })).not.toBeInTheDocument()
     expect(screen.getByText('check-reputation')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Thought for 900ms/ }))
     const line = screen.getByText('virustotal').parentElement as HTMLElement
@@ -242,7 +318,8 @@ describe('a root-cause run', () => {
     } as never)
     render(<WatchRun d={trace()} onBack={vi.fn()} />)
 
-    expect(await screen.findByText('Step 1 of 4 · Search')).toBeInTheDocument()
+    expect(await screen.findByText('Step 4 of 4 · Notice')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('listitem', { name: /^Step 1:/ }))
     expect(screen.queryByText(UNSUPPORTED)).not.toBeInTheDocument()
     expect(screen.getByText('What the lead agent did')).toBeInTheDocument()
     expect(screen.getByText('index=a | head')).toBeInTheDocument()
@@ -283,6 +360,36 @@ describe('a run that is neither', () => {
     expect(screen.getByText('Limits used')).toBeInTheDocument()
     expect(screen.queryByText('What the lead agent did')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /replay/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('the kind of a run', () => {
+  const started = (extra = {}) => ({ run_id: 'run-5', status: 'running', workflow_name: 'threat-hunt', trigger_context: { run_kind: 'hunt', hypothesis: 'A\nB' }, ...extra }) as unknown as WfRunDetail
+
+  it('is a hunt from the run row alone: Starting…, the hypothesis under a named heading, and Live', () => {
+    render(<WatchRun d={started()} onBack={vi.fn()} />)
+    expect(screen.getByText('Starting…')).toBeInTheDocument()
+    expect(screen.queryByText(PLAYBOOK)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Watch it run · Threat hunt' })).toBeInTheDocument()
+    expect(screen.getByText('A · B')).toBeInTheDocument()
+    expect(screen.getByText(/Live\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Replayed step by step/)).not.toBeInTheDocument()
+  })
+
+  it('treats adjudicate as hunt-like, and a run with no recorded kind and no projection as a playbook', () => {
+    const { unmount } = render(<WatchRun d={started({ trigger_context: { run_kind: 'adjudicate' } })} onBack={vi.fn()} />)
+    expect(screen.getByText('Starting…')).toBeInTheDocument()
+    unmount()
+    render(<WatchRun d={started({ trigger_context: {} })} onBack={vi.fn()} />)
+    expect(screen.getByText(PLAYBOOK)).toBeInTheDocument()
+  })
+
+  it('says replayed once the run has ended, and falls back to the beliefs put up when no hypothesis was typed', () => {
+    const d = hunt('completed', [move(1)], { hypotheses: [{ hypothesis_id: 'h1', statement: 'The same operator moved', status: 'active', provenance: 'operator' }, { hypothesis_id: 'h2', statement: 'A scanner', status: 'active', provenance: 'base_rate' }] })
+    render(<WatchRun d={d} onBack={vi.fn()} />)
+    expect(screen.getByText(/Replayed step by step from the record\./)).toBeInTheDocument()
+    expect(screen.getByRole('heading').nextElementSibling).toHaveTextContent('The same operator moved')
+    expect(screen.getByRole('heading').nextElementSibling).not.toHaveTextContent('A scanner')
   })
 })
 

@@ -100,8 +100,6 @@ from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
     _infer_title,
     count_steps,
-    generate_case_review_context,
-    generate_case_review_plan,
     generate_initial_context,
     generate_initial_state,
     generate_plan,
@@ -1751,10 +1749,6 @@ class Orchestrator:
                 if action.get("requires_approval"):
                     await self._create_approval_action(inv_id, action)
 
-        case_id = state.get("case_id")
-        if case_id and state.get("workflow_id") != "case-review":
-            await self._maybe_trigger_case_review(case_id)
-
     async def _create_approval_action(self, inv_id: str, action: Dict):
         """Create an approval action for proposed response."""
         try:
@@ -1783,94 +1777,6 @@ class Orchestrator:
             logger.info(f"Created approval action for {inv_id}: {action_str}")
         except Exception as e:
             logger.error(f"Failed to create approval action: {e}")
-
-    async def _maybe_trigger_case_review(self, case_id: str):
-        """Trigger a case-review agent if one hasn't already run for this case."""
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation as InvModel
-
-            with get_db_manager().session_scope() as session:
-                existing = (
-                    session.query(InvModel)
-                    .filter(
-                        InvModel.workflow_id == "case-review",
-                        InvModel.case_id == case_id,
-                        InvModel.status.notin_(["failed"]),
-                    )
-                    .first()
-                )
-                if existing:
-                    logger.debug(
-                        f"Case-review already exists for {case_id}: {existing.investigation_id}"
-                    )
-                    return
-
-            case_data = None
-            if self._data_service:
-                case_data = self._data_service.get_case(case_id)
-            if not case_data:
-                logger.warning(f"Case {case_id} not found, skipping case review")
-                return
-
-            case_title = case_data.get("title", case_id)
-            finding_ids = case_data.get("finding_ids", [])
-            priority = case_data.get("priority", "medium")
-
-            inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
-            total_steps = count_steps("case-review")
-
-            workdir = self.workdir.create(inv_id)
-
-            plan_md = generate_case_review_plan(
-                inv_id, case_id, case_title, finding_ids, priority
-            )
-            self.workdir.write_file(inv_id, "plan.md", plan_md)
-
-            state = generate_initial_state(
-                inv_id, "case-review", case_id, [], total_steps
-            )
-            self.workdir.write_state(inv_id, state)
-
-            context_md = generate_case_review_context(case_id, case_title, finding_ids)
-            self.workdir.write_file(inv_id, "context.md", context_md)
-
-            inv_record = {
-                "investigation_id": inv_id,
-                "case_id": case_id,
-                "workflow_id": "case-review",
-                "trigger_type": "case_review",
-                "trigger_ids": finding_ids[:10],
-                "status": "assigned",
-                "workdir": str(workdir),
-                "current_step": 1,
-                "total_steps": total_steps,
-                "priority": priority,
-                "max_iterations": self.config.max_iterations_per_agent,
-                "max_cost_usd": self.config.max_cost_per_investigation,
-                "max_runtime_seconds": self.config.max_runtime_per_investigation,
-            }
-
-            self._save_investigation(inv_record)
-
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "investigation_created",
-                    "workflow_id": "case-review",
-                    "trigger_type": "case_review",
-                    "case_id": case_id,
-                },
-            )
-
-            logger.info(
-                f"Created case-review investigation {inv_id} for case {case_id}"
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Failed to trigger case review for {case_id}: {e}", exc_info=True
-            )
 
     # -------------------------------------------------------------------------
     # AI Decision Logging

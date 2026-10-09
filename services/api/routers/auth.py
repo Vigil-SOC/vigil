@@ -352,21 +352,44 @@ def login(
     )
 
 
+async def _revoke_token(raw: str, owner: User, kind: str) -> None:
+    """Blacklist a token's JTI for its remaining life. Another user's token is
+    left alone, so a body field cannot be used to revoke someone else's session."""
+    payload = AuthService.verify_jwt_token(raw)
+    jti = payload.get("jti") if payload else None
+    if not jti or payload.get("user_id") != owner.user_id:
+        return
+    exp_ts = payload.get("exp")
+    try:
+        await blacklist_jti(
+            jti, datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
+        )
+    except Exception as exc:
+        # Redis down: logout still "succeeds" client-side (cookies cleared,
+        # client discards its tokens), but the server-side failure is logged.
+        logger.error(
+            "Failed to blacklist %s token for %s: %s", kind, owner.username, exc
+        )
+
+
 @router.post("/logout")
 async def logout(
     request: Request,
     response: Response,
+    body: Optional[RefreshTokenRequest] = None,
     current_user: User = Depends(get_current_active_user),
     authorization: Optional[str] = Header(None),
 ):
     """
-    Logout user — blacklist the current access token's JTI so replaying it
-    returns 401 for the rest of its lifetime, and clear the HttpOnly auth
-    cookies from the browser.
+    Logout user: blacklist the current access token and the refresh token so
+    replaying either returns 401 for the rest of its lifetime, and clear the
+    HttpOnly auth cookies from the browser.
 
     Args:
-        request: FastAPI request (used to read the access_token cookie).
+        request: FastAPI request (used to read the auth cookies).
         response: FastAPI response (used to clear auth cookies).
+        body: Optional refresh token for Bearer-flow clients, which hold it
+            outside a cookie.
         current_user: Current authenticated user.
         authorization: Authorization header (used to extract the JTI for
             Bearer-flow clients).
@@ -380,48 +403,18 @@ async def logout(
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             raw_token = parts[1]
-
     if raw_token:
-        payload = AuthService.verify_jwt_token(raw_token)
-        if payload:
-            jti = payload.get("jti")
-            exp_ts = payload.get("exp")
-            exp_dt = datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
-            if jti:
-                try:
-                    await blacklist_jti(jti, exp_dt)
-                except Exception as exc:
-                    # Redis down — logout still "succeeds" client-side
-                    # (cookies cleared, client discards the Bearer token),
-                    # but we surface the server-side failure for ops.
-                    logger.error(
-                        "Failed to blacklist token for %s: %s",
-                        current_user.username,
-                        exc,
-                    )
+        await _revoke_token(raw_token, current_user, "access")
 
-    # Blacklist the refresh token JTI too so a captured copy cannot be
-    # used to mint new access tokens after logout.
-    raw_refresh: Optional[str] = request.cookies.get(REFRESH_COOKIE_NAME)
-    if raw_refresh:
-        refresh_payload = AuthService.verify_jwt_token(raw_refresh)
-        if refresh_payload:
-            refresh_jti = refresh_payload.get("jti")
-            refresh_exp_ts = refresh_payload.get("exp")
-            refresh_exp_dt = (
-                datetime.utcfromtimestamp(refresh_exp_ts)
-                if refresh_exp_ts is not None
-                else None
-            )
-            if refresh_jti:
-                try:
-                    await blacklist_jti(refresh_jti, refresh_exp_dt)
-                except Exception as exc:
-                    logger.error(
-                        "Failed to blacklist refresh token for %s: %s",
-                        current_user.username,
-                        exc,
-                    )
+    # A captured refresh token must not mint new access tokens after logout.
+    # The cookie and the body field can differ (a Bearer client next to a
+    # browser session), so both are revoked.
+    refresh_tokens = {
+        request.cookies.get(REFRESH_COOKIE_NAME),
+        body.refresh_token if body else None,
+    }
+    for raw in refresh_tokens - {None, ""}:
+        await _revoke_token(raw, current_user, "refresh")
 
     clear_auth_cookies(response)
 

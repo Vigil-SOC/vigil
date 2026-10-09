@@ -1,0 +1,13 @@
+# expect: E-RE2
+# why: Linear-time regex only (K1 T-10)
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.bad-regex
+title: Regex that needs a backtracking engine
+revision: 1
+fault: {class: ingest, mode: I-1, causes: [I-1.b]}
+lane: 2
+signals:
+  line: {log: {signal: log_soc_daemon, template: {re2: '^(a+)+\1$'}}}
+when: {fn: count, signal: line, window: 5m, op: ">=", value: 1}
+advice: {summary: Bad regex rule, fix: Nothing to do.}
