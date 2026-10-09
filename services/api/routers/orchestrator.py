@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from core.auth.permissions import permission_gate
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
+from core.storage.config_service import get_config_service
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
 
@@ -28,6 +30,9 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
+
+# Turning the orchestrator off, or wiping its records, is a settings change.
+_SETTINGS_WRITE = [permission_gate("settings.write")]
 
 
 _cached_orchestrator = None
@@ -167,7 +172,7 @@ def _persist_orchestrator_enabled(
         raise RuntimeError("orchestrator.settings was not stored")
 
 
-@router.post("/enable")
+@router.post("/enable", dependencies=_SETTINGS_WRITE)
 def enable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -179,7 +184,7 @@ def enable_orchestrator(
     return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
 
 
-@router.post("/disable")
+@router.post("/disable", dependencies=_SETTINGS_WRITE)
 def disable_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -195,7 +200,7 @@ def disable_orchestrator(
     }
 
 
-@router.post("/kill")
+@router.post("/kill", dependencies=_SETTINGS_WRITE)
 async def kill_orchestrator(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -228,8 +233,10 @@ async def kill_orchestrator(
         raise HTTPException(status_code=500, detail="Failed to kill the orchestrator")
 
 
-@router.post("/investigations/purge")
-async def purge_investigations():
+@router.post("/investigations/purge", dependencies=_SETTINGS_WRITE)
+async def purge_investigations(
+    current_user: User = Depends(get_current_active_user),
+):
     """Hard reset: stop all running agents, delete every investigation
     record (and its cascading logs), and wipe the on-disk workdir tree.
 
@@ -240,6 +247,17 @@ async def purge_investigations():
         orch = _get_orchestrator()
         if not orch:
             raise HTTPException(status_code=503, detail="Orchestrator not available")
+        # The purge cascades to investigation_logs; config_audit_log is not
+        # touched by it, so this row records who did it.
+        await asyncio.to_thread(
+            get_config_service(user_id=str(current_user.user_id)).record_audit,
+            config_type="orchestrator",
+            config_key="investigations",
+            action="purge",
+            old_value=None,
+            new_value=None,
+            change_reason="All investigations purged via API",
+        )
         result = await orch.purge_all_investigations()
         return {
             "success": True,

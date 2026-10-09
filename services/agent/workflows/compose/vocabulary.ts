@@ -1,3 +1,5 @@
+import type { UnboundPayload } from "../../contracts/events.js";
+
 // What a step answers with, and what the ledger holds for it. Compose owns both:
 // the arch declares no roles, so there is no operator-authored schema to inherit.
 
@@ -37,4 +39,4 @@ export interface PhasePayload {
   answer: PhaseAnswer;
 }
 
-export type ComposeKinds = { phase: PhasePayload };
+export type ComposeKinds = { phase: PhasePayload; unbound: UnboundPayload };

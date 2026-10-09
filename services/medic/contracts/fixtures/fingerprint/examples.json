@@ -1,0 +1,232 @@
+{
+  "algorithm": "fp1",
+  "catalog": [
+    [
+      "core.integrations.elastic.ingestion",
+      "%s configuration incomplete (missing: %s); skipping polls until it is completed"
+    ]
+  ],
+  "same": [
+    {
+      "name": "catalog-template-different-args",
+      "use_catalog": true,
+      "expected": "fp1_c3b21b15e751b56a",
+      "lines": [
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "WARNING",
+          "logger": "core.integrations.elastic.ingestion",
+          "template": "%s configuration incomplete (missing: %s); skipping polls until it is completed",
+          "message": "Elastic configuration incomplete (missing: elasticsearch_url); skipping polls until it is completed"
+        },
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "WARNING",
+          "logger": "core.integrations.elastic.ingestion",
+          "template": "%s configuration incomplete (missing: %s); skipping polls until it is completed",
+          "message": "Elastic configuration incomplete (missing: api_key, elasticsearch_url); skipping polls until it is completed"
+        }
+      ]
+    },
+    {
+      "name": "fstring-ids-and-numbers",
+      "use_catalog": false,
+      "expected": "fp1_fe2d3ee920973f34",
+      "lines": [
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "services.daemon.orchestrator",
+          "template": "Failed to save investigation 3f2a9c1e-1111-2222-3333-444455556666 to DB after 3 attempts",
+          "message": "Failed to save investigation 3f2a9c1e-1111-2222-3333-444455556666 to DB after 3 attempts"
+        },
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "services.daemon.orchestrator",
+          "template": "Failed to save investigation 0b0b0b0b-aaaa-bbbb-cccc-ddddeeeeffff to DB after 12 attempts",
+          "message": "Failed to save investigation 0b0b0b0b-aaaa-bbbb-cccc-ddddeeeeffff to DB after 12 attempts"
+        }
+      ]
+    },
+    {
+      "name": "fstring-hosts-ports-quoted",
+      "use_catalog": false,
+      "expected": "fp1_7acb7f356eb73afc",
+      "lines": [
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "core.storage.database_data_service",
+          "template": "Error getting findings from DB: connection to server at \"10.0.0.5\", port 5432 failed: Connection refused",
+          "message": "Error getting findings from DB: connection to server at \"10.0.0.5\", port 5432 failed: Connection refused"
+        },
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "core.storage.database_data_service",
+          "template": "Error getting findings from DB: connection to server at \"db.internal\", port 6432 failed: Connection refused",
+          "message": "Error getting findings from DB: connection to server at \"db.internal\", port 6432 failed: Connection refused"
+        }
+      ]
+    },
+    {
+      "name": "text-urls-timestamps",
+      "use_catalog": false,
+      "expected": "fp1_5dfea71d31cb602e",
+      "lines": [
+        {
+          "service": "soc-daemon",
+          "format": "text",
+          "raw": "2026-10-07 10:00:01,123 - services.daemon.poller - WARNING - Splunk query failed (401): https://splunk.a.example:8089/services/search at 2026-10-07T10:00:01Z"
+        },
+        {
+          "service": "soc-daemon",
+          "format": "text",
+          "raw": "2026-10-08 23:59:59,999 - services.daemon.poller - WARNING - Splunk query failed (403): https://splunk.b.example/services/search at 2026-10-08T23:59:59.5Z"
+        }
+      ]
+    },
+    {
+      "name": "same-exception-different-line-numbers",
+      "use_catalog": true,
+      "expected": "fp1_dc835c24313f887f",
+      "lines": [
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "core.storage.service",
+          "template": "%s failed",
+          "message": "DatabaseService.get_findings failed",
+          "exc_type": "sqlalchemy.exc.OperationalError",
+          "exception": "Traceback (most recent call last):\n  File \"/app/core/storage/service.py\", line 88, in get_findings\n    x\n  File \"/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py\", line 2306, in execute\n    y\nE: boom"
+        },
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "core.storage.service",
+          "template": "%s failed",
+          "message": "DatabaseService.get_findings failed",
+          "exc_type": "sqlalchemy.exc.OperationalError",
+          "exception": "Traceback (most recent call last):\n  File \"/opt/vigil/core/storage/service.py\", line 97, in get_findings\n    x\n  File \"/venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py\", line 2410, in execute\n    y\nE: different text"
+        }
+      ]
+    }
+  ],
+  "differ": [
+    {
+      "name": "level-matters",
+      "use_catalog": true,
+      "expected": [
+        "fp1_ff84108e0675dc2d",
+        "fp1_898749eef6b3cf9f"
+      ],
+      "lines": [
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "WARNING",
+          "logger": "a.b",
+          "template": "x happened",
+          "message": "x happened"
+        },
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "a.b",
+          "template": "x happened",
+          "message": "x happened"
+        }
+      ]
+    },
+    {
+      "name": "service-matters",
+      "use_catalog": true,
+      "expected": [
+        "fp1_e2c77eb50f2ae053",
+        "fp1_898749eef6b3cf9f"
+      ],
+      "lines": [
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "a.b",
+          "template": "x happened",
+          "message": "x happened"
+        },
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "a.b",
+          "template": "x happened",
+          "message": "x happened"
+        }
+      ]
+    },
+    {
+      "name": "exc-type-matters",
+      "use_catalog": true,
+      "expected": [
+        "fp1_7a550e29f26069a3",
+        "fp1_07ccb979dc2867de"
+      ],
+      "lines": [
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "core.storage.service",
+          "template": "%s failed",
+          "message": "f failed",
+          "exc_type": "sqlalchemy.exc.OperationalError"
+        },
+        {
+          "service": "backend",
+          "format": "python_json",
+          "level": "ERROR",
+          "logger": "core.storage.service",
+          "template": "%s failed",
+          "message": "f failed",
+          "exc_type": "sqlalchemy.exc.IntegrityError"
+        }
+      ]
+    },
+    {
+      "name": "fstring-matching-catalog-is-untrusted",
+      "use_catalog": true,
+      "expected": [
+        "fp1_c3b21b15e751b56a",
+        "fp1_9d8fdf811edd0946"
+      ],
+      "lines": [
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "WARNING",
+          "logger": "core.integrations.elastic.ingestion",
+          "template": "%s configuration incomplete (missing: %s); skipping polls until it is completed",
+          "message": "Elastic configuration incomplete (missing: x); skipping polls until it is completed"
+        },
+        {
+          "service": "soc-daemon",
+          "format": "python_json",
+          "level": "WARNING",
+          "logger": "core.integrations.elastic.ingestion",
+          "template": "%s configuration incomplete (missing: %s); skipping polls until it is completed",
+          "message": "%s configuration incomplete (missing: %s); skipping polls until it is completed"
+        }
+      ]
+    }
+  ]
+}

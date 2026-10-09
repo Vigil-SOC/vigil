@@ -1,0 +1,70 @@
+{
+  "v": 1,
+  "id": "http.daemon_status:01JA8Z3K4M:1",
+  "kind": "sample",
+  "signal": "daemon_status.kafka",
+  "sensor": {
+    "id": "http.daemon_status",
+    "run": "01JA8Z3K4M",
+    "seq": 1
+  },
+  "target": {
+    "service": "soc-daemon",
+    "instance": "deeptempo-soc-daemon",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:15Z",
+  "observed_at": "2026-10-07T10:00:15Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "epoch": "uptime:2026-10-07T08:12:03Z",
+  "values": [
+    {
+      "key": "connected",
+      "type": "bool",
+      "state": "present",
+      "value": true,
+      "trust": "trusted"
+    },
+    {
+      "key": "messages_consumed",
+      "type": "counter",
+      "state": "present",
+      "value": 18233,
+      "trust": "trusted"
+    },
+    {
+      "key": "decode_errors",
+      "type": "counter",
+      "state": "present",
+      "value": 41,
+      "trust": "trusted"
+    },
+    {
+      "key": "missing_id_errors",
+      "type": "counter",
+      "state": "present",
+      "value": 0,
+      "trust": "trusted"
+    },
+    {
+      "key": "last_message_at",
+      "type": "timestamp",
+      "state": "present",
+      "value": "2026-10-07T10:00:11Z",
+      "trust": "trusted"
+    },
+    {
+      "key": "last_error",
+      "type": "text",
+      "state": "present",
+      "value": "Expecting value: line 1 column 1 (char 0)",
+      "trust": "trusted"
+    }
+  ],
+  "$comment": "Free text is always untrusted (K1 T-05)"
+}

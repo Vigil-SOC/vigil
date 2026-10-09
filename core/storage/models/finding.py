@@ -36,6 +36,9 @@ class Finding(Base):
 
     anomaly_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Short alert name from the source; the console shows it ahead of description
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Human-readable description (populated from ingestion or synthesized from entity_context)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

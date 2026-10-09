@@ -6,10 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from core.response.approval_service import APPROVAL_CONFIG_KEY
 from services.api.routers.config import (
     ForceManualApprovalConfig,
+    OrchestratorConfigResponse,
     OrchestratorSettingsConfig,
     get_force_manual_approval,
     get_orchestrator_config,
@@ -205,3 +207,63 @@ def test_act_is_refused_when_the_environment_wins(force, auto):
     assert saved[APPROVAL_CONFIG_KEY] == {"enabled": True}
     assert "orchestrator.settings" not in saved
     assert assist.enabled is True
+
+
+def test_get_serves_defaults_and_bounds_that_match_the_model():
+    svc = MagicMock()
+    svc.get_system_config.return_value = None
+    with patch("services.api.routers.config.get_config_service", return_value=svc):
+        result = get_orchestrator_config()
+
+    # The route's response model is what the client receives
+    served = OrchestratorConfigResponse.model_validate(result).model_dump()
+    assert served["defaults"] == OrchestratorSettingsConfig().model_dump()
+    assert served["defaults"]["enabled"] is False
+    props = OrchestratorSettingsConfig.model_json_schema()["properties"]
+    numeric = {k for k, p in props.items() if "minimum" in p}
+    assert set(served["bounds"]) == numeric
+    for name in numeric:
+        b = served["bounds"][name]
+        assert (b["min"], b["max"]) == (props[name]["minimum"], props[name]["maximum"])
+        assert b["min"] > 0 and b["step"] > 0
+        assert b["min"] <= served["defaults"][name] <= b["max"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_concurrent_agents", 0),
+        ("max_concurrent_agents", 11),
+        ("max_iterations_per_agent", 0),
+        ("max_cost_per_investigation", 0),
+        ("max_total_hourly_cost", 501),
+        ("stale_threshold", 59),
+        ("workdir_base", ""),
+    ],
+)
+def test_post_rejects_out_of_bounds_values(field, value):
+    with pytest.raises(ValidationError):
+        OrchestratorSettingsConfig.model_validate({field: value})
+
+
+def test_a_config_saved_before_the_bounds_still_loads_and_can_be_corrected():
+    saved, svc = _store()
+    # "Unlimited" used to be stored as 0
+    saved["orchestrator.settings"] = {
+        "max_concurrent_agents": 0,
+        "max_cost_per_investigation": 0,
+    }
+    with (
+        patch("services.api.routers.config.get_config_service", return_value=svc),
+        patch("services.api.routers.orchestrator._get_orchestrator", return_value=None),
+    ):
+        result = OrchestratorConfigResponse.model_validate(get_orchestrator_config())
+        assert result.max_concurrent_agents == 0
+        set_orchestrator_config(
+            OrchestratorSettingsConfig.model_validate(
+                {**result.model_dump(), "max_concurrent_agents": 1, "max_cost_per_investigation": 1}
+            ),
+            current_user=MagicMock(),
+        )
+
+    assert saved["orchestrator.settings"]["max_concurrent_agents"] == 1

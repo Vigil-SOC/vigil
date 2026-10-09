@@ -42,7 +42,7 @@ jobs:
         run: flake8 services/ core/
 
       - name: Run black
-        run: black --check services/ core/
+        run: black --check --extend-exclude '^/services/medic/contracts/' services/ core/
 
       - name: Run isort
         run: isort --check-only services/ core/

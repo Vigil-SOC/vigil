@@ -429,6 +429,16 @@ def load_integrations_config(config_service: Any = None) -> dict[str, Any]:
             "integrations": {
                 row["integration_id"]: row.get("config") or {} for row in rows
             },
+            # Only rows that were ever tested; the file fallback has none.
+            "last_test": {
+                row["integration_id"]: {
+                    "at": row["last_test_at"],
+                    "success": row.get("last_test_success"),
+                    "error": row.get("last_error"),
+                }
+                for row in rows
+                if row.get("last_test_at")
+            },
         }
     return _integrations_from_file()
 

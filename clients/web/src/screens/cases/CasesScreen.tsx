@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
-import { caseSearchApi, casesApi } from '../../services/api'
+import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
 import { mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -12,10 +12,14 @@ import {
   CASES_CHANGED,
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
+  CLOSURE_CATEGORIES,
   type CaseFilters,
   type Phase,
 } from './useCases'
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select, activateOnKey } from '../../shared/ui'
+import { FilterChip } from '../../shared/FilterChip'
+import { PageHead } from '../../shared/PageHead'
+import { statePill, type PillTone } from '../../shared/StatePill'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
@@ -53,18 +57,51 @@ const STATE_OPTIONS = [
 function budgetCell(c: CaseRow): string {
   if (c.costUsd == null && c.maxCostUsd == null) return '—'
   const cost = c.costUsd == null ? '—' : c.costUsd.toFixed(2)
-  const max = c.maxCostUsd == null ? '—' : c.maxCostUsd.toFixed(2)
+  const max = c.maxCostUsd ? c.maxCostUsd.toFixed(2) : '—' // a run with no cap of its own has none to show
   return c.budgetHealth ? `${cost}/${max} ${c.budgetHealth}` : `${cost}/${max}`
 }
 
-function stripStates(by: Record<string, number>): string {
-  const parts = Object.entries(by).filter(([, n]) => n > 0)
-  if (!parts.length) return '—'
-  return parts.map(([state, n]) => `${n} ${state}`).join(' · ')
+const STATE_WORDS = STATE_OPTIONS.filter((o) => o.value && o.value !== 'closed')
+const TONE_DOT: Record<PillTone, string> = {
+  needs: 'var(--poor)',
+  live: 'var(--ac)',
+  idle: 'var(--tx2)',
+  closed: 'var(--tx2)',
+}
+
+const KIND_WORDS: Record<string, string> = {
+  investigate: 'Investigation',
+  hunt: 'Hunt',
+  root_cause: 'Root cause',
+  adjudicate: 'Adjudicate',
+  compose: 'Compose',
+}
+const kindWord = (kind: string) => KIND_WORDS[kind] ?? cap(kind.replace(/_/g, ' '))
+
+/** Distinct run kinds in the workflow catalog, known ones first. Empty while it loads or if it fails. */
+function useRunKinds(): string[] {
+  const [kinds, setKinds] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    workflowApi
+      .listAll()
+      .then((res) => {
+        if (cancelled) return
+        const found = new Set<string>()
+        for (const w of res.data?.workflows ?? []) if (w.run_kind) found.add(w.run_kind)
+        const known = Object.keys(KIND_WORDS)
+        setKinds([...known.filter((k) => found.has(k)), ...[...found].filter((k) => !known.includes(k)).sort()])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  return kinds
 }
 
 
-export default function CasesScreen({ setViewFull, openCase }: ConsoleScreenProps) {
+export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSeedConsumed }: ConsoleScreenProps) {
   // the full page is a ?case=<id> param, so it is deep-linkable; rows open the drawer instead
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
@@ -76,7 +113,7 @@ export default function CasesScreen({ setViewFull, openCase }: ConsoleScreenProp
   }, [selected, setViewFull])
 
   return selected ? (
-    <CasesDetail id={selected} onBack={backToList} pageKey="cases" />
+    <CasesDetail id={selected} onBack={backToList} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
   ) : (
     <CasesTable filters={filters} onFilters={setFilters} onSelect={openCase} />
   )
@@ -103,6 +140,8 @@ function CasesTable({
   onSelect: (id: string) => void
 }) {
   const { rows, total, strip, phase, error, reload } = useCases(filters)
+  const kinds = useRunKinds()
+  const me = useAuth().user?.username ?? ''
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Advanced search replaces the page until cleared. Results stay in API order.
   const [results, setResults] = useState<CaseRow[] | null>(null)
@@ -122,16 +161,21 @@ function CasesTable({
       offset: 'offset' in partial ? partial.offset ?? 0 : 0,
     })
 
-  const activeFilters =
-    (filters.state ? 1 : 0) +
+  // what the Filters panel holds; the chips own state, needs-you, kind and SLA
+  const panelFilters =
     (filters.priority !== 'any' ? 1 : 0) +
-    (filters.sla ? 1 : 0) +
     (filters.assignee.trim() ? 1 : 0) +
     (filters.workflow.trim() ? 1 : 0) +
     (filters.dataSource.trim() ? 1 : 0)
+  const activeFilters =
+    panelFilters + (filters.state ? 1 : 0) + (filters.needsYou ? 1 : 0) + (filters.kind ? 1 : 0) + (filters.sla ? 1 : 0)
   const showingSearch = results !== null
   const display = showingSearch ? results : rows
   const openCount = Object.values(strip.by_state).reduce((sum, n) => sum + n, 0)
+  const stateKeys = [
+    ...STATE_WORDS.map((o) => o.value),
+    ...Object.keys(strip.by_state).filter((k) => k !== 'closed' && !STATE_WORDS.some((o) => o.value === k)),
+  ].filter((k) => (strip.by_state[k] ?? 0) > 0 || k === filters.state)
   const pageStart = total === 0 ? 0 : filters.offset + 1
   const pageEnd = Math.min(filters.offset + rows.length, total)
   const agentShare = strip.closed_today
@@ -140,70 +184,101 @@ function CasesTable({
 
   return (
     <>
-      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <div className="search" style={{ maxWidth: 320 }}>
-          <span><Icon name="search" /></span>
-          <input
-            aria-label="Search cases"
-            placeholder="Search cases by title, ID, owner…"
-            value={filters.query}
-            onChange={(e) => setFilters({ query: e.target.value })}
-          />
+      <div className="cases-top">
+        <PageHead
+          title="Cases"
+          level="h1"
+          description="Every open case, who owns it and what it is waiting on. Cases that need you come first, then the ones closest to their SLA."
+          actions={
+            <>
+              <div className="search">
+                <span><Icon name="search" /></span>
+                <input
+                  aria-label="Search cases"
+                  placeholder="Search cases by title, ID, owner…"
+                  value={filters.query}
+                  onChange={(e) => setFilters({ query: e.target.value })}
+                />
+              </div>
+              <FilterButton
+                activeCount={panelFilters}
+                onClearAll={() => setFilters({
+                  state: '',
+                  needsYou: false,
+                  kind: '',
+                  priority: 'any',
+                  sla: '',
+                  assignee: '',
+                  workflow: '',
+                  dataSource: '',
+                })}
+              >
+                <FilterGroup
+                  label="Priority"
+                  value={filters.priority}
+                  onSelect={(priority) => setFilters({ priority })}
+                  options={[{ value: 'any', label: 'Any' }, ...CASE_PRIO_OPTIONS]}
+                />
+                <label className="filter-grp">
+                  <span className="filter-grp-label">Assignee</span>
+                  <input aria-label="Assignee filter" className={inputCls} value={filters.assignee} onChange={(e) => setFilters({ assignee: e.target.value })} />
+                </label>
+                <label className="filter-grp">
+                  <span className="filter-grp-label">Workflow</span>
+                  <input aria-label="Workflow filter" className={inputCls} value={filters.workflow} onChange={(e) => setFilters({ workflow: e.target.value })} />
+                </label>
+                <label className="filter-grp">
+                  <span className="filter-grp-label">Data source</span>
+                  <input aria-label="Data source filter" className={inputCls} value={filters.dataSource} onChange={(e) => setFilters({ dataSource: e.target.value })} />
+                </label>
+              </FilterButton>
+              <button className="btn ghost" aria-pressed={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
+                Advanced
+              </button>
+              <button className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={reload}><Icon name="refresh" /></button>
+              <button className="btn primary" onClick={() => setNewOpen(true)}><Icon name="plus" /> New case</button>
+            </>
+          }
+        />
+        <div className="cases-chips">
+          <div className="chip-group" role="group" aria-label="State">
+            <FilterChip list dot="var(--tx2)" label="All open" count={openCount} active={!filters.needsYou && !filters.state} onClick={() => setFilters({ state: '', needsYou: false })} />
+            <FilterChip list dot={TONE_DOT.needs} label="Needs you" count={strip.needs_you} active={filters.needsYou} onClick={() => setFilters({ needsYou: true, state: '' })} />
+            {stateKeys.map((key) => (
+              <FilterChip
+                key={key}
+                list
+                dot={TONE_DOT[statePill(key).tone]}
+                label={STATE_WORDS.find((o) => o.value === key)?.label ?? cap(key.replace(/_/g, ' '))}
+                count={strip.by_state[key] ?? 0}
+                active={!filters.needsYou && filters.state === key}
+                onClick={() => setFilters({ state: key, needsYou: false })}
+              />
+            ))}
+            <FilterChip
+              list
+              label="Closed today"
+              count={`${strip.closed_today} · ${agentShare} by an agent alone`}
+              active={filters.state === 'closed'}
+              onClick={() => setFilters({ state: filters.state === 'closed' ? '' : 'closed', needsYou: false })}
+            />
+          </div>
+          {kinds.length > 0 && (
+            <div className="chip-group" role="group" aria-label="Kind">
+              <FilterChip list label="All kinds" active={!filters.kind} onClick={() => setFilters({ kind: '' })} />
+              {kinds.map((kind) => (
+                <FilterChip key={kind} list label={kindWord(kind)} active={filters.kind === kind} onClick={() => setFilters({ kind })} />
+              ))}
+            </div>
+          )}
+          <div className="chip-group" role="group" aria-label="Owner">
+            <FilterChip list label="Everyone’s" active={!filters.assignee.trim() && !filters.sla} onClick={() => setFilters({ assignee: '', sla: '' })} />
+            {me && (
+              <FilterChip list label="Assigned to me" active={filters.assignee.trim() === me} onClick={() => setFilters({ assignee: me, sla: '' })} />
+            )}
+            <FilterChip list label="Near SLA" count={strip.sla_at_risk} active={filters.sla === 'risk'} onClick={() => setFilters({ sla: filters.sla === 'risk' ? '' : 'risk', assignee: '' })} />
+          </div>
         </div>
-        <FilterButton
-          activeCount={activeFilters}
-          onClearAll={() => setFilters({
-            state: '',
-            priority: 'any',
-            sla: '',
-            assignee: '',
-            workflow: '',
-            dataSource: '',
-          })}
-        >
-          <FilterGroup
-            label="State"
-            value={filters.state}
-            onSelect={(state) => setFilters({ state })}
-            options={STATE_OPTIONS}
-          />
-          <FilterGroup
-            label="Priority"
-            value={filters.priority}
-            onSelect={(priority) => setFilters({ priority })}
-            options={[{ value: 'any', label: 'Any' }, ...CASE_PRIO_OPTIONS]}
-          />
-          <FilterGroup
-            label="SLA"
-            value={filters.sla}
-            onSelect={(sla) => setFilters({ sla: sla as CaseFilters['sla'] })}
-            options={[
-              { value: '', label: 'Any' },
-              { value: 'risk', label: 'At risk' },
-            ]}
-          />
-          <label className="filter-grp">
-            <span className="filter-grp-label">Assignee</span>
-            <input aria-label="Assignee filter" className={inputCls} value={filters.assignee} onChange={(e) => setFilters({ assignee: e.target.value })} />
-          </label>
-          <label className="filter-grp">
-            <span className="filter-grp-label">Workflow</span>
-            <input aria-label="Workflow filter" className={inputCls} value={filters.workflow} onChange={(e) => setFilters({ workflow: e.target.value })} />
-          </label>
-          <label className="filter-grp">
-            <span className="filter-grp-label">Data source</span>
-            <input aria-label="Data source filter" className={inputCls} value={filters.dataSource} onChange={(e) => setFilters({ dataSource: e.target.value })} />
-          </label>
-        </FilterButton>
-        <div className="flex-1" />
-        <button
-          className={`btn ${showAdvanced ? 'primary' : 'ghost'}`}
-          onClick={() => setShowAdvanced((v) => !v)}
-        >
-          Advanced Search
-        </button>
-        <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="btn primary" onClick={() => setNewOpen(true)}><Icon name="plus" /> New Case</button>
       </div>
       {showAdvanced && <AdvancedSearchPanel onResults={setResults} rows={rows} />}
       {results && (
@@ -212,25 +287,6 @@ function CasesTable({
           <button className="btn ghost" onClick={() => setResults(null)}>Clear search</button>
         </div>
       )}
-      <div className="kpi-strip">
-        <div className="kpi">
-          <div className="k-label">Open</div>
-          <div className="k-row"><span className="k-val">{openCount}</span></div>
-          <div className="muted" style={{ fontSize: 12 }}>{stripStates(strip.by_state)}</div>
-        </div>
-        <div className="kpi">
-          <div className="k-label">SLA at risk</div>
-          <div className="k-row"><span className="k-val">{strip.sla_at_risk}</span></div>
-        </div>
-        <div className="kpi">
-          <div className="k-label">Closed today</div>
-          <div className="k-row"><span className="k-val">{strip.closed_today}</span></div>
-        </div>
-        <div className="kpi">
-          <div className="k-label">Agent closures</div>
-          <div className="k-row"><span className="k-val" style={{ fontSize: 18 }}>{agentShare}</span></div>
-        </div>
-      </div>
       <div className="table-wrap list-scroll">
         <table className="tbl cases-tbl">
           <thead>
@@ -608,13 +664,6 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
 
 /** What a closer says a Case turned out to be. `duplicate` is bookkeeping rather
  *  than a determination, so it records a category and mints no verdict. */
-const CLOSURE_CATEGORIES = [
-  { value: 'resolved', label: 'Resolved' },
-  { value: 'false_positive', label: 'False positive' },
-  { value: 'duplicate', label: 'Duplicate' },
-  { value: 'unable_to_resolve', label: 'Unable to resolve' },
-] as const
-
 type ClosureCategory = (typeof CLOSURE_CATEGORIES)[number]['value']
 
 function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseRow | null; onClose: () => void; onSaved: () => void }) {
@@ -836,6 +885,8 @@ export function CasesDetail({
   onBack,
   onExpand,
   pageKey,
+  seed,
+  onSeedConsumed,
 }: {
   id: string
   /** Leave the case: back to the list, or close the drawer. */
@@ -843,8 +894,11 @@ export function CasesDetail({
   /** Set only in the drawer. */
   onExpand?: () => void
   pageKey: string
+  /** Command-bar text for this case's composer. */
+  seed?: string | null
+  onSeedConsumed?: () => void
 }) {
-  const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail } =
+  const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail, refresh } =
     useCaseDetail(id)
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
@@ -865,6 +919,8 @@ export function CasesDetail({
         phase={phase}
         error={error}
         pageKey={pageKey}
+        seed={seed}
+        onSeedConsumed={onSeedConsumed}
         onBack={onBack}
         onExpand={onExpand}
         onEdit={() => setAction('edit')}
@@ -872,6 +928,7 @@ export function CasesDetail({
         onDelete={() => setAction('delete')}
         canDelete={canDelete}
         onChanged={onChanged}
+        onRefresh={refresh}
       />
 
       <EditCaseDialog

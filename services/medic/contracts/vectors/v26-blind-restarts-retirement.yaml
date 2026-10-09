@@ -1,0 +1,101 @@
+id: v26-blind-restarts-retirement
+title: 'Retirement needs 24 h of covered silence: a blind period in the middle restarts it'
+covers:
+- §3 group lifetime
+- §2 coverage
+start: '2026-10-07T10:00:00Z'
+end: +36h45m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.source-erroring
+    title: Vector rule ingest.source-erroring
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 2
+    signals:
+      errors:
+        sample:
+          signal: federation_sources
+          key: sources.consecutive_errors
+          by:
+          - source
+    when:
+      fn: latest
+      signal: errors
+      op: '>'
+      value: 3
+    group_by:
+    - source
+    for: 0s
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.federation
+  covers:
+  - federation_sources
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+  - - +12h
+    - error
+  - - +12h30m
+    - ok
+types:
+  federation_sources:
+    sources.consecutive_errors: gauge
+series:
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels:
+    source: a
+  steps:
+  - - +0s
+    - 0
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels: &id001
+    source: gone
+  to: +10m
+  steps:
+  - - +0s
+    - 5
+expect:
+- at: +1m
+  rule: ingest.source-erroring
+  eval: true
+  state: firing
+  group: *id001
+  incident: A
+- at: +24h10m
+  rule: ingest.source-erroring
+  eval: unknown
+  state: firing
+  group: *id001
+  incident: A
+  note: 24 h since its last observation, but the sensor was blind 12h–12h30m
+- at: +36h30m
+  rule: ingest.source-erroring
+  eval: unknown
+  state: inactive
+  group: *id001
+  note: 24 h of covered silence after the blind period ended
+incidents:
+  A:
+    rule: ingest.source-erroring
+    active_since: +0s
+    opened_at: +0s
+    resolving_since: null
+    resolved_at: +36h30m
+    reason: group_retired
+    group: *id001
+    routed_at: +0s

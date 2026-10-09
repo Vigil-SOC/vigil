@@ -1,4 +1,4 @@
-/* Shared kit: level badge, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
+/* Shared kit: level badge, meter bar, ⓘ, Not measured yet, page head, state pill, severity mark, tab strip. Tokens only. */
 .level-pill {
   display: inline-flex;
   align-items: center;
@@ -61,6 +61,7 @@
   white-space: normal; /* a th above may be nowrap */
 }
 
+.info-tip-pop::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; } /* keeps hover across the gap */
 .info-tip-pop.end { right: 0; }
 .info-tip-pop.start { left: 0; }
 .info-tip-line b { color: var(--tx0); font-weight: 650; }
@@ -78,7 +79,7 @@
   gap: 4px;
 }
 
-.page-head h2 {
+.page-head :is(h1, h2) {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
@@ -94,6 +95,181 @@
   line-height: 1.5;
   color: var(--tx1);
 }
+
+/* Duration picker: a pill that opens hours and minutes fields and presets (DesignSystem board). */
+.dp { position: relative; display: inline-flex; }
+
+.dp-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  color: var(--tx2);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dp-pill b { font-size: 13px; font-weight: 700; color: var(--tx0); }
+.dp-pill svg { align-self: center; margin-left: 4px; color: var(--tx3); }
+.dp-pill:hover,
+.dp-pill[aria-expanded='true'] { border-color: var(--ac-ln); }
+
+.dp-pop {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln2);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+}
+
+.dp-fields { display: flex; gap: 8px; }
+.dp-fields.shake { animation: dp-shake 0.3s; }
+.dp-field { display: inline-flex; align-items: baseline; gap: 4px; font-size: 11.5px; color: var(--tx2); }
+
+.dp-input {
+  width: 52px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  color: var(--tx0);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  outline: none;
+}
+.dp-input:focus { background: var(--ac-bg); border-color: var(--ac-ln); color: var(--ac); }
+
+.dp-presets { display: flex; gap: 5px; }
+.dp-preset {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg3);
+  border: 1px solid var(--ln1);
+  color: var(--tx1);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dp-preset:hover { border-color: var(--ac-ln); color: var(--ac); }
+
+@keyframes dp-shake {
+  0%, 100% { transform: translateX(0); }
+  18% { transform: translateX(-5px); }
+  36% { transform: translateX(4px); }
+  54% { transform: translateX(-3px); }
+  72% { transform: translateX(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dp-fields.shake { animation: none; }
+}
+
+/* Scrub field: drag sideways or click to type; the fill shows where the value sits in its range (DesignSystem board). */
+.sf {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+  min-width: 190px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--bg1);
+  border: 1px solid var(--ac-ln);
+  color: var(--tx1);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+}
+.sf::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--sf-fill, 0%);
+  box-sizing: border-box;
+  background: var(--ac-bg);
+  border-right: 2px solid var(--ac);
+}
+.sf > * { position: relative; }
+.sf:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.sf.dragging { border-color: var(--ac); }
+.sf.typing { cursor: text; border-color: var(--ac); }
+.sf.typing::before { display: none; }
+.sf-label { flex: 1 1 auto; text-align: left; }
+.sf-num { min-width: 34px; text-align: right; font-size: 13px; font-weight: 700; color: var(--tx0); }
+.sf-unit { color: var(--tx2); }
+.sf-input {
+  width: 56px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--tx0);
+  font: inherit;
+  font-weight: 700;
+  text-align: right;
+}
+.sf.shake { animation: dp-shake 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .sf.shake { animation: none; }
+}
+
+/* with an actions slot: text left, controls right, bottom-aligned */
+.page-head.with-actions {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.page-head-text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.page-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.meter-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg4);
+  overflow: hidden;
+}
+
+.meter-fill { height: 100%; }
+.meter-fill.good { background: var(--good); }
+.meter-fill.fair { background: var(--fair); }
+.meter-fill.poor { background: var(--poor); }
 
 @keyframes kit-blink {
   0%, 100% { opacity: 1; }
@@ -186,6 +362,120 @@
 
 .tab-strip > button.active .tab-count { background: var(--ac-bg); color: var(--ac); }
 
+.filter-chip {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ln1);
+  background: transparent;
+  color: var(--tx0);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filter-chip:hover { background: var(--bg3); }
+.filter-chip.active { border-color: var(--ac); background: var(--ac-bg); }
+
+/* list size: the Cases list's chips carry a state dot and a count */
+.filter-chip.list {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  color: var(--tx1);
+}
+.filter-chip.list.active { border-color: var(--ac-ln); color: var(--tx0); }
+.filter-chip .chip-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
+.filter-chip .chip-count { color: var(--tx2); }
+
 @media (prefers-reduced-motion: reduce) {
   .state-pill.needs .state-dot { animation: none; }
+}
+
+/* Duration picker: a pill that opens hours and minutes fields and presets (DesignSystem board). */
+.dp { position: relative; display: inline-flex; }
+
+.dp-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  color: var(--tx2);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dp-pill b { font-size: 13px; font-weight: 700; color: var(--tx0); }
+.dp-pill svg { align-self: center; margin-left: 4px; color: var(--tx3); }
+.dp-pill:hover,
+.dp-pill[aria-expanded='true'] { border-color: var(--ac-ln); }
+
+.dp-pop {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln2);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+}
+
+.dp-fields { display: flex; gap: 8px; }
+.dp-fields.shake { animation: dp-shake 0.3s; }
+.dp-field { display: inline-flex; align-items: baseline; gap: 4px; font-size: 11.5px; color: var(--tx2); }
+
+.dp-input {
+  width: 52px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  color: var(--tx0);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  outline: none;
+}
+.dp-input:focus { background: var(--ac-bg); border-color: var(--ac-ln); color: var(--ac); }
+
+.dp-presets { display: flex; gap: 5px; }
+.dp-preset {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg3);
+  border: 1px solid var(--ln1);
+  color: var(--tx1);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dp-preset:hover { border-color: var(--ac-ln); color: var(--ac); }
+
+@keyframes dp-shake {
+  0%, 100% { transform: translateX(0); }
+  18% { transform: translateX(-5px); }
+  36% { transform: translateX(4px); }
+  54% { transform: translateX(-3px); }
+  72% { transform: translateX(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dp-fields.shake { animation: none; }
 }

@@ -76,6 +76,9 @@ interface TraceDetail {
 
 const newSessionId = () => crypto.randomUUID()
 
+/** An `{error}` frame the server sent: the backend was reached, so it is not a transport failure. */
+class ServerRefusal extends Error {}
+
 interface Conversation {
   id: string
   title: string
@@ -139,15 +142,34 @@ function histTime(ts: number | null): string {
   const d = new Date(ts)
   return isNaN(d.getTime()) ? '' : format(d, 'MMM d, HH:mm')
 }
-/* user + assistant turns only */
+/* user + assistant turns only. An incomplete reply is a failed turn; its content is the failure. */
 function toChatMsgs(msgs: ConversationDetail['messages']): ChatMsg[] {
   return msgs
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) =>
       m.role === 'user'
         ? { role: 'user' as Role, text: m.content }
-        : { role: 'vigil' as Role, text: m.content || '_(no response)_' },
+        : m.complete === false
+          ? { role: 'error' as Role, text: m.content || 'This turn did not finish.' }
+          : { role: 'vigil' as Role, text: m.content || '_(no response)_' },
     )
+}
+
+/** What the model is sent: a failed turn and its question were never answered, so neither goes. */
+function askedOf(msgs: ChatMsg[]): ChatMsg[] {
+  return msgs.filter((m, i) => m.role !== 'error' && msgs[i + 1]?.role !== 'error')
+}
+
+/** The failure's own words, from a refused response's `detail`. */
+async function refusalOf(res: Response): Promise<string> {
+  try {
+    const detail = (await res.json())?.detail
+    if (typeof detail === 'string' && detail) return detail
+    if (typeof detail?.message === 'string' && detail.message) return detail.message
+  } catch {
+    /* no body */
+  }
+  return `Vigil refused the request (HTTP ${res.status})`
 }
 
 interface CaseHit {
@@ -265,6 +287,8 @@ export default function Chat({
   lockedCaseId,
   evidenceIds = [],
   onCite,
+  onTurnDone,
+  collapseKey,
 }: {
   open: boolean
   onClose: () => void
@@ -280,6 +304,10 @@ export default function Chat({
   /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
   evidenceIds?: readonly string[]
   onCite?: (id: string) => void
+  /** Called when a turn ends, so a page can re-read what the answer may cite. */
+  onTurnDone?: () => void
+  /** When this changes (the case tab), a pinned thread folds to its last exchange. */
+  collapseKey?: string
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
@@ -304,6 +332,7 @@ export default function Chat({
   // null: the field is omitted. "" clears a case already stored on the row.
   const [caseId, setCaseId] = useState<string | null>(lockedCaseId ?? null)
   const [threadOpen, setThreadOpen] = useState(false)
+  const [earlierHidden, setEarlierHidden] = useState(false)
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
@@ -467,7 +496,7 @@ export default function Chat({
       setThreadOpen(true)
     }
     // `fresh` keeps a new investigation's seed off an unrelated conversation
-    const base = opts?.fresh ? [] : messagesRef.current.filter((m) => m.role !== 'error')
+    const base = opts?.fresh ? [] : messagesRef.current
     const next: ChatMsg[] = [...base, { role: 'user', text }]
     putMessages(next)
     setDraft('')
@@ -482,6 +511,8 @@ export default function Chat({
     // and patched afterwards; patching at HTTP 200 races a row that is not there.
     const sentCase = caseIdRef.current
     let accepted = false
+    // false until the API itself answered: only then is "is the backend running?" a fair question
+    let reached = false
     try {
       const payload: {
         messages: { role: string; content: string }[]
@@ -489,7 +520,7 @@ export default function Chat({
         page_context?: string
         case_id?: string
       } = {
-        messages: next.map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
+        messages: askedOf(next).map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
         session_id: sessionRef.current,
       }
       if (pageKey) payload.page_context = pageKey
@@ -500,7 +531,9 @@ export default function Chat({
         body: JSON.stringify(payload),
         signal: ac.signal,
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (res.status === 502 || res.status === 503) throw new Error(`HTTP ${res.status}`)
+      reached = true
+      if (!res.ok) throw new Error(await refusalOf(res))
       accepted = true
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
@@ -521,25 +554,19 @@ export default function Chat({
               type?: string
               content?: string
               error?: string
-              windowed_messages?: number
-              remaining_messages?: number
             }
             try {
               ev = JSON.parse(data)
             } catch {
               continue
             }
-            if (ev.error) throw new Error(ev.error)
+            if (ev.error) throw new ServerRefusal(ev.error)
             if (ev.type === 'tool_processing') {
               // separate tool output from the prose preceding it
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
             } else if (ev.type === 'context_windowed') {
-              curText +=
-                `_[Context compressed: ${ev.windowed_messages ?? 0} older ` +
-                `messages condensed to stay within the model's limits; recent ` +
-                `messages and key details are preserved.]_\n\n`
-              setStreamText(curText)
+              // an engine detail: not part of the answer, so it is not written into it
             } else if (ev.type === 'text') {
               setIsProcessingTools(false)
               curText += ev.content || ''
@@ -575,8 +602,11 @@ export default function Chat({
     } catch (e) {
       const err = e as { name?: string; message?: string }
       if (err?.name !== 'AbortError' && gen === turnGen.current) {
+        // A reason the server sent is shown as is; only a failure to reach it blames the backend.
+        const why = err?.message || String(e)
+        const text = reached || e instanceof ServerRefusal ? why : `Could not reach Vigil: ${why}. Is the backend running?`
         setMessages((m) => {
-          const next: ChatMsg[] = [...m, { role: 'error', text: `Could not reach Vigil: ${err?.message || e}. Is the backend running?` }]
+          const next: ChatMsg[] = [...m, { role: 'error', text }]
           messagesRef.current = next
           return next
         })
@@ -594,6 +624,7 @@ export default function Chat({
         setStreamText('')
         setIsProcessingTools(false)
         abortRef.current = null
+        if (accepted) onTurnDone?.()
       }
     }
   }
@@ -786,6 +817,14 @@ export default function Chat({
     }
   }, [reloadHistory, lockedCaseId])
 
+  // going back to a tab folds the thread to its last exchange; a case switch resets that below
+  const seenKey = useRef(collapseKey)
+  useEffect(() => {
+    if (seenKey.current === collapseKey) return
+    seenKey.current = collapseKey
+    setEarlierHidden(true)
+  }, [collapseKey])
+
   // Newest conversation whose case_id is exactly the locked id. `q` is a substring match.
   useEffect(() => {
     if (!lockedCaseId) return
@@ -801,6 +840,7 @@ export default function Chat({
     setDraft('')
     putMessages([])
     setThreadOpen(false)
+    setEarlierHidden(false)
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(lockedCaseId)
@@ -876,16 +916,32 @@ export default function Chat({
     }
   }
 
+  // the last question and what followed it
+  const lastAsk = messages.map((m) => m.role).lastIndexOf('user')
+  const firstShown = pinned && earlierHidden && lastAsk > 0 ? lastAsk : 0
+  const [prevMsg, lastMsg] = messages.slice(-2)
+  const retryOf = !loading && lastMsg?.role === 'error' && prevMsg?.role === 'user' ? prevMsg.text : undefined
+
   const transcript = (
     <div className="chat-body" ref={bodyRef}>
+      {firstShown > 0 && (
+        <button type="button" className="composer-earlier" onClick={() => setEarlierHidden(false)}>
+          Show {firstShown} earlier message{firstShown === 1 ? '' : 's'}
+        </button>
+      )}
       {messages.length === 0 && !loading && (
         <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
       )}
-      {messages.map((m, i) =>
+      {messages.map((m, i) => i < firstShown ? null :
         m.role === 'user' ? (
           <div className="msg user" key={i}><div className="body">{m.text}</div></div>
         ) : m.role === 'error' ? (
-          <div className="msg vigil err" key={i}><div className="body">{m.text}</div></div>
+          <div className="msg vigil err" key={i} role="alert">
+            <div className="body">{m.text}</div>
+            {retryOf && i === messages.length - 1 && (
+              <button type="button" className="btn ghost msg-retry" onClick={() => send(retryOf)}>Retry</button>
+            )}
+          </div>
         ) : (
           <VigilMessage key={i} text={m.text} ms={m.ms} evidenceIds={evidenceIds} onCite={onCite} />
         )
@@ -932,22 +988,21 @@ export default function Chat({
         <textarea
           ref={taRef}
           rows={1}
-          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil, / for commands, @ for context'}
+          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil · @ to attach a case'}
           aria-label={lockedCaseId ? 'Ask about this case' : 'Ask Vigil'}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <div className="ci-row">
-          {caseId ? (
+          {caseId && !lockedCaseId ? (
             <span className="chat-case" data-testid="attached-case">
               <span>{caseId}</span>
-              {lockedCaseId ? null : (
-                <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
-              )}
+              <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
             </span>
           ) : null}
           <div className="ci-grow" />
+          {pinned && <span className="composer-note">Private to you · Ask only</span>}
           {loading ? (
             <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
           ) : (
@@ -962,21 +1017,21 @@ export default function Chat({
     <>
     {pinned ? (
       <section className="case-composer" aria-label="Ask Vigil">
-        <div className="composer-modes" role="group" aria-label="Composer mode">
-          <button type="button" className="on" aria-pressed="true">Ask</button>
-          <button type="button" disabled title="Coming in a later release">Tell</button>
-          <button type="button" disabled title="Coming in a later release">Do</button>
-        </div>
-        <div className="chat-note">
-          <span>Private to you · Ask only</span>
-        </div>
         {messages.length > 0 && (
-          <button type="button" className="composer-fold" onClick={() => setThreadOpen((openThread) => !openThread)}>
+          <button type="button" className="composer-fold" aria-expanded={threadOpen} onClick={() => setThreadOpen((openThread) => !openThread)}>
+            <span className="composer-chev" aria-hidden="true">▾</span>
             {messages.length} message{messages.length === 1 ? '' : 's'} · {threadOpen ? 'hide' : 'show'}
           </button>
         )}
         {threadOpen && transcript}
-        {foot}
+        <div className="composer-box">
+          <div className="composer-modes" role="group" aria-label="Composer mode">
+            <button type="button" className="on" aria-pressed="true">Ask</button>
+            <button type="button" disabled title="Coming in a later release">Tell</button>
+            <button type="button" disabled title="Coming in a later release">Do</button>
+          </div>
+          {foot}
+        </div>
       </section>
     ) : (
     <aside

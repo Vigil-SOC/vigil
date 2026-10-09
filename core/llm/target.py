@@ -7,7 +7,10 @@ provider claims it first, so the pair has to travel together.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Set, Tuple
+from typing import TYPE_CHECKING, Optional, Set, Tuple
+
+if TYPE_CHECKING:
+    from core.llm.router.router import ProviderSpec
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +97,9 @@ def _catalogue(provider) -> Optional[set]:
         return None
 
 
-def resolve_component(component: str) -> Optional[Tuple[str, str]]:
-    """The ``(provider_type, model)`` a component's assignment resolves to.
-
-    ``provider_type`` because the row id means nothing to Bifrost. None leaves
-    the caller its own default.
-    """
+def resolve_dispatch(component: str) -> Optional[Tuple["ProviderSpec", str]]:
+    """The ``(provider, model)`` a component's assignment resolves to, ready to
+    hand to ``LLMRouter.dispatch``. None leaves the caller its own default."""
     from core.llm.providers.registry import get_registry
 
     try:
@@ -117,4 +117,29 @@ def resolve_component(component: str) -> Optional[Tuple[str, str]]:
             "%s resolves to provider %s, which has no row", component, provider_id
         )
         return None
-    return provider.provider_type, model_for(provider, model_id)
+    return provider, model_for(provider, model_id)
+
+
+def resolve_component(component: str) -> Optional[Tuple[str, str]]:
+    """The ``(provider_type, model)`` a component's assignment resolves to.
+
+    ``provider_type`` because the row id means nothing to Bifrost. None leaves
+    the caller its own default.
+    """
+    resolved = resolve_dispatch(component)
+    if resolved is None:
+        return None
+    provider, model = resolved
+    return provider.provider_type, model
+
+
+def resolve_effort(component: str) -> Optional[str]:
+    """The reasoning effort set on a component's assignment, or None for the
+    model's own default."""
+    from core.llm.providers.registry import get_registry
+
+    try:
+        return get_registry().effort_for_component(component)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("effort lookup failed for %s: %s", component, exc)
+        return None

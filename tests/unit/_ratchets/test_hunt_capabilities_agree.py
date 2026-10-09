@@ -11,7 +11,11 @@ from typing import Dict, List, Set
 
 import pytest
 
-from core.workflows.playbook_resolver import CAPABILITIES, HUNT_CAPABILITIES
+from core.workflows.playbook_resolver import (
+    CAPABILITIES,
+    HUNT_CAPABILITIES,
+    INVESTIGATE_CAPABILITIES,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -22,7 +26,8 @@ MCP_CONFIG = ROOT / "mcp-config.json"
 # Both resolve through resolve_hunt and are granted HUNT_CAPABILITIES, so both are
 # what this ratchet is about. rootcause.yaml is not in this list: that trace binds
 # telemetry_search on its own and does not ask the hunt for a roster. Not globbed:
-# investigate, compose and chat are granted something else entirely.
+# compose and chat are granted something else entirely, and investigate is held to
+# INVESTIGATE_CAPABILITIES below.
 HUNT_LIKE = [
     ("threathunt.yaml", "threat-hunt"),
     ("adjudicate.yaml", "shadow-adjudication"),
@@ -83,6 +88,15 @@ def test_python_binds_every_capability_the_arch_asks_for(arch):
         f"{arch.name} asks for capabilities the resolver does not emit, so the "
         f"roles needing them would be granted nothing: {sorted(unbound)}"
     )
+
+
+# The investigate lead's needs are granted from its own tuple, so each has to be a
+# capability the resolver knows or the lead would silently hold nothing for it.
+def test_every_investigate_need_is_a_capability_the_resolver_binds():
+    arch = ROOT / "services" / "agent" / "arch" / "investigate.yaml"
+    needs = _needs_in_arch(arch)
+    assert needs == set(INVESTIGATE_CAPABILITIES)
+    assert needs <= set(CAPABILITIES)
 
 
 # Over the union, not per arch: a capability only rootcause.yaml asks for is still

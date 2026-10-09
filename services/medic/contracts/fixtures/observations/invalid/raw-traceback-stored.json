@@ -1,0 +1,45 @@
+{
+  "v": 1,
+  "id": "log.backend:01JA8Z3K4M:11",
+  "kind": "log",
+  "signal": "log_backend",
+  "sensor": {
+    "id": "log.backend",
+    "run": "01JA8Z3K4M",
+    "seq": 11
+  },
+  "target": {
+    "service": "backend",
+    "instance": "deeptempo-backend",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:04.870000Z",
+  "observed_at": "2026-10-07T10:00:05Z",
+  "source_ts": "2026-10-07T10:00:04.870000Z",
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "skew_ms": -130,
+  "log": {
+    "format": "python_json",
+    "level": "ERROR",
+    "logger": "core.storage.database_data_service",
+    "template": "Error getting findings from DB: (psycopg2.OperationalError) connection to server at \"<redacted-host>\", port 5432 failed: Connection refused",
+    "template_trust": "untrusted",
+    "message": "Error getting findings from DB: (psycopg2.OperationalError) connection to server at \"<redacted-host>\", port 5432 failed: Connection refused",
+    "exc_type": "sqlalchemy.exc.OperationalError",
+    "frames": [
+      "core/storage/database_data_service.py:get_findings",
+      "core/storage/service.py:get_findings"
+    ],
+    "fingerprint": "fp1_72b92a347c1bc455",
+    "fingerprint_basis": "normalized",
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "line_hash": "933c60bd9627a622",
+    "truncated": false,
+    "exception": "Traceback ..."
+  },
+  "$comment": "Raw tracebacks are not stored (K1 T-01 minimise)"
+}

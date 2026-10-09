@@ -11,6 +11,7 @@ import type { Memory } from "../../core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import type { StreamEvent } from "../../core/stream.js";
+import { chatEvents } from "../../workflows/chat/sse.js";
 import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from "../../workflows/chat/workflow.js";
 import { huntNotes } from "../../workflows/hunt/recall.js";
 import { newLedger, resolve } from "../support/hunt.js";
@@ -195,5 +196,16 @@ describe("the opening turn is the one the prefix caches on", () => {
     expect(await opening(ASKED)).toEqual(
       await opening([...ASKED, { role: "assistant", content: "nothing odd" }, { role: "user", content: "sure?" }]),
     );
+  });
+});
+
+describe("a later question the request has no room for", () => {
+  it("fails with the reason, which the console receives as an error", async () => {
+    const turns: Turn[] = [...ASKED, { role: "assistant", content: "nothing odd" }, { role: "user", content: "q".repeat(130_000) }];
+    const { seen, report } = await converse(harnessOf([{ deltas: ["never"] }]), turns);
+
+    expect(report.status).toBe("failed");
+    expect(report.reason).toMatch(/more than Ask can read at once/);
+    expect(seen.flatMap(chatEvents)).toContainEqual({ error: report.reason });
   });
 });

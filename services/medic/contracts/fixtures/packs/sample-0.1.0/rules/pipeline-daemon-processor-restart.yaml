@@ -1,0 +1,28 @@
+# Lane-1 variant of pipeline.daemon-component-hung for Compose (P-3.a lane 1: restart soc-daemon).
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.daemon-processor-restart
+title: Daemon processor hung on Compose (restart is a lane-1 fix)
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.a]}
+lane: 1
+detection: absence
+shapes: [compose]
+signals:
+  status:    {sample: {signal: daemon_health, key: components.processor}}
+  processed: {sample: {signal: daemon_status.processor, key: processed}}
+  uptime:    {sample: {signal: daemon_health, key: uptime_seconds}}
+  arrivals:  {sample: {signal: daemon_status.poller, key: webhook_findings}}
+when:
+  all:
+    - {fn: latest, signal: status, op: "==", value: running}
+    - {fn: changes, signal: processed, window: 15m, op: "==", value: 0}
+    - {fn: increase, signal: arrivals, window: 15m, op: ">", value: 0}
+    - {fn: latest, signal: uptime, op: ">", value: 900}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: Findings are arriving but the soc-daemon processor has processed none for 15 minutes while reporting running.
+  fix: >-
+    Restart the soc-daemon container. In Phase 1 Medic can do this for you;
+    in Phase 0 it only records that it would have.

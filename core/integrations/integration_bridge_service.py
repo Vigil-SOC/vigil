@@ -6,6 +6,7 @@ from typing import Dict, Optional, Tuple
 
 from core.config import load_integrations_config
 from core.integrations._base.descriptor import get_descriptor, iter_descriptors
+from core.integrations.extension.trust import is_trusted_connector_url
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,16 @@ class IntegrationBridgeService:
         for integration_id, cfg in integrations.items():
             connector_url = (cfg or {}).get("connectorUrl")
             if not connector_url:
+                continue
+            # The value becomes an MCP child's argv, so hold it to the same
+            # trust rule as the session mint, and keep placeholders out of it.
+            if "${" in str(connector_url) or not is_trusted_connector_url(
+                str(connector_url)
+            ):
+                logger.warning(
+                    "Ignoring connectorUrl for '%s': not a trusted https origin",
+                    integration_id,
+                )
                 continue
             env_key = f"{integration_id.upper().replace('-', '_')}_MCP_URL"
             current = os.environ.get(env_key)  # noqa: ENV001 - MCP child env
