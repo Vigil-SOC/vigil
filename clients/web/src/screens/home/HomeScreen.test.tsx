@@ -372,7 +372,7 @@ describe('Home', () => {
     expect(screen.getByText('6 open · oldest first')).toBeInTheDocument()
   })
 
-  it('first run lists every step with done ones ticked and counts them from the response', async () => {
+  it('first run lists open steps before done ones, each in served order, and counts from the response', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: {
@@ -389,18 +389,84 @@ describe('Home', () => {
     const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem')
     expect(rows.map((row) => row.querySelector('h3')?.textContent)).toEqual([
       'Connect more tools',
-      'Where Vigil pings you (done)',
       'Link detection rules',
+      'Where Vigil pings you (done)',
     ])
-    expect(rows[1]).toHaveClass('done')
+    expect(rows[2]).toHaveClass('done')
     expect(rows[0]).not.toHaveClass('done')
-    expect(within(rows[2]).getByRole('link', { name: 'Link' })).toHaveAttribute(
+    expect(within(rows[1]).getByRole('link', { name: 'Link' })).toHaveAttribute(
       'href',
       '/settings?section=data&tab=detection',
+    )
+    expect(within(rows[2]).getByRole('link', { name: 'Edit' })).toHaveAttribute(
+      'href',
+      '/settings?section=integrations',
     )
     expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
     expect(screen.getByText('No alerts yet')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Connect data' })).toHaveAttribute('href', '/settings?section=data')
+  })
+
+  it('first run gives only the first open step the primary action', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: {
+        steps: [doneSteps[0], { ...doneSteps[1], done: false }, { ...doneSteps[2], done: false }, doneSteps[3]],
+        alerts_exist: 0,
+        demo_enabled: false,
+      },
+    } as never)
+    renderHome()
+
+    await screen.findByText('2 of 4 done')
+    const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem')
+    const actions = rows.map((row) => row.querySelector('a') as HTMLElement)
+    expect(rows.map((row) => row.querySelector('h3')?.textContent)).toEqual([
+      'Where Vigil pings you',
+      'Link detection rules',
+      'Connect more tools (done)',
+      'Pick a model per agent (done)',
+    ])
+    expect(actions.map((a) => a.classList.contains('primary'))).toEqual([true, false, false, false])
+    expect(rows[0]).toHaveClass('next')
+    expect(rows[1]).not.toHaveClass('next')
+    expect(actions.map((a) => a.textContent)).toEqual(['Set up', 'Link', 'Edit', 'Edit'])
+  })
+
+  it('first run with every step done has no primary action', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+
+    await screen.findByText('4 of 4 done')
+    const list = screen.getByRole('list', { name: 'Setup steps' })
+    expect(list.querySelector('.primary')).toBeNull()
+    expect(list.querySelector('.next')).toBeNull()
+  })
+
+  it('first run says nothing is connected instead of Board clear, and waits for setup before choosing', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    let resolveSetup: (value: never) => void = () => {}
+    vi.mocked(configApi.getSetupSteps).mockReturnValue(new Promise((resolve) => (resolveSetup = resolve)) as never)
+    renderHome()
+
+    await flush()
+    expect(screen.queryByText('Board clear.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nothing is connected yet, so nothing needs you')).not.toBeInTheDocument()
+    await act(async () => {
+      resolveSetup({ data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false } } as never)
+    })
+    expect(await screen.findByText('Nothing is connected yet, so nothing needs you')).toBeInTheDocument()
+    expect(screen.queryByText('Board clear.')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the count headline when setup fails to load', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('setup down'))
+    renderHome()
+    expect(await screen.findByText('Board clear.')).toBeInTheDocument()
   })
 
   it('first run: Take the tour calls startTour and is hidden without it', async () => {
