@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
 import { Icon, type IconName } from '../../shared/icons'
 import { SettingsCard } from '../../shared/ui'
-import { readProviderConfigured } from '../../routing/useSetupStatus'
+import { readProviderStatus } from '../../routing/useSetupStatus'
 import {
   failingFederationSource,
   stoppedMcpServer,
@@ -70,10 +70,19 @@ const readStorage: Read = async (storage) => {
 }
 
 const readProvider = async (): Promise<Result> => {
-  const ready = await readProviderConfigured()
-  return ready
-    ? { phase: 'passed', detail: 'Ready' }
-    : { phase: 'needs', detail: 'You add a provider in step 3' }
+  const status = await readProviderStatus()
+  switch (status) {
+    case 'ready':
+      return { phase: 'passed', detail: 'Ready' }
+    case 'none':
+      return { phase: 'passed', detail: 'Running on this server · you add a provider in step 3' }
+    case 'unreachable':
+      return { phase: 'needs', detail: 'Could not reach the model gateway' }
+    default: {
+      const unreachable: never = status
+      return unreachable
+    }
+  }
 }
 
 const readFederation = async (): Promise<Result> => {

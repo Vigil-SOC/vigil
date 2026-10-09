@@ -89,8 +89,8 @@ export function Rail({ steps, active, passed, onPick, onDemo, demoBusy }: RailPr
           Guidance continues after setup
         </span>
         <p>
-          Setup in the profile menu brings you back here, Home keeps a checklist, and empty screens
-          tell you what to connect.
+          Setup in the top bar shows what is left, Home keeps a checklist, and empty screens tell you
+          what to connect.
         </p>
       </div>
       <button type="button" className="su-demo" disabled={demoBusy} onClick={onDemo}>

@@ -8,15 +8,17 @@ import { anyRoutableBifrostProvider } from '../services/bifrostApi'
 export const isProviderReady = (provider: LLMProvider): boolean =>
   provider.is_active && provider.is_default
 
-export async function readProviderConfigured(): Promise<boolean> {
+export type ProviderStatus = 'ready' | 'none' | 'unreachable'
+
+/** Only a failed routability read is `unreachable`: a failed legacy list with
+    a healthy gateway is still a gateway that answered. */
+export async function readProviderStatus(): Promise<ProviderStatus> {
   const [legacy, bifrost] = await Promise.allSettled([
     llmProviderApi.list().then((res) => (res.data || []).some(isProviderReady)),
     anyRoutableBifrostProvider(),
   ])
   const legacyReady = legacy.status === 'fulfilled' && legacy.value
   const bifrostReady = bifrost.status === 'fulfilled' && bifrost.value
-  if (legacyReady || bifrostReady) return true
-  if (legacy.status === 'rejected') throw legacy.reason
-  if (bifrost.status === 'rejected') throw bifrost.reason
-  return false
+  if (legacyReady || bifrostReady) return 'ready'
+  return bifrost.status === 'rejected' ? 'unreachable' : 'none'
 }
