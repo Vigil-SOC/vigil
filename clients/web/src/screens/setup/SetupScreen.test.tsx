@@ -337,7 +337,10 @@ describe('SetupScreen', () => {
         data: source({ enabled: false }),
       } as never)
       await connect()
-      fireEvent.click(await screen.findByRole('switch', { name: 'Collect alerts' }))
+      const toggle = await screen.findByRole('switch', { name: 'Collect alerts' })
+      // patchSource re-reads the list after the PATCH, so the re-read must agree
+      vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ enabled: false })]))
+      fireEvent.click(toggle)
       expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { enabled: false })
       expect(await screen.findByRole('button', { name: 'Test' })).toBeDisabled()
       expect(screen.getByText('Turn on Collect alerts to test.')).toBeInTheDocument()
