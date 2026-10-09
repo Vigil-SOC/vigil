@@ -1,11 +1,15 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { NAV, type ConsoleScreenKey } from '../data/data'
 
 export type TourStopId = 'nav' | 'attention' | 'ask'
+
+// Tab names come from NAV so the copy follows a rename.
+const tab = (key: ConsoleScreenKey) => NAV.find(n => n[2] === key)?.[1] ?? key
 
 const COPY: Record<TourStopId, { title: string; body: string; selector: string }> = {
   nav: {
     title: 'Pages are grouped by what you are doing',
-    body: 'Watch intake (Overview, Triage), work cases (Cases), or change how Vigil works (Agents & workflows, Settings). A number on a tab means it has something for you.',
+    body: `Watch intake (${tab('overview')}, ${tab('triage')}), work cases (${tab('cases')}), or change how Vigil works (${tab('workflows')}, ${tab('settings')}). A number on a tab means it has something for you.`,
     selector: 'nav[aria-label="Primary"]',
   },
   attention: {
@@ -21,7 +25,7 @@ const COPY: Record<TourStopId, { title: string; body: string; selector: string }
 }
 
 const PAD = 6
-const CARD_W = 300
+const CARD_W = 330
 const CARD_H = 168 // first-paint guess; the rendered height replaces it
 const GAP = 12
 
@@ -131,7 +135,7 @@ export default function ConsoleTour({
         <h2 id="console-tour-title">{copy.title}</h2>
         <p>{copy.body}</p>
         <div className="console-tour-actions">
-          <button type="button" className="btn ghost" onClick={onDismiss}>Skip tour</button>
+          <button type="button" className="console-tour-skip" onClick={onDismiss}>Skip tour</button>
           <span className="console-tour-spacer" />
           {index > 0 && <button type="button" className="btn" onClick={() => onIndex(index - 1)}>Back</button>}
           <button type="button" className="btn primary" onClick={() => (last ? onDismiss() : onIndex(index + 1))}>

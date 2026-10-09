@@ -258,6 +258,7 @@ export function Select({
   onSelect,
   placeholder = 'Select…',
   searchable = false,
+  disabled,
 }: {
   value: string
   options: DropOption[]
@@ -265,6 +266,7 @@ export function Select({
   placeholder?: string
   // adds a filter input to the open menu, for long option lists
   searchable?: boolean
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -422,6 +424,7 @@ export function Select({
         className="field-select"
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && !searchable && shown[active] ? optionId(active) : undefined}
         onClick={() => (open ? setOpen(false) : openMenu())}
@@ -538,7 +541,7 @@ export function ToggleRow({
         <span className="toggle-row-label">{label}</span>
         {hint && <span className="toggle-row-hint">{hint}</span>}
       </div>
-      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} label={typeof label === 'string' ? label : undefined} />
     </div>
   )
 }
@@ -652,16 +655,18 @@ export function SettingsCard({
   desc,
   actions,
   wide,
+  id,
   children,
 }: {
   title: ReactNode
   desc?: ReactNode
   actions?: ReactNode
   wide?: boolean
+  id?: string
   children: ReactNode
 }) {
   return (
-    <section className={`card card-sq settings-card${wide ? ' wide' : ''}`}>
+    <section id={id} className={`card card-sq settings-card${wide ? ' wide' : ''}`}>
       <div className="card-h">
         <div className="settings-card-head">
           <h3>{title}</h3>

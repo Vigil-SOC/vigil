@@ -244,7 +244,7 @@ describe('FindingPopup AI enrichment errors', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Generate AI analysis' }))
 
     expect(await screen.findByText('Virtual-key budget spent')).toBeInTheDocument()
-    expect(screen.getByText(/AI Config → Virtual Keys/)).toBeInTheDocument()
+    expect(screen.getByText(/AI models → Spending limit/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     expect(screen.queryByText('AI enrichment failed')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Open AI Config' }))

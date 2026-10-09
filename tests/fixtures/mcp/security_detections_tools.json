@@ -1,0 +1,2182 @@
+[
+ {
+  "name": "search",
+  "description": "Full-text search across all detection fields (name, description, query, MITRE IDs, tags, CVEs, analytic stories, process names, file paths, registry paths)",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Search query (FTS5 syntax supported: use quotes for exact phrases, OR for alternatives)",
+     "examples": [
+      "powershell base64",
+      "CVE-2024-*",
+      "\"DLL sideloading\"",
+      "ransomware OR encryption"
+     ]
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return",
+     "default": 50,
+     "minimum": 1,
+     "maximum": 500
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter results by detection source type"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "name": "get_by_id",
+  "description": "Get a single detection by its ID",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Detection ID (UUID for Sigma, or Splunk detection ID)"
+    }
+   },
+   "required": [
+    "id"
+   ]
+  }
+ },
+ {
+  "name": "get_raw_yaml",
+  "description": "Get the original YAML content for a detection",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Detection ID"
+    }
+   },
+   "required": [
+    "id"
+   ]
+  }
+ },
+ {
+  "name": "list_all",
+  "description": "List all detections with pagination. Use for browsing the detection index.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "number",
+     "description": "Max results to return",
+     "default": 100,
+     "minimum": 1,
+     "maximum": 1000
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (for paging through results)",
+     "default": 0,
+     "minimum": 0
+    }
+   }
+  }
+ },
+ {
+  "name": "list_by_source",
+  "description": "List detections filtered by source type",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Source type to filter by"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "source_type"
+   ]
+  }
+ },
+ {
+  "name": "list_by_mitre",
+  "description": "List detections that map to a specific MITRE ATT&CK technique",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE ATT&CK technique ID (e.g., T1059.001)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "technique_id"
+   ]
+  }
+ },
+ {
+  "name": "list_by_logsource",
+  "description": "List Sigma detections filtered by logsource (category, product, or service)",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "category": {
+     "type": "string",
+     "description": "Logsource category (e.g., process_creation, network_connection)"
+    },
+    "product": {
+     "type": "string",
+     "description": "Logsource product (e.g., windows, linux, aws)"
+    },
+    "service": {
+     "type": "string",
+     "description": "Logsource service (e.g., sysmon, security, powershell)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   }
+  }
+ },
+ {
+  "name": "list_by_severity",
+  "description": "List detections filtered by severity level",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "level": {
+     "type": "string",
+     "enum": [
+      "informational",
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Severity level to filter by"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "level"
+   ]
+  }
+ },
+ {
+  "name": "list_by_cve",
+  "description": "List detections that cover a specific CVE vulnerability",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "cve_id": {
+     "type": "string",
+     "description": "CVE ID (e.g., CVE-2024-27198, CVE-2021-44228)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "cve_id"
+   ]
+  }
+ },
+ {
+  "name": "list_by_analytic_story",
+  "description": "List Splunk detections that belong to a specific analytic story (e.g., \"Ransomware\", \"Data Destruction\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "story": {
+     "type": "string",
+     "description": "Analytic story name or partial match (e.g., \"Ransomware\", \"Windows Persistence\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "story"
+   ]
+  }
+ },
+ {
+  "name": "list_by_process_name",
+  "description": "List detections that reference a specific process name (e.g., \"powershell.exe\", \"w3wp.exe\", \"cmd.exe\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "process_name": {
+     "type": "string",
+     "description": "Process name to search for (e.g., \"powershell.exe\", \"cmd.exe\", \"nginx.exe\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "process_name"
+   ]
+  }
+ },
+ {
+  "name": "list_by_detection_type",
+  "description": "List detections by type (TTP, Anomaly, Hunting, Correlation)",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "detection_type": {
+     "type": "string",
+     "enum": [
+      "TTP",
+      "Anomaly",
+      "Hunting",
+      "Correlation"
+     ],
+     "description": "Detection type to filter by"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "detection_type"
+   ]
+  }
+ },
+ {
+  "name": "list_by_data_source",
+  "description": "List detections that use a specific data source (e.g., \"Sysmon\", \"Windows Security\", \"process_creation\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "data_source": {
+     "type": "string",
+     "description": "Data source to search for (e.g., \"Sysmon\", \"Windows Security\", \"process_creation\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "data_source"
+   ]
+  }
+ },
+ {
+  "name": "list_by_mitre_tactic",
+  "description": "List detections by MITRE ATT&CK tactic (e.g., \"execution\", \"persistence\", \"credential-access\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "tactic": {
+     "type": "string",
+     "enum": [
+      "reconnaissance",
+      "resource-development",
+      "initial-access",
+      "execution",
+      "persistence",
+      "privilege-escalation",
+      "defense-evasion",
+      "credential-access",
+      "discovery",
+      "lateral-movement",
+      "collection",
+      "command-and-control",
+      "exfiltration",
+      "impact"
+     ],
+     "description": "MITRE ATT&CK tactic to filter by"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "tactic"
+   ]
+  }
+ },
+ {
+  "name": "list_by_kql_category",
+  "description": "List KQL detections filtered by category (e.g., \"Defender For Endpoint\", \"Azure Active Directory\", \"Threat Hunting\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "category": {
+     "type": "string",
+     "description": "KQL category derived from folder path (e.g., \"Defender For Endpoint\", \"DFIR\", \"Sentinel\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "category"
+   ]
+  }
+ },
+ {
+  "name": "list_by_kql_tag",
+  "description": "List KQL detections filtered by tag (e.g., \"ransomware\", \"hunting\", \"ti-feed\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "tag": {
+     "type": "string",
+     "description": "Tag to filter by (e.g., \"ransomware\", \"dfir\", \"apt\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "tag"
+   ]
+  }
+ },
+ {
+  "name": "list_by_kql_datasource",
+  "description": "List KQL detections that use a specific Microsoft data source (e.g., \"DeviceProcessEvents\", \"SigninLogs\", \"EmailEvents\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "data_source": {
+     "type": "string",
+     "description": "Microsoft KQL table name (e.g., \"DeviceProcessEvents\", \"AADSignInEventsBeta\", \"CloudAppEvents\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "data_source"
+   ]
+  }
+ },
+ {
+  "name": "get_stats",
+  "description": "Get statistics about the indexed detections and stories",
+  "input_schema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "get_technique_ids",
+  "description": "Get ONLY unique MITRE technique IDs (lightweight - no full detection data). Use this for Navigator layer generation or coverage analysis.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter by source type"
+    },
+    "tactic": {
+     "type": "string",
+     "enum": [
+      "reconnaissance",
+      "resource-development",
+      "initial-access",
+      "execution",
+      "persistence",
+      "privilege-escalation",
+      "defense-evasion",
+      "credential-access",
+      "discovery",
+      "lateral-movement",
+      "collection",
+      "command-and-control",
+      "exfiltration",
+      "impact"
+     ],
+     "description": "Filter by MITRE tactic"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "informational",
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Filter by severity"
+    }
+   }
+  }
+ },
+ {
+  "name": "analyze_coverage",
+  "description": "Get coverage analysis with stats by tactic, top covered techniques, and weak spots. Returns summary data, not raw detections. Use this instead of listing detections and processing manually.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter by source type (optional - analyzes all if not specified)"
+    }
+   }
+  }
+ },
+ {
+  "name": "identify_gaps",
+  "description": "Identify detection gaps based on a threat profile (ransomware, apt, initial-access, persistence, credential-access, defense-evasion). Returns prioritized gaps with recommendations.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "threat_profile": {
+     "type": "string",
+     "enum": [
+      "ransomware",
+      "apt",
+      "initial-access",
+      "persistence",
+      "credential-access",
+      "defense-evasion"
+     ],
+     "description": "Threat profile to analyze gaps against"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter by source type (optional)"
+    }
+   },
+   "required": [
+    "threat_profile"
+   ]
+  }
+ },
+ {
+  "name": "suggest_detections",
+  "description": "Get detection suggestions for a specific technique. Returns existing detections, required data sources, and detection ideas.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID (e.g., T1059.001, T1547.001)"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter by source type (optional)"
+    }
+   },
+   "required": [
+    "technique_id"
+   ]
+  }
+ },
+ {
+  "name": "generate_navigator_layer",
+  "description": "Generate a MITRE ATT&CK Navigator layer JSON from detection coverage. Returns valid Navigator JSON ready for import at https://mitre-attack.github.io/attack-navigator/. Filter by source, tactic, or severity.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Layer name (e.g., \"Sigma Coverage Q1 2026\")"
+    },
+    "description": {
+     "type": "string",
+     "description": "Optional layer description"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter to specific source type (optional \u2014 includes all if omitted)"
+    },
+    "tactic": {
+     "type": "string",
+     "enum": [
+      "reconnaissance",
+      "resource-development",
+      "initial-access",
+      "execution",
+      "persistence",
+      "privilege-escalation",
+      "defense-evasion",
+      "credential-access",
+      "discovery",
+      "lateral-movement",
+      "collection",
+      "command-and-control",
+      "exfiltration",
+      "impact"
+     ],
+     "description": "Filter by MITRE tactic (optional)"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "informational",
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Filter by minimum severity (optional)"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "analyze_procedure_coverage",
+  "description": "Analyze procedure-level coverage for a MITRE technique. Goes beyond \"we cover T1059.001\" to show WHICH specific behaviors/procedures your detections actually catch (e.g., encoded commands, download cradles, AMSI bypass). Shows covered and uncovered procedures with detection names.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID (e.g., T1059.001, T1003.001)"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter to specific source (optional \u2014 analyzes all if omitted)"
+    },
+    "include_query_snippets": {
+     "type": "boolean",
+     "description": "Include relevant query snippets showing what each detection checks (default: false)"
+    }
+   },
+   "required": [
+    "technique_id"
+   ]
+  }
+ },
+ {
+  "name": "compare_procedure_coverage",
+  "description": "Compare procedure-level detection coverage across sources for a technique. Shows which source catches which specific behaviors \u2014 two orgs can both tag T1059.001 but detect completely different procedures. Returns a matrix of source \u00d7 procedure.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID to compare across sources"
+    },
+    "sources": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "sigma",
+       "splunk_escu",
+       "elastic",
+       "kql",
+       "sublime",
+       "crowdstrike_cql",
+       "jamf_protect"
+      ]
+     },
+     "description": "Sources to compare (default: all available)"
+    }
+   },
+   "required": [
+    "technique_id"
+   ]
+  }
+ },
+ {
+  "name": "get_detection_list",
+  "description": "Get a lightweight list of detection names and IDs matching a search query. Returns ONLY name, id, source, mitre_ids - no queries or raw yaml. Use this when you need a simple list.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Search query (e.g., \"powershell\", \"credential\", \"T1059\")"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Optional: filter by source type"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results (default 100)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "name": "compare_sources",
+  "description": "Compare detection coverage between sources (Sigma vs Splunk vs Elastic vs KQL) for a topic. Returns a clean breakdown with counts and names per source.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "topic": {
+     "type": "string",
+     "description": "Topic to compare (e.g., \"powershell\", \"credential dumping\", \"ransomware\")"
+    },
+    "limit_per_source": {
+     "type": "number",
+     "description": "Max detections to show per source (default 50)"
+    }
+   },
+   "required": [
+    "topic"
+   ]
+  }
+ },
+ {
+  "name": "count_by_source",
+  "description": "Get quick counts of detections by source for a topic. Returns just the numbers, no detection details.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "topic": {
+     "type": "string",
+     "description": "Topic to count (e.g., \"powershell\", \"lateral movement\")"
+    }
+   },
+   "required": [
+    "topic"
+   ]
+  }
+ },
+ {
+  "name": "list_by_name_pattern",
+  "description": "List detections whose NAME matches a pattern, grouped by source. Returns just name + ID pairs.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "pattern": {
+     "type": "string",
+     "description": "Pattern to match in detection names (e.g., \"PowerShell\", \"WMI\", \"Registry\")"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Optional: filter to specific source"
+    }
+   },
+   "required": [
+    "pattern"
+   ]
+  }
+ },
+ {
+  "name": "smart_compare",
+  "description": "Compare detections across sources, tactics, or techniques for a given topic. Returns breakdown by source, tactic, and severity.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "topic": {
+     "type": "string",
+     "description": "Topic to compare (e.g., \"powershell\", \"credential dumping\", \"T1059\", \"ransomware\")"
+    }
+   },
+   "required": [
+    "topic"
+   ]
+  }
+ },
+ {
+  "name": "get_coverage_summary",
+  "description": "Get a lightweight coverage summary (~200 bytes) with tactic percentages. Use this for quick overviews instead of full analyze_coverage.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter by source type (optional)"
+    }
+   }
+  }
+ },
+ {
+  "name": "get_top_gaps",
+  "description": "Get just the top 5 gaps (~300 bytes) for a threat profile. Use this for quick gap checks.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "threat_profile": {
+     "type": "string",
+     "enum": [
+      "ransomware",
+      "apt",
+      "initial-access",
+      "persistence",
+      "credential-access",
+      "defense-evasion"
+     ],
+     "description": "Threat profile to check"
+    }
+   },
+   "required": [
+    "threat_profile"
+   ]
+  }
+ },
+ {
+  "name": "get_technique_count",
+  "description": "Get just the detection count for a technique (~50 bytes). Use this for quick coverage checks.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID (e.g., T1059.001)"
+    }
+   },
+   "required": [
+    "technique_id"
+   ]
+  }
+ },
+ {
+  "name": "analyze_actor_coverage",
+  "description": "Analyze detection coverage against a specific threat actor. Shows which of the actor's known MITRE ATT&CK techniques have detections, coverage percentage, and prioritized gaps. Requires STIX data (ATTACK_STIX_PATH env var).",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "actor_name": {
+     "type": "string",
+     "description": "Threat actor name or alias (e.g., APT29, Cozy Bear, Lazarus Group, FIN7, HAFNIUM)"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter detections to a specific source (optional)"
+    },
+    "include_navigator_layer": {
+     "type": "boolean",
+     "description": "Include ATT&CK Navigator layer JSON in response (default: false)"
+    }
+   },
+   "required": [
+    "actor_name"
+   ]
+  }
+ },
+ {
+  "name": "list_actors",
+  "description": "List all known MITRE ATT&CK threat actors with aliases and technique counts. Requires STIX data (ATTACK_STIX_PATH env var).",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "search": {
+     "type": "string",
+     "description": "Search by actor name or alias (optional)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum results to return (default: 50)"
+    }
+   }
+  }
+ },
+ {
+  "name": "compare_actor_coverage",
+  "description": "Compare detection coverage across multiple threat actors. Shows shared technique gaps and unique risks per actor. Requires STIX data (ATTACK_STIX_PATH env var).",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "actor_names": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "List of threat actor names to compare (2-5 actors)"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter detections to a specific source (optional)"
+    }
+   },
+   "required": [
+    "actor_names"
+   ]
+  }
+ },
+ {
+  "name": "get_actor_profile",
+  "description": "Get full threat actor dossier: description, aliases, known techniques, software employed, and detection coverage status. Requires STIX data (ATTACK_STIX_PATH env var).",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "actor_name": {
+     "type": "string",
+     "description": "Threat actor name or alias"
+    }
+   },
+   "required": [
+    "actor_name"
+   ]
+  }
+ },
+ {
+  "name": "search_stories",
+  "description": "Search analytic stories by narrative, description, or name. Stories provide rich context about threat campaigns and detection strategies.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Search query for stories (e.g., \"ransomware encryption\", \"credential theft\", \"persistence\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 20)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "name": "get_story",
+  "description": "Get detailed information about a specific analytic story by name",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Story name (e.g., \"Ransomware\", \"Windows Persistence Techniques\")"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "list_stories",
+  "description": "List all analytic stories with pagination",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   }
+  }
+ },
+ {
+  "name": "list_stories_by_category",
+  "description": "List analytic stories by category (e.g., \"Malware\", \"Adversary Tactics\", \"Abuse\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "category": {
+     "type": "string",
+     "description": "Story category (e.g., \"Malware\", \"Adversary Tactics\", \"Abuse\", \"Cloud Security\")"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Max results to return (default 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Offset for pagination (default 0)"
+    }
+   },
+   "required": [
+    "category"
+   ]
+  }
+ },
+ {
+  "name": "save_query",
+  "description": "Save a query result for quick retrieval later. Useful for caching frequently needed data.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name for the saved query (e.g., \"powershell_splunk_detections\")"
+    },
+    "query_type": {
+     "type": "string",
+     "description": "Type of query (e.g., \"detection_list\", \"comparison\", \"coverage\")"
+    },
+    "data": {
+     "type": "object",
+     "description": "The data to save (any JSON object)"
+    },
+    "ttl_minutes": {
+     "type": "number",
+     "description": "Time-to-live in minutes (optional, default: no expiry)"
+    }
+   },
+   "required": [
+    "name",
+    "query_type",
+    "data"
+   ]
+  }
+ },
+ {
+  "name": "get_saved_query",
+  "description": "Retrieve a previously saved query result by name.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name of the saved query"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "list_saved_queries",
+  "description": "List all saved queries, optionally filtered by type.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "query_type": {
+     "type": "string",
+     "description": "Optional: filter by query type"
+    }
+   }
+  }
+ },
+ {
+  "name": "rebuild_index",
+  "description": "Force re-index all detections and stories from configured paths. WARNING: This is a destructive operation that deletes the current index.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "confirm": {
+     "type": "boolean",
+     "description": "Set to true to confirm you want to rebuild (required for safety)",
+     "default": false
+    },
+    "skip_elicitation": {
+     "type": "boolean",
+     "description": "Skip the elicitation confirmation prompt (for programmatic use)",
+     "default": false
+    }
+   }
+  }
+ },
+ {
+  "name": "save_template",
+  "description": "Save a reusable query template with {{placeholders}}. Templates can contain SQL queries or tool-chain definitions for future execution.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Unique name for the template (e.g., \"ransomware_gaps\", \"technique_coverage\")"
+    },
+    "template": {
+     "type": "string",
+     "description": "The query template with {{param}} placeholders (e.g., \"SELECT * FROM detections WHERE mitre_ids LIKE '%{{technique}}%'\")"
+    },
+    "description": {
+     "type": "string",
+     "description": "Human-readable description of what this template does"
+    }
+   },
+   "required": [
+    "name",
+    "template"
+   ]
+  }
+ },
+ {
+  "name": "run_template",
+  "description": "Execute a saved query template with the provided parameters. Returns the query results.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name of the saved template to execute"
+    },
+    "params": {
+     "type": "object",
+     "description": "Parameter values to substitute into the template (e.g., {\"technique\": \"T1486\", \"source\": \"splunk_escu\"})"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "list_templates",
+  "description": "List all saved query templates with their names, descriptions, and usage statistics.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "sort_by": {
+     "type": "string",
+     "enum": [
+      "name",
+      "created_at",
+      "use_count"
+     ],
+     "description": "Field to sort by (default: use_count)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum number of templates to return (default: 50)"
+    }
+   }
+  }
+ },
+ {
+  "name": "get_template",
+  "description": "Get the full details of a saved query template including the template string and parameters.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name of the template to retrieve"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "delete_template",
+  "description": "Delete a saved query template by name.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name of the template to delete"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "create_table",
+  "description": "Create a new custom table to store analysis data. Use this to persist findings, research results, or any structured data you want to retrieve later.\n\nPre-built tables available: gap_analyses, source_comparisons, threat_actor_profiles, detection_recommendations",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Table name (alphanumeric and underscores, must start with letter). Examples: my_analysis, cve_research, custom_mappings"
+    },
+    "description": {
+     "type": "string",
+     "description": "Human-readable description of what this table stores"
+    },
+    "columns": {
+     "type": "array",
+     "description": "Column definitions for the table schema",
+     "items": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string",
+        "description": "Column name"
+       },
+       "type": {
+        "type": "string",
+        "enum": [
+         "TEXT",
+         "INTEGER",
+         "REAL",
+         "BLOB"
+        ],
+        "description": "SQLite data type"
+       },
+       "nullable": {
+        "type": "boolean",
+        "description": "Allow NULL values (default: true)"
+       },
+       "primary_key": {
+        "type": "boolean",
+        "description": "Is this the primary key?"
+       },
+       "unique": {
+        "type": "boolean",
+        "description": "Must values be unique?"
+       }
+      },
+      "required": [
+       "name",
+       "type"
+      ]
+     }
+    }
+   },
+   "required": [
+    "name",
+    "description",
+    "columns"
+   ]
+  }
+ },
+ {
+  "name": "insert_row",
+  "description": "Insert a row of data into a dynamic table. Data is validated against the table schema.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "table_name": {
+     "type": "string",
+     "description": "Name of the table to insert into"
+    },
+    "data": {
+     "type": "object",
+     "description": "Key-value pairs matching the table schema. Use JSON for complex values (arrays, nested objects)."
+    },
+    "row_id": {
+     "type": "string",
+     "description": "Optional: Custom row ID. If not provided, a UUID is generated."
+    }
+   },
+   "required": [
+    "table_name",
+    "data"
+   ]
+  }
+ },
+ {
+  "name": "query_table",
+  "description": "Query data from a dynamic table with optional filtering, sorting, and pagination.\n\nFilter examples:\n- Exact match: {\"status\": \"completed\"}\n- LIKE match: {\"name\": \"%ransomware%\"}\n- Multiple conditions: {\"status\": \"pending\", \"priority\": \"high\"}",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "table_name": {
+     "type": "string",
+     "description": "Name of the table to query"
+    },
+    "where": {
+     "type": "object",
+     "description": "Filter conditions as key-value pairs. Use % for LIKE patterns."
+    },
+    "select": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Columns to return (default: all)"
+    },
+    "order_by": {
+     "type": "array",
+     "description": "Sort order",
+     "items": {
+      "type": "object",
+      "properties": {
+       "column": {
+        "type": "string"
+       },
+       "direction": {
+        "type": "string",
+        "enum": [
+         "ASC",
+         "DESC"
+        ]
+       }
+      }
+     }
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum rows to return (default: 100)"
+    },
+    "offset": {
+     "type": "number",
+     "description": "Number of rows to skip (for pagination)"
+    }
+   },
+   "required": [
+    "table_name"
+   ]
+  }
+ },
+ {
+  "name": "list_tables",
+  "description": "List all dynamic tables created by the LLM, including pre-built analysis tables and their statistics.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "include_prebuilt": {
+     "type": "boolean",
+     "description": "Include pre-built analysis tables in the list (default: true)"
+    }
+   }
+  }
+ },
+ {
+  "name": "drop_table",
+  "description": "Remove a dynamic table and all its data. Use with caution - this is irreversible.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "table_name": {
+     "type": "string",
+     "description": "Name of the table to drop"
+    },
+    "confirm": {
+     "type": "boolean",
+     "description": "Must be true to confirm deletion"
+    }
+   },
+   "required": [
+    "table_name",
+    "confirm"
+   ]
+  }
+ },
+ {
+  "name": "describe_table",
+  "description": "Get detailed schema information and statistics for a dynamic table.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "table_name": {
+     "type": "string",
+     "description": "Name of the table to describe"
+    }
+   },
+   "required": [
+    "table_name"
+   ]
+  }
+ },
+ {
+  "name": "create_entity",
+  "description": "Create a knowledge entity representing a security concept. Use this to build the knowledge graph with threat actors, techniques, detections, campaigns, tools, vulnerabilities, and data sources.\n\nEntity types:\n- threat_actor: APT groups, criminal gangs (e.g., \"APT29\", \"STORM-0501\")\n- technique: MITRE ATT&CK techniques (e.g., \"T1059.001 PowerShell\")\n- detection: Security detection rules (e.g., \"Suspicious PowerShell Execution\")\n- campaign: Attack campaigns (e.g., \"SolarWinds Compromise\")\n- tool: Attack tools or malware (e.g., \"Cobalt Strike\", \"Mimikatz\")\n- vulnerability: CVEs (e.g., \"CVE-2024-1234\")\n- data_source: Log sources (e.g., \"Windows Security Events\")",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Unique name for the entity (e.g., \"APT29\", \"T1059.001\", \"Cobalt Strike\")"
+    },
+    "entity_type": {
+     "type": "string",
+     "description": "Type of entity: threat_actor, technique, detection, campaign, tool, vulnerability, data_source",
+     "enum": [
+      "threat_actor",
+      "technique",
+      "detection",
+      "campaign",
+      "tool",
+      "vulnerability",
+      "data_source"
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "entity_type"
+   ]
+  }
+ },
+ {
+  "name": "create_relation",
+  "description": "Create a relationship between two entities WITH reasoning explaining WHY they're connected. This is the core of tribal knowledge - capturing not just the connection but the insight behind it.\n\nRelation types:\n- uses: Threat actor uses technique/tool (e.g., APT29 uses Cobalt Strike)\n- targets: Threat actor targets sector/system\n- detects: Detection covers technique\n- covers: Detection provides coverage for technique\n- mitigates: Control mitigates technique\n- exploits: Campaign exploits vulnerability\n- attributed_to: Campaign attributed to threat actor\n- depends_on: Detection depends on data source\n- related_to: General relationship\n\nIMPORTANT: The reasoning field is critical - explain WHY this connection exists.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "from_entity": {
+     "type": "string",
+     "description": "Name of the source entity"
+    },
+    "to_entity": {
+     "type": "string",
+     "description": "Name of the target entity"
+    },
+    "relation_type": {
+     "type": "string",
+     "description": "Type of relationship: uses, targets, detects, covers, mitigates, exploits, attributed_to, depends_on, related_to"
+    },
+    "reasoning": {
+     "type": "string",
+     "description": "REQUIRED: WHY does this relationship exist? This captures tribal knowledge."
+    },
+    "confidence": {
+     "type": "number",
+     "description": "Confidence in this relationship (0.0-1.0, default 1.0)"
+    }
+   },
+   "required": [
+    "from_entity",
+    "to_entity",
+    "relation_type",
+    "reasoning"
+   ]
+  }
+ },
+ {
+  "name": "add_observation",
+  "description": "Add a fact or observation about an entity. Observations capture point-in-time knowledge that can be queried later.\n\nExamples:\n- \"APT29 has been active since at least 2008\"\n- \"This detection has high false positives in development environments\"\n- \"T1059.001 is commonly used for initial access in ransomware\"",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "entity_name": {
+     "type": "string",
+     "description": "Name of the entity this observation is about"
+    },
+    "observation": {
+     "type": "string",
+     "description": "The fact or observation to record"
+    },
+    "source": {
+     "type": "string",
+     "description": "Source of this observation (e.g., \"CISA Advisory\", \"user input\", \"threat report\")"
+    },
+    "confidence": {
+     "type": "number",
+     "description": "Confidence in this observation (0.0-1.0, default 1.0)"
+    }
+   },
+   "required": [
+    "entity_name",
+    "observation"
+   ]
+  }
+ },
+ {
+  "name": "delete_entity",
+  "description": "Remove an entity from the knowledge graph. This also removes all relations and observations associated with the entity.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name or ID of the entity to delete"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "delete_observation",
+  "description": "Remove a specific observation by its ID. Use open_entity first to find observation IDs.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "observation_id": {
+     "type": "string",
+     "description": "UUID of the observation to delete"
+    }
+   },
+   "required": [
+    "observation_id"
+   ]
+  }
+ },
+ {
+  "name": "search_knowledge",
+  "description": "Search across all knowledge types: entities, relations, observations, decisions, and learnings. Uses full-text search to find relevant tribal knowledge.\n\nSearch examples:\n- \"PowerShell execution\" - Find everything related to PowerShell\n- \"credential theft\" - Find credential-related knowledge\n- \"APT29\" - Find all knowledge about this threat actor",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Search query (supports FTS5 syntax)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum results to return (default 30)"
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "name": "read_graph",
+  "description": "Read the entire knowledge graph or a filtered subgraph. Returns entities, relations, and observations.\n\nUse this to:\n- Get an overview of all stored knowledge\n- Filter by entity type to focus on specific concepts\n- Understand the structure of captured tribal knowledge",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "entity_type": {
+     "type": "string",
+     "description": "Filter to specific entity type (threat_actor, technique, detection, etc.)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum entities/relations to return (default 500)"
+    }
+   }
+  }
+ },
+ {
+  "name": "open_entity",
+  "description": "Get complete information about a specific entity including all its relations and observations. This is the detailed view of a single knowledge node.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Name or ID of the entity to open"
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "name": "log_decision",
+  "description": "Record WHY a significant decision was made. This is the gold of tribal knowledge - capturing the reasoning process so future agents can understand past decisions.\n\nDecision types:\n- gap_identified: A detection gap was found\n- detection_recommended: A specific detection was recommended\n- coverage_mapped: Coverage was analyzed and mapped\n- priority_assigned: A priority decision was made\n- false_positive_tuning: FP tuning recommendation\n- threat_assessment: Threat level assessment\n- data_source_selected: Data source was chosen\n\nIMPORTANT: Be detailed in the reasoning - this helps future analysis.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "decision_type": {
+     "type": "string",
+     "description": "Type of decision being logged",
+     "enum": [
+      "gap_identified",
+      "detection_recommended",
+      "coverage_mapped",
+      "priority_assigned",
+      "false_positive_tuning",
+      "threat_assessment",
+      "data_source_selected"
+     ],
+     "examples": [
+      "gap_identified",
+      "detection_recommended"
+     ]
+    },
+    "context": {
+     "type": "string",
+     "description": "The situation/context that led to this decision",
+     "examples": [
+      "Analyzing ransomware coverage for STORM-0501",
+      "Evaluating PowerShell detection options"
+     ]
+    },
+    "decision": {
+     "type": "string",
+     "description": "The actual decision that was made",
+     "examples": [
+      "T1486 has weak coverage",
+      "Recommend creating behavioral detection for encryption patterns"
+     ]
+    },
+    "reasoning": {
+     "type": "string",
+     "description": "DETAILED explanation of WHY this decision was made - this is the tribal knowledge. Be specific!",
+     "examples": [
+      "Only 2 detections cover this technique, both rely on file extension monitoring which ransomware can bypass by using random extensions"
+     ]
+    },
+    "entities_involved": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Names of entities involved in this decision",
+     "examples": [
+      [
+       "STORM-0501",
+       "T1486",
+       "ransomware"
+      ]
+     ]
+    },
+    "outcome": {
+     "type": "string",
+     "description": "Optional outcome or result of the decision",
+     "examples": [
+      "Created detection XYZ",
+      "Flagged for next sprint"
+     ]
+    },
+    "session_id": {
+     "type": "string",
+     "description": "Optional session ID to group related decisions"
+    }
+   },
+   "required": [
+    "decision_type",
+    "context",
+    "decision",
+    "reasoning"
+   ]
+  }
+ },
+ {
+  "name": "add_learning",
+  "description": "Store a pattern or insight derived from analysis for future reference. Learnings are reusable knowledge that can help future sessions.\n\nLearning types:\n- detection_pattern: A pattern for writing effective detections\n- gap_pattern: A recurring type of detection gap\n- user_preference: User preferences for analysis style\n- false_positive_pattern: Common FP patterns to avoid\n- threat_pattern: Recurring threat behaviors\n- correlation_insight: Insights about technique correlations\n- data_quality_insight: Insights about data source quality\n\nExamples:\n- \"STORM-0501 consistently uses native tools before deploying ransomware\"\n- \"Detections for T1059.001 need process parent filtering to reduce FPs\"\n- \"User prefers prioritizing detections by MITRE tactic stage\"",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "learning_type": {
+     "type": "string",
+     "description": "Type of learning: detection_pattern, gap_pattern, user_preference, false_positive_pattern, threat_pattern, correlation_insight, data_quality_insight"
+    },
+    "title": {
+     "type": "string",
+     "description": "Short title for this learning"
+    },
+    "insight": {
+     "type": "string",
+     "description": "The actual insight or pattern learned"
+    },
+    "evidence": {
+     "type": "string",
+     "description": "Evidence supporting this learning (observations, decisions that led to it)"
+    },
+    "applications": {
+     "type": "string",
+     "description": "How this learning can be applied in practice"
+    }
+   },
+   "required": [
+    "learning_type",
+    "title",
+    "insight"
+   ]
+  }
+ },
+ {
+  "name": "get_relevant_decisions",
+  "description": "Get past decisions relevant to the current context. Uses full-text search to find tribal knowledge that applies to your current analysis.\n\nUse this to:\n- See how similar situations were handled before\n- Understand reasoning behind past recommendations\n- Maintain consistency with previous decisions",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "context_query": {
+     "type": "string",
+     "description": "Description of current context to find relevant decisions (e.g., \"ransomware detection gaps\", \"credential theft coverage\")"
+    },
+    "decision_type": {
+     "type": "string",
+     "description": "Optional filter by decision type"
+    },
+    "session_id": {
+     "type": "string",
+     "description": "Optional filter by session"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum decisions to return (default 20)"
+    }
+   },
+   "required": [
+    "context_query"
+   ]
+  }
+ },
+ {
+  "name": "get_learnings",
+  "description": "Get applicable learnings for the current task. Returns patterns and insights that may help with the current analysis.\n\nUse this to:\n- Apply proven patterns to new situations\n- Remember user preferences\n- Avoid known pitfalls",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "task_query": {
+     "type": "string",
+     "description": "Description of current task to find relevant learnings (e.g., \"writing PowerShell detection\", \"analyzing APT coverage\")"
+    },
+    "learning_type": {
+     "type": "string",
+     "description": "Optional filter by learning type"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum learnings to return (default 10)"
+    },
+    "mark_applied": {
+     "type": "boolean",
+     "description": "If true, increment the times_applied counter for returned learnings"
+    }
+   },
+   "required": [
+    "task_query"
+   ]
+  }
+ },
+ {
+  "name": "auto_analyze_coverage",
+  "description": "Automatically analyze detection coverage, identify gaps across threat profiles, and store findings for future reference.\n\nThis tool:\n1. Runs coverage analysis across all detections\n2. Identifies gaps for specified threat profiles (ransomware, apt, etc.)\n3. Stores results in the gap_analyses dynamic table\n4. Logs decisions about significant findings in the knowledge graph\n\nUse this for comprehensive, stored analysis that persists across sessions.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "threat_profiles": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Threat profiles to analyze. Options: ransomware, apt, initial-access, persistence, credential-access, defense-evasion. Default: [\"ransomware\", \"apt\"]"
+    },
+    "store_results": {
+     "type": "boolean",
+     "description": "Store results in dynamic tables for persistence (default: true)"
+    },
+    "analysis_name": {
+     "type": "string",
+     "description": "Optional name for this analysis run (defaults to timestamp-based name)"
+    },
+    "session_id": {
+     "type": "string",
+     "description": "Optional session ID to group related analyses"
+    }
+   }
+  }
+ },
+ {
+  "name": "auto_gap_report",
+  "description": "Generate a comprehensive gap report comparing detection coverage across sources (Sigma, Splunk ESCU, Elastic, KQL) and threat profiles.\n\nThis tool:\n1. Analyzes all threat profiles for gaps\n2. Compares detection coverage across different sources\n3. Creates prioritized recommendations based on severity and coverage\n4. Stores the complete report in dynamic tables\n\nUse this for executive-level reporting on detection posture.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "report_name": {
+     "type": "string",
+     "description": "Name for this report (defaults to timestamp-based name)"
+    },
+    "compare_sources": {
+     "type": "boolean",
+     "description": "Include source comparison analysis (default: true)"
+    },
+    "include_recommendations": {
+     "type": "boolean",
+     "description": "Generate prioritized recommendations (default: true)"
+    },
+    "priority_tactics": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Tactics to prioritize in recommendations. Options: execution, persistence, credential-access, defense-evasion, lateral-movement, exfiltration, impact"
+    },
+    "session_id": {
+     "type": "string",
+     "description": "Optional session ID to group related reports"
+    }
+   }
+  }
+ },
+ {
+  "name": "auto_compare_sources",
+  "description": "Autonomously compare detection coverage across different sources (Sigma, Splunk ESCU, Elastic, KQL) with detailed reasoning and analysis.\n\nThis tool:\n1. Compares detection counts and coverage across all available sources\n2. Analyzes technique-level coverage differences between sources\n3. Identifies which source has best coverage for specific tactics/techniques\n4. Provides reasoned recommendations for source selection\n5. Stores comparison results and logs decision reasoning\n\nUse this to understand the strengths/weaknesses of different detection sources and make informed decisions about which to use.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "techniques_to_compare": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Specific MITRE technique IDs to compare (e.g., [\"T1059.001\", \"T1003.001\"]). If not provided, uses high-priority techniques."
+    },
+    "focus_tactic": {
+     "type": "string",
+     "enum": [
+      "execution",
+      "persistence",
+      "privilege-escalation",
+      "defense-evasion",
+      "credential-access",
+      "discovery",
+      "lateral-movement",
+      "collection",
+      "command-and-control",
+      "exfiltration",
+      "impact"
+     ],
+     "description": "Focus comparison on a specific MITRE ATT&CK tactic"
+    },
+    "include_quality_analysis": {
+     "type": "boolean",
+     "description": "Include analysis of detection quality indicators (default: true)"
+    },
+    "session_id": {
+     "type": "string",
+     "description": "Optional session ID to group related comparisons"
+    }
+   }
+  }
+ },
+ {
+  "name": "llm_enhanced_analysis",
+  "description": "Request LLM-enhanced analysis of security detection data using MCP sampling.\n\nThis tool leverages MCP sampling to request the client's LLM to analyze security data with expert reasoning. Unlike the auto_* tools that perform direct analysis, this tool asks the LLM to provide contextual insights.\n\nNote: Requires client to support MCP sampling capability. If not supported, falls back to structured data output.\n\nUse cases:\n- Get expert reasoning about coverage gaps\n- Generate detection recommendations with context\n- Compare sources with nuanced analysis\n- Understand threat profile implications",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "analysis_type": {
+     "type": "string",
+     "enum": [
+      "coverage",
+      "gaps",
+      "comparison",
+      "recommendation"
+     ],
+     "description": "Type of analysis to request"
+    },
+    "threat_profile": {
+     "type": "string",
+     "description": "Threat profile context (e.g., ransomware, apt)"
+    },
+    "techniques": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Specific techniques to analyze (optional)"
+    },
+    "custom_context": {
+     "type": "string",
+     "description": "Additional context for the analysis"
+    }
+   },
+   "required": [
+    "analysis_type"
+   ]
+  }
+ },
+ {
+  "name": "check_sampling_status",
+  "description": "Check if MCP sampling is available for LLM-enhanced analysis.\n\nSampling allows the server to request LLM completions from the client, enabling richer autonomous analysis. Not all MCP clients support this feature.\n\nUse this tool to check capability before using llm_enhanced_analysis.",
+  "input_schema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "get_query_patterns",
+  "description": "Get common query patterns for a MITRE technique based on existing detections. Returns SPL structure, common fields, macros used, and example queries. Use this before writing a detection to learn the conventions.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID (e.g., T1059.001, T1003.001)"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter patterns by source type (optional)"
+    }
+   },
+   "required": [
+    "technique_id"
+   ]
+  }
+ },
+ {
+  "name": "get_field_reference",
+  "description": "Get available fields for a Splunk data model with usage examples. Use this to understand what fields are available when writing a detection query.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "data_model": {
+     "type": "string",
+     "description": "Data model name (e.g., Endpoint.Processes, Endpoint.Filesystem, Network_Traffic.All_Traffic)"
+    }
+   },
+   "required": [
+    "data_model"
+   ]
+  }
+ },
+ {
+  "name": "get_macro_reference",
+  "description": "Get common Splunk macros and their usage patterns. Essential for writing detections that follow repository conventions.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "filter": {
+     "type": "string",
+     "description": "Filter macros by name (optional, e.g., \"security_content\")"
+    }
+   }
+  }
+ },
+ {
+  "name": "find_similar_detections",
+  "description": "Find existing detections similar to what you want to create. Use this to learn from existing detection logic and structure.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "description": {
+     "type": "string",
+     "description": "Describe the behavior you want to detect (e.g., \"PowerShell downloading files\", \"process injection via CreateRemoteThread\")"
+    },
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID to narrow search (optional)"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk_escu",
+      "elastic",
+      "kql",
+      "sublime",
+      "crowdstrike_cql",
+      "jamf_protect"
+     ],
+     "description": "Filter by source type (optional)"
+    },
+    "limit": {
+     "type": "number",
+     "description": "Maximum results (default 5)"
+    }
+   },
+   "required": [
+    "description"
+   ]
+  }
+ },
+ {
+  "name": "suggest_detection_template",
+  "description": "Generate a detection template based on technique, learned patterns, and conventions. Returns YAML structure ready for customization.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "technique_id": {
+     "type": "string",
+     "description": "MITRE technique ID (e.g., T1059.001)"
+    },
+    "description": {
+     "type": "string",
+     "description": "What behavior to detect (e.g., \"PowerShell executing encoded commands\")"
+    },
+    "data_model": {
+     "type": "string",
+     "description": "Data model (e.g., Endpoint.Processes). If not specified, will use most common for technique."
+    },
+    "detection_type": {
+     "type": "string",
+     "enum": [
+      "TTP",
+      "Anomaly",
+      "Hunting"
+     ],
+     "description": "Detection type (default: TTP)"
+    },
+    "platform": {
+     "type": "string",
+     "enum": [
+      "Windows",
+      "Linux",
+      "macOS",
+      "AWS",
+      "Azure",
+      "GCP"
+     ],
+     "description": "Target platform (default: Windows)"
+    }
+   },
+   "required": [
+    "technique_id",
+    "description"
+   ]
+  }
+ },
+ {
+  "name": "generate_rba_structure",
+  "description": "Generate RBA (Risk-Based Alerting) structure for a detection based on learned patterns and best practices.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "detection_type": {
+     "type": "string",
+     "enum": [
+      "TTP",
+      "Anomaly",
+      "Hunting",
+      "Correlation"
+     ],
+     "description": "Type of detection"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Detection severity"
+    },
+    "description": {
+     "type": "string",
+     "description": "What the detection identifies (for message generation)"
+    },
+    "fields_available": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Fields available in the detection (e.g., [\"dest\", \"user\", \"process_name\"])"
+    }
+   },
+   "required": [
+    "detection_type",
+    "severity",
+    "description"
+   ]
+  }
+ },
+ {
+  "name": "extract_patterns",
+  "description": "Extract and store patterns from all indexed detections. Run this to populate the pattern database for template generation.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "force": {
+     "type": "boolean",
+     "description": "Force re-extraction even if patterns exist (default: false)"
+    }
+   }
+  }
+ },
+ {
+  "name": "learn_from_feedback",
+  "description": "Store user preference or correction to improve future suggestions. Call this when user modifies generated content to build tribal knowledge.",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "feedback_type": {
+     "type": "string",
+     "enum": [
+      "naming",
+      "query_structure",
+      "rba_score",
+      "field_usage",
+      "style",
+      "macro_usage"
+     ],
+     "description": "Type of feedback"
+    },
+    "original": {
+     "type": "string",
+     "description": "What was originally suggested"
+    },
+    "corrected": {
+     "type": "string",
+     "description": "What the user changed it to"
+    },
+    "context": {
+     "type": "string",
+     "description": "Additional context (technique, detection type, etc.)"
+    }
+   },
+   "required": [
+    "feedback_type",
+    "original",
+    "corrected"
+   ]
+  }
+ }
+]

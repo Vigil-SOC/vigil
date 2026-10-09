@@ -1,0 +1,47 @@
+{
+  "v": 1,
+  "id": "file.pid_files:01JA8Z3K4M:8",
+  "kind": "sample",
+  "signal": "pid_files",
+  "sensor": {
+    "id": "file.pid_files",
+    "run": "01JA8Z3K4M",
+    "seq": 8
+  },
+  "target": {
+    "service": "soc-daemon",
+    "instance": "vigil-host-1",
+    "shape": "start_sh"
+  },
+  "t": "2026-10-07T10:00:15Z",
+  "observed_at": "2026-10-07T10:00:15Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "values": [
+    {
+      "key": "daemon_pid",
+      "type": "gauge",
+      "state": "present",
+      "value": 48121,
+      "trust": "trusted"
+    },
+    {
+      "key": "daemon_pid_alive",
+      "type": "bool",
+      "state": "present",
+      "value": true,
+      "trust": "trusted"
+    },
+    {
+      "key": "port_9091_pid_matches",
+      "type": "bool",
+      "state": "present",
+      "value": false,
+      "trust": "trusted"
+    }
+  ]
+}

@@ -163,6 +163,7 @@ def _in_flight_match(
         return None
     return {
         "run_id": run.get("run_id"),
+        "case_id": context.get("case_id"),
         "status": run.get("status"),
         "started_at": _iso(run.get("started_at")),
         "hypothesis": hypothesis,

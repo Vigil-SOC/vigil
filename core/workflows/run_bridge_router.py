@@ -77,6 +77,10 @@ class TerminalUpdate(BaseModel):
     handoffs: List[TerminalHandoff] = Field(default_factory=list)
 
 
+class CitedFindings(BaseModel):
+    finding_ids: List[str] = Field(default_factory=list)
+
+
 class StatusUpdate(BaseModel):
     status: Literal["running", "paused"]
     reason: Optional[str] = None
@@ -214,6 +218,50 @@ def record_handoff(
     authorise(authorization, "run handoff")
     origin = _origin_case(run_id, run_service)
     _process_handoff(run_id, handoff, origin, _source_is_hunt(run_id), run_service)
+
+
+# Alerts the hunt's evidence cites, pushed as each iteration lands. They are linked
+# onto the case the hunt was started on, which is what fills its alert count,
+# entities and IOCs. A hunt with no case of its own has nothing to link to yet.
+@router.post("/{run_id}/findings", status_code=204)
+def record_findings(
+    run_id: str,
+    cited: CitedFindings,
+    authorization: Optional[str] = Header(default=None),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> None:
+    authorise(authorization, "run findings")
+    case_id = _origin_case(run_id, run_service)
+    if case_id:
+        _link_findings(case_id, run_id, cited.finding_ids)
+
+
+# Once per finding: link_finding answers False for one already on the case, so a
+# push the agent layer repeats (a resume starts with nothing marked sent) adds no
+# second audit row. An id the hunt invented names no finding and is not linked.
+def _link_findings(case_id: str, run_id: str, finding_ids: List[str]) -> None:
+    from core.cases import case_journal_service
+    from core.storage.database_data_service import DatabaseDataService
+
+    data = DatabaseDataService()
+    for finding_id in dict.fromkeys(finding_ids):
+        try:
+            if not data.get_finding(finding_id):
+                continue
+            if case_journal_service.link_finding(data, case_id, finding_id):
+                _add_activity(
+                    case_id,
+                    "finding_added",
+                    f"Hunt {run_id} added alert {finding_id}",
+                    {"run_id": run_id, "finding_id": finding_id},
+                )
+        except Exception:  # noqa: BLE001 — the hunt carries on either way
+            logger.exception(
+                "could not link finding %s of %s to case %s",
+                finding_id,
+                run_id,
+                case_id,
+            )
 
 
 # Files the handoff on a case and, for a hunt, tees up the backward run. Both the
@@ -533,6 +581,16 @@ def _record_handoff(case_id: str, run_id: str, handoff: TerminalHandoff) -> None
         logger.exception("could not record the handoff of %s on %s", run_id, case_id)
 
 
+# What the analyst reads under a checkpoint's question. Never the class name or a
+# threshold: those are config, not an explanation.
+_CHECKPOINT_REASONS = {
+    "hypothesis_approval": "Vigil wants your go-ahead on the hypothesis it will test.",
+    "verdict_review": "Vigil wants your review before the hunt settles on a verdict.",
+    "scope_extension": "Vigil wants your go-ahead to look beyond the scope you set.",
+    "budget_anomaly": "Vigil's hunt lead is asking a person to look at this run.",
+}
+
+
 # A run parked on a checkpoint, as a question in the approvals inbox. Only the
 # compose path raised these before, so a hunt parked where nobody could see it.
 @router.post("/{run_id}/checkpoints", status_code=204)
@@ -551,7 +609,9 @@ def record_checkpoint(
         checkpoint_id=raised.checkpoint_id,
         title=raised.question[:120] or raised.checkpoint_class,
         description=raised.question,
-        reason=f"The run parked on a {raised.checkpoint_class} checkpoint",
+        reason=_CHECKPOINT_REASONS.get(
+            raised.checkpoint_class, "The run is waiting on your answer."
+        ),
         parameters={
             "checkpoint_class": raised.checkpoint_class,
             "run_kind": raised.run_kind,

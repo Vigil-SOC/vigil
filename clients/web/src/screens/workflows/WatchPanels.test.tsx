@@ -64,6 +64,7 @@ const limit = (label: string) => (screen.getByText(label).parentElement as HTMLE
 describe('a hunt, as of the selected step', () => {
   it('counts the evidence and reads the status the lead was shown, then the totals at the last step', async () => {
     render(<WatchRun d={hunt()} onBack={vi.fn()} />)
+    step(1)
 
     // step 1: one belief on the board, one record for it, nothing asked, nothing missed
     expect(await screen.findByText('Standing')).toBeInTheDocument()
@@ -95,6 +96,29 @@ describe('a hunt, as of the selected step', () => {
     expect(screen.getByText('VirusTotal timed out')).toBeInTheDocument()
     expect(limit('Budget')).toBe('Budget$4.40 of $15.00')
     expect(limit('Steps')).toBe('Steps3 of 8')
+  })
+
+  it('holds a long Reviewer verdict to two lines, with Show all only when it overflows', async () => {
+    const heights = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120)
+    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(36)
+    render(<WatchRun d={hunt()} onBack={vi.fn()} />)
+    step(2)
+
+    const verdict = await screen.findByText(/Strongest innocent explanation: A nightly backup job/)
+    expect(verdict).toHaveClass('line-clamp-2')
+    const reviewer = within(screen.getByText('Reviewer').parentElement as HTMLElement)
+    fireEvent.click(reviewer.getByRole('button', { name: 'Show all' }))
+    expect(verdict).not.toHaveClass('line-clamp-2')
+    fireEvent.click(reviewer.getByRole('button', { name: 'Show less' }))
+    expect(verdict).toHaveClass('line-clamp-2')
+    heights.mockRestore(); client.mockRestore()
+  })
+
+  it('offers no Show all on a verdict that fits', async () => {
+    render(<WatchRun d={hunt()} onBack={vi.fn()} />)
+    step(2)
+    await screen.findByText(/Strongest innocent explanation/)
+    expect(within(screen.getByText('Reviewer').parentElement as HTMLElement).queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument()
   })
 
   it('reads Scope from the scope_extension checkpoints, and asks nothing of the record it lacks', async () => {
@@ -172,6 +196,7 @@ describe('what each kind of run says where it has nothing', () => {
     } as unknown as WfRunDetail
     render(<WatchRun d={d} onBack={vi.fn()} />)
 
+    fireEvent.click(await screen.findByRole('listitem', { name: /^Step 1:/ })) // a finished run opens on its last step
     expect(await screen.findByText('1 decision · no step limit on this kind')).toBeInTheDocument()
     expect(limit('Budget')).toBe('Budget$1.00 of $10.00')
     expect(screen.getByText(NO_EXPLANATIONS)).toBeInTheDocument()
@@ -268,6 +293,7 @@ describe('a root-cause run, as of the selected step', () => {
   const open = async (body: object) => {
     vi.mocked(workflowApi.replayRun).mockResolvedValue({ data: { run_id: 'run-5', run_kind: 'root_cause', steps, ...body } } as never)
     render(<WatchRun d={trace()} onBack={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('listitem', { name: /^Step 1:/ })) // a finished run opens on its last step
     await screen.findByText('Step 1 of 5 · Search')
   }
 

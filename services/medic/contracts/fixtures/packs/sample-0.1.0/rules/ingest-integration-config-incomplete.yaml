@@ -1,0 +1,33 @@
+# Log signature, latched · I-1.b (from E1 example 03). #1661 config_gap.py.
+# Grouping on args[0] makes it untrusted (E2 decision 4): fine for lane 2.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.integration-config-incomplete
+title: SIEM integration is enabled but missing required settings
+revision: 1
+fault: {class: ingest, mode: I-1, causes: [I-1.b]}
+lane: 2
+signals:
+  incomplete:
+    log:
+      signal: log_soc_daemon
+      logger: {prefix: core.integrations.}
+      level: [WARNING]
+      template: {re2: '^%s configuration (still )?incomplete \(missing: %s\)'}
+      keys: {integration: "args[0]"}
+  complete:
+    log:
+      signal: log_soc_daemon
+      logger: {prefix: core.integrations.}
+      level: [INFO]
+      template: {eq: '%s configuration complete; polling resumed after %d skipped polls'}
+      keys: {integration: "args[0]"}
+group_by: [integration]
+when: {fn: latch, set: incomplete, clear: complete}
+advice:
+  summary: An integration is switched on but missing settings, so Vigil is skipping its polls.
+  fix: >-
+    Open Settings, Integrations and fill every required field for this
+    integration (Elastic: Elasticsearch URL; OpenSearch: OpenSearch URL;
+    Sentinel: client secret, subscription ID, resource group, workspace name;
+    Defender: tenant and app credentials), or turn the integration off.

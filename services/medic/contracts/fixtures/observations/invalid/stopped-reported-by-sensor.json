@@ -1,0 +1,38 @@
+{
+  "v": 1,
+  "id": "framework:01JA8Z3K4M:17",
+  "kind": "sensor_health",
+  "signal": "sensor_health",
+  "sensor": {
+    "id": "framework",
+    "run": "01JA8Z3K4M",
+    "seq": 17
+  },
+  "target": {
+    "service": "medic",
+    "instance": "deeptempo-medic",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:00Z",
+  "observed_at": "2026-10-07T10:00:00Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "health": {
+    "sensor": "log.agent-worker",
+    "state": "stopped",
+    "reported_by": "sensor",
+    "covers": [
+      "log_agent_worker"
+    ],
+    "interval_s": 15,
+    "last_ok_at": "2026-10-07T09:55:00Z",
+    "consecutive_failures": 0,
+    "counters": {
+      "reads": 0,
+      "failures": 0,
+      "dropped": 112,
+      "redactor_failures": 0
+    }
+  },
+  "$comment": "A stopped sensor can't report itself"
+}

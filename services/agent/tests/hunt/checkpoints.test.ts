@@ -100,7 +100,11 @@ describe("verdict review", () => {
     expect(started.ledger.projection.hunt.outcome).toBeNull();
 
     await expect(controllerFor(started.ledger, [CONCLUDE]).advanceIteration()).rejects.toThrow(HuntParked);
-    await expect(controllerFor(started.ledger, [CONCLUDE]).advanceIteration()).rejects.toThrow(/approve .*reject/s);
+    // Names the question and nothing internal: no hunt id, no directive syntax.
+    const reason = await controllerFor(started.ledger, [CONCLUDE]).advanceIteration().catch((error: Error) => error.message);
+    expect(reason).toMatch(/^Waiting for your approval: Mark h-\w+ proven\?/);
+    expect(reason).not.toContain(started.ledger.projection.hunt.hunt_id);
+    expect(reason).not.toMatch(/directive/);
   });
 
   it("survives process death: a controller from the ledger alone still shows it pending", async () => {

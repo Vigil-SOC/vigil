@@ -1,0 +1,129 @@
+{
+  "absolute-path": {
+    "codes": [
+      "P-SCHEMA"
+    ],
+    "why": "Absolute path"
+  },
+  "catalog-frontend-logger": {
+    "codes": [
+      "P-CATALOG"
+    ],
+    "why": "The browser-writable frontend logger is never trusted (B3-X1)"
+  },
+  "catalog-unreachable-rule": {
+    "codes": [
+      "P-CATALOG"
+    ],
+    "why": "A trusted-only rule whose templates aren't in the catalog can never fire"
+  },
+  "counts-wrong": {
+    "codes": [
+      "P-COUNTS"
+    ],
+    "why": "Manifest counts must match the contents"
+  },
+  "duplicate-json-key": {
+    "codes": [
+      "P-JSON"
+    ],
+    "why": "Duplicate keys: a reviewer and the loader could read different values"
+  },
+  "engine-api-overstated": {
+    "codes": [
+      "P-ENGINE"
+    ],
+    "why": "Manifest must state exactly what the rules need"
+  },
+  "expired": {
+    "codes": [
+      "P-EXPIRED"
+    ],
+    "why": "Expired before import (K1 T-22)"
+  },
+  "kind-mismatch": {
+    "codes": [
+      "P-FILES"
+    ],
+    "why": "A rule file declared as a catalog"
+  },
+  "lifetime-too-long": {
+    "codes": [
+      "P-DATES"
+    ],
+    "why": "Expiry more than 366 days after creation"
+  },
+  "missing-file": {
+    "codes": [
+      "P-FILES"
+    ],
+    "why": "A listed file is missing"
+  },
+  "nan-constant": {
+    "codes": [
+      "P-JSON"
+    ],
+    "why": "Non-standard JSON"
+  },
+  "path-traversal": {
+    "codes": [
+      "P-SCHEMA"
+    ],
+    "why": "zip-slip style name (K1 T-25)"
+  },
+  "rule-misfiled": {
+    "codes": [
+      "P-PATH",
+      "P-RULE-DUP"
+    ],
+    "why": "Same rule id twice, one in a file not named after it"
+  },
+  "rule-with-code": {
+    "codes": [
+      "P-RULE"
+    ],
+    "why": "One refused rule refuses the whole pack (E2 \u00a76)"
+  },
+  "runbook-on-lane3-rule": {
+    "codes": [
+      "P-RUNBOOK"
+    ],
+    "why": "Runbooks only fix lane-1 rules"
+  },
+  "suppression-cycle": {
+    "codes": [
+      "P-SUPPRESSION"
+    ],
+    "why": "llm suppresses P-4 and P-4 suppresses llm: two faults hide each other"
+  },
+  "suppression-unknown-rule": {
+    "codes": [
+      "P-SUPPRESSION"
+    ],
+    "why": "A rule selector must name a rule in the pack"
+  },
+  "tampered-byte": {
+    "codes": [
+      "P-HASH"
+    ],
+    "why": "A byte changed after the manifest was written (lane 2 -> 1)"
+  },
+  "unknown-manifest-field": {
+    "codes": [
+      "P-SCHEMA"
+    ],
+    "why": "Strict schema: unknown fields refused"
+  },
+  "unlisted-file": {
+    "codes": [
+      "P-FILES"
+    ],
+    "why": "A file the manifest doesn't list"
+  },
+  "vigil-out-of-range": {
+    "codes": [
+      "P-VIGIL"
+    ],
+    "why": "Written for a different Vigil"
+  }
+}

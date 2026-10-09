@@ -1,7 +1,7 @@
 /* ============================================================
    Setup · Connect an AI provider (Bifrost)
 
-   The onboarding twin of Settings → AI Config → Providers & Keys. A provider
+   The onboarding twin of Settings → AI models → Keys. A provider
    routes only once it holds a key whose credential Bifrost has verified, so the
    flow is: pick/create a provider → add a key → the setup step flips ready.
    Reuses the same vertex-aware KeyDialog as Settings so vertex (service-account

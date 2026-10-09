@@ -1,0 +1,54 @@
+{
+  "v": 1,
+  "id": "redis.queues:01JA8Z3K4M:6",
+  "kind": "sample",
+  "signal": "redis_queues",
+  "sensor": {
+    "id": "redis.queues",
+    "run": "01JA8Z3K4M",
+    "seq": 6
+  },
+  "target": {
+    "service": "redis",
+    "instance": "deeptempo-redis",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:15Z",
+  "observed_at": "2026-10-07T10:00:15Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "values": [
+    {
+      "key": "arq_llm.zcard",
+      "type": "gauge",
+      "state": "present",
+      "value": 3,
+      "trust": "trusted"
+    },
+    {
+      "key": "arq_llm.oldest_score_ms",
+      "type": "gauge",
+      "state": "present",
+      "value": 1791375600000,
+      "trust": "trusted"
+    },
+    {
+      "key": "bull_agent_runs.wait",
+      "type": "gauge",
+      "state": "present",
+      "value": 0,
+      "trust": "trusted"
+    },
+    {
+      "key": "bull_agent_runs.failed",
+      "type": "gauge",
+      "state": "present",
+      "value": 12,
+      "trust": "trusted"
+    }
+  ]
+}

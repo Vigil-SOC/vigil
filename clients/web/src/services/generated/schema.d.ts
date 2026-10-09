@@ -2962,9 +2962,11 @@ export interface paths {
         put?: never;
         /**
          * Test Integration
-         * @description Probe the MCP servers behind an integration.
+         * @description Probe the MCP servers behind an integration, or its connector URL.
          *
-         *     Catalog entries have no descriptor, so they are not testable. A stored
+         *     A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
+         *     over HTTP instead. Other catalog entries have no descriptor, so they are not
+         *     testable. A stored
          *     config of ``{}`` is still configured — secret-only rows keep the secret
          *     outside this dict. The integration's enabled flag does not block the
          *     probe: enabled MCP servers are contacted, and if none are enabled every
@@ -3246,7 +3248,7 @@ export interface paths {
         };
         /**
          * Get Setup Steps
-         * @description Home's setup list: tools, a notify route, rules on disk, and model variety.
+         * @description Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill.
          */
         get: operations["get_api_config_setup-steps"];
         put?: never;
@@ -8264,6 +8266,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/runs/{run_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Findings */
+        post: operations["post_internal_runs_run_id_findings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/runs/{run_id}/handoff": {
         parameters: {
             query?: never;
@@ -9686,6 +9705,11 @@ export interface components {
              * @default
              */
             run_kind: string;
+        };
+        /** CitedFindings */
+        CitedFindings: {
+            /** Finding Ids */
+            finding_ids?: string[];
         };
         /**
          * ClaudeConfig
@@ -26922,6 +26946,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Decisions"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_internal_runs_run_id_findings: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CitedFindings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

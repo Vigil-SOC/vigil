@@ -1,0 +1,10 @@
+id: lanes-08-child-without-parent-routes-after-hold
+description: E3 6.4. A suppression child whose parent never fires routes when its 5-min hold ends, with its own lane.
+until: 3600
+suppression:
+  - {parent: llm.provider-keyless-default, child: pipeline.triage-stalled}
+  - {parent: llm.provider-keyless-default, child: pipeline.probe-missed}
+incidents:
+  - {id: c, rule: pipeline.triage-stalled, lane: 3, trust: trusted, signals: 2, samples: 2, opened_at: 0}
+expect:
+  c: {lane: {value: 3, reason: rule}, routed_at: 300, suppressed_by: null, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}

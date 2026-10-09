@@ -593,6 +593,14 @@ export const consoleApi = {
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
 
+export interface IntegrationTestResult {
+  success: boolean
+  message?: string
+  // "not_testable": a catalog-only entry with no MCP server behind it
+  reason?: string
+  servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
+}
+
 export const configApi = {
   getClaude: () => api.get('/config/claude'),
   setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
@@ -624,6 +632,9 @@ export const configApi = {
     enabled_integrations: string[]
     integrations: Record<string, any>
   }) => api.post('/config/integrations', data),
+  // Probes the stored config, so save first. 400 when nothing is saved.
+  testIntegration: (id: string) =>
+    api.post<IntegrationTestResult>(`/config/integrations/${encodeURIComponent(id)}/test`),
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
@@ -721,7 +732,7 @@ export const extensionsApi = {
 
 export interface LLMProvider {
   provider_id: string
-  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex'
+  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex' | 'openrouter'
   name: string
   base_url: string | null
   has_api_key: boolean
@@ -1075,10 +1086,10 @@ export const workflowApi = {
       timeout: LLM_TIMEOUT,
     })
   },
-  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
-  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered, each
+  // with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
-    api.post('/workflows/threat-hunt/coverage', body),
+    api.post('/workflows/threat-hunt/coverage', body, { timeout: LLM_TIMEOUT }),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
@@ -1451,6 +1462,15 @@ export interface TriagePayload {
     waiting: number
     cases_created_today: number
     trust_floor: string
+  }
+  /** rows that pass the filters, before the row cap */
+  matched: number
+  /** every intake row, before the filters and the row cap; zero entries are left out */
+  counts: {
+    total: number
+    kind: Record<string, number>
+    source: Record<string, number>
+    state: Record<string, number>
   }
   sources: TriageSource[]
   arrival_info: string

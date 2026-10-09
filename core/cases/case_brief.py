@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, List
+from typing import Any, Callable, List
 
 from core.agents.projections import read_projection
 from core.cases import case_records_service
@@ -24,6 +24,12 @@ MAX_ALERTS = 25
 MAX_FINDINGS = 10
 LINE_CHARS = 240
 FINDING_CHARS = 600
+# The brief rides in the system prompt on every turn and shares the agent layer's
+# request ceiling (DEFAULT_FOLD.max_chars, 120,000, services/agent/core/context.ts)
+# with the tool catalogue (about 23,000: the built-ins plus the two integration
+# tools, fixed however many MCP servers are connected) and the history the
+# question is asked against. Past this it sheds rows.
+MAX_BRIEF_CHARS = 12_000
 
 OPEN, CLOSE = "<case_data>", "</case_data>"
 
@@ -42,17 +48,17 @@ def _line(value: Any, limit: int = LINE_CHARS) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _alerts(findings: List[dict]) -> List[str]:
+def _alerts(findings: List[dict], shown: int) -> List[str]:
     lines = [
         f"- {_line(f.get('finding_id'), 80)}: {_line(f.get('description'))}"
-        for f in findings[:MAX_ALERTS]
+        for f in findings[:shown]
     ]
-    if len(findings) > MAX_ALERTS:
-        lines.append(f"({len(findings) - MAX_ALERTS} more alerts not shown)")
+    if len(findings) > shown:
+        lines.append(f"({len(findings) - shown} more alerts not shown)")
     return ["Alerts:", *lines] if lines else ["Alerts: none."]
 
 
-def _hunt(view: dict) -> List[str]:
+def _hunt(view: dict, shown: int) -> List[str]:
     out = ["Hypotheses (explanations the hunt is testing):"]
     for h in view.get("hypotheses") or []:
         out.append(
@@ -62,7 +68,8 @@ def _hunt(view: dict) -> List[str]:
         )
     if len(out) == 1:
         out.append("- none yet")
-    rows = view.get("evidence") or []
+    everything = view.get("evidence") or []
+    rows = everything[:shown]
     out.append("Evidence, newest first (id | stance | observation):")
     held = 0
     for row in rows:
@@ -85,7 +92,7 @@ def _hunt(view: dict) -> List[str]:
         )
     if not rows:
         out.append("- none yet")
-    unlisted = max(int(view.get("evidence_count") or 0) - len(rows), 0)
+    unlisted = max(int(view.get("evidence_count") or 0), len(everything)) - len(rows)
     if unlisted:
         out.append(f"({unlisted} more evidence rows not shown)")
     if held:
@@ -93,17 +100,29 @@ def _hunt(view: dict) -> List[str]:
     return out
 
 
-def _lead(view: dict) -> List[str]:
+def _lead(view: dict, shown: int) -> List[str]:
     findings = view.get("findings") or []
     out = ["Findings:"]
-    for f in findings[:MAX_FINDINGS]:
+    for f in findings[:shown]:
         answer = f.get("answer")
         if not isinstance(answer, str):
             answer = str(answer or "")
         out.append(f"- {_line(f.get('agent_id'), 80)}: {_line(answer, FINDING_CHARS)}")
-    if len(findings) > MAX_FINDINGS:
-        out.append(f"({len(findings) - MAX_FINDINGS} more findings not shown)")
+    if len(findings) > shown:
+        out.append(f"({len(findings) - shown} more findings not shown)")
     return out if findings else ["Findings: none yet."]
+
+
+def _fit(compose: Callable[[int, int], str], alerts: int, rows: int) -> str:
+    """The fullest brief within the budget: the run's oldest rows go first, then alerts."""
+    text = compose(alerts, rows)
+    while len(text) > MAX_BRIEF_CHARS and rows > 0:
+        rows -= 1
+        text = compose(alerts, rows)
+    while len(text) > MAX_BRIEF_CHARS and alerts > 0:
+        alerts -= 1
+        text = compose(alerts, rows)
+    return text
 
 
 async def case_brief(case_id: str, workflows: Any) -> str:
@@ -120,20 +139,24 @@ async def case_brief(case_id: str, workflows: Any) -> str:
                 case_records_service.list_case_runs(session, case_id),
             )
         state = combined_state(case.get("status"), [s for _, s in refs])
-        lines = [
-            f"Case {case_id}: {_line(case.get('title'))} (state: {state})",
-            *_alerts(alerts),
-        ]
+        head = f"Case {case_id}: {_line(case.get('title'))} (state: {state})"
+        run, hunt, view = None, False, None
         if refs:
             run, _ = refs[0]
             hunt = catalog.is_hunt(workflows, run.get("workflow_id"))
             view = await read_projection(run["run_id"])
+
+        def compose(alert_rows: int, run_rows: int) -> str:
+            lines = [head, *_alerts(alerts, alert_rows)]
             if view:
-                lines.append(
-                    f"Newest run: {run['run_id']} ({'hunt' if hunt else 'lead investigation'})"
-                )
-                lines += _hunt(view) if hunt else _lead(view)
+                kind = "hunt" if hunt else "lead investigation"
+                lines.append(f"Newest run: {run['run_id']} ({kind})")
+                lines += _hunt(view, run_rows) if hunt else _lead(view, run_rows)
+            return "\n".join(lines)
+
+        run_rows = len(view.get("evidence") or []) if hunt and view else MAX_FINDINGS
+        body = _fit(compose, MAX_ALERTS, run_rows)
     except Exception as exc:  # noqa: BLE001 — a brief is never worth the turn
         logger.warning("no case brief for %s: %s", case_id, exc)
         return ""
-    return f"{RULES}\n{OPEN}\n" + "\n".join(lines) + f"\n{CLOSE}"
+    return f"{RULES}\n{OPEN}\n{body}\n{CLOSE}"

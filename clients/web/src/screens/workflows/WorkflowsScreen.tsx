@@ -41,14 +41,18 @@ export interface Feed<T> {
 const [PAGE_TITLE, PAGE_DESC] = TITLES.workflows
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
-  const [tab, setTab] = useState<WfTab>('workflows')
+  // ?tab= picks the opening tab, e.g. Home's "Add a custom skill" step
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [tab, setTab] = useState<WfTab>(() => {
+    const wanted = searchParams.get('tab')
+    return wanted === 'agents' || wanted === 'skills' || wanted === 'commands' ? wanted : 'workflows'
+  })
   // lifted so the header's "New workflow" opens the same builder from any tab
   const [creating, setCreating] = useState<null | 'blank' | 'ai'>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
-  const [searchParams, setSearchParams] = useSearchParams()
   const runId = searchParams.get('run')
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
@@ -1010,7 +1014,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         )}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!canRun} style={{ opacity: canRun ? 1 : 0.5 }} onClick={run}>
+          <button className="btn primary" disabled={!canRun} onClick={run}>
             <Icon name="play" /> {starting ? 'Starting…' : 'Run workflow'}
           </button>
         </div>
@@ -2772,7 +2776,7 @@ function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !name.trim()} style={{ opacity: busy || !name.trim() ? 0.5 : 1 }} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+          <button className="btn primary" disabled={busy || !name.trim()} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </div>
     </Popup>
@@ -3052,7 +3056,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
         </div>
         <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
         <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
-        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} style={{ opacity: phase === 'ready' ? 1 : 0.5 }} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
+        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
       </div>
       {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
