@@ -306,7 +306,15 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                 {components.map((c) => {
                   const meta = COMPONENT_LABELS[c] || { label: c, description: '' }
                   const row = rows[c] || rowFor(c, undefined)
-                  const providerModels = row.providerId ? modelsByProvider[row.providerId] || [] : []
+                  // An inheriting row shows chat_default's choice, read-only; row state stays blank
+                  const shown = row.inherit ? assignments[CHAT_DEFAULT_KEY] : undefined
+                  const shownProvider = shown ? shown.provider_id : row.providerId
+                  const shownModel = shown ? shown.model_id : row.modelId
+                  const providerOptions = (shown && !providerIds.includes(shownProvider) ? [...providerIds, shownProvider] : providerIds)
+                    .map((pid) => ({ value: pid, label: pid }))
+                  const providerModels = shownProvider ? modelsByProvider[shownProvider] || [] : []
+                  const modelOptions = providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))
+                  if (shown && !modelOptions.some((o) => o.value === shownModel)) modelOptions.push({ value: shownModel, label: shownModel })
                   return (
                     <tr key={c}>
                       <td style={{ minWidth: 200, maxWidth: 300 }}>
@@ -316,18 +324,18 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                       <td style={{ minWidth: 340 }}>
                         <div className="aim-model">
                           <Select
-                            value={row.providerId}
+                            value={shownProvider}
                             placeholder="Select provider"
-                            disabled={saving.includes(c)}
-                            options={providerIds.map((pid) => ({ value: pid, label: pid }))}
+                            disabled={row.inherit || saving.includes(c)}
+                            options={providerOptions}
                             onSelect={(v) => update(c, { providerId: v, modelId: '' })}
                           />
                           <Select
-                            value={row.modelId}
+                            value={shownModel}
                             placeholder="Select model"
                             searchable
-                            disabled={saving.includes(c)}
-                            options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
+                            disabled={row.inherit || saving.includes(c)}
+                            options={modelOptions}
                             onSelect={(v) => update(c, { modelId: v })}
                           />
                         </div>
