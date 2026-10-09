@@ -255,6 +255,7 @@ vi.mock('../services/api', () => ({
           cases_created_today: 0,
           trust_floor: 'Not measured yet',
         },
+        counts: { total: 0, kind: {}, source: {}, state: {} },
         sources: [],
         arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
         strip_info: {
@@ -463,7 +464,7 @@ describe('SocConsole', () => {
       ['Agents & workflows', 'Agents & workflows'],
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
-      ['Triage queue', 'Triage queue'],
+      ['Triage queue', 'Triage queue'], // the screen draws its own heading
       ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],
@@ -636,6 +637,12 @@ describe('SocConsole', () => {
       await screen.findByRole('tab', { name: /Summary/ })
       ask('why this loader?')
       await sentOnCase()
+    })
+
+    it('keeps the floating Ask Vigil button off a case page opened by its URL', async () => {
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
     })
 
     it('opens the dock with the text when no case is open', async () => {

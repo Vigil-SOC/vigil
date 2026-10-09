@@ -3,76 +3,119 @@ import { useNavigate } from 'react-router-dom'
 import '../../../../../docs/design/console/tokens/tokens.css'
 import '../../styles.css'
 import '../../shell/shell.css'
+import './setup.css'
 import { useColorScheme } from '../../contexts/ColorSchemeContext'
 import { Icon } from '../../shared/icons'
-import { VigilMark } from '../../shared/VigilLogo'
 import { SettingsCard } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
+import { configApi } from '../../services/api'
+import { ToastProvider, useToast } from '../../shell/toast'
 import SetupProviderStep from './SetupProviderStep'
 import DataSourceDialog from './DataSourceDialog'
 import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
 import LimitsStep from './LimitsStep'
 import SummaryStep, { type SummaryTarget } from './SummaryStep'
-import { markSetupDismissed } from './setupDismissed'
+import { Rail, TopBar } from './SetupChrome'
+import {
+  SETUP_STEP_COUNT,
+  markSetupDismissed,
+  readSetupProgress,
+  writeSetupProgress,
+  type SetupProgress,
+} from './setupDismissed'
 
-const STEPS = ['checks', 'data', 'ai', 'workflows', 'limits', 'summary'] as const
+// the done page follows the five numbered steps and is never counted in "n of 5"
+const STEPS = ['checks', 'data', 'ai', 'workflows', 'limits', 'done'] as const
 
 type StepId = (typeof STEPS)[number]
 
-const STEP_COPY: Record<StepId, { title: string; desc: string }> = {
+const DONE = STEPS.length - 1
+
+interface StepCopy {
+  rail: string
+  sub: string
+  title: string
+  desc: string
+  /** the existing panel's own card */
+  card: { title: string; desc: string }
+}
+
+const STEP_COPY: Record<StepId, StepCopy> = {
   checks: {
-    title: 'System checks',
-    desc: 'API health, the storage backend, and whether a provider can route.',
+    rail: 'Before you start',
+    sub: 'System checks',
+    title: 'Welcome to Vigil',
+    desc: 'Vigil investigates your security alerts with AI agents and asks you before it changes anything. Setup takes about 15 minutes, and your progress is saved if you leave.',
+    card: {
+      title: 'System checks',
+      desc: 'API health, storage, an AI provider, federation and MCP servers, one at a time.',
+    },
   },
   data: {
-    title: 'Connect data',
-    desc: 'A SIEM or EDR so Vigil has alerts to triage.',
+    rail: 'Connect your data',
+    sub: 'At least one alert source',
+    title: 'Connect your data',
+    desc: 'Pick where your alerts live. Vigil reads alerts from it and asks before it changes anything there. You can add more sources later.',
+    card: { title: 'Connect data', desc: 'A SIEM or EDR so Vigil has alerts to triage.' },
   },
   ai: {
-    title: 'Where AI runs',
-    desc: 'A local model keeps data on site. A hosted one sends it out.',
+    rail: 'Choose where AI runs',
+    sub: 'A model provider and key',
+    title: 'Choose where AI runs',
+    desc: 'Agents and chat need a language model. Pick where it runs. You can choose a different model for each agent later in Settings.',
+    card: {
+      title: 'Where AI runs',
+      desc: 'A local model keeps data on site. A hosted one sends it out.',
+    },
   },
   workflows: {
-    title: 'Workflows',
-    desc: 'Turn off any playbook you do not want. The first switch lets Vigil start them on new alerts.',
+    rail: 'Agents and workflows',
+    sub: 'What runs, and what may act alone',
+    title: 'Choose what Vigil does on its own',
+    desc: 'Each workflow tests possible explanations for an alert, gathers evidence for and against each one, and asks before any change.',
+    card: {
+      title: 'Workflows',
+      desc: 'Turn off any playbook you do not want. The first switch lets Vigil start them on new alerts.',
+    },
   },
   limits: {
-    title: 'Limits and autonomy',
-    desc: 'A profile sets the default case limits. Assist or Act sets what may happen without asking.',
+    rail: 'Limits and alerts',
+    sub: 'Spend and notifications',
+    title: 'Set limits and where Vigil reaches you',
+    desc: 'Limits stop runaway cost. You can change them later in Settings.',
+    card: {
+      title: 'Limits and autonomy',
+      desc: 'A profile sets the default case limits. Assist or Act sets what may happen without asking.',
+    },
   },
-  summary: {
-    title: 'Summary',
+  done: {
+    rail: '',
+    sub: '',
+    title: 'Vigil is ready',
     desc: 'The console works from here. Reopen this pass from the account menu.',
+    card: { title: 'Summary', desc: '' },
   },
 }
 
-const Shell = ({ children }: { children: React.ReactNode }) => {
-  const { scheme } = useColorScheme()
-  return (
-    <div className={`soc-console ${scheme === 'light' ? 'vg-light' : 'vg-dark'}`} data-theme={scheme}>
-      <div className="absolute inset-0 overflow-auto">
-        <div className="min-h-full flex justify-center px-6 py-6">
-          <div className="w-full max-w-xl my-auto">{children}</div>
-        </div>
-      </div>
-    </div>
-  )
-}
+const RAIL = STEPS.slice(0, DONE).map((id) => ({
+  title: STEP_COPY[id].rail,
+  sub: STEP_COPY[id].sub,
+}))
 
 function stepPanel(id: StepId, onAdvance: () => void, onChange: (target: SummaryTarget) => void) {
   switch (id) {
     case 'checks':
       return <SystemChecksStep />
     case 'data':
-      return <DataSourceDialog onSaved={onAdvance} />
+      return <DataSourceDialog />
     case 'ai':
       return <SetupProviderStep onSaved={onAdvance} />
     case 'workflows':
       return <WorkflowsStep />
     case 'limits':
       return <LimitsStep />
-    case 'summary':
+    case 'done':
       return <SummaryStep onChange={onChange} />
     default: {
       const _exhaustive: never = id
@@ -81,74 +124,162 @@ function stepPanel(id: StepId, onAdvance: () => void, onChange: (target: Summary
   }
 }
 
-const SetupScreen = () => {
+const Shell = ({ children }: { children: React.ReactNode }) => {
+  const { scheme } = useColorScheme()
+  return (
+    <div
+      className={`soc-console su-root ${scheme === 'light' ? 'vg-light' : 'vg-dark'}`}
+      data-theme={scheme}
+    >
+      <ToastProvider>{children}</ToastProvider>
+    </div>
+  )
+}
+
+const SetupWizard = () => {
   const navigate = useNavigate()
+  const { notify } = useToast()
   const { hasPermission } = useAuth()
-  const [index, setIndex] = useState(0)
+  const [progress, setProgress] = useState<SetupProgress>(readSetupProgress)
+  const [index, setIndex] = useState(progress.furthest - 1)
+  const [demoBusy, setDemoBusy] = useState(false)
   const step = STEPS[index]
   const copy = STEP_COPY[step]
-  const last = index === STEPS.length - 1
+  const done = step === 'done'
+  const last = index === DONE - 1
 
   const dismiss = () => {
     markSetupDismissed()
     navigate('/', { replace: true })
   }
 
+  const save = (next: SetupProgress) => {
+    writeSetupProgress(next)
+    setProgress(next)
+  }
+
   const advance = () => {
-    if (last) dismiss()
-    else setIndex((current) => current + 1)
+    const n = index + 1
+    save({
+      furthest: Math.max(progress.furthest, Math.min(n + 1, SETUP_STEP_COUNT)),
+      passed: [...new Set([...progress.passed, n])],
+    })
+    setIndex(n)
+  }
+
+  const finishLater = () => {
+    writeSetupProgress({ ...progress, furthest: Math.max(progress.furthest, index + 1) })
+    dismiss()
+  }
+
+  // epic decision 7, guard 20: a server-set DEMO_MODE=false cannot be overridden from here
+  const lookAroundWithDemo = async () => {
+    setDemoBusy(true)
+    try {
+      const { data } = await configApi.getDemoMode()
+      if (data?.source === 'environment' && !data.enabled) {
+        notify('err', "Demo mode is set by the server's environment")
+        return
+      }
+      await configApi.setDemoMode(true)
+      dismiss()
+    } catch {
+      notify('err', 'Demo data could not be turned on')
+    } finally {
+      setDemoBusy(false)
+    }
   }
 
   if (!hasPermission('settings.write')) {
     return (
-      <Shell>
-        <header className="text-center mb-6">
-          <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
-        </header>
-        <SettingsCard title="Setup" desc="Administrator access needed">
-          <p className="text-tx-2 text-sm">
-            Ask an administrator to connect an AI provider and data sources. You can open the
-            console in the meantime.
-          </p>
-          <div className="flex justify-end mt-4">
-            <button className="btn primary" onClick={dismiss}>
-              Continue to console
-              <Icon name="arrowR" size={15} />
-            </button>
+      <>
+        <TopBar />
+        <div className="su-body">
+          <aside className="su-rail" aria-hidden="true" />
+          <div className="su-main">
+            <div className="su-scroll">
+              <div className="su-col">
+                <SettingsCard title="Setup" desc="Administrator access needed">
+                  <p className="text-tx-2 text-sm">
+                    Ask an administrator to connect an AI provider and data sources. You can open
+                    the console in the meantime.
+                  </p>
+                  <div className="flex justify-end mt-4">
+                    <button className="btn primary" onClick={dismiss}>
+                      Continue to console
+                      <Icon name="arrowR" size={15} />
+                    </button>
+                  </div>
+                </SettingsCard>
+              </div>
+            </div>
           </div>
-        </SettingsCard>
-      </Shell>
+        </div>
+      </>
     )
   }
 
   return (
-    <Shell>
-      <header className="text-center mb-6">
-        <span className="inline-grid place-items-center w-12 h-12 rounded-lg bg-accent-dim text-accent-2 mb-3">
-          <VigilMark className="w-6 h-6" />
-        </span>
-        <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
-        <p className="text-tx-3 text-sm mt-1">
-          One pass over this install. Every step can be skipped.
-        </p>
-        <button className="btn ghost mt-3" onClick={dismiss}>
-          Skip setup
-        </button>
-      </header>
-      <SettingsCard title={copy.title} desc={`${copy.desc} · ${index + 1} of ${STEPS.length}`}>
-        {stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))}
-      </SettingsCard>
-      <div className="flex justify-end gap-2 mt-5">
-        <button className="btn ghost" onClick={advance}>
-          Skip
-        </button>
-        <button className="btn primary" onClick={advance}>
-          {last ? 'Go to console' : 'Continue'}
-          <Icon name="arrowR" size={15} />
-        </button>
+    <>
+      <TopBar />
+      <div className="su-body">
+        <Rail
+          steps={RAIL}
+          active={done ? -1 : index}
+          passed={(n) => done || progress.passed.includes(n)}
+          onPick={setIndex}
+          onDemo={lookAroundWithDemo}
+          demoBusy={demoBusy}
+        />
+        <div className="su-main">
+          <div className="su-scroll">
+            <div className="su-col">
+              <div className="su-head">
+                <span className="su-eyebrow">{done ? 'Setup complete' : `Step ${index + 1} of ${SETUP_STEP_COUNT}`}</span>
+                <h1>{copy.title}</h1>
+                <p>{copy.desc}</p>
+              </div>
+              <SettingsCard title={copy.card.title} desc={copy.card.desc || undefined}>
+                {stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))}
+              </SettingsCard>
+            </div>
+          </div>
+          <footer className="su-foot">
+            <span className="su-foot-note">
+              {!done && `Step ${index + 1} of ${SETUP_STEP_COUNT} · your progress is saved`}
+            </span>
+            {done ? (
+              <button className="btn primary" onClick={dismiss}>
+                Go to console
+                <Icon name="arrowR" size={15} />
+              </button>
+            ) : (
+              <>
+                {index > 0 && (
+                  <button className="btn ghost" onClick={() => setIndex(index - 1)}>
+                    Back
+                  </button>
+                )}
+                <button className="btn ghost" onClick={finishLater}>
+                  Save and finish later
+                </button>
+                <button className="btn primary" onClick={advance}>
+                  {last ? 'Finish setup' : 'Continue'}
+                  <Icon name="arrowR" size={15} />
+                </button>
+              </>
+            )}
+          </footer>
+        </div>
       </div>
-    </Shell>
+    </>
   )
 }
+
+const SetupScreen = () => (
+  <Shell>
+    <SetupWizard />
+  </Shell>
+)
 
 export default SetupScreen

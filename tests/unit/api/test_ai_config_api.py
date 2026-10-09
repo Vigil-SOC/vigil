@@ -320,3 +320,82 @@ def test_model_info_404_when_missing(client):
         r = client.get("/api/ai/models/nothing/info")
 
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Component fallback (settings.fallback_model_id)
+# ---------------------------------------------------------------------------
+
+
+def _put_fb(client, component="triage", provider="ollama-local", model="a", **settings):
+    return client.put(
+        f"/api/ai/config/{component}",
+        json={"provider_id": provider, "model_id": model, "settings": settings},
+    )
+
+
+def test_fallback_set_change_clear_each_write_one_audit_row(client, session):
+    _put_fb(client)
+    r = _put_fb(client, fallback_model_id=" b ")
+    assert r.json()["settings"] == {"fallback_model_id": "b"}  # stripped, served by GET too
+    assert client.get("/api/ai/config").json()["assignments"]["triage"]["settings"] == {
+        "fallback_model_id": "b"
+    }
+    _put_fb(client, fallback_model_id="c")
+    _put_fb(client, fallback_model_id=None)
+    assert [x.action for x in session.audits] == ["create"] + ["update"] * 3
+    assert [x.new_value.get("fallback_model_id") for x in session.audits] == [
+        None, "b", "c", None,
+    ]
+    assert session.audits[2].old_value["fallback_model_id"] == "b"
+    assert session.assignments["triage"].settings == {}
+
+
+def test_blank_fallback_is_unset(client, session):
+    _put_fb(client, fallback_model_id="  ")
+    assert session.assignments["triage"].settings == {}
+    assert len(session.audits) == 1  # create only
+
+
+def test_model_only_put_keeps_the_fallback(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, model="c")
+    assert r.json()["settings"] == {"fallback_model_id": "b"}
+
+
+def test_provider_change_drops_the_fallback(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, provider="anthropic-default", model="c")
+    assert r.json()["settings"] == {}
+    assert session.audits[-1].new_value == {"provider_id": "anthropic-default", "model_id": "c"}
+
+
+def test_fallback_equal_to_model_is_rejected(client, session):
+    assert _put_fb(client, fallback_model_id="a").status_code == 400
+    assert session.assignments == {}
+
+
+def test_fallback_outside_known_catalogue_is_rejected(client, session):
+    with patch("services.api.routers.ai_config.catalogue_of", return_value=["a", "b"]):
+        assert _put_fb(client, fallback_model_id="zzz").status_code == 400
+        assert _put_fb(client, fallback_model_id="b").status_code == 200
+
+
+def test_delete_clears_fallback_with_row(client, session):
+    _put_fb(client, fallback_model_id="b")
+    client.delete("/api/ai/config/triage")
+    assert session.assignments == {}
+    assert session.audits[-1].old_value["fallback_model_id"] == "b"
+
+
+def test_provider_change_drops_a_fallback_sent_with_it(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, provider="anthropic-default", model="c", fallback_model_id="d")
+    assert r.json()["settings"] == {}
+
+
+def test_model_change_onto_the_fallback_clears_it(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, model="b", fallback_model_id=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"] == {}
