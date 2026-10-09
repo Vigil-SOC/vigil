@@ -516,20 +516,21 @@ describe('SocConsole', () => {
     expect(rules()).toBe('x|x|x|xx|xx')
   })
 
-  it('draws the board page heading in the screen, with the board copy', async () => {
+  it('draws a page heading for a screen that has none of its own, and not for the ones that do', async () => {
     renderConsole('/overview')
     expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Overview')
-    expect(screen.getByText('Where your data comes from, what Vigil does with it, and what came out.')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
+    expect(document.querySelector('.vg-page-head')).toBeNull()
     expect(document.querySelector('.topbar')).toBeNull()
     clickScreen('Cases')
-    // the Cases list draws its own page head, with the same copy
     expect(title()).toBe('Cases')
     expect(screen.getByText('Every open case, who owns it and what it is waiting on.')).toBeInTheDocument()
+    expect(document.querySelector('.vg-page-head')).toBeNull()
     clickScreen('Triage queue')
-    // the Triage screen draws its own page head, so the shell adds none
     expect(title()).toBe('Triage queue')
     expect(document.querySelector('.vg-page-head')).toBeNull()
+    clickScreen('Health')
+    expect(title()).toBe('Health')
+    expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
   })
 
   it('shows no shell heading where the screen owns it', async () => {

@@ -94,11 +94,11 @@ export interface CaseRow {
 }
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
-  overview: ['Overview', 'Where your data comes from, what Vigil does with it, and what came out.'],
-  triage: ['Triage queue', 'Every incoming alert and what triage did with it.'],
+  overview: ['Overview', 'What arrived today and where it went'],
+  triage: ['Triage queue', 'What intake did with what arrived'],
   dashboard: ['Dashboard', 'Security operations overview'],
   home: ['Home', 'What needs a person'],
-  cases: ['Cases', 'Every open case, who owns it and what it is waiting on.'],
+  cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],
   analytics: ['Analytics Dashboard', 'Security operations analytics'],
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],

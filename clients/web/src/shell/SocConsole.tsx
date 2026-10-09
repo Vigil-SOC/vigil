@@ -442,9 +442,8 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  // these draw their own heading; Home's headline is its heading, and the Cases and Triage lists draw their page heads
-  const ownsHeading =
-    current === 'workflows' || current === 'settings' || current === 'home' || current === 'cases' || current === 'triage'
+  // these draw their own heading; Home's headline is its heading
+  const ownsHeading = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings'].includes(current)
   const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
