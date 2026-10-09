@@ -638,6 +638,12 @@ describe('SocConsole', () => {
       await sentOnCase()
     })
 
+    it('keeps the floating Ask Vigil button off a case page opened by its URL', async () => {
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
+    })
+
     it('opens the dock with the text when no case is open', async () => {
       renderConsole('/cases')
       await screen.findByText('Defense Evasion: Obfuscated Loader')

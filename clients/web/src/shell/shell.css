@@ -547,6 +547,16 @@ input.vg-side-input {
   cursor: default;
 }
 
+/* same disabled treatment as .btn.primary: placeholder text on a quiet fill, not a dimmed accent */
+.vg-side-btn.primary:disabled {
+  background: var(--bg3);
+  border-color: var(--ln1);
+  color: var(--tx3);
+  opacity: 1;
+  cursor: not-allowed;
+  filter: none;
+}
+
 .vg-side-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
