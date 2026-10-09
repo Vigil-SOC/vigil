@@ -6673,13 +6673,12 @@
    }
 
    .tbl tbody tr.row-expanded>td {
-      padding: 0 22px 12px;
+      padding: 0 16px 12px;
       white-space: normal;
       overflow-wrap: anywhere;
    }
 
    .tq-panel {
-      width: min(560px, 100%);
       padding: 10px 12px;
       border-radius: 10px;
       background: var(--bg-2);
