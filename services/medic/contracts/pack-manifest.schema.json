@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/pack/v1",
+  "title": "Medic content pack v1 (built single-file form)",
+  "description": "One JSON file: a manifest plus the exact text of every pack file, keyed by path. The signature (F2) covers the file's bytes and is verified before this schema is applied. $defs also hold the schemas of the pack's own documents: source manifest, suppression, catalog, runbook descriptor. Checks JSON Schema can't express are in pack_check.py.",
+  "type": "object",
+  "required": ["format", "manifest", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "medic.pack/v1"},
+    "manifest": {"$ref": "#/$defs/manifest"},
+    "files": {
+      "description": "path -> exact UTF-8 text of the file. Must match manifest.contents one-to-one.",
+      "type": "object",
+      "minProperties": 2,
+      "maxProperties": 500,
+      "propertyNames": {"$ref": "#/$defs/path"},
+      "additionalProperties": {"type": "string", "maxLength": 65536}
+    }
+  },
+  "$defs": {
+    "semver": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,4})$"},
+    "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "path": {
+      "description": "Only these locations exist in a pack, so there is no path to traverse (K1 T-25).",
+      "type": "string",
+      "pattern": "^(rules/[a-z0-9][a-z0-9-]{0,71}\\.yaml|runbooks/[a-z0-9][a-z0-9-]{0,62}\\.yaml|suppression\\.yaml|catalog\\.yaml)$"
+    },
+    "static_text": {"type": "string", "minLength": 1, "not": {"pattern": "\\{\\{|\\{%|\\$\\{|%\\(|`|<script"}},
+    "source_manifest": {
+      "description": "pack.yaml in the source tree: everything the builder doesn't compute.",
+      "type": "object",
+      "required": ["format", "pack", "engine_api", "fingerprint", "vigil"],
+      "additionalProperties": false,
+      "properties": {
+        "format": {"const": "medic.pack/v1"},
+        "pack": {"$ref": "#/$defs/pack_identity"},
+        "engine_api": {"type": "string", "pattern": "^1\\.(0|[1-9][0-9]{0,2})$"},
+        "fingerprint": {"enum": ["fp1"]},
+        "vigil": {"$ref": "#/$defs/vigil_range"}
+      }
+    },
+    "pack_identity": {
+      "type": "object",
+      "required": ["id", "version", "channel", "created_at", "expires_at", "publisher"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "version": {"description": "Monotonic per (id, channel) (K1 T-22). Process: F4.", "$ref": "#/$defs/semver"},
+        "channel": {"enum": ["stable", "beta", "dev"]},
+        "created_at": {"$ref": "#/$defs/ts"},
+        "expires_at": {"$ref": "#/$defs/ts"},
+        "publisher": {"const": "deeptempo"}
+      }
+    },
+    "vigil_range": {
+      "description": "Vigil versions whose logs and endpoints these rules and the catalog were written against: [min, max_exclusive).",
+      "type": "object",
+      "required": ["min", "max_exclusive"],
+      "additionalProperties": false,
+      "properties": {"min": {"$ref": "#/$defs/semver"}, "max_exclusive": {"$ref": "#/$defs/semver"}}
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["pack", "engine_api", "fingerprint", "vigil", "contents", "counts"],
+      "additionalProperties": false,
+      "properties": {
+        "pack": {"$ref": "#/$defs/pack_identity"},
+        "engine_api": {"description": "Exactly the highest engine_api any rule needs (E2 §1).", "type": "string", "pattern": "^1\\.(0|[1-9][0-9]{0,2})$"},
+        "fingerprint": {"enum": ["fp1"]},
+        "vigil": {"$ref": "#/$defs/vigil_range"},
+        "contents": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "required": ["path", "kind", "sha256", "bytes"],
+            "additionalProperties": false,
+            "properties": {
+              "path": {"$ref": "#/$defs/path"},
+              "kind": {"enum": ["rule", "runbook", "suppression", "catalog"]},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "bytes": {"type": "integer", "minimum": 1, "maximum": 65536}
+            }
+          }
+        },
+        "counts": {
+          "type": "object",
+          "required": ["rules", "runbooks", "suppressions", "catalog_entries"],
+          "additionalProperties": false,
+          "properties": {
+            "rules": {"type": "integer", "minimum": 1, "maximum": 500},
+            "runbooks": {"type": "integer", "minimum": 0},
+            "suppressions": {"type": "integer", "minimum": 0},
+            "catalog_entries": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "selector": {
+      "type": "object", "minProperties": 1, "maxProperties": 1, "additionalProperties": false,
+      "properties": {
+        "rule": {"type": "string", "pattern": "^(ingest|llm|pipeline)\\.[a-z0-9][a-z0-9-]{1,62}$"},
+        "mode": {"type": "string", "pattern": "^[ILP]-[0-9]{1,2}$"},
+        "cause": {"type": "string", "pattern": "^[ILP]-[0-9]{1,2}(\\.[a-z])?$"},
+        "class": {"enum": ["ingest", "llm", "pipeline"]}
+      }
+    },
+    "suppression": {
+      "description": "suppression.yaml (E3 §6).",
+      "type": "object",
+      "required": ["apiVersion", "kind", "entries"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "medic.suppression/v1"},
+        "kind": {"const": "Suppression"},
+        "entries": {
+          "type": "array", "maxItems": 64,
+          "items": {
+            "type": "object", "required": ["parent", "children", "why"], "additionalProperties": false,
+            "properties": {
+              "parent": {"$ref": "#/$defs/selector"},
+              "children": {"$ref": "#/$defs/selector"},
+              "match": {"type": "array", "maxItems": 3, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}},
+              "why": {"$ref": "#/$defs/static_text", "maxLength": 300}
+            }
+          }
+        }
+      }
+    },
+    "catalog": {
+      "description": "catalog.yaml (D3 §2): the only (logger, template) pairs that earn template_trust=catalog.",
+      "type": "object",
+      "required": ["apiVersion", "kind", "vigil_commit", "entries"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "medic.catalog/v1"},
+        "kind": {"const": "TemplateCatalog"},
+        "vigil_commit": {"description": "Commit the AST scan read (F5).", "type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+        "entries": {
+          "type": "array", "maxItems": 5000,
+          "items": {
+            "type": "object", "required": ["logger", "template"], "additionalProperties": false,
+            "properties": {
+              "logger": {"description": "Same charset as the observation logger (X1 #14), so agent loggers with : or - can be catalogued. The client-written frontend logger never can, in any case or with any separator (fingerprint.md §7; S0 review R9).", "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$", "not": {"pattern": "^[Ff][Rr][Oo][Nn][Tt][Ee][Nn][Dd]([.:-]|$)"}},
+              "template": {"type": "string", "minLength": 1, "maxLength": 500}
+            }
+          }
+        }
+      }
+    },
+    "runbook": {
+      "description": "runbooks/<id>.yaml. Minimal descriptor slot; G4 finalizes the action vocabulary before the first pack ships. Descriptors only: there is no executor in Phase 0, and rules never name runbooks (E2 §7).",
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "title", "applies_to", "action", "verify_after_s", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {"const": "medic.runbooks/v1"},
+        "kind": {"const": "Runbook"},
+        "id": {"$ref": "#/$defs/id"},
+        "title": {"type": "string", "minLength": 5, "maxLength": 120},
+        "applies_to": {"description": "Lane-1 rule ids this runbook would fix.", "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^(ingest|llm|pipeline)\\.[a-z0-9][a-z0-9-]{1,62}$"}},
+        "action": {
+          "type": "object", "required": ["type", "target"], "additionalProperties": false,
+          "properties": {
+            "type": {"enum": ["restart_service", "kill_orphan_process"]},
+            "target": {"enum": ["soc-daemon", "llm-worker", "agent-worker", "agent-serve", "bifrost"]}
+          }
+        },
+        "verify_after_s": {"type": "integer", "minimum": 30, "maximum": 86400},
+        "description": {"$ref": "#/$defs/static_text", "maxLength": 1000}
+      }
+    }
+  }
+}

@@ -1,0 +1,105 @@
+id: v06-counter-reset-across-epoch
+title: 'increase sums across a daemon restart: +2, reset, +4 = 6'
+covers:
+- §2 increase epochs
+- §2 lower bound
+start: '2026-10-07T10:00:00Z'
+end: +32m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.kafka-decode-errors-fast
+    title: Vector rule ingest.kafka-decode-errors-fast
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-3
+      causes:
+      - I-3.j
+    lane: 2
+    signals:
+      decode_errors:
+        sample:
+          signal: daemon_status.kafka
+          key: decode_errors
+    when:
+      fn: increase
+      signal: decode_errors
+      window: 15m
+      op: '>'
+      value: 5
+    for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+series:
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 40
+  - - +10m
+    - 42
+  - - +12m
+    - 0
+  - - +14m
+    - 4
+  epochs:
+  - - +0s
+    - e1
+  - - +12m
+    - e2
+expect:
+- at: +12m
+  rule: ingest.kafka-decode-errors-fast
+  eval: unknown
+  state: inactive
+  note: lower bound 2
+- at: +14m
+  rule: ingest.kafka-decode-errors-fast
+  eval: true
+  state: firing
+  incident: A
+  note: lower bound 6 already > 5
+- at: +24m45s
+  rule: ingest.kafka-decode-errors-fast
+  eval: true
+  state: firing
+  incident: A
+- at: +25m
+  rule: ingest.kafka-decode-errors-fast
+  eval: false
+  state: resolving
+  incident: A
+  note: 'baseline +10m (42): reset adds 0, then +4'
+- at: +30m
+  rule: ingest.kafka-decode-errors-fast
+  eval: false
+  state: inactive
+incidents:
+  A:
+    rule: ingest.kafka-decode-errors-fast
+    active_since: +14m
+    opened_at: +14m
+    resolving_since: +25m
+    resolved_at: +30m
+    reason: cleared
+    routed_at: +14m

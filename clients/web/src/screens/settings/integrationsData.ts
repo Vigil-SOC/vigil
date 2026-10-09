@@ -27,6 +27,7 @@ export const WIP_SERVERS = new Set([
  *  registration, persisted enabled-state store). */
 export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   loglm: 'LogLM',
+  'gcp-scc': 'GCP Security Command Center',
   'splunk-selfhosted': 'Splunk (Self-Hosted)',
 }))
 
@@ -43,12 +44,12 @@ export const MCP_CATEGORIES: McpCategory[] = [
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
   { label: 'SIEM / Data Lake', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'opensearch', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
-  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl'] },
+  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl', 'cloudforce_one'] },
   { label: 'Cloud Security', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
   { label: 'Identity & Access', servers: ['okta', 'azure-ad'] },
-  { label: 'Network Security', servers: ['vstrike'] },
+  { label: 'Network Security', servers: ['vstrike', 'cloudflare'] },
   { label: 'Incident Management', servers: ['jira', 'pagerduty', 'slack', 'microsoft-teams'] },
-  { label: 'Sandbox / Analysis', servers: ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation'] },
+  { label: 'Sandbox / Analysis', servers: ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation', 'cape-sandbox'] },
   { label: 'Adversary Emulation', servers: ['atomic-red-team'] },
 ]
 
@@ -94,4 +95,13 @@ export function prettyServerName(name: string): string {
     .split('-')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
+}
+
+export type IntegrationsTab = 'connected' | 'add' | 'custom' | 'surface'
+
+/** `?tab=`: `servers` is the old name of Connected; anything unknown lands there. */
+export function tabFromQuery(value: string | null): IntegrationsTab {
+  if (value === 'servers') return 'connected'
+  if (value === 'connected' || value === 'add' || value === 'custom' || value === 'surface') return value
+  return 'connected'
 }

@@ -1,0 +1,67 @@
+{
+  "v": 1,
+  "id": "http.federation_sources:01JA8Z3K4M:4",
+  "kind": "sample",
+  "signal": "federation_sources",
+  "sensor": {
+    "id": "http.federation_sources",
+    "run": "01JA8Z3K4M",
+    "seq": 4
+  },
+  "target": {
+    "service": "backend",
+    "instance": "deeptempo-backend",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:30Z",
+  "observed_at": "2026-10-07T10:00:30Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "epoch": "backend:2026-10-07T08:11:50Z",
+  "values": [
+    {
+      "key": "sources.enabled",
+      "type": "bool",
+      "state": "present",
+      "value": true,
+      "trust": "trusted",
+      "labels": {
+        "source": "splunk"
+      }
+    },
+    {
+      "key": "sources.last_success_at",
+      "type": "timestamp",
+      "state": "present",
+      "value": "2026-10-07T09:59:58Z",
+      "trust": "trusted",
+      "labels": {
+        "source": "splunk"
+      }
+    },
+    {
+      "key": "sources.consecutive_errors",
+      "type": "gauge",
+      "state": "present",
+      "value": 0,
+      "trust": "trusted",
+      "labels": {
+        "source": "splunk"
+      }
+    },
+    {
+      "key": "sources.dropped_total",
+      "type": "counter",
+      "state": "present",
+      "value": 0,
+      "trust": "trusted",
+      "labels": {
+        "source": "splunk"
+      }
+    }
+  ]
+}

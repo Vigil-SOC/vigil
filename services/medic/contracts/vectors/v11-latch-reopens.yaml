@@ -1,0 +1,81 @@
+id: v11-latch-reopens
+title: '#1689 enter/recover pair, then a second outage'
+covers:
+- §2 latch
+- §5 two openings are not flapping
+start: '2026-10-07T10:00:00Z'
+end: +25m
+rules:
+- ref: llm-gateway-outage.yaml
+sensors:
+- id: log.soc-daemon
+  covers:
+  - log_soc_daemon
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+logs:
+- signal: log_soc_daemon
+  level: ERROR
+  logger: services.daemon.processor
+  template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'
+  message: 'Failed to connect LLM gateway, AI triage is skipped until it connects: ConnectError: connection refused'
+  at: +2m
+- signal: log_soc_daemon
+  level: INFO
+  logger: services.daemon.processor
+  template: '%s; recovered after %d failures'
+  message: LLM gateway connected for AI triage; recovered after 12 failures
+  at: +10m
+- signal: log_soc_daemon
+  level: ERROR
+  logger: services.daemon.processor
+  template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'
+  message: 'Failed to connect LLM gateway, AI triage is skipped until it connects: ConnectError: connection refused'
+  at: +20m
+expect:
+- at: +2m
+  rule: llm.gateway-outage
+  eval: true
+  state: pending
+- at: +4m
+  rule: llm.gateway-outage
+  eval: true
+  state: firing
+  incident: A
+- at: +10m
+  rule: llm.gateway-outage
+  eval: false
+  state: resolving
+  incident: A
+- at: +15m
+  rule: llm.gateway-outage
+  eval: false
+  state: inactive
+- at: +20m
+  rule: llm.gateway-outage
+  eval: true
+  state: pending
+- at: +22m
+  rule: llm.gateway-outage
+  eval: true
+  state: firing
+  incident: B
+incidents:
+  A:
+    rule: llm.gateway-outage
+    active_since: +2m
+    opened_at: +4m
+    resolving_since: +10m
+    resolved_at: +15m
+    reason: cleared
+    routed_at: +4m
+  B:
+    rule: llm.gateway-outage
+    active_since: +20m
+    opened_at: +22m
+    resolving_since: null
+    resolved_at: null
+    routed_at: +22m

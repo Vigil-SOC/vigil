@@ -5,6 +5,7 @@ import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
+import { NAV } from '../data/data'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
 
@@ -100,11 +101,13 @@ vi.mock('../services/api', () => ({
           ],
         },
       }),
+    listCustom: () => Promise.resolve({ data: { agents: [] } }),
   },
   claudeApi: {
     getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
   },
   mcpApi: {
+    listServers: () => Promise.resolve({ data: { servers: [] } }),
     getStatuses: () => Promise.resolve({
       data: {
         statuses: [
@@ -125,6 +128,7 @@ vi.mock('../services/api', () => ({
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
+    listModels: () => Promise.resolve({ data: { models: [] } }),
   },
   // a vi.fn, so the SSE test can supply a streaming body
   streamFetch: vi.fn(() => Promise.resolve({ ok: true, status: 200, body: null })),
@@ -201,10 +205,15 @@ vi.mock('../services/api', () => ({
     reject: vi.fn(() => Promise.resolve({})),
   },
   configApi: {
+    getAIOperations: () => Promise.resolve({ data: {} }),
     getTheme: () => Promise.resolve({ data: { theme: 'dark' } }),
     setTheme: () => Promise.resolve({ data: {} }),
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
     getGeneral: () => Promise.resolve({ data: { show_notifications: false } }),
+    getOrchestrator: () => Promise.resolve({ data: {} }),
+    getForceManualApproval: () => Promise.resolve({ data: { enabled: false, environment_wins: false } }),
+    // the intent report card shows its own failed state; its contents aren't under test here
+    getIntent: () => Promise.reject(new Error('not under test')),
     getAutonomy: vi.fn(() => Promise.resolve({
       data: { auto_response_enabled: true, force_manual_approval: false },
     })),
@@ -283,6 +292,11 @@ vi.mock('../services/api', () => ({
     update: () => Promise.resolve({ data: {} }),
     delete: () => Promise.resolve({ data: {} }),
     importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
+  },
+  // the spending card shows its own error state; budgets aren't under test here
+  budgetsApi: {
+    getQuota: () => Promise.reject(new Error('not under test')),
+    get: () => Promise.reject(new Error('not under test')),
   },
 }))
 
@@ -1040,7 +1054,7 @@ describe('SocConsole', () => {
     it('points at the primary nav until Skip, then stays hidden on reload', () => {
       const first = renderConsole()
       const ring = document.querySelector('.console-tour-ring')
-      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toHaveTextContent('Watch intake (Overview, Triage)')
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toHaveTextContent('Watch intake (Overview, Triage queue)')
       expect(ring).toHaveAttribute('data-stop', 'nav')
       expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 1 of 3')
       expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
@@ -1054,6 +1068,23 @@ describe('SocConsole', () => {
       first.unmount()
       renderConsole()
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('names the tabs by their NAV labels', () => {
+      renderConsole()
+      const body = screen.getByRole('dialog', { name: NAV_TITLE }).textContent ?? ''
+      for (const key of ['overview', 'triage', 'cases', 'workflows', 'settings']) {
+        expect(body).toContain(NAV.find(n => n[2] === key)![1])
+      }
+    })
+
+    it('falls back to the default spot with no ring when the stop target is missing', () => {
+      rectSpy.mockRestore()
+      rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(domRect(0, 0, 0, 0))
+      renderConsole()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
+      expect(document.querySelector('.console-tour-ring')).not.toBeInTheDocument()
+      expect(document.querySelector('.console-tour-card')).toHaveStyle({ top: '72px' })
     })
 
     it('walks Home then Ask Vigil, and Done writes the seen flag', async () => {

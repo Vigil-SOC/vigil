@@ -1,0 +1,64 @@
+id: v05-unknown-never-fires
+title: A signal that can't be read is unknown, never healthy, and raises sensor-blind
+covers:
+- §2 unknown
+- §2 sensor-blind
+start: '2026-10-07T10:00:00Z'
+end: +10m
+rules:
+- ref: ingest-kafka-decode-errors.yaml
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - error
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+series:
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 0
+expect:
+- at: +1m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: inactive
+- at: +10m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: inactive
+- at: +2m15s
+  rule: watcher.sensor-blind
+  eval: true
+  state: pending
+  group:
+    sensor: http.daemon
+- at: +3m
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.daemon
+  incident: SB
+incidents:
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +30s
+    opened_at: +2m30s
+    resolving_since: null
+    resolved_at: null
+    group:
+      sensor: http.daemon
+    routed_at: +2m30s

@@ -48,18 +48,18 @@ describe("what the caller asked about is on the board", () => {
     expect(byProvenance(await newLedger(), OPERATOR_HYPOTHESIS_PROVENANCE)).toEqual([]);
   });
 
-  it("counts both in the checkpoint that starts the hunt, and says how many are the caller's", async () => {
+  it("counts both in the checkpoint that starts the hunt", async () => {
     const started = await newLedger({ hypotheses: ["one"], operatorHypotheses: [ASKED] });
 
     const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
-    expect(checkpoint!.question).toBe("Approve and start this run on 2 hypothesis(es), 1 from your request?");
+    expect(checkpoint!.question).toBe("Approve and start this hunt on 2 hypotheses");
   });
 
-  it("says nothing about the caller when they asked about nothing", async () => {
+  it("says hypothesis, singular, for one", async () => {
     const started = await newLedger({ hypotheses: ["one"] });
 
     const [checkpoint] = [...started.ledger.projection.checkpoints.values()];
-    expect(checkpoint!.question).toBe("Approve and start this run on 1 hypothesis(es)?");
+    expect(checkpoint!.question).toBe("Approve and start this hunt on 1 hypothesis");
   });
 
   // A contender, not a base rate: the null must beat it like any other, so a hunt

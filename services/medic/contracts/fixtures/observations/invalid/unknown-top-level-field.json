@@ -1,0 +1,48 @@
+{
+  "v": 1,
+  "id": "host.disk:01JA8Z3K4M:9",
+  "kind": "sample",
+  "signal": "host_disk",
+  "sensor": {
+    "id": "host.disk",
+    "run": "01JA8Z3K4M",
+    "seq": 9
+  },
+  "target": {
+    "service": "host",
+    "instance": "vigil-host-1",
+    "shape": "start_sh"
+  },
+  "t": "2026-10-07T10:00:00Z",
+  "observed_at": "2026-10-07T10:00:00Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "values": [
+    {
+      "key": "free_bytes",
+      "type": "gauge",
+      "state": "present",
+      "value": 5368709120,
+      "trust": "trusted",
+      "labels": {
+        "mount": "/var/lib/vigil"
+      }
+    },
+    {
+      "key": "free_ratio",
+      "type": "gauge",
+      "state": "present",
+      "value": 0.07,
+      "trust": "trusted",
+      "labels": {
+        "mount": "/var/lib/vigil"
+      }
+    }
+  ],
+  "note": "hi",
+  "$comment": "Unknown fields are refused"
+}

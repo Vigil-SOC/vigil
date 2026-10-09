@@ -1,0 +1,18 @@
+# Flapping · L-4 (from E1 example 05). Expected trust: trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: llm.gateway-flapping
+title: LLM gateway health keeps changing state
+revision: 1
+fault: {class: llm, mode: L-4, causes: [L-4.a]}
+lane: 2
+signals:
+  gateway_ok: {sample: {signal: bifrost_health, key: ok}}
+when: {fn: changes, signal: gateway_ok, window: 30m, op: ">=", value: 4}
+keep_firing_for: 30m
+advice:
+  summary: Possible intermittent gateway or provider connectivity problem. Bifrost health changed state 4 or more times in 30 minutes.
+  fix: >-
+    Check network egress from the Bifrost container to the model provider and
+    the provider's status page. If the provider is healthy, check the host's
+    resource limits for the Bifrost container.

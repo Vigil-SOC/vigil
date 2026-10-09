@@ -1,5 +1,6 @@
 """SLA Policies API endpoints."""
 
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -362,12 +363,15 @@ def set_default_policy(policy_id: str, session: UnitOfWorkSession):
 
 
 @router.get("/{policy_id}/usage")
-def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
+def get_policy_usage(
+    policy_id: str, session: UnitOfWorkSession, since: Optional[datetime] = None
+):
     """
     Get usage statistics for an SLA policy.
 
     Args:
         policy_id: The policy ID
+        since: Count only cases whose SLA was created at or after this time
 
     Returns:
         Usage statistics
@@ -376,27 +380,27 @@ def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
 
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
-    # Total cases using this policy
-    total_cases = (
-        session.query(CaseSLA).filter(CaseSLA.sla_policy_id == policy_id).count()
-    )
+
+    # Every count shares one window: all-time, or from `since` on.
+    window = [CaseSLA.sla_policy_id == policy_id]
+    if since is not None:
+        if since.tzinfo is not None:  # created_at is naive UTC
+            since = since.astimezone(timezone.utc).replace(tzinfo=None)
+        window.append(CaseSLA.created_at >= since)
+
+    total_cases = session.query(CaseSLA).filter(*window).count()
 
     # Active cases (not resolved)
     active_cases = (
         session.query(CaseSLA)
         .join(Case)
-        .filter(
-            CaseSLA.sla_policy_id == policy_id,
-            Case.status.notin_(["resolved", "closed"]),
-        )
+        .filter(*window, Case.status.notin_(["resolved", "closed"]))
         .count()
     )
 
     # Breached cases
     breached_cases = (
-        session.query(CaseSLA)
-        .filter(CaseSLA.sla_policy_id == policy_id, CaseSLA.breached.is_(True))
-        .count()
+        session.query(CaseSLA).filter(*window, CaseSLA.breached.is_(True)).count()
     )
 
     # Compliance rate
