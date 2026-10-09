@@ -21,6 +21,8 @@ from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
 from core.routing import Auth, RouterMeta
+from core.skills.skill_library import READ_SKILL_TOOL
+from core.skills.skill_usage import record_skill_read
 
 router = APIRouter()
 
@@ -50,10 +52,35 @@ class InvokeRequest(BaseModel):
     # An API-signed token for the session's user (core/auth/tool_principal.py) and
     # ToolPrincipal in contracts/tool.ts. Absent means no person: tools record "agent".
     principal: Optional[str] = None
+    # The Vigil agent this call runs for, when one does (#1560). It rides the
+    # turn rather than the harness because a compose run shares one harness
+    # across phases run by different agents. Absent means unattributed: a
+    # skill read is still counted, with no agent to credit.
+    agent_id: Optional[str] = None
 
 
 def _failure(kind: str, **detail: Any) -> Dict[str, Any]:
     return {"ok": False, "failure": {"kind": kind, **detail}}
+
+
+async def _note_skill_read(body: InvokeRequest) -> None:
+    """Count one skill use (#1560), after the read is known to have succeeded.
+
+    Only a read of the skill body counts: a follow-up read of a supporting
+    file is the same use, not another one. Runs with no agent behind them
+    record an unattributed read rather than an invented id. A failed insert
+    is logged and swallowed — the usage log must never fail the tool call it
+    is counting — and the write runs off the event loop.
+    """
+    if body.tool != READ_SKILL_TOOL or body.args.get("file"):
+        return
+    name = body.args.get("name")
+    if not isinstance(name, str) or not name:
+        return
+    try:
+        await asyncio.to_thread(record_skill_read, name, body.agent_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("recording the read of skill %s failed", name)
 
 
 # Where a tool that answers an envelope keeps the rows. Read as one object the whole
@@ -241,6 +268,8 @@ async def invoke(
     errored = _errored(result)
     if errored is not None:
         return _failure("backend_error", detail=errored)
+
+    await _note_skill_read(body)
 
     rows = _rows(result)
     capped = len(rows) > body.bounds.max_rows

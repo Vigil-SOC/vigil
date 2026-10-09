@@ -13,6 +13,9 @@ export interface ApiSkill {
   bundled: boolean
   /** Regular files in the skill folder, SKILL.md included; same list the drawer shows. */
   file_count: number
+  /** Reads of the skill body in the last 7 days, and the distinct agents that made them. Absent from an API that predates usage recording. */
+  reads_7d?: number
+  agents_7d?: number
 }
 
 /** A file in the skill folder: posix path relative to it, and size in bytes. */

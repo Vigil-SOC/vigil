@@ -29,6 +29,12 @@ export interface TurnConfig {
   run_id: string;
   run_kind: RunKind;
   role: string;
+  // The Vigil agent this turn runs as, when one does. It rides the turn
+  // rather than the harness because a compose run shares one harness across
+  // phases run by different agents, and a skill read must be credited to the
+  // phase's agent (#1560). Absent means unattributed: a run with no agent
+  // behind it records its reads with no agent.
+  agent_id?: string;
   system: string;
   task: string;
   // null for a conversational role, whose answer is prose: the last text turn is

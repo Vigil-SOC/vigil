@@ -101,4 +101,17 @@ export interface Skill {
   bundled: boolean
   /** files in the skill folder, SKILL.md included */
   fileCount: number
+  /** reads of the skill body in the last 7 days (#1560) */
+  reads7d: number
+  /** distinct agents that read it in the last 7 days */
+  agents7d: number
+}
+
+/** The usage line the card and the drawer subtitle share (#1560). */
+export function skillUsageText(reads: number, agents: number): string {
+  if (reads <= 0) return 'Not used in 7 days'
+  const times = reads === 1 ? '1 time' : `${reads} times`
+  if (agents <= 0) return `Used ${times} in 7 days`
+  const by = agents === 1 ? '1 agent' : `${agents} agents`
+  return `Used ${times} in 7 days · by ${by}`
 }

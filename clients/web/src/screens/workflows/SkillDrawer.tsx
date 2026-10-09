@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { HoldButton } from '../../shared/HoldButton'
 import { Popup } from '../../shared/ui'
 import { skillsApi, type ApiSkillDetail, type ApiSkillTest } from '../../services/skillsApi'
-import type { Skill } from '../../data/appData'
+import { skillUsageText, type Skill } from '../../data/appData'
 
 const PATH_UNSET = 'The skills path is unset. Set VIGIL_SKILLS_PATH to a directory before saving.'
 
@@ -138,7 +138,7 @@ export function SkillDrawer({
   }
 
   const origin = creating || !detail?.bundled ? 'Yours' : 'Built in'
-  const subtitle = detail ? `${origin} · version ${detail.version}` : origin
+  const subtitle = detail ? `${origin} · version ${detail.version} · ${skillUsageText(detail.reads_7d ?? 0, detail.agents_7d ?? 0)}` : origin
   const err = (text: string) => <span className="text-[12px]" style={{ color: 'var(--crit)' }}>{text}</span>
 
   return (
