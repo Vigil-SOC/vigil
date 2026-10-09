@@ -1,0 +1,137 @@
+{{- if .Values.medic.enabled }}
+{{- /*
+Medic's isolation (C3 §4.4, R1/R2). Rendered whenever Medic is, whatever
+networkPolicies.enabled says: these policies are the guarantee, not an option.
+Only a network plugin that enforces NetworkPolicy makes them real, which is why
+Medic refuses to start where a connection they block gets through (A3-3).
+
+Policies add up: a connection is allowed if ANY policy selecting the pod allows
+it. These are the only policies that select Medic or the gateway (their own
+labels, see _medic.tpl), so what they allow is all that is allowed.
+*/}}
+{{- $medic := include "vigil.medic.selectorLabels" (dict "context" . "component" "medic") }}
+{{- $gw := include "vigil.medic.selectorLabels" (dict "context" . "component" "medic-gateway") }}
+{{- $backend := include "vigil.componentSelectorLabels" (dict "context" . "component" "backend") }}
+{{- $labels := include "vigil.medic.labels" (dict "context" . "component" "medic") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vigil.medic.fullname" . }}-deny-all
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [medic, medic-gateway]
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vigil.medic.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $medic | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The console path: backend → gateway (inbound) → Medic's API.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $gw | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.medic.apiPort" . }}
+  egress:
+    # Every backend read goes through the gateway's outbound listener. No route
+    # to the backend, Redis, Postgres or Bifrost, and none off the cluster.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $gw | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.medicGateway.outPort" . }}
+    {{- if .Values.agentWorker.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "agent-worker") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6990
+    {{- end }}
+    # The Kubernetes API, by endpoint address (see vigil.medic.kubeApiCidrs).
+    - to:
+        {{- range (include "vigil.medic.kubeApiCidrs" . | fromJsonArray) }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        {{- range .Values.medic.kubeApi.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- include "vigil.medic.dnsEgress" . | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vigil.medicGateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" (dict "context" . "component" "medic-gateway") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $gw | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Medic → outbound listener only.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $medic | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.medicGateway.outPort" . }}
+    # Backend → inbound listener only.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- $backend | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.medicGateway.inPort" . }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $backend | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.service.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $medic | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vigil.medic.apiPort" . }}
+    {{- include "vigil.medic.dnsEgress" . | nindent 4 }}
+{{- end }}

@@ -891,6 +891,104 @@ networkPolicies:
     allowProbesFromAnyNamespace: true
 
 # -----------------------------------------------------------------------------
+# Medic — the install's own ops-health watcher (System Watcher). Off by default.
+# -----------------------------------------------------------------------------
+# Observe-only: it reads pods, logs and the agent worker's /readyz, and reaches
+# the backend only through its read-only gateway (a separate pod). Everything it
+# renders carries its own labels, not the chart's selector pair, so the chart's
+# NetworkPolicies never select it, and its own policies render whatever
+# networkPolicies.enabled says.
+#
+# It needs a cluster that ENFORCES NetworkPolicy (Calico, Cilium, a managed
+# cluster with policy enforcement on, kind's kindnet since it gained policy
+# support). At start it connects to the gateway (allowed) and then tries a
+# connection its policy blocks (see below). Unless the first connects
+# and the second is dropped, it exits with code 3 and says why, and the pod
+# crash-loops: on flannel or any plugin without policy support it will not run.
+# Known limits:
+#   - Cilium matches ipBlock against node/host addresses only with
+#     policy-cidr-match-mode=nodes; without it, an API server on node IPs is
+#     unreachable from Medic.
+#   - NodeLocal DNSCache (169.254.20.10) isn't covered by `dns` below; Medic
+#     can't resolve names there and refuses to start.
+#   - kubeApi.cidrs looked up at install are pinned: if the API server's
+#     addresses change (EKS rotates its ENIs), run `helm upgrade` again.
+#   - IPv6-only clusters aren't supported yet (the gateway binds IPv4).
+medic:
+  enabled: false
+  image:
+    repository: ""   # empty → <registry>/<namespace>-medic
+    tag: ""          # empty → .Chart.AppVersion
+    pullPolicy: ""
+  # 1 vCPU / 1 GiB is the hard ceiling; Medic's pass bar is half that.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  # The decision store (medic.db). One writer, so one replica and Recreate.
+  # `helm uninstall` keeps the claim; delete it by hand to drop the history.
+  persistence:
+    enabled: true          # false → emptyDir: history is lost on every restart
+    size: 2Gi
+    storageClassName: ""   # empty → the cluster default
+    accessModes:
+      - ReadWriteOnce      # ReadWriteOncePod where the storage driver has it
+  # The NetworkPolicy probe is not configurable: Medic connects to the gateway's
+  # outbound listener (<fullname>-medic-gateway:8471, allowed) and then tries
+  # its inbound one (<fullname>-medic-gateway-in:8470, which only the backend
+  # may reach). Same pods, so both have endpoints or neither does.
+  # Where Medic reads the agent worker's /readyz. Empty → a Service this chart
+  # renders for it (<fullname>-medic-agent-worker:6990). Needs
+  # agentWorker.enabled: the egress policy allows only the chart's agent worker.
+  agentWorkerAddr: ""
+  # The Kubernetes API server's address(es), as CIDRs, for Medic's egress policy
+  # (TCP `ports` only). Filled at install by looking up the `kubernetes`
+  # endpoints; set by hand where lookup can't run (`helm template`, Argo CD,
+  # Flux), e.g. from `kubectl get endpointslice kubernetes -n default`.
+  kubeApi:
+    cidrs: []
+    ports: [443, 6443]
+  # Where Medic and the gateway resolve names.
+  dns:
+    namespace: kube-system
+    podLabels:
+      k8s-app: kube-dns
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+  # The read-only gateway: Medic's only path to the backend (an exact list of
+  # GETs), and the backend's path to Medic's API.
+  gateway:
+    image:
+      repository: ""   # empty → <registry>/<namespace>-medic-gateway
+      tag: ""
+      pullPolicy: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    # The Viewer account the gateway logs in as. Required when medic.enabled.
+    # The password comes from an existing Secret, mounted as a file; it is
+    # never put in this file or in any pod's environment.
+    viewer:
+      username: ""
+      passwordSecret:
+        name: ""
+        key: password
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    podAnnotations: {}
+
+# -----------------------------------------------------------------------------
 # Development utilities (issue #117) — off by default, not for production
 # -----------------------------------------------------------------------------
 splunk:
