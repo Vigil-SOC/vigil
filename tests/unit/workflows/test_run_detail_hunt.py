@@ -66,3 +66,41 @@ def test_the_threat_hunt_definition_is_the_one_that_reads_as_a_hunt():
     assert catalog.is_hunt(workflows, "threat-hunt")
     assert not catalog.is_hunt(workflows, "incident-response")
     assert not catalog.is_hunt(workflows, None)
+
+
+# The tier is a display label stamped on the way out, not stored on the row.
+@pytest.mark.asyncio
+async def test_a_hunt_run_stamps_each_evidence_row_with_its_source_tier(monkeypatch):
+    fold = {
+        "evidence": [
+            {"evidence_id": "e1", "source_system": "crowdstrike", "is_gap": False},
+            {"evidence_id": "e2", "source_system": "", "is_gap": True},
+        ]
+    }
+
+    async def _reads(_run_id):
+        return fold
+
+    monkeypatch.setattr(router, "read_projection", _reads)
+
+    detail = await router.get_workflow_run(
+        "run-3", _runs_for("threat-hunt"), WorkflowsService()
+    )
+
+    live, gap = detail["hunt"]["evidence"]
+    assert live["source_tier"] in {"telemetry", "feed", "not_evidence"}
+    assert "source_tier" not in gap
+
+
+@pytest.mark.asyncio
+async def test_a_hunt_run_with_no_fold_still_reads(monkeypatch):
+    async def _reads(_run_id):
+        return None
+
+    monkeypatch.setattr(router, "read_projection", _reads)
+
+    detail = await router.get_workflow_run(
+        "run-4", _runs_for("threat-hunt"), WorkflowsService()
+    )
+
+    assert detail["hunt"] is None

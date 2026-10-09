@@ -168,6 +168,10 @@
   background: var(--bg3);
 }
 
+.vg-command-later {
+  display: block;
+}
+
 .vg-command-row:disabled {
   opacity: 0.45;
   cursor: default;
@@ -189,6 +193,7 @@
 
 .vg-command-preview {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-top: 4px;
@@ -198,9 +203,131 @@
 
 .vg-command-preview p {
   flex: 1;
+  min-width: 0;
   margin: 0;
   color: var(--tx1);
   font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* /hunt: the preview is a drop target, and carries the attach controls under the argument. */
+.vg-command-preview.dragging {
+  outline: 1px dashed var(--ac-ln);
+  outline-offset: -4px;
+  background: var(--ac-bg);
+}
+
+.vg-command-attach {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The board's secondary button: 28px, radius 10. */
+.vg-command-attach .btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-command-attach .btn:hover {
+  background: var(--bg3);
+  border-color: var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-command-file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.vg-command-file-name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vg-command-file-meta,
+.vg-command-note {
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.vg-command-note {
+  flex: 0 0 100%;
+}
+
+.vg-command-paste {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.vg-command-paste textarea {
+  width: 100%;
+  height: 96px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--ln1);
+  border-radius: 10px;
+  background: var(--bg1);
+  color: var(--tx0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.vg-command-paste textarea:focus {
+  border-color: var(--ac-ln);
+}
+
+.vg-command-foot {
+  position: sticky;
+  bottom: -6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 6px -6px -6px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--ln0);
+  background: var(--bg1);
+  color: var(--tx2);
+  font-size: 11px;
+}
+
+.vg-command-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vg-command-foot kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--ln2);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--tx2);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .vg-drawer-scrim {
@@ -218,6 +345,7 @@
 .vg-case-drawer {
   width: 75%;
   height: 100%;
+  container-type: size; /* the case composer caps its thread at 40cqh */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -225,8 +353,8 @@
   box-shadow: -16px 0 40px var(--shadow);
 }
 
-/* Skill editor drawer: docs/design/console/boards/SkillEditor.dc.html */
-.vg-skill-scrim {
+/* Right-hand drawers (skill, agent): docs/design/console/boards/SkillEditor.dc.html, AgentEditor.dc.html */
+.vg-side-scrim {
   position: fixed;
   top: 98px; /* below the header and nav, as the board's drawer sits under the nav */
   right: 0;
@@ -239,7 +367,7 @@
   background: var(--scrim);
 }
 
-.vg-skill-drawer {
+.vg-side-panel {
   box-sizing: border-box;
   width: 620px;
   max-width: 100%;
@@ -252,39 +380,39 @@
   background: var(--bg1);
   border-left: 1px solid var(--ln1);
   box-shadow: -24px 0 60px var(--shadow);
-  animation: vg-skill-slide .16s ease-out;
+  animation: vg-side-slide .16s ease-out;
 }
 
-.vg-skill-drawer p {
+.vg-side-panel p {
   margin: 0;
 }
 
-@keyframes vg-skill-slide {
+@keyframes vg-side-slide {
   from { transform: translateX(24px); opacity: 0; }
   to { transform: none; opacity: 1; }
 }
 
-.vg-skill-field {
+.vg-side-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
 }
 
-.vg-skill-label {
+.vg-side-label {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.3;
   color: var(--tx2);
 }
 
-.vg-skill-hint {
+.vg-side-hint {
   font-size: 12px;
   line-height: 1.45;
   color: var(--tx2);
 }
 
-.vg-skill-input {
+.vg-side-input {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
@@ -299,20 +427,20 @@
   resize: vertical;
 }
 
-.vg-skill-input:focus {
+.vg-side-input:focus {
   border-color: var(--ac);
 }
 
-.vg-skill-input:disabled {
+.vg-side-input:disabled {
   opacity: 0.6;
 }
 
-.vg-skill-input.mono {
+.vg-side-input.mono {
   font-family: var(--font-mono);
   font-size: 12px;
 }
 
-input.vg-skill-input {
+input.vg-side-input {
   height: 36px;
   padding: 0 12px;
 }
@@ -323,7 +451,7 @@ input.vg-skill-input {
   color: var(--tx0);
 }
 
-.vg-skill-drawer .vg-skill-file {
+.vg-side-panel .vg-skill-file {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -339,15 +467,15 @@ input.vg-skill-input {
   cursor: pointer;
 }
 
-.vg-skill-drawer .vg-skill-file:hover {
+.vg-side-panel .vg-skill-file:hover {
   background: var(--bg3);
 }
 
-.vg-skill-drawer .vg-skill-file[aria-current='true'] {
+.vg-side-panel .vg-skill-file[aria-current='true'] {
   border-color: var(--ln1);
 }
 
-.vg-skill-close {
+.vg-side-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -362,12 +490,12 @@ input.vg-skill-input {
   cursor: pointer;
 }
 
-.vg-skill-close:hover {
+.vg-side-close:hover {
   background: var(--bg3);
   color: var(--tx0);
 }
 
-.vg-skill-foot {
+.vg-side-foot {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -375,10 +503,17 @@ input.vg-skill-input {
   border-top: 1px solid var(--ln0);
 }
 
-.vg-skill-btn {
+.vg-skill-foot-end {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.vg-side-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   height: 34px;
   padding: 0 13px;
   box-sizing: border-box;
@@ -392,24 +527,262 @@ input.vg-skill-input {
   cursor: pointer;
 }
 
-.vg-skill-btn:hover {
+.vg-side-btn:hover {
   background: var(--bg3);
   color: var(--tx0);
 }
 
-.vg-skill-btn.primary {
+.vg-side-btn.primary {
   background: var(--ac);
   color: var(--ac-tx);
   border-color: var(--ac);
 }
 
-.vg-skill-btn.primary:hover {
+.vg-side-btn.primary:hover {
   filter: brightness(1.08);
 }
 
-.vg-skill-btn:disabled {
+.vg-side-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* same disabled treatment as .btn.primary: placeholder text on a quiet fill, not a dimmed accent */
+.vg-side-btn.primary:disabled {
+  background: var(--bg3);
+  border-color: var(--ln1);
+  color: var(--tx3);
+  opacity: 1;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.vg-side-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+select.vg-side-input {
+  height: 36px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.vg-side-title {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--tx0);
+}
+
+.vg-side-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--bg2);
+  border: 1px solid var(--ln0);
+}
+
+.vg-side-card .vg-side-input {
+  background: var(--bg1);
+}
+
+.vg-side-assist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg2);
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.vg-side-assist-text {
+  flex: 1 1 calc(100% - 28px);
+  min-width: 0;
+}
+
+.vg-side-assist input {
+  flex: 1 1 0;
+  min-width: 200px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--bg1);
+  border: 1px solid var(--ln1);
+  border-radius: 8px;
+  color: var(--tx0);
+  font: inherit;
+  outline: none;
+}
+
+.vg-side-assist input:focus {
+  border-color: var(--ac);
+}
+
+.vg-side-btn.small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.vg-side-btn.line {
+  border-color: var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-side-link {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ac);
+  font: inherit;
+  cursor: pointer;
+}
+
+.vg-side-link:hover {
+  text-decoration: underline;
+}
+
+.vg-side-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vg-side-pre {
+  max-height: 40vh;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--bg2);
+  border-radius: 10px;
+  color: var(--tx1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.vg-side-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 10px;
+  background: var(--bg2);
+  font-size: 12px;
+}
+
+.vg-side-tool-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--tx0);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.vg-side-mark {
+  flex-shrink: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
+.vg-side-mark.read_only,
+.vg-side-mark.on_its_own { color: var(--good); }
+.vg-side-mark.asks_first { color: var(--fair); }
+.vg-side-mark.none { color: var(--tx3); }
+.vg-side-mark .poor { color: var(--poor); }
+
+.vg-side-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--tx2);
+  cursor: pointer;
+}
+
+.vg-side-x:hover {
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.vg-side-err {
+  font-size: 12.5px;
+  color: var(--crit);
+}
+
+/* Test results: not on the SkillEditor board, built from the field and file-row styles. */
+.vg-skill-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vg-skill-spin {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--ln1);
+  border-top-color: var(--ac);
+  border-radius: 50%;
+  animation: soc-spin 0.7s linear infinite;
+}
+
+.vg-skill-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--tx0);
+}
+
+.vg-skill-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.vg-skill-result-mark {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ok);
+}
+
+.vg-skill-result[data-passed='false'] .vg-skill-result-mark {
+  color: var(--crit);
+}
+
+.vg-skill-missing {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
 }
 
 .vg-header-end {
@@ -611,52 +984,65 @@ input.vg-skill-input {
 
 .console-tour-ring {
   position: fixed;
-  border-radius: 10px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
-  outline: 2px solid var(--ac);
+  border-radius: var(--radius-button);
+  box-shadow: 0 0 0 3px var(--ac), 0 0 0 9999px var(--spot);
   pointer-events: none;
 }
 
+/* 16px radius is the board's; the token scale stops at 14px. */
 .console-tour-card {
   position: fixed;
-  width: 300px;
-  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 330px;
+  padding: 16px;
   background: var(--bg2);
-  border: 1px solid var(--ln2);
-  border-radius: 12px;
-  box-shadow: 0 16px 40px var(--shadow);
+  border: 1px solid var(--ac-ln);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px var(--shadow);
   color: var(--tx1);
   font-family: var(--font-ui);
   pointer-events: auto;
 }
 
 .console-tour-card h2 {
-  margin: 0 0 6px;
+  margin: 0;
   color: var(--tx0);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .console-tour-card p {
   margin: 0;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
-.console-tour-step {
-  margin-bottom: 6px;
-  color: var(--tx2);
+.console-tour-card .console-tour-step {
+  color: var(--ac);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .console-tour-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 4px;
+}
+
+.console-tour-skip {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .console-tour-spacer {

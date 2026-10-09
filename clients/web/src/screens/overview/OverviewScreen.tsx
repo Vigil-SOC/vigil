@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -18,11 +18,13 @@ import api, {
 } from '../../services/api'
 
 const NOISE_INFO = 'The mark is stored and does not change scoring.'
-const ALREADY_QUEUED = 'This finding is already queued.'
+const CONNECT_DATA = '/settings?section=data'
 
 const POLL_MS = 10_000
 
 type Phase = 'loading' | 'error' | 'ready'
+// The single read of an alert that is not in the feed.
+type AlertRead = { id: string; status: 'loading' | 'ready' | 'error' | 'missing'; item?: OverviewFeedItem }
 
 function fmtRate(rate: number | null): string {
   if (rate === null) return '—'
@@ -56,9 +58,26 @@ function EvidenceBody({ item }: { item: OverviewFeedItem }) {
   )
 }
 
+function ConnectData() {
+  return (
+    <Link className="btn primary no-underline" to={CONNECT_DATA}>
+      Connect data
+    </Link>
+  )
+}
+
 function Flow({ data }: { data: OverviewPayload }) {
   return (
     <div className="kpi-strip" aria-label="Today's flow">
+      {data.empty && (
+        <div className="kpi col-span-2 items-start" aria-label="Sources">
+          <div className="k-note">
+            Nothing is connected yet. Connect a source on the left and its alerts flow through the Vigil engine to the
+            outcomes on the right.
+          </div>
+          <ConnectData />
+        </div>
+      )}
       {data.arrivals.map((arrival) => (
         <div className="kpi" key={arrival.data_source} aria-label={arrival.data_source}>
           <div className="k-label as-stored">{arrival.data_source}</div>
@@ -92,19 +111,46 @@ function Flow({ data }: { data: OverviewPayload }) {
   )
 }
 
-export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScreenProps) {
+export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenProps) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const alertId = searchParams.get('alert') || null // an empty value is no alert
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
   const [wall, setWall] = useState(false)
-  const [open, setOpen] = useState<OverviewFeedItem | null>(null)
+  const [read, setRead] = useState<AlertRead | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [marked, setMarked] = useState(false)
   const [launchNote, setLaunchNote] = useState<string | null>(null)
   const [ticketNote, setTicketNote] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
+  // The feed row when there is one; else the single read; else the last item shown, so a poll that
+  // drops the alert (marked as noise) does not blank the popup.
+  const shown = useRef<OverviewFeedItem | null>(null)
+  if (!alertId) shown.current = null
+  const open =
+    (alertId ? data?.feed.find((row) => row.finding_id === alertId) : null) ??
+    (read?.id === alertId ? read?.item : null) ??
+    (shown.current?.finding_id === alertId ? shown.current : null) ??
+    null
+  if (open) shown.current = open
   const openId = useRef<string | null>(null)
   openId.current = open?.finding_id ?? null
+  const hasOpen = open !== null
+  const readStatus = read?.id === alertId ? read.status : 'loading'
+  const feedSettled = phase !== 'loading'
+
+  const setAlert = (id: string | null) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (id) next.set('alert', id)
+        else next.delete('alert')
+        return next
+      },
+      { replace: id === null },
+    )
 
   const load = useCallback(() => {
     overviewApi
@@ -141,12 +187,34 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
     }
   }, [])
 
+  // An alert that is not in the feed (older than the cap, or noise-marked) comes from its own read.
   useEffect(() => {
-    setMarked(false)
+    if (!alertId) {
+      setRead(null)
+      return
+    }
+    if (hasOpen || !feedSettled) return
+    let live = true
+    setRead({ id: alertId, status: 'loading' })
+    overviewApi
+      .alert(alertId)
+      .then((res) => {
+        if (live) setRead({ id: alertId, status: 'ready', item: res.data })
+      })
+      .catch((error) => {
+        if (live) setRead({ id: alertId, status: error?.response?.status === 404 ? 'missing' : 'error' })
+      })
+    return () => {
+      live = false
+    }
+  }, [alertId, hasOpen, feedSettled, attempt])
+
+  useEffect(() => {
+    setMarked(open?.noise_marked ?? false)
     setLaunchNote(null)
     setTicketNote(null)
     setActionError(null)
-  }, [open?.finding_id])
+  }, [open?.finding_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => setWallMode?.(false), [setWallMode])
 
@@ -155,6 +223,19 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
     setWall(next)
     setWallMode?.(next)
   }
+
+  // Escape leaves full screen. The popup's own Escape handler runs first and stops propagation,
+  // so with an alert open one keypress closes only the popup.
+  useEffect(() => {
+    if (!wall) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setWall(false)
+      setWallMode?.(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wall, setWallMode])
 
   const agentColumns = useMemo<ColumnDef<OverviewAgent>[]>(() => [
     { key: 'name', label: 'Workflow', render: (row) => row.name, sortVal: (row) => row.name, searchVal: (row) => row.name },
@@ -180,9 +261,27 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
       render: (row) => <span className="tag">{row.terminal_label}</span>,
       sortVal: (row) => row.terminal_label,
     },
+    {
+      key: 'case_id',
+      label: 'Case',
+      render: (row) =>
+        row.case_id ? (
+          <button
+            type="button"
+            className="tag cursor-pointer !font-[family-name:var(--mono)]"
+            onClick={(event) => {
+              event.stopPropagation() // the row opens the alert
+              openCase(row.case_id!)
+            }}
+          >
+            Case {row.case_id}
+          </button>
+        ) : null,
+      sortVal: (row) => row.case_id ?? '',
+    },
     { key: 'description', label: 'Description', render: (row) => row.description ?? '—', sortVal: (row) => row.description ?? '' },
     { key: 'created_at', label: 'Arrived', render: (row) => row.created_at ?? '—', sortVal: (row) => row.created_at ?? '' },
-  ], [])
+  ], [openCase])
   const agentSort = useTableSort(agentColumns, { key: 'name', dir: 'asc' })
   const feedSort = useTableSort(feedColumns, { key: 'created_at', dir: 'desc' })
 
@@ -212,9 +311,9 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
     try {
       const res = await findingsApi.launchIntake(findingId)
       if (!stillOpen(findingId)) return
-      setLaunchNote(res.data.already_queued ? ALREADY_QUEUED : 'Queued for intake.')
+      setLaunchNote(res.data.already_queued ? 'Already waiting in the Triage queue.' : 'Waiting in the Triage queue')
     } catch (error) {
-      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t launch this finding'))
+      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t send this finding to triage'))
     }
   }
 
@@ -248,7 +347,8 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
         </span>
         <div className="flex-1" />
         <button type="button" className="btn ghost" aria-pressed={wall} onClick={toggleWall}>
-          {wall ? 'Exit wall' : 'Wall'}
+          <Icon name="fit" size={13} />
+          {wall ? 'Exit full screen' : 'Full screen'}
         </button>
         <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
           <Icon name="refresh" />
@@ -259,37 +359,31 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
       {phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load overview" body={error} primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />
       )}
-      {phase === 'ready' && data?.empty && (
-        <EmptyState
-          icon="gear"
-          title="No sources enabled"
-          body="Enable a federation source to see what arrives today."
-          primary={{ label: 'Settings', onClick: () => goSettings('federation') }}
-        />
-      )}
-      {phase === 'ready' && data && !data.empty && (
+      {phase === 'ready' && data && (
         <>
           <Flow data={data} />
-          <section className="section">
-            <div className="card">
-              <div className="card-h">
-                <h3>Agents</h3>
-                <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
-                  <Icon name="info" size={14} />
-                </button>
+          {!wall && (
+            <section className="section">
+              <div className="card">
+                <div className="card-h">
+                  <h3>Agents</h3>
+                  <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
+                    <Icon name="info" size={14} />
+                  </button>
+                </div>
+                <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
+                <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
+                <DataTable
+                  columns={agentColumns}
+                  rows={sortRows(data.agents, agentColumns, agentSort.sort)}
+                  rowKey={(row) => row.workflow_id}
+                  sort={agentSort.sort}
+                  onSort={agentSort.toggle}
+                  emptyMessage="No workflows."
+                />
               </div>
-              <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
-              <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
-              <DataTable
-                columns={agentColumns}
-                rows={sortRows(data.agents, agentColumns, agentSort.sort)}
-                rowKey={(row) => row.workflow_id}
-                sort={agentSort.sort}
-                onSort={agentSort.toggle}
-                emptyMessage="No workflows."
-              />
-            </div>
-          </section>
+            </section>
+          )}
           <section className="section">
             <div className="card">
               <div className="card-h"><h3>Alerts</h3></div>
@@ -299,15 +393,32 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
                 rowKey={(row) => row.finding_id}
                 sort={feedSort.sort}
                 onSort={feedSort.toggle}
-                onRowClick={setOpen}
-                emptyMessage="No alerts."
+                onRowClick={(row) => setAlert(row.finding_id)}
+                emptyMessage={
+                  data.empty ? (
+                    <span className="flex flex-col items-center gap-3">
+                      No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline
+                      <ConnectData />
+                    </span>
+                  ) : (
+                    'No alerts.'
+                  )
+                }
               />
             </div>
           </section>
         </>
       )}
 
-      <Popup open={open !== null} onClose={() => setOpen(null)} title={open?.finding_id ?? 'Alert'}>
+      <Popup open={alertId !== null} onClose={() => setAlert(null)} title={alertId ?? 'Alert'}>
+        {!open && readStatus === 'missing' && <p>Alert {alertId} not found.</p>}
+        {!open && readStatus === 'error' && (
+          <>
+            <p role="alert">Couldn’t load alert {alertId}.</p>
+            <div><button type="button" className="btn ghost" onClick={() => setAttempt((n) => n + 1)}>Retry</button></div>
+          </>
+        )}
+        {!open && readStatus === 'loading' && <p>Loading alert…</p>}
         {open && (
           <>
             <p className="text-[13px] text-tx-2">{open.description ?? 'No description.'}</p>
@@ -323,7 +434,19 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
               <button type="button" className="btn ghost icon" aria-label={NOISE_INFO} title={NOISE_INFO}>
                 <Icon name="info" size={14} />
               </button>
-              <button type="button" className="btn ghost" onClick={launch}>Launch</button>
+              <button type="button" className="btn ghost" onClick={launch}>Send to triage</button>
+              {open.case_id && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    setAlert(null) // one overlay at a time
+                    openCase(open.case_id!)
+                  }}
+                >
+                  Open case
+                </button>
+              )}
               {open.case_id && (
                 <button type="button" className="btn ghost" onClick={createTicket}>Create ticket</button>
               )}
@@ -331,7 +454,11 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
                 <button type="button" className="btn ghost" disabled>ServiceNow</button>
               </span>
             </div>
-            {launchNote && <p>{launchNote}</p>}
+            {launchNote && (
+              <p>
+                <Link to="/triage">{launchNote}</Link>
+              </p>
+            )}
             {ticketNote && <p>{ticketNote}</p>}
             {actionError && <p role="alert">{actionError}</p>}
           </>

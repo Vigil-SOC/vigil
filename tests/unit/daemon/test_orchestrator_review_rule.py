@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -35,7 +35,7 @@ def _review(state: dict):
     orch._update_investigation_status = MagicMock()
     orch._send_notification = MagicMock()
     orch._log_ai_decision = MagicMock()
-    orch._maybe_trigger_case_review = AsyncMock()
+    orch._save_investigation = MagicMock()
     asyncio.run(orch._review_investigation("inv-1"))
     orch._update_investigation_status.assert_called_once_with("inv-1", "completed")
     kwargs = orch._log_ai_decision.call_args.kwargs
@@ -43,12 +43,12 @@ def _review(state: dict):
         kwargs["decision_type"],
         kwargs["rule"],
         kwargs["confidence"],
-        orch._maybe_trigger_case_review,
+        orch,
     )
 
 
 def test_review_submitted_approves_and_records_the_outcome():
-    decision, rule, confidence, case_review = _review(
+    decision, rule, confidence, _ = _review(
         {"proposed_actions": [], "workflow_id": "threat-hunt"}
     )
     assert (decision, rule, confidence) == (
@@ -56,22 +56,17 @@ def test_review_submitted_approves_and_records_the_outcome():
         "review.terminal_outcome=completed",
         1.0,
     )
-    case_review.assert_not_called()
 
 
 def test_state_without_steps_or_summary_still_approves():
     assert "summary" not in _REAL_STATE
     assert "completed_steps" not in _REAL_STATE
-    decision, rule, confidence, case_review = _review(_REAL_STATE)
+    decision, rule, confidence, orch = _review(_REAL_STATE)
     assert (decision, rule, confidence) == (
         "review_approve",
         "review.terminal_outcome=completed",
         1.0,
     )
-    case_review.assert_awaited_once_with("case-1")
-
-
-def test_case_review_workflow_does_not_trigger_another():
-    state = {**_REAL_STATE, "workflow_id": "case-review"}
-    _, _, _, case_review = _review(state)
-    case_review.assert_not_called()
+    # No follow-up investigation is created for the case.
+    orch._save_investigation.assert_not_called()
+    orch.workdir.create.assert_not_called()

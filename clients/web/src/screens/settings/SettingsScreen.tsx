@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
-import { NotMeasured } from '../../shared/NotMeasured'
 import { PageHead } from '../../shared/PageHead'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useToast } from '../../shell/toast'
@@ -14,9 +13,9 @@ import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
 import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
+import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsState'
 import SlaPoliciesSection from './SlaPoliciesSection'
-import DataIngestionPanel from './DataIngestion'
-import DetectionRulesPanel from './DetectionRulesPanel'
+import DataUploadsSection from './DataUploadsSection'
 import type { SectionProps } from './types'
 
 const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
@@ -57,39 +56,6 @@ const SYSTEM_TAB_DEFS: SystemTabDef[] = [
 const SYSTEM_TABS = SYSTEM_TAB_DEFS.filter((tab) => !tab.devOnly || IS_DEV_MODE)
 
 const SYSTEM_KEYS = new Set<string>(SYSTEM_TABS.map((tab) => tab.key))
-
-type DataTab = 'ingestion' | 'detection'
-
-function dataTabFromQuery(value: string | null): DataTab {
-  if (value === 'detection') return 'detection'
-  return 'ingestion'
-}
-
-function DataUploadsSection({ notify }: SectionProps) {
-  const [searchParams] = useSearchParams()
-  const requested = dataTabFromQuery(searchParams.get('tab'))
-  const [tab, setTab] = useState<DataTab>(requested)
-
-  useEffect(() => {
-    setTab(requested)
-  }, [requested])
-
-  return (
-    <>
-      <NotMeasured label="Retention" tip="Vigil does not record how long uploaded data is kept." />
-      <div className="tabs" style={{ gap: 4 }}>
-        <button className={`tab${tab === 'ingestion' ? ' active' : ''}`} onClick={() => setTab('ingestion')}>
-          Manual Upload
-        </button>
-        <button className={`tab${tab === 'detection' ? ' active' : ''}`} onClick={() => setTab('detection')}>
-          Detection Rules
-        </button>
-      </div>
-      {tab === 'ingestion' && <DataIngestionPanel notify={notify} />}
-      {tab === 'detection' && <DetectionRulesPanel notify={notify} />}
-    </>
-  )
-}
 
 function SystemTabs({ notify }: SectionProps) {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -136,11 +102,20 @@ function resolveNav(sectionParam: string | null): NavKey {
   return NAV[0].key
 }
 
-export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {
+export default function SettingsScreen(props: ConsoleScreenProps) {
+  return (
+    <IntegrationsStateProvider>
+      <SettingsLayout {...props} />
+    </IntegrationsStateProvider>
+  )
+}
+
+function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
   const active = resolveNav(sectionParam)
   const { notify } = useToast()
+  const { attention } = useIntegrationsState()
 
   useEffect(() => {
     setViewFull(true)
@@ -163,6 +138,9 @@ export default function SettingsScreen({ setViewFull }: ConsoleScreenProps) {
           >
             <Icon name={item.icon} size={16} />
             <span>{item.label}</span>
+            {item.key === 'integrations' && attention.length > 0 && (
+              <span className="settings-nav-count" aria-label={`${attention.length} need attention`}>{attention.length}</span>
+            )}
           </button>
         ))}
       </nav>

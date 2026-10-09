@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/vector/v1",
+  "title": "Medic evaluation vector v1",
+  "description": "A timeline of compact observations plus rules, and the states the engine must report. Offsets like '+5m' are relative to start. vector_expand.py turns the compact form into D3 observations. See semantics.md §8.",
+  "type": "object",
+  "required": ["id", "title", "covers", "start", "end", "rules", "sensors", "expect", "incidents"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^v[0-9]{2}-[a-z0-9-]+$"},
+    "title": {"type": "string"},
+    "covers": {"description": "semantics.md sections this vector pins.", "type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^§[1-7]"}},
+    "start": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "end": {"$ref": "#/$defs/offset"},
+    "tick": {"$ref": "#/$defs/duration"},
+    "engine_restarts": {"type": "array", "items": {"$ref": "#/$defs/offset"}},
+    "limits": {"description": "Test-only overrides of engine limits, so a vector can exercise a cap without 64 groups.", "type": "object", "additionalProperties": false, "properties": {"group_cap": {"type": "integer", "minimum": 1}}},
+    "rules": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "minProperties": 1, "maxProperties": 2, "additionalProperties": false,
+        "properties": {
+          "ref": {"description": "File in fixtures/rules/valid/", "type": "string", "pattern": "^[a-z0-9-]+\\.yaml$"},
+          "inline": {"type": "object"},
+          "params": {"description": "Site overrides of the rule's params.", "type": "object"}
+        }
+      }
+    },
+    "suppression": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["parent", "children"], "additionalProperties": false,
+        "properties": {
+          "parent": {"$ref": "#/$defs/selector"},
+          "children": {"$ref": "#/$defs/selector"},
+          "match": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "sensors": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["id", "covers", "interval", "service", "states"], "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},
+          "covers": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "interval": {"$ref": "#/$defs/duration"},
+          "service": {"type": "string"},
+          "shape": {"enum": ["start_sh", "compose", "helm"]},
+          "states": {
+            "description": "From each offset on, the sensor is ok (reads work), error (reads fail) or stopped (no reports at all).",
+            "type": "array", "minItems": 1,
+            "items": {"type": "array", "prefixItems": [{"$ref": "#/$defs/offset"}, {"enum": ["ok", "error", "stopped"]}], "minItems": 2, "maxItems": 2}
+          }
+        }
+      }
+    },
+    "types": {"description": "signal -> key -> value type", "type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"enum": ["counter", "gauge", "bool", "enum", "timestamp", "text"]}}},
+    "series": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["signal", "key", "steps"], "additionalProperties": false,
+        "properties": {
+          "signal": {"type": "string"},
+          "key": {"type": "string"},
+          "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+          "from": {"$ref": "#/$defs/offset"},
+          "to": {"$ref": "#/$defs/offset"},
+          "steps": {
+            "description": "[offset, value] pairs; the value holds until the next step. null = absent.",
+            "type": "array", "minItems": 1,
+            "items": {"type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [{"$ref": "#/$defs/offset"}, {}]}
+          },
+          "epochs": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [{"$ref": "#/$defs/offset"}, {"type": "string"}]}}
+        }
+      }
+    },
+    "logs": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["at", "signal", "level", "logger", "template"], "additionalProperties": false,
+        "properties": {
+          "at": {"$ref": "#/$defs/offset"},
+          "signal": {"type": "string"},
+          "level": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+          "logger": {"type": "string"},
+          "template": {"type": "string"},
+          "message": {"type": "string"},
+          "trusted": {"description": "Default true: the template is in the pack catalog.", "type": "boolean"},
+          "repeat": {"type": "object", "required": ["every", "until"], "additionalProperties": false, "properties": {"every": {"$ref": "#/$defs/duration"}, "until": {"$ref": "#/$defs/offset"}}}
+        }
+      }
+    },
+    "expect": {
+      "type": "array", "minItems": 2,
+      "items": {
+        "type": "object", "required": ["at", "rule", "eval", "state"], "additionalProperties": false,
+        "properties": {
+          "at": {"$ref": "#/$defs/offset"},
+          "rule": {"type": "string"},
+          "group": {"type": "object", "additionalProperties": {"type": "string"}},
+          "eval": {"enum": [true, false, "unknown"]},
+          "state": {"enum": ["inactive", "pending", "firing", "resolving"]},
+          "incident": {"type": "string"},
+          "suppressed": {"type": "boolean"},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "incidents": {
+      "description": "Every incident the engine must open within [start, end], and no others.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object", "required": ["rule", "active_since", "opened_at", "resolved_at"], "additionalProperties": false,
+        "properties": {
+          "rule": {"type": "string"},
+          "group": {"type": "object", "additionalProperties": {"type": "string"}},
+          "active_since": {"$ref": "#/$defs/offset"},
+          "opened_at": {"$ref": "#/$defs/offset"},
+          "resolving_since": {"oneOf": [{"$ref": "#/$defs/offset"}, {"type": "null"}]},
+          "resolved_at": {"oneOf": [{"$ref": "#/$defs/offset"}, {"type": "null"}]},
+          "reason": {"enum": ["cleared", "rule_retired", "group_retired"]},
+          "flapping": {"type": "boolean"},
+          "reopen_count": {"type": "integer", "minimum": 0},
+          "suppressed_by": {"type": "string"},
+          "routed_at": {"oneOf": [{"$ref": "#/$defs/offset"}, {"type": "null"}]},
+          "held_by_upgrade_until": {"$ref": "#/$defs/offset"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "offset": {"type": "string", "pattern": "^\\+(?=[0-9])([0-9]+h)?([0-9]+m)?([0-9]+s)?$"},
+    "duration": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+    "selector": {
+      "type": "object", "minProperties": 1, "maxProperties": 1, "additionalProperties": false,
+      "properties": {"rule": {"type": "string"}, "mode": {"type": "string"}, "cause": {"type": "string"}, "class": {"enum": ["ingest", "llm", "pipeline"]}}
+    }
+  }
+}

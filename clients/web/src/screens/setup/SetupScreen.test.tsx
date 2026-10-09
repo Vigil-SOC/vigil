@@ -50,6 +50,7 @@ vi.mock('../../services/api', () => ({
   consoleApi: { getHealth: vi.fn(() => Promise.resolve({ data: { status: 'healthy' } })) },
   storageApi: { getStatus: vi.fn(() => Promise.resolve({ data: { backend: 'none' } })) },
   llmProviderApi: { list: vi.fn(() => Promise.resolve({ data: [] })) },
+  aiConfigApi: { getConfig: vi.fn(() => Promise.resolve({ data: { components: [], assignments: {} } })) },
   workflowApi: { listAll: vi.fn(() => Promise.resolve({ data: { workflows: [] } })) },
   configApi: {
     getOrchestrator: vi.fn(() => Promise.resolve({ data: { profiles: {} } })),

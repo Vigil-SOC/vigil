@@ -1,0 +1,78 @@
+# infra/docker/Dockerfile.medic
+# =============================================================================
+# Medic: the ops-health watcher for this install (System Watcher)
+#
+# Final image runs:  python -m services.medic run
+# Health check:      python -m services.medic check   (reads one file, C5 §5.1)
+# Exposes ports:     none yet (the API arrives with G3)
+#
+# Built only from services/medic: Medic imports nothing from core (A3-1), so
+# core is not copied in and Medic's own lock is the only dependency list.
+# Runs as uid/gid 10001, not Vigil's 1000, so the 0600/0700 modes on its data
+# keep every Vigil container out of it (C4 ENG #6). Works with a read-only root
+# filesystem: the only write path is the data dir, a volume or PVC (C4 §6.2).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Medic's venv, from its own lock
+# ---------------------------------------------------------------------------
+# PYTHON_VERSION as in the other images: .python-version is the repo's pin.
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim AS deps
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.7 /uv /usr/local/bin/uv
+
+WORKDIR /build
+ENV UV_PROJECT_ENVIRONMENT=/opt/medic/venv \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+COPY services/medic/pyproject.toml services/medic/uv.lock ./
+RUN uv sync --frozen --no-dev --no-cache
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime image
+# ---------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+ARG VIGIL_VERSION=
+LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
+
+# The data dir is created here, owned by 10001 and mode 0700: Docker copies
+# that ownership into a new, empty named volume (C4 §6.2). No VOLUME line:
+# Compose (medic_data) and Helm (the PVC) mount it; an anonymous volume would
+# hide a missing mount instead of failing on the read-only root.
+RUN groupadd -g 10001 medic \
+    && useradd -u 10001 -g 10001 -M -d /nonexistent -s /usr/sbin/nologin medic \
+    && mkdir -p /var/lib/vigil-medic \
+    && chown 10001:10001 /var/lib/vigil-medic \
+    && chmod 0700 /var/lib/vigil-medic
+
+COPY --from=deps /opt/medic/venv /opt/medic/venv
+
+# Code stays root-owned: Medic can read it, not change it. .dockerignore keeps
+# Medic's tests, fixtures and generator tools out.
+WORKDIR /app
+COPY services/medic/ ./services/medic/
+COPY VERSION ./VERSION
+# Compiled now, because a read-only root filesystem can't take __pycache__ later.
+RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi \
+    && /opt/medic/venv/bin/python -m compileall -q /app/services/medic
+
+ENV PATH=/opt/medic/venv/bin:$PATH \
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    VIGIL_MEDIC_DATA_DIR=/var/lib/vigil-medic
+
+USER 10001:10001
+
+# C5 §5.2 values (the llm-worker's): interval 30 s, retries 4, 300 s start-up
+# grace. `check` itself already allows 120 s, so a hung loop reads "unhealthy"
+# about 210-240 s in, after the 180 s watchdog has exited it. Compose restarts
+# only on exit, so the watchdog is what recovers a hang there.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=4 \
+  CMD ["python", "-m", "services.medic", "check"]
+
+CMD ["python", "-m", "services.medic", "run"]

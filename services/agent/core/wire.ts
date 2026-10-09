@@ -11,6 +11,7 @@ import {
   type Turn,
   type TurnRequest,
 } from "./provider.js";
+import type { Effort } from "./spec.js";
 import { noVirtualKey, type VirtualKey } from "./vk.js";
 
 // Unset, the gateway's own default cuts a long emission off mid-JSON, which
@@ -84,6 +85,16 @@ function tally(): Tally {
   };
 }
 
+// Where a component's reasoning effort rides, per provider: OpenRouter's
+// `reasoning` object, Anthropic's `output_config`. Nothing for the rest, or when
+// unset, so the model keeps its own default. Mirrors core/llm/defaults.effort_kwargs.
+export function effortFields(provider_type: string, effort: Effort | undefined): object {
+  if (effort === undefined) return {};
+  if (provider_type === "openrouter") return { reasoning: { effort } };
+  if (provider_type === "anthropic") return { output_config: { effort } };
+  return {};
+}
+
 export function openAiSurface(
   client: OpenAI,
   model: string,
@@ -91,8 +102,9 @@ export function openAiSurface(
   provider_type: string,
   wire_model: string = model,
   vk: VirtualKey = noVirtualKey,
+  effort?: Effort,
 ): Provider {
-  return new OpenAiSurface(client, model, limiter, provider_type, wire_model, vk);
+  return new OpenAiSurface(client, model, limiter, provider_type, wire_model, vk, effort);
 }
 
 // The one surface built. The gateway routes to either provider family behind a
@@ -111,6 +123,7 @@ class OpenAiSurface implements Provider {
     readonly provider_type: string,
     private readonly wire_model: string = model,
     private readonly vk: VirtualKey = noVirtualKey,
+    private readonly effort?: Effort,
   ) {}
 
   // Assembled before the events are emitted, so usage precedes the tool calls. The
@@ -242,7 +255,7 @@ class OpenAiSurface implements Provider {
       // run, and a key changed in Settings has to reach the next call.
       const vk = await this.vk();
       const stream = await this.client.chat.completions.create(
-        { ...limit, ...body, stream: true, stream_options: { include_usage: true } },
+        { ...limit, ...body, ...effortFields(this.provider_type, this.effort), stream: true, stream_options: { include_usage: true } },
         { ...(signal ? { signal } : {}), ...(vk === null ? {} : { headers: { "x-bf-vk": vk } }) },
       );
       if (!(Symbol.asyncIterator in stream)) {
