@@ -985,10 +985,15 @@ export function CasePage({
                   />
                 </div>
                 <div className="rec-actions">
-                  {runId && (
+                  {runId ? (
                     <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
                       Replay
                     </Link>
+                  ) : (
+                    <>
+                      <button type="button" className="rec-btn" disabled>Replay</button>
+                      <InfoTip label="Why Replay is unavailable" text="This case has no run to replay." />
+                    </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
                   {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
