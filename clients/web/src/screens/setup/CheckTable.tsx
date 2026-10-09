@@ -24,7 +24,10 @@ export default function CheckTable({
           <div key={row.id} role="listitem" className="su-check-row">
             <CheckMark phase={row.phase} />
             <span className="su-check-name">{row.label}</span>
-            <span className={`su-check-detail${row.phase === 'needs' ? ' needs' : ''}`}>
+            <span
+              className={`su-check-detail${row.phase === 'needs' ? ' needs' : ''}`}
+              title={row.detail}
+            >
               {row.detail}
             </span>
           </div>

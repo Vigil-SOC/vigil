@@ -178,6 +178,14 @@ describe('SystemChecksStep', () => {
     expect(screen.getAllByText('Could not read')).toHaveLength(2)
   })
 
+  it('shows Could not read for a storage read with no body', async () => {
+    vi.mocked(storageApi.getStatus).mockResolvedValue({ data: undefined } as never)
+    render(<SystemChecksStep />)
+    await waitFor(() => expect(mark('Storage')).toBe('Needs you'))
+    expect(mark('Database')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
+  })
+
   it('names an enabled MCP server that is not running', async () => {
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({
       data: {

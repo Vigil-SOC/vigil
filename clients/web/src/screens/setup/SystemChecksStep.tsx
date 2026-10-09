@@ -144,7 +144,10 @@ export default function SystemChecksStep() {
     setFinished(false)
     let storageRead: Promise<StorageRead> | undefined
     const storage = () =>
-      (storageRead ??= storageApi.getStatus().then((res) => (res.data ?? {}) as StorageRead))
+      (storageRead ??= storageApi.getStatus().then((res) => {
+        if (!res.data) throw new Error('storage status has no body')
+        return res.data as StorageRead
+      }))
     // one after another: only the current row shows Checking, the rest wait
     ;(async () => {
       for (const { id, read } of CHECKS) {
