@@ -1,0 +1,44 @@
+{
+  "v": 1,
+  "id": "log.soc-daemon:01JA8Z3K4M:10",
+  "kind": "log",
+  "signal": "log_soc_daemon",
+  "sensor": {
+    "id": "log.soc-daemon",
+    "run": "01JA8Z3K4M",
+    "seq": 10
+  },
+  "target": {
+    "service": "soc-daemon",
+    "instance": "deeptempo-soc-daemon",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:01.998000Z",
+  "observed_at": "2026-10-07T10:00:02.120000Z",
+  "source_ts": "2026-10-07T10:00:01.998000Z",
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "skew_ms": -121,
+  "log": {
+    "format": "python_json",
+    "level": "WARNING",
+    "logger": "core.integrations.elastic.ingestion",
+    "template": "%s configuration incomplete (missing: %s); skipping polls until it is completed",
+    "template_trust": "catalog",
+    "message": "Elastic configuration incomplete (missing: elasticsearch_url); skipping polls until it is completed",
+    "exc_type": null,
+    "frames": [],
+    "fingerprint": "fp1_c3b21b15e751b56a",
+    "fingerprint_basis": "template",
+    "trace_id": null,
+    "line_hash": "e8427a47e14981e6",
+    "truncated": false,
+    "args": [
+      "Elastic",
+      "elasticsearch_url"
+    ]
+  }
+}

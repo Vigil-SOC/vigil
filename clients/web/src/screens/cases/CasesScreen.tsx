@@ -57,7 +57,7 @@ const STATE_OPTIONS = [
 function budgetCell(c: CaseRow): string {
   if (c.costUsd == null && c.maxCostUsd == null) return '—'
   const cost = c.costUsd == null ? '—' : c.costUsd.toFixed(2)
-  const max = c.maxCostUsd == null ? '—' : c.maxCostUsd.toFixed(2)
+  const max = c.maxCostUsd ? c.maxCostUsd.toFixed(2) : '—' // a run with no cap of its own has none to show
   return c.budgetHealth ? `${cost}/${max} ${c.budgetHealth}` : `${cost}/${max}`
 }
 
@@ -188,7 +188,7 @@ function CasesTable({
         <PageHead
           title="Cases"
           level="h1"
-          description="Every open case, who owns it and what it is waiting on. Cases that need you come first, then the ones closest to their SLA."
+          description="Every open case, who owns it and what it is waiting on."
           actions={
             <>
               <div className="search">

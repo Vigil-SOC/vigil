@@ -15,9 +15,12 @@ import {
   huntTitle,
   isLiveCommand,
   jiraReadiness,
+  LIVE_COMMANDS,
   moveEnabled,
   PASTED_NAME,
   proposalFrom,
+  runningHunt,
+  type RunningHunt,
   readRecents,
   writeRecent,
   type BoardLink,
@@ -86,6 +89,7 @@ export default function CommandBar({
   onOpenCase,
   onGo,
   caseOpen = false,
+  fill,
 }: {
   boards: BoardLink[]
   onOpenChat: (prompt?: string) => void
@@ -93,6 +97,8 @@ export default function CommandBar({
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
   /** A case is open, so asking goes to its composer instead of the dock. */
   caseOpen?: boolean
+  /** A new `seq` puts `text` in the bar and opens it. Nothing runs; the person still presses Run. */
+  fill?: { text: string; seq: number } | null
 }) {
   const { user } = useAuth()
   const { notify } = useToast()
@@ -145,6 +151,20 @@ export default function CommandBar({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const seenFill = useRef(fill?.seq)
+  useEffect(() => {
+    if (!fill || fill.seq === seenFill.current) return // a remount must not replay an old fill
+    seenFill.current = fill.seq
+    const lower = fill.text.toLowerCase()
+    const command = LIVE_COMMANDS.find((c) => lower.startsWith(`${c.name} `))
+    setQuery(fill.text)
+    setHits(null)
+    setActive(0)
+    setPreview(command ? { id: command.id as LiveCommandId, arg: commandRemainder(fill.text, command.name) } : null)
+    setOpen(true)
+    inputRef.current?.focus()
+  }, [fill?.seq]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!open) return
     const onDoc = (event: MouseEvent) => {
@@ -179,6 +199,7 @@ export default function CommandBar({
   const previewView = preview ? commandPreview(preview.id, preview.arg, jira, attachment) : null
   const previewKey = preview ? `${preview.id}:${preview.arg}` : ''
   const previewDisabled = previewView?.disabled ?? true
+  const alreadyRunning = preview?.id === 'hunt' && !preview.arg.trim() ? runningHunt(attachment) : null
 
   useEffect(() => {
     if (previewKey && !previewDisabled) runRef.current?.focus()
@@ -241,6 +262,15 @@ export default function CommandBar({
     const file = event.dataTransfer.files?.[0]
     if (file) void attach(file)
   }
+
+  // The door to the hunt already running on the attached document.
+  const openRunning = useCallback((hunt: RunningHunt) => {
+    if (hunt.caseId) onOpenCase(hunt.caseId)
+    else if (hunt.runId) onGo('workflows', { search: `?run=${encodeURIComponent(hunt.runId)}` })
+    else return
+    setOpen(false)
+    setPreview(null)
+  }, [onGo, onOpenCase])
 
   const remember = useCallback((text: string) => {
     if (!userId) return
@@ -520,6 +550,11 @@ export default function CommandBar({
                     </button>
                   )}
                   {previewView.note && <span className="vg-command-note">{previewView.note}</span>}
+                  {alreadyRunning && (alreadyRunning.caseId || alreadyRunning.runId) && (
+                    <button type="button" className="btn" onClick={() => openRunning(alreadyRunning)}>
+                      Open its case
+                    </button>
+                  )}
                   {pasting !== null && (
                     <div className="vg-command-paste">
                       <textarea

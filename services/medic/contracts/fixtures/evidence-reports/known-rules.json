@@ -1,0 +1,22 @@
+[
+  [
+    "ingest.integration-config-incomplete",
+    1
+  ],
+  [
+    "ingest.source-silent",
+    2
+  ],
+  [
+    "llm.gateway-outage",
+    1
+  ],
+  [
+    "pipeline.daemon-component-hung",
+    1
+  ],
+  [
+    "pipeline.run-stale",
+    1
+  ]
+]

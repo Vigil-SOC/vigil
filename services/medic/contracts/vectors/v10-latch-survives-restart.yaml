@@ -1,0 +1,76 @@
+id: v10-latch-survives-restart
+title: '#1661 set/clear pair; the engine restarts in between'
+covers:
+- §2 latch
+- §4 persistence
+start: '2026-10-07T10:00:00Z'
+end: +40m
+engine_restarts:
+- +15m
+rules:
+- ref: ingest-integration-config-incomplete.yaml
+sensors:
+- id: log.soc-daemon
+  covers:
+  - log_soc_daemon
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+logs:
+- at: +5m
+  signal: log_soc_daemon
+  level: WARNING
+  logger: core.integrations.elastic.ingestion
+  template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'
+  message: 'Elastic configuration incomplete (missing: elasticsearch_url); skipping polls until it is completed'
+- at: +30m
+  signal: log_soc_daemon
+  level: INFO
+  logger: core.integrations.elastic.ingestion
+  template: '%s configuration complete; polling resumed after %d skipped polls'
+  message: Elastic configuration complete; polling resumed after 100 skipped polls
+expect:
+- at: +5m
+  rule: ingest.integration-config-incomplete
+  eval: true
+  state: pending
+  group: &id001
+    integration: Elastic
+- at: +7m
+  rule: ingest.integration-config-incomplete
+  eval: true
+  state: firing
+  group: *id001
+  incident: A
+  note: default for 2m
+- at: +15m15s
+  rule: ingest.integration-config-incomplete
+  eval: true
+  state: firing
+  group: *id001
+  incident: A
+  note: after the engine restart
+- at: +30m
+  rule: ingest.integration-config-incomplete
+  eval: false
+  state: resolving
+  group: *id001
+  incident: A
+- at: +35m
+  rule: ingest.integration-config-incomplete
+  eval: false
+  state: inactive
+  group: *id001
+  note: default keep_firing_for 5m
+incidents:
+  A:
+    rule: ingest.integration-config-incomplete
+    active_since: +5m
+    opened_at: +7m
+    resolving_since: +30m
+    resolved_at: +35m
+    reason: cleared
+    group: *id001
+    routed_at: +7m

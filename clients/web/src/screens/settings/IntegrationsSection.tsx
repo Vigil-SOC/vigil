@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { PageHead } from '../../shared/PageHead'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { EmptyState, TextInput } from '../../shared/ui'
+import { EmptyState } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
+import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
 import {
   MCP_CATEGORIES,
@@ -12,11 +14,14 @@ import {
   SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
   prettyServerName,
+  INTEGRATIONS_DESC,
   tabFromQuery,
   type IntegrationsTab,
 } from './integrationsData'
 import { relativeTime, type ServerRow } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
+import AddIntegrationTab from './AddIntegrationTab'
+import { buildCatalog } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
@@ -37,9 +42,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const [tab, setTab] = useState<IntegrationsTab>(requested)
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
-  const [search, setSearch] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const [builderOpen, setBuilderOpen] = useState(false)
+  // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
+  const [customCount, setCustomCount] = useState<number | null>(null)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
   const { error, reload: reloadMcp, setServerEnabled } = mcp
   const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = int
@@ -50,29 +55,35 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     reloadInt()
   }
 
+  const reloadCustom = useCallback(async () => {
+    try {
+      const r = await fetch(`${basePath}/api/custom-integrations/list`, { credentials: 'include' })
+      const d = r.ok ? await r.json() : null
+      setCustomCount(Array.isArray(d?.integrations) ? d.integrations.length : null)
+    } catch {
+      setCustomCount(null)
+    }
+  }, [])
+
   useEffect(() => {
     setTab(requested)
   }, [requested])
+
+  useEffect(() => {
+    reloadCustom()
+  }, [reloadCustom])
 
   const connected = useMemo(
     () => rows.filter((r) => r.connected).sort((a, b) => categoryRank(a.name) - categoryRank(b.name)),
     [rows],
   )
-  const addable = useMemo(() => {
-    const q = search.toLowerCase()
-    const match = (r: ServerRow) =>
-      !q || r.name.toLowerCase().includes(q) || (SERVER_DESCRIPTIONS.get(r.name) ?? '').toLowerCase().includes(q)
-    return rows
-      .filter((r) => !r.connected && match(r))
-      .sort((a, b) => categoryRank(a.name) - categoryRank(b.name))
-  }, [rows, search])
   const catalog = getAllIntegrations()
-  const connectedIds = new Set([
-    ...intCfg.enabled_integrations,
-    ...connected.flatMap((r) => (r.integration ? [r.integration.id] : [])),
-  ])
-  const available = catalog.filter((i) => !connectedIds.has(i.id)).length
-  const customCount = catalog.filter((i) => (i as { is_custom?: boolean }).is_custom).length
+  const connectedIds = useMemo(
+    () => new Set([...intCfg.enabled_integrations, ...connected.flatMap((r) => (r.integration ? [r.integration.id] : []))]),
+    [intCfg.enabled_integrations, connected],
+  )
+  const entries = useMemo(() => buildCatalog(catalog, rows, connectedIds), [catalog, rows, connectedIds])
+  const available = entries.filter((e) => !e.connected).length
   const healthy = connected.filter((r) => r.level === 'good').length
 
   // gate M: MCP server on/off (agent tools)
@@ -103,7 +114,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const tabs: [IntegrationsTab, string, number | null][] = [
     ['connected', 'Connected', ready ? connected.length : null],
     ['add', 'Add integration', ready ? available : null],
-    ['custom', 'Custom', ready ? customCount : null],
+    ['custom', 'Custom', customCount],
     ['surface', 'Vigil MCP server', null],
   ]
   const first = attention[0]
@@ -116,6 +127,17 @@ export default function IntegrationsSection({ notify }: SectionProps) {
 
   // pb-20: the floating Ask Vigil button covers nothing at the end of the scroll
   return (
+    <>
+    <PageHead
+      title="Integrations"
+      description={INTEGRATIONS_DESC}
+      actions={
+        <>
+          <button className="btn ghost" onClick={() => setTab('custom')}><Icon name="sparkle" /> Build custom</button>
+          <button className="btn primary" onClick={() => setTab('add')}><Icon name="plus" /> Add integration</button>
+        </>
+      }
+    />
     <div className="settings-content-inner flex flex-col gap-4 pb-20" style={{ maxWidth: 1280 }}>
       {ready && (
         <>
@@ -158,8 +180,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         ))}
       </div>
 
-      {tab !== 'surface' && phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
-      {tab !== 'surface' && phase === 'error' && (
+      {(tab === 'connected' || tab === 'add') && phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
+      {(tab === 'connected' || tab === 'add') && phase === 'error' && (
         <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
       )}
 
@@ -240,84 +262,37 @@ export default function IntegrationsSection({ notify }: SectionProps) {
       )}
 
       {tab === 'add' && ready && (
-        <>
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="search" style={{ flex: 1, minWidth: 220, maxWidth: 420 }}>
-              <Icon name="search" size={15} />
-              <TextInput placeholder="Search integrations…" value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-            <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-          </div>
-          {addable.length === 0 && (
-            <EmptyState
-              compact
-              icon="filter"
-              title={search ? 'No integrations match this search' : 'Everything available is connected'}
-              body={search ? `No MCP servers match “${search}”.` : undefined}
-              primary={search ? { label: 'Clear search', onClick: () => setSearch(''), icon: 'close' } : undefined}
-            />
-          )}
-          {addable.length > 0 && (
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {addable.map((r) => (
-                <div key={r.name} className="card card-sq p-3.5 flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-semibold text-tx truncate flex-1">{displayName(r.name)}</span>
-                    {WIP_SERVERS.has(r.name) && <span className="chip" style={{ color: 'var(--high)', fontSize: 10 }}>WIP</span>}
-                    <RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} />
-                  </div>
-                  <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
-                    {SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'}
-                  </p>
-                  {r.note && <p className="text-[11px] text-tx-3 leading-snug line-clamp-2" title={r.note}>{r.note}</p>}
-                  <div className="flex items-center gap-1.5 mt-auto">
-                    <span className="text-xs text-tx-3 flex-1">{r.word}</span>
-                    {r.integration?.docs_url && (
-                      <a className="btn ghost icon" title="Documentation" href={r.integration.docs_url} target="_blank" rel="noreferrer">
-                        <Icon name="doc" size={14} />
-                      </a>
-                    )}
-                    {canConfigure(r) && (
-                      <button className="btn ghost icon" title="Configure credentials" onClick={() => setWizardFor(r.integration!)}>
-                        <Icon name="gear" size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {tab === 'custom' && ready && (
-        <EmptyState
-          compact
-          icon="plus"
-          title={customCount ? `${customCount} custom integration${customCount === 1 ? '' : 's'} saved` : 'No custom integrations yet'}
-          body="Describe a tool Vigil does not ship with and it becomes an MCP server agents can use."
-          primary={{ label: 'Build custom integration', onClick: () => setBuilderOpen(true), icon: 'plus' }}
+        <AddIntegrationTab
+          entries={entries}
+          busy={busy}
+          onConnect={setWizardFor}
+          onTurnOn={(name) => onToggleMcp(name, true)}
+          onRefresh={reload}
         />
       )}
 
-      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
-
-      {builderOpen && (
+      {/* mounted on every tab so a draft survives a visit elsewhere */}
+      <div hidden={tab !== 'custom'}>
         <CustomIntegrationBuilder
-          onClose={() => setBuilderOpen(false)}
-          onSave={(id) => {
-            setBuilderOpen(false)
-            notify('ok', `Custom integration "${id}" saved. Restart the MCP servers to load it.`)
+          notify={notify}
+          onWrote={reloadCustom}
+          onSaved={() => {
+            reloadCustom()
             reload()
           }}
         />
-      )}
+      </div>
+
+      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
 
       {wizardFor && (
         <IntegrationWizard
           integration={wizardFor}
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
           secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
+          lastTest={intCfg.last_test[wizardFor.id]}
+          category={categoryOf(rows.find((r) => r.integration?.id === wizardFor.id)?.name ?? '')}
+          onTested={reloadInt}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)
@@ -334,6 +309,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         />
       )}
     </div>
+    </>
   )
 }
 

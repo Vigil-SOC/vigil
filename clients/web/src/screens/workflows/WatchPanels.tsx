@@ -2,7 +2,7 @@
    Limits used, Reviewer and Blind spots hit, each as of the step the player holds.
    Board: docs/design/console/boards/WorkflowRun.dc.html. Everything is a function of the
    run detail and, for a hunt, the lead's recorded digest at that step: no endpoint, no fold. */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
 import { Cost, fmtCost } from '../../shared/cost'
 import { explanationWord, wordDisplay } from '../cases/caseFold'
@@ -222,6 +222,35 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   return [budget, steps, scope]
 }
 
+/** Prose written at length: two lines, with "Show all" once it overflows them. `label` sits inside the clamp. */
+export function Prose({ text, label, className = '' }: { text: string; label?: string; className?: string }) {
+  const box = useRef<HTMLSpanElement>(null)
+  const [open, setOpen] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el || open) return
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [text, open])
+  return (
+    <>
+      <span ref={box} className={`break-words ${className} ${open ? '' : 'line-clamp-2'}`}>
+        {label && <span className="text-[11px] uppercase tracking-[0.06em] text-[var(--tx2)] mr-1.5">{label}</span>}
+        {text}
+      </span>
+      {(overflows || open) && (
+        <button
+          type="button" aria-expanded={open} onClick={() => setOpen(!open)}
+          className="self-start p-0 bg-transparent text-[11px] font-semibold text-[var(--ac)] cursor-pointer"
+        >{open ? 'Show less' : 'Show all'}</button>
+      )}
+    </>
+  )
+}
+
 /** The newest verdict at or before the step, as the critic wrote it: model text, not a finding. */
 function Reviewer({ hunt, iteration }: { hunt: HuntView; iteration: number }) {
   const seen = (hunt.reviews ?? []).filter((r) => r.iteration <= iteration)
@@ -232,7 +261,7 @@ function Reviewer({ hunt, iteration }: { hunt: HuntView; iteration: number }) {
     <Note>
       <span className="line-clamp-2 break-words" title={argued}>Reviewed: {argued}</span>
       <span className="text-[11px] uppercase tracking-[0.06em] text-[var(--tx2)]">model text</span>
-      <span className="break-words" title={latest.strongest_benign_explanation}>Strongest innocent explanation: {latest.strongest_benign_explanation || '—'}</span>
+      <Prose key={latest.hypothesis_id + latest.iteration} text={`Strongest innocent explanation: ${latest.strongest_benign_explanation || '—'}`} />
       <span className="font-bold text-[var(--tx0)]">{latest.survives ? 'Stood' : 'Did not stand'}</span>
     </Note>
   )

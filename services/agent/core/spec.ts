@@ -5,6 +5,9 @@ import { DEFAULT_PARK_MS, type BudgetLimits } from "../contracts/budget.js";
 
 export class SpecError extends Error {}
 
+export const EFFORTS = ["low", "medium", "high"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 // Serial is parallel with one worker, so there is no second loop to maintain.
 export interface DispatchPolicy {
   topology: TopologyId;
@@ -106,6 +109,9 @@ export interface Config {
   // deployment holding two that both offer "gemini-2.5-flash". Optional because
   // a single-provider deployment has nothing to disambiguate.
   provider?: string;
+  // Reasoning effort for `model`, from the model assignment's settings. Absent
+  // leaves the model's own default.
+  effort?: Effort;
   budgets: BudgetLimits;
   runtime: Runtime;
   tools: ToolSpec[];
@@ -158,7 +164,7 @@ const LAYERS = {
     "phases",
     "narrative",
   ],
-  config: ["model", "provider", "budgets", "runtime", "tools", "approvals", "thresholds"],
+  config: ["model", "provider", "effort", "budgets", "runtime", "tools", "approvals", "thresholds"],
 } as const;
 
 export type Layer = keyof typeof LAYERS;
@@ -442,6 +448,11 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
   if (model.trim() === "") throw new SpecError("config needs a model: a deployment that names none bills nothing and answers nothing");
   const provider = front["provider"] === undefined ? undefined : str(front["provider"]).trim() || undefined;
 
+  const effort = front["effort"] === undefined ? undefined : str(front["effort"]).trim().toLowerCase();
+  if (effort !== undefined && !(EFFORTS as readonly string[]).includes(effort)) {
+    throw new SpecError(`effort must be one of ${EFFORTS.join(", ")}`);
+  }
+
   const tools = parseTools(front["tools"]);
   const declared = new Set(tools.map((tool) => tool.id));
   if (declared.size !== tools.length) throw new SpecError("tools declares the same id twice");
@@ -454,6 +465,7 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
     sections,
     model,
     ...(provider === undefined ? {} : { provider }),
+    ...(effort === undefined ? {} : { effort: effort as Effort }),
     budgets: positive(merge(front["budgets"], DEFAULT_BUDGETS, "budgets"), "budgets"),
     runtime: positive(merge(front["runtime"], DEFAULT_RUNTIME, "runtime"), "runtime"),
     tools,

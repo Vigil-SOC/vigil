@@ -1,0 +1,12 @@
+{
+  "warning": "TEST ONLY. Seeds are public: sha256('medic-TEST-ONLY-<name>').",
+  "keyids": {
+    "root-1": "6fb4769fb1cb629679d7a412e27db622",
+    "root-2": "ecbcce86653f9cfbcaa40e8a1054925f",
+    "root-3": "eba0a754a6cb65518ce66197f154186b",
+    "root-4": "f2c389743850e7b01d503ab942e77013",
+    "pack-a": "ce23b71cb58b014c6f011cc11158f2b0",
+    "pack-b": "39b9e32505fa1dfc941f361917d6c687",
+    "dev-1": "904237d591689d212a1918f2a8bb8e49"
+  }
+}
