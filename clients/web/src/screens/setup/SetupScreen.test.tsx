@@ -135,6 +135,15 @@ describe('SetupScreen', () => {
     expect(container.querySelector('.soc-console')).toHaveClass('vg-dark')
   })
 
+  it('points the rail card at the top bar, not the profile menu', () => {
+    renderSetup()
+    expect(
+      screen.getByText(
+        'Setup in the top bar shows what is left, Home keeps a checklist, and empty screens tell you what to connect.',
+      ),
+    ).toBeInTheDocument()
+  })
+
   const saved = () => JSON.parse(localStorage.getItem(SETUP_PROGRESS_KEY) ?? 'null')
   const rail = () => within(screen.getByRole('complementary', { name: 'Setup steps' }))
 

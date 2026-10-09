@@ -1,0 +1,96 @@
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+// Get __dirname equivalent in ES modules
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = dirname(__filename);
+// https://vitejs.dev/config/
+export default defineConfig(function (_a) {
+    var _b;
+    var _c;
+    var mode = _a.mode;
+    // Load env from repo root (two levels up: clients/web → repo root)
+    var env = loadEnv(mode, resolve(__dirname, '..', '..'), '');
+    // Frontend auth bypass. An explicit VITE_DEV_MODE wins (the desktop app sets
+    // it false so its login/bootstrap flow is real); otherwise inherit root .env
+    // DEV_MODE for terminal dev. loadEnv('' prefix) also surfaces process.env, so
+    // read that first for the explicit override.
+    var explicit = (_c = process.env.VITE_DEV_MODE) !== null && _c !== void 0 ? _c : env.VITE_DEV_MODE;
+    var devMode = explicit === 'true' || explicit === 'false'
+        ? explicit
+        : env.DEV_MODE === 'true'
+            ? 'true'
+            : 'false';
+    // Context path (sub-path) the app is served under. Empty = root. In prod the
+    // backend injects <meta name="vigil-base-path"> into index.html and the bundle
+    // uses relative asset URLs (base './'); in dev we set base to the context
+    // path and inject the same meta tag so basePath.ts resolves identically.
+    var contextPath = process.env.VIGIL_CONTEXT_PATH || env.VIGIL_CONTEXT_PATH || '';
+    var isDev = mode === 'development';
+    var base = isDev && contextPath ? "".concat(contextPath, "/") : './';
+    // Injected as a runtime <meta> so the dev SPA's trust gate reads the same
+    // origins the backend uses for the CSP + SSRF guard (mirrors base-path).
+    var extensionAllowlist = process.env.EXTENSION_CONNECTOR_ALLOWLIST || env.EXTENSION_CONNECTOR_ALLOWLIST || '';
+    return {
+        base: base,
+        plugins: [
+            {
+                name: 'inject-runtime-config',
+                transformIndexHtml: function (html) {
+                    var tags = [];
+                    if (contextPath)
+                        tags.push("<meta name=\"vigil-base-path\" content=\"".concat(contextPath, "\">"));
+                    if (extensionAllowlist)
+                        tags.push("<meta name=\"vigil-extension-allowlist\" content=\"".concat(extensionAllowlist, "\">"));
+                    if (!tags.length)
+                        return html;
+                    return html.replace('<head>', "<head>\n    ".concat(tags.join('\n    ')));
+                },
+            },
+            react(),
+        ],
+        server: {
+            // tokens.css lives under docs/, outside this package. Setting allow
+            // replaces Vite's default (the web root), so the repo root has to
+            // include it or the dev server refuses the file.
+            fs: {
+                allow: [resolve(__dirname, '..', '..')],
+            },
+            port: 6988,
+            host: '127.0.0.1', // Use IPv4 explicitly
+            proxy: (_b = {},
+                // Dev proxy must match the context-path-prefixed API calls.
+                _b["".concat(contextPath, "/api")] = {
+                    target: 'http://127.0.0.1:6987', // Use IPv4 explicitly instead of localhost
+                    changeOrigin: true,
+                },
+                _b),
+        },
+        resolve: {
+            // Dedupe React so pre-bundled deps share one instance. Without this,
+            // react-router-dom gets its own React copy and hook calls throw
+            // "Cannot read properties of null (reading 'useRef')".
+            dedupe: ['react', 'react-dom'],
+        },
+        optimizeDeps: {
+            // One esbuild optimize pass so React lives in ONE shared chunk instead
+            // of being duplicated per dep.
+            include: [
+                'react',
+                'react-dom',
+                'react-dom/client',
+                'react/jsx-runtime',
+                'react/jsx-dev-runtime',
+                'react-router-dom',
+            ],
+        },
+        build: {
+            outDir: 'build',
+        },
+        define: {
+            // Make DEV_MODE from root .env available as VITE_DEV_MODE in frontend
+            'import.meta.env.VITE_DEV_MODE': JSON.stringify(devMode),
+        },
+    };
+});
