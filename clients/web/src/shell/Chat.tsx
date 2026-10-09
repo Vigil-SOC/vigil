@@ -377,7 +377,7 @@ export default function Chat({
     const root = panelRef.current
     if (!open || pinned || !root || root.contains(document.activeElement)) return
     root.querySelector<HTMLElement>(historyOpen ? '.chist-search input' : 'textarea')?.focus()
-  }, [historyOpen, open, pinned, renamingId, serverConvos])
+  }, [historyOpen, open, pinned, renamingId, serverConvos, history])
 
   // the trace dialog owns its Esc + focus handling
   const anyPopupOpen = traceOpen
@@ -1207,8 +1207,8 @@ export default function Chat({
             aria-label="Conversation history"
             aria-pressed={historyOpen}
             onClick={() => {
+              if (!historyOpen) reloadHistory()
               setHistoryOpen((v) => !v)
-              reloadHistory()
             }}
           >
             <Icon name="clock" />
