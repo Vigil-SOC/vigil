@@ -93,6 +93,12 @@ function turnFor(options: ChatOptions, lead: RoleSpec): TurnConfig {
     verbs: [],
     result_cap: runtime.result_cap,
     recall_limit: runtime.recall_limit,
+    // The window the caller's catalogue reported for this conversation's
+    // model, so the fold bounds the request by what the model can read
+    // rather than by the flat default.
+    ...(options.spec.context_window === undefined
+      ? {}
+      : { context_window: options.spec.context_window }),
   };
 }
 

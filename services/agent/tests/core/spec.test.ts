@@ -274,4 +274,20 @@ describe("the config layer", () => {
     const config = scratchFile("no-model.yaml", "budgets: { max_calls: 2 }\n");
     expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(/config needs a model/);
   });
+
+  it("carries the model's context window the caller declared, and none it did not", () => {
+    const windowed = scratchFile("window.yaml", "model: m\ncontext_window: 200000\n");
+    expect(buildSpec({ ...CASE, config: windowed }, ["EXAMINE", "CONCLUDE"]).context_window).toBe(200_000);
+
+    const plain = scratchFile("no-window.yaml", "model: m\n");
+    expect(buildSpec({ ...CASE, config: plain }, ["EXAMINE", "CONCLUDE"]).context_window).toBeUndefined();
+
+    const unknown = scratchFile("zero-window.yaml", "model: m\ncontext_window: 0\n");
+    expect(buildSpec({ ...CASE, config: unknown }, ["EXAMINE", "CONCLUDE"]).context_window).toBeUndefined();
+  });
+
+  it("refuses a context window that is not a whole number of tokens", () => {
+    const config = scratchFile("bad-window.yaml", "model: m\ncontext_window: 200.5\n");
+    expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(/context_window must be a non-negative integer/);
+  });
 });

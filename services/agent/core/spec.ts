@@ -112,6 +112,11 @@ export interface Config {
   // Reasoning effort for `model`, from the model assignment's settings. Absent
   // leaves the model's own default.
   effort?: Effort;
+  // The model's context window in tokens, from the gateway catalogue, when the
+  // caller knows it. The fold sizes a request against it; absent (or zero)
+  // leaves the flat default ceiling, which is what every caller did before
+  // this existed.
+  context_window?: number;
   budgets: BudgetLimits;
   runtime: Runtime;
   tools: ToolSpec[];
@@ -164,7 +169,7 @@ const LAYERS = {
     "phases",
     "narrative",
   ],
-  config: ["model", "provider", "effort", "budgets", "runtime", "tools", "approvals", "thresholds"],
+  config: ["model", "provider", "effort", "context_window", "budgets", "runtime", "tools", "approvals", "thresholds"],
 } as const;
 
 export type Layer = keyof typeof LAYERS;
@@ -453,6 +458,14 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
     throw new SpecError(`effort must be one of ${EFFORTS.join(", ")}`);
   }
 
+  const contextWindow = front["context_window"];
+  if (
+    contextWindow !== undefined &&
+    (typeof contextWindow !== "number" || !Number.isInteger(contextWindow) || contextWindow < 0)
+  ) {
+    throw new SpecError(`context_window must be a non-negative integer number of tokens, got ${String(contextWindow)}`);
+  }
+
   const tools = parseTools(front["tools"]);
   const declared = new Set(tools.map((tool) => tool.id));
   if (declared.size !== tools.length) throw new SpecError("tools declares the same id twice");
@@ -466,6 +479,7 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
     model,
     ...(provider === undefined ? {} : { provider }),
     ...(effort === undefined ? {} : { effort: effort as Effort }),
+    ...(contextWindow === undefined || contextWindow === 0 ? {} : { context_window: contextWindow }),
     budgets: positive(merge(front["budgets"], DEFAULT_BUDGETS, "budgets"), "budgets"),
     runtime: positive(merge(front["runtime"], DEFAULT_RUNTIME, "runtime"), "runtime"),
     tools,

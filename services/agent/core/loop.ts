@@ -47,6 +47,10 @@ export interface TurnConfig {
   verbs: readonly string[];
   result_cap: number;
   recall_limit: number;
+  // The model's context window in tokens, when the workflow's config carried
+  // one: the fold sizes this turn's requests against it. Absent leaves the
+  // flat default ceiling.
+  context_window?: number;
   // The entity keys the run opens on, for the episodic read. Empty is the default
   // and means a run that recalls nothing: which keys a run is about is the
   // workflow's answer, and a harness that guessed would query on prose.

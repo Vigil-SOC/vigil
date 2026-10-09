@@ -18,7 +18,7 @@ import {
   type TurnConfig,
 } from "./loop.js";
 import { ProviderError, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
-import { assemble, prefixOf, type FoldPolicy, type Prefix } from "./context.js";
+import { assemble, foldPolicyFor, prefixOf, type FoldPolicy, type Prefix } from "./context.js";
 import { scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
 
@@ -362,7 +362,9 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Prefix, then the folded history, then a tail that is never persisted. What
   // summarising drops is the fold's to decide, and the edges are never dropped.
   private assembled(working = ""): Message[] {
-    const policy = this.tightened ?? undefined;
+    // The turn's own ceiling, sized from the model's window when the config
+    // carried one; a write-up retry tightens past it down the ladder.
+    const policy = this.tightened ?? (this.cfg.context_window === undefined ? undefined : foldPolicyFor(this.cfg.context_window));
     const { messages, folded } = assemble(
       this.prefix,
       this.cfg.task,

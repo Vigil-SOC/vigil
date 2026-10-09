@@ -257,6 +257,7 @@ def chat_config(
     tools: Optional[List[str]] = None,
     mcp_tools: Optional[List[Dict[str, Any]]] = None,
     provider: Optional[str] = None,
+    context_window: int = 0,
 ) -> str:
     """Render the agent layer's config document.
 
@@ -264,10 +265,15 @@ def chat_config(
     model rather than folded into it: Bifrost routes ``<provider>/<model>`` but
     the price catalogue is keyed by the bare id, so the agent needs both. Left
     out when unknown, which is what every caller did before this existed.
+
+    ``context_window`` is the model's window in tokens, from the same gateway
+    catalogue: the agent layer sizes the request against it instead of a flat
+    guess. Left out when unknown (0), which keeps the agent's default.
     """
     document = {
         "model": model,
         **({"provider": provider} if provider else {}),
+        **({"context_window": context_window} if context_window else {}),
         "budgets": DEFAULT_BUDGETS,
         "runtime": DEFAULT_RUNTIME,
         "tools": _declare(tools, mcp_tools),

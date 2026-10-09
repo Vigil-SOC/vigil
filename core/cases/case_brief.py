@@ -24,10 +24,15 @@ MAX_ALERTS = 25
 MAX_FINDINGS = 10
 LINE_CHARS = 240
 FINDING_CHARS = 600
-# The brief rides in the system prompt on every turn and shares the agent layer's
-# request ceiling (DEFAULT_FOLD.max_chars, 120,000, services/agent/core/context.ts)
-# with the tool catalogue (about 92,000 with the default MCP servers) and the
-# history the question is asked against. Past this it sheds rows.
+# The brief rides in the system prompt on every turn. This cap is the
+# build-side bound only: the budget that actually governs is the agent layer's
+# ceiling for the resolved model (derived from its context window,
+# services/agent/core/context.ts), against the real system prompt and the real
+# catalogue the request carries. When the assembled prefix crosses that
+# ceiling the agent sheds this block itself, whole lines from the end, before
+# any question is refused — so the cap no longer has to guess the catalogue's
+# size, which is what the flat 12,000 was doing when it was set against an
+# assumed ~92,000.
 MAX_BRIEF_CHARS = 12_000
 
 OPEN, CLOSE = "<case_data>", "</case_data>"

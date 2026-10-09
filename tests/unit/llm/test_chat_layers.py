@@ -95,6 +95,28 @@ def test_declare_drops_art_execute_but_keeps_splunk_execute():
 
 
 @pytest.mark.unit
+def test_chat_config_carries_the_models_window_when_it_is_known():
+    import yaml
+
+    from core.llm.chat_layers import chat_config
+
+    config = yaml.safe_load(chat_config("m", context_window=200_000))
+    assert config["context_window"] == 200_000
+
+
+@pytest.mark.unit
+def test_chat_config_omits_the_window_when_it_is_unknown():
+    import yaml
+
+    from core.llm.chat_layers import chat_config
+
+    # An omitted key is the backward-compatible shape: an agent build that
+    # predates the window keeps the flat ceiling it has always used.
+    config = yaml.safe_load(chat_config("m"))
+    assert "context_window" not in config
+
+
+@pytest.mark.unit
 def test_chat_config_keeps_approvals_empty_when_art_is_connected():
     import yaml
 

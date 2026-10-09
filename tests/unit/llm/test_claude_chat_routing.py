@@ -85,6 +85,48 @@ def _spec(
 # --- _resolve_provider_model_for_request -----------------------------------
 
 
+# --- _context_window_for ---------------------------------------------------
+
+
+class _WindowInfo:
+    def __init__(self, window):
+        self.context_window = window
+
+
+def test_context_window_comes_from_the_gateway_catalogue(monkeypatch):
+    class _Reg:
+        def get_model_info(self, provider_id, provider_type, model_id):
+            assert (provider_id, provider_type, model_id) == (
+                "ollama-local",
+                "ollama",
+                AN_OLLAMA_MODEL,
+            )
+            return _WindowInfo(32_768)
+
+    monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
+    assert claude._context_window_for(_spec(), AN_OLLAMA_MODEL) == 32_768
+
+
+def test_context_window_is_unknown_when_the_catalogue_has_none(monkeypatch):
+    class _Reg:
+        def get_model_info(self, *a, **k):
+            return _WindowInfo(0)
+
+    monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
+    assert claude._context_window_for(_spec(), AN_OLLAMA_MODEL) == 0
+
+
+def test_context_window_lookup_failure_is_an_unknown_window(monkeypatch):
+    # A catalogue that cannot answer must not fail the turn: the agent falls
+    # back to its flat ceiling, exactly as before the window was plumbed.
+    class _Reg:
+        def get_model_info(self, *a, **k):
+            raise RuntimeError("catalogue unavailable")
+
+    monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
+    assert claude._context_window_for(_spec(), AN_OLLAMA_MODEL) == 0
+
+
 def test_bare_model_id_has_no_provider():
     # The Chat dock sends a bare model id (no "::").
     assert claude._resolve_provider_model_for_request("qwen3-coder:latest", None) == (

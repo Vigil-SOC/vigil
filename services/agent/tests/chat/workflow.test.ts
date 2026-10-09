@@ -3,6 +3,7 @@ import { archFor } from "../../arch/registry.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
+import { ceilingForWindow, sizeOf } from "../../core/context.js";
 import { localDispatch } from "../../core/dispatch.js";
 import type { Harness } from "../../core/loop.js";
 import { nullMemory, recalling } from "../../core/memory.js";
@@ -207,5 +208,56 @@ describe("a later question the request has no room for", () => {
     expect(report.status).toBe("failed");
     expect(report.reason).toMatch(/more than Ask can read at once/);
     expect(seen.flatMap(chatEvents)).toContainEqual({ error: report.reason });
+  });
+});
+
+describe("the model's window sizes the turn (#1933)", () => {
+  const WINDOWED = `
+model: anthropic/claude-opus-5
+context_window: 16384
+budgets: { max_calls: 6, max_wall_ms: 600000, max_cost_usd: 1.00 }
+runtime: { max_turns: 4, result_cap: 8000, recall_limit: 2 }
+tools:
+  - id: findings
+    kind: remote
+    description: search findings
+    parameters: { type: object }
+approvals: []
+`;
+
+  it("answers a follow-up the brief would crowd out, the brief shedding to fit the window", async () => {
+    // A small window and a brief several times the room it leaves: the turn
+    // only fits once the brief has shed, and the markers must survive — a
+    // shed-away closing marker would strand the case data.
+    const brief = `<case_data>\n${"evidence row\n".repeat(4_000)}</case_data>`;
+    const base = specOf(WINDOWED);
+    const spec: RunSpec = {
+      ...base,
+      roles: { ...base.roles, lead: { ...base.roles.lead!, prompt: `${base.roles.lead!.prompt}\n\n${brief}` } },
+    };
+    const turns: Turn[] = [
+      { role: "user", content: "What does this case hold?" },
+      { role: "assistant", content: "It holds failed logins." },
+      { role: "user", content: "Which evidence supports that?" },
+    ];
+    const harness = harnessOf([{ content: "the answer" }]);
+    const stream = runChat(harness, { run_id: RUN, spec, turns });
+    let report: ChatReport | undefined;
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) {
+        report = next.value;
+        break;
+      }
+    }
+    expect(report?.status).toBe("completed");
+
+    const request = (harness.provider as ScriptedProvider).requests[0]!;
+    const ceiling = ceilingForWindow(16_384);
+    expect(sizeOf(request.messages) + JSON.stringify(request.tools).length).toBeLessThanOrEqual(ceiling);
+    expect(request.messages[0]!.content).toContain("<case_data>");
+    expect(request.messages[0]!.content).toContain("</case_data>");
+    expect(request.messages[0]!.content.length).toBeLessThan(brief.length);
+    expect(request.messages.some((message) => message.content.includes("Which evidence supports that?"))).toBe(true);
   });
 });

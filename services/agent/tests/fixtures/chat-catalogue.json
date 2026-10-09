@@ -1,0 +1,3331 @@
+[
+ {
+  "id": "analyze_coverage",
+  "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL). Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "techniques": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "List of MITRE technique IDs (e.g., ['T1059.001', 'T1071.001']). Catalog path; omit when reporting a run."
+    },
+    "run_id": {
+     "type": "string",
+     "description": "Agent run id. Asks the agent layer for journaled execute traces, then reconstructs. Report path, not catalog counts."
+    },
+    "steps": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     },
+     "description": "Action-trace steps (same shape as reconstruct_run). Report path without a ledger."
+    }
+   }
+  }
+ },
+ {
+  "id": "search_detections",
+  "description": "Search across 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) using keywords. Returns matching detection rules with metadata. Use this to find relevant detections for specific attack patterns or tools.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Search query - keywords or phrases (e.g., 'powershell base64', 'lateral movement', 'mimikatz')"
+    },
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk",
+      "elastic",
+      "kql"
+     ],
+     "description": "Optional: Filter by detection format. Omit to search all formats."
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Maximum number of results to return (default: 20)",
+     "default": 20
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "identify_gaps",
+  "description": "Identify detection gaps for a given context such as threat actor, attack type, or campaign. Analyzes which MITRE techniques have insufficient detection coverage. Use this for gap analysis and prioritization.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "context": {
+     "type": "string",
+     "description": "Context for gap analysis (e.g., 'ransomware', 'APT29', 'initial access', 'lateral movement')"
+    }
+   },
+   "required": [
+    "context"
+   ]
+  }
+ },
+ {
+  "id": "get_coverage_stats",
+  "description": "Get overall detection coverage statistics including total detections, techniques covered, and breakdown by source format. Use this for high-level coverage overview.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk",
+      "elastic",
+      "kql"
+     ],
+     "description": "Optional: Get stats for specific source format only"
+    }
+   }
+  }
+ },
+ {
+  "id": "get_detection_count",
+  "description": "Get count of detection rules, optionally filtered by source format.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "source_type": {
+     "type": "string",
+     "enum": [
+      "sigma",
+      "splunk",
+      "elastic",
+      "kql"
+     ],
+     "description": "Optional: Count for specific source format"
+    }
+   }
+  }
+ },
+ {
+  "id": "lint_detections",
+  "description": "Lint Sigma detection rules for match keys tied to a specific IP, hostname, user, or subnet. Returns rewrite guidance to make the rule behavioural. Pass rule_yaml for one rule or source_path to walk .yml files under an existing source. Does not block importing community rule sources.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "rule_yaml": {
+     "type": "string",
+     "description": "Sigma rule YAML to lint. Pass this or source_path, not both."
+    },
+    "source_path": {
+     "type": "string",
+     "description": "Directory of Sigma .yml files (or a single .yml file) to lint."
+    }
+   }
+  }
+ },
+ {
+  "id": "check_detection_candidate",
+  "description": "Lint a candidate Sigma rule and replay it against events the caller already has. Replay is one selection of field equality and |contains, AND-ed. Returns lint, replay, and candidate; candidate is set only when lint passed and an event matched. Does not query Findings or a SIEM and does not write a rule.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "rule_yaml": {
+     "type": "string",
+     "description": "Sigma rule YAML to lint and replay."
+    },
+    "events": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     },
+     "description": "Events already in hand. Field names are matched to event keys as written."
+    },
+    "technique_id": {
+     "type": "string",
+     "description": "Technique id of the missed step this candidate answers."
+    },
+    "hostname": {
+     "type": "string",
+     "description": "Hostname of the missed step."
+    },
+    "started_at": {
+     "type": "string",
+     "description": "Window start of the missed step."
+    },
+    "ended_at": {
+     "type": "string",
+     "description": "Window end of the missed step."
+    }
+   },
+   "required": [
+    "rule_yaml",
+    "events",
+    "technique_id",
+    "hostname",
+    "started_at",
+    "ended_at"
+   ]
+  }
+ },
+ {
+  "id": "reconstruct_run",
+  "description": "Reconstruct a red-run action trace into per-step detection verdicts. Correlates each step to ingested Findings by host, entity, and time. Verdict is rule, loglm, both, or missed. Cite matching Finding ids. Unknown keys on a step are ignored.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "steps": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     },
+     "description": "Action-trace steps. Join keys are host/entity/time (hostname, src_ip, user, started_at/ended_at or timestamp). Unknown keys are ignored."
+    }
+   },
+   "required": [
+    "steps"
+   ]
+  }
+ },
+ {
+  "id": "list_findings",
+  "description": "List security findings with server-side pagination and compact summaries. Returns compact finding summaries (use get_finding for full details). Supports filtering by severity, data_source, status, and pagination via offset/limit.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Filter by severity level"
+    },
+    "data_source": {
+     "type": "string",
+     "description": "Filter by data source (e.g., 'sysmon', 'cloudtrail')"
+    },
+    "status": {
+     "type": "string",
+     "description": "Filter by status (e.g., 'new', 'investigating', 'resolved')"
+    },
+    "cluster_id": {
+     "type": "string",
+     "description": "Filter by cluster id"
+    },
+    "min_anomaly_score": {
+     "type": "number",
+     "description": "Minimum anomaly score, inclusive"
+    },
+    "sort_by": {
+     "type": "string",
+     "enum": [
+      "timestamp",
+      "anomaly_score",
+      "severity"
+     ],
+     "description": "Column to sort by",
+     "default": "timestamp"
+    },
+    "sort_order": {
+     "type": "string",
+     "enum": [
+      "asc",
+      "desc"
+     ],
+     "description": "Sort direction",
+     "default": "desc"
+    },
+    "offset": {
+     "type": "integer",
+     "description": "Pagination offset (0-based)",
+     "default": 0
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Maximum number of findings to return",
+     "default": 20
+    }
+   }
+  }
+ },
+ {
+  "id": "search_findings",
+  "description": "Search findings by text query across finding IDs, descriptions, and entity context. Returns compact summaries with pagination. Use get_finding for full details on specific results.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Text search query (searches finding IDs, descriptions, entity context)"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Filter by severity level"
+    },
+    "data_source": {
+     "type": "string",
+     "description": "Filter by data source"
+    },
+    "status": {
+     "type": "string",
+     "description": "Filter by status"
+    },
+    "sort_by": {
+     "type": "string",
+     "enum": [
+      "timestamp",
+      "anomaly_score",
+      "severity"
+     ],
+     "default": "anomaly_score"
+    },
+    "sort_order": {
+     "type": "string",
+     "enum": [
+      "asc",
+      "desc"
+     ],
+     "default": "desc"
+    },
+    "offset": {
+     "type": "integer",
+     "default": 0
+    },
+    "limit": {
+     "type": "integer",
+     "default": 20
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "get_findings_stats",
+  "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source, status, and top MITRE techniques. Use this to get an overview before drilling into specific findings.",
+  "parameters": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "id": "get_finding",
+  "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques and related context.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "finding_id": {
+     "type": "string",
+     "description": "The finding ID (e.g., 'f-20260209-001')"
+    }
+   },
+   "required": [
+    "finding_id"
+   ]
+  }
+ },
+ {
+  "id": "list_cases",
+  "description": "List investigation cases with optional filters. Returns active and closed cases.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "status": {
+     "type": "string",
+     "enum": [
+      "open",
+      "in_progress",
+      "closed"
+     ],
+     "description": "Filter by case status"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Filter by severity (cases store this as priority)"
+    },
+    "priority": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Filter by priority"
+    },
+    "limit": {
+     "type": "integer",
+     "default": 50
+    }
+   }
+  }
+ },
+ {
+  "id": "get_case",
+  "description": "Get detailed information about a specific case including all findings, timeline, activities, and MITRE techniques.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "case_id": {
+     "type": "string",
+     "description": "The case ID"
+    }
+   },
+   "required": [
+    "case_id"
+   ]
+  }
+ },
+ {
+  "id": "case_records",
+  "description": "Read the case records held for an investigation.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "case_id": {
+     "type": "string",
+     "description": "The case whose records to read."
+    }
+   },
+   "required": [
+    "case_id"
+   ]
+  }
+ },
+ {
+  "id": "create_case",
+  "description": "Create a new investigation case. Use this to organize related findings into a case for tracking and investigation.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "title": {
+     "type": "string",
+     "description": "Case title/summary"
+    },
+    "description": {
+     "type": "string",
+     "description": "Detailed case description"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Case severity. Used as priority when priority is omitted."
+    },
+    "priority": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ],
+     "description": "Case priority. Wins over severity when both are set."
+    },
+    "status": {
+     "type": "string",
+     "description": "Initial status",
+     "default": "new"
+    },
+    "assignee": {
+     "type": "string",
+     "description": "Assignee"
+    },
+    "tags": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Tags applied after the case is created"
+    },
+    "finding_ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Optional: Initial findings to add to case"
+    }
+   },
+   "required": [
+    "title"
+   ]
+  }
+ },
+ {
+  "id": "add_finding_to_case",
+  "description": "Add a finding to an existing case.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "case_id": {
+     "type": "string"
+    },
+    "finding_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "case_id",
+    "finding_id"
+   ]
+  }
+ },
+ {
+  "id": "update_case",
+  "description": "Update an existing case's title, description, status, or priority.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "case_id": {
+     "type": "string",
+     "description": "The case ID to update"
+    },
+    "title": {
+     "type": "string",
+     "description": "New title"
+    },
+    "description": {
+     "type": "string",
+     "description": "New description or executive summary"
+    },
+    "status": {
+     "type": "string",
+     "enum": [
+      "open",
+      "investigating",
+      "resolved",
+      "closed"
+     ]
+    },
+    "priority": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ]
+    },
+    "assignee": {
+     "type": "string",
+     "description": "Assignee"
+    },
+    "add_note": {
+     "type": "string",
+     "description": "Note appended to the case"
+    }
+   },
+   "required": [
+    "case_id"
+   ]
+  }
+ },
+ {
+  "id": "add_resolution_step",
+  "description": "Add a resolution step to a case documenting a containment, eradication, or recovery action taken or recommended.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "case_id": {
+     "type": "string",
+     "description": "The case ID"
+    },
+    "description": {
+     "type": "string",
+     "description": "What needs to be done or was done"
+    },
+    "action_taken": {
+     "type": "string",
+     "description": "The specific action taken or recommended"
+    },
+    "result": {
+     "type": "string",
+     "description": "Outcome or expected outcome of the action"
+    }
+   },
+   "required": [
+    "case_id",
+    "description",
+    "action_taken"
+   ]
+  }
+ },
+ {
+  "id": "list_completed_hunts",
+  "description": "Return completed threat-hunt runs that finished in an assessment window. Each hunt is the existing hunt projection: hypotheses (with provenance), evidence provenance, verdict, checkpoint resolutions (approver identity), and timestamps. Hunts whose projection is not yet available are omitted.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "start": {
+     "type": "string",
+     "description": "Window start (ISO-8601 timestamp)"
+    },
+    "end": {
+     "type": "string",
+     "description": "Window end (ISO-8601 timestamp)"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Maximum number of completed hunts to return",
+     "default": 200
+    }
+   },
+   "required": [
+    "start",
+    "end"
+   ]
+  }
+ },
+ {
+  "id": "list_learning_episodes",
+  "description": "What Vigil learned in a window: one episode per concluded hunt or case, read from distilled memory, and a finished compose run whose projection has an execute trace. Each carries kind, investigation_id, origin_run_id (null for a case), concluded_at, and a payload of the verdicts (with source stances) and gaps that investigation recorded. An investigation that concluded nothing is still an episode. Read-only.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "start": {
+     "type": "string",
+     "description": "Window start (ISO-8601 timestamp or date)"
+    },
+    "end": {
+     "type": "string",
+     "description": "Window end (ISO-8601 timestamp or date, inclusive)"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Maximum number of episodes to return, newest first",
+     "default": 200
+    }
+   },
+   "required": [
+    "start",
+    "end"
+   ]
+  }
+ },
+ {
+  "id": "export_learning_episodes",
+  "description": "Write a chosen set of learning episodes to a JSONL file in the exports directory, one episode per line, selected by {kind, investigation_id} pairs from list_learning_episodes. A finished compose run with an execute trace is included as kind emulation. By default entity values are redacted to their type (ip:*), and host, ip, user, and command are dropped from missed emulation steps; pass identified=true to keep them. An empty selection writes no file.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "episodes": {
+     "type": "array",
+     "description": "Episodes to export, as returned by list_learning_episodes",
+     "items": {
+      "type": "object",
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "hunt",
+         "case",
+         "emulation"
+        ]
+       },
+       "investigation_id": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "kind",
+       "investigation_id"
+      ]
+     }
+    },
+    "identified": {
+     "type": "boolean",
+     "description": "Keep entity values instead of redacting them to their type",
+     "default": false
+    },
+    "name": {
+     "type": "string",
+     "description": "File stem under the exports directory; defaults to a timestamped name"
+    }
+   },
+   "required": [
+    "episodes"
+   ]
+  }
+ },
+ {
+  "id": "replay_hunt",
+  "description": "Replay a completed threat hunt: for each decision the hunt lead took, the digest it was shown is rebuilt from the ledger and compared with the one recorded (rebuilt, recorded, mismatch), alongside what memory recalled for the hunt. Pass decision_id to narrow the report to one decision.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "run_id": {
+     "type": "string",
+     "description": "Workflow run id of the hunt (a uuid)"
+    },
+    "decision_id": {
+     "type": "string",
+     "description": "Replay only this decision"
+    }
+   },
+   "required": [
+    "run_id"
+   ]
+  }
+ },
+ {
+  "id": "get_technique_rollup",
+  "description": "Get rollup statistics for MITRE techniques showing finding counts and severity distribution.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "min_confidence": {
+     "type": "number",
+     "description": "Minimum technique confidence to count",
+     "default": 0.0
+    },
+    "time_range": {
+     "type": "string",
+     "enum": [
+      "24h",
+      "7d",
+      "30d",
+      "all"
+     ],
+     "description": "Window over finding timestamps",
+     "default": "all"
+    }
+   }
+  }
+ },
+ {
+  "id": "lookup_indicators",
+  "description": "Look up observables in Vigil's threat-indicator database, populated from the configured threat feeds. Returns one row per value asked about, with known=false for any the feeds do not carry -- an indicator no feed knows is a finding about the indicator.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "indicator_type": {
+     "type": "string",
+     "description": "What kind of observable these are",
+     "enum": [
+      "ip",
+      "domain",
+      "url",
+      "md5",
+      "sha1",
+      "sha256"
+     ],
+     "default": "ip"
+    },
+    "values": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "The observables to look up, in one batch"
+    }
+   },
+   "required": [
+    "values"
+   ]
+  }
+ },
+ {
+  "id": "propose_feed_hunts",
+  "description": "Which recently fed threat indicators has nobody hunted? Reads the newest rows of Vigil's threat-indicator database and runs each through the same coverage check as `check_hunt_coverage`. Returns one entry per uncovered indicator with its Entity Key, the feed row (type, value, source, last_seen) and a `proposal` body for POST /api/workflows/threat-hunt/execute; indicators already `running` or `concluded` are counted and omitted. Read-only: this never starts a hunt.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "description": "How many of the most recent indicators to classify (capped at 200)",
+     "default": 200
+    }
+   }
+  }
+ },
+ {
+  "id": "list_pending_approvals",
+  "description": "List pending actions awaiting approval. Returns actions that require analyst approval before execution (e.g., host isolation, IP blocking).",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "description": "Maximum number of pending actions to return",
+     "default": 50
+    }
+   }
+  }
+ },
+ {
+  "id": "get_approval_action",
+  "description": "Get detailed information about a specific pending action by ID.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "action_id": {
+     "type": "string",
+     "description": "The action ID (e.g., 'action-20260209-001')"
+    }
+   },
+   "required": [
+    "action_id"
+   ]
+  }
+ },
+ {
+  "id": "approve_action",
+  "description": "Approve a pending action for execution. The action will be executed automatically after approval.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "action_id": {
+     "type": "string",
+     "description": "The action ID to approve"
+    }
+   },
+   "required": [
+    "action_id"
+   ]
+  }
+ },
+ {
+  "id": "reject_action",
+  "description": "Reject a pending action. The action will not be executed and will be marked as rejected.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "action_id": {
+     "type": "string",
+     "description": "The action ID to reject"
+    },
+    "reason": {
+     "type": "string",
+     "description": "Reason for rejection"
+    }
+   },
+   "required": [
+    "action_id",
+    "reason"
+   ]
+  }
+ },
+ {
+  "id": "get_approval_stats",
+  "description": "Get statistics about approval actions including total, pending, approved, rejected, and executed counts.",
+  "parameters": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "id": "recall_entity",
+  "description": "Recall what past investigations saw and concluded about an entity. Returns the Sightings (what was observed, per investigation and source), the Verdicts (what was concluded, with the stance of each corroborating source) and the Declared Gaps (questions nobody gathered evidence for) for each Entity Key given as `type:value`. An entity nobody has investigated returns empty lists, which is an answer and not an error. Results are capped per key and overall; `dropped` says what was left out and `ranking` says on what basis. Pass your own role in `caller_kind` and `caller_id`: every read is logged for audit, and one that does not say who asked is logged as `unknown`.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "entity_keys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Entity Keys as `type:value`, at least one"
+    },
+    "entity_key": {
+     "type": "string",
+     "description": "One Entity Key, wrapped into entity_keys"
+    },
+    "as_of": {
+     "type": "string",
+     "description": "Freshness filter, ISO-8601 with an offset; defaults to now"
+    },
+    "caller_kind": {
+     "type": "string",
+     "default": "unknown"
+    },
+    "caller_id": {
+     "type": "string",
+     "default": "unknown"
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "check_hunt_coverage",
+  "description": "Before proposing a hunt from a threat report, ask whether one already covers it. Pass the report text (STIX bundle or plain text) and/or already-extracted Entity Keys (`type:value`) and ATT&CK technique ids. Answers `running` (a hunt is on it now; extend that run via POST /api/agent-runs/{run_id}/directives kind `extend`), `concluded` (a past hunt reached a Verdict; rows carry outcome, date and origin_run_id) or `uncovered`. The last two include a `proposal` body for POST /api/workflows/threat-hunt/execute. Matched and unmatched keys and techniques are listed. Read-only: this never starts a hunt.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "report": {
+     "type": "string",
+     "description": "The report: a STIX 2.x bundle or plain text"
+    },
+    "entity_keys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Entity Keys already extracted, as `type:value`"
+    },
+    "techniques": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "ATT&CK technique ids already extracted (T1566)"
+    }
+   }
+  }
+ },
+ {
+  "id": "read_skill",
+  "description": "Read a skill from the library listed in <available_skills>. Without `file` this returns the skill's SKILL.md body: the procedure to follow. A body may point at supporting files (references/, assets/); pass one as `file`, a path relative to the skill directory, to read it. Text only, nothing is executed, and a path outside the skill is refused.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Skill name exactly as listed in <available_skills>"
+    },
+    "file": {
+     "type": "string",
+     "description": "Optional file inside the skill directory, e.g. references/checklist.md. Omit for the SKILL.md body."
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ },
+ {
+  "id": "vigil_list_findings",
+  "description": "List findings, paged and filtered in SQL.",
+  "parameters": {
+   "properties": {
+    "severity": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Severity"
+    },
+    "data_source": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Data Source"
+    },
+    "status": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Status"
+    },
+    "cluster_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Cluster Id"
+    },
+    "min_anomaly_score": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Min Anomaly Score"
+    },
+    "sort_by": {
+     "default": "timestamp",
+     "title": "Sort By",
+     "type": "string"
+    },
+    "sort_order": {
+     "default": "desc",
+     "title": "Sort Order",
+     "type": "string"
+    },
+    "offset": {
+     "default": 0,
+     "title": "Offset",
+     "type": "integer"
+    },
+    "limit": {
+     "default": 20,
+     "title": "Limit",
+     "type": "integer"
+    }
+   },
+   "title": "list_findingsArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_finding",
+  "description": "Get a specific finding by ID.",
+  "parameters": {
+   "properties": {
+    "finding_id": {
+     "title": "Finding Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "finding_id"
+   ],
+   "title": "get_findingArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_list_completed_hunts",
+  "description": "Return completed threat-hunt projections for an assessment window.",
+  "parameters": {
+   "properties": {
+    "start": {
+     "title": "Start",
+     "type": "string"
+    },
+    "end": {
+     "title": "End",
+     "type": "string"
+    },
+    "limit": {
+     "default": 200,
+     "title": "Limit",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "start",
+    "end"
+   ],
+   "title": "list_completed_huntsArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_replay_hunt",
+  "description": "Rebuild what each decision of a completed hunt was shown (rebuilt, recorded,\n    mismatch, recalled). ``decision_id`` narrows the report to one decision.",
+  "parameters": {
+   "properties": {
+    "run_id": {
+     "title": "Run Id",
+     "type": "string"
+    },
+    "decision_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Decision Id"
+    }
+   },
+   "required": [
+    "run_id"
+   ],
+   "title": "replay_huntArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_technique_rollup",
+  "description": "Roll up ATT&CK techniques by finding count and severity.",
+  "parameters": {
+   "properties": {
+    "min_confidence": {
+     "default": 0.0,
+     "title": "Min Confidence",
+     "type": "number"
+    },
+    "time_range": {
+     "default": "all",
+     "title": "Time Range",
+     "type": "string"
+    }
+   },
+   "title": "get_technique_rollupArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_list_cases",
+  "description": "List cases. Filters apply to the full case list.",
+  "parameters": {
+   "properties": {
+    "status": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Status"
+    },
+    "severity": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Severity"
+    },
+    "priority": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Priority"
+    },
+    "limit": {
+     "default": 50,
+     "title": "Limit",
+     "type": "integer"
+    }
+   },
+   "title": "list_casesArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_case",
+  "description": "Get one case.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "case_id"
+   ],
+   "title": "get_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_create_case",
+  "description": "Open a case. Assignee and tags are applied as edits after it exists.",
+  "parameters": {
+   "properties": {
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "title": "Description",
+     "type": "string"
+    },
+    "severity": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Severity"
+    },
+    "priority": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Priority"
+    },
+    "finding_ids": {
+     "anyOf": [
+      {
+       "items": {},
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Finding Ids"
+    },
+    "status": {
+     "default": "new",
+     "title": "Status",
+     "type": "string"
+    },
+    "assignee": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Assignee"
+    },
+    "tags": {
+     "anyOf": [
+      {
+       "items": {},
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Tags"
+    }
+   },
+   "required": [
+    "title"
+   ],
+   "title": "create_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_update_case",
+  "description": "Update a case. Closing or reopening records the closure row.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "title": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Title"
+    },
+    "description": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Description"
+    },
+    "status": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Status"
+    },
+    "priority": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Priority"
+    },
+    "assignee": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Assignee"
+    },
+    "add_note": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Add Note"
+    }
+   },
+   "required": [
+    "case_id"
+   ],
+   "title": "update_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_finding_to_case",
+  "description": "Attach a finding to a case.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "finding_id": {
+     "title": "Finding Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "case_id",
+    "finding_id"
+   ],
+   "title": "add_finding_to_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_activity",
+  "description": "Add an activity/action to a case. Activities track actions taken during investigation.\n\n    Args:\n        case_id: The case ID (e.g., \"case-20260114-abc123\")\n        activity_type: Type of activity (e.g., \"note\", \"status_change\", \"finding_added\",\n                      \"action_taken\", \"investigation_step\", \"analysis\", \"communication\")\n        description: Description of the activity\n        details: Optional dictionary with additional details\n\n    Examples:\n        - add_case_activity(\"case-123\", \"note\", \"Confirmed lateral movement pattern\")\n        - add_case_activity(\"case-123\", \"action_taken\", \"Isolated infected host\",\n                          {\"host\": \"workstation-42\", \"action\": \"network_isolation\"})",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "activity_type": {
+     "title": "Activity Type",
+     "type": "string"
+    },
+    "description": {
+     "title": "Description",
+     "type": "string"
+    },
+    "details": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Details"
+    }
+   },
+   "required": [
+    "case_id",
+    "activity_type",
+    "description"
+   ],
+   "title": "add_case_activityArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_timeline_entry",
+  "description": "Add an entry to the case timeline. Timeline tracks chronological events.\n\n    Args:\n        case_id: The case ID\n        event_description: Description of the event\n        event_time: ISO timestamp of when the event occurred (defaults to now)\n        event_type: Type of event (e.g., \"attack\", \"detection\", \"investigation\", \"response\")\n        details: Optional additional details\n\n    Examples:\n        - add_case_timeline_entry(\"case-123\", \"Initial malware execution detected\",\n                                \"2026-01-21T10:00:00Z\", \"attack\")\n        - add_case_timeline_entry(\"case-123\", \"Analyst began investigation\", event_type=\"investigation\")",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "event_description": {
+     "title": "Event Description",
+     "type": "string"
+    },
+    "event_time": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Event Time"
+    },
+    "event_type": {
+     "default": "investigation",
+     "title": "Event Type",
+     "type": "string"
+    },
+    "details": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Details"
+    }
+   },
+   "required": [
+    "case_id",
+    "event_description"
+   ],
+   "title": "add_case_timeline_entryArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_mitre_techniques",
+  "description": "Add MITRE ATT&CK technique IDs to a case to document the kill chain.\n\n    Args:\n        case_id: The case ID\n        technique_ids: List of MITRE technique IDs (e.g., [\"T1071.001\", \"T1059.001\"])\n\n    Example:\n        add_case_mitre_techniques(\"case-123\", [\"T1071.001\", \"T1059.001\", \"T1048.003\"])",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "technique_ids": {
+     "items": {},
+     "title": "Technique Ids",
+     "type": "array"
+    }
+   },
+   "required": [
+    "case_id",
+    "technique_ids"
+   ],
+   "title": "add_case_mitre_techniquesArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_resolution_step",
+  "description": "Add a resolution/remediation step to a case.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "description": {
+     "title": "Description",
+     "type": "string"
+    },
+    "action_taken": {
+     "title": "Action Taken",
+     "type": "string"
+    },
+    "result": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Result"
+    }
+   },
+   "required": [
+    "case_id",
+    "description",
+    "action_taken"
+   ],
+   "title": "add_resolution_stepArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_bulk_add_findings_to_case",
+  "description": "Add multiple findings to a case at once.\n\n    Args:\n        case_id: The case ID\n        finding_ids: List of finding IDs to add\n        note: Optional note explaining why these findings were added\n\n    Example:\n        bulk_add_findings_to_case(\"case-123\",\n                                [\"f-20260121-001\", \"f-20260121-002\", \"f-20260121-003\"],\n                                \"All findings show lateral movement pattern\")",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "finding_ids": {
+     "items": {},
+     "title": "Finding Ids",
+     "type": "array"
+    },
+    "note": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Note"
+    }
+   },
+   "required": [
+    "case_id",
+    "finding_ids"
+   ],
+   "title": "bulk_add_findings_to_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_create_case_from_killchain",
+  "description": "Create a case documenting a kill chain with findings organized by stage.\n\n    Args:\n        title: Case title\n        finding_ids: List of finding IDs\n        killchain_stages: List of dicts with 'stage' and 'techniques' keys\n                         Example: [{\"stage\": \"Initial Access\", \"techniques\": [\"T1078\"]},\n                                  {\"stage\": \"Lateral Movement\", \"techniques\": [\"T1021.001\"]}]\n        description: Case description\n        priority: Priority level\n        assignee: Optional assignee\n\n    Example:\n        create_case_from_killchain(\n            \"APT Lateral Movement Campaign\",\n            [\"f-001\", \"f-002\", \"f-003\"],\n            [\n                {\"stage\": \"Initial Access\", \"techniques\": [\"T1078\"], \"description\": \"Compromised credentials\"},\n                {\"stage\": \"Lateral Movement\", \"techniques\": [\"T1021.001\"], \"description\": \"RDP lateral movement\"},\n                {\"stage\": \"Exfiltration\", \"techniques\": [\"T1048.003\"], \"description\": \"Data staged for exfil\"}\n            ],\n            priority=\"critical\"\n        )",
+  "parameters": {
+   "properties": {
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "finding_ids": {
+     "items": {},
+     "title": "Finding Ids",
+     "type": "array"
+    },
+    "killchain_stages": {
+     "items": {},
+     "title": "Killchain Stages",
+     "type": "array"
+    },
+    "description": {
+     "default": "",
+     "title": "Description",
+     "type": "string"
+    },
+    "priority": {
+     "default": "high",
+     "title": "Priority",
+     "type": "string"
+    },
+    "assignee": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Assignee"
+    }
+   },
+   "required": [
+    "title",
+    "finding_ids",
+    "killchain_stages"
+   ],
+   "title": "create_case_from_killchainArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_comment",
+  "description": "Add a comment to a case. Supports threaded discussions.\n\n    Args:\n        case_id: The case ID\n        content: Comment text\n        parent_comment_id: Optional ID of parent comment for threading\n\n    Examples:\n        - add_case_comment(\"case-123\", \"Confirmed lateral movement pattern\")\n        - add_case_comment(\"case-123\", \"I see the same pattern\", parent_comment_id=5)",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "content": {
+     "title": "Content",
+     "type": "string"
+    },
+    "parent_comment_id": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Parent Comment Id"
+    }
+   },
+   "required": [
+    "case_id",
+    "content"
+   ],
+   "title": "add_case_commentArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_case_comments",
+  "description": "Get all comments for a case.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "case_id"
+   ],
+   "title": "get_case_commentsArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_evidence",
+  "description": "Add evidence to a case with chain of custody tracking.\n\n    Args:\n        case_id: The case ID\n        evidence_type: Type (e.g., \"file\", \"log\", \"network_capture\", \"memory_dump\", \"screenshot\")\n        name: Evidence name\n        description: Optional description\n        file_path: Optional file path\n        source: Optional source system\n        tags: Optional tags list\n\n    Examples:\n        - add_case_evidence(\"case-123\", \"memory_dump\", \"host-42-memory.raw\",\n                           description=\"Memory dump from compromised host\")\n        - add_case_evidence(\"case-123\", \"log\", \"firewall-logs.txt\",\n                           source=\"Palo Alto FW\", tags=[\"c2\", \"exfiltration\"])",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "evidence_type": {
+     "title": "Evidence Type",
+     "type": "string"
+    },
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "description": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Description"
+    },
+    "file_path": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "File Path"
+    },
+    "source": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Source"
+    },
+    "tags": {
+     "anyOf": [
+      {
+       "items": {},
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Tags"
+    }
+   },
+   "required": [
+    "case_id",
+    "evidence_type",
+    "name"
+   ],
+   "title": "add_case_evidenceArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_ioc",
+  "description": "Add an Indicator of Compromise (IOC) to a case.\n\n    Args:\n        case_id: The case ID\n        ioc_type: Type (e.g., \"ip\", \"domain\", \"hash\", \"url\", \"email\", \"file_name\")\n        value: The IOC value\n        threat_level: Optional threat level (\"critical\", \"high\", \"medium\", \"low\")\n        confidence: Optional confidence score (0.0-1.0)\n        source: Optional source of the IOC\n        tags: Optional tags\n        context: Optional context/notes\n\n    Examples:\n        - add_case_ioc(\"case-123\", \"ip\", \"192.168.50.5\", threat_level=\"high\",\n                      context=\"C2 server IP\")\n        - add_case_ioc(\"case-123\", \"domain\", \"evil.com\", threat_level=\"critical\",\n                      confidence=0.95, source=\"VirusTotal\")\n        - add_case_ioc(\"case-123\", \"hash\", \"a1b2c3...\", ioc_type=\"md5\",\n                      tags=[\"malware\", \"ransomware\"])",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "ioc_type": {
+     "title": "Ioc Type",
+     "type": "string"
+    },
+    "value": {
+     "title": "Value",
+     "type": "string"
+    },
+    "threat_level": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Threat Level"
+    },
+    "confidence": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Confidence"
+    },
+    "source": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Source"
+    },
+    "tags": {
+     "anyOf": [
+      {
+       "items": {},
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Tags"
+    },
+    "context": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Context"
+    }
+   },
+   "required": [
+    "case_id",
+    "ioc_type",
+    "value"
+   ],
+   "title": "add_case_iocArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_bulk_add_iocs",
+  "description": "Bulk add multiple IOCs to a case at once.\n\n    Args:\n        case_id: The case ID\n        iocs: List of IOC dicts with keys: ioc_type, value, threat_level (optional),\n              confidence (optional), source (optional), context (optional)\n\n    Example:\n        bulk_add_iocs(\"case-123\", [\n            {\"ioc_type\": \"ip\", \"value\": \"192.168.1.5\", \"threat_level\": \"high\"},\n            {\"ioc_type\": \"ip\", \"value\": \"192.168.1.6\", \"threat_level\": \"high\"},\n            {\"ioc_type\": \"domain\", \"value\": \"evil.com\", \"threat_level\": \"critical\"}\n        ])",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "iocs": {
+     "items": {},
+     "title": "Iocs",
+     "type": "array"
+    }
+   },
+   "required": [
+    "case_id",
+    "iocs"
+   ],
+   "title": "bulk_add_iocsArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_case_iocs",
+  "description": "Get all IOCs for a case, optionally filtered by type.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "ioc_type": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Ioc Type"
+    }
+   },
+   "required": [
+    "case_id"
+   ],
+   "title": "get_case_iocsArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_add_case_task",
+  "description": "Add a task to a case for tracking investigation work.\n\n    Args:\n        case_id: The case ID\n        title: Task title\n        description: Optional description\n        assignee: Optional assignee username\n        priority: Priority (\"low\", \"medium\", \"high\", \"critical\")\n        due_date: Optional due date (ISO format)\n\n    Examples:\n        - add_case_task(\"case-123\", \"Analyze malware sample\", priority=\"high\")\n        - add_case_task(\"case-123\", \"Interview affected users\", assignee=\"analyst2\",\n                       due_date=\"2026-01-25T17:00:00Z\")",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "description": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Description"
+    },
+    "assignee": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Assignee"
+    },
+    "priority": {
+     "default": "medium",
+     "title": "Priority",
+     "type": "string"
+    },
+    "due_date": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Due Date"
+    }
+   },
+   "required": [
+    "case_id",
+    "title"
+   ],
+   "title": "add_case_taskArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_update_case_task",
+  "description": "Update a task status.\n\n    Args:\n        task_id: The task ID\n        status: Optional new status (\"pending\", \"in_progress\", \"completed\", \"cancelled\")\n        assignee: Optional new assignee\n        notes: Optional notes about the update\n\n    Examples:\n        - update_case_task(5, status=\"in_progress\")\n        - update_case_task(5, status=\"completed\", notes=\"Malware analysis complete - ransomware variant\")",
+  "parameters": {
+   "properties": {
+    "task_id": {
+     "title": "Task Id",
+     "type": "integer"
+    },
+    "status": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Status"
+    },
+    "assignee": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Assignee"
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Notes"
+    }
+   },
+   "required": [
+    "task_id"
+   ],
+   "title": "update_case_taskArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_case_tasks",
+  "description": "Get all tasks for a case.",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "case_id"
+   ],
+   "title": "get_case_tasksArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_link_related_cases",
+  "description": "Link two related cases together.\n\n    Args:\n        case_id: Primary case ID\n        related_case_id: Related case ID\n        relationship_type: Type (\"duplicate\", \"related\", \"parent\", \"child\", \"blocks\", \"blocked_by\")\n        notes: Optional notes about relationship\n\n    Examples:\n        - link_related_cases(\"case-123\", \"case-124\", \"related\",\n                            notes=\"Both cases show same attack pattern\")\n        - link_related_cases(\"case-123\", \"case-125\", \"parent\",\n                            notes=\"case-123 is the parent campaign\")",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "related_case_id": {
+     "title": "Related Case Id",
+     "type": "string"
+    },
+    "relationship_type": {
+     "title": "Relationship Type",
+     "type": "string"
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Notes"
+    }
+   },
+   "required": [
+    "case_id",
+    "related_case_id",
+    "relationship_type"
+   ],
+   "title": "link_related_casesArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_escalate_case",
+  "description": "Escalate a case to higher tier or management.\n\n    Args:\n        case_id: The case ID\n        escalated_to: Who to escalate to (username/team)\n        reason: Reason for escalation\n        urgency_level: Urgency (\"low\", \"medium\", \"high\", \"critical\")\n\n    Example:\n        escalate_case(\"case-123\", \"soc-manager\",\n                     \"Suspected APT activity requires management approval\",\n                     urgency_level=\"critical\")",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "escalated_to": {
+     "title": "Escalated To",
+     "type": "string"
+    },
+    "reason": {
+     "title": "Reason",
+     "type": "string"
+    },
+    "urgency_level": {
+     "default": "high",
+     "title": "Urgency Level",
+     "type": "string"
+    }
+   },
+   "required": [
+    "case_id",
+    "escalated_to",
+    "reason"
+   ],
+   "title": "escalate_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_close_case",
+  "description": "Properly close a case with closure metadata.\n\n    Args:\n        case_id: The case ID\n        closure_category: Category (\"resolved\", \"false_positive\", \"duplicate\", \"unable_to_resolve\")\n        root_cause: Optional root cause analysis\n        lessons_learned: Optional lessons learned\n        recommendations: Optional recommendations\n        executive_summary: Optional executive summary\n        false_positive_reason: Optional reason a false-positive closure was one\n        closure_notes: Optional free-text notes on the closure\n\n    Example:\n        close_case(\"case-123\", \"resolved\",\n                  root_cause=\"Compromised credentials due to phishing\",\n                  lessons_learned=\"Need MFA enforcement\",\n                  recommendations=\"Deploy MFA to all users, additional phishing training\",\n                  executive_summary=\"Lateral movement attack contained and remediated\")",
+  "parameters": {
+   "properties": {
+    "case_id": {
+     "title": "Case Id",
+     "type": "string"
+    },
+    "closure_category": {
+     "title": "Closure Category",
+     "type": "string"
+    },
+    "root_cause": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Root Cause"
+    },
+    "lessons_learned": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Lessons Learned"
+    },
+    "recommendations": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Recommendations"
+    },
+    "executive_summary": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Executive Summary"
+    },
+    "false_positive_reason": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "False Positive Reason"
+    },
+    "closure_notes": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Closure Notes"
+    }
+   },
+   "required": [
+    "case_id",
+    "closure_category"
+   ],
+   "title": "close_caseArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_create_approval_action",
+  "description": "Submit action to approval queue.\n\n    ``action_type`` is one of isolate_host, block_ip, block_domain,\n    quarantine_file, disable_user, custom.\n\n    ``evidence`` is optional here as it always was in practice: the old\n    server declared it required in the schema and then accepted a call\n    without it, so requiring it now would refuse calls that used to work.\n\n    The caller's ``confidence`` is its own claim, so it never releases the\n    action: the row waits in the queue for a person.",
+  "parameters": {
+   "properties": {
+    "action_type": {
+     "title": "Action Type",
+     "type": "string"
+    },
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "description": {
+     "title": "Description",
+     "type": "string"
+    },
+    "target": {
+     "title": "Target",
+     "type": "string"
+    },
+    "confidence": {
+     "title": "Confidence",
+     "type": "number"
+    },
+    "reason": {
+     "title": "Reason",
+     "type": "string"
+    },
+    "evidence": {
+     "anyOf": [
+      {
+       "items": {},
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Evidence"
+    }
+   },
+   "required": [
+    "action_type",
+    "title",
+    "description",
+    "target",
+    "confidence",
+    "reason"
+   ],
+   "title": "create_approval_actionArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_list_approval_actions",
+  "description": "List approval actions.\n\n    ``status`` is one of pending, approved, rejected, executed, failed.",
+  "parameters": {
+   "properties": {
+    "status": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Status"
+    },
+    "action_type": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Action Type"
+    }
+   },
+   "title": "list_approval_actionsArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_get_approval_action",
+  "description": "Get action details.",
+  "parameters": {
+   "properties": {
+    "action_id": {
+     "title": "Action Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action_id"
+   ],
+   "title": "get_approval_actionArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_approve_action",
+  "description": "Approve a pending action. The actor is the caller, not an argument.",
+  "parameters": {
+   "properties": {
+    "action_id": {
+     "title": "Action Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action_id"
+   ],
+   "title": "approve_actionArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "vigil_reject_action",
+  "description": "Reject a pending action. The actor is the caller, not an argument.",
+  "parameters": {
+   "properties": {
+    "action_id": {
+     "title": "Action Id",
+     "type": "string"
+    },
+    "reason": {
+     "title": "Reason",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action_id",
+    "reason"
+   ],
+   "title": "reject_actionArguments",
+   "type": "object"
+  }
+ },
+ {
+  "id": "splunk-selfhosted_splunk_generate_spl",
+  "description": "Generate SPL from natural language",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "indexes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "splunk-selfhosted_splunk_execute",
+  "description": "Execute SPL query.\nA search with no shaping returns up to max_results (default 100) full events, including _raw and Splunk's internal fields. When a count, distinct values, a time range or a few columns would answer the question, ask for that with stats, tstats, top, dedup, table, fields <list> or head. Pull raw events only when the event text itself is the evidence, and then keep head and max_results small.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "spl_query": {
+     "type": "string"
+    },
+    "earliest": {
+     "type": "string",
+     "default": "0"
+    },
+    "max_results": {
+     "type": "integer",
+     "default": 100,
+     "description": "Events returned. The default is 100 full events; use a smaller number when you need raw events."
+    }
+   },
+   "required": [
+    "spl_query"
+   ]
+  }
+ },
+ {
+  "id": "splunk-selfhosted_splunk_search_ip",
+  "description": "Search events for IP",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ip_address": {
+     "type": "string"
+    },
+    "hours": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "ip_address"
+   ]
+  }
+ },
+ {
+  "id": "splunk-selfhosted_splunk_search_host",
+  "description": "Search events for hostname",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "hostname": {
+     "type": "string"
+    },
+    "hours": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "hostname"
+   ]
+  }
+ },
+ {
+  "id": "splunk-selfhosted_splunk_nl_search",
+  "description": "Natural language search (generate + execute). Takes no time range and reaches all time. Prefer splunk_execute, whose description lists what is held and which windows cover it, and which lets you narrow the span yourself.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "max_results": {
+     "type": "integer",
+     "default": 100
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "elastic_elastic_search_logs",
+  "description": "Search Elasticsearch logs with a custom query DSL body",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Elasticsearch query DSL as a JSON string"
+    },
+    "index": {
+     "type": "string",
+     "description": "Target index (default: configured alert index)"
+    },
+    "time_range": {
+     "type": "string",
+     "description": "Relative time range, e.g. '24h', '7d'",
+     "default": "24h"
+    },
+    "max_results": {
+     "type": "integer",
+     "default": 100
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "elastic_elastic_search_by_ioc",
+  "description": "Search Elasticsearch for events matching an IOC (IP, hash, username, hostname)",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ioc_type": {
+     "type": "string",
+     "enum": [
+      "ip",
+      "hash",
+      "username",
+      "hostname"
+     ]
+    },
+    "ioc_value": {
+     "type": "string"
+    },
+    "index": {
+     "type": "string"
+    },
+    "hours": {
+     "type": "integer",
+     "default": 24
+    }
+   },
+   "required": [
+    "ioc_type",
+    "ioc_value"
+   ]
+  }
+ },
+ {
+  "id": "elastic_elastic_get_indices",
+  "description": "List available Elasticsearch indices",
+  "parameters": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "id": "elastic_elastic_get_detection_alerts",
+  "description": "Fetch recent detection alerts from Elastic Security",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "max_results": {
+     "type": "integer",
+     "default": 50
+    },
+    "status": {
+     "type": "string",
+     "enum": [
+      "open",
+      "acknowledged",
+      "closed"
+     ],
+     "description": "Filter by alert status"
+    }
+   }
+  }
+ },
+ {
+  "id": "opensearch_opensearch_search_logs",
+  "description": "Search OpenSearch logs with a custom query DSL body",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "OpenSearch query DSL as a JSON string"
+    },
+    "index": {
+     "type": "string",
+     "description": "Target index (default: all non-system indices)"
+    },
+    "time_range": {
+     "type": "string",
+     "description": "Relative time range, e.g. '24h', '7d'",
+     "default": "24h"
+    },
+    "max_results": {
+     "type": "integer",
+     "default": 100
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "opensearch_opensearch_search_by_ioc",
+  "description": "Search OpenSearch for events matching an IOC (IP, hash, username, hostname)",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ioc_type": {
+     "type": "string",
+     "enum": [
+      "ip",
+      "hash",
+      "username",
+      "hostname"
+     ]
+    },
+    "ioc_value": {
+     "type": "string"
+    },
+    "index": {
+     "type": "string"
+    },
+    "hours": {
+     "type": "integer",
+     "default": 24
+    }
+   },
+   "required": [
+    "ioc_type",
+    "ioc_value"
+   ]
+  }
+ },
+ {
+  "id": "opensearch_opensearch_get_indices",
+  "description": "List available OpenSearch indices",
+  "parameters": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "id": "opensearch_opensearch_get_findings",
+  "description": "Fetch recent Security Analytics findings from OpenSearch",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "max_results": {
+     "type": "integer",
+     "default": 50
+    },
+    "detector_name": {
+     "type": "string",
+     "description": "Filter by Security Analytics detector name"
+    }
+   }
+  }
+ },
+ {
+  "id": "alienvault-otx_otx_check_ip",
+  "description": "Check IP in AlienVault OTX",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ip": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "ip"
+   ]
+  }
+ },
+ {
+  "id": "alienvault-otx_otx_check_domain",
+  "description": "Check domain in OTX",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "domain": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "domain"
+   ]
+  }
+ },
+ {
+  "id": "alienvault-otx_otx_check_hash",
+  "description": "Check file hash in OTX",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "hash": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "hash"
+   ]
+  }
+ },
+ {
+  "id": "palo-alto_pan_get_threats",
+  "description": "Get threat logs",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "default": 20
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "slack_slack_send_alert",
+  "description": "Send security alert to Slack channel",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "channel": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ]
+    }
+   },
+   "required": [
+    "channel",
+    "message"
+   ]
+  }
+ },
+ {
+  "id": "carbon-black_cb_get_alerts",
+  "description": "Get Carbon Black alerts",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "default": 10
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "carbon-black_cb_search_device",
+  "description": "Search device by IP/hostname",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ip": {
+     "type": "string"
+    },
+    "hostname": {
+     "type": "string"
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "vstrike_vstrike_get_asset_topology",
+  "description": "Return full topology info for a VStrike asset: segment, site, criticality, neighbors.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "asset_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "asset_id"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_list_adjacent_assets",
+  "description": "List one-hop neighbors of an asset. Each neighbor may include a MITRE ATT&CK technique if the edge represents an observed or inferred attack-path step.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "asset_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "asset_id"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_get_blast_radius",
+  "description": "Return blast-radius info for an asset (count of reachable assets plus a sample).",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "asset_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "asset_id"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_get_segment_findings",
+  "description": "List VStrike-enriched findings for a given network segment.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "segment": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer",
+     "default": 100
+    }
+   },
+   "required": [
+    "segment"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_node_search",
+  "description": "Omni-search across nodes in the active VStrike network. Returns the nodes that caused the match.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "network_id": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer",
+     "default": 50
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_node_drift_get",
+  "description": "Returns the list of end-node state changes in order for the supplied node and what source identified each change.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "node_id": {
+     "type": "string"
+    },
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "node_id"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_storyline_list",
+  "description": "List the storylines available for the network.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "vstrike_vstrike_storyline_events_get",
+  "description": "List the events in the storylines along with their properties.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "storyline_id": {
+     "type": "string"
+    },
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "storyline_id"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_legend_run_list",
+  "description": "List the legend runs available for the network.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "vstrike_vstrike_legend_run_results_get",
+  "description": "Returns the results for the legend provided.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "legend_run_id": {
+     "type": "string"
+    },
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "legend_run_id"
+   ]
+  }
+ },
+ {
+  "id": "vstrike_vstrike_network_graph_get",
+  "description": "Fetch the active VStrike network graph as {label, nodes, edges, bbox}. Use this when you need the full topology of a network for layout, blast-radius, or path-finding reasoning rather than a single-asset lookup.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": true
+  }
+ },
+ {
+  "id": "vstrike_vstrike_ui_legend_apply",
+  "description": "Apply a legend run to the active VStrike iframe session. Re-colors / re-labels nodes per the legend. Returns once VStrike has accepted the request.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "legend_run_id": {
+     "type": "string"
+    },
+    "network_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "legend_run_id"
+   ],
+   "additionalProperties": true
+  }
+ },
+ {
+  "id": "vstrike_vstrike_ui_rightpanel_focus",
+  "description": "Open the right-hand details panel in the VStrike iframe. Takes no parameters; the panel opens for whatever node is currently selected in the active session. Pair with vstrike_ui_camera_node or other selection tools first if you want the panel to target a specific node.",
+  "parameters": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": true
+  }
+ },
+ {
+  "id": "microsoft-defender_mde_get_alerts",
+  "description": "Get Microsoft Defender alerts",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "default": 20
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "microsoft-defender_mde_get_machine",
+  "description": "Get machine info",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "machine_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "machine_id"
+   ]
+  }
+ },
+ {
+  "id": "microsoft-teams_teams_send_alert",
+  "description": "Send alert to Teams channel via webhook",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "title": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    },
+    "severity": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ]
+    }
+   },
+   "required": [
+    "title",
+    "message"
+   ]
+  }
+ },
+ {
+  "id": "azure-ad_aad_get_user",
+  "description": "Get Azure AD user",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "user": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "user"
+   ]
+  }
+ },
+ {
+  "id": "azure-ad_aad_get_sign_ins",
+  "description": "Get user sign-in logs",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "user": {
+     "type": "string"
+    },
+    "limit": {
+     "type": "integer",
+     "default": 20
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "misp_misp_search_ioc",
+  "description": "Search IOC in MISP",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "value": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "value"
+   ]
+  }
+ },
+ {
+  "id": "misp_misp_get_events",
+  "description": "Get recent MISP events",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "default": 10
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "id": "hybrid-analysis_ha_search_hash",
+  "description": "Search Hybrid Analysis by file hash",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "hash": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "hash"
+   ]
+  }
+ },
+ {
+  "id": "hybrid-analysis_ha_get_report",
+  "description": "Get analysis report",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "job_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "job_id"
+   ]
+  }
+ },
+ {
+  "id": "anyrun_anyrun_get_report",
+  "description": "Get Any.Run sandbox analysis report",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id"
+   ]
+  }
+ },
+ {
+  "id": "anyrun_anyrun_search_hash",
+  "description": "Search Any.Run by file hash",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "hash": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "hash"
+   ]
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_submit_file",
+  "description": "Submit a file to CAPE Sandbox for detonation. Accepts base64 file_b64 + filename.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "file_b64": {
+     "type": "string",
+     "description": "Base64-encoded file contents"
+    },
+    "filename": {
+     "type": "string",
+     "description": "Filename when file_b64 is used"
+    },
+    "options": {
+     "type": "string",
+     "description": "CAPE options string (optional)"
+    },
+    "timeout": {
+     "type": "integer",
+     "description": "Analysis timeout in seconds"
+    }
+   }
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_submit_url",
+  "description": "Submit a URL to CAPE Sandbox for behavioral analysis.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string"
+    },
+    "timeout": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "url"
+   ]
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_get_report",
+  "description": "Retrieve the full analysis report for a CAPE task.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id"
+   ]
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_get_iocs",
+  "description": "Extract IOCs (IPs, domains, URLs, dropped hashes, mutexes) from a completed CAPE task.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id"
+   ]
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_get_pcap",
+  "description": "Retrieve the PCAP download URL for a CAPE task (does not download bytes).",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id"
+   ]
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_list_tasks",
+  "description": "List recent CAPE analysis tasks with status.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "description": "Max tasks (default 20)"
+    },
+    "offset": {
+     "type": "integer",
+     "description": "Pagination offset"
+    }
+   }
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_search_hash",
+  "description": "Look up prior CAPE analyses by file hash (md5/sha1/sha256). Use before submitting to avoid duplicate detonation.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "hash": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "hash"
+   ]
+  }
+ },
+ {
+  "id": "cape-sandbox_cape_task_status",
+  "description": "Lightweight status check for a single task (pending / running / reported / failed).",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id"
+   ]
+  }
+ },
+ {
+  "id": "ip-geolocation_geolocate_ip",
+  "description": "Get geolocation for IP address",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ip": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "ip"
+   ]
+  }
+ },
+ {
+  "id": "ip-geolocation_geolocate_batch",
+  "description": "Geolocate multiple IPs",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ips": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "ips"
+   ]
+  }
+ },
+ {
+  "id": "url-analysis_analyze_url",
+  "description": "Analyze URL for security indicators",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "url"
+   ]
+  }
+ },
+ {
+  "id": "url-analysis_extract_iocs",
+  "description": "Extract IOCs from URL",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "url"
+   ]
+  }
+ },
+ {
+  "id": "cloudflare_cf_lookup_ip_threat",
+  "description": "Read-only: fetch IP Access Rules referencing this IP plus recent firewall events (read scope only). Returns empty result when integration disabled.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "ip": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "ip"
+   ]
+  }
+ },
+ {
+  "id": "cloudflare_cf_lookup_domain_threat",
+  "description": "Read-only: fetch Gateway category and rule matches for a domain.",
+  "parameters": {
+   "type": "object",
+   "properties": {
+    "domain": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "domain"
+   ]
+  }
+ }
+]

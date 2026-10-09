@@ -216,6 +216,25 @@ def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -
     return assignment_model
 
 
+def _context_window_for(provider: Any, model: str) -> int:
+    """The resolved model's context window in tokens, 0 when unknown.
+
+    Read from the gateway catalogue the registry prices from — the same
+    ``max_input_tokens`` discovery recorded — so the agent layer can size the
+    request against the window the model actually has. A lookup failure is
+    an unknown window, never a failed turn: the agent keeps its default
+    ceiling, which is what it did before the window was carried at all.
+    """
+    try:
+        info = get_registry().get_model_info(
+            provider.provider_id, provider.provider_type, model
+        )
+        return int(info.context_window or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("context window lookup failed for %s: %s", model, exc)
+        return 0
+
+
 class ContentBlock(BaseModel):
     """Content block for message (text or image)."""
 
@@ -350,6 +369,7 @@ async def chat_stream(
         _raise_no_provider()
     model = request.model = model_for(active_provider, request.model)
     provider_type = active_provider.provider_type
+    context_window = _context_window_for(active_provider, model)
 
     # Surface whatever MCP integrations are connected right now (VirusTotal, OTX,
     # MISP, Shodan, …) so the assistant can call them the moment their server is
@@ -364,7 +384,13 @@ async def chat_stream(
         # The provider rides alongside the model so the gateway routes to the
         # account this request resolved to, rather than to whichever provider
         # claims the bare model name first.
-        "config": chat_config(model, tools, mcp_tools, provider=provider_type),
+        "config": chat_config(
+            model,
+            tools,
+            mcp_tools,
+            provider=provider_type,
+            context_window=context_window,
+        ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
         "principal": tool_principal.mint(current_user.username),
@@ -380,7 +406,16 @@ async def chat_stream(
         if trimmed is None:
             return None
         kept, dropped = trimmed
-        return chat_config(model, tools, kept, provider=provider_type), dropped
+        return (
+            chat_config(
+                model,
+                tools,
+                kept,
+                provider=provider_type,
+                context_window=context_window,
+            ),
+            dropped,
+        )
 
     return StreamingResponse(
         _relay(

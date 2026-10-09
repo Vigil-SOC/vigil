@@ -24,6 +24,27 @@ export interface FoldPolicy {
 // inside any provider's window and inside the gateway's own per-request ceiling.
 export const DEFAULT_FOLD: FoldPolicy = { head: 2, tail: 8, max_messages: 40, max_chars: 120_000 };
 
+// A request is bounded by the model that will read it, not by a number chosen for
+// a catalogue nobody measured. The gateway catalogue carries each model's window
+// (max_input_tokens); at ~3.5 characters per token, less an output reservation for
+// the answer (and the tool calls that precede it), that is the ceiling a request
+// for that model may weigh. The flat DEFAULT_FOLD remains the fallback for a
+// model whose window nobody knows.
+export const CHARS_PER_TOKEN = 3.5;
+export const OUTPUT_RESERVE_TOKENS = 8_192;
+
+export function ceilingForWindow(contextWindow: number | undefined): number {
+  if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return DEFAULT_FOLD.max_chars;
+  }
+  if (contextWindow <= OUTPUT_RESERVE_TOKENS) return DEFAULT_FOLD.max_chars;
+  return Math.floor((contextWindow - OUTPUT_RESERVE_TOKENS) * CHARS_PER_TOKEN);
+}
+
+export function foldPolicyFor(contextWindow: number | undefined): FoldPolicy {
+  return { ...DEFAULT_FOLD, max_chars: ceilingForWindow(contextWindow) };
+}
+
 export function sizeOf(messages: readonly Message[]): number {
   return messages.reduce((total, message) => total + message.content.length, 0);
 }
@@ -169,6 +190,30 @@ export function transientTail(working: string): Message[] {
   return working === "" ? [] : [{ role: "user", content: working }];
 }
 
+// The case brief rides inside the system prompt between these markers (rendered
+// by core/cases/case_brief.py), sized by a build-side cap that knows neither the
+// model nor the catalogue it will sit beside. When the prefix alone crosses the
+// ceiling, the brief is the one part that can shed: whole lines from the end of
+// the block, which is where its oldest rows sit (alerts and evidence are listed
+// newest first), keeping the markers and everything outside them untouched.
+const BRIEF_OPEN = "<case_data>";
+const BRIEF_CLOSE = "</case_data>";
+
+export function shedBrief(system: string, excess: number): string {
+  if (excess <= 0) return system;
+  const open = system.indexOf(BRIEF_OPEN);
+  const close = open === -1 ? -1 : system.indexOf(BRIEF_CLOSE, open + BRIEF_OPEN.length);
+  if (open === -1 || close === -1) return system;
+  const start = open + BRIEF_OPEN.length;
+  const inner = system.slice(start, close);
+  const keep = Math.max(0, inner.length - excess);
+  if (keep >= inner.length) return system;
+  // Whole lines only: a half-kept row reads as a fact cut mid-sentence.
+  const cut = inner.lastIndexOf("\n", keep);
+  const kept = cut > 0 ? inner.slice(0, cut) : "";
+  return system.slice(0, start) + kept + (kept === "" ? "" : "\n") + system.slice(close);
+}
+
 export function assemble(
   prefix: Prefix,
   task: string,
@@ -177,15 +222,29 @@ export function assemble(
   summarise: Summarise,
   policy: FoldPolicy = DEFAULT_FOLD,
 ): { messages: Message[]; folded: number } {
-  const intro = prefixMessages(prefix, task);
+  let intro = prefixMessages(prefix, task);
   const tail = transientTail(working);
+  const catalogue = JSON.stringify(prefix.tools).length;
   // The ceiling is the whole request's, so the parts the fold cannot touch -- the system
-  // prompt and the tool catalogue -- are spent before it gets a budget.
-  const spent = sizeOf(intro) + sizeOf(tail) + JSON.stringify(prefix.tools).length;
-  const room = Math.max(0, policy.max_chars - spent);
-  // A question in history is never folded, so one the prefix leaves no room for cannot
-  // be answered. A task is the prefix's own and keeps the old behaviour.
+  // prompt and the tool catalogue -- are spent before it gets a budget. The brief
+  // sheds first: it is the only spent part sized by a guess, and the question
+  // guard below is only honest once it has shed what it can.
+  let spent = sizeOf(intro) + sizeOf(tail) + catalogue;
+  // The conversation is part of what the request must carry, and the brief
+  // sheds before any of it folds: it sheds enough for the whole history, not
+  // merely enough for the prefix, or the guard below would refuse a question
+  // the brief could have made room for.
   const question = history[pinnedAt(history)];
+  const carried = spent + sizeOf(history);
+  if (carried > policy.max_chars) {
+    const system = shedBrief(intro[0]!.content, carried - policy.max_chars);
+    if (system !== intro[0]!.content) {
+      intro = [{ role: "system", content: system }, intro[1]!];
+      spent = sizeOf(intro) + sizeOf(tail) + catalogue;
+    }
+  }
+  const room = Math.max(0, policy.max_chars - spent);
+  // A task is the prefix's own and keeps the old behaviour.
   if (question !== undefined && question.content.length > room) {
     throw new Error("This case has more than Ask can read at once. Ask about something more specific.");
   }
