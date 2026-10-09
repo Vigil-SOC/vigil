@@ -1,0 +1,407 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/evidence-report/v1",
+  "title": "Medic evidence report v1 (medic.evidence/v1)",
+  "description": "The only file that leaves a partner site in Phase 0 (K1 TB6, T-31). Closed schema: every object is additionalProperties false, every leaf carries x-medic-type (enum, number, id, timestamp, hash; never redacted_excerpt or pack_text), every string is an enum, a const or a fixed pattern, and every number is an integer (counts and seconds; rates are computed by the reader). No group values, evidence, excerpts, advice, comments, admin identities or incident IDs. The file is the canonical serialisation (sorted keys, 2-space indent, ASCII, LF, one trailing newline), so the bytes the admin previews are the only spelling of the content (evidence_report_check.py). Field-to-metric map: outputs/X3-evidence-report-adr.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "instance_id",
+    "install_shape",
+    "medic_version",
+    "engine_api",
+    "dev_mode",
+    "generated_at",
+    "period",
+    "retention_days",
+    "packs",
+    "pack_events",
+    "chain",
+    "availability",
+    "sensors_blind",
+    "rule_exposure",
+    "incidents",
+    "unknown_signature",
+    "watcher_incidents",
+    "replay_feedback",
+    "overhead"
+  ],
+  "properties": {
+    "format": {
+      "const": "medic.evidence/v1",
+      "x-medic-type": "enum"
+    },
+    "instance_id": {
+      "description": "Random per install (X1 5a): mi_ + 16 hex, never derived from a host or cluster name. Separates instances and partner from internal (A4 T).",
+      "type": "string",
+      "pattern": "^mi_[0-9a-f]{16}$",
+      "x-medic-type": "id"
+    },
+    "install_shape": {
+      "enum": ["start_sh", "compose", "helm"],
+      "x-medic-type": "enum"
+    },
+    "medic_version": {
+      "$ref": "#/$defs/semver"
+    },
+    "engine_api": {
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]{0,2})$",
+      "x-medic-type": "id"
+    },
+    "dev_mode": {
+      "description": "Unsigned content was allowed during the period (UX-9). A true report doesn't count toward the gate.",
+      "type": "boolean",
+      "x-medic-type": "enum"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/ts"
+    },
+    "period": {
+      "description": "Half-open [from, to), whole hours UTC, 1 hour to 31 days (X2 /v1/export). seconds = to - from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "seconds"],
+      "properties": {
+        "from": {"$ref": "#/$defs/ts_hour"},
+        "to": {"$ref": "#/$defs/ts_hour"},
+        "seconds": {"type": "integer", "minimum": 3600, "maximum": 2678400, "x-medic-type": "number"}
+      }
+    },
+    "retention_days": {
+      "description": "Effective retention (C4 6.5): explains anchors in the period.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3650,
+      "x-medic-type": "number"
+    },
+    "packs": {
+      "description": "Every pack that was active during the period, with how long (F3, F4).",
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "channel", "active_s"],
+        "properties": {
+          "id": {"description": "Closed list of published pack ids (F4); a new pack is a schema MINOR.", "enum": ["medic-core"], "x-medic-type": "enum"},
+          "version": {"$ref": "#/$defs/semver"},
+          "channel": {"enum": ["stable", "beta", "dev"], "x-medic-type": "enum"},
+          "active_s": {"$ref": "#/$defs/seconds"}
+        }
+      }
+    },
+    "pack_events": {
+      "description": "Counts of G2 pack_event records in the period, by event.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["imported", "reverted", "override", "rule_skipped"],
+      "properties": {
+        "imported": {"$ref": "#/$defs/count"},
+        "reverted": {"$ref": "#/$defs/count"},
+        "override": {"$ref": "#/$defs/count"},
+        "rule_skipped": {"$ref": "#/$defs/count"}
+      }
+    },
+    "chain": {
+      "description": "Outside witness for the decision log (K1 T-17, C4 6.5, G2 4). head is the store head when the report was generated.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "oldest", "first_seq_in_period", "last_seq_in_period", "anchors_in_period", "resets_in_period", "verify"],
+      "properties": {
+        "head": {"$ref": "#/$defs/seq_hash"},
+        "oldest": {
+          "description": "Where verification starts: genesis, the oldest anchor, or a store_reset.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seq", "hash", "kind"],
+          "properties": {
+            "seq": {"$ref": "#/$defs/count"},
+            "hash": {"$ref": "#/$defs/hash"},
+            "kind": {"enum": ["genesis", "anchor", "store_reset"], "x-medic-type": "enum"}
+          }
+        },
+        "first_seq_in_period": {"$ref": "#/$defs/seq_or_null"},
+        "last_seq_in_period": {"$ref": "#/$defs/seq_or_null"},
+        "anchors_in_period": {"$ref": "#/$defs/count"},
+        "resets_in_period": {"$ref": "#/$defs/count"},
+        "verify": {
+          "description": "decision_chain.verify from oldest to head when the report was generated.",
+          "enum": ["ok", "E-HASH", "E-SEQ", "E-LINK", "E-UNANCHORED"],
+          "x-medic-type": "enum"
+        }
+      }
+    },
+    "availability": {
+      "description": "C5 5.5 / I1-9. Every second of the period is in exactly one state; up_s = running + degraded is the denominator for every rate (A4 T).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["up_s", "states", "restarts", "decisions_lost", "store_states_seen"],
+      "properties": {
+        "up_s": {"$ref": "#/$defs/seconds"},
+        "states": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["running", "degraded", "starting", "not_recording", "blind", "crash_looping", "not_running"],
+          "properties": {
+            "running": {"$ref": "#/$defs/span"},
+            "degraded": {"$ref": "#/$defs/span"},
+            "starting": {"$ref": "#/$defs/span"},
+            "not_recording": {"$ref": "#/$defs/span"},
+            "blind": {"$ref": "#/$defs/span"},
+            "crash_looping": {"$ref": "#/$defs/span"},
+            "not_running": {"$ref": "#/$defs/span"}
+          }
+        },
+        "restarts": {
+          "description": "Process exits in the period, by reason (X2 Status.last_exit).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clean", "signal", "oom", "watchdog_stall", "crash", "unknown"],
+          "properties": {
+            "clean": {"$ref": "#/$defs/count"},
+            "signal": {"$ref": "#/$defs/count"},
+            "oom": {"$ref": "#/$defs/count"},
+            "watchdog_stall": {"$ref": "#/$defs/count"},
+            "crash": {"$ref": "#/$defs/count"},
+            "unknown": {"$ref": "#/$defs/count"}
+          }
+        },
+        "decisions_lost": {"$ref": "#/$defs/count"},
+        "store_states_seen": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["ok", "near_cap", "on_reserve", "recording_stopped", "reset_after_corruption", "backend_mismatch", "purge_refused_clock", "migration_blocked"],
+            "x-medic-type": "enum"
+          }
+        }
+      }
+    },
+    "sensors_blind": {
+      "description": "Per signal (D1 catalogue id, signal_ids.json), time it read unknown while the watcher was up (K1 T-09). Signals never blind are omitted.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["signal", "intervals", "seconds"],
+        "properties": {
+          "signal": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,47}(\\.[a-z][a-z0-9_]{0,31})?$", "x-medic-type": "id"},
+          "intervals": {"$ref": "#/$defs/count"},
+          "seconds": {"$ref": "#/$defs/seconds"}
+        }
+      }
+    },
+    "rule_exposure": {
+      "description": "A4 4b: per rule revision, seconds loaded, and seconds loaded AND every signal it reads was up AND the watcher was up. The per-rule false-alarm denominator.",
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "revision", "loaded_s", "exposed_s"],
+        "properties": {
+          "rule_id": {"$ref": "#/$defs/rule_id"},
+          "revision": {"$ref": "#/$defs/revision"},
+          "loaded_s": {"$ref": "#/$defs/seconds"},
+          "exposed_s": {"$ref": "#/$defs/seconds"}
+        }
+      }
+    },
+    "incidents": {
+      "description": "subject: vigil incidents opened in the period, one row per (rule_id, revision, lane, lane_reason). Feedback and adjudication are as of period.to.",
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "revision", "lane", "lane_reason", "detection_type", "has_fix", "opened", "routed", "suppressed_quiet", "reopened", "escalation_simulated", "open_at_end", "feedback_live", "wrong_lane_suggested", "adjudication"],
+        "properties": {
+          "rule_id": {"$ref": "#/$defs/rule_id"},
+          "revision": {"$ref": "#/$defs/revision"},
+          "lane": {"enum": [1, 2, 3], "x-medic-type": "enum"},
+          "lane_reason": {"enum": ["rule", "lane1_gate_failed"], "x-medic-type": "enum"},
+          "detection_type": {"enum": ["event", "absence"], "x-medic-type": "enum"},
+          "has_fix": {"description": "The rule carries fix text (pack advice), so its ratings count toward admin agreement (I1-5).", "type": "boolean", "x-medic-type": "enum"},
+          "opened": {"$ref": "#/$defs/count"},
+          "routed": {"description": "Opened in the period and routed by period.to. The gate counts these; suppressed symptoms aren't separate alarms (E3 6.1).", "$ref": "#/$defs/count"},
+          "suppressed_quiet": {"$ref": "#/$defs/count"},
+          "reopened": {"$ref": "#/$defs/count"},
+          "escalation_simulated": {"$ref": "#/$defs/count"},
+          "open_at_end": {"$ref": "#/$defs/count"},
+          "feedback_live": {
+            "description": "Current live rating per (admin, routed incident); unrated = routed incidents with no live rating from anyone.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agree", "disagree", "wrong_lane", "false_alarm", "unrated"],
+            "properties": {
+              "agree": {"$ref": "#/$defs/count"},
+              "disagree": {"$ref": "#/$defs/count"},
+              "wrong_lane": {"$ref": "#/$defs/count"},
+              "false_alarm": {"$ref": "#/$defs/count"},
+              "unrated": {"$ref": "#/$defs/count"}
+            }
+          },
+          "wrong_lane_suggested": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lane1", "lane2", "lane3"],
+            "properties": {
+              "lane1": {"$ref": "#/$defs/count"},
+              "lane2": {"$ref": "#/$defs/count"},
+              "lane3": {"$ref": "#/$defs/count"}
+            }
+          },
+          "adjudication": {
+            "description": "Latest G2 adjudication per routed incident (internal instances; partner verdicts stay on DeepTempo's sheet). none = not adjudicated in the store.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["true_fault", "false_alarm", "watcher_caused", "unknown", "none"],
+            "properties": {
+              "true_fault": {"$ref": "#/$defs/count"},
+              "false_alarm": {"$ref": "#/$defs/count"},
+              "watcher_caused": {"$ref": "#/$defs/count"},
+              "unknown": {"$ref": "#/$defs/count"},
+              "none": {"$ref": "#/$defs/count"}
+            }
+          }
+        }
+      }
+    },
+    "unknown_signature": {
+      "description": "Incidents no rule claimed (G1 R4, lane 3, rule null).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opened", "routed"],
+      "properties": {
+        "opened": {"$ref": "#/$defs/count"},
+        "routed": {"$ref": "#/$defs/count"}
+      }
+    },
+    "watcher_incidents": {
+      "description": "subject: watcher incidents (watcher.* built-ins), kept out of lane metrics (G1 R7).",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "opened", "open_s"],
+        "properties": {
+          "rule_id": {"type": "string", "pattern": "^watcher\\.[a-z0-9][a-z0-9-]{1,30}$", "x-medic-type": "id"},
+          "opened": {"$ref": "#/$defs/count"},
+          "open_s": {"$ref": "#/$defs/seconds"}
+        }
+      }
+    },
+    "replay_feedback": {
+      "description": "Replay review ratings (source: replay), never pooled with live (I1 5). heads = replay store heads rated, so DeepTempo can match them to its corpus builds.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["heads", "agree", "disagree", "wrong_lane", "false_alarm"],
+      "properties": {
+        "heads": {"type": "array", "maxItems": 4, "uniqueItems": true, "items": {"$ref": "#/$defs/hash"}},
+        "agree": {"$ref": "#/$defs/count"},
+        "disagree": {"$ref": "#/$defs/count"},
+        "wrong_lane": {"$ref": "#/$defs/count"},
+        "false_alarm": {"$ref": "#/$defs/count"}
+      }
+    },
+    "overhead": {
+      "description": "I1-6, self-measured by Medic from 1-min samples while up (C7: a cross-check; I3/I4 measure from outside on internal instances). null if Medic took no samples.",
+      "oneOf": [
+        {"type": "null", "x-medic-type": "enum"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "samples", "cpu_p95_millicores", "cpu_max_millicores", "mem_p95_mib", "mem_max_mib", "store_growth_kib_per_day", "gateway_req_per_min_p95", "limit_hits"],
+          "properties": {
+            "source": {"const": "medic_self", "x-medic-type": "enum"},
+            "samples": {"$ref": "#/$defs/count"},
+            "cpu_p95_millicores": {"$ref": "#/$defs/count"},
+            "cpu_max_millicores": {"$ref": "#/$defs/count"},
+            "mem_p95_mib": {"$ref": "#/$defs/count"},
+            "mem_max_mib": {"$ref": "#/$defs/count"},
+            "store_growth_kib_per_day": {"$ref": "#/$defs/count"},
+            "gateway_req_per_min_p95": {"$ref": "#/$defs/count"},
+            "limit_hits": {"$ref": "#/$defs/count"}
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "ts": {
+      "description": "Whole seconds UTC; one spelling per instant.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "x-medic-type": "timestamp"
+    },
+    "ts_hour": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00:00Z$",
+      "x-medic-type": "timestamp"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "x-medic-type": "hash"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,4})$",
+      "x-medic-type": "id"
+    },
+    "rule_id": {
+      "description": "Pack rule ids only (F1 pattern, tighter length); the checker can also hold them to the pack catalogue.",
+      "type": "string",
+      "pattern": "^(ingest|llm|pipeline)\\.[a-z0-9][a-z0-9-]{1,47}$",
+      "x-medic-type": "id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9999,
+      "x-medic-type": "number"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000,
+      "x-medic-type": "number"
+    },
+    "seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2678400,
+      "x-medic-type": "number"
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intervals", "seconds"],
+      "properties": {
+        "intervals": {"$ref": "#/$defs/count"},
+        "seconds": {"$ref": "#/$defs/seconds"}
+      }
+    },
+    "seq_hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "hash"],
+      "properties": {
+        "seq": {"$ref": "#/$defs/count"},
+        "hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "seq_or_null": {
+      "oneOf": [
+        {"type": "null", "x-medic-type": "enum"},
+        {"$ref": "#/$defs/count"}
+      ]
+    }
+  }
+}

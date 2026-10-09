@@ -1,0 +1,125 @@
+id: v16-group-overflow
+title: With a cap of 2 groups, the third source lands in the overflow group
+covers:
+- §3 cap
+start: '2026-10-07T10:00:00Z'
+end: +12m
+limits:
+  group_cap: 2
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.source-erroring
+    title: Vector rule ingest.source-erroring
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 2
+    signals:
+      errors:
+        sample:
+          signal: federation_sources
+          key: sources.consecutive_errors
+          by:
+          - source
+    when:
+      fn: latest
+      signal: errors
+      op: '>'
+      value: 3
+    group_by:
+    - source
+    for: 0s
+    keep_firing_for: 0s
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.federation
+  covers:
+  - federation_sources
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  federation_sources:
+    sources.consecutive_errors: gauge
+series:
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels:
+    source: a
+  steps:
+  - - +0s
+    - 0
+  - - +1m
+    - 5
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels:
+    source: b
+  steps:
+  - - +0s
+    - 0
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels:
+    source: c
+  from: +5m
+  steps:
+  - - +5m
+    - 0
+  - - +10m
+    - 5
+expect:
+- at: +1m
+  rule: ingest.source-erroring
+  eval: true
+  state: firing
+  group:
+    source: a
+  incident: A
+- at: +10m
+  rule: ingest.source-erroring
+  eval: false
+  state: inactive
+  group:
+    source: b
+- at: +10m
+  rule: ingest.source-erroring
+  eval: true
+  state: firing
+  group: &id001
+    source: __overflow__
+  incident: O
+- at: +10m
+  rule: ingest.source-erroring
+  eval: true
+  state: firing
+  group:
+    source: a
+  incident: A
+incidents:
+  A:
+    rule: ingest.source-erroring
+    active_since: +1m
+    opened_at: +1m
+    resolving_since: null
+    resolved_at: null
+    group:
+      source: a
+    routed_at: +1m
+  O:
+    rule: ingest.source-erroring
+    active_since: +10m
+    opened_at: +10m
+    resolving_since: null
+    resolved_at: null
+    group: *id001
+    routed_at: +10m

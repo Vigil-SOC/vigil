@@ -1,0 +1,172 @@
+id: v17-suppression-basic
+title: 'Triage stalls because the LLM gateway is down: the P-4 incident is suppressed'
+covers:
+- §6 suppression
+start: '2026-10-07T10:00:00Z'
+end: +92m
+rules:
+- ref: llm-gateway-outage.yaml
+- ref: pipeline-triage-stalled.yaml
+suppression:
+- parent:
+    class: llm
+  children:
+    mode: P-4
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+- id: log.soc-daemon
+  covers:
+  - log_soc_daemon
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_status.processor:
+    processed: counter
+    triaged: counter
+series:
+- signal: daemon_status.processor
+  key: processed
+  steps:
+  - - +0m
+    - 0
+  - - +5m
+    - 10
+  - - +10m
+    - 20
+  - - +15m
+    - 30
+  - - +20m
+    - 40
+  - - +25m
+    - 50
+  - - +30m
+    - 60
+  - - +35m
+    - 70
+  - - +40m
+    - 80
+  - - +45m
+    - 90
+  - - +50m
+    - 100
+  - - +55m
+    - 110
+  - - +60m
+    - 120
+  - - +65m
+    - 130
+  - - +70m
+    - 140
+  - - +75m
+    - 150
+  - - +80m
+    - 160
+  - - +85m
+    - 170
+  - - +90m
+    - 180
+  - - +95m
+    - 190
+- signal: daemon_status.processor
+  key: triaged
+  steps:
+  - - +0s
+    - 0
+  - - +5m
+    - 10
+  - - +10m
+    - 20
+  - - +60m
+    - 30
+  - - +65m
+    - 40
+  - - +70m
+    - 50
+  - - +75m
+    - 60
+  - - +80m
+    - 70
+  - - +85m
+    - 80
+  - - +90m
+    - 90
+logs:
+- signal: log_soc_daemon
+  level: ERROR
+  logger: services.daemon.processor
+  template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'
+  message: 'Failed to connect LLM gateway, AI triage is skipped until it connects: ConnectError: connection refused'
+  at: +10m
+- signal: log_soc_daemon
+  level: INFO
+  logger: services.daemon.processor
+  template: '%s; recovered after %d failures'
+  message: LLM gateway connected for AI triage; recovered after 12 failures
+  at: +60m
+expect:
+- at: +12m
+  rule: llm.gateway-outage
+  eval: true
+  state: firing
+  incident: P
+- at: +40m
+  rule: pipeline.triage-stalled
+  eval: true
+  state: pending
+- at: +50m
+  rule: pipeline.triage-stalled
+  eval: true
+  state: firing
+  incident: C
+  suppressed: true
+- at: +60m
+  rule: pipeline.triage-stalled
+  eval: false
+  state: resolving
+  incident: C
+  suppressed: true
+- at: +65m
+  rule: llm.gateway-outage
+  eval: false
+  state: inactive
+- at: +75m
+  rule: pipeline.triage-stalled
+  eval: false
+  state: resolving
+  incident: C
+  note: resolving, so it closes quietly
+- at: +90m
+  rule: pipeline.triage-stalled
+  eval: false
+  state: inactive
+incidents:
+  P:
+    rule: llm.gateway-outage
+    active_since: +10m
+    opened_at: +12m
+    resolving_since: +60m
+    resolved_at: +65m
+    reason: cleared
+    routed_at: +12m
+  C:
+    rule: pipeline.triage-stalled
+    active_since: +40m
+    opened_at: +50m
+    resolving_since: +60m
+    resolved_at: +90m
+    reason: cleared
+    suppressed_by: P
+    routed_at: null

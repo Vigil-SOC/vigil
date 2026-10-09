@@ -1,0 +1,98 @@
+id: v22-absent-value
+title: An absent backup gauge makes age() false and absent_for(1h) true once covered
+covers:
+- §2 latest absent
+- §2 absent_for
+start: '2026-10-07T10:00:00Z'
+end: +60m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: pipeline.backup-stale
+    title: Vector rule pipeline.backup-stale
+    revision: 1
+    fault:
+      class: pipeline
+      mode: P-6
+      causes:
+      - P-6.c
+    lane: 2
+    signals: &id001
+      backup:
+        sample:
+          signal: backend_metrics_backup
+          key: vigil_backup_last_success_timestamp
+    when:
+      fn: age
+      signal: backup
+      op: '>'
+      value: 86400
+    for: 0s
+    advice: &id002
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: pipeline.backup-never
+    title: Vector rule pipeline.backup-never
+    revision: 1
+    fault:
+      class: pipeline
+      mode: P-6
+      causes:
+      - P-6.c
+    lane: 2
+    signals: *id001
+    when:
+      fn: absent_for
+      signal: backup
+      window: 1h
+    detection: absence
+    for: 0s
+    advice: *id002
+sensors:
+- id: http.backend-metrics
+  covers:
+  - backend_metrics_backup
+  interval: 60s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  backend_metrics_backup:
+    vigil_backup_last_success_timestamp: timestamp
+series:
+- signal: backend_metrics_backup
+  key: vigil_backup_last_success_timestamp
+  steps:
+  - - +0s
+    - null
+expect:
+- at: +30m
+  rule: pipeline.backup-stale
+  eval: false
+  state: inactive
+- at: +30m
+  rule: pipeline.backup-never
+  eval: unknown
+  state: inactive
+- at: +57m45s
+  rule: pipeline.backup-never
+  eval: unknown
+  state: inactive
+- at: +58m
+  rule: pipeline.backup-never
+  eval: true
+  state: firing
+  incident: A
+incidents:
+  A:
+    rule: pipeline.backup-never
+    active_since: +58m
+    opened_at: +58m
+    resolving_since: null
+    resolved_at: null
+    routed_at: +58m

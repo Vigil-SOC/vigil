@@ -1,0 +1,22 @@
+# Row age · P-2 (sql view). Expected trust: trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.run-stale
+title: Investigation runs are executing with no recent activity
+revision: 1
+fault: {class: pipeline, mode: P-2, causes: [P-2.a, P-2.b]}
+lane: 3
+signals:
+  stale_count: {sample: {signal: sql_investigations_stale, key: stale_executing}}
+  oldest:      {sample: {signal: sql_investigations_stale, key: oldest_last_activity_at}}
+when:
+  all:
+    - {fn: latest, signal: stale_count, op: ">", value: 0}
+    - {fn: age, signal: oldest, op: ">", value: 1800}
+for: 10m
+keep_firing_for: 30m
+advice:
+  summary: At least one investigation has been executing with no activity for over 30 minutes.
+  fix: >-
+    Send this incident to DeepTempo Support. Cancelling the stuck run in the
+    console frees its slot; record that you did so.

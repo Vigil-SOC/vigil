@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "id": "http.backend_metrics:01JA8Z3K4M:2",
+  "kind": "sample",
+  "signal": "backend_metrics_backup",
+  "sensor": {
+    "id": "http.backend_metrics",
+    "run": "01JA8Z3K4M",
+    "seq": 2
+  },
+  "target": {
+    "service": "backend",
+    "instance": "deeptempo-backend",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:30Z",
+  "observed_at": "2026-10-07T10:00:30Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "values": [
+    {
+      "key": "vigil_backup_last_success_timestamp",
+      "type": "gauge",
+      "state": "absent",
+      "value": 0,
+      "trust": "trusted"
+    }
+  ],
+  "$comment": "Absent must not be confused with zero"
+}
