@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import IntegrationWizard from '../settings/IntegrationWizard'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import { getAllIntegrations } from '../../config/integrations'
 import { CATALOG_TO_SOURCE } from '../../config/sourceBadges'
 import { DATA_SOURCE_CATEGORIES } from './setupSteps'
 import { configApi, mcpApi } from '../../services/api'
+import { Icon, type IconName } from '../../shared/icons'
 import { TextInput } from '../../shared/ui'
-import CheckMark from './CheckMark'
-import SourceCollection from './SourceCollection'
+import ChoiceCard from './ChoiceCard'
+import ConnectSource, { type ConnectResult } from './ConnectSource'
+import { fieldsOf, type ConnectConfig } from './connectConfig'
+import { DemoSource, UploadSource } from './FileAndDemoSources'
 
 // for the few ids whose mcp-config.json server key differs from the catalog id.
 // Shared by the picker filter and connect-on-save, so the two can't diverge.
@@ -22,18 +24,34 @@ const serverFor = (catalogId: string) => CATALOG_TO_SERVER[catalogId] ?? catalog
 
 interface IntegrationsConfig {
   enabled_integrations: string[]
-  integrations: Record<string, Record<string, unknown>>
+  integrations: Record<string, ConnectConfig>
+  // per integration, which password fields already have a stored value (booleans only)
+  secrets_set: Record<string, Record<string, boolean>>
 }
 
-const DataSourceDialog = () => {
-  const [selected, setSelected] = useState<IntegrationMetadata | null>(null)
-  // set by a successful save; the step stays on it so the result is seen
-  const [connected, setConnected] = useState<IntegrationMetadata | null>(null)
+// the board's tile icons, from the shared set (no vendor logos)
+const CATEGORY_ICON: Record<string, IconName> = {
+  SIEM: 'chart',
+  'EDR/XDR': 'shield',
+  'Cloud Security': 'lock',
+  'Network Security': 'graph',
+  'Data Pipeline': 'flow',
+  'Detection & AI': 'brain',
+}
+const TILE_COUNT = 6
+
+type Pick = string | null | undefined
+
+const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
+  // undefined = the first source, null = nothing (after "Connect another")
+  const [picked, setPicked] = useState<Pick>(undefined)
+  const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
   const [availableServers, setAvailableServers] = useState<Set<string> | null>(null)
   const [serversError, setServersError] = useState(false)
+  const [cfgReady, setCfgReady] = useState(false)
   // loaded once, so the save merges instead of clobbering other integrations
-  const cfg = useRef<IntegrationsConfig>({ enabled_integrations: [], integrations: {} })
+  const cfg = useRef<IntegrationsConfig>({ enabled_integrations: [], integrations: {}, secrets_set: {} })
 
   // a fetch failure is kept distinct from "no servers", so it can't masquerade
   // as an empty picker
@@ -55,9 +73,11 @@ const DataSourceDialog = () => {
         cfg.current = {
           enabled_integrations: data.enabled_integrations || [],
           integrations: data.integrations || {},
+          secrets_set: data.secrets_set || {},
         }
       })
       .catch(() => {})
+      .finally(() => alive && setCfgReady(true))
     return () => {
       alive = false
     }
@@ -75,7 +95,7 @@ const DataSourceDialog = () => {
     )
   }, [availableServers])
 
-  const filtered = useMemo(() => {
+  const found = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return dataSources
     return dataSources.filter(
@@ -83,120 +103,157 @@ const DataSourceDialog = () => {
     )
   }, [dataSources, query])
 
-  const handleSave = async (id: string, config: Record<string, unknown>) => {
+  // saves run one at a time: each reads and rewrites the shared config
+  const saving = useRef<Promise<unknown>>(Promise.resolve())
+  const handleSave = (integration: IntegrationMetadata, config: ConnectConfig) => {
+    const run = saving.current.then(() => save(integration, config))
+    saving.current = run.catch(() => {})
+    return run
+  }
+
+  const save = async (integration: IntegrationMetadata, config: ConnectConfig): Promise<ConnectResult> => {
+    const { id } = integration
     const cur = cfg.current
     const integrations = { ...cur.integrations, [id]: config }
     const alreadyEnabled = cur.enabled_integrations.includes(id)
-    const enabled = alreadyEnabled
-      ? cur.enabled_integrations
-      : [...cur.enabled_integrations, id]
+    const enabled = alreadyEnabled ? cur.enabled_integrations : [...cur.enabled_integrations, id]
     await configApi.setIntegrations({ enabled_integrations: enabled, integrations })
-    // keep the cache current: the dialog stays mounted, so a second save must
-    // merge with this one, not with the state from mount
-    cfg.current = { enabled_integrations: enabled, integrations }
+    // keep the saved form for "Test again", but not the secrets: only that they are set
+    const kept = { ...config }
+    const secrets = { ...cur.secrets_set[id] }
+    for (const f of fieldsOf(integration))
+      if (f.type === 'password') {
+        if (kept[f.name]) secrets[f.name] = true
+        delete kept[f.name]
+      }
+    cfg.current = {
+      enabled_integrations: enabled,
+      integrations: { ...cur.integrations, [id]: kept },
+      secrets_set: { ...cur.secrets_set, [id]: secrets },
+    }
 
     const serverName = serverFor(id)
     const { data } = await mcpApi.setServerEnabled(serverName, true)
     // success:true only means the enabled bit persisted; `connected` is the real
-    // result. null = MCP subsystem down, not a cred failure, so let it through.
-    if (data?.connected === false) {
+    // result. null = MCP subsystem down, not a cred failure, so it is let through.
+    const connected = data?.connected ?? null
+    if (connected === false) {
       mcpApi.setServerEnabled(serverName, false).catch(() => {})
       // the checklist keys off enabled_integrations, so a source that never
       // connected must not count. Only when we just added it.
       if (!alreadyEnabled) {
-        const rolledBack = { enabled_integrations: cur.enabled_integrations, integrations }
-        cfg.current = rolledBack
-        configApi.setIntegrations(rolledBack).catch(() => {})
+        cfg.current.enabled_integrations = cur.enabled_integrations
+        configApi
+          .setIntegrations({ enabled_integrations: cur.enabled_integrations, integrations })
+          .catch(() => {})
       }
-      const missing = data.missing_credentials?.length
-        ? `Missing required credentials: ${data.missing_credentials.join(', ')}.`
-        : null
-      throw new Error(
-        data.error ||
-          missing ||
-          `Couldn't connect to ${selected?.name ?? serverName}. Check the credentials and try again.`,
-      )
     }
-    if (selected) setConnected(selected)
+    return { connected, error: data?.error, missing_credentials: data?.missing_credentials }
   }
 
-  if (selected) {
-    return (
-      <IntegrationWizard
-        variant="setup"
-        integration={selected}
-        existingConfig={cfg.current.integrations[selected.id] ?? {}}
-        onClose={() => setSelected(null)}
-        onSave={handleSave}
-      />
-    )
+  const selectedId = picked === undefined ? dataSources[0]?.id : picked
+  const selected = dataSources.find((i) => i.id === selectedId)
+  // a source picked from the search takes the last source tile, so the selection stays visible
+  const tiles = dataSources.slice(0, TILE_COUNT)
+  if (selected && !tiles.includes(selected)) tiles[tiles.length - 1] = selected
+  const pick = (id: string) => {
+    setPicked(id)
+    setSearching(false)
+    setQuery('')
   }
-
-  if (connected) {
-    const sourceId = CATALOG_TO_SOURCE[connected.id]
-    return (
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-3 text-sm rounded-[10px] px-3.5 py-2.5 border border-[color:var(--good-ln)] bg-[var(--good-bg)]">
-          <CheckMark phase="passed" />
-          <span className="text-tx font-semibold" role="status">
-            Connected to {connected.name}
-          </span>
-        </div>
-        {sourceId && <SourceCollection key={sourceId} sourceId={sourceId} />}
-        <div>
-          <button className="btn ghost" onClick={() => setConnected(null)}>
-            Connect another
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const tile = (i: IntegrationMetadata) => (
+    <ChoiceCard
+      key={i.id}
+      title={i.name}
+      body={i.category}
+      icon={<Icon name={CATEGORY_ICON[i.category] ?? 'grid'} />}
+      chip={i.id === 'loglm' ? 'DeepTempo' : undefined}
+      selected={selectedId === i.id}
+      onSelect={() => pick(i.id)}
+    />
+  )
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-tx-2">
-        Connect a SIEM, EDR, or other telemetry source so Vigil has alerts to triage. Search and
-        pick one — you can add more anytime in Settings → Integrations.
-      </p>
-      <TextInput
-        value={query}
-        placeholder="Search data sources (Splunk, CrowdStrike, Elastic…)"
-        onChange={(e) => setQuery(e.target.value)}
-      />
-      {/* Fixed height (not max-h) so filtering doesn't resize the panel per keystroke. */}
-      <div className="h-56 overflow-y-auto pr-1 -mr-1">
-        {serversError ? (
-          <div className="py-6 text-center text-sm text-tx-3">
-            Couldn&apos;t load available sources.{' '}
-            <button className="text-accent-2 hover:underline" onClick={loadServers}>
-              Retry
-            </button>
-          </div>
-        ) : availableServers === null ? (
-          <div className="py-6 text-center text-sm text-tx-3">Loading available sources…</div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {filtered.map((i) => (
-              <button
-                key={i.id}
-                className="card card-sq text-left p-3"
-                onClick={() => setSelected(i)}
-              >
-                <div className="text-[13px] font-semibold text-tx">{i.name}</div>
-                <div className="text-xs text-tx-3 mt-0.5">{i.category}</div>
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <div className="col-span-2 py-6 text-center text-sm text-tx-3">
-                {query.trim()
-                  ? `No data sources match “${query.trim()}”.`
-                  : 'No connectable data sources found.'}
-              </div>
-            )}
-          </div>
-        )}
+    <>
+      <div role="group" aria-label="Data source" className="su-choices">
+        {tiles.map(tile)}
+        <ChoiceCard
+          title="Upload a file"
+          body="An export from any tool"
+          icon={<Icon name="upload" />}
+          selected={selectedId === 'upload'}
+          onSelect={() => pick('upload')}
+        />
+        <ChoiceCard
+          title="Try demo data"
+          body="Explore first, connect later"
+          icon={<Icon name="sparkle" />}
+          chip="No setup"
+          chipTone="vio"
+          selected={selectedId === 'demo'}
+          onSelect={() => pick('demo')}
+        />
       </div>
-    </div>
+      {serversError ? (
+        <p className="su-note">
+          Couldn&apos;t load available sources.{' '}
+          <button className="text-accent-2 hover:underline" onClick={loadServers}>
+            Retry
+          </button>
+        </p>
+      ) : availableServers === null ? (
+        <p className="su-note">Loading available sources…</p>
+      ) : (
+        <>
+          {dataSources.length === 0 && <p className="su-note">No connectable data sources found.</p>}
+          {dataSources.length > TILE_COUNT && (
+            <button
+              type="button"
+              className="su-more"
+              aria-expanded={searching}
+              onClick={() => setSearching((s) => !s)}
+            >
+              More sources
+            </button>
+          )}
+        </>
+      )}
+      {searching && (
+        <div className="flex flex-col gap-3">
+          <TextInput
+            value={query}
+            placeholder="Search data sources (Splunk, CrowdStrike, Elastic…)"
+            aria-label="Search data sources"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {found.length === 0 ? (
+            <p className="su-note">No data sources match “{query.trim()}”.</p>
+          ) : (
+            <div className="su-choices">{found.map(tile)}</div>
+          )}
+        </div>
+      )}
+      {selectedId === 'upload' ? (
+        <UploadSource />
+      ) : selectedId === 'demo' ? (
+        <DemoSource />
+      ) : selected ? (
+        cfgReady && (
+          <ConnectSource
+            key={selected.id}
+            integration={selected}
+            existingConfig={cfg.current.integrations[selected.id] ?? {}}
+            secretsSet={cfg.current.secrets_set[selected.id] ?? {}}
+            sourceId={CATALOG_TO_SOURCE[selected.id]}
+            onTest={(config) => handleSave(selected, config)}
+            onAdvance={onAdvance}
+            onAnother={() => setPicked(null)}
+          />
+        )
+      ) : (
+        <p className="su-note">Pick a source above to connect it.</p>
+      )}
+    </>
   )
 }
 

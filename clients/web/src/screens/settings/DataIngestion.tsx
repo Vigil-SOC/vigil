@@ -81,7 +81,7 @@ export function DemoDataClear({ notify }: SectionProps) {
   )
 }
 
-const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
+export const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
 
 export function UploadCard({ notify }: SectionProps) {
   const { job, attaching, upload } = useIngestionJob()

@@ -8,10 +8,10 @@ import { useColorScheme } from '../../contexts/ColorSchemeContext'
 import { Icon } from '../../shared/icons'
 import { SettingsCard } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
-import { configApi } from '../../services/api'
 import { ToastProvider, useToast } from '../../shell/toast'
 import SetupProviderStep from './SetupProviderStep'
 import DataSourceDialog from './DataSourceDialog'
+import { DEMO_ENV_NOTICE, turnOnDemoMode } from './demoMode'
 import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
 import LimitsStep from './LimitsStep'
@@ -53,7 +53,6 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     sub: 'At least one alert source',
     title: 'Connect your data',
     desc: 'Pick where your alerts live. Vigil reads alerts from it and asks before it changes anything there. You can add more sources later.',
-    card: { title: 'Connect data', desc: 'A SIEM or EDR so Vigil has alerts to triage.' },
   },
   ai: {
     rail: 'Choose where AI runs',
@@ -104,7 +103,7 @@ function stepPanel(id: StepId, onAdvance: () => void, onChange: (target: Summary
     case 'checks':
       return <SystemChecksStep />
     case 'data':
-      return <DataSourceDialog />
+      return <DataSourceDialog onAdvance={onAdvance} />
     case 'ai':
       return <SetupProviderStep onSaved={onAdvance} />
     case 'workflows':
@@ -172,13 +171,8 @@ const SetupWizard = () => {
   const lookAroundWithDemo = async () => {
     setDemoBusy(true)
     try {
-      const { data } = await configApi.getDemoMode()
-      if (data?.source === 'environment' && !data.enabled) {
-        notify('err', "Demo mode is set by the server's environment")
-        return
-      }
-      await configApi.setDemoMode(true)
-      dismiss()
+      if ((await turnOnDemoMode()) === 'environment') notify('err', DEMO_ENV_NOTICE)
+      else dismiss()
     } catch {
       notify('err', 'Demo data could not be turned on')
     } finally {
