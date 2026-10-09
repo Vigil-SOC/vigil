@@ -29,10 +29,24 @@ class Incident:
     samples: int = 0
     runtime_untrusted: bool = False
     runbook: dict[str, Any] | None = None
+    # E3 4: spans spent resolving, as (from, refired_at); refired_at None = it never
+    # refired (it resolved at resolved_at, or is still resolving at the end).
+    resolving: tuple[tuple[int, int | None], ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Incident:
-        return cls(**d)
+        spans = tuple(tuple(s) for s in d.get("resolving", ()))
+        return cls(**(d | {"resolving": spans}))
+
+    def firing_from(self, t: int) -> int | None:
+        """The first time >= t at which the incident is firing, or None if it never
+        is again (resolving until it resolves, or until the vector ends)."""
+        if self.resolved_at is not None and self.resolved_at <= t:
+            return None
+        for start, refired in self.resolving:
+            if start <= t and (refired is None or refired > t):
+                return refired
+        return t
 
 
 def lane_of(inc: Incident) -> dict[str, Any]:
@@ -84,7 +98,10 @@ def route(
     """R2 (E3 6): returns (routed_at, suppressed_by).
 
     A child holds 5 min. A parent open at any time during the hold suppresses it. It
-    routes on its own only if it is still open 10 min after the last parent resolves.
+    routes on its own only if it is still firing 10 min after the last parent
+    resolves; one resolving then routes if it refires, and never if it resolves (E3
+    6.3 as amended 2026-10-08, S4b2-4/5). "Firing" stands in for E3's "firing and
+    true": an unknown tick while firing is the engine vectors' to pin (v19).
     """
     parents = parents_of.get(inc.rule or "", set())
     if not parents:
@@ -104,8 +121,8 @@ def route(
     if None in ends:
         return None, by
     free_at = max(e for e in ends if e is not None) + OUTLIVE_S
-    still_open = inc.resolved_at is None or inc.resolved_at > free_at
-    return (free_at if still_open and free_at <= until else None), by
+    at = inc.firing_from(free_at)
+    return (at if at is not None and at <= until else None), by
 
 
 def run_vector(vector: dict[str, Any]) -> dict[str, Any]:

@@ -1,14 +1,20 @@
 id: lanes-09-child-outlives-parent
-description: E3 6.3. The parent resolves at 900. Child c is still open 10 min later, so it is unsuppressed and routes at 1500 on its own lane (it wasn't only a symptom). Child d resolves at 1200, inside those 10 min, so it closes quietly and never routes.
+description: E3 6.3. The parent resolves at 900. Child c is still open 10 min later, so it is unsuppressed and routes at 1500 on its own lane (it wasn't only a symptom). Child d resolves at 1200, inside those 10 min, so it closes quietly and never routes. Child e is resolving at the 1500 mark and resolves at 1800, so it never routes either; child f is resolving at the mark but refires true at 1650, so it routes then (E3 6.3 as amended 2026-10-08, S4b2-4/5. Only a child still firing routes. `resolving` lists [from, refired-at] spans, null = never refired).
 until: 3600
 suppression:
   - {parent: llm.provider-keyless-default, child: pipeline.triage-stalled}
   - {parent: llm.provider-keyless-default, child: pipeline.probe-missed}
+  - {parent: llm.provider-keyless-default, child: pipeline.queue-backlog}
+  - {parent: llm.provider-keyless-default, child: pipeline.enrich-stalled}
 incidents:
   - {id: p, rule: llm.provider-keyless-default, lane: 2, trust: trusted, signals: 2, samples: 1, opened_at: 0, resolved_at: 900}
   - {id: c, rule: pipeline.triage-stalled, lane: 3, trust: trusted, signals: 2, samples: 2, opened_at: 60}
   - {id: d, rule: pipeline.probe-missed, lane: 3, trust: trusted, signals: 2, samples: 1, opened_at: 90, resolved_at: 1200}
+  - {id: e, rule: pipeline.queue-backlog, lane: 3, trust: trusted, signals: 2, samples: 1, opened_at: 120, resolving: [[1400, null]], resolved_at: 1800}
+  - {id: f, rule: pipeline.enrich-stalled, lane: 3, trust: trusted, signals: 2, samples: 1, opened_at: 150, resolving: [[1400, 1650]]}
 expect:
   p: {lane: {value: 2, reason: rule}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: notify_admin, L2: {action: notify_admin, not_eligible: not_lane1}}, escalation: null}
   c: {lane: {value: 3, reason: rule}, routed_at: 1500, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}
   d: {lane: {value: 3, reason: rule}, routed_at: null, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}
+  e: {lane: {value: 3, reason: rule}, routed_at: null, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}
+  f: {lane: {value: 3, reason: rule}, routed_at: 1650, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}
