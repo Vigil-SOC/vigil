@@ -1,0 +1,78 @@
+id: v14-signal-flapping-rule
+title: changes(bifrost ok, 30m) >= 4
+covers:
+- §2 changes
+- §2 lower bound
+start: '2026-10-07T10:00:00Z'
+end: +72m
+rules:
+- ref: llm-gateway-flapping.yaml
+sensors:
+- id: http.bifrost
+  covers:
+  - bifrost_health
+  interval: 15s
+  service: bifrost
+  states:
+  - - +0s
+    - ok
+types:
+  bifrost_health:
+    ok: bool
+series:
+- signal: bifrost_health
+  key: ok
+  steps:
+  - - +0s
+    - true
+  - - +10m
+    - false
+  - - +12m
+    - true
+  - - +14m
+    - false
+  - - +16m
+    - true
+expect:
+- at: +15m
+  rule: llm.gateway-flapping
+  eval: unknown
+  state: inactive
+  note: lower bound 3
+- at: +16m
+  rule: llm.gateway-flapping
+  eval: true
+  state: pending
+- at: +18m
+  rule: llm.gateway-flapping
+  eval: true
+  state: firing
+  incident: A
+- at: +39m45s
+  rule: llm.gateway-flapping
+  eval: true
+  state: firing
+  incident: A
+- at: +40m
+  rule: llm.gateway-flapping
+  eval: false
+  state: resolving
+  incident: A
+- at: +69m45s
+  rule: llm.gateway-flapping
+  eval: false
+  state: resolving
+  incident: A
+- at: +70m
+  rule: llm.gateway-flapping
+  eval: false
+  state: inactive
+incidents:
+  A:
+    rule: llm.gateway-flapping
+    active_since: +16m
+    opened_at: +18m
+    resolving_since: +40m
+    resolved_at: +70m
+    reason: cleared
+    routed_at: +18m

@@ -15,6 +15,7 @@ from core.llm.cost.budget import BudgetExceeded
 from core.llm.providers.registry import get_registry
 from core.llm.router.router import LLMRouter, get_provider_spec
 from core.llm.security import PromptInjectionBlocked
+from core.llm.target import component_fallback, model_for
 from core.routing import Auth, RouterMeta
 from core.skills.skill_eval import has_cases, load_cases, run_cases
 from core.skills.skill_library import (
@@ -249,7 +250,9 @@ async def test_skill(name: str):
     provider = get_provider_spec(resolved[0]) if resolved else None
     if resolved is None or provider is None:
         raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL["message"])
-    model = resolved[1]
+    model = model_for(
+        provider, resolved[1], component_fallback("chat_default"), "chat_default"
+    )
 
     try:
         results = await run_cases(

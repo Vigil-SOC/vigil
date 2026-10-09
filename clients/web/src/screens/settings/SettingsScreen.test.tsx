@@ -5,8 +5,23 @@ import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import SettingsScreen from './SettingsScreen'
 
-vi.mock('./AiConfigSection', () => ({ default: () => <div>AI panel</div> }))
-vi.mock('./IntegrationsSection', () => ({ default: () => <div>Integrations panel</div> }))
+// AI models and Integrations render their own page head (they carry head actions), so the stubs do too
+vi.mock('./AiConfigSection', () => ({
+  default: () => (
+    <>
+      <header className="page-head"><h2>AI models</h2><p>Stub description.</p></header>
+      <div>AI panel</div>
+    </>
+  ),
+}))
+vi.mock('./IntegrationsSection', () => ({
+  default: () => (
+    <>
+      <header className="page-head"><h2>Integrations</h2><p>Stub description.</p></header>
+      <div>Integrations panel</div>
+    </>
+  ),
+}))
 const integrationsState = vi.hoisted(() => ({ attention: [] as unknown[] }))
 vi.mock('./IntegrationsState', () => ({
   IntegrationsStateProvider: ({ children }: { children: unknown }) => children,
@@ -20,8 +35,7 @@ vi.mock('./SystemSection', () => ({ default: () => <div>System panel</div> }))
 vi.mock('./GeneralSection', () => ({ default: () => <div>General panel</div> }))
 vi.mock('./DeveloperSection', () => ({ default: () => <div>Developer panel</div> }))
 vi.mock('./UsersSection', () => ({ default: () => <div>Users panel</div> }))
-vi.mock('./DataIngestion', () => ({ default: () => <div>Ingestion panel</div> }))
-vi.mock('./DetectionRulesPanel', () => ({ default: () => <div>Detection panel</div> }))
+vi.mock('./DataUploadsSection', () => ({ default: () => <div>Data panel</div> }))
 
 const screenProps: ConsoleScreenProps = {
   openChat: vi.fn(),
@@ -134,15 +148,11 @@ describe('settings nav', () => {
     expect(screen.queryByText('System panel')).not.toBeInTheDocument()
   })
 
-  it('puts upload and detection rules on Data & uploads, with the retention line', () => {
+  it('opens Data & uploads as one page, for old section and tab links alike', () => {
     renderAt('/settings?section=data&tab=detection')
-    expect(screen.getByText('Retention: Not measured yet')).toBeInTheDocument()
-    expect(tabs().getByRole('button', { name: 'Detection Rules' })).toHaveClass('active')
-    expect(screen.getByText('Detection panel')).toBeInTheDocument()
-    expect(screen.queryByText('Ingestion panel')).not.toBeInTheDocument()
-
-    fireEvent.click(tabs().getByRole('button', { name: 'Manual Upload' }))
-    expect(screen.getByText('Ingestion panel')).toBeInTheDocument()
+    expect(nav().getByRole('button', { name: 'Data & uploads' })).toHaveClass('active')
+    expect(screen.getByText('Data panel')).toBeInTheDocument()
+    expect(document.querySelector('.tabs')).toBeNull()
   })
 
   it('keeps the sections goSettings already opens', () => {

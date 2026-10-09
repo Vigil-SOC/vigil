@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import IntegrationsSection from './IntegrationsSection'
 import { tabFromQuery } from './integrationsData'
@@ -144,8 +144,20 @@ describe('Integrations: Connected table', () => {
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: { statuses: [] } } as never)
     renderSection()
     expect(await screen.findByText('Nothing is connected yet')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Add integration/ }))
+    // the head button of the same name sits above; the empty state's is the one inside the section body
+    const empty = screen.getByText('Nothing is connected yet').closest('.empty-state') as HTMLElement
+    fireEvent.click(within(empty).getByRole('button', { name: /Add integration/ }))
     expect(screen.getByRole('tab', { name: /Add integration/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('switches the tab strip from the page-head actions', async () => {
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const head = within(screen.getByRole('banner'))
+    fireEvent.click(head.getByRole('button', { name: 'Add integration' }))
+    expect(screen.getByRole('tab', { name: /^Add integration/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(head.getByRole('button', { name: 'Build custom' }))
+    expect(screen.getByRole('tab', { name: /^Custom/ })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows loading, then an error with Retry', async () => {
@@ -156,6 +168,168 @@ describe('Integrations: Connected table', () => {
     vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: [] } } as never)
     fireEvent.click(screen.getByRole('button', { name: /Retry/ }))
     await waitFor(() => expect(screen.queryByText('Couldn’t load MCP servers')).not.toBeInTheDocument())
+  })
+})
+
+describe('Integrations: Custom tab', () => {
+  const DRAFT = {
+    success: true,
+    integration_id: 'custom-acme',
+    integration_name: 'Acme XDR',
+    metadata: {
+      category: 'EDR/XDR',
+      description: 'Reads Acme findings.',
+      fields: [
+        { name: 'base_url', label: 'Base URL', type: 'url' },
+        { name: 'api_key', label: 'API key', type: 'password' },
+      ],
+    },
+    tools: [{ name: 'acme_list_findings', description: 'List findings since a time' }],
+    server_code: 'print("v1")',
+  }
+  let listed: number
+  let generateReply: () => unknown
+  let calls: { url: string; body: Record<string, unknown> | null }[]
+
+  const called = (suffix: string) => calls.filter((c) => c.url.endsWith(suffix))
+
+  beforeEach(() => {
+    listed = 1
+    calls = []
+    generateReply = () => DRAFT
+    vi.mocked(configApi.getIntegrations).mockResolvedValue({ data: {} } as never)
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: [] } } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: { statuses: [] } } as never)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: { body?: string }) => {
+        calls.push({ url, body: init?.body ? JSON.parse(init.body) : null })
+        const ok = (body: unknown) => ({ ok: true, json: async () => body })
+        if (url.endsWith('/list')) {
+          if (listed < 0) return { ok: false, json: async () => ({}) }
+          return ok({ success: true, integrations: Array.from({ length: listed }, (_, i) => ({ id: `c${i}` })) })
+        }
+        if (url.endsWith('/generate')) {
+          const r = generateReply() as { fail?: string }
+          return r.fail ? { ok: false, json: async () => ({ detail: r.fail }) } : ok(r)
+        }
+        if (url.endsWith('/save')) {
+          listed += 1
+          return ok({ success: true })
+        }
+        if (url.endsWith('/validate')) return ok({ valid: true, checks: { has_server: true, has_main: true } })
+        return ok({})
+      }),
+    )
+  })
+
+  const open = async (n = 'Custom 1') => {
+    renderSection('/settings?section=integrations&tab=custom')
+    await screen.findByRole('tab', { name: n })
+  }
+  const generate = async () => {
+    fireEvent.change(screen.getByLabelText(/^API documentation/), { target: { value: 'GET /v2/findings' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }))
+    await screen.findByText('acme_list_findings')
+  }
+
+  it('takes the tab count from the saved list, and shows no count when the list is refused', async () => {
+    listed = 3
+    await open('Custom 3')
+    cleanup()
+    listed = -1
+    const before = called('/list').length
+    renderSection('/settings?section=integrations&tab=custom')
+    await waitFor(() => expect(called('/list').length).toBeGreaterThan(before))
+    expect(screen.getByRole('tab', { name: 'Custom' })).toBeInTheDocument()
+  })
+
+  it('starts empty: nothing drafted, Generate off until there is documentation', async () => {
+    await open()
+    expect(screen.getByText(/Nothing drafted yet/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate draft' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /Save as draft|Test read-only/ })).not.toBeInTheDocument()
+  })
+
+  it('shows loading while Vigil drafts, then the draft: settings, tools and editable code', async () => {
+    let finish: (v: unknown) => void = () => {}
+    const pending = new Promise((r) => { finish = r })
+    const base = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) =>
+      String(url).endsWith('/generate') ? ((await pending, base(url, init)) as never) : (base(url, init) as never),
+    )
+    await open()
+    fireEvent.change(screen.getByLabelText(/^API documentation/), { target: { value: 'GET /v2/findings' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }))
+    expect(await screen.findByText(/Vigil is reading the documentation/)).toBeInTheDocument()
+    finish(null)
+
+    expect(await screen.findByText('acme_list_findings')).toBeInTheDocument()
+    expect(screen.getByText('List findings since a time')).toBeInTheDocument()
+    expect(screen.getByText('Base URL')).toBeInTheDocument()
+    expect(screen.getByText('API key (secret)')).toBeInTheDocument()
+    expect(screen.getByLabelText('Server code')).toHaveValue('print("v1")')
+    expect(screen.queryByText(/Claude/)).not.toBeInTheDocument()
+  })
+
+  it('says why when generating fails', async () => {
+    generateReply = () => ({ fail: 'Claude API is not configured.' })
+    await open()
+    fireEvent.change(screen.getByLabelText(/^API documentation/), { target: { value: 'docs' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('not configured')
+    expect(screen.getByRole('button', { name: 'Generate draft' })).toBeEnabled()
+  })
+
+  it('asks the clarifying question and sends the answer back', async () => {
+    generateReply = () => ({ success: true, needs_clarification: true, message: 'Which auth scheme?', conversation_history: [{ role: 'user', content: 'p' }] })
+    await open()
+    fireEvent.change(screen.getByLabelText(/^API documentation/), { target: { value: 'docs' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate draft' }))
+    expect(await screen.findByText('Which auth scheme?')).toBeInTheDocument()
+    generateReply = () => DRAFT
+    fireEvent.change(screen.getByLabelText(/^Your answer/), { target: { value: 'Bearer token' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send answer' }))
+    expect(await screen.findByText('acme_list_findings')).toBeInTheDocument()
+    expect(called('/generate')[1].body).toMatchObject({ user_response: 'Bearer token' })
+  })
+
+  it('Validate saves then checks, and the count follows; Save does not write the same code twice', async () => {
+    const notify = vi.fn()
+    render(
+      <MemoryRouter initialEntries={['/settings?section=integrations&tab=custom']}>
+        <IntegrationsStateProvider>
+          <IntegrationsSection notify={notify} />
+        </IntegrationsStateProvider>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: 'Custom 1' })
+    await generate()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+    expect(await screen.findByText('The code passes the static check.')).toBeInTheDocument()
+    expect(called('/save')).toHaveLength(1)
+    expect(called('/custom-acme/validate')).toHaveLength(1)
+    expect(await screen.findByRole('tab', { name: 'Custom 2' })).toBeInTheDocument()
+    expect(screen.getByText(/Saved, not enabled/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', expect.stringContaining('saved but not enabled')))
+    expect(called('/save')).toHaveLength(1)
+    expect(screen.getByText(/Nothing drafted yet/)).toBeInTheDocument()
+  })
+
+  it('sends code edited after Validate when saving', async () => {
+    await open()
+    await generate()
+    fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+    await screen.findByText('The code passes the static check.')
+
+    fireEvent.change(screen.getByLabelText('Server code'), { target: { value: 'print("v2")' } })
+    expect(screen.queryByText('The code passes the static check.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(called('/save')).toHaveLength(2))
+    expect(called('/save')[1].body).toMatchObject({ integration_id: 'custom-acme', server_code: 'print("v2")' })
   })
 })
 
@@ -187,14 +361,14 @@ describe('Integrations: Add integration tab', () => {
     } as never)
   })
 
-  it('counts chips from the catalog, marks connected cards and leaves WIP servers out', async () => {
+  it('lists a chip per category without counts, marks connected cards and leaves WIP servers out', async () => {
     await open()
     const chips = within(screen.getByRole('group', { name: 'Category' }))
-    // Slack is work in progress: no card, no count
+    // Slack is work in progress: no card
     expect(screen.queryByText('Slack', { selector: '.int-card-name' })).not.toBeInTheDocument()
-    // Entra ID is work in progress too: Okta alone makes Identity; Jira and PagerDuty make Incident Management
-    expect(chips.getByRole('button', { name: /Identity & Access/ })).toHaveTextContent('1')
-    expect(chips.getByRole('button', { name: /Incident Management/ })).toHaveTextContent('2')
+    expect(chips.getByRole('button', { name: 'All' })).toHaveTextContent(/^All$/)
+    expect(chips.getByRole('button', { name: 'Identity & Access' })).toHaveTextContent(/^Identity & Access$/)
+    expect(chips.getByRole('button', { name: 'Incident Management' })).toBeInTheDocument()
     expect(within(card('GitHub')).getByText('Connected')).toBeInTheDocument()
     expect(within(card('GitHub')).queryByRole('button', { name: /Connect/ })).not.toBeInTheDocument()
     expect(within(card('Okta')).getByText('Available')).toBeInTheDocument()

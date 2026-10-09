@@ -24,6 +24,7 @@ from core.deps import (
 )
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
+from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
     credentials_to_resupply,
@@ -37,6 +38,12 @@ from core.response.approval_service import APPROVAL_CONFIG_KEY
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
+from core.skills.skill_library import (
+    is_bundled,
+    load_skills,
+    operator_skills_root,
+    skill_roots,
+)
 from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
@@ -712,8 +719,13 @@ def build_setup_steps(
     descriptor_count: int,
     alerts_exist: int,
     demo_enabled: bool,
+    skills_root_set: bool = False,
+    custom_skills: int = 0,
 ) -> dict:
-    """Four setup steps from config that already exists. No ranking, no dismissal."""
+    """Four or five setup steps from config that already exists. No ranking, no dismissal.
+
+    The custom skill step is served only when ``VIGIL_SKILLS_PATH`` is set, so it can always be finished.
+    """
     integrations = loaded.get("integrations") or {}
     connected = len(integrations)
     slack = (secrets_set.get("slack") or {}).get("bot_token") is True
@@ -731,45 +743,60 @@ def build_setup_steps(
     else:
         model_line = "Agents use more than one model"
     integrations_href = "/settings?section=integrations"
+    steps = [
+        _step(
+            "connect_tools",
+            "Connect more tools",
+            f"{connected} of {descriptor_count} integrations connected",
+            connected >= 1,
+            integrations_href,
+        ),
+        _step(
+            "notify",
+            "Where Vigil pings you",
+            (
+                "Slack or PagerDuty route is set"
+                if notify_done
+                else "No Slack or PagerDuty route yet"
+            ),
+            notify_done,
+            integrations_href,
+        ),
+        _step(
+            "rules",
+            "Link detection rules",
+            (
+                "Detection rules are on disk"
+                if rules_done
+                else "No detection rules on disk"
+            ),
+            rules_done,
+            "/settings?section=data&tab=detection",
+        ),
+        _step(
+            "per_agent",
+            "Pick a model per agent",
+            model_line,
+            distinct >= 2,
+            "/settings?section=ai-config&tab=assignment",
+        ),
+    ]
+    if skills_root_set:
+        steps.append(
+            _step(
+                "custom_skill",
+                "Add a custom skill",
+                (
+                    "Teach Vigil your team’s playbooks"
+                    if custom_skills == 0
+                    else f"{custom_skills} custom skill{'s' if custom_skills != 1 else ''}"
+                ),
+                custom_skills >= 1,
+                "/workflows?tab=skills",
+            )
+        )
     return {
-        "steps": [
-            _step(
-                "connect_tools",
-                "Connect more tools",
-                f"{connected} of {descriptor_count} integrations connected",
-                connected >= 1,
-                integrations_href,
-            ),
-            _step(
-                "notify",
-                "Where Vigil pings you",
-                (
-                    "Slack or PagerDuty route is set"
-                    if notify_done
-                    else "No Slack or PagerDuty route yet"
-                ),
-                notify_done,
-                integrations_href,
-            ),
-            _step(
-                "rules",
-                "Link detection rules",
-                (
-                    "Detection rules are on disk"
-                    if rules_done
-                    else "No detection rules on disk"
-                ),
-                rules_done,
-                "/settings?section=data&tab=detection",
-            ),
-            _step(
-                "per_agent",
-                "Pick a model per agent",
-                model_line,
-                distinct >= 2,
-                "/settings?section=ai-config&tab=assignment",
-            ),
-        ],
+        "steps": steps,
         "alerts_exist": alerts_exist,
         "demo_enabled": demo_enabled,
     }
@@ -780,8 +807,14 @@ def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
 ):
-    """Home's setup list: tools, a notify route, rules on disk, and model variety."""
+    """Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill."""
     loaded = load_integrations_config(get_config_service())
+    skills_root_set = operator_skills_root() is not None
+    try:
+        custom_skills = sum(1 for s in load_skills(skill_roots()) if not is_bundled(s))
+    except Exception:  # a bad skills folder must not fail the setup read
+        logger.warning("Could not count custom skills", exc_info=True)
+        custom_skills = 0
     return build_setup_steps(
         loaded=loaded,
         secrets_set=_secrets_set_map(loaded.get("integrations") or {}),
@@ -790,6 +823,8 @@ def get_setup_steps(
         descriptor_count=len(iter_descriptors()),
         alerts_exist=findings_data_service.count_findings(),
         demo_enabled=is_demo_mode(),
+        skills_root_set=skills_root_set,
+        custom_skills=custom_skills,
     )
 
 
@@ -1052,6 +1087,24 @@ def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
     return "; ".join(parts) or None
 
 
+async def _probe_connector_integration(
+    integration_id: str, status: dict, current_user: User
+) -> dict:
+    username = getattr(current_user, "username", None) or "unknown"
+    try:
+        message = await extension_sessions.probe_connector(integration_id, username)
+        success, error = True, None
+    except extension_sessions.ExtensionSessionError as exc:
+        success, message, error = False, str(exc), str(exc)
+
+    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
+        integration_id, success=success, error=error, tested_at=utcnow()
+    )
+    if not recorded:
+        logger.warning("Integration '%s' test result was not saved", integration_id)
+    return {"success": success, "message": message, "status": status}
+
+
 @router.post("/integrations/{integration_id}/test")
 async def test_integration(
     integration_id: str,
@@ -1059,9 +1112,11 @@ async def test_integration(
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
     mcp_client=Depends(provide_mcp_client),
 ):
-    """Probe the MCP servers behind an integration.
+    """Probe the MCP servers behind an integration, or its connector URL.
 
-    Catalog entries have no descriptor, so they are not testable. A stored
+    A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
+    over HTTP instead. Other catalog entries have no descriptor, so they are not
+    testable. A stored
     config of ``{}`` is still configured — secret-only rows keep the secret
     outside this dict. The integration's enabled flag does not block the
     probe: enabled MCP servers are contacted, and if none are enabled every
@@ -1071,6 +1126,10 @@ async def test_integration(
 
     server_names = list(bridge.server_names_for(integration_id))
     status = bridge.get_integration_status(integration_id)
+    # A UI-extension connector has no MCP server of its own: probe its URL.
+    stored = bridge.get_integration_config(integration_id) or {}
+    if not server_names and stored.get("connectorUrl"):
+        return await _probe_connector_integration(integration_id, status, current_user)
     if not server_names:
         return {
             "success": False,

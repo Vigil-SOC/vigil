@@ -36,4 +36,6 @@ export interface ConsoleScreenProps {
   onCaseSeedConsumed?: () => void
   /** Starts the console tour. Absent where the shell can't run it. */
   startTour?: () => void
+  /** Puts text in the header's command bar and opens it. Absent where the shell has no bar. */
+  fillCommand?: (text: string) => void
 }

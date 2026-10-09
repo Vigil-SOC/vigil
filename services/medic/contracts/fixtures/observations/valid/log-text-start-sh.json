@@ -1,0 +1,40 @@
+{
+  "v": 1,
+  "id": "log.soc-daemon:01JA8Z3K4M:13",
+  "kind": "log",
+  "signal": "log_soc_daemon",
+  "sensor": {
+    "id": "log.soc-daemon",
+    "run": "01JA8Z3K4M",
+    "seq": 13
+  },
+  "target": {
+    "service": "soc-daemon",
+    "instance": "vigil-host-1",
+    "shape": "start_sh"
+  },
+  "t": "2026-10-07T10:00:01.123000Z",
+  "observed_at": "2026-10-07T10:00:02Z",
+  "source_ts": "2026-10-07T10:00:01.123000Z",
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "skew_ms": -877,
+  "log": {
+    "format": "text",
+    "level": "WARNING",
+    "logger": "services.daemon.poller",
+    "template": null,
+    "template_trust": "untrusted",
+    "message": "2026-10-07 10:00:01,123 - services.daemon.poller - WARNING - Splunk query failed (401): https://splunk.example.com:8089/services/search",
+    "exc_type": null,
+    "frames": [],
+    "fingerprint": "fp1_99decb282942144d",
+    "fingerprint_basis": "normalized",
+    "trace_id": null,
+    "line_hash": "44e311ddf0689480",
+    "truncated": false
+  }
+}

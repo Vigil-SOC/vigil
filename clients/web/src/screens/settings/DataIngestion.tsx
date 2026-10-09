@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
+import { LevelBadge } from '../../shared/LevelBadge'
 import {
   ConfirmDialog,
   Field,
@@ -27,7 +28,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-function DemoDataClear({ notify }: SectionProps) {
+export function DemoDataClear({ notify }: SectionProps) {
   const [enabled, setEnabled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [report, setReport] = useState<string | null>(null)
@@ -80,25 +81,14 @@ function DemoDataClear({ notify }: SectionProps) {
   )
 }
 
-export default function DataIngestionPanel({ notify }: SectionProps) {
-  return (
-    <div className="flex flex-col gap-4" style={{ maxWidth: 920 }}>
-      <DemoDataClear notify={notify} />
-      <ManualUploadPanel notify={notify} />
-      <S3Panel notify={notify} />
-      <KafkaPanel notify={notify} />
-      <DarktracePanel notify={notify} />
-    </div>
-  )
-}
-
 const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
 
-function ManualUploadPanel({ notify }: SectionProps) {
+export function UploadCard({ notify }: SectionProps) {
   const { job, attaching, upload } = useIngestionJob()
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const running = job?.status === 'running'
 
   const doUpload = async () => {
@@ -115,12 +105,26 @@ function ManualUploadPanel({ notify }: SectionProps) {
     }
   }
 
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const dropped = e.dataTransfer.files?.[0]
+    if (dropped && !running) setFile(dropped)
+  }
+
   return (
-    <SettingsCard
-      title="Manual Upload"
-      desc="Upload a local file directly into Vigil. Large files keep ingesting in the background — you can leave this page."
-    >
-      <div className="flex items-center gap-2.5 flex-wrap">
+    <SettingsCard title="Upload files" desc="Import findings or cases from a file. Duplicates are skipped.">
+      <div
+        className={`data-drop${dragging ? ' over' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+      >
+        <Icon name="upload" size={20} />
+        <span className="data-drop-title">Drop a file to import, or choose a file</span>
+        <span className="data-drop-sub">
+          {ACCEPTED_UPLOAD_TYPES.split(',').join(', ')} · large files keep importing in the background
+        </span>
         <input
           ref={fileRef}
           type="file"
@@ -130,15 +134,18 @@ function ManualUploadPanel({ notify }: SectionProps) {
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           onClick={(e) => { (e.target as HTMLInputElement).value = '' }} // lets the same file be retried
         />
-        <button className="btn ghost" onClick={() => fileRef.current?.click()} disabled={running}>
-          <Icon name="paperclip" /> {file ? file.name : 'Choose File'}
-        </button>
-        {file && <span className="text-xs text-tx-3">{formatFileSize(file.size)}</span>}
-        <button className="btn primary" disabled={!file || submitting || running || attaching} onClick={doUpload}>
-          <Icon name="upload" /> {submitting ? 'Uploading…' : 'Upload'}
-        </button>
+        <div className="flex items-center justify-center gap-2.5 flex-wrap">
+          <button className={`btn ${file ? 'ghost' : 'primary'}`} onClick={() => fileRef.current?.click()} disabled={running}>
+            <Icon name="paperclip" /> {file ? file.name : 'Choose File'}
+          </button>
+          {file && <span className="text-xs text-tx-3">{formatFileSize(file.size)}</span>}
+          {file && (
+            <button className="btn primary" disabled={submitting || running || attaching} onClick={doUpload}>
+              <Icon name="upload" /> {submitting ? 'Uploading…' : 'Upload'}
+            </button>
+          )}
+        </div>
       </div>
-      <p className="text-xs text-tx-3 mt-1.5">Allowed file types: .parquet, .csv, .json, .jsonl, .ndjson.</p>
 
       {job && <IngestionJobStatus job={job} />}
     </SettingsCard>
@@ -146,25 +153,25 @@ function ManualUploadPanel({ notify }: SectionProps) {
 }
 
 function IngestionJobStatus({ job }: { job: IngestionJob }) {
-  if (job.status === 'running') {
-    const pct = job.determinate && job.total > 0
-      ? Math.min(100, Math.round((job.processed / job.total) * 100))
-      : null
-    return (
-      <div className="settings-banner info mt-3" role="status" aria-live="polite">
-        <span className="spin" aria-hidden="true" />
-        <span className="text-xs">
-          Ingesting <span className="font-mono">{job.filename}</span> —{' '}
-          {pct !== null ? `${job.processed} of ${job.total} rows (${pct}%)` : `${job.processed} rows so far`}
-        </span>
-      </div>
-    )
-  }
+  const running = job.status === 'running'
   const ok = job.status === 'succeeded'
+  const pct = job.determinate && job.total > 0
+    ? Math.min(100, Math.round((job.processed / job.total) * 100))
+    : null
+  const message = running
+    ? pct !== null ? `${job.processed} of ${job.total} rows (${pct}%)` : `${job.processed} rows so far`
+    : job.message
   return (
-    <div className={`settings-banner ${ok ? 'ok' : 'err'} mt-3`}>
-      <Icon name={ok ? 'check2' : 'alert'} size={13} />
-      <span className="text-xs"><span className="font-mono">{job.filename}</span> — {job.message}</span>
+    <div className="data-job" role="status" aria-live="polite">
+      <span className="font-mono data-job-name" title={job.filename}>{job.filename}</span>
+      <span className="data-job-msg" title={message}>{message}</span>
+      {running ? (
+        <span className="level-pill idle"><span className="spin" aria-hidden="true" /> Importing</span>
+      ) : ok ? (
+        <span className="level-pill good"><Icon name="check2" size={11} /> Done</span>
+      ) : (
+        <span className="level-pill poor"><Icon name="alert" size={11} /> Failed</span>
+      )}
     </div>
   )
 }
@@ -174,8 +181,8 @@ const AUTH_OPTIONS = [
   { value: 'profile', label: 'AWS profile (SSO)' },
 ]
 
-function S3Panel({ notify }: SectionProps) {
-  const { config, setConfig, phase, error, reload, save } = useS3()
+function S3Form({ notify, s3 }: SectionProps & { s3: ReturnType<typeof useS3> }) {
+  const { config, setConfig, phase, error, reload, save } = s3
   const [saving, setSaving] = useState(false)
   const [confirmSave, setConfirmSave] = useState(false)
 
@@ -188,15 +195,13 @@ function S3Panel({ notify }: SectionProps) {
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [results, setResults] = useState<{ key: string; success: boolean; message: string }[]>([])
 
-  if (phase === 'loading') return <SettingsCard title="S3 Storage" desc=""><div className="text-sm text-tx-3 py-6 text-center">Loading…</div></SettingsCard>
+  if (phase === 'loading') return <div className="text-sm text-tx-3 py-6 text-center">Loading…</div>
   if (phase === 'error') {
     return (
-      <SettingsCard title="S3 Storage" desc="">
-        <div className="py-6 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load S3 config: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      </SettingsCard>
+      <div className="py-6 text-center flex flex-col items-center gap-2.5">
+        <span className="text-sm text-tx-3">Couldn’t load S3 config: {error}</span>
+        <button className="btn ghost" onClick={reload}>Retry</button>
+      </div>
     )
   }
 
@@ -265,15 +270,8 @@ function S3Panel({ notify }: SectionProps) {
   }
 
   return (
-    <SettingsCard
-      title="S3 Storage"
-      desc="AWS S3 bucket for browsing and ingesting supported files."
-      actions={
-        <button className="btn primary" onClick={onSave} disabled={saving}>
-          <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
-        </button>
-      }
-    >
+    <>
+      <p className="text-xs text-tx-3 mb-3">AWS S3 bucket for browsing and ingesting supported files.</p>
       <div className="flex flex-col gap-3.5 max-w-[560px]">
         <Field label="Bucket Name" hint="Tip: paste a full s3:// URI to auto-populate the prefix.">
           <TextInput
@@ -318,6 +316,8 @@ function S3Panel({ notify }: SectionProps) {
           <TextInput value={config.parquet_prefix} placeholder="e.g. lake/v1/embeddings/" onChange={(e) => setConfig({ ...config, parquet_prefix: e.target.value })} />
         </Field>
       </div>
+
+      <SaveRow saving={saving} onSave={onSave} />
 
       {/* Browse & ingest */}
       <div className="mt-5 pt-5 border-t border-line-soft">
@@ -392,7 +392,7 @@ function S3Panel({ notify }: SectionProps) {
         onConfirm={doSave}
         onClose={() => setConfirmSave(false)}
       />
-    </SettingsCard>
+    </>
   )
 }
 
@@ -408,12 +408,12 @@ const SASL_MECHANISMS = [
   { value: 'SCRAM-SHA-512', label: 'SCRAM-SHA-512' },
 ]
 
-function KafkaPanel({ notify }: SectionProps) {
-  const { config, setConfig, stats, daemonReachable, phase, save } = useKafka()
+function KafkaForm({ notify, kafka }: SectionProps & { kafka: ReturnType<typeof useKafka> }) {
+  const { config, setConfig, stats, daemonReachable, phase, save } = kafka
   const [saving, setSaving] = useState(false)
   const [topicInput, setTopicInput] = useState('')
 
-  if (phase === 'loading') return <SettingsCard title="Kafka Ingestion" desc=""><div className="text-sm text-tx-3 py-6 text-center">Loading…</div></SettingsCard>
+  if (phase === 'loading') return <div className="text-sm text-tx-3 py-6 text-center">Loading…</div>
 
   const set = (patch: Partial<KafkaConfig>) => setConfig({ ...config, ...patch })
 
@@ -440,15 +440,8 @@ function KafkaPanel({ notify }: SectionProps) {
   const statusText = stats?.connected ? 'CONNECTED' : config.enabled ? 'ENABLED (not yet connected)' : 'DISABLED'
 
   return (
-    <SettingsCard
-      title="Kafka Ingestion"
-      desc="Stream JSON-encoded finding objects from Kafka topics. SASL password and SSL CA path must be set via env vars (KAFKA_SASL_PASSWORD, KAFKA_SSL_CA_LOCATION)."
-      actions={
-        <button className="btn primary" onClick={handleSave} disabled={saving}>
-          <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
-        </button>
-      }
-    >
+    <>
+      <p className="text-xs text-tx-3 mb-3">Stream JSON-encoded finding objects from Kafka topics. SASL password and SSL CA path must be set via env vars (KAFKA_SASL_PASSWORD, KAFKA_SSL_CA_LOCATION).</p>
       {!daemonReachable && (
         <div className="settings-banner info mb-3"><Icon name="info" size={14} /> Daemon health endpoint unreachable — live stats unavailable. Changes apply once the daemon reads the updated config.</div>
       )}
@@ -524,15 +517,16 @@ function KafkaPanel({ notify }: SectionProps) {
           <NumberInput value={config.session_timeout_ms} onChange={(e) => set({ session_timeout_ms: Number(e.target.value) })} />
         </Field>
       </div>
-    </SettingsCard>
+      <SaveRow saving={saving} onSave={handleSave} />
+    </>
   )
 }
 
-function DarktracePanel({ notify }: SectionProps) {
-  const { config, setConfig, phase, save } = useDarktrace()
+function DarktraceForm({ notify, darktrace }: SectionProps & { darktrace: ReturnType<typeof useDarktrace> }) {
+  const { config, setConfig, phase, save } = darktrace
   const [saving, setSaving] = useState(false)
 
-  if (phase === 'loading') return <SettingsCard title="Darktrace" desc=""><div className="text-sm text-tx-3 py-6 text-center">Loading…</div></SettingsCard>
+  if (phase === 'loading') return <div className="text-sm text-tx-3 py-6 text-center">Loading…</div>
 
   const handleSave = async () => {
     setSaving(true)
@@ -547,15 +541,8 @@ function DarktracePanel({ notify }: SectionProps) {
   }
 
   return (
-    <SettingsCard
-      title="Darktrace"
-      desc="Webhook receiver for Darktrace Model Breach, AI Analyst, and System Status alerts."
-      actions={
-        <button className="btn primary" onClick={handleSave} disabled={saving}>
-          <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
-        </button>
-      }
-    >
+    <>
+      <p className="text-xs text-tx-3 mb-3">Webhook receiver for Darktrace Model Breach, AI Analyst, and System Status alerts.</p>
       <ToggleRow
         label="Enable webhook receiver"
         checked={config.enabled}
@@ -571,6 +558,132 @@ function DarktracePanel({ notify }: SectionProps) {
         <Field label="Max body size (KB)" hint="Reject payloads larger than this.">
           <NumberInput value={config.max_body_kb} min={1} max={16384} onChange={(e) => setConfig({ ...config, max_body_kb: Math.max(1, Number(e.target.value) || 1024) })} />
         </Field>
+      </div>
+      <SaveRow saving={saving} onSave={handleSave} />
+    </>
+  )
+}
+
+function SaveRow({ saving, onSave }: { saving: boolean; onSave: () => void }) {
+  return (
+    <div className="mt-4">
+      <button className="btn primary" onClick={onSave} disabled={saving}>
+        <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
+      </button>
+    </div>
+  )
+}
+
+type StreamKey = 's3' | 'kafka' | 'darktrace'
+type StreamStatus = { level: 'good' | 'fair' | 'poor' | null; text: string }
+
+const OFF: StreamStatus = { level: null, text: 'Off' }
+
+/** One row of the Streams and buckets table; `status.level` null renders as plain text. */
+interface StreamRow {
+  key: StreamKey
+  name: string
+  settings: string
+  status: StreamStatus
+  action: string
+  form: ReactNode
+}
+
+function StatusCell({ status }: { status: StreamStatus }) {
+  if (status.level === 'good') return <LevelBadge level="good" variant="pill" />
+  if (!status.level) return <span className="muted">{status.text}</span>
+  return <span className={`level-pill ${status.level}`}>{status.text}</span>
+}
+
+export function StreamsCard({ notify }: SectionProps) {
+  const s3 = useS3()
+  const kafka = useKafka()
+  const darktrace = useDarktrace()
+  const [open, setOpen] = useState<StreamKey | null>(null)
+
+  const s3c = s3.config
+  const kc = kafka.config
+  const dc = darktrace.config
+  const kafkaSetUp = kc.enabled || kc.topics.length > 0
+
+  const s3Status: StreamStatus =
+    s3.phase === 'loading' ? { level: null, text: 'Loading…' }
+    : s3.phase === 'error' ? { level: 'poor', text: 'Unavailable' }
+    : s3c.configured ? { level: 'good', text: 'Good' }
+    : OFF
+  const kafkaStatus: StreamStatus =
+    kafka.phase === 'loading' ? { level: null, text: 'Loading…' }
+    : kafka.stats?.connected ? { level: 'good', text: 'Good' }
+    : kc.enabled ? { level: 'fair', text: 'Not connected' }
+    : OFF
+  const darktraceStatus: StreamStatus =
+    darktrace.phase === 'loading' ? { level: null, text: 'Loading…' }
+    : dc.enabled && dc.configured ? { level: 'good', text: 'Good' }
+    : dc.enabled ? { level: 'fair', text: 'No secret' }
+    : OFF
+
+  const rows: StreamRow[] = [
+    {
+      key: 's3',
+      name: 'Amazon S3',
+      settings: s3c.configured
+        ? [s3c.bucket_name, s3c.region, s3c.auth_method === 'profile' ? 'AWS profile (SSO)' : 'Access keys'].filter(Boolean).join(' · ')
+        : 'Not set up',
+      status: s3Status,
+      action: s3c.configured ? 'Browse' : 'Set up',
+      form: <S3Form notify={notify} s3={s3} />,
+    },
+    {
+      key: 'kafka',
+      name: 'Kafka',
+      settings: kafkaSetUp
+        ? [kc.bootstrap_servers, kc.topics.length ? `topics ${kc.topics.join(', ')}` : 'no topics', kc.security_protocol].join(' · ')
+        : 'Not set up',
+      status: kafkaStatus,
+      action: kafkaSetUp ? 'Edit' : 'Set up',
+      form: <KafkaForm notify={notify} kafka={kafka} />,
+    },
+    {
+      key: 'darktrace',
+      name: 'Darktrace webhook',
+      settings: dc.configured ? dc.url || 'Webhook secret saved' : 'Not set up',
+      status: darktraceStatus,
+      action: dc.configured ? 'Edit' : 'Set up',
+      form: <DarktraceForm notify={notify} darktrace={darktrace} />,
+    },
+  ]
+
+  return (
+    <SettingsCard title="Streams and buckets" desc="Read findings continuously from storage or a message bus.">
+      <div className="table-wrap">
+        <table className="tbl data-table">
+          <thead>
+            <tr><th>Source</th><th>Settings</th><th>Status</th><th aria-label="Action" /></tr>
+          </thead>
+          <tbody>
+            {rows.flatMap((r) => [
+              <tr key={r.key}>
+                <td><b>{r.name}</b></td>
+                <td className="data-clip" title={r.settings}>{r.settings}</td>
+                <td><StatusCell status={r.status} /></td>
+                <td className="data-act">
+                  <button
+                    className="data-link"
+                    aria-expanded={open === r.key}
+                    aria-label={`${open === r.key ? 'Close' : r.action} ${r.name}`}
+                    onClick={() => setOpen(open === r.key ? null : r.key)}
+                  >
+                    {open === r.key ? 'Close' : r.action}
+                  </button>
+                </td>
+              </tr>,
+              // stays mounted while closed, so a browse or ingest in flight survives a collapse
+              <tr key={`${r.key}-form`} className="data-expand" hidden={open !== r.key}>
+                <td colSpan={4}>{r.form}</td>
+              </tr>,
+            ])}
+          </tbody>
+        </table>
       </div>
     </SettingsCard>
   )

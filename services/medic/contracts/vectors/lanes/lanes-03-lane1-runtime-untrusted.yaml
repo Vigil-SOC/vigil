@@ -1,0 +1,7 @@
+id: lanes-03-lane1-runtime-untrusted
+description: A lane-1 rule fires, but this evaluation read an untrusted sample value (ENGINE_API 5). The lane stays 1, and L2 is capped at proposing (R3, decided 2a). No escalation, because L2 would not have run anything.
+until: 3600
+incidents:
+  - {id: a, rule: pipeline.agent-worker-down, lane: 1, trust: trusted, signals: 2, samples: 1, runtime_untrusted: true, opened_at: 0, runbook: {id: restart-agent-worker, verify_after_s: 300}}
+expect:
+  a: {lane: {value: 1, reason: rule}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: propose_runbook, L2: {action: propose_runbook, not_eligible: runtime_untrusted}}, escalation: null}

@@ -1,0 +1,168 @@
+{
+  "$comment": "Refused: 11 evidence items (cap 10, C4 sizing).",
+  "v": 1,
+  "at": "2026-12-07T09:15:00Z",
+  "type": "incident_opened",
+  "body": {
+    "incident_id": "inc_50eeae0570ffe3e235dd00c0",
+    "subject": "vigil",
+    "instance_id": "mi_3f9a2c1b0d4e5f60",
+    "install_shape": "helm",
+    "rule": {
+      "id": "ingest.integration-config-incomplete",
+      "revision": 1,
+      "pack_id": "medic-core",
+      "pack_version": "0.1.0",
+      "engine_api": "1.0",
+      "input_trust": "untrusted"
+    },
+    "fault": {
+      "class": "ingest",
+      "mode": "I-1",
+      "causes": [
+        "I-1.b"
+      ]
+    },
+    "detection_type": "event",
+    "active_since": "2026-12-07T09:13:00Z",
+    "group": [
+      {
+        "name": "integration",
+        "value": "h_ff9cf5afca192342"
+      }
+    ],
+    "route": "routed",
+    "lane": {
+      "value": 2,
+      "reason": "rule"
+    },
+    "evidence": [
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      },
+      {
+        "observation_id": "log.soc-daemon:a1b2c3d4e5:1042",
+        "signal": "log_soc_daemon",
+        "t": "2026-12-07T09:12:58Z",
+        "fingerprint": "fp1_3f9a2c1b0d4e5f60",
+        "excerpt": {
+          "text": "WARNING core.integrations Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed",
+          "redaction_version": "k2-1.0"
+        }
+      }
+    ],
+    "advice": {
+      "summary": "An integration is enabled but its configuration is incomplete.",
+      "fix": "Open Settings > Integrations, open the integration named in the evidence, fill in the missing fields and save. Polling resumes on the next cycle."
+    },
+    "runbook": null,
+    "would_have": {
+      "L0": "record",
+      "L1": "notify_admin",
+      "L2": {
+        "action": "notify_admin",
+        "not_eligible": "not_lane1"
+      }
+    }
+  },
+  "seq": 0,
+  "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+  "hash": "4df3941d81577f2a8854b6c834ede3472d9dcd6c3899b6849c57a460a2138f33"
+}

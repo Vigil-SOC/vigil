@@ -1,0 +1,99 @@
+{
+  "availability": {
+    "decisions_lost": 0,
+    "restarts": {
+      "clean": 0,
+      "crash": 0,
+      "oom": 0,
+      "signal": 0,
+      "unknown": 0,
+      "watchdog_stall": 0
+    },
+    "states": {
+      "blind": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "crash_looping": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "degraded": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "not_recording": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "not_running": {
+        "intervals": 1,
+        "seconds": 86400
+      },
+      "running": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "starting": {
+        "intervals": 0,
+        "seconds": 0
+      }
+    },
+    "store_states_seen": [
+      "ok"
+    ],
+    "up_s": 0
+  },
+  "chain": {
+    "anchors_in_period": 0,
+    "first_seq_in_period": null,
+    "head": {
+      "hash": "5e8f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7",
+      "seq": 12
+    },
+    "last_seq_in_period": null,
+    "oldest": {
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "kind": "genesis",
+      "seq": 0
+    },
+    "resets_in_period": 0,
+    "verify": "ok"
+  },
+  "dev_mode": false,
+  "engine_api": "1.0",
+  "format": "medic.evidence/v1",
+  "generated_at": "2026-12-11T08:00:00Z",
+  "incidents": [],
+  "install_shape": "start_sh",
+  "instance_id": "mi_0b5d9e2a7c13f846",
+  "medic_version": "0.1.0",
+  "overhead": null,
+  "pack_events": {
+    "imported": 0,
+    "override": 0,
+    "reverted": 0,
+    "rule_skipped": 0
+  },
+  "packs": [],
+  "period": {
+    "from": "2026-12-10T00:00:00Z",
+    "seconds": 86400,
+    "to": "2026-12-11T00:00:00Z"
+  },
+  "replay_feedback": {
+    "agree": 0,
+    "disagree": 0,
+    "false_alarm": 0,
+    "heads": [],
+    "wrong_lane": 0
+  },
+  "retention_days": 90,
+  "rule_exposure": [],
+  "sensors_blind": [],
+  "unknown_signature": {
+    "opened": 0,
+    "routed": 0
+  },
+  "watcher_incidents": []
+}

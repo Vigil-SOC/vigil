@@ -111,7 +111,6 @@ class CustomWorkflowCreate(BaseModel):
     use_case: Optional[str] = ""
     trigger_examples: List[str] = Field(default_factory=list)
     phases: List[WorkflowPhaseSchema] = Field(default_factory=list)
-    graph_layout: Dict[str, Any] = Field(default_factory=dict)
     created_by: Optional[str] = None
 
 
@@ -121,7 +120,6 @@ class CustomWorkflowUpdate(BaseModel):
     use_case: Optional[str] = None
     trigger_examples: Optional[List[str]] = None
     phases: Optional[List[WorkflowPhaseSchema]] = None
-    graph_layout: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
 
 

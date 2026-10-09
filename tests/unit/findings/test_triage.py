@@ -119,7 +119,29 @@ def _by_id(payload: dict) -> dict[int, dict]:
     return {row["id"]: row for row in payload["rows"]}
 
 
+def _counts() -> dict:
+    return triage_payload(now=NOW, day=DAY)["counts"]
+
+
+def _added(before: dict, after: dict) -> dict:
+    """What a test's own rows added to ``counts``.
+
+    ``counts`` covers the whole intake table, and the database is shared with
+    every other DB-backed suite, so rows they leave behind are in both reads
+    and cancel out here.
+    """
+    added = {"total": after["total"] - before["total"]}
+    for key in ("kind", "source", "state"):
+        added[key] = {
+            name: n - before[key].get(name, 0)
+            for name, n in after[key].items()
+            if n != before[key].get(name, 0)
+        }
+    return added
+
+
 def test_five_state_words_and_an_investigation_id_with_no_door():
+    before = _counts()
     _case("tr-case-1")
     _investigation("tr-inv-ask", "incident-response")
     _finding(
@@ -183,7 +205,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
 
     payload = triage_payload(now=NOW, day=DAY)
     rows = _by_id(payload)
-    assert rows[waiting]["state_label"] == "Waiting"
+    assert rows[waiting]["state_label"] == "Waiting for a slot"
     assert rows[waiting]["case_door"] is None
     assert rows[waiting]["pickup_seconds"] is None
     assert rows[waiting]["source"] == "splunk"
@@ -205,7 +227,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[added]["state_label"] == "Added to a case"
     assert rows[added]["case_door"] == "tr-case-1"
 
-    assert rows[ghost]["state_label"] == "tr-inv-ghost"
+    assert rows[ghost]["state_label"] == "Added to a case"
     assert rows[ghost]["case_door"] is None
     assert rows[ghost]["source"] == "Ask"
     assert rows[ghost]["document"] == "please look"
@@ -223,7 +245,21 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert info["trust_floor"]["limit"]
     assert set(payload["breakdown_info"]) == {"trust", "weight", "score"}
 
+    assert all("tr-" not in row["state_label"] for row in payload["rows"])
+    counts = payload["counts"]
+    assert counts["total"] == sum(counts["state"].values())
+    added = _added(before, counts)
+    assert added["total"] == 7
+    assert added["state"] == {"queued": 1, "launched": 3, "merged": 2, "expired": 1}
+    assert added["kind"] == {"detection": 4, "schedule": 2, "human_ask": 1}
+    assert added["source"] == {"splunk": 4, "Schedule": 2, "Ask": 1}
+
     filtered = triage_payload(now=NOW, day=DAY, state="queued")
+    assert filtered["counts"] == counts
+    # matched is the filtered rows before the cap; the table is shared with other
+    # suites, so compare with the queued count rather than a literal
+    assert filtered["matched"] == counts["state"]["queued"]
+    assert triage_payload(now=NOW, day=DAY)["matched"] == counts["total"]
     assert filtered["strip"]["waiting"] == payload["strip"]["waiting"]
     assert waiting in [row["id"] for row in filtered["rows"]]
     assert {row["state"] for row in filtered["rows"]} == {"queued"}
@@ -312,6 +348,7 @@ def test_zero_arrival_day_leaves_the_pickup_share_empty():
 
 def test_source_filter_keeps_an_older_row_the_cap_would_drop():
     """``?source=`` applies before the 200 cap."""
+    before = _counts()
     _finding(
         "tr-kept-f", "low", data_source="tr-kept", created_at=NOW - timedelta(days=2)
     )
@@ -341,6 +378,15 @@ def test_source_filter_keeps_an_older_row_the_cap_would_drop():
     assert len(unfiltered) == ROW_CAP
     filtered = triage_payload(now=NOW, day=DAY, source="tr-kept")
     assert [row["id"] for row in filtered["rows"]] == [kept]
+    # counts see the rows the cap drops, and the filters leave them alone
+    counts = _counts()
+    added = _added(before, counts)
+    assert added["total"] == ROW_CAP + 1
+    assert added["source"] == {"tr-kept": 1, "tr-other": ROW_CAP}
+    assert added["state"] == {"expired": ROW_CAP + 1}
+    assert filtered["counts"] == counts
+    for narrow in ({"kind": "schedule"}, {"state": "queued"}):
+        assert triage_payload(now=NOW, day=DAY, **narrow)["counts"] == counts
 
 
 def test_finding_only_source_has_null_lag_and_is_not_quiet():

@@ -54,7 +54,7 @@ const FENCED = {
   status: 'success',
 }
 
-const mount = async (keys: unknown[], routable: string[]) => {
+const mount = async (keys: unknown[], routable: string[], health = 'healthy') => {
   listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
   listKeys.mockResolvedValue({ data: { keys, total: keys.length } })
   providerModels.mockResolvedValue({
@@ -66,16 +66,15 @@ const mount = async (keys: unknown[], routable: string[]) => {
       keys: Object.fromEntries(
         (keys as { id?: string }[])
           .filter((k) => k.id)
-          .map((k) => [k.id, { provider: 'anthropic', routable: true, health: 'healthy' }]),
+          .map((k) => [k.id, { provider: 'anthropic', routable: health === 'healthy', health }]),
       ),
     },
   })
   render(<AiProvidersPanel notify={() => {}} />)
-  await screen.findByText('anthropic')
+  await screen.findByText(keys.length ? 'anthropic-key' : /No key/)
 }
 
 const openEditor = async () => {
-  fireEvent.click(screen.getByTitle('Expand'))
   fireEvent.click(await screen.findByTitle('Edit'))
   await screen.findByText('Key name')
 }
@@ -153,10 +152,7 @@ describe('the models a key is fenced to', () => {
    and `use_anthropic_endpoints: false` -- so `!k.enabled` was true for every
    key the gateway returned, and every key rendered as "Disabled". */
 describe('the “Disabled” badge', () => {
-  const expand = async () => {
-    fireEvent.click(screen.getByTitle('Expand'))
-    await screen.findByText('anthropic-key')
-  }
+  const expand = () => screen.findByText('anthropic-key')
 
   it('stays hidden for a key Bifrost returns without an `enabled` field', async () => {
     const withoutEnabled: Record<string, unknown> = { ...FENCED }
@@ -165,13 +161,80 @@ describe('the “Disabled” badge', () => {
     await mount([withoutEnabled], ['claude-sonnet-5'])
     await expand()
 
-    expect(screen.queryByText('Disabled')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Disabled/)).not.toBeInTheDocument()
   })
 
   it('still shows for a key that was explicitly disabled', async () => {
     await mount([{ ...FENCED, enabled: false }], ['claude-sonnet-5'])
     await expand()
 
-    expect(screen.getByText('Disabled')).toBeInTheDocument()
+    expect(screen.getByText(/anthropic · Disabled/)).toBeInTheDocument()
+  })
+})
+
+describe('the keys table', () => {
+  it('lists the board’s columns with a Good badge and the key’s share of its provider', async () => {
+    await mount([FENCED, { ...FENCED, id: 'k2', name: 'anthropic-backup', weight: 3, models: ['*'] }], [])
+    for (const h of ['Key', 'Credential', 'Share', 'Models allowed', 'Health']) {
+      expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument()
+    }
+    expect(screen.getByText('25%')).toBeInTheDocument()
+    expect(screen.getByText('75%')).toBeInTheDocument()
+    expect(screen.getByText('2 allowed')).toBeInTheDocument()
+    expect(screen.getByText('All models')).toBeInTheDocument()
+    expect(screen.getAllByText('Good')).toHaveLength(2)
+  })
+
+  it('shows a rejected key as Poor, and never invents Fair', async () => {
+    await mount([FENCED], [], 'rejected')
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+    expect(screen.queryByText('Fair')).not.toBeInTheDocument()
+  })
+
+  it('draws no health at all when the verdicts could not be read', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [FENCED], total: 1 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockRejectedValue(new Error('down'))
+    render(<AiProvidersPanel notify={() => {}} />)
+    await screen.findByText('anthropic-key')
+    expect(screen.getByText('Couldn’t check whether these keys can route')).toBeInTheDocument()
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+    expect(screen.queryByText('Good')).not.toBeInTheDocument()
+    expect(screen.queryByText('Unverified')).not.toBeInTheDocument()
+  })
+
+  it('says so when the gateway cannot be reached, and when there are no providers', async () => {
+    listProviders.mockRejectedValue(new Error('refused'))
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    const { unmount } = render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText('Couldn’t reach the Bifrost gateway')).toBeInTheDocument()
+    unmount()
+
+    listProviders.mockResolvedValue({ data: { providers: [] } })
+    render(<AiProvidersPanel notify={() => {}} />)
+    expect(await screen.findByText('No providers configured')).toBeInTheDocument()
+  })
+
+  it('lists a provider with no key and offers to add one', async () => {
+    await mount([], [])
+    expect(screen.getByText(/No key — this provider cannot route/)).toBeInTheDocument()
+    expect(screen.getByTitle('Delete provider')).toBeInTheDocument()
+  })
+})
+
+describe('the page head’s Add provider', () => {
+  it('opens the dialog once when asked, and the Keys card keeps Add key but not Add provider', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    const opened = vi.fn()
+    render(<AiProvidersPanel notify={() => {}} addProviderRequested onAddProviderOpened={opened} />)
+    expect(await screen.findByRole('dialog', { name: 'Add provider' })).toBeInTheDocument()
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Add provider' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Add key' }).length).toBeGreaterThan(0)
   })
 })

@@ -1,100 +1,211 @@
 import { useEffect, useState } from 'react'
-import { consoleApi, storageApi } from '../../services/api'
-import { Icon } from '../../shared/icons'
+import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
+import { Icon, type IconName } from '../../shared/icons'
+import { SettingsCard } from '../../shared/ui'
 import { readProviderConfigured } from '../../routing/useSetupStatus'
+import {
+  failingFederationSource,
+  stoppedMcpServer,
+  type FederationRead,
+  type McpRead,
+} from '../../shell/statusLine'
+import type { CheckPhase } from './CheckMark'
+import CheckTable, { type CheckRow } from './CheckTable'
 
-export type CheckPhase = 'pending' | 'running' | 'pass' | 'fail'
+export type { CheckPhase }
 
-export interface SystemCheck {
-  id: 'health' | 'storage' | 'provider'
-  label: string
-  phase: CheckPhase
-  detail: string
+type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'federation' | 'mcp'
+
+export type SystemCheck = CheckRow & { id: CheckId }
+
+type Result = Pick<SystemCheck, 'phase' | 'detail'>
+
+interface StorageRead {
+  backend?: string
+  description?: string
+  database_available?: boolean
+  demo_mode?: boolean
 }
 
-const PHASE_LABEL: Record<CheckPhase, string> = {
-  pending: 'Pending',
-  running: 'Running',
-  pass: 'Pass',
-  fail: 'Fail',
-}
+/** Database and Storage share one read per run */
+type Read = (storage: () => Promise<StorageRead>) => Promise<Result>
 
-const INITIAL: SystemCheck[] = [
-  { id: 'health', label: 'API health', phase: 'pending', detail: '' },
-  { id: 'storage', label: 'Storage', phase: 'pending', detail: '' },
-  { id: 'provider', label: 'AI provider', phase: 'pending', detail: '' },
+const COULD_NOT_READ: Result = { phase: 'needs', detail: 'Could not read' }
+
+const NEEDS: { icon: IconName; title: string; sub: string }[] = [
+  {
+    icon: 'link',
+    title: 'Access to one alert source',
+    sub: 'A SIEM, EDR or identity tool, or a file export to upload',
+  },
+  {
+    icon: 'bot',
+    title: 'An AI provider key, or a local model',
+    sub: 'Anthropic, OpenAI or your cloud; or an Ollama server for fully local use',
+  },
+  { icon: 'clock', title: 'About 15 minutes', sub: 'Nothing runs on its own until you finish' },
 ]
 
-async function readHealth(): Promise<SystemCheck> {
-  try {
-    const res = await consoleApi.getHealth()
-    const status = (res.data as { status?: string } | undefined)?.status
-    return { id: 'health', label: 'API health', phase: 'pass', detail: status || 'Reachable' }
-  } catch {
-    return { id: 'health', label: 'API health', phase: 'fail', detail: 'Could not read' }
+const readHealth = async (): Promise<Result> => {
+  const res = await consoleApi.getHealth()
+  const status = (res.data as { status?: string } | undefined)?.status
+  if (status !== 'healthy') return { phase: 'needs', detail: `Status is ${status ?? 'unknown'}` }
+  return { phase: 'passed', detail: status }
+}
+
+const readDatabase: Read = async (storage) => {
+  const read = await storage()
+  if (read.demo_mode) return { phase: 'passed', detail: 'Demo data, no database needed' }
+  return read.database_available
+    ? { phase: 'passed', detail: 'Connected' }
+    : { phase: 'needs', detail: 'Not connected' }
+}
+
+const readStorage: Read = async (storage) => {
+  const { backend, description } = await storage()
+  return {
+    phase: 'passed',
+    detail: [backend || 'Unknown backend', description].filter(Boolean).join(' · '),
   }
 }
 
-async function readStorage(): Promise<SystemCheck> {
-  try {
-    const res = await storageApi.getStatus()
-    const backend = (res.data as { backend?: string } | undefined)?.backend
+const readProvider = async (): Promise<Result> => {
+  const ready = await readProviderConfigured()
+  return ready
+    ? { phase: 'passed', detail: 'Ready' }
+    : { phase: 'needs', detail: 'You add a provider in step 3' }
+}
+
+const readFederation = async (): Promise<Result> => {
+  const read = (await federationApi.getHealth()).data as FederationRead | undefined
+  // no body is a failed read, not an empty list
+  if (!read) throw new Error('no federation health body')
+  const failing = failingFederationSource(read)
+  if (failing) {
     return {
-      id: 'storage',
-      label: 'Storage',
-      phase: 'pass',
-      detail: backend || 'Unknown backend',
+      phase: 'needs',
+      detail: `${failing.source_id ?? 'A source'} has consecutive errors`,
     }
-  } catch {
-    return { id: 'storage', label: 'Storage', phase: 'fail', detail: 'Could not read' }
+  }
+  const enabled = read?.sources?.filter((s) => s.enabled).length ?? 0
+  if (!enabled) {
+    return {
+      phase: 'waiting',
+      detail: 'Nothing to check yet · the next step connects a source',
+    }
+  }
+  return { phase: 'passed', detail: `${enabled} source${enabled === 1 ? '' : 's'} collecting` }
+}
+
+const readMcp = async (): Promise<Result> => {
+  const read = (await mcpApi.getStatuses()).data as McpRead | undefined
+  // no body is a failed read, not "None enabled"
+  if (!read) throw new Error('no MCP status body')
+  const down = stoppedMcpServer(read)
+  if (down) {
+    return {
+      phase: 'needs',
+      detail: `${down.name ?? 'A server'} is ${down.status ?? 'not running'}`,
+    }
+  }
+  const enabled = read?.statuses?.filter((s) => s.enabled).length ?? 0
+  return {
+    phase: 'passed',
+    detail: enabled ? `${enabled} enabled server${enabled === 1 ? '' : 's'} running` : 'None enabled',
   }
 }
 
-async function readProvider(): Promise<SystemCheck> {
-  try {
-    const ready = await readProviderConfigured()
-    return {
-      id: 'provider',
-      label: 'AI provider',
-      phase: ready ? 'pass' : 'fail',
-      detail: ready ? 'Ready' : 'Not configured',
-    }
-  } catch {
-    return { id: 'provider', label: 'AI provider', phase: 'fail', detail: 'Could not read' }
-  }
-}
+const CHECKS: { id: CheckId; label: string; read: Read }[] = [
+  { id: 'database', label: 'Database', read: readDatabase },
+  { id: 'provider', label: 'Model gateway', read: readProvider },
+  { id: 'storage', label: 'Storage', read: readStorage },
+  { id: 'health', label: 'API health', read: readHealth },
+  { id: 'federation', label: 'Alert collection', read: readFederation },
+  { id: 'mcp', label: 'Tool servers', read: readMcp },
+]
+
+const INITIAL: SystemCheck[] = CHECKS.map(({ id, label }) => ({
+  id,
+  label,
+  phase: 'waiting',
+  detail: '',
+}))
 
 export default function SystemChecksStep() {
   const [checks, setChecks] = useState<SystemCheck[]>(INITIAL)
+  const [finished, setFinished] = useState(false)
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
     let live = true
-    setChecks((rows) => rows.map((row) => ({ ...row, phase: 'running', detail: '' })))
-    Promise.all([readHealth(), readStorage(), readProvider()]).then((rows) => {
-      if (live) setChecks(rows)
-    })
+    const patch = (id: CheckId, result: Result) =>
+      setChecks((rows) => rows.map((row) => (row.id === id ? { ...row, ...result } : row)))
+    setChecks(INITIAL)
+    setFinished(false)
+    let storageRead: Promise<StorageRead> | undefined
+    const storage = () =>
+      (storageRead ??= storageApi.getStatus().then((res) => {
+        if (!res.data) throw new Error('storage status has no body')
+        return res.data as StorageRead
+      }))
+    // one after another: only the current row shows Checking, the rest wait
+    ;(async () => {
+      for (const { id, read } of CHECKS) {
+        if (!live) return
+        patch(id, { phase: 'checking', detail: '' })
+        const result = await read(storage).catch(() => COULD_NOT_READ)
+        if (!live) return
+        patch(id, result)
+      }
+      setFinished(true)
+    })()
     return () => {
       live = false
     }
   }, [nonce])
 
+  // Alert collection stays Waiting until a source exists, so wait for the run, not for every row
+  const warnings = finished ? checks.filter((c) => c.phase === 'needs').length : 0
+
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex justify-end">
-        <button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
-          <Icon name="refresh" size={14} /> Retry
-        </button>
-      </div>
-      {checks.map((check) => (
-        <div key={check.id} className="flex items-center gap-3 text-sm">
-          <span className="text-tx font-medium w-28 shrink-0">{check.label}</span>
-          <span className={check.phase === 'fail' ? 'text-high' : 'text-tx-2'}>
-            {PHASE_LABEL[check.phase]}
-          </span>
-          {check.detail && <span className="text-tx-3 text-xs">{check.detail}</span>}
-        </div>
-      ))}
-    </div>
+    <>
+      <SettingsCard
+        title="System checks"
+        desc="Vigil checked this server before you start."
+        actions={
+          <button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
+            <Icon name="refresh" size={14} /> Check again
+          </button>
+        }
+      >
+        <CheckTable
+          rows={checks}
+          label="System checks"
+          summary={
+            warnings
+              ? {
+                  tone: 'fair',
+                  text: `${warnings} ${warnings === 1 ? 'warning' : 'warnings'}. You can continue; fix them before you rely on alerts.`,
+                }
+              : undefined
+          }
+        />
+      </SettingsCard>
+      <SettingsCard title="What you'll need">
+        <ul className="su-needs">
+          {NEEDS.map((need) => (
+            <li key={need.title}>
+              <span className="su-needs-icon">
+                <Icon name={need.icon} size={16} />
+              </span>
+              <span>
+                <span className="su-needs-t">{need.title}</span>
+                <span className="su-needs-s">{need.sub}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </SettingsCard>
+    </>
   )
 }

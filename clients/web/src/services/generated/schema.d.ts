@@ -2962,9 +2962,11 @@ export interface paths {
         put?: never;
         /**
          * Test Integration
-         * @description Probe the MCP servers behind an integration.
+         * @description Probe the MCP servers behind an integration, or its connector URL.
          *
-         *     Catalog entries have no descriptor, so they are not testable. A stored
+         *     A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
+         *     over HTTP instead. Other catalog entries have no descriptor, so they are not
+         *     testable. A stored
          *     config of ``{}`` is still configured — secret-only rows keep the secret
          *     outside this dict. The integration's enabled flag does not block the
          *     probe: enabled MCP servers are contacted, and if none are enabled every
@@ -3246,7 +3248,7 @@ export interface paths {
         };
         /**
          * Get Setup Steps
-         * @description Home's setup list: tools, a notify route, rules on disk, and model variety.
+         * @description Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill.
          */
         get: operations["get_api_config_setup-steps"];
         put?: never;
@@ -10005,10 +10007,6 @@ export interface components {
             created_by?: string | null;
             /** Description */
             description: string;
-            /** Graph Layout */
-            graph_layout?: {
-                [key: string]: unknown;
-            };
             /** Name */
             name: string;
             /** Phases */
@@ -10025,10 +10023,6 @@ export interface components {
         CustomWorkflowUpdate: {
             /** Description */
             description?: string | null;
-            /** Graph Layout */
-            graph_layout?: {
-                [key: string]: unknown;
-            } | null;
             /** Is Active */
             is_active?: boolean | null;
             /** Name */

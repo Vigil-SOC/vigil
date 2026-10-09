@@ -25,9 +25,11 @@ import {
   explanationWord,
   honestLine,
   moveTool,
+  plural,
   readFold,
   recallEntityCalls,
   recordChip,
+  runSentence,
   stanceTotals,
   stoppedRun,
   strongestRows,
@@ -81,10 +83,6 @@ function closedBy(closure: CaseClosureView | null): string {
 
 function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
-}
-
-function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`
 }
 
 function latency(ms: number | undefined): string {
@@ -778,9 +776,9 @@ export function CasePage({
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsCount > 0).tone
   const running = !closed && !stopped && tone !== 'needs'
-  // Reason after the pill: the ask, what a live run is doing, or who closed it.
+  // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? fold?.doing : closed ? closedBy(closure) : ''
+    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedBy(closure) : ''
   const needsBlock = (
     <CaseNeeds
       items={needsItems}

@@ -1,15 +1,15 @@
 /* ============================================================
-   Settings · AI Config · Providers & Keys
+   Settings · AI models · Keys
 
    Bifrost holds one provider per upstream and any number of keys under it,
    each with its own weight, model allow-list and health. That is the shape
-   here: providers expand to their keys, and a key is the unit you edit.
+   here: one row per key, the provider named under it, and a key is the unit you edit.
 
    There is no separate "test connection" — Bifrost validates a credential
    upstream when it accepts the write and reports the verdict as the key's
    `status`, so saving is testing.
    ============================================================ */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
@@ -18,10 +18,12 @@ import {
   NumberInput,
   PasswordInput,
   Popup,
+  Select,
   SettingsCard,
   TextInput,
   Toggle,
 } from '../../shared/ui'
+import { LevelBadge } from '../../shared/LevelBadge'
 import { useBifrostProviders, useProviderModels, bifrostError } from './useBifrost'
 import {
   bifrostApi,
@@ -37,40 +39,34 @@ import {
 import type { SectionProps } from './types'
 import { urlIsLoopback } from '../../shared/loopback'
 
-// Without a verdict, a `list_models_failed` cannot be told from a refusal.
-function KeyStatusChip({ status, description, verdict }: {
+// Only the two outcomes the gateway actually decided are a level: routable is
+// Good, rejected is Poor. Everything else stays a plain chip — never Fair — and
+// no verdicts at all (the check failed) draws nothing.
+function KeyHealth({ status, description, verdict }: {
   status?: string
   description?: string
   verdict?: KeyVerdict
 }) {
-  if (verdict?.health === 'healthy' || (!verdict && status === 'success')) {
-    return <span className="status closed">Healthy</span>
-  }
-  if (verdict?.health === 'disabled') {
-    return <span className="chip">Disabled</span>
-  }
-  if (verdict?.health === 'unverifiable') {
-    return (
-      <span className="chip" title={description}>
-        Unverifiable
-      </span>
-    )
-  }
+  if (verdict?.health === 'healthy') return <LevelBadge variant="pill" level="good" />
   if (verdict?.health === 'rejected') {
     return (
-      <span className="chip" style={{ color: 'var(--crit)' }} title={description || status}>
-        {status === 'list_models_failed' ? 'Rejected' : status}
+      <span title={description || status}>
+        <LevelBadge variant="pill" level="poor" />
       </span>
     )
   }
-  return (
-    <span className="chip" title={verdict ? description : status}>
-      Unverified
-    </span>
-  )
+  if (verdict?.health === 'disabled') return <span className="chip">Disabled</span>
+  if (verdict?.health === 'unverifiable') return <span className="chip" title={description}>Unverifiable</span>
+  return <span className="chip" title={verdict ? description : status}>Unverified</span>
 }
 
-export default function AiProvidersPanel({ notify }: SectionProps) {
+interface AiProvidersPanelProps extends SectionProps {
+  /** the page head's Add provider asked for the dialog; the panel opens it once, then calls onAddProviderOpened */
+  addProviderRequested?: boolean
+  onAddProviderOpened?: () => void
+}
+
+export default function AiProvidersPanel({ notify, addProviderRequested, onAddProviderOpened }: AiProvidersPanelProps) {
   const {
     providers,
     keys,
@@ -83,14 +79,25 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
     addProvider,
     removeProvider,
   } = useBifrostProviders()
-  const [expanded, setExpanded] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ provider: string; key: BifrostKey | null } | null>(null)
+  // The header "Add key" picks the provider first when there is more than one.
+  const [pickProvider, setPickProvider] = useState<string | null>(null)
   const [addingProvider, setAddingProvider] = useState(false)
+  useEffect(() => {
+    if (!addProviderRequested) return
+    setAddingProvider(true)
+    onAddProviderOpened?.()
+  }, [addProviderRequested, onAddProviderOpened])
   const [newProvider, setNewProvider] = useState('')
   const [confirmDel, setConfirmDel] = useState<
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
   >(null)
   const [busy, setBusy] = useState(false)
+
+  const addKey = () => {
+    if (providers.length === 1) setEditing({ provider: providers[0].name, key: null })
+    else if (providers.length > 1) setPickProvider(providers[0].name)
+  }
 
   const handleAddProvider = async () => {
     const name = newProvider.trim().toLowerCase()
@@ -101,7 +108,6 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
       notify('ok', `Provider ${name} added. Add a key to make it routable.`)
       setAddingProvider(false)
       setNewProvider('')
-      setExpanded(name)
     } catch (e) {
       notify('err', bifrostError(e, 'Bifrost rejected that provider name.'))
     } finally {
@@ -131,11 +137,11 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
   return (
     <SettingsCard
       wide
-      title="Providers & Keys"
-      desc="Configuration lives in the Bifrost gateway, which is the only route out to a model. A provider can hold several keys — Bifrost load-balances across them by weight and fails over when one is rejected."
+      title="Keys"
+      desc="A provider can hold several keys; traffic is shared by weight and moves to another key if one is rejected. Saving a key tests it."
       actions={
-        <button className="btn primary" onClick={() => setAddingProvider(true)}>
-          <Icon name="plus" /> Add Provider
+        <button className="btn ghost" disabled={providers.length === 0} onClick={addKey}>
+          <Icon name="plus" /> Add key
         </button>
       }
     >
@@ -156,7 +162,7 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
           compact
           icon="alert"
           title="Couldn’t check whether these keys can route"
-          body="Health below falls back to the gateway's own status, which cannot tell a refused credential from one it was unable to check."
+          body="Health is left blank rather than guessed: the gateway's own status cannot tell a refused credential from one it was unable to check."
           primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
         />
       )}
@@ -169,102 +175,96 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
           primary={{ label: 'Add provider', onClick: () => setAddingProvider(true), icon: 'plus' }}
         />
       )}
-      {phase === 'ready' &&
-        providers.map((p) => {
-          const pk = keys[p.name] || []
-          const open = expanded === p.name
-          return (
-            <div key={p.name} className="mb-2.5" style={{ border: '1px solid var(--line)', borderRadius: 6 }}>
-              <div className="flex items-center gap-2.5 px-3 py-2.5">
-                <button
-                  className="btn ghost icon"
-                  title={open ? 'Collapse' : 'Expand'}
-                  onClick={() => setExpanded(open ? null : p.name)}
-                >
-                  <Icon name={open ? 'x2' : 'plus'} size={14} />
-                </button>
-                <span className="font-medium">{p.name}</span>
-                <span className="chip">{pk.length === 1 ? '1 key' : `${pk.length} keys`}</span>
-                {p.provider_status && p.provider_status !== 'active' && (
-                  <span className="chip" style={{ color: 'var(--high)' }}>{p.provider_status}</span>
-                )}
-                {pk.length === 0 && (
-                  <span className="text-xs text-tx-3">No key — this provider cannot route</span>
-                )}
-                <span className="grow" />
-                <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
-                  <Icon name="plus" size={14} /> Add key
-                </button>
-                <button
-                  className="btn ghost icon"
-                  title="Delete provider"
-                  onClick={() => setConfirmDel({ kind: 'provider', provider: p.name })}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
-              </div>
-              {open && (
-                <div className="table-wrap" style={{ borderTop: '1px solid var(--line)' }}>
-                  <table className="tbl">
-                    <thead>
-                      <tr>
-                        <th>Key</th><th>Credential</th><th>Weight</th><th>Models</th><th>Health</th>
-                        <th style={{ textAlign: 'right' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pk.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="text-sm text-tx-3">
-                            No keys yet.
-                          </td>
-                        </tr>
-                      )}
-                      {pk.map((k) => (
-                        <tr key={k.id}>
-                          <td>
-                            <div className="flex flex-col">
-                              <span>{k.name}</span>
-                              {k.enabled === false && <span className="text-xs text-tx-3">Disabled</span>}
-                            </div>
-                          </td>
-                          <td className="font-mono text-xs">
-                            {secretText(k.value) || (k.ollama_key_config ? secretText(k.ollama_key_config.url) : '—')}
-                          </td>
-                          <td>{k.weight}</td>
-                          <td className="text-xs">
-                            {k.models?.includes('*')
-                              ? 'All'
-                              : `${k.models?.length || 0} allowed`}
-                          </td>
-                          <td><KeyStatusChip status={k.status} description={k.description} verdict={verdicts?.keys[k.id]} /></td>
-                          <td style={{ textAlign: 'right' }}>
-                            <div className="inline-flex gap-1.5">
-                              <button
-                                className="btn ghost icon"
-                                title="Edit"
-                                onClick={() => setEditing({ provider: p.name, key: k })}
-                              >
-                                <Icon name="edit" size={15} />
-                              </button>
-                              <button
-                                className="btn ghost icon"
-                                title="Delete key"
-                                onClick={() => setConfirmDel({ kind: 'key', provider: p.name, key: k })}
-                              >
-                                <Icon name="trash" size={15} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )
-        })}
+      {phase === 'ready' && providers.length > 0 && (
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Key</th><th>Credential</th><th>Share</th><th>Models allowed</th><th>Health</th>
+                <th style={{ textAlign: 'right' }}>Edit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providers.map((p) => {
+                const pk = keys[p.name] || []
+                const live = pk.filter((k) => k.enabled !== false)
+                const totalWeight = live.reduce((n, k) => n + (Number(k.weight) || 0), 0)
+                if (pk.length === 0) {
+                  return (
+                    <tr key={p.name}>
+                      <td>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{p.name}</span>
+                          <span className="text-xs text-tx-3">{p.provider_status && p.provider_status !== 'active' ? p.provider_status : 'Provider'}</span>
+                        </div>
+                      </td>
+                      <td colSpan={4} className="text-sm text-tx-3">No key — this provider cannot route</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="inline-flex gap-1.5">
+                          <button className="btn ghost" onClick={() => setEditing({ provider: p.name, key: null })}>
+                            <Icon name="plus" size={14} /> Add key
+                          </button>
+                          <button
+                            className="btn ghost icon"
+                            title="Delete provider"
+                            onClick={() => setConfirmDel({ kind: 'provider', provider: p.name })}
+                          >
+                            <Icon name="trash" size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }
+                return pk.map((k) => (
+                  <tr key={`${p.name}/${k.id}`}>
+                    <td>
+                      <div className="flex flex-col">
+                        <span className="font-medium">{k.name}</span>
+                        <span className="text-xs text-tx-3">
+                          {p.name}{k.enabled === false ? ' · Disabled' : ''}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="font-mono text-xs">
+                      {secretText(k.value) || (k.ollama_key_config ? secretText(k.ollama_key_config.url) : '—')}
+                    </td>
+                    <td>
+                      {k.enabled !== false && totalWeight > 0
+                        ? `${Math.round(((Number(k.weight) || 0) / totalWeight) * 100)}%`
+                        : '—'}
+                    </td>
+                    <td className="text-xs">
+                      {k.models?.includes('*') ? 'All models' : `${k.models?.length || 0} allowed`}
+                    </td>
+                    <td>
+                      {verdicts && <KeyHealth status={k.status} description={k.description} verdict={verdicts.keys[k.id]} />}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div className="inline-flex gap-1.5">
+                        <button
+                          className="btn ghost"
+                          title="Edit"
+                          onClick={() => setEditing({ provider: p.name, key: k })}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="btn ghost icon"
+                          title="Delete key"
+                          onClick={() => setConfirmDel({ kind: 'key', provider: p.name, key: k })}
+                        >
+                          <Icon name="trash" size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <Popup open={addingProvider} onClose={() => setAddingProvider(false)} title="Add provider" width={440}>
         <Field
@@ -292,6 +292,25 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
         </div>
       </Popup>
 
+      <Popup open={pickProvider !== null} onClose={() => setPickProvider(null)} title="Add key" width={440}>
+        <Field label="Provider" hint="The key is added under this provider.">
+          <Select
+            value={pickProvider || ''}
+            options={providers.map((p) => ({ value: p.name, label: p.name }))}
+            onSelect={setPickProvider}
+          />
+        </Field>
+        <div className="flex justify-end gap-2.5 mt-5">
+          <button className="btn ghost" onClick={() => setPickProvider(null)}>Cancel</button>
+          <button
+            className="btn primary"
+            onClick={() => { setEditing({ provider: pickProvider!, key: null }); setPickProvider(null) }}
+          >
+            Continue
+          </button>
+        </div>
+      </Popup>
+
       {editing && (
         <KeyDialog
           provider={editing.provider}
@@ -300,7 +319,6 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
           onSave={async (data) => {
             const saved = await saveKey(editing.provider, editing.key?.id || null, data)
             setEditing(null)
-            setExpanded(editing.provider)
             const refusal = await keyRefusal(saved?.id)
             notify(
               refusal ? 'err' : 'ok',
