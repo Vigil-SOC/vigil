@@ -387,10 +387,13 @@ export default function FlowDiagram({ data, wall, onToggleWall }: Props) {
                   key={b.o.state}
                   className="ov-out"
                   role="group"
+                  tabIndex={0}
                   aria-label={b.o.label}
                   style={{ left: x2 + 14, top: b.y - 19, opacity: outDim(b.o.state) }}
                   onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
                   onMouseLeave={leave}
+                  onFocus={() => setHover({ kind: 'out', key: b.o.state })}
+                  onBlur={leave}
                 >
                   <span className="ov-out-l">
                     <b style={{ color: b.color }}>{fmt(b.o.count)}</b>
