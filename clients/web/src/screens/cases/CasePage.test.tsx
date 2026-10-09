@@ -878,7 +878,7 @@ describe('case page', () => {
       expect(onBack).toHaveBeenCalled()
     })
 
-    it('has no Replay link without a run', async () => {
+    it('shows Replay disabled, with an ⓘ saying why, without a run', async () => {
       testState.recordRows = rows
       testState.cases = [{
         case_id: 'case-rec',
@@ -894,6 +894,9 @@ describe('case page', () => {
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
       await screen.findByText('Lead started step 7')
       expect(screen.queryByRole('link', { name: 'Replay' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Replay' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Why Replay is unavailable' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('This case has no run to replay.')
       expect(screen.queryByRole('button', { name: 'Verify chain' })).not.toBeInTheDocument()
     })
 
