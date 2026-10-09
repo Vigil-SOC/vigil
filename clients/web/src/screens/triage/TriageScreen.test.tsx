@@ -167,7 +167,7 @@ describe('TriageScreen', () => {
     expect(filters.getAllByRole('button', { name: 'All 12' })).toHaveLength(3)
     expect(filters.getByRole('button', { name: 'Alert 7' })).toBeInTheDocument()
     expect(filters.getAllByRole('button', { name: 'Ask 2' })).toHaveLength(2) // the Kind chip and the Source chip
-    expect(filters.getByRole('button', { name: 'splunk 7' })).toHaveAttribute('title', '2 arrived today · Quiet')
+    expect(filters.getByRole('button', { name: 'Splunk 7' })).toHaveAttribute('title', '2 arrived today · Quiet')
     expect(filters.getByRole('button', { name: 'Waiting for a slot 3' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Picked up or started a case 5' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Added to a case 4' })).toBeInTheDocument()
@@ -184,6 +184,11 @@ describe('TriageScreen', () => {
     renderScreen()
     await screen.findByLabelText('Intake strip')
     const filters = within(screen.getByRole('group', { name: 'Filters' }))
+    // the chip shows the label; the request keeps the stored id
+    fireEvent.click(filters.getByRole('button', { name: 'Splunk 7' }))
+    await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ source: 'splunk' }))
+    fireEvent.click(filters.getAllByRole('button', { name: 'All 12' })[1])
+    await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({}))
     fireEvent.click(filters.getByRole('button', { name: 'Waiting for a slot 3' }))
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ state: 'queued' }))
     expect(filters.getByRole('button', { name: 'Waiting for a slot 3' })).toHaveAttribute('aria-pressed', 'true')
@@ -202,13 +207,22 @@ describe('TriageScreen', () => {
   it('keeps a linked source as a selected chip with 0, and says when the cap hides rows', async () => {
     const base = payload()
     vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, matched: 340, counts: { ...base.counts, total: 340 } } } as never)
-    renderScreen('/triage?source=okta')
+    renderScreen('/triage?source=microsoft_defender')
     await screen.findByLabelText('Intake strip')
-    expect(screen.getByRole('button', { name: 'okta 0' })).toHaveAttribute('aria-pressed', 'true')
-    expect(triageApi.get).toHaveBeenCalledWith({ source: 'okta' })
+    expect(screen.getByRole('button', { name: 'Defender 0' })).toHaveAttribute('aria-pressed', 'true')
+    expect(triageApi.get).toHaveBeenCalledWith({ source: 'microsoft_defender' })
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     expect(await screen.findByText('Showing 200 of 340')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument()
+  })
+
+  it('shows a stored source name as its label in the row', async () => {
+    const base = payload()
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, rows: [{ ...base.rows[0], source: 'microsoft_defender' }] } } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    expect(screen.getByText('Defender')).toHaveClass('tq-source')
+    expect(screen.queryByText('microsoft_defender')).not.toBeInTheDocument()
   })
 
   it('lays the rows out in the board’s columns and words', async () => {

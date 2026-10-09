@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import IntegrationWizard from '../settings/IntegrationWizard'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import { getAllIntegrations } from '../../config/integrations'
+import { CATALOG_TO_SOURCE } from '../../config/sourceBadges'
 import { DATA_SOURCE_CATEGORIES } from './setupSteps'
 import { configApi, mcpApi } from '../../services/api'
 import { TextInput } from '../../shared/ui'
@@ -18,16 +19,6 @@ const CATALOG_TO_SERVER: Record<string, string> = {
   'splunk': 'splunk-selfhosted',
 }
 const serverFor = (catalogId: string) => CATALOG_TO_SERVER[catalogId] ?? catalogId
-
-// catalog id -> federation source_id, for the ids that have a collector
-const CATALOG_TO_SOURCE: Record<string, string> = {
-  crowdstrike: 'crowdstrike',
-  splunk: 'splunk',
-  'elastic-siem': 'elastic',
-  'azure-sentinel': 'azure_sentinel',
-  'aws-security-hub': 'aws_security_hub',
-  'microsoft-defender': 'microsoft_defender',
-}
 
 interface IntegrationsConfig {
   enabled_integrations: string[]
