@@ -103,3 +103,13 @@ def test_chat_config_keeps_approvals_empty_when_art_is_connected():
     assert "atomic-red-team_atomic_red_team_execute" not in {
         tool["id"] for tool in config["tools"]
     }
+
+
+@pytest.mark.unit
+def test_chat_config_carries_effort_only_when_set():
+    import yaml
+
+    from core.llm.chat_layers import chat_config
+
+    assert yaml.safe_load(chat_config("m", effort="high"))["effort"] == "high"
+    assert "effort" not in yaml.safe_load(chat_config("m", effort=None))
