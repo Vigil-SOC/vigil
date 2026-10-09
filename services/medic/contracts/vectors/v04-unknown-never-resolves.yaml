@@ -1,0 +1,112 @@
+id: v04-unknown-never-resolves
+title: A stopped sensor keeps the incident open until a real false
+covers:
+- §2 freshness
+- §4 never resolve blind
+- §2 sensor-blind
+start: '2026-10-07T10:00:00Z'
+end: +95m
+rules:
+- ref: ingest-kafka-decode-errors.yaml
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+  - - +33m
+    - stopped
+  - - +60m
+    - ok
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+series:
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 0
+  - - +20m
+    - 10
+- signal: daemon_status.kafka
+  key: missing_id_errors
+  steps:
+  - - +0s
+    - 0
+expect:
+- at: +30m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: firing
+  incident: A
+- at: +34m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: firing
+  incident: A
+- at: +59m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: firing
+  incident: A
+- at: +70m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: firing
+  incident: A
+  note: reads are back but the 15m window isn't covered until +75m
+- at: +75m
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: resolving
+  incident: A
+- at: +89m45s
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: resolving
+  incident: A
+- at: +90m
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: inactive
+- at: +35m30s
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.daemon
+  incident: SB
+- at: +60m
+  rule: watcher.sensor-blind
+  eval: false
+  state: inactive
+  group:
+    sensor: http.daemon
+incidents:
+  A:
+    rule: ingest.kafka-decode-errors
+    active_since: +20m
+    opened_at: +30m
+    resolving_since: +75m
+    resolved_at: +90m
+    reason: cleared
+    routed_at: +30m
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +33m30s
+    opened_at: +35m30s
+    resolving_since: +60m
+    resolved_at: +60m
+    reason: cleared
+    group:
+      sensor: http.daemon
+    routed_at: +35m30s

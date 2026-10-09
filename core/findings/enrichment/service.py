@@ -73,6 +73,7 @@ def _resolve_provider(component: str) -> Tuple[Any, str, Any]:
     """
     from core.llm.providers.registry import get_registry
     from core.llm.router.router import get_provider_spec
+    from core.llm.target import component_fallback, model_for
 
     resolved_model = get_registry().resolve_model_for_component(component)
     if not resolved_model:
@@ -95,7 +96,11 @@ def _resolve_provider(component: str) -> Tuple[Any, str, Any]:
                 f"Anthropic provider '{provider_id}' has no resolvable API key"
             )
 
-    return provider, model_id, claude_service
+    return (
+        provider,
+        model_for(provider, model_id, component_fallback(component), component),
+        claude_service,
+    )
 
 
 async def _dispatch(

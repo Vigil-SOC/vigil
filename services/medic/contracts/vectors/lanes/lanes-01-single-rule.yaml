@@ -1,0 +1,7 @@
+id: lanes-01-single-rule
+description: A lane-2 rule that is no rule's suppression child routes when it opens. The lane is the rule's lane (R1).
+until: 3600
+incidents:
+  - {id: a, rule: ingest.integration-config-incomplete, lane: 2, trust: untrusted, signals: 2, samples: 0, opened_at: 0}
+expect:
+  a: {lane: {value: 2, reason: rule}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: notify_admin, L2: {action: notify_admin, not_eligible: not_lane1}}, escalation: null}

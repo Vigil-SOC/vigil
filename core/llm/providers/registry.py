@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.agents.builtins import blank_model
 from core.llm.providers.discovery import is_embedding_model_id
 from core.llm.router.router import get_default_provider_spec
 
@@ -76,6 +77,9 @@ def _record_pricing_unknown(provider_type: str, model_id: str) -> None:
 # Component enum (mirrors ai_model_configs.component values)
 # ---------------------------------------------------------------------------
 
+# Key in ai_model_configs.settings holding a component's same-provider fallback.
+FALLBACK_KEY = "fallback_model_id"
+
 COMPONENTS: Tuple[str, ...] = (
     "chat_default",
     "triage",
@@ -104,7 +108,13 @@ def is_valid_component(name: str) -> bool:
 
 # The provider types Vigil can configure. Also what a ``provider/model`` id may
 # name, since that is the gateway's own wire form.
-VALID_PROVIDER_TYPES = frozenset({"anthropic", "openai", "ollama", "vertex"})
+VALID_PROVIDER_TYPES = frozenset(
+    {"anthropic", "openai", "ollama", "vertex", "openrouter"}
+)
+
+# The vendors an OpenRouter id may be prefixed with ("anthropic/claude-...") whose
+# own datasheets can price it when OpenRouter's does not.
+OPENROUTER_VENDORS = ("anthropic", "openai")
 
 
 def infer_provider_type(model_id: str) -> str:
@@ -238,6 +248,33 @@ def _default_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
     }
 
 
+def _vendor_rates(model_id: str) -> Optional[Dict[str, Any]]:
+    """Rates for an OpenRouter ``<vendor>/<id>`` from the vendor's own datasheet.
+
+    Used when OpenRouter's sheet lacks the id. Anthropic spells versions with
+    dashes (``claude-haiku-5-5``) where OpenRouter uses dots (``claude-haiku-5.5``).
+    """
+    vendor, _, bare = model_id.partition("/")
+    if vendor not in OPENROUTER_VENDORS or not bare:
+        return None
+    for candidate in dict.fromkeys((bare, bare.replace(".", "-"))):
+        live = _LIVE_META.get((vendor, candidate)) or {}
+        in_rate = live.get("input_cost_per_token")
+        out_rate = live.get("output_cost_per_token")
+        if in_rate is None or out_rate is None:
+            continue
+        read = live.get("cache_read_cost_per_token")
+        write = live.get("cache_write_cost_per_token")
+        return {
+            "input": float(in_rate),
+            "output": float(out_rate),
+            "cache_read": float(in_rate if read is None else read),
+            "cache_write": float(in_rate if write is None else write),
+            "rates_fetched_at": live.get("rates_fetched_at"),
+        }
+    return None
+
+
 def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
     """Return the catalog entry for one model, priced from live meta only.
 
@@ -275,6 +312,15 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
         entry["pricing_source"] = "zero" if not any(rates.values()) else "exact"
     elif provider_type == "ollama" and "rates_fetched_at" not in live:
         entry["pricing_source"] = "zero"
+    elif provider_type == "openrouter" and (vendor := _vendor_rates(model_id)):
+        entry.update(vendor, rates_fetched_at=vendor["rates_fetched_at"])
+        entry["pricing_source"] = (
+            "zero"
+            if not any(
+                vendor[k] for k in ("input", "output", "cache_read", "cache_write")
+            )
+            else "exact"
+        )
     else:
         logger.warning(
             "No gateway rate for %s/%s — its calls are recorded as unpriced",
@@ -671,6 +717,25 @@ class ModelRegistry:
         if spec is not None:
             return (spec.provider_id, spec.default_model)
         return None
+
+    def effort_for_component(self, component: str) -> Optional[str]:
+        """``settings.effort`` of the assignment that resolves ``component``
+        (its own row, else ``chat_default``'s); None leaves the model's default."""
+        assignments = self.get_all_assignments()
+        a = assignments.get(component) or assignments.get("chat_default")
+        effort = a.settings.get("effort") if a else None
+        # Free-form JSON in the row; only a level the agent layer accepts leaves here.
+        return effort if effort in ("low", "medium", "high") else None
+
+    def fallback_for_component(self, component: str) -> Optional[str]:
+        """The fallback model of the row ``resolve_model_for_component`` uses.
+
+        A component without its own row inherits ``chat_default``'s, so it
+        inherits that row's fallback too.
+        """
+        assignments = self.get_all_assignments()
+        row = assignments.get(component) or assignments.get("chat_default")
+        return blank_model((row.settings or {}).get(FALLBACK_KEY)) if row else None
 
     # ---- provider helpers ------------------------------------------------
 

@@ -35,10 +35,12 @@ only when the consumer reads the value under a non-canonical name
 from __future__ import annotations
 
 import json
-from typing import Dict, Iterable, Mapping
+import re
+from typing import Dict, Iterable, List, Mapping
 
 from core.config import vigil_path
 from core.integrations._base.descriptor import iter_descriptors
+from core.secrets import get_secret
 
 
 def default_env_var(integration_id: str, field_name: str) -> str:
@@ -288,3 +290,45 @@ def redact_secrets(integration_id: str, config: Dict[str, object]) -> Dict[str, 
 def secret_field_names(integration_id: str) -> Iterable[str]:
     """Iterable over the form-field names that are secrets for an integration."""
     return secret_fields_for(integration_id).keys()
+
+
+# Config keys that say where the integration connects (server_url, connectorUrl,
+# base_url, host, tenant, region, ...).
+_DESTINATION_KEY = re.compile(
+    r"url|uri|host|endpoint|server|domain|address|instance|tenant|region|(?:^|_)port$",
+    re.IGNORECASE,
+)
+
+
+def _same_destination(old: object, new: object) -> bool:
+    def norm(value: object) -> str:
+        return "" if value is None else str(value).strip().rstrip("/")
+
+    return norm(old) == norm(new)
+
+
+def credentials_to_resupply(
+    integration_id: str,
+    stored_config: Mapping[str, object],
+    new_config: Mapping[str, object],
+) -> List[str]:
+    """Secret fields the caller must send again because the destination moved.
+
+    A stored credential follows the saved destination on the next call, so
+    changing where an integration connects must not carry the old credential
+    to the new host. When a destination field differs from the stored one,
+    every secret that is currently set has to be present and non-empty in
+    ``new_config``; the names of those that are not are returned.
+    """
+    moved = any(
+        _DESTINATION_KEY.search(key)
+        and not _same_destination(stored_config.get(key), value)
+        for key, value in new_config.items()
+    )
+    if not moved:
+        return []
+    return [
+        field
+        for field, env_key in secret_fields_for(integration_id).items()
+        if get_secret(env_key) and not new_config.get(field)
+    ]

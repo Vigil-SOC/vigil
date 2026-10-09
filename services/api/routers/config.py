@@ -2,10 +2,10 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.auth.permissions import permission_gate
@@ -24,8 +24,10 @@ from core.deps import (
 )
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
+from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
+    credentials_to_resupply,
     redact_secrets,
     secret_fields_for,
     split_secrets,
@@ -36,6 +38,12 @@ from core.response.approval_service import APPROVAL_CONFIG_KEY
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
+from core.skills.skill_library import (
+    is_bundled,
+    load_skills,
+    operator_skills_root,
+    skill_roots,
+)
 from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
 from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
@@ -711,8 +719,13 @@ def build_setup_steps(
     descriptor_count: int,
     alerts_exist: int,
     demo_enabled: bool,
+    skills_root_set: bool = False,
+    custom_skills: int = 0,
 ) -> dict:
-    """Four setup steps from config that already exists. No ranking, no dismissal."""
+    """Four or five setup steps from config that already exists. No ranking, no dismissal.
+
+    The custom skill step is served only when ``VIGIL_SKILLS_PATH`` is set, so it can always be finished.
+    """
     integrations = loaded.get("integrations") or {}
     connected = len(integrations)
     slack = (secrets_set.get("slack") or {}).get("bot_token") is True
@@ -730,45 +743,60 @@ def build_setup_steps(
     else:
         model_line = "Agents use more than one model"
     integrations_href = "/settings?section=integrations"
+    steps = [
+        _step(
+            "connect_tools",
+            "Connect more tools",
+            f"{connected} of {descriptor_count} integrations connected",
+            connected >= 1,
+            integrations_href,
+        ),
+        _step(
+            "notify",
+            "Where Vigil pings you",
+            (
+                "Slack or PagerDuty route is set"
+                if notify_done
+                else "No Slack or PagerDuty route yet"
+            ),
+            notify_done,
+            integrations_href,
+        ),
+        _step(
+            "rules",
+            "Link detection rules",
+            (
+                "Detection rules are on disk"
+                if rules_done
+                else "No detection rules on disk"
+            ),
+            rules_done,
+            "/settings?section=data&tab=detection",
+        ),
+        _step(
+            "per_agent",
+            "Pick a model per agent",
+            model_line,
+            distinct >= 2,
+            "/settings?section=ai-config&tab=assignment",
+        ),
+    ]
+    if skills_root_set:
+        steps.append(
+            _step(
+                "custom_skill",
+                "Add a custom skill",
+                (
+                    "Teach Vigil your team’s playbooks"
+                    if custom_skills == 0
+                    else f"{custom_skills} custom skill{'s' if custom_skills != 1 else ''}"
+                ),
+                custom_skills >= 1,
+                "/workflows?tab=skills",
+            )
+        )
     return {
-        "steps": [
-            _step(
-                "connect_tools",
-                "Connect more tools",
-                f"{connected} of {descriptor_count} integrations connected",
-                connected >= 1,
-                integrations_href,
-            ),
-            _step(
-                "notify",
-                "Where Vigil pings you",
-                (
-                    "Slack or PagerDuty route is set"
-                    if notify_done
-                    else "No Slack or PagerDuty route yet"
-                ),
-                notify_done,
-                integrations_href,
-            ),
-            _step(
-                "rules",
-                "Link detection rules",
-                (
-                    "Detection rules are on disk"
-                    if rules_done
-                    else "No detection rules on disk"
-                ),
-                rules_done,
-                "/settings?section=data&tab=detection",
-            ),
-            _step(
-                "per_agent",
-                "Pick a model per agent",
-                model_line,
-                distinct >= 2,
-                "/settings?section=ai-config",
-            ),
-        ],
+        "steps": steps,
         "alerts_exist": alerts_exist,
         "demo_enabled": demo_enabled,
     }
@@ -779,8 +807,14 @@ def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
 ):
-    """Home's setup list: tools, a notify route, rules on disk, and model variety."""
+    """Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill."""
     loaded = load_integrations_config(get_config_service())
+    skills_root_set = operator_skills_root() is not None
+    try:
+        custom_skills = sum(1 for s in load_skills(skill_roots()) if not is_bundled(s))
+    except Exception:  # a bad skills folder must not fail the setup read
+        logger.warning("Could not count custom skills", exc_info=True)
+        custom_skills = 0
     return build_setup_steps(
         loaded=loaded,
         secrets_set=_secrets_set_map(loaded.get("integrations") or {}),
@@ -789,6 +823,8 @@ def get_setup_steps(
         descriptor_count=len(iter_descriptors()),
         alerts_exist=findings_data_service.count_findings(),
         demo_enabled=is_demo_mode(),
+        skills_root_set=skills_root_set,
+        custom_skills=custom_skills,
     )
 
 
@@ -822,6 +858,7 @@ def get_integrations_config():
                 "configured": False,
                 "enabled_integrations": [],
                 "integrations": {},
+                "last_test": {},
             }
 
         # Redact registered secret fields so the frontend never receives
@@ -836,6 +873,8 @@ def get_integrations_config():
             "enabled_integrations": loaded["enabled_integrations"],
             "integrations": redacted,
             "secrets_set": _secrets_set_map(redacted),
+            # {id: {at, success, error}} from POST .../test; untested ids absent
+            "last_test": loaded.get("last_test", {}),
         }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
@@ -843,6 +882,7 @@ def get_integrations_config():
             "configured": False,
             "enabled_integrations": [],
             "integrations": {},
+            "last_test": {},
             "error": INTERNAL_ERROR_DETAIL,
         }
 
@@ -861,7 +901,10 @@ def set_integrations_config(
     from the dict that lands in the DB / JSON file. Empty strings are
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials. A failed secret write or integration-config
+    clobber stored credentials, unless a destination field (URL, host, ...) also
+    changed: then every stored secret must be re-entered (HTTP 400 otherwise),
+    so a saved credential is never carried to a destination its owner did not
+    choose. A failed secret write or integration-config
     row is HTTP 500; the detail names the integration and field, never the value.
 
     Args:
@@ -871,6 +914,23 @@ def set_integrations_config(
         Success status
     """
     config_service = _for_user(current_user)
+
+    # A stored credential is sent to whatever destination is saved, so moving
+    # one requires the caller to supply the credential again. Checked for every
+    # integration before anything is written.
+    for integration_id, raw_config in config.integrations.items():
+        stored = config_service.get_integration_config(integration_id) or {}
+        missing = credentials_to_resupply(
+            integration_id, stored.get("config") or {}, raw_config or {}
+        )
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Integration '{integration_id}' connects somewhere new; "
+                    f"enter its credential again ({', '.join(missing)}) to save."
+                ),
+            )
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
@@ -1027,6 +1087,24 @@ def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
     return "; ".join(parts) or None
 
 
+async def _probe_connector_integration(
+    integration_id: str, status: dict, current_user: User
+) -> dict:
+    username = getattr(current_user, "username", None) or "unknown"
+    try:
+        message = await extension_sessions.probe_connector(integration_id, username)
+        success, error = True, None
+    except extension_sessions.ExtensionSessionError as exc:
+        success, message, error = False, str(exc), str(exc)
+
+    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
+        integration_id, success=success, error=error, tested_at=utcnow()
+    )
+    if not recorded:
+        logger.warning("Integration '%s' test result was not saved", integration_id)
+    return {"success": success, "message": message, "status": status}
+
+
 @router.post("/integrations/{integration_id}/test")
 async def test_integration(
     integration_id: str,
@@ -1034,9 +1112,11 @@ async def test_integration(
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
     mcp_client=Depends(provide_mcp_client),
 ):
-    """Probe the MCP servers behind an integration.
+    """Probe the MCP servers behind an integration, or its connector URL.
 
-    Catalog entries have no descriptor, so they are not testable. A stored
+    A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
+    over HTTP instead. Other catalog entries have no descriptor, so they are not
+    testable. A stored
     config of ``{}`` is still configured — secret-only rows keep the secret
     outside this dict. The integration's enabled flag does not block the
     probe: enabled MCP servers are contacted, and if none are enabled every
@@ -1046,6 +1126,10 @@ async def test_integration(
 
     server_names = list(bridge.server_names_for(integration_id))
     status = bridge.get_integration_status(integration_id)
+    # A UI-extension connector has no MCP server of its own: probe its URL.
+    stored = bridge.get_integration_config(integration_id) or {}
+    if not server_names and stored.get("connectorUrl"):
+        return await _probe_connector_integration(integration_id, status, current_user)
     if not server_names:
         return {
             "success": False,
@@ -1383,23 +1467,54 @@ def set_ai_operations_config(
 
 
 class OrchestratorSettingsConfig(BaseModel):
-    """Orchestrator configuration for autonomous investigations."""
+    """Orchestrator configuration for autonomous investigations.
+
+    The ``ge``/``le`` bounds are the one source: POST enforces them and GET
+    serves them (with ``step``) as ``bounds``. 0 is not "unlimited" to the
+    daemon (``_in_flight() >= max_concurrent_agents``), it is the tightest cap.
+    """
 
     # Opt-in; also feeds ORCHESTRATOR_DEFAULTS. Matches GET /api/orchestrator/status,
     # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
-    max_concurrent_agents: int = 3
-    max_iterations_per_agent: int = 50
-    max_runtime_per_investigation: int = 3600
-    max_cost_per_investigation: float = 5.0
-    max_total_hourly_cost: float = 20.0
-    loop_interval: int = 60
-    stale_threshold: int = 300
-    workdir_base: str = "data/investigations"
+    max_concurrent_agents: int = Field(3, ge=1, le=10, json_schema_extra={"step": 1})
+    max_iterations_per_agent: int = Field(
+        50, ge=1, le=500, json_schema_extra={"step": 1}
+    )
+    max_runtime_per_investigation: int = Field(
+        3600, ge=60, le=86400, json_schema_extra={"step": 60}
+    )
+    max_cost_per_investigation: float = Field(
+        5.0, ge=0.5, le=100, json_schema_extra={"step": 0.5}
+    )
+    max_total_hourly_cost: float = Field(
+        20.0, ge=1, le=500, json_schema_extra={"step": 1}
+    )
+    loop_interval: int = Field(60, ge=10, le=600, json_schema_extra={"step": 10})
+    stale_threshold: int = Field(300, ge=60, le=86400, json_schema_extra={"step": 60})
+    workdir_base: str = Field("data/investigations", min_length=1)
 
 
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
+
+
+class OrchestratorFieldBounds(BaseModel):
+    """Inclusive range and scrub step of one numeric setting."""
+
+    min: float
+    max: float
+    step: float
+
+
+def _orchestrator_bounds() -> Dict[str, Dict[str, float]]:
+    """Bounds read back from the model's JSON schema, so there is no second dict."""
+    props = OrchestratorSettingsConfig.model_json_schema()["properties"]
+    return {
+        name: {"min": p["minimum"], "max": p["maximum"], "step": p["step"]}
+        for name, p in props.items()
+        if "minimum" in p
+    }
 
 
 class InvestigationProfileValues(BaseModel):
@@ -1467,20 +1582,30 @@ INVESTIGATION_PROFILES = InvestigationProfiles.model_validate(
 )
 
 
-class OrchestratorConfigResponse(OrchestratorSettingsConfig):
-    """Flat saved settings plus the profiles the Settings cards render.
-
-    ``profiles`` is not part of the stored object. POST takes
-    ``OrchestratorSettingsConfig`` and ignores the field.
-    """
-
-    profiles: InvestigationProfiles
+# The saved values with the bounds stripped. A config saved before the bounds
+# existed (0 meant "unlimited" in the old form) must still load so it can be
+# corrected, and a response model that enforced the bounds would 500 on it.
+OrchestratorConfigResponse = create_model(
+    "OrchestratorConfigResponse",
+    __doc__="""Flat saved settings, the profiles the Settings cards render, and the
+    model's ``defaults`` and ``bounds``. Only the flat keys are stored; POST takes
+    ``OrchestratorSettingsConfig`` and ignores the rest.""",
+    profiles=(InvestigationProfiles, ...),
+    defaults=(Dict[str, Union[bool, int, float, str]], ...),
+    bounds=(Dict[str, OrchestratorFieldBounds], ...),
+    **{
+        name: (field.annotation, field.default)
+        for name, field in OrchestratorSettingsConfig.model_fields.items()
+    },
+)
 
 
 def _orchestrator_payload(stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**ORCHESTRATOR_DEFAULTS, **(stored or {})}
     flat = {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
     flat["profiles"] = INVESTIGATION_PROFILES.model_dump()
+    flat["defaults"] = dict(ORCHESTRATOR_DEFAULTS)
+    flat["bounds"] = _orchestrator_bounds()
     return flat
 
 

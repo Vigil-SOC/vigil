@@ -257,20 +257,35 @@ export function Select({
   options,
   onSelect,
   placeholder = 'Select…',
+  searchable = false,
+  disabled,
 }: {
   value: string
   options: DropOption[]
   onSelect: (value: string) => void
   placeholder?: string
+  // adds a filter input to the open menu, for long option lists
+  searchable?: boolean
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const escapeLayerRef = useRef(Symbol('select'))
+  const listId = useId()
   // a fixed-position portal, to escape overflow clipping (cards, .table-wrap,
   // the scrolling settings pane); anchored to the trigger's rect
   const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null)
   const current = options.find((o) => o.value === value)
+
+  const needle = query.trim().toLowerCase()
+  const shown = needle
+    ? options.filter((o) => o.label.toLowerCase().includes(needle) || o.value.toLowerCase().includes(needle))
+    : options
+  const optionId = (i: number) => `${listId}-opt-${i}`
 
   const place = useCallback(() => {
     const el = ref.current
@@ -278,6 +293,43 @@ export function Select({
     const r = el.getBoundingClientRect()
     setPos({ left: r.left, top: r.bottom + 4, width: r.width })
   }, [])
+
+  const openMenu = () => {
+    setQuery('')
+    setActive(Math.max(0, options.findIndex((o) => o.value === value)))
+    setOpen(true)
+  }
+  // the filter input unmounts with the menu, so hand focus back to the trigger
+  const closeMenu = () => {
+    setOpen(false)
+    if (searchable) triggerRef.current?.focus()
+  }
+  const closeMenuRef = useRef(closeMenu)
+  closeMenuRef.current = closeMenu
+  const choose = (o: DropOption) => {
+    onSelect(o.value)
+    closeMenu()
+  }
+
+  // Latest-render key handler; the effect below reads it through the ref so the
+  // document listener (and its Escape layer position) isn't re-registered per keystroke.
+  const onMenuKey = useRef<(e: KeyboardEvent) => void>(() => undefined)
+  onMenuKey.current = (e) => {
+    const last = shown.length - 1
+    let next: number | null = null
+    if (e.key === 'ArrowDown') next = Math.min(active + 1, last)
+    else if (e.key === 'ArrowUp') next = Math.max(active - 1, 0)
+    // in the filter input, Home/End move the caret
+    else if (e.key === 'Home' && !searchable) next = 0
+    else if (e.key === 'End' && !searchable) next = last
+    else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (shown[active]) choose(shown[active])
+      return
+    } else return
+    e.preventDefault()
+    setActive(Math.max(next, 0))
+  }
 
   useEffect(() => {
     if (!open) return
@@ -290,11 +342,12 @@ export function Select({
       setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isTopEscapeLayer(escapeLayer)) {
+      if (!isTopEscapeLayer(escapeLayer)) return
+      if (e.key === 'Escape') {
         e.preventDefault()
         e.stopImmediatePropagation()
-        setOpen(false)
-      }
+        closeMenuRef.current()
+      } else onMenuKey.current(e)
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -308,42 +361,79 @@ export function Select({
       window.removeEventListener('scroll', place, true)
     }
   }, [open, place])
+  useEffect(() => {
+    if (open) document.getElementById(optionId(active))?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, active]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const root = ref.current?.closest('.soc-console') as HTMLElement | null
   const menu =
     open && pos ? (
       <div
         ref={menuRef}
-        className="drop-menu field-menu"
-        role="listbox"
+        className={`drop-menu field-menu${searchable ? ' searchable' : ''}`}
         // above the modal overlay (70), so a Select inside a Popup isn't hidden
         style={{ position: 'fixed', left: pos.left, top: pos.top, width: pos.width, minWidth: pos.width, right: 'auto', zIndex: 80 }}
       >
-        {options.map((o) => (
-          <button
-            key={o.value}
-            role="option"
-            aria-selected={o.value === value}
-            className={o.value === value ? 'sel' : ''}
-            onClick={() => {
-              onSelect(o.value)
-              setOpen(false)
+        {searchable && (
+          <input
+            autoFocus
+            className="drop-search"
+            type="text"
+            role="combobox"
+            aria-expanded
+            aria-controls={listId}
+            aria-activedescendant={shown[active] ? optionId(active) : undefined}
+            aria-label="Filter options"
+            placeholder="Filter…"
+            autoComplete="off"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setActive(0)
             }}
-          >
-            {o.label}
-          </button>
-        ))}
+          />
+        )}
+        <div id={listId} role="listbox">
+          {shown.map((o, i) => (
+            <button
+              key={o.value}
+              id={optionId(i)}
+              type="button"
+              role="option"
+              tabIndex={-1}
+              aria-selected={o.value === value}
+              className={`${o.value === value ? 'sel' : ''}${i === active ? ' active' : ''}`}
+              // keep focus on the trigger / filter input
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => choose(o)}
+            >
+              {o.label}
+            </button>
+          ))}
+          {shown.length === 0 && <div className="drop-empty">No matches</div>}
+        </div>
       </div>
     ) : null
 
   return (
     <div className="drop field-drop" ref={ref}>
       <button
+        ref={triggerRef}
         type="button"
         className="field-select"
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open && !searchable && shown[active] ? optionId(active) : undefined}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={(e) => {
+          if (!open && e.key === 'ArrowDown') {
+            e.preventDefault()
+            openMenu()
+          }
+        }}
       >
         <span className={current ? '' : 'text-tx-3'}>{current?.label ?? placeholder}</span>
         <span className="dd"><Icon name="chevD" size={13} /></span>
@@ -451,7 +541,7 @@ export function ToggleRow({
         <span className="toggle-row-label">{label}</span>
         {hint && <span className="toggle-row-hint">{hint}</span>}
       </div>
-      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} label={typeof label === 'string' ? label : undefined} />
     </div>
   )
 }
@@ -565,16 +655,18 @@ export function SettingsCard({
   desc,
   actions,
   wide,
+  id,
   children,
 }: {
   title: ReactNode
   desc?: ReactNode
   actions?: ReactNode
   wide?: boolean
+  id?: string
   children: ReactNode
 }) {
   return (
-    <section className={`card card-sq settings-card${wide ? ' wide' : ''}`}>
+    <section id={id} className={`card card-sq settings-card${wide ? ' wide' : ''}`}>
       <div className="card-h">
         <div className="settings-card-head">
           <h3>{title}</h3>

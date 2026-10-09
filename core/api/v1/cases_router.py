@@ -29,6 +29,7 @@ from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_state import detail_fields
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.cases.combined_state import queue_item
+from core.deps import provide_workflows
 from core.findings.source_link import resolve_source_link
 from core.response.approval_service import needs_you
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -57,6 +58,7 @@ from core.storage.schemas.case_api import (
 )
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
+from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
 
@@ -282,6 +284,7 @@ def _empty_queue(limit: int, offset: int) -> dict:
             "sla_at_risk": 0,
             "closed_today": 0,
             "agent_closure_share": 0.0,
+            "needs_you": 0,
         },
     }
 
@@ -296,8 +299,11 @@ def get_cases(
     assignee: Optional[str] = None,
     closed: Optional[bool] = None,
     query: Optional[str] = None,
+    needs_you_only: bool = Query(default=False, alias="needs_you"),
+    kind: Optional[str] = None,
     limit: int = Query(default=PAGE_LIMIT, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    workflows: WorkflowsService = Depends(provide_workflows),
 ):
     """One page of the case queue, plus the strip.
 
@@ -305,12 +311,21 @@ def get_cases(
     the case ids that sort first; then resolution time left ascending, rows
     with no SLA last, then last activity descending. The same set marks
     ``needs_you`` on each row. Page size defaults to the repository limit.
+    ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
+    latest investigation ran a workflow of that ``run_kind`` (none when no
+    workflow has it); both compose with the other filters.
     """
     if not data_service.is_using_database():
         return _empty_queue(limit, offset)
 
     now = utcnow()
     needs_you_ids = _needs_you_case_ids()
+    kind = _blank(kind)
+    workflow_ids = (
+        {w["id"] for w in workflows.list_workflows() if w.get("run_kind") == kind}
+        if kind
+        else None
+    )
     with unit_of_work() as session:
         repo = CaseRepository(session)
         rows, total = repo.queue(
@@ -326,8 +341,10 @@ def get_cases(
             closed=closed,
             now=now,
             needs_you_ids=needs_you_ids,
+            needs_you_only=needs_you_only,
+            workflow_ids=workflow_ids,
         )
-        strip = repo.strip(now=now)
+        strip = repo.strip(now=now, needs_you_ids=needs_you_ids)
     return {
         "cases": [
             asdict(queue_item(row, now, needs_you=row.case_id in needs_you_ids))
@@ -364,6 +381,7 @@ def _linked_findings(session, finding_ids: object) -> List[CaseLinkedFinding]:
         entries.append(
             CaseLinkedFinding(
                 finding_id=row.finding_id,
+                title=row.title,
                 description=row.description,
                 source_link=resolve_source_link(
                     {
@@ -401,7 +419,8 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     case = dict(loaded)
     investigations = case_records_service.list_case_investigations(session, case_id)
     closure = session.get(CaseClosureInfo, case_id)
-    case.update(detail_fields(case.get("status"), investigations, closure))
+    runs = case_records_service.list_case_runs(session, case_id)
+    case.update(detail_fields(case.get("status"), investigations, closure, runs))
     case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 

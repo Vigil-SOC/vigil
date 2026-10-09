@@ -173,7 +173,14 @@ async function foldedBy(state: State, runId: string, view: "projection" | "disti
 }
 
 async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse): Promise<void> {
-  const folded = await foldedBy(state, runId, view);
+  let folded: unknown | null;
+  try {
+    folded = await foldedBy(state, runId, view);
+  } catch (error) {
+    // A registered kind is not a foldable ledger: distil throws when the first event
+    // is not the run event. Answered as 502, as readReplay does, so the caller retries.
+    return fail(res, 502, view, runId, error);
+  }
   if (folded === null) return refuse(res, 404, `no readable run: ${runId}`);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify(folded));
@@ -321,7 +328,12 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       if (logged !== null) return readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);
 
       return refuse(res, 404, `no such route: ${req.method} ${url}`);
-    })();
+    })().catch((error: unknown) => {
+      // Backstop: a route that throws must not become an unhandled rejection, which exits the process.
+      if (!res.headersSent) return fail(res, 500, "request", req.url ?? "", error);
+      log.error("request failed after headers", { route: "request", ...errorFields(error) });
+      res.end();
+    });
   });
 }
 

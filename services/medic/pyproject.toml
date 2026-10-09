@@ -1,0 +1,45 @@
+# Medic (System Watcher) has its own lock and its own venv: it imports nothing
+# from core or any other service (A3-1, enforced by .importlinter), so a Vigil
+# dependency bump can't break the thing that watches Vigil. Not installed as a
+# package: it runs as `python -m services.medic` from the repo root (or /app in
+# the image), the same way the other services do. See README.md.
+[project]
+name = "vigil-medic"
+version = "0.0.0"
+description = "Medic: the ops-health watcher for a Vigil install"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "cryptography>=43",
+    "google-re2>=1.1",
+    "httpx>=0.27",
+    "jsonschema>=4.23",
+    "pyyaml>=6",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter==2.15",
+    "openapi-spec-validator>=0.7",
+    "pytest>=8",
+    "ruff==0.16.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["contracts/tests", "tests"]
+# The repo root, so `services.medic` imports the way it does at runtime.
+pythonpath = ["../.."]
+# importlib: the contract tests and Medic's tests both have bare test_*.py names.
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff]
+target-version = "py312"
+# "contracts" in src keeps the contracts' own modules first-party, as they were
+# in the working folder they were copied from, so their imports sort unchanged.
+src = [".", "contracts"]
+
+[tool.ruff.lint.isort]
+# Matches the repo's isort (setup.cfg), so both agree on Medic's own imports.
+known-first-party = ["services"]

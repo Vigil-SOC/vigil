@@ -417,3 +417,43 @@ async def test_fallback_models_empty_when_no_providers():
     last-resort default (the fresh-install Claude bootstrap in the API)."""
     reg = _StubRegistry(active_providers=[])
     assert await reg.fallback_models() == []
+
+
+def test_effort_for_component_follows_the_assignment_and_ignores_junk(monkeypatch):
+    from core.llm.providers.registry import ComponentAssignment, get_registry
+
+    def row(effort):
+        return ComponentAssignment(
+            component="x", provider_id="p", model_id="m", settings={"effort": effort}
+        )
+
+    reg = get_registry()
+    monkeypatch.setattr(
+        reg,
+        "get_all_assignments",
+        lambda: {"investigation": row("high"), "chat_default": row("low")},
+    )
+    assert reg.effort_for_component("investigation") == "high"
+    assert reg.effort_for_component("triage") == "low"  # chat_default's
+
+    monkeypatch.setattr(
+        reg, "get_all_assignments", lambda: {"chat_default": row("max")}
+    )
+    assert reg.effort_for_component("triage") is None
+
+
+def test_fallback_for_component_follows_the_row_that_resolves(monkeypatch):
+    from core.llm.providers.registry import ComponentAssignment
+
+    reg = ModelRegistry()
+    rows = {
+        "chat_default": ComponentAssignment(
+            "chat_default", "p", "m", {"fallback_model_id": " f "}
+        ),
+        "triage": ComponentAssignment("triage", "p", "m2", {}),
+    }
+    monkeypatch.setattr(reg, "get_all_assignments", lambda: rows)
+    assert reg.fallback_for_component("triage") is None  # own row, none set
+    assert reg.fallback_for_component("investigation") == "f"  # inherits chat_default
+    monkeypatch.setattr(reg, "get_all_assignments", lambda: {})
+    assert reg.fallback_for_component("triage") is None

@@ -272,3 +272,28 @@ def test_custom_integration_metadata_unreadable_reads_as_no_secrets(
     (tmp_path / "custom_integrations").mkdir()
     (tmp_path / "custom_integrations" / "metadata.json").write_text("{not json")
     assert secret_fields_for("custom-acme-intel") == {}
+
+
+def test_credentials_to_resupply_names_secrets_left_blank_when_a_url_moves(monkeypatch):
+    from core.integrations import integration_secrets
+
+    monkeypatch.setattr(
+        integration_secrets,
+        "get_secret",
+        lambda env: "stored" if env == "SPLUNK_PASSWORD" else "",
+    )
+    stored = {"server_url": "https://a.example"}
+
+    moved = integration_secrets.credentials_to_resupply(
+        "splunk", stored, {"server_url": "https://b.example", "password": ""}
+    )
+    kept = integration_secrets.credentials_to_resupply(
+        "splunk", stored, {"server_url": "https://a.example/", "password": ""}
+    )
+    resupplied = integration_secrets.credentials_to_resupply(
+        "splunk", stored, {"server_url": "https://b.example", "password": "new"}
+    )
+
+    assert moved == ["password"]
+    assert kept == []
+    assert resupplied == []

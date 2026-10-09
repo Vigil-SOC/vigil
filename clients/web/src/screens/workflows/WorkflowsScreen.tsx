@@ -13,6 +13,7 @@ import WorkflowBuilder from './WorkflowBuilder'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
+import { skillsApi } from '../../services/skillsApi'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
@@ -40,14 +41,18 @@ export interface Feed<T> {
 const [PAGE_TITLE, PAGE_DESC] = TITLES.workflows
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
-  const [tab, setTab] = useState<WfTab>('workflows')
+  // ?tab= picks the opening tab, e.g. Home's "Add a custom skill" step
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [tab, setTab] = useState<WfTab>(() => {
+    const wanted = searchParams.get('tab')
+    return wanted === 'agents' || wanted === 'skills' || wanted === 'commands' ? wanted : 'workflows'
+  })
   // lifted so the header's "New workflow" opens the same builder from any tab
   const [creating, setCreating] = useState<null | 'blank' | 'ai'>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
-  const [searchParams, setSearchParams] = useSearchParams()
   const runId = searchParams.get('run')
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
@@ -481,6 +486,8 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 interface WfLimits {
   capabilities?: { bound: string[]; unbound: string[] }
   budgets?: { max_iterations: number; max_cost_usd: number }
+  /** set when a phase's agent is turned off: the server will refuse the run. */
+  roles_note?: string | null
   /** exact, zero or unknown — how confidently the model's rate resolved. */
   pricing?: { model: string; source: string }
 }
@@ -495,17 +502,20 @@ function turnsHint(asked: string, cost: string, limits: WfLimits | null): string
   return `${turns} turn(s): each is a lead decision, the workers it dispatches and the pass that argues against them.${where}`
 }
 
-/** What the hunt will not be able to look at, said before the run costs anything.
+/** What the run will not be able to look at, said before it costs anything.
  *  The same fact reaches the journal only once the run is over. */
-function Blindness({ unbound }: { unbound: string[] }) {
+function Blindness({ unbound, investigation = false }: { unbound: string[]; investigation?: boolean }) {
   if (unbound.length === 0) return null
   const blind = unbound.includes('telemetry_search')
+  const noun = investigation ? 'investigation' : 'hunt'
   return (
     <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>
       No tool here answers {unbound.join(', ')}.{' '}
       {blind
-        ? 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
-        : 'The roles that need it will run without it, and the hunt will record the gap.'}
+        ? investigation
+          ? 'Without telemetry_search the investigation can read findings and indicators but not the SIEM, and will record the gap.'
+          : 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
+        : `The roles that need it will run without it, and the ${noun} will record the gap.`}
     </div>
   )
 }
@@ -870,6 +880,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   // the ceilings and the unbound-tool warning. Everything else, root-cause included,
   // gets the finding, case, and context dialog.
   const isHuntLike = wf.huntLike
+  const isInvestigate = wf.runKind === 'investigate'
   const turns = Number(iterations)
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)
   const cost = Number(maxCost)
@@ -941,8 +952,13 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
       <div className="flex flex-col gap-3.5">
         <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
+        {isHuntLike && limits?.roles_note && (
+          <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>{limits.roles_note}</div>
+        )}
         {isHuntLike && <Unpriced pricing={limits?.pricing} />}
-        {isHuntLike && <Blindness unbound={limits?.capabilities?.unbound ?? []} />}
+        {(isHuntLike || isInvestigate) && (
+          <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
+        )}
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
@@ -998,7 +1014,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         )}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!canRun} style={{ opacity: canRun ? 1 : 0.5 }} onClick={run}>
+          <button className="btn primary" disabled={!canRun} onClick={run}>
             <Icon name="play" /> {starting ? 'Starting…' : 'Run workflow'}
           </button>
         </div>
@@ -2760,7 +2776,7 @@ function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !name.trim()} style={{ opacity: busy || !name.trim() ? 0.5 : 1 }} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+          <button className="btn primary" disabled={busy || !name.trim()} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </div>
     </Popup>
@@ -2816,6 +2832,8 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
 
   const builtins = rows.filter((a) => !a.custom)
   const ordered = [...builtins, ...rows.filter((a) => a.custom)]
+  // by id, not by row: a fresh copy is open before the reloaded list has it
+  const builtinOpen = !!editId && !editId.startsWith('custom-')
 
   const fork = (handle: string) => {
     setBusy(handle)
@@ -2858,7 +2876,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
         <>
           <AgentTable
             agents={ordered.map((a) => ({ ...a, enabled: enabledNow[a.handle] ?? a.enabled }))}
-            onOpen={(a) => (a.custom ? setEditId(a.handle) : fork(a.handle))}
+            onOpen={(a) => setEditId(a.handle)}
             onToggle={setEnabled}
             renderActions={(a) => a.custom ? (
               <span className="row-act">
@@ -2868,7 +2886,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
               </span>
             ) : (
               <span className="row-act">
-                <button title="Fork to editable copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
+                <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
           />
@@ -2878,12 +2896,18 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
 
       {(creating || editId) && (
         <AgentDrawer
+          key={editId ?? 'new'} // a saved copy reopens as a fresh drawer
           agentId={editId}
+          builtIn={builtinOpen}
           describe={creating === 'describe'}
           toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
           skillCount={skillCount}
           onClose={() => { setEditId(null); setCreating(false) }}
-          onSaved={() => { setEditId(null); setCreating(false); reload() }}
+          onSaved={(saved) => {
+            // a built-in's Save made a copy: reopen on it, in custom mode once the list has it
+            const copy = builtinOpen && saved.id ? saved.id : null
+            setEditId(copy); setCreating(false); reload()
+          }}
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
@@ -2917,7 +2941,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
                   <div className="ag-agent">
-                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
+                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Open ${a.name}`}>
                       <span className="ag-ini">{a.ini}</span>
                       <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
                     </button>
@@ -2987,13 +3011,11 @@ const SKILL_USAGE_INFO = 'Reads of the skill body by an agent, counted over the 
 
 // The card's usage line (#1560): skill reads are recorded now, so this
 // renders the 7-day counts the API returns.
-function SkillUsage({ skill }: { skill: Skill }) {
+function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) {
   return (
     <span className="sk-usage">
       {skillUsageText(skill.reads7d, skill.agents7d)}
-      <button type="button" className="btn ghost icon" aria-label={SKILL_USAGE_INFO} title={SKILL_USAGE_INFO}>
-        <Icon name="info" size={14} />
-      </button>
+      <InfoTip label={SKILL_USAGE_INFO} text={SKILL_USAGE_INFO} align={align} />
     </span>
   )
 }
@@ -3003,10 +3025,24 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [editName, setEditName] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
     : null
   const offeredText = offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')
+
+  const importFile = (file: File | undefined) => {
+    if (!file) return
+    setImporting(true)
+    setImportError(null)
+    skillsApi
+      .upload(file)
+      .then((skill) => { reload(); setEditName(skill.name) })
+      .catch((e) => setImportError(e?.response?.data?.detail || e?.message || 'Could not import the skill'))
+      .finally(() => setImporting(false))
+  }
 
   return (
     <>
@@ -3015,20 +3051,21 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
           <span className="sk-offered" title={`Offered to ${offeredText}`}>
             Offered to
-            <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
-              <Icon name="info" size={14} />
-            </button>
+            <InfoTip label={SKILL_GRANT_INFO} text={SKILL_GRANT_INFO} align="start" />
             <span className="sk-offered-list">{offeredText}</span>
           </span>
         </div>
-        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} style={{ opacity: phase === 'ready' ? 1 : 0.5 }} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
+        <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
+        <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
+        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
       </div>
+      {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-x-5 gap-y-[26px] px-[22px] pt-4 pb-24 [grid-template-columns:repeat(4,minmax(0,1fr))]">
-          {rows.map((s) => (
+          {rows.map((s, i) => (
             <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
               <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
                 <span className="sk-folder" aria-hidden="true">
@@ -3043,7 +3080,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
-                <SkillUsage skill={s} />
+                {/* the last of the four columns opens its popover leftwards to stay on screen */}
+                <SkillUsage skill={s} align={i % 4 === 3 ? 'end' : 'start'} />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}

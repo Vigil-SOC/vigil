@@ -11,6 +11,7 @@ from typing import Any, ContextManager, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from core.agents.integration_tools import resolve_integration_call
 from core.agents.internal_auth import authorise
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
@@ -18,6 +19,7 @@ from core.auth import tool_principal
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
+from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
@@ -201,19 +203,25 @@ def _source_system(tool: str, registry: MCPRegistry) -> str:
 
 # Backend tools first, then the MCP servers. One ceiling governs both, so a tool
 # does not get a second timeout by virtue of living on the other side.
+#
+# call_integration_tool stands for the integration call it names, so that call is
+# what runs, bounded and attributed as if it had been declared itself.
 async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, str]:
     seconds = body.bounds.timeout_ms / 1000
-    args = _bounded(body.args, body.bounds.max_rows, body.tool, registry)
+    tool, raw = body.tool, body.args
+    if tool == CALL_INTEGRATION_TOOL:
+        tool, raw = resolve_integration_call(registry, raw)
+    args = _bounded(raw, body.bounds.max_rows, tool, registry)
 
     result, handled = await asyncio.wait_for(
-        execute_backend_tool(body.tool, args), timeout=seconds
+        execute_backend_tool(tool, args, registry=registry), timeout=seconds
     )
     if handled:
         return result, True, SOURCE_SYSTEM
     result, handled = await asyncio.wait_for(
-        execute_mcp_tool(body.tool, args, seconds, registry), timeout=seconds
+        execute_mcp_tool(tool, args, seconds, registry), timeout=seconds
     )
-    return result, handled, _source_system(body.tool, registry)
+    return result, handled, _source_system(tool, registry)
 
 
 @router.post("/invoke")

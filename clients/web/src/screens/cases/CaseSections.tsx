@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { format } from 'date-fns'
+import { utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
@@ -18,14 +18,10 @@ const ME = 'SOC Analyst'
 type Phase = 'loading' | 'ready' | 'error'
 
 function fmtDT(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy · HH:mm')
+  return utcDayClock(s) ?? '—'
 }
 function fmtD(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy')
+  return utcDay(s) ?? '—'
 }
 function initials(name?: string): string {
   if (!name) return '—'
@@ -33,7 +29,7 @@ function initials(name?: string): string {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || name[0].toUpperCase()
 }
 
-function useResource<T>(caseId: string, run: () => Promise<T>) {
+export function useResource<T>(caseId: string, run: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -67,19 +63,37 @@ function useResource<T>(caseId: string, run: () => Promise<T>) {
   return { data, phase, error, reload }
 }
 
+export type Resource<T> = ReturnType<typeof useResource<T>>
+
 export function SectionCard({
   title,
   count,
   action,
   wide,
+  bare,
   children,
 }: {
   title: string
   count?: ReactNode
   action?: ReactNode
   wide?: boolean
+  /** Side-panel look: a plain titled block, no card chrome. */
+  bare?: boolean
   children: ReactNode
 }) {
+  if (bare) {
+    return (
+      <section className="side-sec">
+        <div className="side-sec-head">
+          <h3>{title}</h3>
+          {count != null && <span>{count}</span>}
+          <span className="grow" />
+          {action}
+        </div>
+        {children}
+      </section>
+    )
+  }
   return (
     <div
       className={`bg-panel border border-line rounded-lg shadow-panel overflow-hidden${wide ? ' span-2' : ''}`}
@@ -138,44 +152,38 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
 
   return (
     <SectionCard
+      bare
       title={title}
       count={`${items.length} item${items.length === 1 ? '' : 's'}`}
-      wide
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
       {adding && (
-        <div className="px-[18px] py-3 border-b border-line-soft grid grid-cols-[1fr_140px] gap-2.5">
+        <div className="py-3 grid grid-cols-1 gap-2.5">
           <input className={inputCls} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <select className={inputCls} value={form.evidence_type} onChange={(e) => setForm({ ...form, evidence_type: e.target.value })}>
             {['file', 'screenshot', 'log', 'url', 'other'].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
-          <input className={`${inputCls} col-span-2`} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          <input className={inputCls} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           <input className={inputCls} placeholder={form.evidence_type === 'url' ? 'URL' : 'File path'} value={form.file_path} onChange={(e) => setForm({ ...form, file_path: e.target.value })} />
-          <button className="btn primary" onClick={submit}>Add evidence</button>
+          <button className="btn primary justify-self-start" onClick={submit}>Add evidence</button>
         </div>
       )}
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead><tr><th>Type</th><th>Name</th><th>Description</th><th>Collected</th><th>By</th><th>Hash</th></tr></thead>
-          <tbody>
-            {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="doc" title="Loading evidence…" /></td></tr>}
-            {phase === 'ready' && items.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." /></td></tr>}
-            {items.map((e) => {
-              const hash = e.file_hash_sha256 || e.file_hash_md5
-              return (
-              <tr key={e.evidence_id ?? e.name}>
-                <td><span className="tag">{e.evidence_type}</span></td>
-                <td>{e.name}</td>
-                <td className="muted">{e.description || '—'}</td>
-                <td className="muted">{fmtDT(e.collected_at ?? undefined)}</td>
-                <td className="muted">{e.collected_by || 'Unknown'}</td>
-                <td className="mono muted">{hash ? `${hash.slice(0, 12)}…` : '—'}</td>
-              </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {phase === 'loading' && <MiniLoading icon="doc" title="Loading evidence…" />}
+      {phase === 'ready' && items.length === 0 && <MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." />}
+      {items.length > 0 && (
+        <ul className="side-rows">
+          {items.map((e) => {
+            const hash = e.file_hash_sha256 || e.file_hash_md5
+            const meta = [e.evidence_type, fmtDT(e.collected_at ?? undefined), e.collected_by || 'Unknown', hash && `${hash.slice(0, 12)}…`].filter(Boolean).join(' · ')
+            return (
+              <li key={e.evidence_id ?? e.name} title={e.description || undefined}>
+                <div className="side-row-main">{e.name}</div>
+                <div className="side-meta">{meta}</div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </SectionCard>
   )
 }
@@ -213,10 +221,13 @@ const isTaskPriority = (v: string | undefined): v is TaskPriority =>
 /** Sort rank for a task's priority; the unknown band sorts last. Any other name sorts as medium. */
 const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
 type CaseTask = Schema<'CaseTaskSchema'>
+export function useTasks(caseId: string) {
+  return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
+}
 export function TasksCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<CaseTask[]>(caseId, () =>
-    casesApi.getTasks(caseId).then((r) => r.data.tasks),
-  )
+  return <TasksView caseId={caseId} resource={useTasks(caseId)} />
+}
+export function TasksView({ caseId, resource: { data, phase, reload }, bare }: { caseId: string; resource: Resource<CaseTask[]>; bare?: boolean }) {
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ title: '', priority: 'medium', assignee: '', due_date: '' })
   const tasks = (data || []).slice().sort((a, b) => {
@@ -252,17 +263,18 @@ export function TasksCard({ caseId }: { caseId: string }) {
 
   return (
     <SectionCard
+      bare={bare}
       title="Tasks"
-      count={`${done}/${tasks.length} done`}
+      count={phase === 'ready' ? `${done}/${tasks.length} done` : undefined}
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
-      <div className="px-[18px] pt-3">
+      <div className={bare ? 'pt-2' : 'px-[18px] pt-3'}>
         <div className="h-1.5 bg-bg-3 rounded-full overflow-hidden">
           <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
       {adding && (
-        <div className="px-[18px] py-3 grid grid-cols-2 gap-2.5">
+        <div className={`${bare ? 'py-2' : 'px-[18px] py-3'} grid grid-cols-2 gap-2.5`}>
           <input className={`${inputCls} col-span-2`} placeholder="Task title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           <select className={inputCls} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
             {['critical', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
@@ -272,8 +284,9 @@ export function TasksCard({ caseId }: { caseId: string }) {
           <button className="btn primary" onClick={submit}>Add task</button>
         </div>
       )}
-      <div className="p-[18px] pt-3 flex flex-col gap-2.5">
+      <div className={`${bare ? 'pt-2' : 'p-[18px] pt-3'} flex flex-col gap-2.5`}>
         {phase === 'loading' && <MiniLoading icon="note" title="Loading tasks…" />}
+        {phase === 'error' && <p className="muted">Couldn’t load tasks.</p>}
         {phase === 'ready' && tasks.length === 0 && <MiniEmpty icon="note" title="No tasks yet" body="Add tasks to assign containment, validation, or follow-up work." />}
         {tasks.map((t) => {
           const overdue = t.due_date && t.status !== 'completed' && new Date(t.due_date).getTime() < Date.now()
@@ -391,7 +404,7 @@ export function SLACard({ caseId }: { caseId: string }) {
   )
 }
 
-interface Comment {
+export interface Comment {
   id: string
   author: string
   content: string
@@ -438,9 +451,9 @@ function CommentNode({ c, onReply }: { c: Comment; onReply: (id: string) => void
       <div className="flex gap-2.5">
         <span className="avatar">{initials(c.author)}</span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2">
             <span className="text-[13px] font-medium text-tx">{c.author}</span>
-            <span className="text-xs text-tx-faint">{fmtDT(c.timestamp)}</span>
+            <span className="text-xs text-tx-faint whitespace-nowrap">{fmtDT(c.timestamp)}</span>
             {c.parent_comment_id && <span className="tag">reply</span>}
           </div>
           <div className="text-[13px] text-tx-2 whitespace-pre-wrap mt-[2px]">{c.content}</div>
@@ -457,12 +470,19 @@ function CommentNode({ c, onReply }: { c: Comment; onReply: (id: string) => void
     </div>
   )
 }
-export function CommentsCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<Comment[]>(caseId, () =>
+export function useComments(caseId: string) {
+  return useResource<Comment[]>(caseId, () =>
     casesApi.getComments(caseId).then((r) =>
       r.data.comments.map(normalizeComment).filter((c): c is Comment => c !== null),
     ),
   )
+}
+/** Comments shown for a case, replies included. */
+export const commentCount = (data: Comment[] | null) => flatten(data || []).length
+export function CommentsCard({ caseId }: { caseId: string }) {
+  return <CommentsView caseId={caseId} resource={useComments(caseId)} />
+}
+export function CommentsView({ caseId, resource: { data, phase, reload }, bare }: { caseId: string; resource: Resource<Comment[]>; bare?: boolean }) {
   const [text, setText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -482,9 +502,10 @@ export function CommentsCard({ caseId }: { caseId: string }) {
   }
 
   return (
-    <SectionCard title="Comments" count={`${total}`} wide>
-      <div className="p-[18px] flex flex-col gap-4">
+    <SectionCard bare={bare} title="Comments" count={phase === 'ready' ? `${total}` : undefined} wide>
+      <div className={`${bare ? 'pt-2' : 'p-[18px]'} flex flex-col gap-4`}>
         {phase === 'loading' && <MiniLoading icon="note" title="Loading comments…" />}
+        {phase === 'error' && <p className="muted">Couldn’t load comments.</p>}
         {phase === 'ready' && total === 0 && <MiniEmpty icon="note" title="No comments yet" body="Use comments to capture analyst notes, handoffs, and review decisions." />}
         {visible.map((c) => <CommentNode key={c.id} c={c} onReply={setReplyTo} />)}
         {tree.length > 1 && (
@@ -502,7 +523,7 @@ export function CommentsCard({ caseId }: { caseId: string }) {
               <button className="text-accent-2 hover:underline" onClick={() => setReplyTo(null)}>cancel</button>
             </div>
           )}
-          <div className="flex gap-2.5 items-end">
+          <div className={`flex gap-2.5 ${bare ? 'flex-col items-stretch' : 'items-end'}`}>
             <textarea
               className={`${inputCls} resize-none`}
               rows={2}
@@ -607,45 +628,38 @@ export function IOCsCard({ caseId }: { caseId: string }) {
 
   return (
     <SectionCard
+      bare
       title="Indicators of Compromise"
       count={`${iocs.length}`}
-      wide
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
       {adding && (
-        <div className="px-[18px] py-3 border-b border-line-soft grid grid-cols-[120px_1fr] gap-2.5">
+        <div className="py-3 grid grid-cols-1 gap-2.5">
           <select className={inputCls} value={form.ioc_type} onChange={(e) => setForm({ ...form, ioc_type: e.target.value })}>
             {['ip', 'domain', 'hash', 'url', 'email', 'other'].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
           <input className={inputCls} placeholder="Value" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} />
           <input className={inputCls} placeholder="Context" value={form.context} onChange={(e) => setForm({ ...form, context: e.target.value })} />
           <input className={inputCls} placeholder="Source" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} />
-          <button className="btn primary col-span-2 justify-self-start" onClick={submit}>Add IOC</button>
+          <button className="btn primary justify-self-start" onClick={submit}>Add IOC</button>
         </div>
       )}
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead><tr><th>Type</th><th>Value</th><th>Context</th><th>Source</th><th>Threat</th><th>First seen</th></tr></thead>
-          <tbody>
-            {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="alert" title="Loading IOCs…" /></td></tr>}
-            {phase === 'ready' && iocs.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." /></td></tr>}
-            {iocs.map((i) => {
-              const tl = threatLevel(i)
-              const value = i.value || ''
-              return (
-                <tr key={i.ioc_id ?? value}>
-                  <td><span className="tag">{(i.ioc_type || '').toUpperCase()}</span></td>
-                  <td className="mono" title={value}>{value.length > 40 ? `${value.slice(0, 40)}…` : value}</td>
-                  <td className="muted">{i.context || '—'}</td>
-                  <td className="muted">{i.source || 'Manual'}</td>
-                  <td><span className={tl.cls}><span className="dot" />{tl.label}</span></td>
-                  <td className="muted">{fmtDT(i.first_seen ?? undefined)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {phase === 'loading' && <MiniLoading icon="alert" title="Loading IOCs…" />}
+      {phase === 'ready' && iocs.length === 0 && <MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." />}
+      {iocs.length > 0 && (
+        <ul className="side-rows">
+          {iocs.map((i) => {
+            const value = i.value || ''
+            const meta = [(i.ioc_type || '').toUpperCase(), threatLevel(i).label, i.source || 'Manual', fmtDT(i.first_seen ?? undefined)].filter(Boolean).join(' · ')
+            return (
+              <li key={i.ioc_id ?? value} title={i.context || undefined}>
+                <div className="side-row-main mono" title={value}>{value}</div>
+                <div className="side-meta">{meta}</div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </SectionCard>
   )
 }

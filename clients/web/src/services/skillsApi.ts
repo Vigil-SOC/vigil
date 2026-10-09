@@ -1,4 +1,4 @@
-import api from './api'
+import api, { LLM_TIMEOUT } from './api'
 
 /**
  * Skills API. The list is loaded from disk. Saves and deletes go to the
@@ -42,6 +42,14 @@ export interface SkillWrite {
   version?: number
 }
 
+/** POST /api/skills/{name}/test: the saved skill's evals/cases.json run on the chat model. */
+export interface ApiSkillTest {
+  /** True when the skill ships no cases; nothing was run. */
+  no_cases: boolean
+  model: string | null
+  results: { name: string; passed: boolean; missing: string[] }[]
+}
+
 export const skillsApi = {
   list: () => api.get<ApiSkill[]>('/skills').then((r) => r.data),
   get: (name: string) => api.get<ApiSkillDetail>(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
@@ -52,5 +60,17 @@ export const skillsApi = {
       )
       .then((r) => r.data),
   save: (skill: SkillWrite) => api.post<ApiSkill>('/skills', skill).then((r) => r.data),
+  /** Installs a SKILL.md or a skill .zip under the operator root; a taken name is refused (409). */
+  upload: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api
+      .post<ApiSkill>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data)
+  },
+  test: (name: string) =>
+    api
+      .post<ApiSkillTest>(`/skills/${encodeURIComponent(name)}/test`, null, { timeout: LLM_TIMEOUT })
+      .then((r) => r.data),
   delete: (name: string) => api.delete(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
 }

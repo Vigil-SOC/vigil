@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { approvalsApi, configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
-import { LevelBadge } from '../shared/LevelBadge'
+import { PageHead } from '../shared/PageHead'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
 import ExtensionHost from '../extensions/ExtensionHost'
@@ -17,6 +17,7 @@ import Chat from './Chat'
 import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
+import { HOME_PERM, landingScreen } from './landing'
 import ConsoleTour, { type TourStopId } from './ConsoleTour'
 import { markConsoleTourSeen, readConsoleTourSeen } from './consoleTourSeen'
 import ErrorBoundary from './ErrorBoundary'
@@ -47,11 +48,13 @@ import {
   type StatusFold,
 } from './statusLine'
 
-const PRIMARY_KEYS = ['home', 'cases', 'workflows', 'settings']
-const MORE_KEYS = ['overview', 'triage', 'dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+const PRIMARY_KEYS = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings']
+// a rule is drawn only between two groups that both have a visible item
+const NAV_GROUPS = [['home'], ['overview'], ['triage', 'cases'], ['workflows', 'settings']]
+const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
-const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
-const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
+const AUTONOMY_ACT = 'Act · reversible changes on its own'
+const AUTONOMY_ASSIST = 'Assist · asks before changes'
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
@@ -73,11 +76,14 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
 const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
   decisions: 'ai_decisions.approve',
-  home: 'ai_decisions.approve',
+  home: HOME_PERM,
   settings: 'settings.read',
 }
 
 const CHAT_WIDTH = 400
+
+const setupTip = (left: number) =>
+  `Finish setting up Vigil: ${left === 1 ? '1 step is' : `${left} steps are`} left. Opens the setup guide.`
 
 export default function SocConsole() {
   return (
@@ -127,7 +133,9 @@ function SocConsoleInner() {
   // while manifests load, a deep-linked extension tab shows loading rather than
   // flashing 404
   const valid = screen !== undefined && screen in screens
-  const current: string = valid ? (screen as string) : 'dashboard'
+  const landing = landingScreen(hasPermission)
+  const landingLabel = landing === 'home' ? 'Home' : 'Overview'
+  const current: string = valid ? (screen as string) : landing
   const resolvingExtension = !valid && screen !== undefined && extLoading
   const currentPerm = valid ? screenPerms[current] : undefined
   const allowed = !currentPerm || hasPermission(currentPerm)
@@ -137,12 +145,17 @@ function SocConsoleInner() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [assist, setAssist] = useState<boolean | null>(null)
   const [status, setStatus] = useState<StatusFold | null>(null)
+  // open setup steps; null when unread or failed, so no chip and no menu count
+  const [setupLeft, setSetupLeft] = useState<number | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   )
   const [chatSeed, setChatSeed] = useState<string | null>(null)
+  const [caseSeed, setCaseSeed] = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
+  const [fill, setFill] = useState<{ text: string; seq: number } | null>(null)
+  const fillCommand = useCallback((text: string) => setFill((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 })), [])
   const [viewFull, setViewFull] = useState(false)
   const [wallMode, setWallMode] = useState(false)
   const homePerm = SCREEN_PERMS.home
@@ -171,6 +184,15 @@ function SocConsoleInner() {
     if (prompt) setChatSeed(prompt)
   }, [])
   const closeChat = useCallback(() => setChatOpen(false), [])
+  // the open case: the drawer wins over the full page's ?case= param
+  const pageCase = current === 'cases' && allowed ? new URLSearchParams(location.search).get('case') : null
+  const openCaseId = drawerCase ?? pageCase
+  // with a case open the text goes to its own composer, not the dock
+  const askVigil = useCallback((text?: string) => {
+    if (openCaseId && text) setCaseSeed(text)
+    else openChat(text)
+  }, [openCaseId, openChat])
+  const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -232,8 +254,12 @@ function SocConsoleInner() {
     prepareStop(tourIndex)
   }, [tourOn, tourIndex, prepareStop, wallMode, chatOpen, viewFull])
 
-  // screens that deep-link a detail re-assert viewFull from their own URL state
+  // screens that deep-link a detail re-assert viewFull from their own URL state; a child's effect
+  // runs before this one on first mount, so only a change of screen may clear what it set
+  const shownScreen = useRef(current)
   useEffect(() => {
+    if (shownScreen.current === current) return
+    shownScreen.current = current
     setViewFull(false)
     setWallMode(false)
   }, [current])
@@ -284,6 +310,22 @@ function SocConsoleInner() {
     }
   }, [])
 
+  // re-read on each screen change so finishing a step shows without a reload
+  useEffect(() => {
+    let live = true
+    configApi
+      .getSetupSteps()
+      .then((res) => {
+        if (live) setSetupLeft(res.data.steps.filter((step) => !step.done).length)
+      })
+      .catch(() => {
+        if (live) setSetupLeft(null)
+      })
+    return () => {
+      live = false
+    }
+  }, [current])
+
   useEffect(() => {
     let live = true
     configApi
@@ -302,19 +344,29 @@ function SocConsoleInner() {
 
   useEffect(() => {
     let live = true
+    let inFlight = false
     const settled = <T,>(p: Promise<T>): Promise<T | null> => p.then((v) => v).catch(() => null)
-    Promise.all([
-      settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
-      settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
-      settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
-      canReadRoutability
-        ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
-        : Promise.resolve(null),
-    ]).then(([health, federation, mcp, routability]) => {
-      if (live) setStatus(foldStatus({ health, federation, mcp, routability }))
-    })
+    // the last fold stays up while a round runs; a failed read folds as null
+    const pollStatus = () => {
+      if (inFlight) return
+      inFlight = true
+      Promise.all([
+        settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
+        settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
+        settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
+        canReadRoutability
+          ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
+          : Promise.resolve(null),
+      ]).then(([health, federation, mcp, routability]) => {
+        inFlight = false
+        if (live) setStatus(foldStatus({ health, federation, mcp, routability }))
+      })
+    }
+    pollStatus()
+    const id = setInterval(pollStatus, 30_000)
     return () => {
       live = false
+      clearInterval(id)
     }
   }, [canReadRoutability])
 
@@ -356,6 +408,9 @@ function SocConsoleInner() {
     }),
   ]
   const moreCurrent = more.some((item) => valid && item[2] === current)
+  const navGroups = NAV_GROUPS.map((keys) =>
+    keys.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
+  ).filter((group) => group.length > 0)
 
   const navButton = (item: NavItem) => {
     const [icon, label, key] = item
@@ -374,9 +429,11 @@ function SocConsoleInner() {
           go(key, key === 'decisions' && parked > 0 ? { search: '?tab=approvals' } : undefined)
         }}
       >
-        <Icon name={icon} size={16} />
+        <Icon name={icon} size={14} />
         <span>{label}</span>
-        {count > 0 && <span className="vg-nav-count">{count > 99 ? '99+' : count}</span>}
+        {count > 0 && (
+          <span className={`vg-nav-count${key === 'home' ? '' : ' quiet'}`}>{count > 99 ? '99+' : count}</span>
+        )}
       </button>
     )
   }
@@ -387,7 +444,9 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings')
+  // these draw their own heading; Home's headline is its heading
+  const ownsHeading = ['home', 'overview', 'triage', 'cases', 'workflows', 'settings'].includes(current)
+  const showHeading = valid && allowed && !ownsHeading && !wallMode && !viewFull
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -410,14 +469,25 @@ function SocConsoleInner() {
               const key = item[2] as string
               return { key, label: item[1] }
             })}
-            onOpenChat={openChat}
+            onOpenChat={askVigil}
+            caseOpen={openCaseId !== null}
             onOpenCase={setDrawerCase}
-            onGo={(next) => go(next)}
+            onGo={(next, options) => {
+              setDrawerCase(null) // the drawer would sit over the next screen
+              go(next, options)
+            }}
+            fill={fill}
           />
           <div className="vg-header-end">
             {assist !== null && (
               <div className="vg-autonomy">
-                <button type="button" className="vg-autonomy-link" onClick={() => goSettings('autoinvestigate')}>
+                <button
+                  type="button"
+                  className="vg-autonomy-link"
+                  aria-label={`Autonomy · ${assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}`}
+                  onClick={() => goSettings('autoinvestigate')}
+                >
+                  <span className="vg-autonomy-label">Autonomy</span>
                   {assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}
                 </button>
                 <InfoTip
@@ -428,58 +498,69 @@ function SocConsoleInner() {
                 />
               </div>
             )}
-            <UserMenu onShowTour={startTour} />
+            <UserMenu onShowTour={startTour} setupLeft={setupLeft} />
           </div>
         </header>}
         {!wallMode && <nav className="vg-nav" aria-label="Primary">
-          {primary.map(navButton)}
+          {navGroups.map((group, i) => (
+            <Fragment key={group[0][2]}>
+              {i > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
+              {group.map(navButton)}
+            </Fragment>
+          ))}
           {more.length > 0 && (
-            <div className="vg-more" ref={moreRef}>
-              <button
-                type="button"
-                className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
-                aria-haspopup="menu"
-                aria-expanded={moreOpen}
-                aria-label="More"
-                onClick={() => setMoreOpen((open) => !open)}
-              >
-                <Icon name="more" size={16} />
-                <span>More</span>
-              </button>
-              {moreOpen && (
-                <div className="vg-more-menu" role="menu" aria-label="More screens">
-                  {more.map(navButton)}
-                </div>
-              )}
-            </div>
-          )}
-        </nav>}
-        <div
-          className={`vg-status${status?.level === 'poor' ? ' is-poor' : ''}`}
-          role={status ? 'status' : undefined}
-          aria-label={status ? 'System status' : undefined}
-          data-level={status?.level}
-        >
-          {status && (
             <>
-              <LevelBadge level={status.level} className="vg-status-level" />
-              <span>{status.sentence}</span>
+              {navGroups.length > 0 && <span className="vg-nav-sep" aria-hidden="true" />}
+              <div className="vg-more" ref={moreRef}>
+                <button
+                  type="button"
+                  className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
+                  aria-haspopup="menu"
+                  aria-expanded={moreOpen}
+                  aria-label="More"
+                  onClick={() => setMoreOpen((open) => !open)}
+                >
+                  <Icon name="more" size={14} />
+                  <span>More</span>
+                </button>
+                {moreOpen && (
+                  <div className="vg-more-menu" role="menu" aria-label="More screens">
+                    {more.map(navButton)}
+                  </div>
+                )}
+              </div>
             </>
           )}
-        </div>
+          <div className="vg-nav-end">
+            {status && (
+              <div
+                className={`vg-status-chip${status.level === 'poor' ? ' is-poor' : ''}`}
+                role="status"
+                aria-label="System status"
+                data-level={status.level}
+                title={status.sentence}
+              >
+                <span className="vg-status-dot" aria-hidden="true" />
+                <span className="vg-status-text">{status.sentence}</span>
+              </div>
+            )}
+            {setupLeft !== null && setupLeft > 0 && (
+              <Link
+                to="/setup"
+                className="vg-setup-chip"
+                title={setupTip(setupLeft)}
+                aria-label={setupTip(setupLeft)}
+              >
+                <Icon name="check" size={13} />
+                Finish setup
+                <span className="vg-setup-count">{setupLeft} left</span>
+              </Link>
+            )}
+          </div>
+        </nav>}
 
         {/* main */}
         <div className={mainClass}>
-          {/* Agents & workflows and Settings draw their own headings */}
-          {!wallMode && !ownsHeading && (
-            <header className="topbar">
-              <div className="title">
-                <h1>{title}</h1>
-                <p>{sub}</p>
-              </div>
-              <div className="grow" />
-            </header>
-          )}
           {demoOn && (
             <div className="demo-banner" role="status">
               The data on screen is demo data.
@@ -487,6 +568,11 @@ function SocConsoleInner() {
           )}
           <main className="view" style={{ overflowY: viewFull ? 'hidden' : 'auto' }}>
             <div className="screen" style={viewFull ? { height: '100%' } : undefined}>
+              {showHeading && (
+                <div className="vg-page-head">
+                  <PageHead title={title} description={sub} level="h1" />
+                </div>
+              )}
               <ErrorBoundary resetKey={valid ? current : 'notfound'}>
                 {!valid ? (
                   resolvingExtension ? (
@@ -495,17 +581,17 @@ function SocConsoleInner() {
                       <p>Loading…</p>
                     </div>
                   ) : (
-                    <NotFoundScreen path={screen} onHome={() => go('dashboard')} />
+                    <NotFoundScreen path={screen} homeLabel={landingLabel} onHome={() => go(landing)} />
                   )
                 ) : !allowed ? (
                   <div className="access-denied">
                     <Icon name="lock" size={26} />
                     <h2>Access denied</h2>
                     <p>You don’t have permission to view this page{currentPerm ? ` (requires ${currentPerm})` : ''}.</p>
-                    <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
+                    <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} />
                 )}
               </ErrorBoundary>
             </div>
@@ -526,6 +612,8 @@ function SocConsoleInner() {
             caseId={drawerCase}
             onClose={() => setDrawerCase(null)}
             pageKey={current}
+            seed={caseSeed}
+            onSeedConsumed={clearCaseSeed}
           />
         )}
       </div>

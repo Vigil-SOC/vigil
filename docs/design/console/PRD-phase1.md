@@ -1,6 +1,6 @@
 # Vigil Console, phase 1 PRD
 
-Rev 1.1-P1 · 2026-09-30 · derived from PRD rev 1.1 (Mayank Kumar, 09/29/2026) and the v7 design package, rescoped per the team's phase-1 message of 09/30/2026.
+Rev 1.1-P1 · 2026-09-30 · derived from PRD rev 1.1 (Mayank Kumar, 09/29/2026) and the v7 design package, rescoped per the team's phase-1 message of 09/30/2026. Amended for #1715: OV-P3 and AV-P1.
 
 ## How to read this
 
@@ -112,7 +112,7 @@ Boards: `Overview`, `OverviewAlert`, `OverviewEmpty`, `OverviewFull`.
 
 - **OV-P1. Flow diagram**: sources with vendor logos and today's arrivals (B2); engine node; outcome nodes. Populated from B2: closed by agent alone, closed by a person, needs a person. **Not measured yet**: paused, stuck, incidents. Every populated count opens Cases or the Triage queue filtered.
 - **OV-P2. Agents running now**: one row per workflow with running count, 30-day completion rate with sample size, and a level word (Good at or above 95%, Fair 85 to 95%, Poor under 85%). "What each agent is doing" comes from the run's current phase where a run is live.
-- **OV-P3. Live alert feed**, latest 50, kind, source, severity, state; polled. Opening an alert shows source evidence with "Open in source" from B5 and the actions Launch workflow (today's execute), Mark as noise (B6), and Create ticket when the alert has a case (today's Jira export). ServiceNow: **Later**.
+- **OV-P3. Live alert feed**, latest 50, kind, source, severity, state; polled. Opening an alert shows source evidence with "Open in source" from B5 and the actions Send to triage (offers the alert to the orchestrator's intake queue; a direct run is the command bar's `/investigate`), Mark as noise (B6), and Create ticket when the alert has a case (today's Jira export). ServiceNow: **Later**.
 - **OV-P4. Full-screen mode** with no top bar; empty state with connect-data placeholders.
 
 ## 9. Triage queue
@@ -163,7 +163,7 @@ One layout, opened as a drawer or full page (SH-P9). Phase 1 shows the layout an
 
 Boards: `PulseChat` (layout only; Pulse is phase 2), `ChatHistory`, `TourAsk`.
 
-- **AV-P1.** Off a case, the dock at 400 px on any page, marked private to the user, with searchable history grouped by day (B10), the page context shown ("Using Overview"), @ to attach a case (B10), / to list the built-in commands. Streaming and Markdown as today.
+- **AV-P1.** Off a case, the dock at 400 px on any page, marked private to the user, with searchable history grouped by day (B10), the page context shown ("Using Overview"), @ to attach a case (B10), a leading / is message text; commands live in the command bar. Streaming and Markdown as today.
 - **AV-P2.** No per-conversation model picker; the model comes from Settings › AI models. Today's picker, system prompt field and cost meter are removed from the dock.
 - **AV-P3.** Fleet-wide directions, on-demand work with cost, and the trace-as-model-text labelling beyond today's thinking display: **Omitted**.
 - **AV-P4.** Tab from the command bar hands the typed text to the dock, or to the case composer when a case is open.
@@ -184,7 +184,7 @@ Boards: `Agents`, `AgentEditor`, `SkillEditor`, `WorkflowRun`. Fastest path: tod
 
 Boards: `Settings`, `SettingsIntegrations`, `SettingsCustom`, `SettingsCollection`, `SettingsSLA`, `SettingsLimits`, `SettingsData`. Seven screens; Team and access and Feedback are phase 2.
 
-- **SE-P1. AI models**: per-agent model with fallback (B12), provider and hosted-or-local, gateway budget as today; caching, context and tool-result size where today's config carries them. Changes confirm and journal through today's config audit.
+- **SE-P1. AI models**: per-agent model with fallback (B12; built-in components keep a same-provider fallback in `ai_model_configs.settings`, #1816), provider and hosted-or-local, gateway budget as today; caching, context and tool-result size where today's config carries them. Changes confirm and journal through today's config audit.
 - **SE-P2. Integrations**: today's list and setup wizard restyled, with status, last successful read, and whether a source-console link template is present (B5). Vigil's own MCP credentials as today, with hold-to-revoke. Custom integration builder as today under its own screen.
 - **SE-P3. Alert collection**: federation sources with cursor, lag and expected interval (B3), poll now; rule sources; Kafka and ingestion under Data and uploads.
 - **SE-P4. SLA policies**: today's policies screen restyled; escalation steps as today's escalation rules.

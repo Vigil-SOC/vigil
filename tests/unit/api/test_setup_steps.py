@@ -105,7 +105,7 @@ def test_per_agent_needs_two_distinct_models():
     assert one["done"] is False
     assert one["state_line"] == "All agents use one model"
     assert two["done"] is True
-    assert none["href"] == "/settings?section=ai-config"
+    assert none["href"] == "/settings?section=ai-config&tab=assignment"
 
 
 def test_alerts_exist_is_the_findings_count():
@@ -181,3 +181,74 @@ def test_endpoint_uses_the_existing_reads():
     assert body["alerts_exist"] == 7
     assert body["demo_enabled"] is False
     findings.count_findings.assert_called_once_with()
+
+
+def test_custom_skill_step_is_left_out_when_the_skills_root_is_unset():
+    body = _body(skills_root_set=False, custom_skills=3)
+    assert [item["id"] for item in body["steps"]] == [
+        "connect_tools",
+        "notify",
+        "rules",
+        "per_agent",
+    ]
+
+
+def test_custom_skill_step_is_open_last_with_the_board_line_when_none_exist():
+    body = _body(skills_root_set=True, custom_skills=0)
+    assert [item["id"] for item in body["steps"]] == [
+        "connect_tools",
+        "notify",
+        "rules",
+        "per_agent",
+        "custom_skill",
+    ]
+    assert _step(body, "custom_skill") == {
+        "id": "custom_skill",
+        "title": "Add a custom skill",
+        "state_line": "Teach Vigil your team’s playbooks",
+        "done": False,
+        "href": "/workflows?tab=skills",
+    }
+
+
+def test_custom_skills_close_the_step_and_are_counted():
+    two = _step(_body(skills_root_set=True, custom_skills=2), "custom_skill")
+    one = _step(_body(skills_root_set=True, custom_skills=1), "custom_skill")
+    assert two["done"] is True
+    assert two["state_line"] == "2 custom skills"
+    assert one["state_line"] == "1 custom skill"
+
+
+def test_endpoint_counts_custom_skills_and_survives_a_bad_skills_folder():
+    from services.api.routers import config as config_module
+
+    rules = MagicMock()
+    rules.list_sources.return_value = []
+    findings = MagicMock()
+    findings.count_findings.return_value = 0
+    bundled, custom = MagicMock(), MagicMock()
+
+    def get(skills):
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(config_module, "load_integrations_config", lambda _svc: {})
+            patch.setattr(config_module, "get_config_service", lambda: object())
+            patch.setattr(config_module, "iter_descriptors", lambda: ())
+            patch.setattr(config_module, "is_demo_mode", lambda: False)
+            patch.setattr(config_module, "findings_data_service", findings)
+            patch.setattr(config_module, "assigned_model_ids", lambda _s: set())
+            patch.setattr(config_module, "operator_skills_root", lambda: "/skills")
+            patch.setattr(config_module, "skill_roots", lambda: [])
+            patch.setattr(config_module, "load_skills", skills)
+            patch.setattr(config_module, "is_bundled", lambda s: s is bundled)
+            return config_module.get_setup_steps(session=object(), detection_rules=rules)
+
+    step = _step(get(lambda _roots: [bundled, custom, custom]), "custom_skill")
+    assert step["done"] is True
+    assert step["state_line"] == "2 custom skills"
+
+    def boom(_roots):
+        raise OSError("unreadable")
+
+    step = _step(get(boom), "custom_skill")
+    assert step["done"] is False
+    assert step["state_line"] == "Teach Vigil your team’s playbooks"

@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/observation/v1",
+  "title": "Medic observation v1",
+  "description": "The record every sensor emits. One observation = one read of one signal (sample), one log line (log), or one sensor heartbeat (sensor_health). Values are already redacted (K2) before an observation exists. See contracts/fingerprint.md and outputs/D3-observation-schema-adr.md.",
+  "type": "object",
+  "required": ["v", "id", "kind", "signal", "sensor", "target", "t", "observed_at", "source_ts", "outcome"],
+  "properties": {
+    "v": {"const": 1},
+    "id": {
+      "description": "<sensor.id>:<sensor.run>:<sensor.seq>. Unique, deterministic in replay.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}:[A-Za-z0-9]{8,32}:[0-9]{1,18}$"
+    },
+    "kind": {"enum": ["sample", "log", "sensor_health"]},
+    "signal": {
+      "description": "D1 signal_id (B6 surface ID where one exists), or 'sensor_health'.",
+      "$ref": "#/$defs/signal_id"
+    },
+    "sensor": {
+      "type": "object",
+      "required": ["id", "run", "seq"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},
+        "run": {"description": "New value every time the sensor (re)starts.", "type": "string", "pattern": "^[A-Za-z0-9]{8,32}$"},
+        "seq": {"description": "Counts up from 0 within one run, with no gaps.", "type": "integer", "minimum": 0}
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["service", "shape"],
+      "additionalProperties": false,
+      "properties": {
+        "service": {"$ref": "#/$defs/service"},
+        "instance": {"description": "Container ID, pod name or host alias. Opaque.", "$ref": "#/$defs/label_value"},
+        "shape": {"enum": ["start_sh", "compose", "helm"]}
+      }
+    },
+    "t": {
+      "description": "The time the engine uses for windows. Samples and sensor_health: observed_at. Logs: source_ts, unless |skew_ms| > 300000 or source_ts is null; then observed_at and skew_flag=true.",
+      "$ref": "#/$defs/ts"
+    },
+    "observed_at": {"description": "Watcher wall clock (UTC) when the read completed.", "$ref": "#/$defs/ts"},
+    "source_ts": {"description": "Time the source asserted (log ts, HTTP Date header). Null if none.", "oneOf": [{"$ref": "#/$defs/ts"}, {"type": "null"}]},
+    "skew_ms": {"description": "source_ts minus observed_at, when both exist.", "type": ["integer", "null"]},
+    "skew_flag": {"type": "boolean"},
+    "outcome": {"description": "Did the read work? 'error' is never the same as zero or absent.", "enum": ["ok", "error"]},
+    "error": {"$ref": "#/$defs/read_error"},
+    "epoch": {
+      "description": "Counter epoch. Changes whenever the producer restarts and its counters reset (uptime drop, container start time, Kafka service re-created). Required when any value is a counter.",
+      "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+    },
+    "redaction": {
+      "type": "object",
+      "required": ["version", "hits"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {"type": "string", "pattern": "^[a-z0-9.-]{1,32}$"},
+        "hits": {"type": "integer", "minimum": 0}
+      }
+    },
+    "values": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/value"}},
+    "log": {"$ref": "#/$defs/log"},
+    "health": {"$ref": "#/$defs/health"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"outcome": {"const": "error"}}},
+      "then": {"required": ["error"], "properties": {"values": {"maxItems": 0}}, "not": {"required": ["log"]}},
+      "else": {"not": {"required": ["error"]}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "sample"}}},
+      "then": {
+        "required": ["values", "redaction"],
+        "not": {"anyOf": [{"required": ["log"]}, {"required": ["health"]}]}
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "sample"}, "values": {"contains": {"properties": {"type": {"const": "counter"}}}}}, "required": ["values"]},
+      "then": {"required": ["epoch"]}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "log"}}},
+      "then": {
+        "required": ["redaction"],
+        "not": {"anyOf": [{"required": ["values"]}, {"required": ["health"]}]},
+        "if": {"properties": {"outcome": {"const": "ok"}}},
+        "then": {"required": ["log"]}
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "sensor_health"}}},
+      "then": {
+        "required": ["health"],
+        "properties": {"signal": {"const": "sensor_health"}, "outcome": {"const": "ok"}},
+        "not": {"anyOf": [{"required": ["values"]}, {"required": ["log"]}]}
+      }
+    }
+  ],
+  "$defs": {
+    "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"},
+    "signal_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}(\\.[a-z][a-z0-9_]{0,63})?$"},
+    "service": {
+      "description": "Closed, shape-independent service names (X1 #6). fp1 hashes this, so Helm's '<fullname>-soc-daemon' is reported as 'soc-daemon'. Mirrors fingerprint_ref.SERVICES.",
+      "enum": ["backend", "soc-daemon", "llm-worker", "agent-worker", "agent-serve", "bifrost", "backup", "postgres", "redis", "host", "medic", "medic-gateway"]
+    },
+    "label_value": {
+      "description": "Labels and group keys are restricted so they can't carry injected text. A value that doesn't fit, or that looks like an engine marker ('h_…', '__…'), is replaced by 'h_' + 16 hex of its sha256 (fingerprint_ref.label_safe). The sensor applies it to every label it emits; the engine applies it only to group keys taken from free-text log fields (semantics §3).",
+      "type": "string", "pattern": "^[A-Za-z0-9_.:/@+-]{1,128}$"
+    },
+    "untrusted_text": {"type": "string", "maxLength": 500},
+    "read_error": {
+      "type": "object",
+      "required": ["class"],
+      "additionalProperties": false,
+      "properties": {
+        "class": {"enum": ["timeout", "refused", "dns", "tls", "http_status", "auth", "parse", "too_large", "redactor_failed", "not_installed", "other"]},
+        "http_status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "detail": {"$ref": "#/$defs/untrusted_text"}
+      }
+    },
+    "value": {
+      "type": "object",
+      "required": ["key", "type", "state", "value", "trust"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {"description": "Dotted field path inside the signal body, e.g. 'decode_errors' or 'sources.last_success_at'.", "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,63}(\\.[a-z_][a-z0-9_]{0,63}){0,5}$"},
+        "type": {"enum": ["counter", "gauge", "bool", "enum", "timestamp", "text"]},
+        "state": {"description": "present = the source returned a value (0 is present). absent = the source returned no such field or series.", "enum": ["present", "absent"]},
+        "value": {},
+        "labels": {"type": "object", "maxProperties": 8, "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,31}$", "description": "Same as rule group_by and record group names (X1 #13)."}, "additionalProperties": {"$ref": "#/$defs/label_value"}},
+        "trust": {"enum": ["trusted", "untrusted"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "absent"}}}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"state": {"const": "present"}, "type": {"const": "counter"}}}, "then": {"properties": {"value": {"type": "integer", "minimum": 0}}}},
+        {"if": {"properties": {"state": {"const": "present"}, "type": {"const": "gauge"}}}, "then": {"properties": {"value": {"type": "number"}}}},
+        {"if": {"properties": {"state": {"const": "present"}, "type": {"const": "bool"}}}, "then": {"properties": {"value": {"type": "boolean"}}}},
+        {"if": {"properties": {"state": {"const": "present"}, "type": {"const": "enum"}}}, "then": {"properties": {"value": {"$ref": "#/$defs/label_value"}}}},
+        {"if": {"properties": {"state": {"const": "present"}, "type": {"const": "timestamp"}}}, "then": {"properties": {"value": {"$ref": "#/$defs/ts"}}}},
+        {"if": {"properties": {"type": {"const": "text"}}}, "then": {"properties": {"value": {"oneOf": [{"$ref": "#/$defs/untrusted_text"}, {"type": "null"}]}, "trust": {"const": "untrusted"}}}}
+      ]
+    },
+    "log": {
+      "type": "object",
+      "required": ["format", "level", "fingerprint", "fingerprint_basis", "template_trust", "line_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "format": {"enum": ["python_json", "agent_json", "text"]},
+        "level": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+        "logger": {"oneOf": [{"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$"}, {"type": "null"}]},
+        "template": {"description": "msg_template (Python) or msg (agents), redacted. Null for text logs.", "oneOf": [{"type": "string", "maxLength": 500}, {"type": "null"}]},
+        "template_trust": {"description": "'catalog' only when (logger, template) exactly matches a pack catalog entry AND, if the template has placeholders, message != template. Everything else is 'untrusted' (K1 T-05).", "enum": ["catalog", "untrusted"]},
+        "message": {"description": "Redacted excerpt of the rendered message.", "$ref": "#/$defs/untrusted_text"},
+        "args": {"description": "Recovered by aligning message against a placeholder template. Always untrusted.", "type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
+        "exc_type": {"oneOf": [{"type": "string", "pattern": "^[A-Za-z0-9_.]{1,200}$"}, {"type": "null"}]},
+        "frames": {"description": "Innermost first-party frames, innermost last. No line numbers.", "type": "array", "maxItems": 5, "items": {"type": "string", "pattern": "^[A-Za-z0-9_./-]{1,200}:[A-Za-z0-9_<>.]{1,100}$"}},
+        "fingerprint": {"type": "string", "pattern": "^fp1_[0-9a-f]{16}$"},
+        "fingerprint_basis": {"enum": ["template", "normalized"]},
+        "trace_id": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{16,32}$"}, {"type": "null"}]},
+        "line_hash": {"description": "Dedup key for re-read lines: 16 hex of sha256(service|instance|source_ts|redacted line).", "type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "truncated": {"type": "boolean"}
+      }
+    },
+    "health": {
+      "type": "object",
+      "required": ["sensor", "state", "reported_by", "covers", "interval_s", "last_ok_at", "consecutive_failures", "counters"],
+      "additionalProperties": false,
+      "properties": {
+        "sensor": {"description": "The sensor this heartbeat is about (may differ from the emitting sensor when reported_by=framework).", "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$"},
+        "state": {"description": "ok: last read worked. degraded: some reads fail or lines dropped. blind: no successful read for 3 intervals. stopped: the sensor itself has not reported for 3 intervals (framework-reported).", "enum": ["ok", "degraded", "blind", "stopped"]},
+        "reported_by": {"enum": ["sensor", "framework"]},
+        "covers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/signal_id"}},
+        "interval_s": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "last_ok_at": {"oneOf": [{"$ref": "#/$defs/ts"}, {"type": "null"}]},
+        "consecutive_failures": {"type": "integer", "minimum": 0},
+        "last_error": {"$ref": "#/$defs/read_error"},
+        "counters": {
+          "description": "Counters since sensor.run started.",
+          "type": "object",
+          "required": ["reads", "failures", "dropped", "redactor_failures"],
+          "additionalProperties": false,
+          "properties": {
+            "reads": {"type": "integer", "minimum": 0},
+            "failures": {"type": "integer", "minimum": 0},
+            "dropped": {"type": "integer", "minimum": 0},
+            "redactor_failures": {"type": "integer", "minimum": 0}
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "stopped"}}}, "then": {"properties": {"reported_by": {"const": "framework"}}}},
+        {"if": {"properties": {"state": {"const": "ok"}}}, "then": {"properties": {"consecutive_failures": {"const": 0}, "last_ok_at": {"$ref": "#/$defs/ts"}}}}
+      ]
+    }
+  }
+}

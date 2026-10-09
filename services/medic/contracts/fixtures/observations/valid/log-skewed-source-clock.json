@@ -1,0 +1,41 @@
+{
+  "v": 1,
+  "id": "log.agent-worker:01JA8Z3K4M:14",
+  "kind": "log",
+  "signal": "log_agent_worker",
+  "sensor": {
+    "id": "log.agent-worker",
+    "run": "01JA8Z3K4M",
+    "seq": 14
+  },
+  "target": {
+    "service": "agent-worker",
+    "instance": "deeptempo-agent-worker",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:07Z",
+  "observed_at": "2026-10-07T10:00:07Z",
+  "source_ts": "2026-10-07T10:09:07Z",
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "skew_ms": 540000,
+  "log": {
+    "format": "agent_json",
+    "level": "WARNING",
+    "logger": "lease",
+    "template": "sweep failed",
+    "template_trust": "untrusted",
+    "message": "sweep failed",
+    "exc_type": null,
+    "frames": [],
+    "fingerprint": "fp1_46dab60c130f0b2a",
+    "fingerprint_basis": "normalized",
+    "trace_id": null,
+    "line_hash": "100e7a09dce045f6",
+    "truncated": false
+  },
+  "skew_flag": true
+}

@@ -814,3 +814,35 @@ async def test_stream_openai_raw_closes_client_on_early_disconnect():
 #   test_*_anthropic_with_thinking_* and test_is_default_anthropic_recognizes_
 #   legacy_refs — the fallback they described handed default-Anthropic thinking
 #     calls to ClaudeService for its tool loop. That loop went in #631.
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sends_effort_to_openrouter_as_reasoning():
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
+        model="anthropic/claude-haiku-5.5",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+    spec = ProviderSpec(
+        provider_id="openrouter-1",
+        provider_type="openrouter",
+        base_url=None,
+        api_key_ref=None,
+        default_model="anthropic/claude-haiku-5.5",
+        config={},
+    )
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        await router.dispatch(
+            provider=spec, messages=[{"role": "user", "content": "hi"}], effort="high"
+        )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "openrouter/anthropic/claude-haiku-5.5"
+    assert kwargs["extra_body"] == {"reasoning": {"effort": "high"}}

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List
 from unittest.mock import patch
 
@@ -23,7 +24,8 @@ REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from services.api.routers.ai_config import router as ai_config_router  # noqa: E402
-from core.storage.models import AIModelConfig, LLMProviderConfig  # noqa: E402
+from core.storage.models import AIModelConfig, ConfigAuditLog, LLMProviderConfig  # noqa: E402
+from services.api.middleware.auth import get_current_active_user  # noqa: E402
 from core.llm.providers.registry import ModelInfo  # noqa: E402
 from core.routing import request_unit_of_work  # noqa: E402
 
@@ -34,6 +36,7 @@ class _FakeSession:
     def __init__(self):
         self.assignments: Dict[str, AIModelConfig] = {}
         self.providers: Dict[str, LLMProviderConfig] = {}
+        self.audits: List[ConfigAuditLog] = []
 
     # --- get (PK lookup) ---
     def get(self, model, pk):
@@ -61,6 +64,8 @@ class _FakeSession:
     def add(self, row):
         if isinstance(row, AIModelConfig):
             self.assignments[row.component] = row
+        elif isinstance(row, ConfigAuditLog):
+            self.audits.append(row)
 
     def delete(self, row):
         if isinstance(row, AIModelConfig):
@@ -109,6 +114,7 @@ def client(session):
         return session
 
     app.dependency_overrides[request_unit_of_work] = _get_session
+    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(user_id="u-42")
     return TestClient(app)
 
 
@@ -207,6 +213,55 @@ def test_delete_missing_is_idempotent(client):
 
 
 # ---------------------------------------------------------------------------
+# Audit journal + updated_by
+# ---------------------------------------------------------------------------
+
+
+def _put(client, component, provider, model):
+    return client.put(
+        f"/api/ai/config/{component}",
+        json={"provider_id": provider, "model_id": model},
+    )
+
+
+def test_put_create_audits_and_stamps_actor(client, session):
+    r = _put(client, "triage", "ollama-local", "llama3:latest")
+    assert r.json()["updated_by"] == "u-42"
+    (a,) = session.audits
+    assert (a.config_type, a.config_key, a.action) == ("ai_model", "triage", "create")
+    assert a.old_value is None
+    assert a.new_value == {"provider_id": "ollama-local", "model_id": "llama3:latest"}
+    assert a.changed_by == "u-42"
+
+
+def test_put_update_audits_old_and_new(client, session):
+    _put(client, "triage", "anthropic-default", "a")
+    _put(client, "triage", "ollama-local", "b")
+    assert [x.action for x in session.audits] == ["create", "update"]
+    assert session.audits[1].old_value == {"provider_id": "anthropic-default", "model_id": "a"}
+    assert session.audits[1].new_value == {"provider_id": "ollama-local", "model_id": "b"}
+
+
+def test_put_unchanged_writes_no_audit(client, session):
+    _put(client, "triage", "anthropic-default", "a")
+    _put(client, "triage", "anthropic-default", "a")
+    assert len(session.audits) == 1
+
+
+def test_delete_audits_old_value(client, session):
+    _put(client, "triage", "anthropic-default", "a")
+    client.delete("/api/ai/config/triage")
+    a = session.audits[-1]
+    assert (a.action, a.changed_by, a.new_value) == ("delete", "u-42", None)
+    assert a.old_value == {"provider_id": "anthropic-default", "model_id": "a"}
+
+
+def test_delete_missing_writes_no_audit(client, session):
+    client.delete("/api/ai/config/triage")
+    assert session.audits == []
+
+
+# ---------------------------------------------------------------------------
 # GET /api/ai/models — registry stubbed so no external calls happen
 # ---------------------------------------------------------------------------
 
@@ -265,3 +320,82 @@ def test_model_info_404_when_missing(client):
         r = client.get("/api/ai/models/nothing/info")
 
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Component fallback (settings.fallback_model_id)
+# ---------------------------------------------------------------------------
+
+
+def _put_fb(client, component="triage", provider="ollama-local", model="a", **settings):
+    return client.put(
+        f"/api/ai/config/{component}",
+        json={"provider_id": provider, "model_id": model, "settings": settings},
+    )
+
+
+def test_fallback_set_change_clear_each_write_one_audit_row(client, session):
+    _put_fb(client)
+    r = _put_fb(client, fallback_model_id=" b ")
+    assert r.json()["settings"] == {"fallback_model_id": "b"}  # stripped, served by GET too
+    assert client.get("/api/ai/config").json()["assignments"]["triage"]["settings"] == {
+        "fallback_model_id": "b"
+    }
+    _put_fb(client, fallback_model_id="c")
+    _put_fb(client, fallback_model_id=None)
+    assert [x.action for x in session.audits] == ["create"] + ["update"] * 3
+    assert [x.new_value.get("fallback_model_id") for x in session.audits] == [
+        None, "b", "c", None,
+    ]
+    assert session.audits[2].old_value["fallback_model_id"] == "b"
+    assert session.assignments["triage"].settings == {}
+
+
+def test_blank_fallback_is_unset(client, session):
+    _put_fb(client, fallback_model_id="  ")
+    assert session.assignments["triage"].settings == {}
+    assert len(session.audits) == 1  # create only
+
+
+def test_model_only_put_keeps_the_fallback(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, model="c")
+    assert r.json()["settings"] == {"fallback_model_id": "b"}
+
+
+def test_provider_change_drops_the_fallback(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, provider="anthropic-default", model="c")
+    assert r.json()["settings"] == {}
+    assert session.audits[-1].new_value == {"provider_id": "anthropic-default", "model_id": "c"}
+
+
+def test_fallback_equal_to_model_is_rejected(client, session):
+    assert _put_fb(client, fallback_model_id="a").status_code == 400
+    assert session.assignments == {}
+
+
+def test_fallback_outside_known_catalogue_is_rejected(client, session):
+    with patch("services.api.routers.ai_config.catalogue_of", return_value=["a", "b"]):
+        assert _put_fb(client, fallback_model_id="zzz").status_code == 400
+        assert _put_fb(client, fallback_model_id="b").status_code == 200
+
+
+def test_delete_clears_fallback_with_row(client, session):
+    _put_fb(client, fallback_model_id="b")
+    client.delete("/api/ai/config/triage")
+    assert session.assignments == {}
+    assert session.audits[-1].old_value["fallback_model_id"] == "b"
+
+
+def test_provider_change_drops_a_fallback_sent_with_it(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, provider="anthropic-default", model="c", fallback_model_id="d")
+    assert r.json()["settings"] == {}
+
+
+def test_model_change_onto_the_fallback_clears_it(client, session):
+    _put_fb(client, fallback_model_id="b")
+    r = _put_fb(client, model="b", fallback_model_id=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"] == {}
