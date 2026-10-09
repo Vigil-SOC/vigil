@@ -92,6 +92,9 @@ export default function AiModelsOverview({ notify }: SectionProps) {
   )
 }
 
+// the residency copy leads with its label ("Hosted: …"); the banner names each group itself
+const residencyPhrase = (stays: boolean) => residencyCopy(stays).replace(/^(Hosted|Local): /, '')
+
 function ResidencyBanner({ names, keys }: { names: string[]; keys: Record<string, BifrostKey[]> }) {
   const stays = (n: string) => bifrostStaysOnSite(n, keys[n] || [])
   const hosted = names.filter((n) => !stays(n)).map(providerLabel)
@@ -101,8 +104,8 @@ function ResidencyBanner({ names, keys }: { names: string[]; keys: Record<string
       <Icon name="info" size={17} />
       <span>
         <b>Where your data goes:</b>
-        {hosted.length > 0 && ` hosted models (${hosted.join(', ')}): ${residencyCopy(false)}.`}
-        {local.length > 0 && ` Local models (${local.join(', ')}): ${residencyCopy(true)}.`}
+        {hosted.length > 0 && ` hosted models (${hosted.join(', ')}): ${residencyPhrase(false)}.`}
+        {local.length > 0 && ` Local models (${local.join(', ')}): ${residencyPhrase(true)}.`}
         {' '}Changing the default model asks you to confirm and is logged.
       </span>
     </div>
@@ -130,7 +133,7 @@ function ProviderCard({ name, keyCount, stays, isDefault, routable }: {
       </div>
       <span className="aim-card-keys">{keys}</span>
       <span className={`aim-card-where${stays ? ' local' : ''}`}>
-        {stays ? 'Local' : 'Hosted'}: {residencyCopy(stays)}
+        {residencyCopy(stays)}
       </span>
     </div>
   )
