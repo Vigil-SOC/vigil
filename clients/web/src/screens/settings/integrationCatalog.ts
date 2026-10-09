@@ -1,4 +1,3 @@
-import type { IconName } from '../../shared/icons'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import {
   MCP_CATEGORIES,
@@ -23,23 +22,6 @@ export interface CatalogEntry {
 }
 
 export const OTHER_CATEGORY = 'Other'
-
-/** Stands in for vendor logos (#1299 decision 14). */
-export const CATEGORY_ICONS: Record<string, IconName> = {
-  'Internal / Platform': 'gear',
-  DeepTempo: 'brain',
-  'Reference Servers': 'folder',
-  'EDR / XDR': 'shield',
-  'SIEM / Data Lake': 'search',
-  'Threat Intelligence': 'eye',
-  'Cloud Security': 'graph',
-  'Identity & Access': 'user',
-  'Network Security': 'link',
-  'Incident Management': 'bolt',
-  'Sandbox / Analysis': 'wrench',
-  'Adversary Emulation': 'bot',
-  [OTHER_CATEGORY]: 'grid',
-}
 
 const INTEGRATION_TO_SERVER = new Map([...SERVER_TO_INTEGRATION].map(([server, id]) => [id, server]))
 const categoryOf = (server: string) => MCP_CATEGORIES.find((c) => c.servers.includes(server))?.label ?? OTHER_CATEGORY
@@ -81,10 +63,8 @@ export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], 
     .sort((a, b) => rank(a) - rank(b))
 }
 
-/** Chips: every category that has a card, with its count, in display order. */
-export function categoryCounts(entries: CatalogEntry[]): [string, number][] {
+/** Chips: every category that has a card, in display order. */
+export function categoryLabels(entries: CatalogEntry[]): string[] {
   const labels = [...MCP_CATEGORIES.map((c) => c.label), OTHER_CATEGORY]
-  return labels
-    .map((l): [string, number] => [l, entries.filter((e) => e.category === l).length])
-    .filter(([, n]) => n > 0)
+  return labels.filter((l) => entries.some((e) => e.category === l))
 }
