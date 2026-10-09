@@ -60,6 +60,7 @@ def _orchestrator() -> Orchestrator:
     orch._process_intake_row = AsyncMock()
     orch._queued_intake_depth = MagicMock(return_value=None)
     orch._in_flight = MagicMock(return_value=0)
+    orch._running = MagicMock(return_value=0)
     orch._update_investigation_status = MagicMock()
     orch._enqueue_investigation = AsyncMock()
     return orch
@@ -200,3 +201,29 @@ def test_in_flight_count_is_one_query_over_the_in_flight_statuses():
                 )
             )
     assert _count_investigations_in_flight() == 3
+
+
+def test_running_count_covers_only_executing_and_waiting_approval():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Investigation
+    from services.daemon.orchestrator import _count_investigations_running
+
+    _seed()
+    with get_db_manager().session_scope() as session:
+        for inv_id, status in (
+            ("inv-a", "assigned"),
+            ("inv-b", "executing"),
+            ("inv-c", "waiting_approval"),
+            ("inv-d", "completed"),
+            ("inv-e", "failed"),
+        ):
+            session.add(
+                Investigation(
+                    investigation_id=inv_id,
+                    workflow_id="incident-response",
+                    trigger_type="manual",
+                    workdir=f"/tmp/{inv_id}",
+                    status=status,
+                )
+            )
+    assert _count_investigations_running() == 2
