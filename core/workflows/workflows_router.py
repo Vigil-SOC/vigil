@@ -322,16 +322,18 @@ async def check_hunt_coverage(payload: HuntCoverageRequest):
     The same function as the ``check_hunt_coverage`` agent tool, imported here
     so the router does not pull a database session factory in at import.
     """
-    from core.memory.hunt_coverage import check_coverage
+    from core.memory.hunt_coverage import check_coverage, with_claim
 
     try:
-        return check_coverage(
+        result = check_coverage(
             report=payload.report,
             entity_keys=payload.entity_keys,
             techniques=payload.techniques,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    # The proposal speaks the report's own claim; the agent tool keeps the template.
+    return await with_claim(result, payload.report) if payload.report else result
 
 
 @router.post(

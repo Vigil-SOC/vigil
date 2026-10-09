@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
+from core.storage.models.workflow import LIVE_CASE_STATES
 
 # Fractions of the clock, matching ``get_sla_status`` (warning at 75%, critical
 # at 90%). The queue's SQL filter uses the warning cut so it does not call
@@ -26,7 +26,7 @@ def combined_state(case_status: str | None, investigation_status: str | None) ->
     """State the queue and the case read agree on."""
     if (case_status or "").strip() == CLOSED:
         return CLOSED
-    if investigation_status in LIVE_INVESTIGATION_STATUSES:
+    if investigation_status in LIVE_CASE_STATES:
         return investigation_status
     return (case_status or "").strip()
 

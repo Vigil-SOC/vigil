@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { format } from 'date-fns'
+import { utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
@@ -18,14 +18,10 @@ const ME = 'SOC Analyst'
 type Phase = 'loading' | 'ready' | 'error'
 
 function fmtDT(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy · HH:mm')
+  return utcDayClock(s) ?? '—'
 }
 function fmtD(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy')
+  return utcDay(s) ?? '—'
 }
 function initials(name?: string): string {
   if (!name) return '—'
@@ -156,44 +152,38 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
 
   return (
     <SectionCard
+      bare
       title={title}
       count={`${items.length} item${items.length === 1 ? '' : 's'}`}
-      wide
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
       {adding && (
-        <div className="px-[18px] py-3 border-b border-line-soft grid grid-cols-[1fr_140px] gap-2.5">
+        <div className="py-3 grid grid-cols-1 gap-2.5">
           <input className={inputCls} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <select className={inputCls} value={form.evidence_type} onChange={(e) => setForm({ ...form, evidence_type: e.target.value })}>
             {['file', 'screenshot', 'log', 'url', 'other'].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
-          <input className={`${inputCls} col-span-2`} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          <input className={inputCls} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           <input className={inputCls} placeholder={form.evidence_type === 'url' ? 'URL' : 'File path'} value={form.file_path} onChange={(e) => setForm({ ...form, file_path: e.target.value })} />
-          <button className="btn primary" onClick={submit}>Add evidence</button>
+          <button className="btn primary justify-self-start" onClick={submit}>Add evidence</button>
         </div>
       )}
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead><tr><th>Type</th><th>Name</th><th>Description</th><th>Collected</th><th>By</th><th>Hash</th></tr></thead>
-          <tbody>
-            {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="doc" title="Loading evidence…" /></td></tr>}
-            {phase === 'ready' && items.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." /></td></tr>}
-            {items.map((e) => {
-              const hash = e.file_hash_sha256 || e.file_hash_md5
-              return (
-              <tr key={e.evidence_id ?? e.name}>
-                <td><span className="tag">{e.evidence_type}</span></td>
-                <td>{e.name}</td>
-                <td className="muted">{e.description || '—'}</td>
-                <td className="muted">{fmtDT(e.collected_at ?? undefined)}</td>
-                <td className="muted">{e.collected_by || 'Unknown'}</td>
-                <td className="mono muted">{hash ? `${hash.slice(0, 12)}…` : '—'}</td>
-              </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {phase === 'loading' && <MiniLoading icon="doc" title="Loading evidence…" />}
+      {phase === 'ready' && items.length === 0 && <MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." />}
+      {items.length > 0 && (
+        <ul className="side-rows">
+          {items.map((e) => {
+            const hash = e.file_hash_sha256 || e.file_hash_md5
+            const meta = [e.evidence_type, fmtDT(e.collected_at ?? undefined), e.collected_by || 'Unknown', hash && `${hash.slice(0, 12)}…`].filter(Boolean).join(' · ')
+            return (
+              <li key={e.evidence_id ?? e.name} title={e.description || undefined}>
+                <div className="side-row-main">{e.name}</div>
+                <div className="side-meta">{meta}</div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </SectionCard>
   )
 }
@@ -638,45 +628,38 @@ export function IOCsCard({ caseId }: { caseId: string }) {
 
   return (
     <SectionCard
+      bare
       title="Indicators of Compromise"
       count={`${iocs.length}`}
-      wide
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
     >
       {adding && (
-        <div className="px-[18px] py-3 border-b border-line-soft grid grid-cols-[120px_1fr] gap-2.5">
+        <div className="py-3 grid grid-cols-1 gap-2.5">
           <select className={inputCls} value={form.ioc_type} onChange={(e) => setForm({ ...form, ioc_type: e.target.value })}>
             {['ip', 'domain', 'hash', 'url', 'email', 'other'].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
           <input className={inputCls} placeholder="Value" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} />
           <input className={inputCls} placeholder="Context" value={form.context} onChange={(e) => setForm({ ...form, context: e.target.value })} />
           <input className={inputCls} placeholder="Source" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} />
-          <button className="btn primary col-span-2 justify-self-start" onClick={submit}>Add IOC</button>
+          <button className="btn primary justify-self-start" onClick={submit}>Add IOC</button>
         </div>
       )}
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead><tr><th>Type</th><th>Value</th><th>Context</th><th>Source</th><th>Threat</th><th>First seen</th></tr></thead>
-          <tbody>
-            {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="alert" title="Loading IOCs…" /></td></tr>}
-            {phase === 'ready' && iocs.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." /></td></tr>}
-            {iocs.map((i) => {
-              const tl = threatLevel(i)
-              const value = i.value || ''
-              return (
-                <tr key={i.ioc_id ?? value}>
-                  <td><span className="tag">{(i.ioc_type || '').toUpperCase()}</span></td>
-                  <td className="mono" title={value}>{value.length > 40 ? `${value.slice(0, 40)}…` : value}</td>
-                  <td className="muted">{i.context || '—'}</td>
-                  <td className="muted">{i.source || 'Manual'}</td>
-                  <td><span className={tl.cls}><span className="dot" />{tl.label}</span></td>
-                  <td className="muted">{fmtDT(i.first_seen ?? undefined)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {phase === 'loading' && <MiniLoading icon="alert" title="Loading IOCs…" />}
+      {phase === 'ready' && iocs.length === 0 && <MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." />}
+      {iocs.length > 0 && (
+        <ul className="side-rows">
+          {iocs.map((i) => {
+            const value = i.value || ''
+            const meta = [(i.ioc_type || '').toUpperCase(), threatLevel(i).label, i.source || 'Manual', fmtDT(i.first_seen ?? undefined)].filter(Boolean).join(' · ')
+            return (
+              <li key={i.ioc_id ?? value} title={i.context || undefined}>
+                <div className="side-row-main mono" title={value}>{value}</div>
+                <div className="side-meta">{meta}</div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </SectionCard>
   )
 }

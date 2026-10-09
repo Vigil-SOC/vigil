@@ -182,6 +182,7 @@ class CustomIntegrationService:
                 "integration_id": integration_id,
                 "integration_name": integration_data["name"],
                 "metadata": integration_data["metadata"],
+                "tools": integration_data.get("tools", []),
                 "server_code": integration_data["server_code"],
                 "message": f"Successfully generated custom integration '{integration_data['name']}'",
             }
@@ -224,7 +225,9 @@ Please analyze this documentation and generate:
      - Types: text, password, url, number, boolean, select
    - docs_url: Official documentation URL (if available)
 
-2. **MCP Server Code** (Python):
+2. **Tools**: a list of the MCP tools the server code exposes, each with name and description (one line)
+
+3. **MCP Server Code** (Python):
    - Complete, production-ready MCP server implementation
    - Follow the Vigil SOC patterns
    - Include proper error handling
@@ -268,6 +271,9 @@ Please respond with a JSON object containing:
     ],
     "docs_url": "https://..."
   }},
+  "tools": [
+    {{"name": "search_threats", "description": "One line on what the tool does"}}
+  ],
   "server_code": "# Complete Python MCP server code here..."
 }}
 ```
@@ -464,6 +470,14 @@ Only generate the JSON response when you have enough information to create a com
 
             # Ensure metadata has the category
             data["metadata"]["category"] = category
+
+            # Optional: names and descriptions of the tools the code exposes
+            tools = data.get("tools")
+            data["tools"] = [
+                {"name": str(t["name"]), "description": str(t.get("description") or "")}
+                for t in (tools if isinstance(tools, list) else [])
+                if isinstance(t, dict) and t.get("name")
+            ]
 
             return data
 

@@ -346,6 +346,7 @@ def resolve(
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
     provider: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Return the playbook and config layers for ``workflow_id``, as YAML text."""
     from core.workflows.workflows_service import WorkflowsService
@@ -392,6 +393,7 @@ def resolve(
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
+        **({"effort": effort} if effort else {}),
         "budgets": (
             dict(INVESTIGATE_BUDGETS)
             if definition.run_kind == "investigate"
@@ -493,6 +495,7 @@ def resolve_hunt(
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
     provider: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> Tuple[str, str]:
     from core.workflows.workflows_service import WorkflowsService
 
@@ -524,6 +527,7 @@ def resolve_hunt(
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
+        **({"effort": effort} if effort else {}),
         "budgets": dict(HUNT_BUDGETS),
         "runtime": DEFAULT_RUNTIME,
         "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))
@@ -553,6 +557,7 @@ def resolve_root_cause(
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
     provider: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> Tuple[str, str]:
     from core.workflows.workflows_service import WorkflowsService
 
@@ -574,6 +579,7 @@ def resolve_root_cause(
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
+        **({"effort": effort} if effort else {}),
         "budgets": {
             "max_calls": ROOT_CAUSE_MAX_CALLS,
             "max_cost_usd": HUNT_BUDGETS["max_cost_usd"],

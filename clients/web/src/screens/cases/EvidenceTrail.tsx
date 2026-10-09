@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
-import { STANCE_WORD, TIER_WORD, relationWord, stanceOf, workerAt, type RunFold, type Stance } from './caseFold'
+import { STANCE_WORD, TIER_WORD, leadingExplanation, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -33,6 +33,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
     }))
   }
   const statements = new Map(fold.hypotheses.map((h) => [h.hypothesis_id, h.statement]))
+  const leading = leadingExplanation(fold)?.hypothesis_id
   return fold.evidence.map((row) => ({
     id: row.evidence_id,
     step: String(row.iteration),
@@ -46,19 +47,25 @@ function rowsOf(fold: RunFold): TrailRow[] {
     links: row.bears_on.map((link) => link.relation),
     source: row.source_system || DASH,
     tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
-    stance: stanceOf(row),
+    stance: stanceOn(row, leading),
     by: workerAt(fold, row.iteration) ?? DASH,
   }))
 }
 
-function header(fold: RunFold, rows: TrailRow[]): string {
-  const count = fold.kind === 'hunt' ? fold.evidenceCount : rows.length
+function header(fold: RunFold): string {
+  const count = fold.kind === 'hunt' ? fold.evidenceCount : fold.findings.length
   const head = `Evidence trail · ${count} ${count === 1 ? 'row' : 'rows'}`
   if (fold.kind !== 'hunt') return head
-  // Counted per link, as the Explanations tab counts for and against; a row with no links counts once as neither.
-  const links = rows.flatMap((row) => (row.links.length ? row.links : ['neither']))
-  const n = (relation: string) => links.filter((link) => link === relation).length
-  return `${head} · ${n('supports')} for / ${n('weakens')} against / ${n('neither')} neither (shown)`
+  const n = stanceTotals(fold)
+  return `${head} · ${n.supports} support · ${n.weakens} go against · ${n.neither} neither`
+}
+
+/** The ⓘ under the totals: a row is counted once, so which explanation it is read against is named. */
+function totalsNote(fold: RunFold): string | null {
+  if (fold.kind !== 'hunt') return null
+  const leading = leadingExplanation(fold)
+  const name = leading && (leading.statement || leading.hypothesis_id)
+  return `Each row is counted once, by its stance on the leading explanation${name ? ` (${name.length > 70 ? `${name.slice(0, 70)}…` : name})` : ''}; a row that does not bear on it counts as neither. Totals cover the rows shown and leave out critic rows, which are listed but not counted. A row's stance on each explanation is under “bears on”.`
 }
 
 export function EvidenceTrail({ fold, phase, focusId }: { fold: RunFold | null; phase: Phase; focusId: string | null }) {
@@ -72,12 +79,16 @@ export function EvidenceTrail({ fold, phase, focusId }: { fold: RunFold | null; 
   if (phase === 'error') return <p>The run could not be read.</p>
   const rows = fold ? rowsOf(fold) : []
   if (!fold || rows.length === 0) return <EmptyState compact icon="shield" title="No evidence yet" />
+  const note = totalsNote(fold)
 
   return (
     <section className="ev-trail" aria-label="Evidence trail">
       <div>
-        <h3>{header(fold, rows)}</h3>
-        <p className="muted">Each observation, its source and tier, and whether it supports or weakens an explanation.</p>
+        <div className="ev-title">
+          <h3>{header(fold)}</h3>
+          {note && <InfoTip label="About the totals" text={note} align="start" />}
+        </div>
+        <p className="muted">Each observation, its source and tier, and whether it supports or goes against an explanation.</p>
       </div>
       <div className="ev-table" role="table" aria-label="Evidence trail rows">
         <div className="ev-grid ev-head" role="row">
