@@ -454,6 +454,25 @@
       padding: 8px;
    }
 
+   /* Disabled reads as placeholder text on a quiet fill (tokens: tx3, "Placeholder, disabled"), never as a live accent. */
+   .btn:disabled,
+   .btn:disabled:hover {
+      background: var(--bg-2);
+      border-color: var(--line);
+      color: var(--tx-faint);
+      cursor: not-allowed;
+   }
+
+   .btn.primary:disabled,
+   .btn.primary:disabled:hover {
+      background: var(--bg-3);
+   }
+
+   .btn.ghost:disabled,
+   .btn.ghost:disabled:hover {
+      background: transparent;
+   }
+
    .chip {
       display: inline-flex;
       align-items: center;
@@ -4291,6 +4310,12 @@
       border-color: var(--accent-line);
    }
 
+   .field-select:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      border-color: var(--line);
+   }
+
    .field-select .dd {
       color: var(--tx-faint);
       display: inline-flex;
@@ -6800,12 +6825,262 @@
       padding: 10px 0;
    }
 
-   /* ---------- Triage: alert column, expanded row, strip ⓘ ---------- */
-   .tq-alert {
-      display: block;
-      max-width: 34ch;
+   /* ---------- Triage queue: follows the Triage board and tokens.json ---------- */
+   .tq-page {
+      padding: 20px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+   }
+
+   .tq-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+   }
+
+   .tq-title {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+   }
+
+   .tq-title h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+      color: var(--tx0);
+   }
+
+   .tq-title p {
+      margin: 0;
+      max-width: 760px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--tx1);
+   }
+
+   .tq-tiles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+   }
+
+   .tq-tile {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      padding: 14px 16px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+   }
+
+   /* the ⓘ sits in the tile's top-right corner, where the board puts its level pill */
+   .tq-tile > .info-tip {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+   }
+
+   .tq-tile-label {
+      padding-right: 24px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .tq-tile-val {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      line-height: 1.2;
+      color: var(--tx0);
+   }
+
+   .tq-tile-val.unmeasured {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      color: var(--tx3);
+   }
+
+   .tq-tile-sub {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .tq-filters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .tq-group-head {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .tq-group-label {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--tx2);
+   }
+
+   .tq-rule {
+      width: 1px;
+      height: 20px;
+      margin: 0 6px;
+      background: var(--ln1);
+   }
+
+   .tq-summary {
+      margin-left: auto;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--ac);
+      white-space: nowrap;
+   }
+
+   .tq-summary button {
+      padding: 0;
+      background: none;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+   }
+
+   .tq-summary button:hover {
+      text-decoration: underline;
+   }
+
+   .tq-card {
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+      overflow: hidden;
+   }
+
+   /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
+   .tq-table {
+      table-layout: fixed;
+   }
+
+   .tq-table thead th {
+      position: static;
+      padding: 11px 16px;
+      background: transparent;
+      border-bottom: 0;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--tx2);
+   }
+
+   .tq-table tbody td {
+      padding: 11px 16px;
+      border-top: 1px solid var(--ln0);
+      border-bottom: 0;
+      font-size: 12px;
+      color: var(--tx1);
+      vertical-align: middle;
       overflow: hidden;
       text-overflow: ellipsis;
+   }
+
+   .tq-table tbody tr:hover {
+      background: var(--bg3);
+   }
+
+   .tq-table tbody td:nth-child(2) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
+   .tq-table thead th:nth-child(1) { width: 100px; }
+   .tq-table thead th:nth-child(2) { width: 124px; }
+   .tq-table thead th:nth-child(4) { width: 84px; }
+   .tq-table thead th:nth-child(5) { width: 112px; }
+   .tq-table thead th:nth-child(6) { width: 108px; }
+   .tq-table thead th:nth-child(7) { width: 176px; }
+   .tq-table thead th:nth-child(8) { width: 26%; }
+
+   .tq-th-info {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+   }
+
+   .tq-kind {
+      font-weight: 650;
+   }
+
+   .tq-alert {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      white-space: normal; /* .tbl cells are nowrap */
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--tx0);
+   }
+
+   .tq-score {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 8px;
+      border: 1px solid var(--ln1);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--tx3);
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+   }
+
+   .tq-time {
+      color: var(--tx2);
+      white-space: nowrap;
+   }
+
+   .tq-pill {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--tx1);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+   }
+
+   .tq-pill.launched { background: var(--good-bg); color: var(--good); }
+   .tq-pill.merged { background: var(--ac-bg); color: var(--ac); }
+   .tq-pill.expired { color: var(--tx2); }
+
+   .tq-why {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .tq-why a {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
    }
 
    .tbl tbody tr.row-expanded:hover {
@@ -6819,6 +7094,7 @@
    }
 
    .tq-panel {
+      width: min(560px, 100%);
       padding: 10px 12px;
       border-radius: 10px;
       background: var(--bg-2);
@@ -6862,13 +7138,6 @@
       align-items: center;
       gap: 12px;
       font-size: 12px;
-   }
-
-   /* the ⓘ sits in the tile's top-right corner, out of the label's ellipsis clip */
-   .kpi>.info-tip {
-      position: absolute;
-      top: 10px;
-      right: 12px;
    }
 
    .tech-expand>td {

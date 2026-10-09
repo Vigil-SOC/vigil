@@ -1,9 +1,9 @@
 import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import SetupScreen from './SetupScreen'
-import { SETUP_DISMISSED_KEY } from './setupDismissed'
+import { SETUP_DISMISSED_KEY, SETUP_PROGRESS_KEY } from './setupDismissed'
 import { configApi, federationApi, mcpApi } from '../../services/api'
 import { TEST_POLL_MS, TEST_POLL_TRIES } from './SourceCollection'
 
@@ -64,6 +64,8 @@ vi.mock('../../services/api', () => ({
       Promise.resolve({ data: { auto_response_enabled: false, force_manual_approval: true } }),
     ),
     setIntegrations: vi.fn(() => Promise.resolve({ data: {} })),
+    getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false, source: 'file' } })),
+    setDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: true } })),
   },
   mcpApi: {
     listServers: vi.fn(() => Promise.resolve({ data: { servers: [] } })),
@@ -124,6 +126,7 @@ const listing = (sources: unknown[], enabled = true) =>
 describe('SetupScreen', () => {
   beforeEach(() => {
     localStorage.clear()
+    vi.clearAllMocks()
     auth.allowed = true
   })
 
@@ -132,19 +135,133 @@ describe('SetupScreen', () => {
     expect(container.querySelector('.soc-console')).toHaveClass('vg-dark')
   })
 
-  it('skips the pass onto the console and stays dismissed', () => {
+  const saved = () => JSON.parse(localStorage.getItem(SETUP_PROGRESS_KEY) ?? 'null')
+  const rail = () => within(screen.getByRole('complementary', { name: 'Setup steps' }))
+
+  it('starts at step 1 with no Back and no per-step Skip', () => {
     renderSetup()
-    fireEvent.click(screen.getByRole('button', { name: 'Skip setup' }))
-    expect(screen.getByText('console-home')).toBeInTheDocument()
-    expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBe('1')
+    expect(screen.getByText('Step 1 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Skip$/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Step 1 of 5 · your progress is saved')).toBeInTheDocument()
   })
 
-  it('skips a single step without leaving setup', async () => {
+  it('Continue never disables, passes the step and shows Back', async () => {
     renderSetup()
-    fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
-    expect(await screen.findByText('No connectable data sources found.')).toBeInTheDocument()
-    expect(screen.queryByText('console-home')).not.toBeInTheDocument()
-    expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByText('Step 2 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+    expect(saved()).toEqual({ furthest: 2, passed: [1] })
+    expect(rail().getByRole('button', { name: /Before you start/ })).toHaveTextContent('Before you start')
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(screen.getByText('Step 1 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+  })
+
+  it('reads Finish setup on step 5 and the done page is not counted', () => {
+    localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 5, passed: [1, 2, 3, 4] }))
+    renderSetup()
+    expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+    expect(screen.getByText('Setup complete', { selector: '.su-eyebrow' })).toBeInTheDocument()
+    expect(screen.queryByText(/of 5/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Go to console/ })).toBeInTheDocument()
+    expect(rail().getAllByRole('button').filter((b) => b.querySelector('svg'))).toHaveLength(5)
+    expect(saved().passed).toContain(5)
+  })
+
+  it('ticks the rail from stored progress and opens any item', async () => {
+    localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 3, passed: [1, 2] }))
+    renderSetup()
+    expect(screen.getByText('Step 3 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+    const items = rail().getAllByRole('button').slice(0, 5)
+    expect(items.map((b) => !!b.querySelector('svg'))).toEqual([true, true, false, false, false])
+    expect(items[2]).toHaveAttribute('aria-current', 'step')
+    fireEvent.click(items[4])
+    expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+  })
+
+  it('Save and finish later keeps progress, dismisses and leaves', () => {
+    localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 2, passed: [1] }))
+    renderSetup()
+    fireEvent.click(screen.getByRole('button', { name: 'Save and finish later' }))
+    expect(screen.getByText('console-home')).toBeInTheDocument()
+    expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBe('1')
+    expect(saved()).toEqual({ furthest: 2, passed: [1] })
+  })
+
+  it('reopening resumes at the saved step', () => {
+    renderSetup()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    cleanup()
+    renderSetup()
+    expect(screen.getByText('Step 2 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+  })
+
+  describe('stored progress that cannot be used', () => {
+    it.each([
+      ['malformed', '{not json'],
+      ['the wrong type', '"3"'],
+      ['an old format with a step id', JSON.stringify({ step: 'workflows' })],
+      ['a step id that no longer exists', JSON.stringify({ furthest: 'summary', passed: ['checks'] })],
+      ['a step outside 1-5', JSON.stringify({ furthest: 6, passed: [1] })],
+      ['a passed step outside 1-5', JSON.stringify({ furthest: 2, passed: [0] })],
+    ])('%s opens at step 1 with nothing passed', (_name, raw) => {
+      localStorage.setItem(SETUP_PROGRESS_KEY, raw)
+      renderSetup()
+      expect(screen.getByText('Step 1 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+      expect(rail().getAllByRole('button').slice(0, 5).some((b) => b.querySelector('svg'))).toBe(false)
+    })
+
+    it('a localStorage that throws still renders step 1 and still moves on', async () => {
+      const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('denied')
+      })
+      const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('denied')
+      })
+      renderSetup()
+      expect(screen.getByText('Step 1 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      expect(await screen.findByText('Step 2 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+      get.mockRestore()
+      set.mockRestore()
+    })
+  })
+
+  describe('Skip setup and look around with demo data', () => {
+    const link = () =>
+      screen.getByRole('button', { name: 'Skip setup and look around with demo data' })
+
+    it('turns demo mode on, dismisses and leaves', async () => {
+      renderSetup()
+      fireEvent.click(link())
+      expect(await screen.findByText('console-home')).toBeInTheDocument()
+      expect(configApi.setDemoMode).toHaveBeenCalledWith(true)
+      expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBe('1')
+    })
+
+    it('stays on the page with a visible error when demo data cannot be turned on', async () => {
+      vi.mocked(configApi.setDemoMode).mockRejectedValueOnce(new Error('500'))
+      renderSetup()
+      fireEvent.click(link())
+      expect(await screen.findByRole('alert')).toHaveTextContent('Demo data could not be turned on')
+      expect(screen.queryByText('console-home')).not.toBeInTheDocument()
+      expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBeNull()
+    })
+
+    it('does not override a server-set DEMO_MODE=false', async () => {
+      vi.mocked(configApi.getDemoMode).mockResolvedValueOnce({
+        data: { enabled: false, source: 'environment' },
+      } as never)
+      renderSetup()
+      fireEvent.click(link())
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "Demo mode is set by the server's environment",
+      )
+      await waitFor(() => expect(link()).toBeEnabled())
+      expect(configApi.setDemoMode).not.toHaveBeenCalled()
+      expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBeNull()
+    })
   })
 
   it('lets someone who cannot write settings leave for the console', () => {
@@ -155,22 +272,23 @@ describe('SetupScreen', () => {
     expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBe('1')
   })
 
-  it('opens the summary on the last step and jumps back to a step from Change', async () => {
+  it('opens the summary on the done page and jumps back to a step from Change', async () => {
     renderSetup()
-    for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+    for (let i = 0; i < 4; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
     expect(await screen.findByText('Nothing connected yet')).toBeInTheDocument()
     expect(screen.getByText('No provider')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Go to console' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Go to console/ })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Change Workflows' }))
     expect(await screen.findByText('No workflows yet.')).toBeInTheDocument()
-    expect(screen.getByText(/4 of 6/)).toBeInTheDocument()
+    expect(screen.getByText('Step 4 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Change Limits' }))
     expect(await screen.findByRole('button', { name: /Assist/ })).toBeInTheDocument()
-    expect(screen.getByText(/5 of 6/)).toBeInTheDocument()
+    expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
   })
 
   describe('Connect data after a save', () => {
