@@ -68,3 +68,22 @@ def build_thinking_kwargs(model: str, budget: Optional[int]) -> Dict[str, Any]:
     if model_requires_adaptive_thinking(model):
         return {"output_config": {"effort": _thinking_budget_to_effort(budget)}}
     return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+
+
+EFFORT_LEVELS = ("low", "medium", "high")
+
+
+def effort_kwargs(provider_type: str, effort: Optional[str]) -> Dict[str, Any]:
+    """The request fields that carry a component's ``settings.effort``.
+
+    OpenRouter takes ``reasoning: {effort}``; Anthropic takes
+    ``output_config.effort``. An unset or unrecognised effort sends nothing, so
+    the model keeps its own default. Merge into the request body.
+    """
+    if effort not in EFFORT_LEVELS:
+        return {}
+    if provider_type == "openrouter":
+        return {"reasoning": {"effort": effort}}
+    if provider_type == "anthropic":
+        return {"output_config": {"effort": effort}}
+    return {}

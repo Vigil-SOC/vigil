@@ -1,88 +1,88 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
-import { EmptyState, TextInput } from '../../shared/ui'
-import { useMcpServers, useIntegrationsConfig } from './useSettings'
+import { InfoTip } from '../../shared/InfoTip'
+import { LevelBadge } from '../../shared/LevelBadge'
+import { EmptyState } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
+import { basePath } from '../../config/basePath'
+import { getAllIntegrations } from '../../config/integrations'
 import {
-  getIntegrationForServer,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
   prettyServerName,
+  tabFromQuery,
+  type IntegrationsTab,
 } from './integrationsData'
+import { relativeTime, type ServerRow } from './integrationHealth'
+import { useIntegrationsState } from './IntegrationsState'
+import AddIntegrationTab from './AddIntegrationTab'
+import { buildCatalog } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { SectionProps } from './types'
 
-type IntegrationsTab = 'servers' | 'surface'
-const TABS: [IntegrationsTab, string][] = [
-  // "Connector" is the page extension (CONTEXT.md); these are the MCP servers
-  // Vigil calls out to, and the next tab is the one Vigil is.
-  ['servers', 'MCP Servers'],
-  ['surface', 'Vigil’s MCP Server'],
-]
-
-function tabFromQuery(value: string | null): IntegrationsTab {
-  if (value === 'servers' || value === 'surface') return value
-  return 'servers'
+const displayName = (name: string) => SERVER_DISPLAY_NAMES.get(name) ?? prettyServerName(name)
+const categoryOf = (name: string) => MCP_CATEGORIES.find((c) => c.servers.includes(name))?.label ?? 'Other'
+const categoryRank = (name: string) => {
+  const i = MCP_CATEGORIES.findIndex((c) => c.servers.includes(name))
+  return i < 0 ? MCP_CATEGORIES.length : i
 }
+const canConfigure = (r: ServerRow) => !!r.integration?.fields?.length
 
 export default function IntegrationsSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
   const requested = tabFromQuery(searchParams.get('tab'))
   const [tab, setTab] = useState<IntegrationsTab>(requested)
+  const { mcp, int, phase, rows, attention } = useIntegrationsState()
+  const { reload: reloadExtensions } = useExtensions()
+  const [busy, setBusy] = useState<string | null>(null)
+  // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
+  const [customCount, setCustomCount] = useState<number | null>(null)
+  const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
+  const { error, reload: reloadMcp, setServerEnabled } = mcp
+  const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = int
+
+  // state lives above the section, so a visit does not refetch: Refresh does
+  const reload = () => {
+    reloadMcp()
+    reloadInt()
+  }
+
+  const reloadCustom = useCallback(async () => {
+    try {
+      const r = await fetch(`${basePath}/api/custom-integrations/list`, { credentials: 'include' })
+      const d = r.ok ? await r.json() : null
+      setCustomCount(Array.isArray(d?.integrations) ? d.integrations.length : null)
+    } catch {
+      setCustomCount(null)
+    }
+  }, [])
 
   useEffect(() => {
     setTab(requested)
   }, [requested])
-  return (
-    <>
-      <div className="tabs" style={{ gap: 4 }}>
-        {TABS.map(([k, label]) => (
-          <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      {tab === 'servers' && <ServersPanel notify={notify} />}
-      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
-    </>
+
+  useEffect(() => {
+    reloadCustom()
+  }, [reloadCustom])
+
+  const connected = useMemo(
+    () => rows.filter((r) => r.connected).sort((a, b) => categoryRank(a.name) - categoryRank(b.name)),
+    [rows],
   )
-}
-
-function ServersPanel({ notify }: SectionProps) {
-  const { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled } = useMcpServers()
-  const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = useIntegrationsConfig()
-  // refresh the extension registry so a newly-configured connector mounts at once
-  const { reload: reloadExtensions } = useExtensions()
-  const [search, setSearch] = useState('')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [builderOpen, setBuilderOpen] = useState(false)
-  const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
-
-  const grouped = useMemo(() => {
-    const q = search.toLowerCase()
-    const match = (n: string) =>
-      !q || n.toLowerCase().includes(q) || (SERVER_DESCRIPTIONS.get(n) ?? '').toLowerCase().includes(q)
-    const claimed = new Set<string>()
-    const out: { label: string; servers: string[] }[] = []
-    for (const cat of MCP_CATEGORIES) {
-      const inCat = servers.filter((n) => cat.servers.includes(n))
-      inCat.forEach((n) => claimed.add(n))
-      const shown = inCat.filter(match)
-      if (shown.length) out.push({ label: cat.label, servers: shown })
-    }
-    const other = servers.filter((n) => !claimed.has(n)).filter(match)
-    if (other.length) out.push({ label: 'Other', servers: other })
-    return out
-  }, [servers, search])
-
-  const enabledCount = servers.filter((n) => enabled[n]).length
-  const runningCount = servers.filter((n) => statuses[n] === 'running').length
+  const catalog = getAllIntegrations()
+  const connectedIds = useMemo(
+    () => new Set([...intCfg.enabled_integrations, ...connected.flatMap((r) => (r.integration ? [r.integration.id] : []))]),
+    [intCfg.enabled_integrations, connected],
+  )
+  const entries = useMemo(() => buildCatalog(catalog, rows, connectedIds), [catalog, rows, connectedIds])
+  const available = entries.filter((e) => !e.connected).length
+  const healthy = connected.filter((r) => r.level === 'good').length
 
   // gate M: MCP server on/off (agent tools)
   const onToggleMcp = async (name: string, want: boolean) => {
@@ -108,168 +108,178 @@ function ServersPanel({ notify }: SectionProps) {
     else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
   }
 
+  const ready = phase === 'ready'
+  const tabs: [IntegrationsTab, string, number | null][] = [
+    ['connected', 'Connected', ready ? connected.length : null],
+    ['add', 'Add integration', ready ? available : null],
+    ['custom', 'Custom', customCount],
+    ['surface', 'Vigil MCP server', null],
+  ]
+  const first = attention[0]
+  const tiles: [string, number, string][] = [
+    ['Connected', connected.length, 'var(--tx0)'],
+    ['Healthy', healthy, 'var(--good)'],
+    ['Need attention', attention.length, attention.length ? 'var(--fair)' : 'var(--tx0)'],
+    ['Available to add', available, 'var(--tx0)'],
+  ]
+
+  // pb-20: the floating Ask Vigil button covers nothing at the end of the scroll
   return (
-    <div className="settings-content-inner flex flex-col gap-4" style={{ maxWidth: 1280 }}>
-      {/* header / toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex gap-2 flex-wrap flex-1">
-          <span className="chip" style={{ color: 'var(--accent-2)' }}>{enabledCount} Enabled</span>
-          <span className="chip" style={{ color: 'var(--ok)' }}>{runningCount} Running</span>
-          <span className="chip">{servers.length} Active</span>
-        </div>
-        <div className="search" style={{ minWidth: 220 }}>
-          <Icon name="search" size={15} />
-          <TextInput
-            placeholder="Search integrations…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <button className="btn ghost" onClick={() => setBuilderOpen(true)}><Icon name="plus" /> Build Custom</button>
-        <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
+    <div className="settings-content-inner flex flex-col gap-4 pb-20" style={{ maxWidth: 1280 }}>
+      {ready && (
+        <>
+          {first && (
+            <div className="int-banner" role="status">
+              <Icon name="alert" size={17} />
+              <span className="int-banner-text">
+                <b>{displayName(first.name)} needs a fix.</b> {first.note}
+                {attention.length > 1 && <span className="int-banner-more">{attention.length - 1} more need attention.</span>}
+              </span>
+              {canConfigure(first) && (
+                <button className="btn primary int-act" onClick={() => setWizardFor(first.integration!)}>Fix</button>
+              )}
+            </div>
+          )}
+          <div className="int-tiles">
+            {tiles.map(([label, value, color]) => (
+              <div key={label} className="int-tile">
+                <span className="int-tile-k">{label}</span>
+                <span className="int-tile-v" style={{ color }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="wf-tabs" role="tablist" aria-label="Integrations views">
+        {tabs.map(([k, label, n]) => (
+          <button
+            key={k}
+            role="tab"
+            aria-selected={tab === k}
+            aria-label={n === null ? label : `${label} ${n}`}
+            className="wf-tab"
+            onClick={() => setTab(k)}
+          >
+            {label}
+            {n !== null && <span className="wf-count">{n}</span>}
+          </button>
+        ))}
       </div>
 
-      {phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
-      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {(tab === 'connected' || tab === 'add') && phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
+      {(tab === 'connected' || tab === 'add') && phase === 'error' && (
+        <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+      )}
 
-      {phase === 'ready' && grouped.length === 0 && (
+      {tab === 'connected' && ready && connected.length === 0 && (
         <EmptyState
           compact
-          icon="filter"
-          title="No integrations match this search"
-          body={`No MCP servers match “${search}”.`}
-          primary={{ label: 'Clear search', onClick: () => setSearch(''), icon: 'close' }}
+          icon="link"
+          title="Nothing is connected yet"
+          body="Connect a tool so agents can read from it and act through it."
+          primary={{ label: 'Add integration', onClick: () => setTab('add'), icon: 'plus' }}
+        />
+      )}
+      {tab === 'connected' && ready && connected.length > 0 && (
+        <div className="flex justify-end">
+          <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
+        </div>
+      )}
+      {tab === 'connected' && ready && connected.length > 0 && (
+        <table className="int-table">
+          <colgroup>
+            <col />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: '25%' }} />
+            <col style={{ width: '22%' }} />
+            <col style={{ width: 56 }} />
+            <col style={{ width: 112 }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Integration</th>
+              <th>Health</th>
+              <th>
+                Last verified
+                <InfoTip
+                  label="About Last verified"
+                  align="start"
+                  source="The last test of the integration, run through POST /api/config/integrations/{id}/test."
+                  limit="Never-tested integrations show —. A failed test stays until the next test passes."
+                />
+              </th>
+              <th>What agents may do with it</th>
+              <th>Note</th>
+              <th>On</th>
+              <th><span className="sr-only">Action</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {connected.map((r) => (
+              <tr key={r.name}>
+                <td>
+                  <span className="int-name">
+                    {displayName(r.name)}
+                    {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
+                  </span>
+                  <span className="int-sub">{categoryOf(r.name)}</span>
+                </td>
+                <td>
+                  {r.level ? <LevelBadge level={r.level} variant="pill" /> : <span className="int-neutral">{r.word}</span>}
+                </td>
+                <td className="int-time">
+                  {r.lastTest ? <time dateTime={r.lastTest.at} title={r.lastTest.at}>{relativeTime(r.lastTest.at)}</time> : <span title="Never tested">—</span>}
+                </td>
+                <td><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'} /></td>
+                <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
+                <td><RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} /></td>
+                <td>
+                  {canConfigure(r) && (
+                    <button className={`btn int-act${r.level === 'poor' ? ' primary' : ''}`} onClick={() => setWizardFor(r.integration!)}>
+                      {r.level === 'poor' ? 'Fix' : 'Configure'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {tab === 'add' && ready && (
+        <AddIntegrationTab
+          entries={entries}
+          busy={busy}
+          onConnect={setWizardFor}
+          onTurnOn={(name) => onToggleMcp(name, true)}
+          onRefresh={reload}
         />
       )}
 
-      {phase === 'ready' &&
-        grouped.map((cat) => (
-          <section key={cat.label}>
-            <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-5">
-              {cat.label}
-            </h4>
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {cat.servers.map((name) => {
-                const isEnabled = !!enabled[name]
-                const isRunning = statuses[name] === 'running'
-                const rowError = errors[name]
-                const missing = missingCredentials[name] ?? []
-                const sessionDetail = [
-                  missing.length ? `Missing ${missing.join(', ')}` : '',
-                  rowError || '',
-                ].filter(Boolean).join(' — ')
-                const integration = getIntegrationForServer(name)
-                const isConfigured = integration
-                  ? intCfg.enabled_integrations.includes(integration.id)
-                  : false
-                const needsConfig = !!integration && !isConfigured
-                // Connector-backed integration: master switch over two gates —
-                // the extension (gateD) and the MCP server / agent tools (gateM).
-                const isExtension = !!integration?.fields?.some((f) => f.name === 'connectorUrl')
-                const gateD = isConfigured
-                const gateM = isEnabled
-                const masterOn = gateD && gateM
-                const masterMixed = isExtension && gateD !== gateM
-                // "configured" once connectorUrl is saved, independent of enabled.
-                const extConfigured = Boolean(
-                  isExtension && integration && intCfg.integrations[integration.id]?.['connectorUrl'],
-                )
-                // green = enabled · amber = partial · gray = needs config · red = off
-                const dotColor = isExtension
-                  ? !extConfigured ? 'var(--tx-faint)' : masterOn ? 'var(--ok)' : masterMixed ? 'var(--high)' : 'var(--crit)'
-                  : isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
-                const label = isExtension
-                  ? !extConfigured ? 'Not Configured' : masterOn ? 'Enabled' : masterMixed ? 'Partial' : 'Off'
-                  : isEnabled ? (isRunning ? 'Running' : 'Enabled') : needsConfig ? 'Not Configured' : 'Off'
-                const canConfigure = !!integration?.fields?.length
-                return (
-                  <div key={name} className="card card-sq p-3.5 flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-semibold text-tx truncate flex-1">
-                        {SERVER_DISPLAY_NAMES.get(name) ?? prettyServerName(name)}
-                      </span>
-                      {WIP_SERVERS.has(name) && (
-                        <span className="chip" style={{ color: 'var(--high)', fontSize: 10 }}>WIP</span>
-                      )}
-                      {isExtension && integration ? (
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={masterMixed ? 'mixed' : masterOn}
-                          aria-label={`Toggle ${name}`}
-                          title={
-                            !extConfigured
-                              ? 'Configure the connector first'
-                              : masterMixed
-                                ? 'Partially enabled — toggle again to retry'
-                                : undefined
-                          }
-                          disabled={busy === name || !extConfigured}
-                          className={`toggle${masterOn ? ' on' : ''}${masterMixed ? ' mixed' : ''}`}
-                          onClick={() => onToggleMaster(name, integration.id, !masterOn)}
-                        >
-                          <span className="toggle-knob" />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={isEnabled}
-                          aria-label={`Toggle ${name}`}
-                          disabled={busy === name}
-                          className={`toggle${isEnabled ? ' on' : ''}`}
-                          onClick={() => onToggleMcp(name, !isEnabled)}
-                        >
-                          <span className="toggle-knob" />
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
-                      {SERVER_DESCRIPTIONS.get(name) || integration?.description || 'Custom MCP integration.'}
-                    </p>
-                    {sessionDetail && (
-                      <p className="text-[11px] text-tx-3 leading-snug line-clamp-2" title={sessionDetail}>
-                        {sessionDetail}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-1.5 mt-auto">
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor }} />
-                      <span className="text-xs text-tx-3 flex-1">{label}</span>
-                      {integration?.docs_url && (
-                        <a className="btn ghost icon" title="Documentation" href={integration.docs_url} target="_blank" rel="noreferrer">
-                          <Icon name="doc" size={14} />
-                        </a>
-                      )}
-                      {canConfigure && (
-                        <button className="btn ghost icon" title="Configure credentials" onClick={() => setWizardFor(integration!)}>
-                          <Icon name="gear" size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        ))}
-
-      {builderOpen && (
+      {/* mounted on every tab so a draft survives a visit elsewhere */}
+      <div hidden={tab !== 'custom'}>
         <CustomIntegrationBuilder
-          onClose={() => setBuilderOpen(false)}
-          onSave={(id) => {
-            setBuilderOpen(false)
-            notify('ok', `Custom integration "${id}" saved. Restart the MCP servers to load it.`)
+          notify={notify}
+          onWrote={reloadCustom}
+          onSaved={() => {
+            reloadCustom()
             reload()
-            reloadInt()
           }}
         />
-      )}
+      </div>
+
+      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
 
       {wizardFor && (
         <IntegrationWizard
           integration={wizardFor}
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
           secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
+          lastTest={intCfg.last_test[wizardFor.id]}
+          category={categoryOf(rows.find((r) => r.integration?.id === wizardFor.id)?.name ?? '')}
+          onTested={reloadInt}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)
@@ -286,5 +296,56 @@ function ServersPanel({ notify }: SectionProps) {
         />
       )}
     </div>
+  )
+}
+
+/** Prose in a table cell: wraps, stops at two lines, full text on hover. */
+function Clamp({ text }: { text: string }) {
+  return text ? <span className="int-clamp" title={text}>{text}</span> : null
+}
+
+/** On/off. A connector-backed integration is one master switch over two gates:
+ * the extension (gate D) and the MCP server / agent tools (gate M). */
+function RowToggle({ row, busy, onMcp, onMaster }: {
+  row: ServerRow
+  busy: string | null
+  onMcp: (name: string, want: boolean) => void
+  onMaster: (name: string, id: string, want: boolean) => void
+}) {
+  const { name, integration, isEnabled, masterOn, masterMixed, extConfigured } = row
+  if (row.isExtension && integration) {
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={masterMixed ? 'mixed' : masterOn}
+        aria-label={`Toggle ${name}`}
+        title={
+          !extConfigured
+            ? 'Configure the connector first'
+            : masterMixed
+              ? 'Partially enabled — toggle again to retry'
+              : undefined
+        }
+        disabled={busy === name || !extConfigured}
+        className={`toggle${masterOn ? ' on' : ''}${masterMixed ? ' mixed' : ''}`}
+        onClick={() => onMaster(name, integration.id, !masterOn)}
+      >
+        <span className="toggle-knob" />
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={isEnabled}
+      aria-label={`Toggle ${name}`}
+      disabled={busy === name}
+      className={`toggle${isEnabled ? ' on' : ''}`}
+      onClick={() => onMcp(name, !isEnabled)}
+    >
+      <span className="toggle-knob" />
+    </button>
   )
 }

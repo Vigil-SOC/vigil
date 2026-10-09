@@ -29,10 +29,38 @@ UNMEASURED = "Not measured yet"
 ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
 _PICKUP_STATES = ("launched", "merged")
 
+# The ⓘ copy for each strip figure, worded from what _strip counts.
+STRIP_INFO = {
+    "picked_up": {
+        "source": "Intake rows, all kinds, created today (UTC day).",
+        "calculation": "Rows that launched a workflow or merged into a case, divided by rows created today.",
+    },
+    "waiting": {
+        "source": "Intake rows still queued, from any day.",
+        "calculation": "A count of rows in the Waiting state right now.",
+    },
+    "cases_created_today": {
+        "source": "Intake rows launched today (UTC day) that opened a case.",
+        "calculation": "The number of distinct cases across those rows.",
+    },
+    "trust_floor": {
+        "source": "Not recorded yet: Vigil keeps no per-source trust score.",
+        "calculation": "The lowest score a finding needs before it is picked up automatically.",
+        "limit": "No score is computed, so no floor can be shown.",
+    },
+}
+
 _KIND_LABELS = {
     "detection": "Alert",
     "schedule": "Schedule",
     "human_ask": "Ask",
+}
+
+# One sentence each for the figures a row's breakdown does not have yet.
+BREAKDOWN_INFO = {
+    "trust": "Vigil keeps no per-source trust score yet, so none is used in the ranking.",
+    "weight": "Vigil keeps no per-row weight yet, so none is used in the ranking.",
+    "score": "No score is computed, so there is nothing to compare against a floor.",
 }
 
 
@@ -357,5 +385,7 @@ def triage_payload(
         "strip": strip,
         "sources": _sources(day, now),
         "arrival_info": ARRIVAL_INFO,
+        "strip_info": STRIP_INFO,
+        "breakdown_info": BREAKDOWN_INFO,
         "unmeasured_text": UNMEASURED,
     }

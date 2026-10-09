@@ -1,0 +1,7 @@
+# expect: E-YAML
+# why: YAML tags that construct objects are refused
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.tag
+title: !!python/object/apply:os.system ["id"]
+revision: 1

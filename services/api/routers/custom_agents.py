@@ -20,7 +20,9 @@ from core.agents.enablement import set_agent_enabled
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
 from core.deps import provide_agent_ai, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
+from core.llm.chat_layers import changes_for_tool
 from core.llm.system_prompt import validate_system_prompt
+from core.llm.tool_schemas import ALL_TOOLS
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
@@ -95,9 +97,11 @@ class CustomAgentUpdate(BaseModel):
         return validate_system_prompt(v, source="custom_agent_update")
 
 
-class ForkAgentRequest(BaseModel):
+class ForkAgentRequest(CustomAgentUpdate):
     """Optional payload when forking. `new_name` lets the UI set the copy's
-    name up front instead of taking the default "<source> (copy)"."""
+    name up front instead of taking the default "<source> (copy)". Any
+    editable field that is sent (even as null) replaces the source's value
+    in the same insert."""
 
     new_name: Optional[str] = None
 
@@ -182,9 +186,13 @@ def list_available_tools(
             server = "other"
         grouped.setdefault(server, []).append(name)
 
+    # What each tool does to the outside world: the connected MCP tools and
+    # Vigil's built-in ones, which are always there. A name missing here is not connected.
+    names = set(tools) | {t["name"] for t in ALL_TOOLS if t.get("name")}
     return {
         "tools": tools,
         "grouped": grouped,
+        "changes": {n: changes_for_tool(n) for n in sorted(names)},
     }
 
 
@@ -244,10 +252,13 @@ def fork_agent(
                 status_code=404, detail=f"Source agent not found: {source_agent_id}"
             )
         new_name = request.new_name if request else None
+        overrides = request.model_dump(exclude_unset=True) if request else {}
+        overrides.pop("new_name", None)
         row = service.fork_from_profile(
             source_profile=source,
             source_id=source_agent_id,
             new_name=new_name,
+            overrides=overrides,
             changed_by=current_user.user_id,
         )
         agent_manager.refresh_custom_agents()

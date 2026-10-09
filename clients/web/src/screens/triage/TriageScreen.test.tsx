@@ -80,6 +80,13 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       { data_source: 'never', arrivals: 0, lag_seconds: null, quiet: true },
     ],
     arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
+    strip_info: {
+      picked_up: { source: 'Picked source', calculation: 'Picked calc' },
+      waiting: { source: 'Waiting source', calculation: 'Waiting calc' },
+      cases_created_today: { source: 'Cases source', calculation: 'Cases calc' },
+      trust_floor: { source: 'Floor source', calculation: 'Floor calc', limit: 'Floor limit' },
+    },
+    breakdown_info: { trust: 'Trust tip', weight: 'Weight tip', score: 'Score tip' },
     unmeasured_text: 'Not measured yet',
     ...overrides,
   }
@@ -99,7 +106,7 @@ function renderScreen(path = '/triage') {
 }
 
 describe('TriageScreen', () => {
-  it('shows the strip, expands a detection, and Rescue sends nothing', async () => {
+  it('shows the strip, expands a detection under its row, and Rescue sends nothing', async () => {
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
     renderScreen('/triage?source=splunk')
     const strip = await screen.findByLabelText('Intake strip')
@@ -110,19 +117,35 @@ describe('TriageScreen', () => {
     expect(within(strip).getByLabelText('splunk')).toHaveTextContent('Quiet')
     expect(within(strip).getByLabelText('never')).toHaveTextContent('Quiet')
     const info = payload().arrival_info
-    expect(within(within(strip).getByLabelText('splunk')).getByRole('button', { name: info })).toHaveAttribute('title', info)
+    expect(within(within(strip).getByLabelText('splunk')).getByRole('button', { name: info })).toBeInTheDocument()
     expect(within(within(strip).getByLabelText('never')).getByRole('button', { name: info })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: info })).toHaveLength(3)
     expect(triageApi.get).toHaveBeenCalledWith({ source: 'splunk' })
 
-    fireEvent.click(screen.getByText('Alert'))
-    expect(await screen.findByLabelText('Expanded row')).toHaveTextContent('Severity critical')
-    expect(screen.getByRole('link', { name: 'https://console.example/alert/9' })).toHaveAttribute('href', 'https://console.example/alert/9')
+    fireEvent.click(screen.getByText('Odd login'))
+    const panel = await screen.findByLabelText('Expanded row')
+    // drawn as its own full-width row directly under the clicked row
+    expect(panel.closest('tr')?.previousElementSibling).toBe(screen.getByText('Odd login').closest('tr'))
+    expect(panel.closest('td')).toHaveAttribute('colspan', '9')
+    expect(panel).toHaveTextContent('How the ranking was worked out')
+    expect(panel).toHaveTextContent('Severity bandcritical')
+    expect(panel).toHaveTextContent('Time to live4h')
+    expect(panel).toHaveTextContent('In the last quarter of its waitNo')
+    for (const label of ['Source trust', 'Weight', 'Score against a floor']) {
+      expect(panel).toHaveTextContent(`${label}Not measured yet`)
+    }
+    expect(within(panel).getAllByRole('button', { name: /tip$/ })).toHaveLength(3)
+    expect(screen.getByRole('link', { name: 'Open in source' })).toHaveAttribute('href', 'https://console.example/alert/9')
+    expect(screen.getByRole('link', { name: 'Open in source' })).toHaveAttribute('target', '_blank')
+    expect(screen.getByRole('link', { name: 'Open in source' })).toHaveAttribute('rel', 'noopener noreferrer')
     expect(screen.getByText(/records omitted from this list/)).toBeInTheDocument()
     const calls = vi.mocked(triageApi.get).mock.calls.length
     fireEvent.click(screen.getByRole('button', { name: 'Rescue' }))
     expect(screen.getByRole('button', { name: 'Rescue' })).toBeDisabled()
     expect(vi.mocked(triageApi.get).mock.calls.length).toBe(calls)
+    // a click inside the panel leaves it open
+    fireEvent.click(panel)
+    expect(screen.getByLabelText('Expanded row')).toBeInTheDocument()
 
     expect(screen.getByRole('link', { name: 'Started a case' })).toHaveAttribute('href', '/cases?case=case-9')
     fireEvent.click(screen.getByRole('link', { name: 'Started a case' }))
@@ -130,5 +153,78 @@ describe('TriageScreen', () => {
     expect(screen.queryByText('Cases page')).not.toBeInTheDocument()
     const ghost = screen.getByText('inv-ghost')
     expect(ghost.closest('a')).toBeNull()
+
+    // a second click on the row closes it
+    fireEvent.click(screen.getByText('Odd login'))
+    expect(screen.queryByLabelText('Expanded row')).not.toBeInTheDocument()
+  })
+
+  it('hides Open in source without a link and shows the new columns', async () => {
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    for (const name of ['Alert, in the source’s words', 'Arrived']) {
+      expect(screen.getByRole('columnheader', { name })).toBeInTheDocument()
+    }
+    // an Ask shows its document line; the detection shows its description, truncated by CSS with the full text in title
+    expect(screen.getByText('please look')).toBeInTheDocument()
+    expect(screen.getByText('Odd login')).toHaveAttribute('title', 'Odd login')
+    // naive UTC created_at is read as UTC, not local
+    expect(screen.getAllByText(new Date('2026-10-01T00:00:00Z').toLocaleString())).toHaveLength(2)
+
+    fireEvent.click(screen.getByText('please look'))
+    await screen.findByLabelText('Expanded row')
+    expect(screen.queryByRole('link', { name: 'Open in source' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/records omitted/)).not.toBeInTheDocument()
+  })
+
+  it('names the state filter options in the column’s words', async () => {
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    fireEvent.click(screen.getByRole('button', { name: /Filter/ }))
+    for (const label of ['Waiting', 'Picked up or started a case', 'Added to a case', 'Expired']) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+    expect(screen.queryByText('Launched')).not.toBeInTheDocument()
+  })
+
+  it('opens an ⓘ on each strip figure from the payload', async () => {
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen()
+    const strip = await screen.findByLabelText('Intake strip')
+    const cases: [string, string, string][] = [
+      ['Picked up automatically', 'Picked source', 'Picked calc'],
+      ['Waiting in line', 'Waiting source', 'Waiting calc'],
+      ['Cases created today', 'Cases source', 'Cases calc'],
+    ]
+    for (const [tile, source, calculation] of cases) {
+      const scope = within(within(strip).getByLabelText(tile))
+      fireEvent.click(scope.getByRole('button'))
+      expect(scope.getByRole('tooltip')).toHaveTextContent(`Source ${source}`)
+      expect(scope.getByRole('tooltip')).toHaveTextContent(`Calculation ${calculation}`)
+    }
+    const floor = within(within(strip).getByLabelText('Trust floor'))
+    fireEvent.click(floor.getByRole('button'))
+    expect(floor.getByRole('tooltip')).toHaveTextContent('Floor source Floor calc Floor limit')
+  })
+
+  it('shows the loading state', async () => {
+    vi.mocked(triageApi.get).mockReturnValue(new Promise(() => {}) as never)
+    renderScreen()
+    expect(screen.getByText('Loading triage…')).toBeInTheDocument()
+  })
+
+  it('shows the error state with a retry', async () => {
+    vi.mocked(triageApi.get).mockRejectedValue(new Error('down'))
+    renderScreen()
+    expect((await screen.findAllByText('Couldn’t load triage')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('shows the empty state when intake has no rows', async () => {
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload({ rows: [] }) } as never)
+    renderScreen()
+    expect(await screen.findByText('Nothing in intake.')).toBeInTheDocument()
   })
 })

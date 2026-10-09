@@ -1,0 +1,32 @@
+# expect: E-LANE1
+# why: No single log line alone may reach lane 1 (K1 T-05 (2))
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.kafka-decode-errors
+title: Kafka consumer is skipping malformed messages
+revision: 1
+fault:
+  class: ingest
+  mode: I-3
+  causes:
+  - I-3.j
+lane: 1
+signals:
+  line:
+    log:
+      signal: log_soc_daemon
+      template:
+        eq: 'Kafka consumer poll error: %s'
+when:
+  fn: count
+  signal: line
+  window: 5m
+  op: '>='
+  value: 1
+for: 10m
+keep_firing_for: 15m
+advice:
+  summary: Messages from the Kafka topic are dropped because they can't be decoded
+    or have no finding_id.
+  fix: Check the producer that writes to the Vigil Kafka topic. Each message must
+    be valid JSON with a finding_id field. Dropped messages are not retried.

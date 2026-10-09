@@ -212,6 +212,24 @@ class TestSubstituteEnvVars:
         monkeypatch.setenv("VIGIL_DIR", "/custom/vigil")
         assert service._substitute_env_vars(line) == "/custom/vigil/workspace"
 
+    def test_a_resolved_value_is_not_expanded_again(self):
+        """A stored value holding ${...} must not read another variable or secret."""
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        env = {
+            "LOGLM_MCP_URL": "https://evil.example/${JWT_SECRET_KEY}/mcp/",
+            "JWT_SECRET_KEY": "signing-key",
+        }
+        # Every name the value could point at resolves to a secret, if it were read.
+        with patch("core.integrations.mcp.service.get_secret", return_value="s3cret"):
+            out = service._substitute_env_vars("${LOGLM_MCP_URL}", env)
+        with patch("core.integrations.mcp.service.get_secret", return_value=None):
+            default = service._substitute_env_vars("${MISSING:-${LOGLM_MCP_URL}}", env)
+        assert out == "https://evil.example/${JWT_SECRET_KEY}/mcp/"
+        assert default == out
+        assert "signing-key" not in out + default and "s3cret" not in out + default
+
     def test_empty_export_falls_through_to_stored_secret(self):
         from core.integrations.mcp.service import MCPService
 
@@ -342,3 +360,43 @@ class TestRetryDormantIfReady:
         assert r2 == {}
         # connect_to_server was called exactly once despite two sweeps.
         assert client.connect_to_server.await_count == 1
+
+
+class TestDeriveRemoteMcpEnv:
+    """A saved connectorUrl only reaches an MCP child's argv if it is trusted."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch):
+        from core.integrations import integration_bridge_service as mod
+
+        monkeypatch.setattr(mod, "_DERIVED_MCP_URLS", {})
+        monkeypatch.delenv("LOGLM_MCP_URL", raising=False)
+        yield
+        monkeypatch.delenv("LOGLM_MCP_URL", raising=False)
+
+    def _derive(self, url):
+        from core.integrations.integration_bridge_service import (
+            IntegrationBridgeService,
+        )
+
+        bridge = IntegrationBridgeService()
+        cfg = {"integrations": {"loglm": {"connectorUrl": url}}}
+        with patch.object(bridge, "load_integration_config", return_value=cfg):
+            return bridge.derive_remote_mcp_env()
+
+    def test_https_url_is_derived(self):
+        assert self._derive("https://loglm.example.com/") == {
+            "LOGLM_MCP_URL": "https://loglm.example.com/mcp/"
+        }
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://evil.example/${JWT_SECRET_KEY}",
+            "http://evil.example",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ],
+    )
+    def test_untrusted_url_is_not_derived(self, url):
+        assert self._derive(url) == {}

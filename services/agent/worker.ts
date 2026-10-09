@@ -26,7 +26,7 @@ import type { State } from "./core/seams.js";
 import { httpPlaybooks, isReference, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
 import { LedgerRepository } from "./ledger/repository.js";
-import { httpMirror, nullMirror, type Mirror } from "./workflows/compose/mirror.js";
+import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./workflows/compose/mirror.js";
 import { runCompose } from "./workflows/compose/workflow.js";
 import type { ComposeKinds } from "./workflows/compose/vocabulary.js";
 import { runLead, type LeadKinds } from "./workflows/lead/workflow.js";
@@ -125,6 +125,24 @@ function handoffFor(): (runId: string, handoff: TerminalHandoff) => Promise<bool
   return (runId, handoff) => mirror.handoff(runId, handoff);
 }
 
+// Where the alerts a hunt's evidence cites go: the case the hunt was started on links
+// them. Same channel and same fail-open answer as the handoff.
+function findingsFor(): (runId: string, findingIds: readonly string[]) => Promise<boolean> {
+  const mirror = mirrorFor();
+  return (runId, findingIds) => mirror.findings(runId, findingIds);
+}
+
+// What the console was last told of each open run, so a sweep that finds a hunt
+// still parked, or an iteration that cost nothing, writes nothing. Per process: a
+// restart repeats one write, which the backend takes as the no-op it is.
+const told = new Map<string, string>();
+
+async function tell(runId: string, update: StatusUpdate): Promise<void> {
+  const key = JSON.stringify(update);
+  if (told.get(runId) === key) return;
+  if (await mirrorFor().status(runId, update)) told.set(runId, key);
+}
+
 function defaultResolver(): PlaybookResolver {
   return httpPlaybooks({
     url: process.env["VIGIL_PLAYBOOKS_URL"] ?? "http://localhost:6987/internal/playbooks",
@@ -163,7 +181,7 @@ async function drive(
   build: HarnessFactory,
   signal: AbortSignal,
   directives: DirectiveQueue,
-): Promise<void> {
+): Promise<string | null> {
   const { run_kind: kind, run_id, enqueued_by: started_by } = job;
   // Folded off the ledger, so a resumed run continues its allowance instead of
   // starting one. Without this, a run killed near its ceiling comes back with a
@@ -172,7 +190,7 @@ async function drive(
 
   if (kind === "compose") {
     await runCompose(build(kind, spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, mirror: mirrorFor(), signal });
-    return;
+    return null;
   }
   const entry = archFor(kind);
   if (entry.workflow === "hunt") {
@@ -180,18 +198,21 @@ async function drive(
     // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
     // so its case must not wait on a terminal that may be far off or never come.
     const onHandoff = kind === "hunt" ? handoffFor() : undefined;
-    await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), signal });
-    return;
+    // Reaching an active iteration means the hunt is running, so the row clears its
+    // reason as it takes the cost. The reason it parked goes back for settle.
+    const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
+    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, signal });
+    return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {
     const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
     await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
-    return;
+    return null;
   }
   if (kind === "hunt" || kind === "investigate") {
     const harness = build(kind, spec, as<LeadKinds>(state), undefined, seed);
     await runLead(harness, { run_id, run_kind: kind, spec, actions: entry.actions, halts: entry.halts, started_by, answers: answersFor(), announce: announceFor(), signal });
-    return;
+    return null;
   }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
 }
@@ -243,13 +264,17 @@ export async function advance(
     // whose answer is sitting at the endpoint unjournaled has been answered. The
     // workflow journals again on every iteration; this is idempotent against what
     // the ledger already holds, so the second call appends nothing.
-    await journalAnswers(state, job.run_id, job.run_kind, answersFor());
+    const answered = await journalAnswers(state, job.run_id, job.run_kind, answersFor());
 
     if (await abandonIfParkedOut(state, leases, job, spec)) return;
     if (await abandonIfStalled(state, leases, job)) return;
     if (latest !== null) await markResumed(state, job, owner, latest);
-    await drive(state, job, spec, build, halt.signal, directives);
-    await settle(state, leases, job, spec, owner);
+    // An answer was just taken, so the run is working again from here: the first
+    // iteration can take minutes, and onCost only clears the row once it ends.
+    // Compose reports its own state through its phases.
+    if (answered > 0 && job.run_kind !== "compose") await tell(job.run_id, { status: "running", reason: "", cost_usd: await spentOn(state, job.run_id) });
+    const parked = await drive(state, job, spec, build, halt.signal, directives);
+    await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
     await abandon(job, error);
     await forget(state, leases, job, owner, error);
@@ -344,7 +369,7 @@ function workerName(): string {
 // Whether this worker is still the run's business, once the workflow returns. A
 // run that reached terminal is nobody's; one that parked stays on the list and is
 // looked at again when its interval passes or the console pulls it forward.
-async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, owner: string): Promise<void> {
+async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, owner: string, parked: string | null): Promise<void> {
   const terminal = await state.terminal(job.run_id);
   if (terminal !== null) {
     // Only compose was ever handed a mirror, so every other kind reached its end
@@ -360,9 +385,14 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         handoffs: terminal.handoffs ?? [],
       });
     }
+    told.delete(job.run_id);
     await reap(leases, job.run_id);
     return;
   }
+  // A hunt out of turns or budget has stopped, so its row says it is waiting and
+  // why, rather than running with no end and no cost. Compose reports its own
+  // pause through its phases.
+  if (parked !== null) await tell(job.run_id, { status: "paused", reason: parked, cost_usd: await spentOn(state, job.run_id) });
   await leases.release(job.run_id, owner, Math.min(PARK_EVERY_MS, spec.budgets.max_park_ms));
 }
 

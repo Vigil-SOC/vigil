@@ -93,10 +93,22 @@ class WorkflowRunService:
             logger.error("Could not persist workflow run start: %s", e)
             return None
 
-    def set_status(self, run_id: str, status: str) -> bool:
-        """Update only ``workflow_runs.status`` without touching terminal
-        fields. Used by the phase loop to flip running→paused when a
-        phase blocks on approval (#128)."""
+    def set_status(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        reason: Optional[str] = None,
+        cost_usd: Optional[float] = None,
+    ) -> bool:
+        """Update ``workflow_runs.status`` without finalizing the run. Used by
+        the phase loop to flip running→paused when a phase blocks on approval
+        (#128), and by the agent layer for a hunt that parks or resumes.
+
+        ``reason`` and ``cost_usd`` are written only when given; an empty
+        ``reason`` clears it. A run already finished stays finished: a late
+        write from a worker that was mid-iteration must not reopen it.
+        """
         if status not in ("running", "paused"):
             logger.error("set_status: invalid non-terminal status %r", status)
             return False
@@ -104,9 +116,13 @@ class WorkflowRunService:
             db = get_db_manager()
             with db.session_scope() as session:
                 row = session.get(WorkflowRun, run_id)
-                if row is None:
+                if row is None or row.status not in ("running", "paused"):
                     return False
                 row.status = status
+                if reason is not None:
+                    row.reason = reason[:5_000] or None
+                if cost_usd is not None:
+                    row.total_cost_usd = cost_usd
             return True
         except SQLAlchemyError as e:
             logger.error("Could not set run status %s: %s", run_id, e)

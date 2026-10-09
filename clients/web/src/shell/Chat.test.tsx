@@ -30,6 +30,7 @@ vi.mock('../services/api', () => ({
   claudeApi: { getModels: vi.fn(() => new Promise(() => undefined)) },
   conversationsApi: {
     get: vi.fn(),
+    list: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
     importHistory: vi.fn(),
@@ -81,6 +82,8 @@ describe('Ask Vigil dock', () => {
     expect(screen.queryByRole('button', { name: /Default agent/ })).toBeNull()
     expect(document.querySelector('.model-sel')).toBeNull()
     expect(document.querySelector('.cm-cost')).toBeNull()
+    expect(document.querySelector('.case-composer')).toBeNull()
+    expect(document.querySelector('.composer-note')).toBeNull()
   })
 
   it('stores a case id from full-text search and ignores a typed id that was not returned', async () => {
@@ -101,6 +104,7 @@ describe('Ask Vigil dock', () => {
 
     renderChat()
     const box = screen.getByPlaceholderText(/Ask Vigil/)
+    expect(box).toHaveAttribute('placeholder', 'Ask Vigil · @ to attach a case')
     fireEvent.change(box, { target: { value: '@loader' } })
     fireEvent.click(await screen.findByRole('option', { name: /CASE-9/ }))
 
@@ -171,6 +175,156 @@ describe('Ask Vigil dock', () => {
     expect(screen.getByText(format(new Date(older), 'MMM d, yyyy'))).toBeInTheDocument()
     fireEvent.click(screen.getByText('Monday thread'))
     await waitFor(() => expect(conversationsApi.get).toHaveBeenCalledWith('newer'))
+  })
+})
+
+describe('pinned case composer', () => {
+  function renderPinned() {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [] } } as never)
+    return render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" />)
+  }
+
+  it('starts as one row with the note, Ask only, and no fold', () => {
+    renderPinned()
+    expect(screen.getByText('Private to you · Ask only')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Tell' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Do' })).toBeDisabled()
+    expect(document.querySelector('.composer-fold')).toBeNull()
+    expect(document.querySelector('.chat-body')).toBeNull()
+    expect(screen.queryByTestId('attached-case')).toBeNull()
+  })
+
+  it('shows Stop while loading, then the error and a fold that hides the thread', async () => {
+    let fail: (e: Error) => void = () => undefined
+    vi.mocked(streamFetch).mockReturnValue(new Promise((_, reject) => { fail = reject }))
+    renderPinned()
+    fireEvent.change(screen.getByPlaceholderText('Ask about this case'), { target: { value: 'why?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByTitle('Stop')
+
+    fail(new Error('boom'))
+    expect(await screen.findByText(/Could not reach Vigil: boom/)).toBeInTheDocument()
+    const fold = screen.getByRole('button', { name: /2 messages · hide/ })
+    fireEvent.click(fold)
+    expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
+    expect(fold).toHaveTextContent('2 messages · show')
+  })
+
+  it('shows an error frame from the server as sent, without blaming the backend', async () => {
+    const frame = new TextEncoder().encode('data: {"error":"This case has more than Ask can read at once."}\n\n')
+    let sent = false
+    vi.mocked(streamFetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: () => {
+            const row = sent ? { done: true, value: undefined } : { done: false, value: frame }
+            sent = true
+            return Promise.resolve(row)
+          },
+        }),
+      },
+    } as unknown as Response)
+    renderPinned()
+    fireEvent.change(screen.getByPlaceholderText('Ask about this case'), { target: { value: 'why?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('This case has more than Ask can read at once.')).toBeInTheDocument()
+    expect(screen.queryByText(/Could not reach Vigil|Is the backend running/)).toBeNull()
+  })
+})
+
+describe('failed case-composer turns', () => {
+  const refused = (status: number, body: unknown) =>
+    ({ ok: false, status, json: () => Promise.resolve(body) }) as unknown as Response
+  function renderPinned() {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [] } } as never)
+    return render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" />)
+  }
+  const ask = (text: string) => {
+    fireEvent.change(screen.getByPlaceholderText('Ask about this case'), { target: { value: text } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  }
+
+  it('shows a refusal in its own words, not as an unreachable backend, and Retry resends the question', async () => {
+    vi.mocked(streamFetch).mockResolvedValueOnce(refused(402, { detail: 'Daily budget reached.' }))
+    renderPinned()
+    ask('why?')
+    expect(await screen.findByText('Daily budget reached.')).toBeInTheDocument()
+    expect(screen.queryByText(/Could not reach Vigil/)).toBeNull()
+
+    vi.mocked(streamFetch).mockResolvedValueOnce(emptyStream())
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const sent = JSON.parse(String(vi.mocked(streamFetch).mock.calls[1][1]?.body))
+    expect(sent.messages).toEqual([{ role: 'user', content: 'why?' }])
+  })
+
+  it('blames the backend only for a 502 or 503', async () => {
+    vi.mocked(streamFetch).mockResolvedValueOnce(refused(503, {}))
+    renderPinned()
+    ask('why?')
+    expect(await screen.findByText(/Could not reach Vigil: HTTP 503\. Is the backend running\?/)).toBeInTheDocument()
+  })
+
+  it('does not send an unanswered question with the next one', async () => {
+    vi.mocked(streamFetch).mockResolvedValueOnce(refused(402, { detail: 'No room.' }))
+    renderPinned()
+    ask('first')
+    await screen.findByText('No room.')
+    vi.mocked(streamFetch).mockResolvedValueOnce(emptyStream())
+    ask('second')
+    await waitFor(() => expect(streamFetch).toHaveBeenCalledTimes(2))
+    const sent = JSON.parse(String(vi.mocked(streamFetch).mock.calls[1][1]?.body))
+    expect(sent.messages).toEqual([{ role: 'user', content: 'second' }])
+  })
+
+  it('re-renders stored failed turns as failed, one bubble per question', async () => {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [{ id: 's1', case_id: 'CASE-1' }] } } as never)
+    vi.mocked(conversationsApi.get).mockResolvedValue({
+      data: {
+        id: 's1',
+        case_id: 'CASE-1',
+        messages: [
+          { role: 'user', content: 'first', complete: true },
+          { role: 'assistant', content: 'No room.', complete: false },
+          { role: 'user', content: 'second', complete: true },
+          { role: 'assistant', content: '', complete: false },
+        ],
+      },
+    } as never)
+    render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" />)
+    await screen.findByRole('button', { name: /4 messages/ })
+    expect(screen.getByText('first')).toBeInTheDocument()
+    expect(screen.getByText('second')).toBeInTheDocument()
+    expect(screen.getByText('No room.')).toBeInTheDocument()
+    expect(screen.getByText('This turn did not finish.')).toBeInTheDocument()
+    expect(screen.queryByText('(no response)')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1)
+  })
+
+  it('folds to the last exchange when the tab changes, and shows the rest on request', async () => {
+    vi.mocked(conversationsApi.list).mockResolvedValue({ data: { conversations: [{ id: 's1', case_id: 'CASE-1' }] } } as never)
+    vi.mocked(conversationsApi.get).mockResolvedValue({
+      data: {
+        id: 's1',
+        case_id: 'CASE-1',
+        messages: [
+          { role: 'user', content: 'first', complete: true },
+          { role: 'assistant', content: 'one', complete: true },
+          { role: 'user', content: 'second', complete: true },
+          { role: 'assistant', content: 'two', complete: true },
+        ],
+      },
+    } as never)
+    const view = render(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" collapseKey="Summary" />)
+    await screen.findByText('first')
+    view.rerender(<Chat pinned open onClose={vi.fn()} pageKey="cases" lockedCaseId="CASE-1" collapseKey="Evidence" />)
+    expect(screen.queryByText('first')).toBeNull()
+    expect(screen.getByText('second')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 earlier messages' }))
+    expect(screen.getByText('first')).toBeInTheDocument()
   })
 })
 

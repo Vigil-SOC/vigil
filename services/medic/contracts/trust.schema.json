@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deeptempo.ai/system-watcher/contracts/trust/v1",
+  "title": "Medic signing: DSSE envelope and trust root v1",
+  "description": "F2. Every signed artefact (pack, trust root, Phase 3 fix plan) travels as a DSSE envelope. The trust root says which keys may sign which payload types. Verification: trust_check.py.",
+  "$ref": "#/$defs/envelope",
+  "$defs": {
+    "b64": {"type": "string", "pattern": "^[A-Za-z0-9+/]*={0,2}$"},
+    "keyid": {"description": "First 32 hex of sha256(raw 32-byte public key).", "type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "payload_type": {
+      "enum": [
+        "application/vnd.deeptempo.medic.pack.v1+json",
+        "application/vnd.deeptempo.medic.pack-dev.v1+json",
+        "application/vnd.deeptempo.medic.trust-root.v1+json",
+        "application/vnd.deeptempo.medic.fixplan.v1+json"
+      ]
+    },
+    "envelope": {
+      "description": "DSSE v1 (https://github.com/secure-systems-lab/dsse). Signatures are over PAE(payloadType, payload bytes).",
+      "type": "object",
+      "required": ["payloadType", "payload", "signatures"],
+      "additionalProperties": false,
+      "properties": {
+        "payloadType": {"$ref": "#/$defs/payload_type"},
+        "payload": {"$ref": "#/$defs/b64"},
+        "signatures": {
+          "type": "array", "minItems": 1, "maxItems": 8,
+          "items": {
+            "type": "object", "required": ["keyid", "sig"], "additionalProperties": false,
+            "properties": {"keyid": {"$ref": "#/$defs/keyid"}, "sig": {"$ref": "#/$defs/b64", "maxLength": 128}}
+          }
+        }
+      }
+    },
+    "role": {
+      "type": "object",
+      "required": ["keyids", "threshold", "payload_types"],
+      "additionalProperties": false,
+      "properties": {
+        "keyids": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/keyid"}},
+        "threshold": {"type": "integer", "minimum": 1, "maximum": 8},
+        "payload_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/payload_type"}},
+        "channels": {"description": "Pack channels this role may sign (checked by F6 after parsing the pack).", "type": "array", "uniqueItems": true, "items": {"enum": ["stable", "beta", "dev"]}},
+        "dev_mode_only": {"type": "boolean"}
+      }
+    },
+    "trust_root": {
+      "description": "The payload of a trust-root envelope. TUF-shaped: versioned, expiring, threshold-signed by the root role.",
+      "type": "object",
+      "required": ["format", "version", "issued_at", "expires_at", "keys", "roles", "revoked_keyids"],
+      "additionalProperties": false,
+      "properties": {
+        "format": {"const": "medic.trust-root/v1"},
+        "version": {"description": "Strictly increasing.", "type": "integer", "minimum": 1},
+        "issued_at": {"$ref": "#/$defs/ts"},
+        "expires_at": {"$ref": "#/$defs/ts"},
+        "keys": {
+          "type": "object", "maxProperties": 32,
+          "propertyNames": {"$ref": "#/$defs/keyid"},
+          "additionalProperties": {
+            "type": "object", "required": ["alg", "public", "not_after", "holder"], "additionalProperties": false,
+            "properties": {
+              "alg": {"const": "ed25519"},
+              "public": {"$ref": "#/$defs/b64", "minLength": 44, "maxLength": 44},
+              "not_after": {"description": "Signatures by this key stop verifying after this time (rotation overlap).", "$ref": "#/$defs/ts"},
+              "holder": {"description": "Where the private key lives, e.g. 'aws-kms:medic-pack-2026' or 'yubikey:root-1'. Informational.", "type": "string", "pattern": "^[a-z0-9-]+:[A-Za-z0-9._-]{1,64}$"}
+            }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "required": ["root", "packs", "packs-dev", "fixplans"],
+          "additionalProperties": false,
+          "properties": {
+            "root": {"$ref": "#/$defs/role"},
+            "packs": {"$ref": "#/$defs/role"},
+            "packs-dev": {"$ref": "#/$defs/role"},
+            "fixplans": {"$ref": "#/$defs/role"}
+          }
+        },
+        "revoked_keyids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/keyid"}}
+      }
+    }
+  }
+}

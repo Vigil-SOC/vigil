@@ -113,6 +113,15 @@ describe('workflow reader pane', () => {
     expect(within(panel('Who does it')).getByText('Critic')).toBeInTheDocument()
   })
 
+  it('says a turned-off phase agent in Who does it even when every role is present', async () => {
+    const note = 'Its phases cannot run as written: phase names agent threat_hunter is turned off'
+    serve({ ...hunt, preflight: { ...hunt.preflight, roles_note: note } })
+    render(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
+    await screen.findByRole('region', { name: 'How it runs' })
+    expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
+    expect(within(panel('Who does it')).getByText(note)).toBeInTheDocument()
+  })
+
   it('says an adjudication hands off nothing, and draws one stage per phase for a compose', async () => {
     serve({ definition: { ...hunt.definition, run_kind: 'adjudicate' }, preflight: { ...hunt.preflight, permissions: [] , permissions_note: 'It holds no tools.' } })
     const { unmount } = render(<WorkflowReaderPane wf={row({ id: 'shadow-adjudication', runKind: 'adjudicate', huntLike: true })} {...actions} />)

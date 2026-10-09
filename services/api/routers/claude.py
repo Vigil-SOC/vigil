@@ -13,11 +13,19 @@ from pydantic import BaseModel, field_validator
 from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
+from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
-from core.deps import provide_mcp_registry
+from core.cases.case_brief import case_brief
+from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
-from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
+from core.llm.chat_layers import (
+    chat_config,
+    granted_ids,
+    run_id_for,
+    tools_ceiling,
+    trim_servers,
+)
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
@@ -27,6 +35,7 @@ from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 from core.storage.models import User
+from core.workflows.workflows_service import WorkflowsService
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
 
@@ -258,17 +267,25 @@ class ChatRequest(BaseModel):
         return validate_system_prompt(v, source="chat")
 
 
+LATEST_ONLY = (
+    "Answer only the latest question; do not restate or summarise earlier answers."
+)
+
+
 def _page_case_sentence(page_context: Optional[str], case_id: Optional[str]) -> str:
     """One sentence naming the page key and case id, when either was sent."""
     page = (page_context or "").strip()
     case = (case_id or "").strip()
     if page and case:
-        return f"The analyst opened this from page {page} about case {case}."
-    if page:
+        sentence = f"The analyst opened this from page {page} about case {case}."
+    elif page:
         return f"The analyst opened this from page {page}."
-    if case:
-        return f"The analyst opened this about case {case}."
-    return ""
+    elif case:
+        sentence = f"The analyst opened this about case {case}."
+    else:
+        return ""
+    # Q3 was opening by restating Q2's answer.
+    return f"{sentence} {LATEST_ONLY}"
 
 
 def _with_page_case(
@@ -289,6 +306,7 @@ async def chat_stream(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),
     registry: MCPRegistry = Depends(provide_mcp_registry),
+    workflows: WorkflowsService = Depends(provide_workflows),
 ):
     """Stream a chat turn from the agent layer, holding this wire contract."""
     # Before model resolution, whose agent lookup swallows errors.
@@ -314,6 +332,18 @@ async def chat_stream(
     system_prompt = _with_page_case(
         system_prompt, request.page_context, request.case_id
     )
+    # Rebuilt every turn, so a live run's new evidence is in the next answer.
+    if (request.case_id or "").strip():
+        brief = await case_brief(request.case_id.strip(), workflows)
+        if brief:
+            system_prompt = f"{system_prompt}\n\n{brief}"
+    # Chat never goes through prompt_for_row, so a granted read_skill would have
+    # no index. Read per turn so a newly saved skill shows on the next message;
+    # skipped when an agent's own prompt already carries it.
+    if "<available_skills>" not in system_prompt:
+        skills = _skills_section(granted_ids(tools), None)
+        if skills:
+            system_prompt = f"{system_prompt}\n\n{skills}".strip()
 
     active_provider = provider_for(provider_id)
     if active_provider is None:
@@ -400,6 +430,8 @@ async def _relay(
 
     said: List[str] = []
     finished = False
+    # The turn's own failure, stored as the failed reply so a reload shows it.
+    failure: Optional[str] = None
     # Said only once the retried attempt answers, so a retry that fails too is
     # relayed as a plain failure.
     note: Optional[str] = None
@@ -416,9 +448,8 @@ async def _relay(
                 ) as upstream:
                     if upstream.status_code != 200:
                         detail = (await upstream.aread()).decode("utf-8", "replace")
-                        yield _frame(
-                            {"error": f"agent layer refused the turn: {detail}"}
-                        )
+                        failure = f"agent layer refused the turn: {detail}"
+                        yield _frame({"error": failure})
                         return
                     async for line in upstream.aiter_lines():
                         if not line.startswith("data: "):
@@ -441,6 +472,9 @@ async def _relay(
                                 yield f"{frame}\n\n"
                             held = None
                         said.append(_text_in(line[6:]))
+                        error = _event_in(line[6:]).get("error")
+                        if error:
+                            failure = str(error)
                         yield f"{line}\n\n"
                     if retry is None:
                         for frame in held or []:
@@ -456,7 +490,8 @@ async def _relay(
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)
-        yield _frame({"error": INTERNAL_ERROR_DETAIL})
+        failure = INTERNAL_ERROR_DETAIL
+        yield _frame({"error": failure})
     finally:
         # Fail-open, and on abort too: GeneratorExit flows through finally.
         try:
@@ -466,11 +501,13 @@ async def _relay(
                 user_id=user_id,
                 agent_id=request.agent_id,
                 model=request.model,
-                user_text=payload["turns"][-1]["content"],
-                assistant_text="".join(said),
+                # The question as asked: the agent turns merge consecutive user messages.
+                user_text=_user_text_from_content(request.messages[-1].content).strip()
+                or payload["turns"][-1]["content"],
+                assistant_text=failure or "".join(said),
                 assistant_thinking=None,
                 tool_calls=[],
-                complete=finished,
+                complete=finished and failure is None,
                 case_id=request.case_id,
                 page_context=request.page_context,
             )

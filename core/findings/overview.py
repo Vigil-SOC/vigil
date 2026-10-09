@@ -191,18 +191,12 @@ def _agent_rows(now: datetime) -> list[dict]:
     return rows
 
 
-def _feed() -> list[dict]:
+def _feed_items(load) -> list[dict]:
+    """Feed items for the findings ``load(session)`` returns; one body for the feed and the single read."""
     db = get_db_manager()
     with db.session_scope() as session:
-        findings = (
-            session.query(Finding)
-            .filter(Finding.noise_marked_at.is_(None))
-            .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
-            .limit(FEED_LIMIT)
-            .all()
-        )
         staged = []
-        for finding in findings:
+        for finding in load(session):
             projected = project_finding_source_evidence_for_list(
                 {"entity_context": finding.entity_context}
             )
@@ -222,6 +216,7 @@ def _feed() -> list[dict]:
                     "created_at": created,
                     "evidence_links": list(finding.evidence_links or []),
                     "source_evidence": evidence,
+                    "noise_marked": finding.noise_marked_at is not None,
                 }
             )
         linked = _cases_for(session, [row["finding_id"] for row in staged])
@@ -250,6 +245,26 @@ def _feed() -> list[dict]:
         item["terminal_state"] = state
         item["terminal_label"] = TERMINAL_LABELS[state]
     return items
+
+
+def _feed() -> list[dict]:
+    return _feed_items(
+        lambda session: session.query(Finding)
+        .filter(Finding.noise_marked_at.is_(None))
+        .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
+        .limit(FEED_LIMIT)
+        .all()
+    )
+
+
+def overview_alert(finding_id: str) -> Optional[dict]:
+    """One alert in the feed item's shape, noise-marked or older than the feed; None when unknown."""
+    items = _feed_items(
+        lambda session: session.query(Finding)
+        .filter(Finding.finding_id == finding_id)
+        .all()
+    )
+    return items[0] if items else None
 
 
 def overview_payload(
