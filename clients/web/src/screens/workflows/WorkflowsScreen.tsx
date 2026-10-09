@@ -29,8 +29,8 @@ import {
 
 /** The body of POST /workflows/custom for a draft, so the server checks it as it would any other. */
 const draftPayload = (d: GeneratedDraft) => ({
-  name: d.name.trim(),
-  description: d.description.trim(),
+  name: (d.name ?? '').trim(),
+  description: (d.description ?? '').trim(),
   use_case: d.use_case ?? '',
   trigger_examples: d.trigger_examples ?? [],
   phases: d.phases,

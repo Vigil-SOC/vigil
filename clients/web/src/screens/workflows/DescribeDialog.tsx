@@ -4,8 +4,11 @@ import { Popup } from '../../shared/ui'
 import { workflowApi, type GeneratedDraft } from '../../services/api'
 
 function errMsg(e: unknown): string {
-  const r = e as { response?: { data?: { detail?: string } }; message?: string }
-  return r?.response?.data?.detail || r?.message || 'Something went wrong'
+  const r = e as { response?: { data?: { detail?: unknown } }; message?: string }
+  const detail = r?.response?.data?.detail
+  // a 422's detail is a list of {loc, msg}, which would print as [object Object]
+  const text = Array.isArray(detail) ? detail.map((d) => d?.msg).filter(Boolean).join('; ') : detail
+  return (typeof text === 'string' && text) || r?.message || 'Something went wrong'
 }
 
 /** One prompt field. The result opens in the reader pane as an AI draft; nothing is saved here. */
