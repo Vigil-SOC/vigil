@@ -100,13 +100,13 @@
 }
 
 .vg-command-bar {
-  height: 38px;
+  height: var(--size-search);
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 10px 0 12px;
   border: 1px solid var(--ln1);
-  border-radius: 999px;
+  border-radius: var(--radius-round);
   background: var(--bg2);
 }
 
@@ -139,7 +139,7 @@
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-round);
   background: transparent;
   color: var(--tx2);
 }
@@ -166,7 +166,7 @@
   gap: 5px;
   padding: 0 12px 0 9px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-round);
   background: var(--bg3);
   color: var(--tx0);
   font-family: inherit;
@@ -187,7 +187,7 @@
   overflow: hidden;
   background: var(--bg2);
   border: 1px solid var(--ln2);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   box-shadow: 0 24px 60px var(--shadow);
   z-index: 70;
 }
@@ -322,13 +322,13 @@
 .vg-command-enter {
   margin-left: 4px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .vg-command-remove {
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
+  flex: 0 0 var(--size-button-sm);
+  width: var(--size-button-sm);
+  height: var(--size-button-sm);
   margin-right: 4px;
   display: inline-flex;
   align-items: center;
@@ -455,7 +455,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 14px;
-  margin: 6px -6px -6px;
+  margin: 6px 0 -6px;
   padding: 9px 14px;
   border-top: 1px solid var(--ln0);
   background: var(--bg1);
