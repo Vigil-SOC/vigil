@@ -231,8 +231,15 @@ describe('case page', () => {
     expect(await screen.findByText('no login')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
-    const latency = await screen.findByRole('columnheader', { name: 'Latency' })
-    expect(within(latency.closest('table') as HTMLElement).getByText('—')).toBeInTheDocument()
+    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+    expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.2000')
+    expect(card).not.toHaveTextContent('no source')
+    // the run's cost, not the row's; the row shows its own turn's cost and size in chars
+    const row = within(card).getByText('who logged in').closest('li') as HTMLElement
+    expect(row).toHaveTextContent('search')
+    expect(row).toHaveTextContent('12 chars')
+    expect(row).toHaveTextContent('$0.0100')
+    expect(row).toHaveTextContent('—')
   })
 
   const huntCase = (id: string) => {
@@ -545,7 +552,7 @@ describe('case page', () => {
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
     fireEvent.click(within(doors).getByRole('button', { name: /^Checked/ }))
-    expect(await screen.findByRole('columnheader', { name: 'Latency' })).toBeInTheDocument()
+    expect(await screen.findByText(/What Vigil checked/)).toBeInTheDocument()
   })
 
   it('shows a run started on the case with no investigation row, before it has reported', async () => {
@@ -630,6 +637,81 @@ describe('case page', () => {
     const doors = await screen.findByRole('region', { name: 'Audit doors' })
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
+  })
+
+  describe('Checked tab', () => {
+    const leadCase = (run: unknown) => {
+      testState.cases = [{
+        case_id: 'case-chk',
+        title: 'Checked case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [investigation('completed', false, 'run-chk')],
+      }]
+      testState.runs['run-chk'] = run
+      renderCase('case-chk')
+    }
+    const openChecked = async () => {
+      await screen.findByRole('heading', { name: 'Checked case' })
+      fireEvent.click(screen.getByRole('tab', { name: /^Checked/ }))
+    }
+    const lead = (extra: Record<string, unknown>) => ({
+      projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null, outcome: null, reason: '', cost_usd: null, ...extra },
+    })
+
+    it('says the run is loading, not that nothing was asked', async () => {
+      testState.cases = [{ ...testState.cases[0], case_id: 'case-chk', title: 'Checked case', finding_ids: [], investigations: [investigation('open', false, 'run-chk')] }]
+      vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
+      renderCase('case-chk')
+      await openChecked()
+      expect(await screen.findByText('Loading the run…', { selector: 'h3' })).toBeInTheDocument()
+      expect(screen.queryByText('No questions asked yet')).not.toBeInTheDocument()
+    })
+
+    it('says the run could not be read', async () => {
+      testState.cases = [{ case_id: 'case-chk', title: 'Checked case', status: 'open', priority: 'low', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [investigation('open', false, 'run-chk')] }]
+      vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
+      renderCase('case-chk')
+      await openChecked()
+      expect(await screen.findByRole('alert')).toHaveTextContent('The run could not be read.')
+    })
+
+    it('puts no-source gaps after the calls, in red, outside the query count; "—" when the run has no cost', async () => {
+      leadCase(lead({
+        calls: [{ question: 'who logged in', tool: 'okta', result_length: 1240, cost_usd: 0.02, duration_ms: 800 }],
+        gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
+      }))
+      await openChecked()
+      const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 1 query · — · 1 with no source')
+      const rows = card.querySelectorAll('li')
+      expect(rows).toHaveLength(2)
+      expect(rows[0]).toHaveTextContent('okta')
+      expect(rows[0]).toHaveTextContent('1,240 chars')
+      expect(rows[0]).toHaveTextContent('0.8 s')
+      expect(rows[1]).toHaveClass('gap')
+      expect(rows[1]).toHaveTextContent('list users — tool down')
+      expect(rows[1]).toHaveTextContent('No source')
+      fireEvent.click(within(card).getByRole('button', { name: 'About the cost' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent(/turn's cost/)
+    })
+
+    it('keeps the header and red rows when there are gaps but no calls', async () => {
+      leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
+      await openChecked()
+      const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.5000 · 1 with no source')
+      expect(card.querySelectorAll('li')).toHaveLength(1)
+    })
+
+    it('shows the empty state for a ready run with no calls and no gaps', async () => {
+      leadCase(lead({}))
+      await openChecked()
+      expect(await screen.findByText('No questions asked yet')).toBeInTheDocument()
+    })
   })
 
   const CLOSURE = {
@@ -878,7 +960,7 @@ describe('case page', () => {
       expect(onBack).toHaveBeenCalled()
     })
 
-    it('has no Replay link without a run', async () => {
+    it('shows Replay disabled, with an ⓘ saying why, without a run', async () => {
       testState.recordRows = rows
       testState.cases = [{
         case_id: 'case-rec',
@@ -894,6 +976,9 @@ describe('case page', () => {
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
       await screen.findByText('Lead started step 7')
       expect(screen.queryByRole('link', { name: 'Replay' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Replay' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Why Replay is unavailable' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('This case has no run to replay.')
       expect(screen.queryByRole('button', { name: 'Verify chain' })).not.toBeInTheDocument()
     })
 

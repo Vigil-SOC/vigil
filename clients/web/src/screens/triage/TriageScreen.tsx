@@ -148,6 +148,7 @@ function Filters({
   clear: () => void
 }) {
   const { counts } = data
+  const badge = useSourceBadge()
   const bySource = new Map(data.sources.map((row) => [row.data_source, row]))
   // an Overview link to a source with no rows still shows its chip, selected
   const sourceNames = Object.keys(counts.source)
@@ -189,7 +190,7 @@ function Filters({
           const row = bySource.get(name)
           return {
             value: name,
-            label: name,
+            label: badge(name).label,
             title: row ? [`${row.arrivals} arrived today`, lagNote(row)].filter(Boolean).join(' · ') : undefined,
           }
         }),

@@ -86,7 +86,7 @@ function clock(value: string | null | undefined): string {
 }
 
 function latency(ms: number | undefined): string {
-  return ms == null ? '—' : `${ms} ms`
+  return ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`
 }
 
 function detailOf(error: unknown, fallback: string): string {
@@ -934,25 +934,44 @@ export function CasePage({
           {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
 
           {tab === 'Checked' && (
-            !fold || fold.calls.length === 0 ? (
+            foldPhase === 'loading' ? (
+              <EmptyState loading compact icon="search" title="Loading the run…" />
+            ) : foldPhase === 'error' ? (
+              <EmptyState error compact icon="search" title="The run could not be read." />
+            ) : !fold || (fold.calls.length === 0 && gaps.length === 0) ? (
               <EmptyState compact icon="search" title="No questions asked yet" />
             ) : (
-              <div className="table-wrap">
-                <table className="tbl">
-                  <thead><tr><th>Question</th><th>Tool</th><th>Result size</th><th>Cost</th><th>Latency</th></tr></thead>
-                  <tbody>
-                    {fold.calls.map((call, i) => (
-                      <tr key={`${call.tool}-${i}`}>
-                        <td>{call.question || '—'}</td>
-                        <td>{call.tool || '—'}</td>
-                        <td>{call.result_length}</td>
-                        <td>{money(call.cost_usd)}</td>
-                        <td>{latency(call.duration_ms)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <section className="case-card case-checked">
+                <h3>
+                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {money(fold.costUsd)}
+                  <InfoTip
+                    label="About the cost"
+                    source="The run's total spend."
+                    calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
+                  />
+                  {gaps.length > 0 && ` · ${gaps.length} with no source`}
+                </h3>
+                <ul className="case-stack">
+                  {fold.calls.map((call, i) => (
+                    <li key={`${call.tool}-${i}`}>
+                      <span className="clamp2" title={call.question}>{call.question || '—'}</span>
+                      <span className="src">{call.tool || '—'}</span>
+                      <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
+                      <span className="num">{money(call.cost_usd)}</span>
+                      <span className="num">{latency(call.duration_ms)}</span>
+                    </li>
+                  ))}
+                  {gaps.map((gap) => (
+                    <li key={gap.id} className="gap">
+                      <span className="clamp2" title={gap.text}>{gap.text}</span>
+                      <span className="src">No source</span>
+                      <span className="num">—</span>
+                      <span className="num">—</span>
+                      <span className="num">—</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )
           )}
 
@@ -985,10 +1004,15 @@ export function CasePage({
                   />
                 </div>
                 <div className="rec-actions">
-                  {runId && (
+                  {runId ? (
                     <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
                       Replay
                     </Link>
+                  ) : (
+                    <>
+                      <button type="button" className="rec-btn" disabled>Replay</button>
+                      <InfoTip label="Why Replay is unavailable" text="This case has no run to replay." />
+                    </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
                   {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
