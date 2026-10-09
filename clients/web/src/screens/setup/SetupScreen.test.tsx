@@ -525,7 +525,10 @@ describe('SetupScreen', () => {
       it('save the collection switch through updateSource', async () => {
         vi.mocked(federationApi.updateSource).mockResolvedValue({ data: source({ enabled: false }) } as never)
         await connect()
-        fireEvent.click(await screen.findByRole('switch', { name: 'Collect alerts' }))
+        const toggle = await screen.findByRole('switch', { name: 'Collect alerts' })
+        // patchSource re-reads the sources after saving, and the server now has it off
+        vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ enabled: false })]))
+        fireEvent.click(toggle)
         expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { enabled: false })
         expect(await screen.findByRole('button', { name: 'Test' })).toBeDisabled()
         expect(screen.getByText('Turn on Collect alerts to test.')).toBeInTheDocument()

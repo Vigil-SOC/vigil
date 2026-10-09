@@ -1,0 +1,13 @@
+# expect: E-RE2
+# why: RE2 program size is capped
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.huge-regex
+title: Regex too large to compile cheaply
+revision: 1
+fault: {class: ingest, mode: I-1, causes: [I-1.b]}
+lane: 2
+signals:
+  line: {log: {signal: log_soc_daemon, template: {re2: '(abc|def|ghi){1,300}'}}}
+when: {fn: count, signal: line, window: 5m, op: ">=", value: 1}
+advice: {summary: Huge regex rule, fix: Nothing to do.}

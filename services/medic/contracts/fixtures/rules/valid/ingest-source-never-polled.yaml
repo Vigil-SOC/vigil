@@ -1,0 +1,24 @@
+# Stall · I-4.a/b (poller counter flat). Expected trust: trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.source-never-polled
+title: Legacy poller for a source has stopped polling
+revision: 1
+engine_api: "1.0"
+shapes: [start_sh, compose, helm]
+fault: {class: ingest, mode: I-4, causes: [I-4.a, I-4.b]}
+lane: 3
+detection: absence
+signals:
+  polls: {sample: {signal: daemon_status.poller, key: polls, by: [source]}}
+group_by: [source]
+when:
+  any:
+    - {fn: absent_for, signal: polls, window: 30m}
+    - {fn: changes, signal: polls, window: 30m, op: "==", value: 0}
+for: 5m
+advice:
+  summary: The daemon hasn't polled this source for 30 minutes.
+  fix: >-
+    Restart soc-daemon after enabling or changing an integration. If polling
+    doesn't resume, send this incident to DeepTempo Support.

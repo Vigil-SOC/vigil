@@ -1,0 +1,140 @@
+id: v07-changes-ignores-reset
+title: processed resets to 0 on restart; changes doesn't count it
+covers:
+- §2 changes epochs
+- §5 two openings are not flapping
+start: '2026-10-07T10:00:00Z'
+end: +55m
+rules:
+- ref: pipeline-daemon-component-hung.yaml
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_status.processor:
+    processed: counter
+  daemon_status.poller:
+    webhook_findings: counter
+  daemon_health:
+    uptime_seconds: gauge
+    components.processor: enum
+series:
+- signal: daemon_health
+  key: components.processor
+  steps:
+  - - +0s
+    - running
+- signal: daemon_health
+  key: uptime_seconds
+  steps:
+  - - +0s
+    - 3600
+  - - +30m
+    - 0
+  - - +45m15s
+    - 915
+- signal: daemon_status.processor
+  key: processed
+  steps:
+  - - +0s
+    - 100
+  - - +30m
+    - 0
+  epochs:
+  - - +0s
+    - e1
+  - - +30m
+    - e2
+- signal: daemon_status.poller
+  key: webhook_findings
+  steps:
+  - - +0m
+    - 0
+  - - +5m
+    - 5
+  - - +10m
+    - 10
+  - - +15m
+    - 15
+  - - +20m
+    - 20
+  - - +25m
+    - 25
+  - - +30m
+    - 0
+  - - +35m
+    - 5
+  - - +40m
+    - 10
+  - - +45m
+    - 15
+  - - +50m
+    - 20
+  epochs:
+  - - +0s
+    - e1
+  - - +30m
+    - e2
+expect:
+- at: +10m
+  rule: pipeline.daemon-component-hung
+  eval: unknown
+  state: inactive
+- at: +15m
+  rule: pipeline.daemon-component-hung
+  eval: true
+  state: pending
+- at: +20m
+  rule: pipeline.daemon-component-hung
+  eval: true
+  state: firing
+  incident: A
+- at: +30m
+  rule: pipeline.daemon-component-hung
+  eval: false
+  state: resolving
+  incident: A
+  note: uptime 0 < 900
+- at: +40m
+  rule: pipeline.daemon-component-hung
+  eval: false
+  state: inactive
+- at: +45m
+  rule: pipeline.daemon-component-hung
+  eval: false
+  state: inactive
+- at: +45m15s
+  rule: pipeline.daemon-component-hung
+  eval: true
+  state: pending
+  note: reset 100→0 isn't a change
+- at: +50m15s
+  rule: pipeline.daemon-component-hung
+  eval: true
+  state: firing
+  incident: B
+incidents:
+  A:
+    rule: pipeline.daemon-component-hung
+    active_since: +15m
+    opened_at: +20m
+    resolving_since: +30m
+    resolved_at: +40m
+    reason: cleared
+    routed_at: +20m
+  B:
+    rule: pipeline.daemon-component-hung
+    active_since: +45m15s
+    opened_at: +50m15s
+    resolving_since: null
+    resolved_at: null
+    routed_at: +50m15s

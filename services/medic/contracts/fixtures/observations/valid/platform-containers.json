@@ -1,0 +1,55 @@
+{
+  "v": 1,
+  "id": "docker.containers:01JA8Z3K4M:7",
+  "kind": "sample",
+  "signal": "containers",
+  "sensor": {
+    "id": "docker.containers",
+    "run": "01JA8Z3K4M",
+    "seq": 7
+  },
+  "target": {
+    "service": "soc-daemon",
+    "instance": "deeptempo-soc-daemon",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:15Z",
+  "observed_at": "2026-10-07T10:00:15Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "redaction": {
+    "version": "k2-0",
+    "hits": 0
+  },
+  "epoch": "container:2026-10-07T08:12:01Z",
+  "values": [
+    {
+      "key": "state",
+      "type": "enum",
+      "state": "present",
+      "value": "running",
+      "trust": "trusted"
+    },
+    {
+      "key": "health",
+      "type": "enum",
+      "state": "present",
+      "value": "healthy",
+      "trust": "trusted"
+    },
+    {
+      "key": "restart_count",
+      "type": "counter",
+      "state": "present",
+      "value": 0,
+      "trust": "trusted"
+    },
+    {
+      "key": "started_at",
+      "type": "timestamp",
+      "state": "present",
+      "value": "2026-10-07T08:12:01Z",
+      "trust": "trusted"
+    }
+  ]
+}

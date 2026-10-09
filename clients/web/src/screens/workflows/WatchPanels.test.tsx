@@ -97,6 +97,28 @@ describe('a hunt, as of the selected step', () => {
     expect(limit('Steps')).toBe('Steps3 of 8')
   })
 
+  it('holds a long Reviewer verdict to two lines, with Show all only when it overflows', async () => {
+    const heights = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120)
+    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(36)
+    render(<WatchRun d={hunt()} onBack={vi.fn()} />)
+    step(2)
+
+    const verdict = await screen.findByText(/Strongest innocent explanation: A nightly backup job/)
+    expect(verdict).toHaveClass('line-clamp-2')
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
+    expect(verdict).not.toHaveClass('line-clamp-2')
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(verdict).toHaveClass('line-clamp-2')
+    heights.mockRestore(); client.mockRestore()
+  })
+
+  it('offers no Show all on a verdict that fits', async () => {
+    render(<WatchRun d={hunt()} onBack={vi.fn()} />)
+    step(2)
+    await screen.findByText(/Strongest innocent explanation/)
+    expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument()
+  })
+
   it('reads Scope from the scope_extension checkpoints, and asks nothing of the record it lacks', async () => {
     const checkpoint = (answer?: string) => ({ checkpoint_id: 'c1', class: 'scope_extension', raised_iteration: 2, question: 'q', ...(answer ? { resolution: { answer, actor: 'me' } } : {}) })
     const scopeOf = () => within(screen.getByText('Scope').parentElement as HTMLElement).getByText(/tenant A|Not recorded/)
