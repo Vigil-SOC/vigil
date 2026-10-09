@@ -45,7 +45,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 
 ### Workflows tab
 
-- **AW-W1. Workflow list.** Each workflow with its kind, what starts it, its command, runs today and cost per run. Trust is **Not measured yet**. *Runs today, cost per run and Trust shipped (#1366); kind, trigger and command are new.*
+- **AW-W1. Workflow list.** Each workflow is a card of its name, its Good/Fair/Poor level, its kind, what starts it, its command, and a line of runs this week, the share that succeeded and cost per run, as the board draws it (#1615 decision 1). A card holds no actions: Watch it run, History, Run workflow, Edit and Delete are in the reader's header.
 - **AW-W2. Workflow reader.** A selected workflow shows its name, an enable toggle, its description, and "Edited N days ago · version N" ("Built in" for a built-in). Below it, **How it runs** draws the stages of its loop — Start, Frame the case, Gather evidence, Weigh and review, Decide, Hand off — and four panels that follow the selected stage, or describe the whole workflow when none is selected:
   - **Who does it** — the agent acting in that stage (lead, helpers or reviewer), its model, and the skills it is offered.
   - **What it may do on its own** — each capability, marked On its own or Asks you, from the approval rules Vigil already enforces.

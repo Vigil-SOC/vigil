@@ -1,5 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -196,8 +196,8 @@ const TRIGGER_LABEL: Record<string, string> = { alerts: 'On alerts', schedule: '
 type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete'; wf: Workflow }
 
 /** One workflow on the board's card column. Clicking the card shows it in the
- *  reader beside the column; the actions sit under it as well. */
-function WorkflowCard({ wf: w, selected, onSelect, onOpen }: { wf: Workflow; selected: boolean; onSelect: () => void; onOpen: (kind: WfModal['kind']) => void }) {
+ *  reader beside the column, whose header holds the actions. */
+function WorkflowCard({ wf: w, selected, onSelect }: { wf: Workflow; selected: boolean; onSelect: () => void }) {
   const commands = LIVE_COMMANDS.filter((c) => c.workflowId === w.id)
   // an absent triggers list (older backend) draws no chip at all, not "started by hand"
   const triggers = w.triggers?.map((t) => TRIGGER_LABEL[t] ?? t) ?? []
@@ -231,18 +231,6 @@ function WorkflowCard({ wf: w, selected, onSelect, onOpen }: { wf: Workflow; sel
             </>
           ) : 'Off · not running'}
         </span>
-      </div>
-      <div className="wfk-acts">
-        <WatchButton wf={w} className="btn ghost wfk-btn" />
-        <button className="btn ghost wfk-btn" onClick={() => onOpen('history')}><Icon name="clock" /> History</button>
-        <span className="flex-1" />
-        {w.source === 'custom' && (
-          <>
-            <button className="btn ghost icon wfk-btn" title="Edit workflow" aria-label={`Edit ${w.name}`} onClick={() => onOpen('edit')}><Icon name="edit" /></button>
-            <button className="btn ghost icon danger wfk-btn" title="Delete workflow" aria-label={`Delete ${w.name}`} onClick={() => onOpen('delete')}><Icon name="trash" /></button>
-          </>
-        )}
-        <button className="btn primary wfk-btn" aria-label={`Run ${w.name}`} onClick={() => onOpen('run')}><Icon name="play" /> Run</button>
       </div>
     </div>
   )
@@ -299,10 +287,9 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
       )}
       {phase === 'ready' && list.length > 0 && (
         <div className="wfk-layout" ref={layoutRef}>
-          {/* bottom padding keeps the last card's actions clear of the fixed Ask Vigil button */}
-          <div className="wfk-col px-[22px] pt-5 pb-[110px]">
+          <div className="wfk-col px-[22px] py-5">
             {list.map((w) => (
-              <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} onOpen={(kind) => setModal({ kind, wf: w })} />
+              <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} />
             ))}
             <div className="wfk-new">
               <span className="text-[13px] font-semibold leading-[1.35] text-tx">Start from a description</span>
@@ -315,7 +302,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
               <WorkflowReaderPane
                 key={`${shown.id}:${saves}`}
                 wf={shown}
-                onWatch={() => setModal({ kind: 'history', wf: shown })}
+                onHistory={() => setModal({ kind: 'history', wf: shown })}
                 onRun={() => setModal({ kind: 'run', wf: shown })}
                 onEdit={() => setModal({ kind: 'edit', wf: shown })}
                 onDelete={() => setModal({ kind: 'delete', wf: shown })}
@@ -335,35 +322,6 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
         </div>
       )}
     </>
-  )
-}
-
-/** Opens the workflow's latest run as the Watch a run page. The run is looked up on
- *  the click, not once per row on load, and a workflow that never ran says so. */
-function WatchButton({ wf, className = 'btn ghost' }: { wf: Workflow; className?: string }) {
-  const navigate = useNavigate()
-  const [state, setState] = useState<'idle' | 'busy' | 'none'>('idle')
-  const [failed, setFailed] = useState<string | null>(null)
-  const watch = () => {
-    setState('busy')
-    setFailed(null)
-    workflowApi
-      .listRuns(wf.id, { limit: 1 })
-      .then((res) => {
-        const latest = (res.data?.runs as WfRun[] | undefined)?.[0]?.run_id
-        if (!latest) return setState('none')
-        setState('idle')
-        navigate({ search: `?run=${encodeURIComponent(latest)}` })
-      })
-      .catch((e) => { setFailed(errMsg(e)); setState('idle') })
-  }
-  return (
-    <button
-      className={className} disabled={state !== 'idle'} onClick={watch}
-      title={state === 'none' ? 'No runs yet' : failed ? `Couldn’t look up runs — ${failed}` : 'Replay the latest run step by step'}
-    >
-      <Icon name="play" /> {state === 'none' ? 'No runs yet' : 'Watch it run'}
-    </button>
   )
 }
 
