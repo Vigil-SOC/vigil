@@ -1,0 +1,35 @@
+# Medic on Compose, part 2 of 2: Medic's networks and the Vigil services on them.
+#
+#   docker compose -f infra/docker/docker-compose.yml \
+#                  -f infra/docker/medic/docker-compose.medic.yml --profile medic up -d
+#
+# Part 1 is the three `profiles: [medic]` services in docker-compose.yml. This
+# file is separate because putting soc-daemon and the agents on medic-net in the
+# main file would change them for every install, Medic on or off (C8: off by
+# default changes nothing). So it adds Medic's networks and nothing else. Use it
+# on every compose command that should keep Medic, or Docker drops the agents
+# off medic-net at the next `up` (Medic then sees DNS errors: blind, not down).
+#
+# Both networks are `internal: true`: nothing on them has a route off the host
+# (C3 R2). Neither holds the backend (R1), Redis, Postgres or Bifrost (C3 §5).
+#   medic-net      Medic + the three below, whose readiness and status ports
+#                  Medic reads directly. They keep deeptempo-network, so their
+#                  own traffic is unchanged.
+#   medic-private  Medic + medic-gateway (outbound :8471) + medic-dockerproxy.
+#                  Kept apart from medic-net so the agents, which handle
+#                  attacker-influenced content, can't use Medic's Docker proxy
+#                  or its Viewer session (S6-9).
+# tests/medic_compose/ pins all of this.
+services:
+  soc-daemon:
+    networks: [medic-net]
+  agent-worker:
+    networks: [medic-net]
+  agent-serve:
+    networks: [medic-net]
+
+networks:
+  medic-net:
+    internal: true
+  medic-private:
+    internal: true

@@ -194,6 +194,11 @@ class Settings(BaseSettings):
     # nobody asked for should not be listening. This is the floor an operator
     # sets before boot; the Settings toggle overrides it at runtime.
     vigil_mcp_enabled: bool = False
+    # Medic's master switch (C8), read by Medic and by the backend so Off never
+    # shows as Down. A string, parsed by core/platform/medic_status.py exactly as
+    # Medic parses it: a bool here would accept spellings Medic reads as off and
+    # fail startup on a typo.
+    vigil_medic_enabled: str = "false"
     vigil_csrf_enabled: bool = True
     vigil_csrf_report_only: bool = True
     vigil_csrf_exempt_paths: Optional[str] = None

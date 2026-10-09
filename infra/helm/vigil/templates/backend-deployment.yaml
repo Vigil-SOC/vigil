@@ -47,6 +47,10 @@ spec:
                   name: {{ include "vigil.postgres.passwordSecret" . }}
                   key: {{ include "vigil.postgres.passwordSecretKey" . }}
             {{- include "vigil.env" . | nindent 12 }}
+            # Medic's master switch, read by the backend too so Off never shows
+            # as Down (C8). Rendered whether or not Medic is.
+            - name: VIGIL_MEDIC_ENABLED
+              value: {{ ternary "true" "false" (eq ((.Values.medic).enabled | toString) "true") | quote }}
             {{- include "vigil.stateEnv" . | nindent 12 }}
             {{- include "vigil.caBundleEnv" . | nindent 12 }}
             {{- range $k, $v := .Values.backend.env }}

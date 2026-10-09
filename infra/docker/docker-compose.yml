@@ -202,6 +202,10 @@ services:
       # on; the OTLP push needs the collector from --profile observability.
       VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      # Medic's master switch, read here too so the console shows Off, not Down
+      # (C8). Same variable and default as the medic service: on without the
+      # Medic profile reads as down, which is loud, never as a silent off.
+      VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
       PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       SSL_CERT_FILE:
@@ -547,6 +551,151 @@ services:
     restart: unless-stopped
     networks:
       - deeptempo-network
+
+  # ─── Medic: this install's own ops-health watcher (System Watcher) ────────
+  # Off by default (C8). Enabling it on Compose takes BOTH `--profile medic`
+  # and the overlay infra/docker/medic/docker-compose.medic.yml, which declares
+  # Medic's two networks and puts soc-daemon and the agents on medic-net. The
+  # profile alone fails with "undefined network" instead of half-starting; without either,
+  # this file renders exactly as it would without Medic (tests/medic_compose/).
+  # scripts/medic/enable-compose.sh writes the secrets and prints the command.
+  #
+  # Isolation (C3 §4.4): Medic is on two `internal: true` networks (no route off
+  # the host) that the backend, Redis, Postgres and Bifrost are not on:
+  # medic-net, shared with the daemon and agents whose ports it reads, and
+  # medic-private, shared only with its gateway and Docker proxy, so the agents
+  # can't use either (S6-9). It reads the backend only through medic-gateway and
+  # Docker only through medic-dockerproxy. Nothing is published on the host,
+  # and none of the agent or daemon tokens is in any Medic-side environment
+  # (K1 §6 C6). Each runs as its own uid, read-only, with no capabilities.
+  medic:
+    profiles: [medic]
+    image: vigil-medic:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.medic
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    container_name: deeptempo-medic
+    user: "10001:10001"
+    read_only: true
+    # SQLite's temp files (big sorts) need somewhere writable besides the store.
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # C7: hard limit 1 vCPU / 1 GiB (the pass bar is half that).
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 128
+    environment:
+      # C8: the master switch, off unless set. The profile and overlay only
+      # decide whether the container exists; with the flag unset or false Medic
+      # logs "off" and exits 0 (unless-stopped retries it with Docker's backoff),
+      # so `docker compose up medic` by name can't start it by accident.
+      VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
+      VIGIL_MEDIC_INSTALL_SHAPE: compose
+      # /readyz over medic-net (the real liveness signal; /healthz always says ok).
+      VIGIL_MEDIC_AGENT_WORKER_ADDR: agent-worker:6990
+    secrets:
+      # X-Medic-Key (X2): what the backend presents, via the gateway, to Medic's API.
+      - medic_api_key
+    volumes:
+      # C4: the store, private to uid 10001. Nothing else mounts it.
+      - medic_data:/var/lib/vigil-medic
+    healthcheck:
+      # Reads the heartbeat file (C5 §5); same budget as the image's HEALTHCHECK.
+      test: ["CMD", "python", "-m", "services.medic", "check"]
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 300s
+    # No depends_on: Medic has to come up, and stay up, when Vigil doesn't.
+    restart: unless-stopped
+    networks:
+      - medic-net
+      - medic-private
+
+  # The only path between Medic and the backend (C3 §4.6), a separate container
+  # so no network policy has to tell the two apart (K1 T-11). Two listeners,
+  # each bound to an alias that exists on one network only (SP1 ⚑6): 8471 on
+  # medic-private (Medic -> backend, Viewer reads on an exact path list) and 8470
+  # on deeptempo-network (backend -> Medic's API). Clients use the service name,
+  # which resolves to the address on their own network.
+  medic-gateway:
+    profiles: [medic]
+    image: vigil-medic-gateway:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.medic-gateway
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    container_name: deeptempo-medic-gateway
+    user: "10002:10002"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 0.5
+    mem_limit: 256m
+    # A thread per connection: 32 per listener, plus upstream calls.
+    pids_limit: 128
+    environment:
+      VIGIL_MEDIC_GATEWAY_BACKEND: backend:6987
+      VIGIL_MEDIC_GATEWAY_MEDIC: medic:8470
+      VIGIL_MEDIC_GATEWAY_OUT_BIND: medic-gateway-out:8471
+      VIGIL_MEDIC_GATEWAY_IN_BIND: medic-gateway-in:8470
+      # The Viewer account the gateway logs in as. Its password is a file, never
+      # env: the gateway refuses to start with one in its environment.
+      # medic-<12 random a-z0-9>, minted by scripts/medic/enable-compose.sh (D2-17).
+      # No default: unset, the gateway refuses to start rather than try a
+      # guessable name.
+      VIGIL_MEDIC_GATEWAY_VIEWER_USER: ${VIGIL_MEDIC_VIEWER_USER:-}
+    secrets:
+      - medic_viewer_password
+    restart: unless-stopped
+    networks:
+      medic-private:
+        aliases: [medic-gateway-out]
+      deeptempo-network:
+        aliases: [medic-gateway-in]
+
+  # Medic's only path to the Docker Engine API (C3 §4.3): five exact GET routes,
+  # container env stripped from every reply. The socket is root-equivalent, so
+  # it is mounted here and nowhere else on the Medic side. `:ro` stops the file
+  # being replaced; the allowlist is what limits the API. The process needs the
+  # socket's group: the `docker` gid on Linux, 0 on Docker Desktop
+  # (enable-compose.sh prints the value for this host).
+  medic-dockerproxy:
+    profiles: [medic]
+    image: vigil-medic-dockerproxy:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.medic-dockerproxy
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    container_name: deeptempo-medic-dockerproxy
+    user: "10003:10003"
+    group_add: ["${VIGIL_MEDIC_DOCKER_GID:-0}"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 32
+    environment:
+      VIGIL_MEDIC_DOCKERPROXY_BIND: medic-dockerproxy:8472
+    volumes:
+      # Long form: if the socket isn't there (rootless Docker: set the variable),
+      # fail rather than let Docker create a directory in its place.
+      - type: bind
+        source: ${VIGIL_MEDIC_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    networks:
+      - medic-private
 
   # ─── Multi-provider LLM gateway ───────────────────────────────────────────
   # Bifrost is the single path for all LLM traffic (GH #84 PR-B). Anthropic
@@ -935,6 +1084,19 @@ volumes:
     driver: local
   misp_logs:
     driver: local
+  # Medic's store (C4): SQLite + JSON Lines, owned by uid 10001, mode 0700.
+  medic_data:
+    driver: local
+
+# Medic's two secrets, generated by scripts/medic/enable-compose.sh (random,
+# 0600, outside the repo and outside Vigil's ~/.vigil). Only the --profile medic
+# services use them, so with the profile off they don't render and the files
+# needn't exist.
+secrets:
+  medic_viewer_password:
+    file: ${VIGIL_MEDIC_SECRETS_DIR:-${HOME:-}/.vigil-medic/secrets}/viewer_password
+  medic_api_key:
+    file: ${VIGIL_MEDIC_SECRETS_DIR:-${HOME:-}/.vigil-medic/secrets}/api_key
 
 networks:
   deeptempo-network:
