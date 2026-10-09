@@ -414,7 +414,7 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || current === 'triage' || (current === 'cases' && !viewFull))
+  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || current === 'overview' || current === 'triage' || (current === 'cases' && !viewFull))
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -501,7 +501,7 @@ function SocConsoleInner() {
 
         {/* main */}
         <div className={mainClass}>
-          {/* Agents & workflows, Triage, Settings and the Cases list draw their own headings */}
+          {/* Overview, Agents & workflows, Triage, Settings and the Cases list draw their own headings */}
           {!wallMode && !ownsHeading && (
             <header className="topbar">
               <div className="title">
