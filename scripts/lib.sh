@@ -27,10 +27,47 @@ _container_ollama_url() {
 # same reason as OLLAMA_URL: compose substitutes from the environment and cannot
 # read .python-version itself, so the pin is injected at the one boundary where
 # compose is invoked, rather than copied into the compose file.
+#
+# Medic on Compose (V1-4): once scripts/medic/enable-compose.sh has written
+# <secrets dir>/compose.env, every call also gets Medic's overlay and Medic's
+# settings, so a start or restart through these scripts can't drop the agents
+# off medic-net (Medic blind). Without that file nothing is added.
 dc() {
+    local -a medic_files=() medic_env=()
+    _dc_medic
     OLLAMA_URL="$(_container_ollama_url)" \
     PYTHON_VERSION="$(python_pin 2>/dev/null || true)" \
-        "${_DC_CMD[@]}" -f "$REPO_ROOT/infra/docker/docker-compose.yml" "$@"
+        env ${medic_env[@]+"${medic_env[@]}"} \
+        "${_DC_CMD[@]}" -f "$REPO_ROOT/infra/docker/docker-compose.yml" \
+        ${medic_files[@]+"${medic_files[@]}"} "$@"
+}
+
+# Fills dc's medic_files (-f overlay, then VIGIL_MEDIC_COMPOSE_OVERRIDE's files)
+# and medic_env (compose.env's VIGIL_MEDIC_* lines, as text: never sourced). As
+# environment, not --env-file: load_env has exported .env, whose
+# VIGIL_MEDIC_ENABLED="false" (env.example) would beat any --env-file.
+_dc_medic() {
+    local settings overlay line f
+    local -a extra=()
+    settings="${VIGIL_MEDIC_SECRETS_DIR:-${HOME:-}/.vigil-medic/secrets}/compose.env"
+    overlay="$REPO_ROOT/infra/docker/medic/docker-compose.medic.yml"
+    [ -f "$settings" ] && [ -f "$overlay" ] || return 0
+    if [ ! -r "$settings" ]; then
+        echo "Warning: can't read $settings; Compose runs without Medic's overlay." >&2
+        return 0
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in VIGIL_MEDIC_*=*) ;; *) continue ;; esac
+        # Override files come from Vigil's own environment, never from compose.env.
+        case "${line%%=*}" in *[!A-Z0-9_]*|VIGIL_MEDIC_COMPOSE_OVERRIDE) continue ;; esac
+        medic_env+=("$line")
+    done < "$settings"
+    medic_files=(-f "$overlay")
+    IFS=: read -r -a extra <<< "${VIGIL_MEDIC_COMPOSE_OVERRIDE:-}"
+    for f in ${extra[@]+"${extra[@]}"}; do
+        [ -n "$f" ] && medic_files+=(-f "$f")
+    done
+    return 0
 }
 
 # --- Log retention ---

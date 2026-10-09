@@ -1,0 +1,68 @@
+[
+ {
+  "Command": "sh -c 'echo started; exec sleep 600 # --requirepass s5p-hunter2-secret'",
+  "Created": 1791430868,
+  "Health": {
+   "FailingStreak": 0,
+   "Status": "healthy"
+  },
+  "HostConfig": {
+   "NetworkMode": "bridge"
+  },
+  "Id": "9079b7229eb86b5cb1ec25e05e548c3040b0b34ab33ca2f3060ef94a422bb8db",
+  "Image": "alpine:3.20",
+  "ImageID": "sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc",
+  "ImageManifestDescriptor": {
+   "annotations": {
+    "com.docker.official-images.bashbrew.arch": "arm64v8",
+    "org.opencontainers.image.base.name": "scratch",
+    "org.opencontainers.image.created": "2026-04-16T23:53:21Z",
+    "org.opencontainers.image.revision": "0db70ae354ee747109ce0b9a0cfbcd3c907bc822",
+    "org.opencontainers.image.source": "https://github.com/alpinelinux/docker-alpine.git#0db70ae354ee747109ce0b9a0cfbcd3c907bc822:aarch64",
+    "org.opencontainers.image.url": "https://hub.docker.com/_/alpine",
+    "org.opencontainers.image.version": "3.20.10"
+   },
+   "digest": "sha256:45e09956dc667c5eff3583c9d94830261fb1ca0be10a0a7db36266edf5de9e1d",
+   "mediaType": "application/vnd.oci.image.manifest.v1+json",
+   "platform": {
+    "architecture": "arm64",
+    "os": "linux",
+    "variant": "v8"
+   },
+   "size": 1026
+  },
+  "Labels": {
+   "com.docker.compose.project": "vigil",
+   "com.docker.compose.service": "misp-redis",
+   "desktop.docker.io/ports.scheme": "v2"
+  },
+  "Mounts": [],
+  "Names": [
+   "/medic-s5p-fixture"
+  ],
+  "NetworkSettings": {
+   "Networks": {
+    "bridge": {
+     "Aliases": null,
+     "DNSNames": null,
+     "DriverOpts": null,
+     "EndpointID": "1eb71a2262c33b37378a55ee56d3d206d5594d2444f0a6d6d81892373ad1d8e8",
+     "Gateway": "172.17.0.1",
+     "GlobalIPv6Address": "",
+     "GlobalIPv6PrefixLen": 0,
+     "GwPriority": 0,
+     "IPAMConfig": null,
+     "IPAddress": "172.17.0.2",
+     "IPPrefixLen": 16,
+     "IPv6Gateway": "",
+     "Links": null,
+     "MacAddress": "ea:59:41:17:49:29",
+     "NetworkID": "03b656c206131f81aa440f3b4a7689b2637b4b407a153a7c720bb2319363c507"
+    }
+   }
+  },
+  "Ports": null,
+  "State": "running",
+  "Status": "Up 3 seconds (healthy)"
+ }
+]

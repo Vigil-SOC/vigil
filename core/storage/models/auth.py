@@ -75,6 +75,13 @@ class User(Base):
         DateTime, nullable=True
     )
 
+    # A machine login, not a person: today only Medic's gateway (D2-17). Exempt
+    # from lockout and held to the Viewer role. Set only by
+    # core/auth/service_account.py, which the enable flow runs; no API writes it.
+    service_account: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
