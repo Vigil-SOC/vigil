@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import SystemChecksStep from './SystemChecksStep'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
 import { readProviderConfigured } from '../../routing/useSetupStatus'
@@ -98,6 +98,15 @@ describe('SystemChecksStep', () => {
       await screen.findByText('Nothing to check yet · the next step connects a source'),
     ).toBeInTheDocument()
     expect(mark('Federation')).toBe('Waiting')
+  })
+
+  it('shows Needs you when a federation or MCP read has no body', async () => {
+    vi.mocked(federationApi.getHealth).mockResolvedValue({ data: undefined } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: null } as never)
+    render(<SystemChecksStep />)
+    await waitFor(() => expect(mark('Federation')).toBe('Needs you'))
+    expect(mark('MCP servers')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
   })
 
   it('names an enabled MCP server that is not running', async () => {

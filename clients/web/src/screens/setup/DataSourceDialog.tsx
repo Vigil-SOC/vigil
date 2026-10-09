@@ -100,6 +100,9 @@ const DataSourceDialog = () => {
       ? cur.enabled_integrations
       : [...cur.enabled_integrations, id]
     await configApi.setIntegrations({ enabled_integrations: enabled, integrations })
+    // keep the cache current: the dialog stays mounted, so a second save must
+    // merge with this one, not with the state from mount
+    cfg.current = { enabled_integrations: enabled, integrations }
 
     const serverName = serverFor(id)
     const { data } = await mcpApi.setServerEnabled(serverName, true)
@@ -109,10 +112,11 @@ const DataSourceDialog = () => {
       mcpApi.setServerEnabled(serverName, false).catch(() => {})
       // the checklist keys off enabled_integrations, so a source that never
       // connected must not count. Only when we just added it.
-      if (!alreadyEnabled)
-        configApi
-          .setIntegrations({ enabled_integrations: cur.enabled_integrations, integrations })
-          .catch(() => {})
+      if (!alreadyEnabled) {
+        const rolledBack = { enabled_integrations: cur.enabled_integrations, integrations }
+        cfg.current = rolledBack
+        configApi.setIntegrations(rolledBack).catch(() => {})
+      }
       const missing = data.missing_credentials?.length
         ? `Missing required credentials: ${data.missing_credentials.join(', ')}.`
         : null

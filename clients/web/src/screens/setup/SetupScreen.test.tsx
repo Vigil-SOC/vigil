@@ -337,6 +337,8 @@ describe('SetupScreen', () => {
         data: source({ enabled: false }),
       } as never)
       await connect()
+      // the hook re-reads the list after a save; it must report the switch as off
+      vi.mocked(federationApi.listSources).mockResolvedValue(listing([source({ enabled: false })]))
       fireEvent.click(await screen.findByRole('switch', { name: 'Collect alerts' }))
       expect(federationApi.updateSource).toHaveBeenCalledWith('crowdstrike', { enabled: false })
       expect(await screen.findByRole('button', { name: 'Test' })).toBeDisabled()
@@ -435,6 +437,27 @@ describe('SetupScreen', () => {
       expect(await screen.findByText(/^Connected to /)).toBeInTheDocument()
       expect(screen.queryByRole('switch')).not.toBeInTheDocument()
       expect(federationApi.listSources).not.toHaveBeenCalled()
+    })
+
+    it('a second save merges with the first, not the config read at mount', async () => {
+      vi.mocked(mcpApi.listServers).mockResolvedValue({
+        data: { servers: ['crowdstrike', 'opensearch'] },
+      } as never)
+      vi.mocked(configApi.setIntegrations).mockClear()
+      renderSetup()
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await screen.findByText('CrowdStrike Falcon'))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      await screen.findByText('Connected to CrowdStrike Falcon')
+      fireEvent.click(screen.getByRole('button', { name: 'Connect another' }))
+      fireEvent.click(await screen.findByText(/OpenSearch/))
+      fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+      await screen.findByText(/^Connected to OpenSearch/)
+      const calls = vi.mocked(configApi.setIntegrations).mock.calls
+      const second = calls[calls.length - 1][0] as { enabled_integrations: string[] }
+      expect(second.enabled_integrations).toEqual(
+        expect.arrayContaining(['crowdstrike', 'opensearch']),
+      )
     })
   })
 })
