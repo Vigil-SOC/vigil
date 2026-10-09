@@ -7751,8 +7751,9 @@
 }
 
    /* Add integration: category chips and search over a card grid; board SettingsIntegrations.dc.html */
-   .int-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-   .int-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+   .int-filters { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+   /* chips wrap inside their own block so search stays at their right until the row is too narrow */
+   .int-cats { display: flex; flex: 1 1 360px; flex-wrap: wrap; gap: 6px; }
    .int-filters-end { display: flex; align-items: center; gap: 8px; margin-left: auto; }
    .int-filters-end .search { width: 260px; max-width: 100%; }
 
