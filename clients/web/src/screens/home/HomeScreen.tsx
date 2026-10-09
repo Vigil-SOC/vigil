@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, triageApi, type NeedsYouItem, type TriageRow } from '../../services/api'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -31,11 +31,34 @@ const STEP_ACTION: Record<string, string> = {
   notify: 'Set up',
   rules: 'Link',
   per_agent: 'Pick',
+  custom_skill: 'Add',
 }
 
 const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint' }
 
 type Pickup = { share: number; launched: number; today: number }
+
+type Chip = { label: string; text: string }
+
+/** Chips for the newest detection that timed out of the queue unworked today (UTC). None without one. */
+export function dropChips(rows: TriageRow[], now = Date.now()): Chip[] {
+  const dayStart = now - (now % 86_400_000)
+  let newest: { row: TriageRow; at: number } | null = null
+  for (const row of rows) {
+    if (row.kind !== 'detection' || row.state !== 'expired' || !row.finding_id || !row.decided_at) continue
+    const at = parseCreatedAt(row.decided_at)
+    if (Number.isNaN(at) || at < dayStart || at >= dayStart + 86_400_000) continue
+    if (!newest || at > newest.at) newest = { row, at }
+  }
+  if (!newest) return []
+  const { finding_id: id, source } = newest.row
+  return [
+    { label: `/investigate ${id}`, text: `/investigate ${id}` },
+    source
+      ? { label: `Why was the ${source} alert dropped?`, text: `/ask Why was the ${source} alert dropped? Finding ${id}` }
+      : { label: `Why was alert ${id} dropped?`, text: `/ask Why was alert ${id} dropped? Finding ${id}` },
+  ]
+}
 
 const SETUP_TIP = {
   source: 'Setup steps (B8)',
@@ -170,10 +193,11 @@ function DecisionCard({
   )
 }
 
-export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) {
+export default function HomeScreen({ openCase, startTour, fillCommand }: ConsoleScreenProps) {
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [count, setCount] = useState<number | null>(null)
   const [share, setShare] = useState<Pickup | null>(null)
+  const [chips, setChips] = useState<Chip[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -195,13 +219,17 @@ export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) 
     const shareRead = triageApi.get().then(
       (res) => {
         const { share: value, launched_or_merged: launched, created_today: today } = res.data.strip.picked_up
-        return typeof value === 'number' ? { share: value, launched, today } : null
+        return {
+          pickup: typeof value === 'number' ? { share: value, launched, today } : null,
+          chips: dropChips(res.data.rows ?? []),
+        }
       },
-      () => null,
+      () => ({ pickup: null, chips: [] as Chip[] }),
     )
-    const [needsResult, pickup] = await Promise.all([needs, shareRead])
+    const [needsResult, triage] = await Promise.all([needs, shareRead])
     if (ticket !== loadTicket.current) return
-    setShare(pickup)
+    setShare(triage.pickup)
+    setChips(triage.chips)
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
       return
@@ -308,6 +336,7 @@ export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) 
   const noAlerts = setup !== null && setup.alerts_exist === 0
   const doneCount = (setup?.steps ?? []).filter((step) => step.done).length
   const stepCount = setup?.steps.length ?? 0
+  const shownChips = fillCommand ? chips : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
   const sectionHead = (title: string, sub: string | null, tip: ReactNode, link: ReactNode) => (
@@ -324,20 +353,34 @@ export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) 
   return (
     <div className="home-screen">
       <div className="home-page">
-        {(shownCount !== null || share !== null) && (
+        {(shownCount !== null || share !== null || shownChips.length > 0) && (
           <div className="home-top">
             {shownCount !== null && <p className="home-headline">{headline(shownCount)}</p>}
-            {share !== null && (
-              <p className="home-share">
-                {Math.round(share.share * 100)}% of alerts picked up automatically today
-                <InfoTip
-                  label="How the pickup share is calculated"
-                  align="start"
-                  source="Intake triggers"
-                  calculation={`Launched or merged ÷ arrived today (UTC), ${share.launched} of ${share.today}`}
-                  limit="None"
-                />
-              </p>
+            {(share !== null || shownChips.length > 0) && (
+              <div className="home-chips">
+                {shownChips.map((chip) => (
+                  <button key={chip.text} type="button" className="home-chip" onClick={() => fillCommand?.(chip.text)}>
+                    {chip.label}
+                  </button>
+                ))}
+                {share !== null && (
+                  <p className="home-share">
+                    {shownChips.length > 0 && (
+                      <span className="home-dot" aria-hidden="true">
+                        ·
+                      </span>
+                    )}
+                    {Math.round(share.share * 100)}% of alerts picked up automatically today
+                    <InfoTip
+                      label="How the pickup share is calculated"
+                      align="start"
+                      source="Intake triggers"
+                      calculation={`Launched or merged ÷ arrived today (UTC), ${share.launched} of ${share.today}`}
+                      limit="None"
+                    />
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}

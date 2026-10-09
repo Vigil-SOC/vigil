@@ -154,6 +154,8 @@ function SocConsoleInner() {
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [caseSeed, setCaseSeed] = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<string | null>(null)
+  const [fill, setFill] = useState<{ text: string; seq: number } | null>(null)
+  const fillCommand = useCallback((text: string) => setFill((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 })), [])
   const [viewFull, setViewFull] = useState(false)
   const [wallMode, setWallMode] = useState(false)
   const homePerm = SCREEN_PERMS.home
@@ -474,6 +476,7 @@ function SocConsoleInner() {
               setDrawerCase(null) // the drawer would sit over the next screen
               go(next, options)
             }}
+            fill={fill}
           />
           <div className="vg-header-end">
             {assist !== null && (
@@ -588,7 +591,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} />
                 )}
               </ErrorBoundary>
             </div>
