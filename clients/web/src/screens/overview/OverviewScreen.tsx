@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import AgentCards from './AgentCards'
 import FlowDiagram from './FlowDiagram'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Popup } from '../../shared/ui'
@@ -13,7 +14,6 @@ import api, {
   configApi,
   findingsApi,
   overviewApi,
-  type OverviewAgent,
   type OverviewFeedItem,
   type OverviewPayload,
 } from '../../services/api'
@@ -26,11 +26,6 @@ const POLL_MS = 10_000
 type Phase = 'loading' | 'error' | 'ready'
 // The single read of an alert that is not in the feed.
 type AlertRead = { id: string; status: 'loading' | 'ready' | 'error' | 'missing'; item?: OverviewFeedItem }
-
-function fmtRate(rate: number | null): string {
-  if (rate === null) return '—'
-  return `${(rate * 100).toFixed(1)}%`
-}
 
 function errorText(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { detail?: unknown; error?: unknown } } })?.response?.data
@@ -72,7 +67,7 @@ function ConnectData() {
   )
 }
 
-export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenProps) {
+export default function OverviewScreen({ go, openCase, setWallMode }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const alertId = searchParams.get('alert') || null // an empty value is no alert
   const [phase, setPhase] = useState<Phase>('loading')
@@ -198,19 +193,6 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
     return () => window.removeEventListener('keydown', onKey)
   }, [wall, setWallMode])
 
-  const agentColumns = useMemo<ColumnDef<OverviewAgent>[]>(() => [
-    { key: 'name', label: 'Workflow', render: (row) => row.name, sortVal: (row) => row.name, searchVal: (row) => row.name },
-    { key: 'running', label: 'Running', render: (row) => row.running, sortVal: (row) => row.running },
-    { key: 'rate', label: '30-day rate', render: (row) => fmtRate(row.rate), sortVal: (row) => row.rate ?? -1 },
-    { key: 'sample_size', label: 'Sample', render: (row) => row.sample_size, sortVal: (row) => row.sample_size },
-    { key: 'level', label: 'Level', render: (row) => <LevelBadge level={row.level} />, sortVal: (row) => row.level ?? '' },
-    {
-      key: 'current_step',
-      label: 'Current step',
-      render: (row) => row.current_step ?? '—',
-      sortVal: (row) => row.current_step ?? '',
-    },
-  ], [])
   const feedColumns = useMemo<ColumnDef<OverviewFeedItem>[]>(() => [
     { key: 'finding_id', label: 'Finding', render: (row) => row.finding_id, sortVal: (row) => row.finding_id },
     { key: 'severity', label: 'Severity', render: (row) => row.severity ?? '—', sortVal: (row) => row.severity ?? '' },
@@ -243,7 +225,6 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
     { key: 'description', label: 'Description', render: (row) => row.description ?? '—', sortVal: (row) => row.description ?? '' },
     { key: 'created_at', label: 'Arrived', render: (row) => row.created_at ?? '—', sortVal: (row) => row.created_at ?? '' },
   ], [openCase])
-  const agentSort = useTableSort(agentColumns, { key: 'name', dir: 'asc' })
   const feedSort = useTableSort(feedColumns, { key: 'created_at', dir: 'desc' })
 
   const stillOpen = (findingId: string) => openId.current === findingId
@@ -338,28 +319,7 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
       {phase === 'ready' && data && (
         <>
           <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
-          {!wall && (
-            <section className="section">
-              <div className="card">
-                <div className="card-h">
-                  <h3>Agents</h3>
-                  <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
-                    <Icon name="info" size={14} />
-                  </button>
-                </div>
-                <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
-                <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
-                <DataTable
-                  columns={agentColumns}
-                  rows={sortRows(data.agents, agentColumns, agentSort.sort)}
-                  rowKey={(row) => row.workflow_id}
-                  sort={agentSort.sort}
-                  onSort={agentSort.toggle}
-                  emptyMessage="No workflows."
-                />
-              </div>
-            </section>
-          )}
+          {!wall && <AgentCards data={data} go={go} />}
           <section className="section">
             <div className="card">
               <div className="card-h"><h3>Alerts</h3></div>
