@@ -191,14 +191,23 @@ class CustomAgentService:
         created_by: Optional[str] = None,
         new_name: Optional[str] = None,
         changed_by: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create a custom agent by copying values from an ``AgentProfile``.
 
         Works for both built-in and custom source agents. The new row is
         an independent copy — the source is never touched. Appends "
         (copy)" to the name unless ``new_name`` is supplied, and bumps
-        with a numeric suffix if the default ID collides.
+        with a numeric suffix if the default ID collides. ``overrides`` (the
+        ``UPDATABLE_FIELDS``) replace the copied values in the same insert,
+        so one call writes one row, or none if validation fails.
         """
+        overrides = {
+            k: v
+            for k, v in (overrides or {}).items()
+            if k in UPDATABLE_FIELDS and not (k == "role" and v is None)
+        }
+        new_name = overrides.pop("name", None) or new_name
         base_name = new_name or f"{source_profile.name} (copy)"
         # Find an unused ID by appending " 2", " 3", ... on collision.
         db_manager = get_db_manager()
@@ -241,6 +250,8 @@ class CustomAgentService:
             "component_category": getattr(source_profile, "component_category", None),
             "forked_from": source_id,
         }
+        data.update(overrides)  # an edited prompt wins over the copied rendered one
+        data["name"] = name
         return self.create_agent(data, created_by=created_by, changed_by=changed_by)
 
     def update_agent(

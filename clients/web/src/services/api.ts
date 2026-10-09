@@ -16,7 +16,7 @@ const api = axios.create({
 
 // LLM-backed calls can legitimately run for minutes. Streaming endpoints pass
 // 0 to disable the timeout for the life of the SSE connection.
-const LLM_TIMEOUT = 180_000
+export const LLM_TIMEOUT = 180_000
 
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
@@ -278,6 +278,8 @@ export const casesApi = {
     assignee?: string
     closed?: boolean
     query?: string
+    needs_you?: boolean
+    kind?: string
     limit?: number
     offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
@@ -330,6 +332,17 @@ export const casesApi = {
   updateTags: (id: string, tags: string[]) =>
     api.put(`/cases/${id}/tags`, { tags }),
 
+  /** Keeps the original of a hunt's attached document on the case, as one `document` evidence row. */
+  attachDocument: (id: string, file: File, opts: { name?: string; pages: number }) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (opts.name) form.append('name', opts.name)
+    form.append('pages', String(opts.pages))
+    return api.post<Schema<'CaseEvidenceSchema'>>(`/cases/${id}/attachments`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+    })
+  },
   getEvidence: (id: string) =>
     api.get<Schema<'CaseEvidenceListResponse'>>(`/cases/${id}/evidence`),
   addEvidence: (id: string, data: Schema<'EvidenceAdd'>) =>
@@ -441,8 +454,8 @@ export const slaPoliciesApi = {
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
   
-  getUsage: (policyId: string) =>
-    api.get(`/sla-policies/${policyId}/usage`),
+  getUsage: (policyId: string, params?: { since?: string }) =>
+    api.get(`/sla-policies/${policyId}/usage`, { params }),
   
   getCases: (policyId: string, params?: {
     status?: string
@@ -515,9 +528,11 @@ export const agentsApi = {
     api.patch(`/agents/custom/${agent_id}`, data),
   deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
   getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
-  // built-ins are never mutated; a fork is a new editable copy
-  forkAgent: (source_agent_id: string, new_name?: string) =>
-    api.post(`/agents/${source_agent_id}/fork`, { new_name }),
+  // any agent, built-in or custom, with its prompt, model and fallback
+  getAgent: (agent_id: string) => api.get(`/agents/agents/${agent_id}`),
+  // built-ins are never mutated; a fork is a new editable copy, with these fields replacing the source's
+  forkAgent: (source_agent_id: string, overrides: Partial<CustomAgentPayload> = {}) =>
+    api.post(`/agents/${source_agent_id}/fork`, overrides),
 
   generateCustom: (data: {
     description: string
@@ -578,6 +593,14 @@ export const consoleApi = {
     api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
 }
 
+export interface IntegrationTestResult {
+  success: boolean
+  message?: string
+  // "not_testable": a catalog-only entry with no MCP server behind it
+  reason?: string
+  servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
+}
+
 export const configApi = {
   getClaude: () => api.get('/config/claude'),
   setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
@@ -609,6 +632,9 @@ export const configApi = {
     enabled_integrations: string[]
     integrations: Record<string, any>
   }) => api.post('/config/integrations', data),
+  // Probes the stored config, so save first. 400 when nothing is saved.
+  testIntegration: (id: string) =>
+    api.post<IntegrationTestResult>(`/config/integrations/${encodeURIComponent(id)}/test`),
   
   getGeneral: () => api.get('/config/general'),
   setGeneral: (data: {
@@ -672,8 +698,9 @@ export const configApi = {
     stale_threshold: number
     workdir_base: string
   }) => {
-    const rest = { ...data }
-    delete (rest as { profiles?: unknown }).profiles
+    // GET also carries profiles, defaults and bounds; none are stored
+    const rest: Record<string, unknown> = { ...data }
+    for (const key of ['profiles', 'defaults', 'bounds']) delete rest[key]
     return api.post('/config/orchestrator', rest)
   },
 
@@ -705,7 +732,7 @@ export const extensionsApi = {
 
 export interface LLMProvider {
   provider_id: string
-  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex'
+  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex' | 'openrouter'
   name: string
   base_url: string | null
   has_api_key: boolean
@@ -1026,6 +1053,12 @@ export interface ReplayReport {
   recalled: string[]
 }
 
+export interface HuntDocument {
+  text: string
+  pages: number
+  condensed: boolean
+}
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
@@ -1038,13 +1071,25 @@ export const workflowApi = {
     case_id?: string
     context?: string
     hypothesis?: string
+    /** Text a person attached (at most 64 KB), read by the run as material. */
+    document?: string
+    hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
-  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
-  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
+  readHuntDocument: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<HuntDocument>('/workflows/threat-hunt/document', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: LLM_TIMEOUT,
+    })
+  },
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered, each
+  // with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
-    api.post('/workflows/threat-hunt/coverage', body),
+    api.post('/workflows/threat-hunt/coverage', body, { timeout: LLM_TIMEOUT }),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
@@ -1152,10 +1197,15 @@ export interface FederationSourceView {
   interval_seconds: number
   max_items: number
   min_severity: string | null
+  cursor: Record<string, unknown> | null
   last_poll_at: string | null
   last_success_at: string | null
   last_error: string | null
   consecutive_errors: number
+  /** Seconds since the last successful poll; null until one has succeeded. Absent on a PATCH response. */
+  lag_seconds?: number | null
+  /** The server's read of "has not kept up with interval_seconds". Absent on a PATCH response. */
+  quiet?: boolean
   is_configured: boolean
   default_interval_seconds: number
 }
@@ -1339,6 +1389,7 @@ export interface OverviewFeedItem {
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
+  noise_marked: boolean
 }
 
 export interface OverviewPayload {
@@ -1358,6 +1409,8 @@ export interface OverviewPayload {
 
 export const overviewApi = {
   get: () => api.get<OverviewPayload>('/overview'),
+  alert: (findingId: string) =>
+    api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
 export interface TriageRow {
@@ -1393,6 +1446,11 @@ export interface TriageSource {
   quiet: boolean | null
 }
 
+export interface TriageInfo {
+  source: string
+  calculation: string
+}
+
 export interface TriagePayload {
   rows: TriageRow[]
   strip: {
@@ -1407,6 +1465,13 @@ export interface TriagePayload {
   }
   sources: TriageSource[]
   arrival_info: string
+  strip_info: {
+    picked_up: TriageInfo
+    waiting: TriageInfo
+    cases_created_today: TriageInfo
+    trust_floor: TriageInfo & { limit: string }
+  }
+  breakdown_info: { trust: string; weight: string; score: string }
   unmeasured_text: string
 }
 

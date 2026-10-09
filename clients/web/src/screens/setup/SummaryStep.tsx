@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getAllIntegrations } from '../../config/integrations'
-import { budgetsApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
+import { aiConfigApi, budgetsApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
 import { Icon, type IconName } from '../../shared/icons'
 import { markConsoleTourSeen } from '../../shell/consoleTourSeen'
 import { matchesProfile, type InvestigationProfiles } from '../settings/useSettings'
@@ -60,8 +60,20 @@ export default function SummaryStep({ onChange }: { onChange: (target: SummaryTa
       return ids.length ? ids.map((id) => catalog.get(id) ?? id).join(', ') : 'Nothing connected yet'
     })
     read('ai', async () => {
-      const { data } = await llmProviderApi.list()
-      const provider = (data ?? []).find((p) => p.is_default)
+      // Mirrors ModelRegistry.resolve_model_for_component('chat_default'). A failed
+      // config read falls back to the provider rows rather than failing the row.
+      const [list, config] = await Promise.all([
+        llmProviderApi.list(),
+        aiConfigApi.getConfig().catch(() => null),
+      ])
+      const providers = list.data ?? []
+      const assigned = config?.data?.assignments?.chat_default
+      if (assigned) {
+        const name = providers.find((p) => p.provider_id === assigned.provider_id)?.name
+        return `${name ?? assigned.provider_id} · ${assigned.model_id}`
+      }
+      const active = providers.filter((p) => p.is_active)
+      const provider = active.find((p) => p.is_default) ?? active[0]
       if (!provider) return 'No provider'
       return provider.default_model ? `${provider.name} · ${provider.default_model}` : provider.name
     })

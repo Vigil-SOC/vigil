@@ -6,18 +6,29 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
 from pydantic import BaseModel, field_validator
 
-from core.agents.projections import read_events, run_id_for
+from core.agents.projections import read_events
 from core.auth.auth_service import AuthService
 from core.auth.permissions import permission_gate
 from core.cases import case_journal_service, case_records_service
+from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_record import merge_record
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
+from core.cases.case_state import case_run_refs
+from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
@@ -25,6 +36,7 @@ from core.storage.models import User
 from core.storage.schemas import (
     CaseCommentSchema,
     CaseEscalationSchema,
+    CaseEvidenceSchema,
     CaseRelationshipSchema,
     CaseSchema,
     CaseSLASchema,
@@ -673,20 +685,23 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
 
     Newest first. The agent returns the ledger with snapshots off. Audit rows
     are ``entity_type == case`` and ``entity_id`` this case — the table has no
-    ``case_id`` column. The run is ``run_id_for`` of the latest investigation,
-    not the shadow adjudication.
+    ``case_id`` column. The run is the case's latest, an investigation's
+    ``run_id_for`` or a run started on the case, never the shadow adjudication.
     """
     if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    investigations = case_records_service.list_case_investigations(session, case_id)
-    latest = investigations[0] if investigations else None
+    refs = case_run_refs(
+        case_records_service.list_case_investigations(session, case_id),
+        case_records_service.list_case_runs(session, case_id),
+    )
+    latest = refs[0][0] if refs else None
     events: list = []
     run_id = None
     investigation_id = None
     if latest is not None:
-        investigation_id = latest.investigation_id
-        run_id = run_id_for(investigation_id)
+        investigation_id = latest["investigation_id"]
+        run_id = latest["run_id"]
         try:
             events = await read_events(run_id) or []
         except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
@@ -699,6 +714,56 @@ async def get_case_record(case_id: str, session: UnitOfWorkSession):
         "investigation_id": investigation_id,
         "rows": merge_record(events, audits),
     }
+
+
+@router.post(
+    "/{case_id}/attachments",
+    dependencies=_CASES_WRITE,
+    response_model=CaseEvidenceSchema,
+)
+async def attach_case_document(
+    case_id: str,
+    session: UnitOfWorkSession,
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    pages: int = Form(1, ge=1),
+    current_user: User = Depends(get_current_user),
+):
+    """Keep the original of a document attached to a hunt, as ``document`` evidence.
+
+    Extraction already happened, at ``/workflows/threat-hunt/document``, so this
+    stores the file and says nothing about its text.
+    """
+    if not data_service.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+    filename = file.filename or "document"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ACCEPTED_TYPES:
+        raise HTTPException(
+            status_code=415, detail=f"{suffix or 'That'} files cannot be attached"
+        )
+    try:
+        path = await spool_upload(file, suffix)
+    except DocumentRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.reason) from None
+    try:
+        evidence = attach_document(
+            session,
+            case_id,
+            path,
+            filename,
+            name=name,
+            pages=pages,
+            collected_by=current_user.username or current_user.user_id,
+        )
+    except Exception as exc:  # noqa: BLE001 -- the reason is in the log
+        logger.error("could not attach a document to %s: %s", case_id, exc)
+        raise HTTPException(
+            status_code=500, detail="The document could not be kept on the case"
+        ) from None
+    finally:
+        path.unlink(missing_ok=True)
+    return CaseEvidenceSchema.dump(evidence)
 
 
 # Case Merge

@@ -8,10 +8,12 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import WorkflowReaderPane from './WorkflowReaderPane'
+import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
+import { skillsApi } from '../../services/skillsApi'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
@@ -88,7 +90,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
         </div>
       </div>
       {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={setCreating} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} />}
+      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
       {creating && <WorkflowBuilder autoGenerate={creating === 'ai'} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); workflows.reload() }} />}
@@ -350,7 +352,7 @@ function WatchButton({ wf, className = 'btn ghost' }: { wf: Workflow; className?
 
 const INPUT_CLS = 'w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line'
 
-function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxLength, list, rows = 3 }: {
+function Field({ label, value, onChange, placeholder, textarea, mono, hint, rows = 3 }: {
   label: string
   value: string
   onChange: (v: string) => void
@@ -358,8 +360,6 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
   textarea?: boolean
   mono?: boolean
   hint?: string
-  maxLength?: number
-  list?: string
   rows?: number
 }) {
   const cls = `${INPUT_CLS}${mono ? ' font-mono' : ''}`
@@ -370,7 +370,7 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, maxL
         // resize-y + max-w-full: grow vertically only, never wider than the modal
         <textarea className={`${cls} resize-y max-w-full`} rows={rows} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       ) : (
-        <input className={cls} value={value} placeholder={placeholder} maxLength={maxLength} list={list} onChange={(e) => onChange(e.target.value)} />
+        <input className={cls} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       )}
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
     </label>
@@ -481,6 +481,8 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 interface WfLimits {
   capabilities?: { bound: string[]; unbound: string[] }
   budgets?: { max_iterations: number; max_cost_usd: number }
+  /** set when a phase's agent is turned off: the server will refuse the run. */
+  roles_note?: string | null
   /** exact, zero or unknown — how confidently the model's rate resolved. */
   pricing?: { model: string; source: string }
 }
@@ -495,17 +497,20 @@ function turnsHint(asked: string, cost: string, limits: WfLimits | null): string
   return `${turns} turn(s): each is a lead decision, the workers it dispatches and the pass that argues against them.${where}`
 }
 
-/** What the hunt will not be able to look at, said before the run costs anything.
+/** What the run will not be able to look at, said before it costs anything.
  *  The same fact reaches the journal only once the run is over. */
-function Blindness({ unbound }: { unbound: string[] }) {
+function Blindness({ unbound, investigation = false }: { unbound: string[]; investigation?: boolean }) {
   if (unbound.length === 0) return null
   const blind = unbound.includes('telemetry_search')
+  const noun = investigation ? 'investigation' : 'hunt'
   return (
     <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>
       No tool here answers {unbound.join(', ')}.{' '}
       {blind
-        ? 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
-        : 'The roles that need it will run without it, and the hunt will record the gap.'}
+        ? investigation
+          ? 'Without telemetry_search the investigation can read findings and indicators but not the SIEM, and will record the gap.'
+          : 'Without telemetry_search the hunt cannot query a SIEM, so it can corroborate nothing and will report that nothing was proven — a fact about this deployment, not about your estate.'
+        : `The roles that need it will run without it, and the ${noun} will record the gap.`}
     </div>
   )
 }
@@ -870,6 +875,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   // the ceilings and the unbound-tool warning. Everything else, root-cause included,
   // gets the finding, case, and context dialog.
   const isHuntLike = wf.huntLike
+  const isInvestigate = wf.runKind === 'investigate'
   const turns = Number(iterations)
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)
   const cost = Number(maxCost)
@@ -941,8 +947,13 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
       <div className="flex flex-col gap-3.5">
         <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
+        {isHuntLike && limits?.roles_note && (
+          <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>{limits.roles_note}</div>
+        )}
         {isHuntLike && <Unpriced pricing={limits?.pricing} />}
-        {isHuntLike && <Blindness unbound={limits?.capabilities?.unbound ?? []} />}
+        {(isHuntLike || isInvestigate) && (
+          <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
+        )}
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
@@ -2803,11 +2814,11 @@ const SUCCESS_TIP = {
 }
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
-function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
+function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount: number | null }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
   const [deleteAgent, setDeleteAgent] = useState<AgentTemplate | null>(null)
   // optimistic On switches, dropped when the list reloads
   const [enabledNow, setEnabledNow] = useState<Record<string, boolean>>({})
@@ -2816,6 +2827,8 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
 
   const builtins = rows.filter((a) => !a.custom)
   const ordered = [...builtins, ...rows.filter((a) => a.custom)]
+  // by id, not by row: a fresh copy is open before the reloaded list has it
+  const builtinOpen = !!editId && !editId.startsWith('custom-')
 
   const fork = (handle: string) => {
     setBusy(handle)
@@ -2845,20 +2858,20 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
           {phase === 'ready' ? `${builtins.length} built-in agent${builtins.length === 1 ? '' : 's'} plus your own. Each can use its own model.` : 'Built-in agents plus your own. Each can use its own model.'}
         </span>
         <button className="ag-btn" title="Refresh" aria-label="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="ag-btn" onClick={() => setCreating(true)}><Icon name="sparkle" /> Describe a new agent</button>
-        <button className="ag-btn primary" onClick={() => setCreating(true)}><Icon name="plus" /> New agent</button>
+        <button className="ag-btn" onClick={() => setCreating('describe')}><Icon name="sparkle" /> Describe a new agent</button>
+        <button className="ag-btn primary" onClick={() => setCreating('blank')}><Icon name="plus" /> New agent</button>
       </div>
 
       {toggleErr && <div className="ag-err" role="alert">{toggleErr}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="brain" title="Loading agents…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating(true), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating('blank'), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
 
       {phase === 'ready' && rows.length > 0 && (
         <>
           <AgentTable
             agents={ordered.map((a) => ({ ...a, enabled: enabledNow[a.handle] ?? a.enabled }))}
-            onOpen={(a) => (a.custom ? setEditId(a.handle) : fork(a.handle))}
+            onOpen={(a) => setEditId(a.handle)}
             onToggle={setEnabled}
             renderActions={(a) => a.custom ? (
               <span className="row-act">
@@ -2868,7 +2881,7 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
               </span>
             ) : (
               <span className="row-act">
-                <button title="Fork to editable copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
+                <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
           />
@@ -2877,10 +2890,19 @@ function AgentsTab({ feed }: { feed: Feed<AgentTemplate> }) {
       )}
 
       {(creating || editId) && (
-        <AgentEditModal
+        <AgentDrawer
+          key={editId ?? 'new'} // a saved copy reopens as a fresh drawer
           agentId={editId}
+          builtIn={builtinOpen}
+          describe={creating === 'describe'}
+          toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
+          skillCount={skillCount}
           onClose={() => { setEditId(null); setCreating(false) }}
-          onSaved={() => { setEditId(null); setCreating(false); reload() }}
+          onSaved={(saved) => {
+            // a built-in's Save made a copy: reopen on it, in custom mode once the list has it
+            const copy = builtinOpen && saved.id ? saved.id : null
+            setEditId(copy); setCreating(false); reload()
+          }}
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
@@ -2914,7 +2936,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
                   <div className="ag-agent">
-                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
+                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Open ${a.name}`}>
                       <span className="ag-ini">{a.ini}</span>
                       <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
                     </button>
@@ -2952,297 +2974,6 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
   )
 }
 
-interface CustomAgentDetail {
-  id: string
-  name?: string
-  description?: string | null
-  specialization?: string | null
-  icon?: string | null
-  color?: string | null
-  role?: string | null
-  methodology?: string | null
-  extra_principles?: string | null
-  system_prompt_override?: string | null
-  recommended_tools?: string[]
-  max_tokens?: number
-  enable_thinking?: boolean
-  model?: string | null
-  fallback_model?: string | null
-  effective_prompt?: string
-  forked_from?: string | null
-}
-
-interface AgentForm {
-  name: string
-  specialization: string
-  description: string
-  icon: string
-  color: string
-  role: string
-  extra_principles: string
-  methodology: string
-  system_prompt_override: string
-  recommended_tools: string
-  max_tokens: string
-  enable_thinking: boolean
-  model: string
-  fallback_model: string
-}
-
-const BLANK_AGENT_FORM: AgentForm = {
-  name: '', specialization: '', description: '', icon: '', color: '#7d74f3', role: '',
-  extra_principles: '', methodology: '', system_prompt_override: '', recommended_tools: '',
-  max_tokens: '', enable_thinking: false, model: '', fallback_model: '',
-}
-
-/** AI-assisted drafting;
-    mirroring the old Agent Builder. `agentId === null` ⇒ create mode. */
-function AgentEditModal({ agentId, onClose, onSaved }: { agentId: string | null; onClose: () => void; onSaved: () => void }) {
-  const isCreate = agentId === null
-  const [agent, setAgent] = useState<CustomAgentDetail | null>(null)
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(isCreate ? 'ready' : 'loading')
-  const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [form, setForm] = useState<AgentForm | null>(isCreate ? { ...BLANK_AGENT_FORM } : null)
-  const [advanced, setAdvanced] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
-  const [toolNames, setToolNames] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const [aiOpen, setAiOpen] = useState(isCreate)
-  const [aiDesc, setAiDesc] = useState('')
-  const [aiFeedback, setAiFeedback] = useState('')
-  const [aiDraft, setAiDraft] = useState<GeneratedAgentDraft | null>(null)
-  const [aiBusy, setAiBusy] = useState(false)
-  const [aiErr, setAiErr] = useState<string | null>(null)
-
-  const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) =>
-    setForm((f) => (f ? { ...f, [k]: v } : f))
-
-  useEffect(() => {
-    let cancelled = false
-    agentsApi.getAvailableTools().then((r) => !cancelled && setToolNames((r.data?.tools || []) as string[])).catch(() => {})
-    if (agentId === null) return () => { cancelled = true }
-    agentsApi
-      .getCustom(agentId)
-      .then((res) => {
-        if (cancelled) return
-        const a = res.data as CustomAgentDetail
-        setAgent(a)
-        setForm({
-          name: a.name || '',
-          specialization: a.specialization || '',
-          description: a.description || '',
-          icon: a.icon || '',
-          color: a.color || '#7d74f3',
-          role: a.role || '',
-          extra_principles: a.extra_principles || '',
-          methodology: a.methodology || '',
-          system_prompt_override: a.system_prompt_override || '',
-          recommended_tools: (a.recommended_tools || []).join(', '),
-          max_tokens: a.max_tokens ? String(a.max_tokens) : '',
-          enable_thinking: !!a.enable_thinking,
-          model: a.model || '',
-          fallback_model: a.fallback_model || '',
-        })
-        setAdvanced(!!a.system_prompt_override)
-        setPhase('ready')
-      })
-      .catch((e) => { if (!cancelled) { setLoadErr(errMsg(e)); setPhase('error') } })
-    return () => { cancelled = true }
-  }, [agentId])
-
-  // merge an AI draft into the form, preserving a name the user already typed
-  const mergeDraft = (d: GeneratedAgentDraft) =>
-    setForm((f) => f ? {
-      ...f,
-      name: f.name.trim() ? f.name : d.name,
-      specialization: d.specialization || f.specialization,
-      description: d.description || f.description,
-      icon: d.icon || f.icon,
-      color: d.color || f.color,
-      role: d.role || f.role,
-      extra_principles: d.extra_principles || f.extra_principles,
-      methodology: d.methodology || f.methodology,
-      recommended_tools: (d.recommended_tools || []).join(', ') || f.recommended_tools,
-      max_tokens: d.max_tokens ? String(d.max_tokens) : f.max_tokens,
-      enable_thinking: typeof d.enable_thinking === 'boolean' ? d.enable_thinking : f.enable_thinking,
-    } : f)
-
-  const generate = (feedback?: string) => {
-    if (!aiDesc.trim()) return
-    setAiBusy(true)
-    setAiErr(null)
-    agentsApi
-      .generateCustom({ description: aiDesc.trim(), current_draft: aiDraft, feedback: feedback?.trim() || undefined })
-      .then((res) => {
-        const d = res.data?.draft
-        if (d) { setAiDraft(d); mergeDraft(d); setAiFeedback('') }
-      })
-      .catch((e) => setAiErr(errMsg(e)))
-      .finally(() => setAiBusy(false))
-  }
-
-  const save = () => {
-    if (!form) return
-    setBusy(true)
-    setError(null)
-    const tokens = parseInt(form.max_tokens, 10)
-    const payload = {
-      name: form.name.trim(),
-      specialization: form.specialization.trim(),
-      description: form.description.trim(),
-      icon: form.icon.trim() || null,
-      color: form.color || null,
-      role: form.role.trim(),
-      extra_principles: form.extra_principles.trim(),
-      methodology: form.methodology.trim(),
-      // Advanced override replaces the base template; clear it when toggled off.
-      system_prompt_override: advanced ? form.system_prompt_override.trim() || null : null,
-      recommended_tools: form.recommended_tools.split(',').map((t) => t.trim()).filter(Boolean),
-      ...(Number.isFinite(tokens) && tokens > 0 ? { max_tokens: tokens } : {}),
-      enable_thinking: form.enable_thinking,
-      model: form.model.trim() || null,
-      fallback_model: form.fallback_model.trim() || null,
-    }
-    const req = isCreate ? agentsApi.createCustom(payload) : agentsApi.updateCustom(agentId, payload)
-    req.then(onSaved).catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-
-  const title = isCreate ? 'New agent' : (phase === 'ready' ? `Edit agent · ${agent?.name || agentId}` : 'Edit agent')
-
-  return (
-    <Popup open onClose={onClose} title={title} width={760}>
-      {phase === 'loading' && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>Loading agent…</div>}
-      {phase === 'error' && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>Couldn’t load agent: {loadErr}</div>}
-      {phase === 'ready' && form && (
-        <div className="flex flex-col gap-3.5">
-          {agent?.forked_from && <p className="text-[11.5px] text-tx-3">Forked from <span className="mono">{agent.forked_from}</span></p>}
-
-          {/* AI assist — describe the agent and let Vigil draft the fields */}
-          <div className="border border-line rounded-[8px] overflow-hidden">
-            <button className="w-full flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-tx-2 bg-bg hover:bg-panel" onClick={() => setAiOpen((v) => !v)}>
-              <Icon name="sparkle" size={14} /> AI assist — describe the agent, Vigil drafts the fields
-              <span className="ml-auto" style={{ transform: aiOpen ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
-            </button>
-            {aiOpen && (
-              <div className="border-t border-line p-3 flex flex-col gap-2.5">
-                <Field label="Describe the agent" value={aiDesc} onChange={setAiDesc} textarea rows={2} placeholder="e.g. Triages cloud IAM misconfigurations and privilege-escalation paths in AWS/GCP." />
-                <div className="flex justify-end">
-                  <button className="btn primary" disabled={aiBusy || !aiDesc.trim()} style={{ opacity: aiBusy || !aiDesc.trim() ? 0.5 : 1 }} onClick={() => generate()}>
-                    <Icon name="sparkle" /> {aiBusy ? 'Generating…' : aiDraft ? 'Regenerate draft' : 'Generate draft'}
-                  </button>
-                </div>
-                {aiDraft && (
-                  <>
-                    <p className="text-[11.5px] text-tx-3">Draft applied to the form below — tweak any field directly, or refine with a follow-up:</p>
-                    <div className="flex gap-2.5 items-end">
-                      <div className="flex-1"><Field label="Refine" value={aiFeedback} onChange={setAiFeedback} placeholder="Add memory-forensics tools; be more conservative on containment." /></div>
-                      <button className="btn ghost" disabled={aiBusy || !aiFeedback.trim()} style={{ opacity: aiBusy || !aiFeedback.trim() ? 0.5 : 1 }} onClick={() => generate(aiFeedback)}>Refine</button>
-                    </div>
-                  </>
-                )}
-                {aiErr && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{aiErr}</div>}
-              </div>
-            )}
-          </div>
-
-          {/* Identity */}
-          <div className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Identity</div>
-          <Field label="Name *" value={form.name} onChange={(v) => set('name', v)} hint={isCreate ? 'Agent ID is derived from the name.' : 'Agent ID is derived from the name and cannot be changed.'} />
-          <Field label="Specialization" value={form.specialization} onChange={(v) => set('specialization', v)} />
-          <Field label="Description" value={form.description} onChange={(v) => set('description', v)} textarea />
-          <div className="grid grid-cols-2 gap-3.5">
-            <Field label="Icon (1 char)" value={form.icon} onChange={(v) => set('icon', v.slice(0, 1))} maxLength={1} />
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Color</span>
-              <input type="color" className="w-full h-[38px] bg-bg border border-line rounded-[7px] p-1 cursor-pointer" value={form.color} onChange={(e) => set('color', e.target.value)} />
-            </label>
-          </div>
-
-          {/* Prompt fragments */}
-          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Prompt fragments</div>
-          <p className="text-[11.5px] text-tx-3 -mt-2">Rendered into the Vigil base prompt (preserves entity-recognition directives; adds read-only memory when recall_entity is granted).</p>
-          <Field label="Role *" value={form.role} onChange={(v) => set('role', v)} hint={'Renders as: "You are a SOC {role} in the Vigil SOC platform."'} />
-          <Field label="Extra principles" value={form.extra_principles} onChange={(v) => set('extra_principles', v)} textarea />
-          <Field label="Methodology" value={form.methodology} onChange={(v) => set('methodology', v)} textarea />
-          <label className="flex items-center gap-2.5 text-[12.5px] text-tx-2 cursor-pointer">
-            <span
-              className={`sk-toggle${advanced ? ' on' : ''}`}
-              role="switch"
-              aria-checked={advanced}
-              aria-label="Advanced: write the full system prompt yourself"
-              tabIndex={0}
-              onClick={() => setAdvanced((v) => !v)}
-              onKeyDown={activateOnKey(() => setAdvanced((v) => !v))}
-            ><span className="kn" /></span>
-            Advanced: bypass base template (write the full system prompt yourself)
-          </label>
-          {advanced && (
-            <Field label="System prompt (verbatim — replaces the base template)" value={form.system_prompt_override} onChange={(v) => set('system_prompt_override', v)} textarea mono rows={12} />
-          )}
-
-          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Model</div>
-          <p className="text-[11.5px] text-tx-3 -mt-2">Workflow runs use the investigation assignment in Settings › AI models.</p>
-          <div className="grid grid-cols-2 gap-3.5">
-            <Field label="Model" value={form.model} onChange={(v) => set('model', v)} mono placeholder="Assignment model" />
-            <Field label="Fallback model" value={form.fallback_model} onChange={(v) => set('fallback_model', v)} mono placeholder="Optional" />
-          </div>
-
-          {/* Tools & behavior */}
-          <div className="pt-1.5 text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Tools &amp; behavior</div>
-          <Field
-            label="Recommended MCP tools (comma-separated)"
-            value={form.recommended_tools}
-            onChange={(v) => set('recommended_tools', v)}
-            mono
-            list="agent-tool-names"
-            hint={toolNames.length ? `${toolNames.length} tools available — free text accepted if a tool isn't in the registry yet.` : undefined}
-          />
-          <datalist id="agent-tool-names">{toolNames.map((t) => <option key={t} value={t} />)}</datalist>
-          <div className="grid grid-cols-2 gap-3.5 items-end">
-            <Field label="Max tokens" value={form.max_tokens} onChange={(v) => set('max_tokens', v.replace(/[^0-9]/g, ''))} placeholder="2048" />
-            <label className="flex items-center gap-2.5 text-[12.5px] text-tx-2 cursor-pointer h-[38px]">
-              <span
-                className={`sk-toggle${form.enable_thinking ? ' on' : ''}`}
-                role="switch"
-                aria-checked={form.enable_thinking}
-                aria-label="Enable thinking"
-                tabIndex={0}
-                onClick={() => set('enable_thinking', !form.enable_thinking)}
-                onKeyDown={activateOnKey(() => set('enable_thinking', !form.enable_thinking))}
-              ><span className="kn" /></span>
-              Enable thinking
-            </label>
-          </div>
-
-          {/* Preview of the saved effective prompt (the exact text Claude receives) */}
-          {agent?.effective_prompt && (
-            <div className="border border-line rounded-[8px] overflow-hidden">
-              <button className="w-full flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-tx-2 bg-bg hover:bg-panel" onClick={() => setShowPreview((v) => !v)}>
-                <span style={{ transform: showPreview ? 'rotate(90deg)' : 'none', transition: 'transform .12s', display: 'inline-flex' }}><Icon name="chevR" size={13} /></span>
-                Preview effective prompt
-              </button>
-              {showPreview && (
-                <div className="border-t border-line">
-                  <pre className="font-mono text-[11px] leading-[1.5] text-tx-2 whitespace-pre-wrap p-3 m-0 overflow-auto" style={{ maxHeight: '40vh' }}>{agent.effective_prompt}</pre>
-                  <p className="text-[11px] text-tx-3 px-3 pb-2.5">This is the exact system prompt Claude receives. Re-save to refresh.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-          <div className="flex justify-end gap-2.5 pt-1">
-            <button className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn primary" disabled={busy || !form.name.trim() || !form.role.trim()} style={{ opacity: busy || !form.name.trim() || !form.role.trim() ? 0.5 : 1 }} onClick={save}>{busy ? (isCreate ? 'Creating…' : 'Saving…') : (isCreate ? 'Create agent' : 'Save changes')}</button>
-          </div>
-        </div>
-      )}
-    </Popup>
-  )
-}
-
 function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate; onClose: () => void; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -3274,13 +3005,11 @@ const SKILL_GRANT_INFO = 'The grant offers the whole library.'
 const SKILL_USAGE_INFO = 'Skill reads are not recorded yet.'
 
 // The card's usage line; swap this one element when skill reads are recorded.
-function SkillUsage() {
+function SkillUsage({ align }: { align: 'start' | 'end' }) {
   return (
     <span className="sk-usage">
       Used by · Not measured yet
-      <button type="button" className="btn ghost icon" aria-label={SKILL_USAGE_INFO} title={SKILL_USAGE_INFO}>
-        <Icon name="info" size={14} />
-      </button>
+      <InfoTip label={SKILL_USAGE_INFO} text={SKILL_USAGE_INFO} align={align} />
     </span>
   )
 }
@@ -3290,10 +3019,24 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [editName, setEditName] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
     : null
   const offeredText = offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')
+
+  const importFile = (file: File | undefined) => {
+    if (!file) return
+    setImporting(true)
+    setImportError(null)
+    skillsApi
+      .upload(file)
+      .then((skill) => { reload(); setEditName(skill.name) })
+      .catch((e) => setImportError(e?.response?.data?.detail || e?.message || 'Could not import the skill'))
+      .finally(() => setImporting(false))
+  }
 
   return (
     <>
@@ -3302,20 +3045,21 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
           <span className="sk-offered" title={`Offered to ${offeredText}`}>
             Offered to
-            <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
-              <Icon name="info" size={14} />
-            </button>
+            <InfoTip label={SKILL_GRANT_INFO} text={SKILL_GRANT_INFO} align="start" />
             <span className="sk-offered-list">{offeredText}</span>
           </span>
         </div>
+        <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
+        <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
         <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} style={{ opacity: phase === 'ready' ? 1 : 0.5 }} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
       </div>
+      {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-x-5 gap-y-[26px] px-[22px] pt-4 pb-24 [grid-template-columns:repeat(4,minmax(0,1fr))]">
-          {rows.map((s) => (
+          {rows.map((s, i) => (
             <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
               <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
                 <span className="sk-folder" aria-hidden="true">
@@ -3330,7 +3074,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
-                <SkillUsage />
+                {/* the last of the four columns opens its popover leftwards to stay on screen */}
+                <SkillUsage align={i % 4 === 3 ? 'end' : 'start'} />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}

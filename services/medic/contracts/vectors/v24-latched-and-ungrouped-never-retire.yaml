@@ -1,0 +1,75 @@
+id: v24-latched-and-ungrouped-never-retire
+title: A set latch and a rule's single {} group stay open through 25 quiet hours
+covers:
+- §3 group lifetime
+- §2 latch
+- §3 label-safe values
+start: '2026-10-07T10:00:00Z'
+end: +25h
+rules:
+- ref: ingest-integration-config-incomplete.yaml
+- ref: llm-gateway-outage.yaml
+sensors:
+- id: log.soc-daemon
+  covers:
+  - log_soc_daemon
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+logs:
+- at: +1m
+  signal: log_soc_daemon
+  level: WARNING
+  logger: core.integrations.sentinel.ingestion
+  template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'
+  message: 'Azure Sentinel configuration incomplete (missing: client_secret); skipping polls until it is completed'
+- signal: log_soc_daemon
+  level: ERROR
+  logger: services.daemon.processor
+  template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'
+  message: 'Failed to connect LLM gateway, AI triage is skipped until it connects: ConnectError: connection refused'
+  at: +1m
+expect:
+- at: +3m
+  rule: ingest.integration-config-incomplete
+  eval: true
+  state: firing
+  group: &id001
+    integration: h_ff9cf5afca192342
+  incident: A
+- at: +3m
+  rule: llm.gateway-outage
+  eval: true
+  state: firing
+  incident: B
+- at: +24h1m15s
+  rule: ingest.integration-config-incomplete
+  eval: true
+  state: firing
+  group: *id001
+  incident: A
+  note: 'no line for 24 h, but the latch is set: a set latch never retires'
+- at: +25h
+  rule: llm.gateway-outage
+  eval: true
+  state: firing
+  incident: B
+  note: the {} group never retires
+incidents:
+  A:
+    rule: ingest.integration-config-incomplete
+    active_since: +1m
+    opened_at: +3m
+    resolving_since: null
+    resolved_at: null
+    group: *id001
+    routed_at: +3m
+  B:
+    rule: llm.gateway-outage
+    active_since: +1m
+    opened_at: +3m
+    resolving_since: null
+    resolved_at: null
+    routed_at: +3m

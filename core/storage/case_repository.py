@@ -11,7 +11,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from sqlalchemy import Select, and_, case, exists, func, or_, select
+from sqlalchemy import (
+    Float,
+    Select,
+    and_,
+    case,
+    cast,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.orm import Session
 
 from core.storage.models import (
@@ -21,9 +33,14 @@ from core.storage.models import (
     CaseSLA,
     Finding,
     Investigation,
+    WorkflowRun,
     case_findings,
 )
-from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
+from core.storage.models.workflow import (
+    LIVE_CASE_STATES,
+    LIVE_INVESTIGATION_STATUSES,
+    RUN_LIVE_STATE,
+)
 from core.time import utcnow
 
 # status / priority / assignee accept either a single value or a list.
@@ -54,48 +71,90 @@ def _ranked(stmt: Select, name: str):
     return select(*ranked.c).where(ranked.c.rn == 1).subquery(name)
 
 
-def _latest_investigations():
+def _case_runs():
+    """Every run a case reads, as one relation: investigations plus run-only refs.
+
+    The SQL of ``case_state.case_run_refs``. A run started on the case with
+    ``trigger_context.case_id`` and no ``Investigation`` row (``/hunt``) is a
+    ref; an investigation's own run is not, since it carries that
+    investigation's id. Its state is the run's word, its cost the run's total,
+    and it has no iteration count or cap of its own.
+    """
+    run_case_id = WorkflowRun.trigger_context["case_id"].astext
+    investigations = select(
+        Investigation.case_id.label("ref_case_id"),
+        Investigation.investigation_id.label("ref_id"),
+        Investigation.workflow_id.label("workflow_id"),
+        Investigation.iteration_count.label("iteration_count"),
+        Investigation.cost_usd.label("cost_usd"),
+        Investigation.max_cost_usd.label("max_cost_usd"),
+        Investigation.status.label("state"),
+        Investigation.created_at.label("created_at"),
+        Investigation.last_activity_at.label("last_activity_at"),
+    ).where(Investigation.case_id.isnot(None))
+    runs = select(
+        run_case_id.label("ref_case_id"),
+        WorkflowRun.run_id.label("ref_id"),
+        WorkflowRun.workflow_id.label("workflow_id"),
+        literal(0).label("iteration_count"),
+        cast(WorkflowRun.total_cost_usd, Float).label("cost_usd"),
+        literal(0.0).label("max_cost_usd"),
+        case(
+            *((WorkflowRun.status == k, v) for k, v in RUN_LIVE_STATE.items()),
+            else_=WorkflowRun.status,
+        ).label("state"),
+        WorkflowRun.started_at.label("created_at"),
+        func.coalesce(WorkflowRun.finished_at, WorkflowRun.started_at).label(
+            "last_activity_at"
+        ),
+    ).where(
+        run_case_id.isnot(None),
+        WorkflowRun.deleted_at.is_(None),
+        ~exists().where(
+            Investigation.investigation_id
+            == WorkflowRun.trigger_context["investigation_id"].astext
+        ),
+    )
+    return union_all(investigations, runs).subquery("case_runs")
+
+
+def _newest_ref(refs, *, live_only: bool = False, **columns):
+    """One row per case: its newest ref, or newest live ref, with ``columns``."""
+    where = [refs.c.ref_case_id.isnot(None)]
+    if live_only:
+        where.append(refs.c.state.in_(LIVE_CASE_STATES))
     return _ranked(
         select(
-            Investigation.case_id.label("inv_case_id"),
-            Investigation.workflow_id.label("workflow_id"),
-            Investigation.iteration_count.label("iteration_count"),
-            Investigation.cost_usd.label("cost_usd"),
-            Investigation.max_cost_usd.label("max_cost_usd"),
-            Investigation.last_activity_at.label("inv_last_activity_at"),
+            *(refs.c[source].label(label) for label, source in columns.items()),
             func.row_number()
             .over(
-                partition_by=Investigation.case_id,
-                order_by=(
-                    Investigation.created_at.desc(),
-                    Investigation.investigation_id.desc(),
-                ),
+                partition_by=refs.c.ref_case_id,
+                order_by=(refs.c.created_at.desc(), refs.c.ref_id.desc()),
             )
             .label("rn"),
-        ).where(Investigation.case_id.isnot(None)),
-        "latest_investigation",
+        ).where(*where),
+        "live_investigation" if live_only else "latest_investigation",
+    )
+
+
+def _latest_investigations():
+    return _newest_ref(
+        _case_runs(),
+        inv_case_id="ref_case_id",
+        workflow_id="workflow_id",
+        iteration_count="iteration_count",
+        cost_usd="cost_usd",
+        max_cost_usd="max_cost_usd",
+        inv_last_activity_at="last_activity_at",
     )
 
 
 def _live_investigations():
-    return _ranked(
-        select(
-            Investigation.case_id.label("live_case_id"),
-            Investigation.status.label("live_status"),
-            func.row_number()
-            .over(
-                partition_by=Investigation.case_id,
-                order_by=(
-                    Investigation.created_at.desc(),
-                    Investigation.investigation_id.desc(),
-                ),
-            )
-            .label("rn"),
-        ).where(
-            Investigation.case_id.isnot(None),
-            Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
-        ),
-        "live_investigation",
+    return _newest_ref(
+        _case_runs(),
+        live_only=True,
+        live_case_id="ref_case_id",
+        live_status="state",
     )
 
 
@@ -247,6 +306,7 @@ class CaseQueueStrip:
     sla_at_risk: int
     closed_today: int
     agent_closure_share: float
+    needs_you: int = 0
 
 
 class CaseRepository:
@@ -444,14 +504,20 @@ class CaseRepository:
         live=None,
         latest=None,
         sla=None,
+        workflow_ids: Optional[set[str]] = None,
+        only_ids: Optional[set[str]] = None,
     ) -> Select:
-        """Queue filters. Joins are added only when the caller has not already."""
+        """Queue filters. Joins are added only when the caller has not already.
+
+        ``workflow_ids`` and ``only_ids`` restrict to those workflows / case ids.
+        ``None`` leaves the filter off, and an empty set matches no rows.
+        """
+        if (workflow or workflow_ids is not None) and latest is None:
+            latest = _latest_investigations()
+            stmt = stmt.outerjoin(latest, latest.c.inv_case_id == Case.case_id)
         if state and live is None:
             live = _live_investigations()
             stmt = stmt.outerjoin(live, live.c.live_case_id == Case.case_id)
-        if workflow and latest is None:
-            latest = _latest_investigations()
-            stmt = stmt.outerjoin(latest, latest.c.inv_case_id == Case.case_id)
         if sla_at_risk and sla is None:
             sla = _latest_slas()
             stmt = stmt.outerjoin(sla, sla.c.sla_case_id == Case.case_id)
@@ -459,6 +525,10 @@ class CaseRepository:
         clauses = []
         if workflow:
             clauses.append(latest.c.workflow_id == workflow)
+        if workflow_ids is not None:
+            clauses.append(latest.c.workflow_id.in_(sorted(workflow_ids)))
+        if only_ids is not None:
+            clauses.append(Case.case_id.in_(sorted(only_ids)))
         if data_source:
             clauses.append(_finding_source_exists(data_source))
         if sla_at_risk:
@@ -488,6 +558,8 @@ class CaseRepository:
         closed: Optional[bool] = None,
         now: Optional[datetime] = None,
         needs_you_ids: Optional[set[str]] = None,
+        needs_you_only: bool = False,
+        workflow_ids: Optional[set[str]] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
         """One page of the queue.
 
@@ -497,6 +569,10 @@ class CaseRepository:
         ``last_activity_at``. An empty set keeps that SLA order and does not
         emit ``IN ()``. Closed cases are omitted unless ``closed`` is set or
         ``state`` names one.
+
+        ``needs_you_only`` keeps just the cases in ``needs_you_ids``; an empty
+        set then returns no rows. ``workflow_ids`` keeps cases whose latest
+        investigation ran one of those workflows (an empty set returns none).
         """
         now = now or utcnow()
         latest = _latest_investigations()
@@ -577,6 +653,8 @@ class CaseRepository:
             live=live,
             latest=latest,
             sla=sla,
+            workflow_ids=workflow_ids,
+            only_ids=(needs_you_ids or set()) if needs_you_only else None,
         )
         total = self.session.execute(
             select(func.count()).select_from(stmt.subquery())
@@ -632,8 +710,15 @@ class CaseRepository:
             )
         return rows, int(total)
 
-    def strip(self, *, now: Optional[datetime] = None) -> CaseQueueStrip:
+    def strip(
+        self,
+        *,
+        now: Optional[datetime] = None,
+        needs_you_ids: Optional[set[str]] = None,
+    ) -> CaseQueueStrip:
         """Open cases by combined state, SLA at risk, closures today.
+
+        ``needs_you`` counts the open (not closed) cases in ``needs_you_ids``.
 
         At risk is the same SQL predicate as the queue filter, over cases
         that are not closed. Today's closures are ``case_closure_info`` rows
@@ -660,6 +745,17 @@ class CaseRepository:
             .where(Case.status != "closed", _sla_at_risk(sla, now))
         ).scalar_one()
 
+        waiting = 0
+        if needs_you_ids:
+            waiting = self.session.execute(
+                select(func.count())
+                .select_from(Case)
+                .where(
+                    Case.status != "closed",
+                    Case.case_id.in_(sorted(needs_you_ids)),
+                )
+            ).scalar_one()
+
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         today = (
@@ -682,4 +778,5 @@ class CaseRepository:
             sla_at_risk=int(at_risk),
             closed_today=closed_today,
             agent_closure_share=share,
+            needs_you=int(waiting),
         )

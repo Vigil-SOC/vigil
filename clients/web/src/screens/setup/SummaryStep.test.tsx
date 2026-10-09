@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import SummaryStep from './SummaryStep'
 import { SETUP_DISMISSED_KEY } from './setupDismissed'
 import { CONSOLE_TOUR_SEEN_KEY } from '../../shell/consoleTourSeen'
-import { budgetsApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
+import { aiConfigApi, budgetsApi, configApi, llmProviderApi, workflowApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   configApi: {
@@ -15,6 +15,7 @@ vi.mock('../../services/api', () => ({
   },
   budgetsApi: { getQuota: vi.fn() },
   llmProviderApi: { list: vi.fn() },
+  aiConfigApi: { getConfig: vi.fn() },
   workflowApi: { listAll: vi.fn() },
 }))
 
@@ -52,10 +53,11 @@ describe('SummaryStep', () => {
     } as never)
     vi.mocked(llmProviderApi.list).mockResolvedValue({
       data: [
-        { name: 'Other', is_default: false, default_model: 'x' },
-        { name: 'Anthropic', is_default: true, default_model: 'claude-sonnet-5-5' },
+        { provider_id: 'o', name: 'Other', is_active: true, is_default: false, default_model: 'x' },
+        { provider_id: 'a', name: 'Anthropic', is_active: true, is_default: true, default_model: 'claude-sonnet-5-5' },
       ],
     } as never)
+    vi.mocked(aiConfigApi.getConfig).mockResolvedValue({ data: { components: [], assignments: {} } } as never)
     vi.mocked(workflowApi.listAll).mockResolvedValue({
       data: { workflows: [{ enabled: true }, { enabled: true }, { enabled: false }] },
     } as never)
@@ -103,6 +105,53 @@ describe('SummaryStep', () => {
     expect(await screen.findByText('2 of 3 on · starts only when asked')).toBeInTheDocument()
     expect(screen.getByText('Custom')).toBeInTheDocument()
     expect(await screen.findByText('Not set')).toBeInTheDocument()
+  })
+
+  describe('AI row', () => {
+    const row = (provider_id: string, name: string, over: object = {}) => ({
+      provider_id, name, is_active: true, is_default: true, default_model: `${name}-model`, ...over,
+    })
+
+    it('picks the earliest active default when several types are default', async () => {
+      vi.mocked(llmProviderApi.list).mockResolvedValue({
+        data: [row('a', 'Anthropic'), row('o', 'OpenAI')],
+      } as never)
+      renderDone()
+      expect(await screen.findByText('Anthropic · Anthropic-model')).toBeInTheDocument()
+    })
+
+    it('skips an inactive default row', async () => {
+      vi.mocked(llmProviderApi.list).mockResolvedValue({
+        data: [row('a', 'Anthropic', { is_active: false }), row('o', 'OpenAI')],
+      } as never)
+      renderDone()
+      expect(await screen.findByText('OpenAI · OpenAI-model')).toBeInTheDocument()
+    })
+
+    it('falls back to the first active row when none is default', async () => {
+      vi.mocked(llmProviderApi.list).mockResolvedValue({
+        data: [row('a', 'Anthropic', { is_active: false }), row('o', 'OpenAI', { is_default: false })],
+      } as never)
+      renderDone()
+      expect(await screen.findByText('OpenAI · OpenAI-model')).toBeInTheDocument()
+    })
+
+    it('follows a chat_default assignment over the default rows', async () => {
+      vi.mocked(llmProviderApi.list).mockResolvedValue({
+        data: [row('a', 'Anthropic'), row('o', 'OpenAI', { is_default: false })],
+      } as never)
+      vi.mocked(aiConfigApi.getConfig).mockResolvedValue({
+        data: { components: [], assignments: { chat_default: { provider_id: 'o', model_id: 'gpt-x' } } },
+      } as never)
+      renderDone()
+      expect(await screen.findByText('OpenAI · gpt-x')).toBeInTheDocument()
+    })
+
+    it('falls back to the default rows when the config read fails', async () => {
+      vi.mocked(aiConfigApi.getConfig).mockRejectedValue(new Error('down'))
+      renderDone()
+      expect(await screen.findByText('Anthropic · claude-sonnet-5-5')).toBeInTheDocument()
+    })
   })
 
   it('shows a short error in the failing row and keeps the others', async () => {

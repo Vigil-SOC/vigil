@@ -1,0 +1,41 @@
+{
+  "v": 1,
+  "id": "http.triage:01JA8Z3K4M:16",
+  "kind": "sensor_health",
+  "signal": "sensor_health",
+  "sensor": {
+    "id": "http.triage",
+    "run": "01JA8Z3K4M",
+    "seq": 16
+  },
+  "target": {
+    "service": "medic",
+    "instance": "deeptempo-medic",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:01:30Z",
+  "observed_at": "2026-10-07T10:01:30Z",
+  "source_ts": null,
+  "outcome": "ok",
+  "health": {
+    "sensor": "http.triage",
+    "state": "blind",
+    "reported_by": "sensor",
+    "covers": [
+      "triage"
+    ],
+    "interval_s": 30,
+    "last_ok_at": "2026-10-07T09:58:30Z",
+    "consecutive_failures": 6,
+    "counters": {
+      "reads": 240,
+      "failures": 6,
+      "dropped": 0,
+      "redactor_failures": 0
+    },
+    "last_error": {
+      "class": "auth",
+      "http_status": 401
+    }
+  }
+}

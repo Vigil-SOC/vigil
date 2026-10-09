@@ -68,6 +68,14 @@ export interface DispatchPayload {
   result?: unknown;
 }
 
+// A capability, or a phase's tool, this deployment cannot answer: journalled once
+// when the run opens so a blind spot is a ledger fact rather than a log line.
+export interface UnboundPayload {
+  capability: string;
+  reason: string;
+  phase_id?: string;
+}
+
 // checkpoint_class and directive kind are workflow vocabulary, so they stay
 // strings here; the closed set for each lives in the workflow that declares it.
 export interface CheckpointPayload {

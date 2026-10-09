@@ -31,6 +31,16 @@ export interface TerminalResult {
   handoffs?: TerminalHandoff[];
 }
 
+// Where a run stands while it is still open. paused is a run waiting on someone
+// with no phase to say so (a hunt out of turns or budget); running is it going
+// again. reason is why it waits ("" clears it) and cost_usd what it has spent so
+// far, so a live run's cost reads right. Absent fields leave the row as it is.
+export interface StatusUpdate {
+  status: "running" | "paused";
+  reason?: string;
+  cost_usd?: number;
+}
+
 // decisions is the only inbound direction: a human answers over there, and this
 // side journals what comes back, so the ledger keeps its single writer.
 export interface Mirror {
@@ -39,6 +49,9 @@ export interface Mirror {
   readonly answerable: boolean;
   phase(runId: string, update: PhaseUpdate): Promise<void>;
   terminal(runId: string, result: TerminalResult): Promise<void>;
+  // Not a terminal: the run stays open, so this never finalizes it. Answers whether
+  // it landed, so a caller that skips repeats can tell a write it must try again.
+  status(runId: string, update: StatusUpdate): Promise<boolean>;
   // A case handed to IR mid-run, filed the moment it is journaled rather than
   // held back until the run ends. A hunt escalates and keeps hunting, so its
   // terminal can be an hour of parking away -- or never arrive, if the run parks
@@ -50,6 +63,10 @@ export interface Mirror {
   // terminal, so a push nobody retries is a case IR never receives. false means
   // "not filed, ask again"; the caller decides when to stop.
   handoff(runId: string, handoff: TerminalHandoff): Promise<boolean>;
+  // Alerts a hunt's evidence cites, for the backend to link to the hunt's case. Like
+  // handoff it answers whether it landed, and the backend is idempotent per finding,
+  // so a caller that is unsure may ask again.
+  findings(runId: string, findingIds: readonly string[]): Promise<boolean>;
   decisions(runId: string): Promise<ResolutionPayload[]>;
 }
 
@@ -59,10 +76,12 @@ export const nullMirror: Mirror = {
   answerable: false,
   phase: async () => {},
   terminal: async () => {},
+  status: async () => true,
   // true, not false: there is nowhere to file to, so the escalation is as filed as
   // it will ever be. Reporting failure here would have a caller that retries on it
   // re-asking a no-op on every iteration for the life of the run.
   handoff: async () => true,
+  findings: async () => true,
   decisions: async () => [],
 };
 
@@ -97,7 +116,9 @@ export function httpMirror(options: MirrorOptions): Mirror {
     // to take, and the ledger is the record either way.
     phase: async (runId, update) => void (await post(`/${encodeURIComponent(runId)}/phases`, update)),
     terminal: async (runId, result) => void (await post(`/${encodeURIComponent(runId)}/terminal`, result)),
+    status: (runId, update) => post(`/${encodeURIComponent(runId)}/status`, update),
     handoff: (runId, handoff) => post(`/${encodeURIComponent(runId)}/handoff`, handoff),
+    findings: (runId, findingIds) => post(`/${encodeURIComponent(runId)}/findings`, { finding_ids: findingIds }),
     decisions: httpAnswers(options),
   };
 }

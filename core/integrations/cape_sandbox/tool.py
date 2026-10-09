@@ -20,9 +20,9 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 import asyncio
+import base64
 import json
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -113,15 +113,11 @@ async def handle_list_tools() -> List[types.Tool]:
             name="cape_submit_file",
             description=(
                 "Submit a file to CAPE Sandbox for detonation. "
-                "Accepts a local file_path or base64 file_b64 + filename."
+                "Accepts base64 file_b64 + filename."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Absolute path to a local file",
-                    },
                     "file_b64": {
                         "type": "string",
                         "description": "Base64-encoded file contents",
@@ -231,7 +227,6 @@ async def handle_call_tool(name: str, arguments: Optional[dict]):
 
     try:
         if name == "cape_submit_file":
-            file_path = args.get("file_path")
             file_b64 = args.get("file_b64")
             filename = args.get("filename")
             data = {}
@@ -240,36 +235,19 @@ async def handle_call_tool(name: str, arguments: Optional[dict]):
             if args.get("timeout"):
                 data["timeout"] = str(args["timeout"])
 
-            if file_path:
-                with open(file_path, "rb") as fh:
-                    files = {"file": (os.path.basename(file_path), fh)}
-                    resp = httpx.post(
-                        f"{base}/apiv2/tasks/create/file/",
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=DEFAULT_TIMEOUT,
-                    )
-            elif file_b64:
-                if not filename:
-                    return result(
-                        {"error": "filename required when submitting via file_b64"}
-                    )
-                import base64
-
-                files = {"file": (filename, base64.b64decode(file_b64))}
-                resp = httpx.post(
-                    f"{base}/apiv2/tasks/create/file/",
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=DEFAULT_TIMEOUT,
-                )
-            else:
+            if not file_b64:
+                return result({"error": "Provide file_b64 and filename"})
+            if not filename:
                 return result(
-                    {"error": "Provide either file_path or (file_b64 + filename)"}
+                    {"error": "filename required when submitting via file_b64"}
                 )
-
+            resp = httpx.post(
+                f"{base}/apiv2/tasks/create/file/",
+                headers=headers,
+                files={"file": (filename, base64.b64decode(file_b64))},
+                data=data,
+                timeout=DEFAULT_TIMEOUT,
+            )
             resp.raise_for_status()
             return result(resp.json())
 

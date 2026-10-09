@@ -1,7 +1,7 @@
 /* ============================================================
    Setup · Choose where AI runs (Bifrost)
 
-   The onboarding twin of Settings → AI Config → Providers & Keys. A provider
+   The onboarding twin of Settings → AI models → Keys. A provider
    routes only once it holds a key whose credential Bifrost has verified, so the
    flow is: pick a card → add a key (inline, or the Settings KeyDialog for a
    cloud account or another provider) → Test → read the verdict banner.
