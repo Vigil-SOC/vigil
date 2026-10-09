@@ -194,6 +194,16 @@ class Settings(BaseSettings):
     # nobody asked for should not be listening. This is the floor an operator
     # sets before boot; the Settings toggle overrides it at runtime.
     vigil_mcp_enabled: bool = False
+    # Medic's master switch (C8), read by Medic and by the backend so Off never
+    # shows as Down. A string, parsed by core/platform/medic_status.py exactly as
+    # Medic parses it: a bool here would accept spellings Medic reads as off and
+    # fail startup on a typo.
+    vigil_medic_enabled: str = "false"
+    # Where the backend polls Medic's status op (C5 §5.3): the gateway's inbound
+    # listener on Compose and Helm, empty until Medic is enabled. The key file
+    # holds the per-install X-Medic-Key (X2); a file, never env.
+    vigil_medic_api_url: str = ""
+    vigil_medic_api_key_file: str = ""
     vigil_csrf_enabled: bool = True
     vigil_csrf_report_only: bool = True
     vigil_csrf_exempt_paths: Optional[str] = None
