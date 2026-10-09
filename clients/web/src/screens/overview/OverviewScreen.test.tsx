@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import OverviewScreen from './OverviewScreen'
@@ -101,6 +101,7 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
         payload_included: false,
       },
     }],
+    feed_limit: 50,
     ...overrides,
   }
 }
@@ -109,23 +110,28 @@ function Where() {
   return <output data-testid="where">{useLocation().search}</output>
 }
 
-function renderScreen(url = '/overview') {
+function renderScreen(url = '/overview', chatOpen = false) {
   const goSettings = vi.fn()
   const go = vi.fn()
   const setWallMode = vi.fn()
   const openCase = vi.fn()
+  const setViewFull = vi.fn()
   const { unmount } = render(
     <MemoryRouter initialEntries={[url]}>
-      <OverviewScreen openChat={vi.fn()} go={go} goSettings={goSettings} openCase={openCase} setViewFull={vi.fn()} setWallMode={setWallMode} />
+      <OverviewScreen openChat={vi.fn()} go={go} goSettings={goSettings} openCase={openCase} setViewFull={setViewFull} setWallMode={setWallMode} chatOpen={chatOpen} />
       <Where />
     </MemoryRouter>,
   )
-  return { setWallMode, openCase, go, unmount }
+  return { setWallMode, openCase, go, setViewFull, unmount }
 }
 
 const where = () => screen.getByTestId('where').textContent
 
+const item = (id: string, over: Partial<OverviewFeedItem> = {}): OverviewFeedItem => ({ ...payload().feed[0], finding_id: id, ...over })
+
 describe('OverviewScreen', () => {
+  afterEach(() => vi.useRealTimers())
+
   it('empty: four connect slots, five outcome slots, no counts, and every card kept', async () => {
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ empty: true, arrivals: [], feed: [], agents: [agent({ running: 0, current_step: null })] }) } as never)
     renderScreen()
@@ -143,7 +149,12 @@ describe('OverviewScreen', () => {
     expect(screen.getByRole('heading', { name: 'Agents running now' })).toBeInTheDocument()
     expect(screen.getByText('No agents running yet')).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: 'Connect data' })).toHaveLength(2)
-    expect(screen.getByText(/No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline/)).toBeInTheDocument()
+    const rail = screen.getByRole('complementary', { name: 'Incoming alerts' })
+    expect(within(rail).getByText('No alerts yet')).toBeInTheDocument()
+    expect(within(rail).getByText('Alerts show here as they arrive, newest first')).toBeInTheDocument()
+    expect(within(rail).queryByText('Live')).not.toBeInTheDocument()
+    expect(within(rail).queryByRole('tablist')).not.toBeInTheDocument()
+    expect(within(rail).getByRole('link', { name: 'Connect data' })).toHaveAttribute('href', '/settings?section=data')
     for (const link of screen.getAllByRole('link', { name: 'Connect data' })) expect(link).toHaveAttribute('href', '/settings?section=data')
     expect(screen.getByText(/Nothing is connected yet, so each part below shows where to connect/)).toBeInTheDocument()
   })
@@ -224,7 +235,7 @@ describe('OverviewScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(setWallMode).toHaveBeenCalledWith(true)
     fireEvent.click(await screen.findByText('f-1'))
-    expect(await screen.findByRole('link', { name: 'Open in source' })).toHaveAttribute('href', 'https://example.test/alert/1')
+    expect(await screen.findByRole('link', { name: 'Open in Splunk ↗' })).toHaveAttribute('href', 'https://example.test/alert/1')
     expect(screen.queryByRole('link', { name: 'https://example.test/alert/1' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Create ticket' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'ServiceNow' })).toBeDisabled()
@@ -262,7 +273,7 @@ describe('OverviewScreen', () => {
     vi.mocked(api.post).mockRejectedValue({ response: { data: { detail: 'JIRA not configured' } } })
     renderScreen()
     fireEvent.click(await screen.findByText('f-1'))
-    expect(screen.queryByRole('link', { name: 'Open in source' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Open in/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'https://example.test/raw' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'The mark is stored and does not change scoring.' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Mark as noise' }))
@@ -337,7 +348,7 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.alert).mockClear()
     renderScreen('/overview?alert=f-1&keep=1')
     expect(await screen.findByRole('button', { name: 'Mark as noise' })).toBeInTheDocument()
-    expect(screen.getByText('Odd login', { selector: 'p' })).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('Odd login')).toBeInTheDocument()
     expect(overviewApi.alert).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() => expect(where()).toBe('?keep=1'))
@@ -351,7 +362,7 @@ describe('OverviewScreen', () => {
     vi.mocked(overviewApi.alert).mockResolvedValue({ data: old } as never)
     renderScreen('/overview?alert=f-old')
     expect(screen.getByText('Loading alert…')).toBeInTheDocument()
-    expect(await screen.findByText('Old one', { selector: 'p' })).toBeInTheDocument()
+    expect(await within(await screen.findByRole('dialog')).findByText('Old one')).toBeInTheDocument()
     expect(overviewApi.alert).toHaveBeenCalledWith('f-old')
     expect(screen.getByRole('button', { name: 'Clear noise' })).toBeInTheDocument()
   })
@@ -368,7 +379,7 @@ describe('OverviewScreen', () => {
     renderScreen('/overview?alert=f-9')
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t load alert f-9.')
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(await screen.findByText('Back', { selector: 'p' })).toBeInTheDocument()
+    expect(await within(await screen.findByRole('dialog')).findByText('Back')).toBeInTheDocument()
   })
 
   it('opens the case from the popup and from the Case column, without stacking overlays', async () => {
@@ -391,5 +402,135 @@ describe('OverviewScreen', () => {
     expect(openCase).toHaveBeenLastCalledWith('case-7')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(where()).toBe('')
+  })
+
+  it('rail: rows as served with severity, time, description, badge and id; tabs filter and All restores', async () => {
+    const feed = [
+      item('f-new', { severity: 'critical', description: 'Newest thing', created_at: '2026-10-01T09:08:07', terminal_state: 'needs_you', terminal_label: 'Needs you' }),
+      item('f-mid', { severity: 'Medium', description: 'Middle thing', terminal_state: 'resolved_auto', terminal_label: 'Resolved automatically', case_id: 'case-3' }),
+      item('f-old', { severity: 'low', description: 'Oldest thing', data_source: 'crowdstrike' }),
+    ]
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
+    renderScreen()
+    const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    expect(within(rail).getByText('Live')).toBeInTheDocument()
+    expect(within(rail).getByText('2 today · newest first · status is what triage did')).toBeInTheDocument()
+    const rows = within(rail).getAllByRole('button', { name: /thing/ })
+    expect(rows.map((r) => r.querySelector('.ov-fid')?.textContent)).toEqual(['f-new', 'f-mid', 'f-old'])
+    expect(rows[0]).toHaveTextContent('Critical')
+    expect(rows[0]).toHaveTextContent('09:08:07')
+    expect(rows[0]).toHaveTextContent('Newest thing')
+    expect(rows[0]).toHaveTextContent('Splunk')
+    expect(rows[0]).toHaveTextContent('Needs you')
+    expect(rows[2]).toHaveTextContent('CrowdStrike')
+    fireEvent.click(within(rail).getByRole('tab', { name: 'Low' }))
+    expect(within(rail).getAllByRole('button', { name: /thing/ })).toHaveLength(1)
+    fireEvent.click(within(rail).getByRole('tab', { name: 'High' }))
+    expect(within(rail).getByText('No High alerts.')).toBeInTheDocument()
+    fireEvent.click(within(rail).getByRole('tab', { name: 'All' }))
+    expect(within(rail).getAllByRole('button', { name: /thing/ })).toHaveLength(3)
+  })
+
+  it('rail: a row click and Enter set ?alert=, and the Case pill opens the case without the alert', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [item('f-1', { description: 'One' }), item('f-2', { description: 'Two', case_id: 'case-7' })] }) } as never)
+    const { openCase } = renderScreen()
+    const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    fireEvent.click(within(rail).getByRole('button', { name: /One/ }))
+    expect(where()).toBe('?alert=f-1')
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(where()).toBe(''))
+    fireEvent.keyDown(within(rail).getByRole('button', { name: /Two/ }), { key: 'Enter' })
+    expect(where()).toBe('?alert=f-2')
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(where()).toBe(''))
+    fireEvent.click(within(rail).getByRole('button', { name: 'Case case-7' }))
+    expect(openCase).toHaveBeenCalledWith('case-7')
+    expect(where()).toBe('')
+  })
+
+  it('rail: the agent mark shows for working and resolved automatically only', async () => {
+    const feed = [
+      item('f-w', { terminal_state: 'working', terminal_label: 'Still working', case_id: 'case-2' }),
+      item('f-w0', { terminal_state: 'working', terminal_label: 'Still working' }),
+      item('f-r', { terminal_state: 'resolved_auto', terminal_label: 'Resolved automatically', case_id: 'case-1' }),
+      item('f-n', { terminal_state: 'needs_you', terminal_label: 'Needs you' }),
+    ]
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
+    renderScreen()
+    const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    expect(within(rail).getByTitle('An agent is already working on it in case case-2')).toBeInTheDocument()
+    expect(within(rail).getByTitle('An agent is already working on it')).toBeInTheDocument()
+    expect(within(rail).getByTitle('Resolved automatically')).toBeInTheDocument()
+    expect(rail.querySelectorAll('.ov-mark-a')).toHaveLength(3)
+  })
+
+  it('rail: Pause stops the poll and Resume loads at once and polls again', async () => {
+    vi.useFakeTimers()
+    vi.mocked(overviewApi.get).mockClear()
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(overviewApi.get).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(overviewApi.get).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Pause the live feed' }))
+    const rail = screen.getByRole('complementary', { name: 'Incoming alerts' })
+    expect(within(rail).getByText('Paused')).toBeInTheDocument()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(overviewApi.get).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Resume the live feed' }))
+    expect(overviewApi.get).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(overviewApi.get).toHaveBeenCalledTimes(4) // one interval, not two
+    expect(within(rail).getByText('Live')).toBeInTheDocument()
+  })
+
+  it('rail: connected but quiet says "No alerts."; the ⓘ carries the feed limit', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed: [], feed_limit: 25 }) } as never)
+    renderScreen()
+    const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    expect(within(rail).getByText('No alerts.')).toBeInTheDocument()
+    expect(within(rail).queryByRole('link', { name: 'Connect data' })).not.toBeInTheDocument()
+    fireEvent.click(within(rail).getByRole('button', { name: 'About incoming alerts' }))
+    expect(within(rail).getByRole('tooltip')).toHaveTextContent('Shows the latest 25')
+  })
+
+  it('rail: takes the full-height view, stays in full screen, and is hidden while the chat dock is open', async () => {
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload() } as never)
+    const first = renderScreen()
+    await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    expect(first.setViewFull).toHaveBeenCalledWith(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
+    expect(screen.getByRole('complementary', { name: 'Incoming alerts' })).toBeInTheDocument()
+    first.unmount()
+    expect(first.setViewFull).toHaveBeenLastCalledWith(false)
+    renderScreen('/overview', true)
+    await screen.findByRole('region', { name: 'How alerts flow through Vigil' })
+    expect(screen.queryByRole('complementary', { name: 'Incoming alerts' })).not.toBeInTheDocument()
+  })
+
+  it('popup: header, fact grid and "Open in <source> ↗" only with a source link', async () => {
+    const feed = [
+      item('f-1', { severity: 'high', description: 'Odd login', case_id: 'case-7', status: 'new' }),
+      item('f-2', { source_link: null, description: 'Quiet one' }),
+    ]
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
+    const { openCase } = renderScreen('/overview?alert=f-1')
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('High')
+    expect(dialog).toHaveTextContent('f-1 · 00:01:00')
+    expect(within(dialog).getByText('Odd login')).toBeInTheDocument()
+    const facts = dialog.querySelector('.ov-facts')!
+    expect(facts).toHaveTextContent('SourceSplunk')
+    expect(facts).toHaveTextContent('Statusnew')
+    expect(facts).toHaveTextContent('TriageNot in a case')
+    expect(within(dialog).getByRole('link', { name: 'Open in Splunk ↗' })).toBeInTheDocument()
+    fireEvent.click(within(facts as HTMLElement).getByRole('button', { name: 'Case case-7' }))
+    expect(openCase).toHaveBeenCalledWith('case-7')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Quiet one/ }))
+    const second = await screen.findByRole('dialog')
+    expect(second.querySelector('.ov-facts')).toHaveTextContent('CaseNot in a case yet')
+    expect(within(second).queryByRole('link', { name: /^Open in/ })).not.toBeInTheDocument()
   })
 })

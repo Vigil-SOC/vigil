@@ -1,17 +1,21 @@
-/* Overview: own heading and the flow diagram (sources, engine ring, outcome bands). Tokens only. */
+/* Overview: own heading, the flow diagram, and the Incoming alerts rail. Tokens only. */
 .ov-screen {
+  display: flex;
+  height: 100%;
+}
+
+.ov-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 20px 24px 24px 24px;
+  overflow-y: auto;
 }
 
-.ov-screen.wall {
+.ov-screen.wall .ov-main {
   padding: 18px 24px 18px 28px;
-}
-
-.ov-screen .section {
-  padding: 0;
 }
 
 .ov-head {
@@ -548,4 +552,416 @@ a.ov-src:hover {
   padding: 0 12px;
   font-size: 12px;
   font-weight: 600;
+}
+
+/* Incoming alerts rail */
+.ov-rail {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg1);
+  border-left: 1px solid var(--ln0);
+}
+
+.ov-rail-h {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid var(--ln0);
+}
+
+.ov-rail-t {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ov-rail-t h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--tx0);
+  white-space: nowrap;
+}
+
+.ov-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--good);
+}
+
+.ov-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--good);
+  animation: ov-live 1.6s ease-in-out infinite;
+}
+
+.ov-live.paused {
+  color: var(--tx2);
+}
+
+.ov-live.paused i {
+  background: var(--tx2);
+  animation: none;
+}
+
+@keyframes ov-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+.ov-rail-ctl {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ov-pause {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ln1);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx1);
+}
+
+.ov-pause:hover {
+  background: var(--bg3);
+}
+
+.ov-rail-h p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ov-tabs {
+  align-self: flex-start;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg2);
+  border: 1px solid var(--ln1);
+  border-radius: 10px;
+}
+
+.ov-tabs button {
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ov-tabs button[aria-selected='true'] {
+  background: var(--bg1);
+  color: var(--tx0);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+
+.ov-rail-b {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.ov-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ln0);
+  cursor: pointer;
+}
+
+.ov-row:hover,
+.ov-row:focus-visible {
+  background: var(--bg2);
+}
+
+.ov-row-1,
+.ov-row-3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ov-row-3 {
+  gap: 6px;
+  font-size: 11px;
+  color: var(--tx2);
+}
+
+.ov-row-3 b {
+  flex: none;
+  max-width: 40%;
+  font-weight: 650;
+  color: var(--tx1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-fid {
+  min-width: 0;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-st {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--bg3);
+  color: var(--tx1);
+}
+
+.ov-sev {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx0);
+}
+
+.ov-sev i {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+}
+
+.ov-row-r {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ov-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx3);
+}
+
+.ov-mark-a {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.ov-mark-a.good {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.ov-row-t {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--tx0);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.ov-pill {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: auto;
+  height: 20px;
+  line-height: 20px;
+  padding: 0 7px;
+  display: block;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--tx2);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.ov-pill.good { background: var(--good-bg); color: var(--good); }
+.ov-pill.poor { background: var(--poor-bg); color: var(--poor); }
+.ov-pill.ac { background: var(--ac-bg); color: var(--ac); }
+
+button.ov-pill:hover {
+  text-decoration: underline;
+}
+
+.ov-rail-none {
+  margin: 0;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ov-rail-empty {
+  padding: 16px;
+}
+
+.ov-empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 22px;
+  border: 1.5px dashed var(--ln2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg1) 70%, transparent);
+  text-align: center;
+}
+
+.ov-empty-panel .ov-tile {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.ov-empty-panel b {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.ov-empty-panel > span:not(.ov-tile) {
+  max-width: 360px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ov-empty-panel .btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ov-rail-f {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--ln0);
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ov-rail-f a {
+  flex: none;
+  font-weight: 600;
+  color: var(--ac);
+  white-space: nowrap;
+}
+
+/* alert popup: header, fact grid, footer */
+.ov-pop-t {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ov-pop-m {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.ov-pop-m > span:last-child {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--tx2);
+}
+
+.ov-pop-d {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.ov-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg2);
+}
+
+.ov-facts dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+}
+
+.ov-facts dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.ov-case-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--ac);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.ov-case-link:hover {
+  text-decoration: underline;
+}
+
+.ov-pop-f {
+  margin-top: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--ln0);
+}
+
+.ov-pop-f a {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ac);
 }

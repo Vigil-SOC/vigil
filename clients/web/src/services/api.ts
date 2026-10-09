@@ -1412,6 +1412,7 @@ export interface OverviewPayload {
   fair_at: number
   agents: OverviewAgent[]
   feed: OverviewFeedItem[]
+  feed_limit: number
 }
 
 export const overviewApi = {

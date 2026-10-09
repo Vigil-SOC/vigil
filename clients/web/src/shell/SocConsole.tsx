@@ -591,7 +591,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} fillCommand={wallMode ? undefined : fillCommand} chatOpen={chatOpen} />
                 )}
               </ErrorBoundary>
             </div>

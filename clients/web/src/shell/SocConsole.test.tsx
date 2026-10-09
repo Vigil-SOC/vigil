@@ -1231,7 +1231,10 @@ describe('SocConsole', () => {
     it('closes the dock and leaves wall mode so the stop target is mounted', async () => {
       renderConsole('/overview')
       await screen.findByRole('button', { name: 'Full screen' })
-      fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+      // Overview owns the full-height view, so it has no Ask Vigil button; Tab in the command bar opens the dock.
+      const bar = screen.getByRole('combobox', { name: 'Find a case, ask Vigil, or run a command' })
+      fireEvent.change(bar, { target: { value: 'hello' } })
+      fireEvent.keyDown(bar, { key: 'Tab' })
       expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
 
