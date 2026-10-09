@@ -709,8 +709,7 @@ a.ov-src:hover {
 }
 
 .ov-row-3 b {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
   max-width: 40%;
   font-weight: 650;
   color: var(--tx1);
@@ -795,16 +794,15 @@ a.ov-src:hover {
 }
 
 .ov-pill {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
   max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   margin-left: auto;
   height: 20px;
+  line-height: 20px;
   padding: 0 7px;
-  display: inline-flex;
-  align-items: center;
+  display: block;
   border: 0;
   border-radius: 999px;
   background: var(--bg3);
@@ -948,6 +946,8 @@ button.ov-pill:hover {
   background: transparent;
   font: inherit;
   color: var(--ac);
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .ov-case-link:hover {
