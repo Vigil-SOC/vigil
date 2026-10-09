@@ -677,7 +677,7 @@ describe('SocConsole', () => {
   it('opens the chat dock without error', () => {
     renderConsole()
     fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    expect(screen.getByText(/investigate a finding/)).toBeInTheDocument()
+    expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
   })
 
   it('keeps the dock at 400px above 600px', () => {
@@ -698,8 +698,8 @@ describe('SocConsole', () => {
   it('opens the dock on the current page without a per-chat model', () => {
     renderConsole()
     fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    expect(screen.getByText('Private to you')).toBeInTheDocument()
-    expect(screen.getByText('Using Dashboard')).toBeInTheDocument()
+    expect(screen.getByText('Using this page')).toBeInTheDocument()
+    expect(document.querySelector('.cx-pill')).toHaveTextContent('Dashboard')
     expect(screen.queryByTitle('Chat settings')).toBeNull()
     expect(screen.queryByPlaceholderText(/Override default system prompt/)).toBeNull()
   })
