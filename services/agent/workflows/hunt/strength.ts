@@ -1,6 +1,6 @@
 import type { Projection } from "./ledger.js";
 import type { Verdicts } from "./config.js";
-import type { DispatchRecord, EvidenceRecord, EvidenceStrength, LinkRelation } from "./types.js";
+import { NOT_RULED, type DispatchRecord, type EvidenceRecord, type EvidenceStrength, type LinkRelation } from "./types.js";
 import { DROPPED } from "./sanitize.js";
 
 export const NULL_CHECK_PROVENANCE = "null_check";
@@ -221,8 +221,9 @@ export function unclassified(projection: Projection): { evidence_id: string; hyp
 
 // What the hunt never ruled on at all. Distinct from unclassified(), which is
 // scoped to active hypotheses: by report time the terminal coercion resolved them.
+// A "neither" the controller filled in is not a ruling; a real one is.
 export function unruledObservations(projection: Projection): number {
-  const linked = new Set(projection.links.map((link) => link.evidence_id));
+  const linked = new Set(projection.links.filter((link) => link.note !== NOT_RULED).map((link) => link.evidence_id));
   return [...projection.evidence.values()].filter(
     (record) => record.provenance === "worker" && !linked.has(record.evidence_id),
   ).length;

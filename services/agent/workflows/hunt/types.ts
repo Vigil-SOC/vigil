@@ -320,10 +320,15 @@ export interface EvidenceRecord {
   captured_at: string;
 }
 
+// The note on a "neither" the controller filled in because the lead never ruled
+// on the pair. It is not a ruling, and unruledObservations() counts it as none.
+export const NOT_RULED = "not ruled";
+
 export interface EvidenceLink {
   evidence_id: string;
   hypothesis_id: string;
   relation: LinkRelation;
+  note?: typeof NOT_RULED;
 }
 
 // One tool invocation and what came back, capped. The execution log the audit
@@ -378,6 +383,7 @@ export interface EvidenceRelation {
   evidence_id: string;
   hypothesis_id: string;
   relation: LinkRelation;
+  note?: typeof NOT_RULED;
 }
 
 // What the hunt is currently looking at. Derived from the decisions, never stored.
