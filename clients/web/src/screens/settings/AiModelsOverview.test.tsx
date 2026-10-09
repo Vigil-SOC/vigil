@@ -272,6 +272,29 @@ describe('model for each agent', () => {
   })
 })
 
+describe('a row that uses the default', () => {
+  it('shows the default’s model as text with a chip, or Not set when there is no default', () => {
+    const { unmount } = mount()
+    expect(within(rowOf('Triage Agent')).getByText('Sonnet')).toBeTruthy()
+    expect(within(rowOf('Triage Agent')).getByText('default')).toBeTruthy()
+    unmount()
+    assignment.mockReturnValue(assignmentsReady({ assignments: {} }))
+    mount()
+    expect(within(rowOf('Triage Agent')).getByText('Not set')).toBeTruthy()
+  })
+
+  it('persists a pick made through Change', async () => {
+    mount()
+    const row = rowOf('Triage Agent')
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[0])
+    fireEvent.click(screen.getByRole('option', { name: 'anthropic-default' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[1])
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'haiku', {}))
+  })
+})
+
 describe('fallback for the built-in components', () => {
   const withFallback = (fb?: string) =>
     assignmentsReady({

@@ -15,6 +15,7 @@ import {
   huntTitle,
   isLiveCommand,
   jiraReadiness,
+  LIVE_COMMANDS,
   moveEnabled,
   PASTED_NAME,
   proposalFrom,
@@ -88,6 +89,7 @@ export default function CommandBar({
   onOpenCase,
   onGo,
   caseOpen = false,
+  fill,
 }: {
   boards: BoardLink[]
   onOpenChat: (prompt?: string) => void
@@ -95,6 +97,8 @@ export default function CommandBar({
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
   /** A case is open, so asking goes to its composer instead of the dock. */
   caseOpen?: boolean
+  /** A new `seq` puts `text` in the bar and opens it. Nothing runs; the person still presses Run. */
+  fill?: { text: string; seq: number } | null
 }) {
   const { user } = useAuth()
   const { notify } = useToast()
@@ -146,6 +150,20 @@ export default function CommandBar({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  const seenFill = useRef(fill?.seq)
+  useEffect(() => {
+    if (!fill || fill.seq === seenFill.current) return // a remount must not replay an old fill
+    seenFill.current = fill.seq
+    const lower = fill.text.toLowerCase()
+    const command = LIVE_COMMANDS.find((c) => lower.startsWith(`${c.name} `))
+    setQuery(fill.text)
+    setHits(null)
+    setActive(0)
+    setPreview(command ? { id: command.id as LiveCommandId, arg: commandRemainder(fill.text, command.name) } : null)
+    setOpen(true)
+    inputRef.current?.focus()
+  }, [fill?.seq]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return

@@ -41,14 +41,18 @@ export interface Feed<T> {
 const [PAGE_TITLE, PAGE_DESC] = TITLES.workflows
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
-  const [tab, setTab] = useState<WfTab>('workflows')
+  // ?tab= picks the opening tab, e.g. Home's "Add a custom skill" step
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [tab, setTab] = useState<WfTab>(() => {
+    const wanted = searchParams.get('tab')
+    return wanted === 'agents' || wanted === 'skills' || wanted === 'commands' ? wanted : 'workflows'
+  })
   // lifted so the header's "New workflow" opens the same builder from any tab
   const [creating, setCreating] = useState<null | 'blank' | 'ai'>(null)
   const workflows = useWorkflows()
   const agents = useAgents()
   const skills = useSkills()
   // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
-  const [searchParams, setSearchParams] = useSearchParams()
   const runId = searchParams.get('run')
   const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   // no chip while a list is loading or failed: a count of 0 would read as empty
