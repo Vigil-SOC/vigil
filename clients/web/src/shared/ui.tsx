@@ -258,6 +258,7 @@ export function Select({
   onSelect,
   placeholder = 'Select…',
   searchable = false,
+  disabled,
 }: {
   value: string
   options: DropOption[]
@@ -265,6 +266,7 @@ export function Select({
   placeholder?: string
   // adds a filter input to the open menu, for long option lists
   searchable?: boolean
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -422,6 +424,7 @@ export function Select({
         className="field-select"
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && !searchable && shown[active] ? optionId(active) : undefined}
         onClick={() => (open ? setOpen(false) : openMenu())}
