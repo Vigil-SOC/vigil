@@ -26,3 +26,6 @@ export const COMPONENT_LABELS: Record<string, { label: string; description: stri
     description: 'Reporter agent output — clarity and structure matter more than depth.',
   },
 }
+
+export const AI_CONFIG_DESC =
+  'Which models Vigil uses, for which agent, and what happens when one is unavailable. Keys are stored encrypted and never shown again.'
