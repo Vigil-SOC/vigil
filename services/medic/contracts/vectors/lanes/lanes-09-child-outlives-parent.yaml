@@ -1,0 +1,14 @@
+id: lanes-09-child-outlives-parent
+description: E3 6.3. The parent resolves at 900. Child c is still open 10 min later, so it is unsuppressed and routes at 1500 on its own lane (it wasn't only a symptom). Child d resolves at 1200, inside those 10 min, so it closes quietly and never routes.
+until: 3600
+suppression:
+  - {parent: llm.provider-keyless-default, child: pipeline.triage-stalled}
+  - {parent: llm.provider-keyless-default, child: pipeline.probe-missed}
+incidents:
+  - {id: p, rule: llm.provider-keyless-default, lane: 2, trust: trusted, signals: 2, samples: 1, opened_at: 0, resolved_at: 900}
+  - {id: c, rule: pipeline.triage-stalled, lane: 3, trust: trusted, signals: 2, samples: 2, opened_at: 60}
+  - {id: d, rule: pipeline.probe-missed, lane: 3, trust: trusted, signals: 2, samples: 1, opened_at: 90, resolved_at: 1200}
+expect:
+  p: {lane: {value: 2, reason: rule}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: notify_admin, L2: {action: notify_admin, not_eligible: not_lane1}}, escalation: null}
+  c: {lane: {value: 3, reason: rule}, routed_at: 1500, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}
+  d: {lane: {value: 3, reason: rule}, routed_at: null, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}
