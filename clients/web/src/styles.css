@@ -454,6 +454,25 @@
       padding: 8px;
    }
 
+   /* Disabled reads as placeholder text on a quiet fill (tokens: tx3, "Placeholder, disabled"), never as a live accent. */
+   .btn:disabled,
+   .btn:disabled:hover {
+      background: var(--bg-2);
+      border-color: var(--line);
+      color: var(--tx-faint);
+      cursor: not-allowed;
+   }
+
+   .btn.primary:disabled,
+   .btn.primary:disabled:hover {
+      background: var(--bg-3);
+   }
+
+   .btn.ghost:disabled,
+   .btn.ghost:disabled:hover {
+      background: transparent;
+   }
+
    .chip {
       display: inline-flex;
       align-items: center;

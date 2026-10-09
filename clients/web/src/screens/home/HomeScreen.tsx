@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -33,7 +33,15 @@ const STEP_ACTION: Record<string, string> = {
   per_agent: 'Pick',
 }
 
+const KIND_LABEL: Record<NeedsYouItem['kind'], string> = { approval: 'Approval', checkpoint: 'Checkpoint' }
+
 type Pickup = { share: number; launched: number; today: number }
+
+const SETUP_TIP = {
+  source: 'Setup steps (B8)',
+  calculation: 'Fixed order; done steps and steps hidden with Not now are left out',
+  limit: 'None',
+}
 
 const NEEDS_TIP = {
   source: 'Pending approvals and checkpoints (B1)',
@@ -95,63 +103,68 @@ function DecisionCard({
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
   const caseId = item.case_id
-  const meta = [item.kind, item.case_id, waited(item.created_at)].filter(Boolean).join(' · ')
+  const meta = [caseId && `Case ${caseId}`, item.reason].filter(Boolean).join(' · ')
 
   return (
-    <article className="card">
-      <div className="card-b">
-        <h3>{item.title}</h3>
-        <p className="home-meta">{meta}</p>
-        {item.reason && <p className="home-reason">{item.reason}</p>}
-        <div className="home-actions">
-          {item.reversibility === 'reversible' ? (
-            <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
-              Approve
-            </button>
-          ) : (
-            <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
-          )}
-          {rejecting ? (
-            <form
-              className="home-reject"
-              onSubmit={(event) => {
-                event.preventDefault()
-                const text = reason.trim()
-                if (!text) return
-                onReject(item, text)
-              }}
-            >
-              <textarea
-                className="feedback-box"
-                aria-label="Rejection reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Why is this being rejected?"
-                autoFocus
-              />
-              <button type="submit" className="btn danger" disabled={busy || !reason.trim()}>
-                Reject
-              </button>
-            </form>
-          ) : (
-            <button type="button" className="btn danger" disabled={busy} onClick={() => setRejecting(true)}>
+    <article className="home-card">
+      <div className="home-card-top">
+        <span className="home-waited">{waited(item.created_at)}</span>
+        <span className="home-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
+      </div>
+      <h3>{item.title}</h3>
+      {meta && (
+        <p className="home-card-meta" title={meta}>
+          {meta}
+        </p>
+      )}
+      <div className="home-actions">
+        {item.reversibility === 'reversible' ? (
+          <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
+            Approve
+          </button>
+        ) : (
+          <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
+        )}
+        {rejecting ? (
+          <form
+            className="home-reject"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const text = reason.trim()
+              if (!text) return
+              onReject(item, text)
+            }}
+          >
+            <textarea
+              className="feedback-box"
+              aria-label="Rejection reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why is this being rejected?"
+              autoFocus
+            />
+            <button type="submit" className="home-btn secondary" disabled={busy || !reason.trim()}>
               Reject
             </button>
-          )}
-          {caseId && (
-            <Link
-              className="btn ghost"
-              to={`/cases?case=${encodeURIComponent(caseId)}`}
-              onClick={(event) => {
-                if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
-                event.preventDefault()
-                onOpenCase(caseId)
-              }}
-            >
-              Open case
-            </Link>
-          )}
-        </div>
+          </form>
+        ) : (
+          <button type="button" className="home-btn secondary" disabled={busy} onClick={() => setRejecting(true)}>
+            Reject
+          </button>
+        )}
+        {caseId && (
+          <Link
+            className="home-btn ghost"
+            to={`/cases?case=${encodeURIComponent(caseId)}`}
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey) return // new tab or window
+              event.preventDefault()
+              onOpenCase(caseId)
+            }}
+          >
+            Open case
+          </Link>
+        )}
       </div>
     </article>
   )
@@ -289,35 +302,92 @@ export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) 
   const shown = items.filter((it) => !pending.includes(it.source_id))
   const shownCount = count === null ? null : Math.max(0, count - (items.length - shown.length))
   const visible = showAll ? shown : shown.slice(0, VISIBLE)
-  const moreWaiting = shown.length - visible.length
+  const rest = shown.slice(visible.length)
+  const moreWaiting = rest.length
   const openSteps = (setup?.steps ?? []).filter((step) => !step.done && !hidden.includes(step.id))
   const noAlerts = setup !== null && setup.alerts_exist === 0
   const doneCount = (setup?.steps ?? []).filter((step) => step.done).length
   const stepCount = setup?.steps.length ?? 0
-  const boardClear = shownCount !== null && !error && shown.length === 0
+  const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
+
+  const sectionHead = (title: string, sub: string | null, tip: ReactNode, link: ReactNode) => (
+    <div className="home-head">
+      <div className="home-head-title">
+        <h2>{title}</h2>
+        {sub && <span className="home-sub">{sub}</span>}
+        {tip}
+      </div>
+      {link}
+    </div>
+  )
 
   return (
     <div className="home-screen">
-      {shownCount !== null && <p className="home-headline">{headline(shownCount)}</p>}
-      {share !== null && (
-        <p className="home-share">
-          {(share.share * 100).toFixed(1)}% of alerts picked up automatically today
-          <InfoTip
-            label="How the pickup share is calculated"
-            align="start"
-            source="Intake triggers"
-            calculation={`Launched or merged ÷ arrived today (UTC), ${share.launched} of ${share.today}`}
-            limit="None"
-          />
-        </p>
-      )}
-      {error && (
-        <p className="section" role="alert">
-          {error}
-        </p>
-      )}
-      {noAlerts ? (
-        <section className="home-first section" aria-label="Setup">
+      <div className="home-page">
+        {(shownCount !== null || share !== null) && (
+          <div className="home-top">
+            {shownCount !== null && <p className="home-headline">{headline(shownCount)}</p>}
+            {share !== null && (
+              <p className="home-share">
+                {Math.round(share.share * 100)}% of alerts picked up automatically today
+                <InfoTip
+                  label="How the pickup share is calculated"
+                  align="start"
+                  source="Intake triggers"
+                  calculation={`Launched or merged ÷ arrived today (UTC), ${share.launched} of ${share.today}`}
+                  limit="None"
+                />
+              </p>
+            )}
+          </div>
+        )}
+        {error && <p role="alert">{error}</p>}
+        {!noAlerts && (
+          <section aria-label="Setup">
+            {sectionHead(
+              'Get more from Vigil',
+              'Fixed order · most impact first',
+              <InfoTip label="How Get more from Vigil is calculated" align="start" {...SETUP_TIP} />,
+              <Link to="/settings?section=integrations">Browse integrations →</Link>,
+            )}
+            {setupError && <p role="alert">{setupError}</p>}
+            {openSteps.length > 0 ? (
+              <ul className="home-steps" style={{ gridTemplateColumns: `repeat(${openSteps.length}, minmax(0, 1fr))` }}>
+                {openSteps.map((step, index) => (
+                  <li key={step.id} className="home-step">
+                    <span className={`home-step-no${index === 0 ? ' first' : ''}`} aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <h3>{step.title}</h3>
+                    <p title={step.state_line}>{step.state_line}</p>
+                    <div className="home-step-foot">
+                      <button type="button" className="home-step-skip" onClick={() => dismiss(step.id)}>
+                        Not now
+                      </button>
+                      <Link className="home-step-act" to={step.href}>
+                        {STEP_ACTION[step.id] ?? 'Open'}
+                        <Icon name="arrowR" size={13} />
+                      </Link>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              setup !== null && <p className="home-steps-none">Nothing to suggest right now.</p>
+            )}
+          </section>
+        )}
+        <section aria-label="Needs your attention">
+          {sectionHead(
+            'Needs your attention',
+            noAlerts || shownCount === null
+              ? null
+              : `${shownCount} open · oldest first${moreWaiting > 0 ? ` · showing ${VISIBLE}` : ''}`,
+            <InfoTip label="How Needs your attention is calculated" align="start" {...NEEDS_TIP} />,
+            <Link to="/cases">Cases →</Link>,
+          )}
+          {noAlerts && setup && (
+            <>
           {setupError && <p role="alert">{setupError}</p>}
           <div className="home-first-grid">
             <div className="home-ready">
@@ -394,68 +464,51 @@ export default function HomeScreen({ openCase, startTour }: ConsoleScreenProps) 
               </div>
             </div>
           </div>
-        </section>
-      ) : (
-        <section className="home-setup section" aria-label="Setup">
-          <div className="home-head">
-            <h2>Get more from Vigil</h2>
-            <Link to="/settings?section=integrations">Browse integrations →</Link>
-          </div>
-          {setupError && <p role="alert">{setupError}</p>}
-          {openSteps.length > 0 && (
-            <ul className="home-steps">
-              {openSteps.map((step) => (
-                <li key={step.id} className="home-step">
-                  <div>
-                    <h3>{step.title}</h3>
-                    <p>{step.state_line}</p>
-                  </div>
-                  <div className="home-step-actions">
-                    <Link className="btn primary" to={step.href}>
-                      {STEP_ACTION[step.id] ?? 'Open'}
-                    </Link>
-                    <button type="button" className="btn ghost" onClick={() => dismiss(step.id)}>
-                      Not now
-                    </button>
-                  </div>
-                </li>
+            </>
+          )}
+          {boardClear && (
+            <div className="home-clear">
+              <h3>Board clear</h3>
+              <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>
+            </div>
+          )}
+          {visible.length > 0 && (
+            <div className="home-cards">
+              {visible.map((item) => (
+                <DecisionCard
+                  key={item.source_id}
+                  item={item}
+                  busy={busy !== null}
+                  onApprove={approve}
+                  onReject={reject}
+                  onOpenCase={openCase}
+                />
               ))}
-            </ul>
+              {moreWaiting > 0 && (
+                <aside className="home-more" aria-label="More waiting">
+                  <h3>+{moreWaiting} more waiting</h3>
+                  <ul>
+                    {(Object.keys(KIND_LABEL) as NeedsYouItem['kind'][]).map((kind) => {
+                      const n = rest.filter((it) => it.kind === kind).length
+                      return (
+                        n > 0 && (
+                          <li key={kind}>
+                            <span>{KIND_LABEL[kind]}</span>
+                            <b>{n}</b>
+                          </li>
+                        )
+                      )
+                    })}
+                  </ul>
+                  <button type="button" className="home-btn primary" onClick={() => setShowAll(true)}>
+                    Show all
+                  </button>
+                </aside>
+              )}
+            </div>
           )}
         </section>
-      )}
-      <section className="section" aria-label="Needs your attention">
-        <div className="home-head">
-          <h2>
-            Needs your attention
-            <InfoTip label="How Needs your attention is calculated" align="start" {...NEEDS_TIP} />
-          </h2>
-          <Link to="/cases">Cases →</Link>
-        </div>
-        {boardClear && (
-          <div className="home-clear">
-            <h3>Board clear</h3>
-            <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>
-          </div>
-        )}
-        <div className="home-cards">
-          {visible.map((item) => (
-            <DecisionCard
-              key={item.source_id}
-              item={item}
-              busy={busy !== null}
-              onApprove={approve}
-              onReject={reject}
-              onOpenCase={openCase}
-            />
-          ))}
-        </div>
-        {moreWaiting > 0 && (
-          <button type="button" className="btn ghost" style={{ marginTop: 12 }} onClick={() => setShowAll(true)}>
-            {moreWaiting} more waiting
-          </button>
-        )}
-      </section>
+      </div>
     </div>
   )
 }

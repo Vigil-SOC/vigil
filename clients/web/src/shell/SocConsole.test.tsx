@@ -5,6 +5,7 @@ import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 import LandingRedirect from '../routing/LandingRedirect'
 import { CONSOLE_TOUR_SEEN_KEY } from './consoleTourSeen'
+import { NAV } from '../data/data'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
 import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi, timelineApi } from '../services/api'
 
@@ -638,6 +639,12 @@ describe('SocConsole', () => {
       await sentOnCase()
     })
 
+    it('keeps the floating Ask Vigil button off a case page opened by its URL', async () => {
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
+    })
+
     it('opens the dock with the text when no case is open', async () => {
       renderConsole('/cases')
       await screen.findByText('Defense Evasion: Obfuscated Loader')
@@ -1054,7 +1061,7 @@ describe('SocConsole', () => {
     it('points at the primary nav until Skip, then stays hidden on reload', () => {
       const first = renderConsole()
       const ring = document.querySelector('.console-tour-ring')
-      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toHaveTextContent('Watch intake (Overview, Triage)')
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toHaveTextContent('Watch intake (Overview, Triage queue)')
       expect(ring).toHaveAttribute('data-stop', 'nav')
       expect(document.querySelector('.console-tour-step')?.textContent).toBe('Step 1 of 3')
       expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
@@ -1068,6 +1075,23 @@ describe('SocConsole', () => {
       first.unmount()
       renderConsole()
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('names the tabs by their NAV labels', () => {
+      renderConsole()
+      const body = screen.getByRole('dialog', { name: NAV_TITLE }).textContent ?? ''
+      for (const key of ['overview', 'triage', 'cases', 'workflows', 'settings']) {
+        expect(body).toContain(NAV.find(n => n[2] === key)![1])
+      }
+    })
+
+    it('falls back to the default spot with no ring when the stop target is missing', () => {
+      rectSpy.mockRestore()
+      rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(domRect(0, 0, 0, 0))
+      renderConsole()
+      expect(screen.getByRole('dialog', { name: NAV_TITLE })).toBeInTheDocument()
+      expect(document.querySelector('.console-tour-ring')).not.toBeInTheDocument()
+      expect(document.querySelector('.console-tour-card')).toHaveStyle({ top: '72px' })
     })
 
     it('walks Home then Ask Vigil, and Done writes the seen flag', async () => {

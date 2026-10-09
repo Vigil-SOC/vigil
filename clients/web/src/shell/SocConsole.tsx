@@ -245,8 +245,12 @@ function SocConsoleInner() {
     prepareStop(tourIndex)
   }, [tourOn, tourIndex, prepareStop, wallMode, chatOpen, viewFull])
 
-  // screens that deep-link a detail re-assert viewFull from their own URL state
+  // screens that deep-link a detail re-assert viewFull from their own URL state; a child's effect
+  // runs before this one on first mount, so only a change of screen may clear what it set
+  const shownScreen = useRef(current)
   useEffect(() => {
+    if (shownScreen.current === current) return
+    shownScreen.current = current
     setViewFull(false)
     setWallMode(false)
   }, [current])
