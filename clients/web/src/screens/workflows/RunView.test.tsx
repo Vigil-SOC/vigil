@@ -1,7 +1,7 @@
 /* `/workflows?run=<id>` is how a case's activity reaches the run it was written
    by (#951). The screen must open that run, as the Watch a run page, in place of
    the catalog, and clearing the param must give the catalog back without a reload.
-   The catalog's "Watch it run" is the other way in. */
+   The reader header's "Watch it run" is the other way in. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -39,6 +39,12 @@ const renderAt = (path: string) =>
       </Routes>
     </MemoryRouter>,
   )
+
+// the reader header, where the catalog's actions live, shows once the definition has loaded
+const loadReader = () => {
+  vi.mocked(workflowApi.get).mockResolvedValueOnce({ data: { run_kind: 'compose', phases: [] } } as never)
+  vi.mocked(workflowApi.preflight).mockResolvedValueOnce({ data: {} } as never)
+}
 
 beforeEach(() => {
   vi.mocked(workflowApi.getRun).mockReset()
@@ -97,13 +103,13 @@ describe('/workflows?run=<id>', () => {
     expect(workflowApi.getRun).not.toHaveBeenCalled()
   })
 
-  it('opens the latest run from the catalog row, looked up on the click', async () => {
+  it('opens the latest run from the reader header, looked up on the click', async () => {
+    loadReader()
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [{ run_id: 'run-9' }] } } as never)
     renderAt('/workflows')
 
-    await screen.findByText('Beacon hunt')
     expect(workflowApi.listRuns).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /Watch it run/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Watch it run/ }))
 
     expect(await screen.findByRole('heading', { name: /Watch it run/ })).toBeInTheDocument()
     expect(workflowApi.listRuns).toHaveBeenCalledWith('wf-1', { limit: 1 })
@@ -111,12 +117,12 @@ describe('/workflows?run=<id>', () => {
     expect(screen.getByTestId('search').textContent).toBe('?run=run-9')
   })
 
-  it('disables the catalog row, saying so, when the workflow has never run', async () => {
+  it('disables the header button, saying so, when the workflow has never run', async () => {
+    loadReader()
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [] } } as never)
     renderAt('/workflows')
 
-    await screen.findByText('Beacon hunt')
-    fireEvent.click(screen.getByRole('button', { name: /Watch it run/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Watch it run/ }))
 
     const none = await screen.findByRole('button', { name: /No runs yet/ })
     expect(none).toBeDisabled()
@@ -124,11 +130,11 @@ describe('/workflows?run=<id>', () => {
   })
 
   it('opens a History row’s run, and closes History as it goes', async () => {
+    loadReader()
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [{ run_id: 'run-1', status: 'completed', triggered_by: 'mk' }] } } as never)
     renderAt('/workflows')
 
-    await screen.findByText('Beacon hunt')
-    fireEvent.click(screen.getByRole('button', { name: /History/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }))
     const link = await screen.findByRole('link', { name: /Watch it run/ })
     // the row's own click expands it; the link must not
     expect(workflowApi.getRun).not.toHaveBeenCalledWith('run-1')

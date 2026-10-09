@@ -2427,8 +2427,8 @@
       flex: 0 0 auto;
    }
 
-   /* Workflow cards: the Agents board's 320px left column. Heights are equal across
-      built-in workflows (clamped name and stats reserve two lines each); a custom one adds a row of actions. */
+   /* Workflow cards: the Agents board's 320px left column. A card is its name, badge,
+      chips and stats line, so heights follow the chips; the actions live in the reader header. */
    .wfk-col {
       width: 320px;
       display: flex;
@@ -2453,6 +2453,8 @@
    .wfk-layout { display: flex; align-items: stretch; min-height: 0; }
    .wfk-layout > .wfk-col { width: 364px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--ln0); }
    .wfk-reader { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+   /* the board's reader starts 16px from the column; standalone panes (draft) keep 22px */
+   .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; }
    .wfk.off .wfk-name { color: var(--tx2); }
 
    .wfk-main {
@@ -2475,7 +2477,6 @@
       font-size: 13px;
       font-weight: 700;
       line-height: 1.35;
-      min-height: 2lh; /* cards stay one height whether the name is 1 or 2 lines */
       color: var(--tx0);
       display: -webkit-box;
       -webkit-line-clamp: 2;
@@ -2510,23 +2511,12 @@
    .wfk-line {
       font-size: 12px;
       line-height: 1.45;
-      min-height: 2lh;
       color: var(--tx2);
       font-variant-numeric: tabular-nums;
    }
 
    .wfk-line > span { white-space: nowrap; }
 
-   .wfk-acts {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap; /* a custom workflow's edit and delete push the row past 290px */
-      gap: 6px;
-      padding-top: 8px;
-      border-top: 1px solid var(--ln0);
-   }
-
-   .wfk-acts .btn.primary { margin-left: auto; }
    .btn.wfk-btn { padding: 4px 9px; font-size: 12px; }
    .btn.icon.wfk-btn { padding: 4px 6px; }
 
