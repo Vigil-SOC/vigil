@@ -1010,7 +1010,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         )}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!canRun} style={{ opacity: canRun ? 1 : 0.5 }} onClick={run}>
+          <button className="btn primary" disabled={!canRun} onClick={run}>
             <Icon name="play" /> {starting ? 'Starting…' : 'Run workflow'}
           </button>
         </div>
@@ -2772,7 +2772,7 @@ function EditModal({ wf, onClose, onSaved }: { wf: Workflow; onClose: () => void
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !name.trim()} style={{ opacity: busy || !name.trim() ? 0.5 : 1 }} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+          <button className="btn primary" disabled={busy || !name.trim()} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </div>
     </Popup>
@@ -2828,6 +2828,8 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
 
   const builtins = rows.filter((a) => !a.custom)
   const ordered = [...builtins, ...rows.filter((a) => a.custom)]
+  // by id, not by row: a fresh copy is open before the reloaded list has it
+  const builtinOpen = !!editId && !editId.startsWith('custom-')
 
   const fork = (handle: string) => {
     setBusy(handle)
@@ -2870,7 +2872,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
         <>
           <AgentTable
             agents={ordered.map((a) => ({ ...a, enabled: enabledNow[a.handle] ?? a.enabled }))}
-            onOpen={(a) => (a.custom ? setEditId(a.handle) : fork(a.handle))}
+            onOpen={(a) => setEditId(a.handle)}
             onToggle={setEnabled}
             renderActions={(a) => a.custom ? (
               <span className="row-act">
@@ -2880,7 +2882,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
               </span>
             ) : (
               <span className="row-act">
-                <button title="Fork to editable copy" aria-label={`Fork ${a.name}`} disabled={busy !== null} onClick={() => fork(a.handle)}><Icon name={busy === a.handle ? 'refresh' : 'fork'} /></button>
+                <button title={`Open ${a.name}`} aria-label={`Open ${a.name}`} onClick={() => setEditId(a.handle)}><Icon name="fork" /></button>
               </span>
             )}
           />
@@ -2890,12 +2892,18 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
 
       {(creating || editId) && (
         <AgentDrawer
+          key={editId ?? 'new'} // a saved copy reopens as a fresh drawer
           agentId={editId}
+          builtIn={builtinOpen}
           describe={creating === 'describe'}
           toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
           skillCount={skillCount}
           onClose={() => { setEditId(null); setCreating(false) }}
-          onSaved={() => { setEditId(null); setCreating(false); reload() }}
+          onSaved={(saved) => {
+            // a built-in's Save made a copy: reopen on it, in custom mode once the list has it
+            const copy = builtinOpen && saved.id ? saved.id : null
+            setEditId(copy); setCreating(false); reload()
+          }}
         />
       )}
       {deleteAgent && <AgentDeleteModal agent={deleteAgent} onClose={() => setDeleteAgent(null)} onDeleted={() => { setDeleteAgent(null); reload() }} />}
@@ -2929,7 +2937,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
               <tr key={a.handle} className={`clickable${a.enabled ? '' : ' ag-off'}`} onClick={() => onOpen(a)}>
                 <td>
                   <div className="ag-agent">
-                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Fork ${a.name} to an editable copy`}>
+                    <button type="button" className="ag-who" title={a.custom ? `Edit ${a.name}` : `Open ${a.name}`}>
                       <span className="ag-ini">{a.ini}</span>
                       <span className="ag-who-txt"><span className="ag-name">{a.name}</span><span className="ag-sub">{a.custom ? 'Yours' : 'Built in'}</span></span>
                     </button>
@@ -2998,13 +3006,11 @@ const SKILL_GRANT_INFO = 'The grant offers the whole library.'
 const SKILL_USAGE_INFO = 'Skill reads are not recorded yet.'
 
 // The card's usage line; swap this one element when skill reads are recorded.
-function SkillUsage() {
+function SkillUsage({ align }: { align: 'start' | 'end' }) {
   return (
     <span className="sk-usage">
       Used by · Not measured yet
-      <button type="button" className="btn ghost icon" aria-label={SKILL_USAGE_INFO} title={SKILL_USAGE_INFO}>
-        <Icon name="info" size={14} />
-      </button>
+      <InfoTip label={SKILL_USAGE_INFO} text={SKILL_USAGE_INFO} align={align} />
     </span>
   )
 }
@@ -3040,15 +3046,13 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
           <span className="sk-offered" title={`Offered to ${offeredText}`}>
             Offered to
-            <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
-              <Icon name="info" size={14} />
-            </button>
+            <InfoTip label={SKILL_GRANT_INFO} text={SKILL_GRANT_INFO} align="start" />
             <span className="sk-offered-list">{offeredText}</span>
           </span>
         </div>
         <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
         <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
-        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} style={{ opacity: phase === 'ready' ? 1 : 0.5 }} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
+        <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
       </div>
       {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
@@ -3056,7 +3060,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-x-5 gap-y-[26px] px-[22px] pt-4 pb-24 [grid-template-columns:repeat(4,minmax(0,1fr))]">
-          {rows.map((s) => (
+          {rows.map((s, i) => (
             <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
               <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
                 <span className="sk-folder" aria-hidden="true">
@@ -3071,7 +3075,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                 </span>
               </button>
               <div className="sk-meta">
-                <SkillUsage />
+                {/* the last of the four columns opens its popover leftwards to stay on screen */}
+                <SkillUsage align={i % 4 === 3 ? 'end' : 'start'} />
                 {s.bundled
                   ? <span className="sk-ro">Read-only</span>
                   : <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}

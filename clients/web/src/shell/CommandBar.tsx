@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api, { casesApi, configApi, findingsApi, workflowApi } from '../services/api'
 import { useToast } from './toast'
+import type { ConsoleScreenGoOptions } from '../shared/types'
 import {
   ATTACH_TYPES,
   attachRefusal,
@@ -17,6 +18,8 @@ import {
   moveEnabled,
   PASTED_NAME,
   proposalFrom,
+  runningHunt,
+  type RunningHunt,
   readRecents,
   writeRecent,
   type BoardLink,
@@ -74,6 +77,11 @@ function errorText(error: unknown, fallback: string): string {
   return message && message.trim() ? message : fallback
 }
 
+// A disabled button gets no hover, so the tooltip sits on a wrapper.
+function LaterTip({ later, children }: { later: boolean; children: ReactNode }) {
+  return later ? <span className="vg-command-later" title="Coming in a later release">{children}</span> : <>{children}</>
+}
+
 export default function CommandBar({
   boards,
   onOpenChat,
@@ -84,7 +92,7 @@ export default function CommandBar({
   boards: BoardLink[]
   onOpenChat: (prompt?: string) => void
   onOpenCase: (caseId: string) => void
-  onGo: (screen: string) => void
+  onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
   /** A case is open, so asking goes to its composer instead of the dock. */
   caseOpen?: boolean
 }) {
@@ -173,6 +181,7 @@ export default function CommandBar({
   const previewView = preview ? commandPreview(preview.id, preview.arg, jira, attachment) : null
   const previewKey = preview ? `${preview.id}:${preview.arg}` : ''
   const previewDisabled = previewView?.disabled ?? true
+  const alreadyRunning = preview?.id === 'hunt' && !preview.arg.trim() ? runningHunt(attachment) : null
 
   useEffect(() => {
     if (previewKey && !previewDisabled) runRef.current?.focus()
@@ -236,6 +245,15 @@ export default function CommandBar({
     if (file) void attach(file)
   }
 
+  // The door to the hunt already running on the attached document.
+  const openRunning = useCallback((hunt: RunningHunt) => {
+    if (hunt.caseId) onOpenCase(hunt.caseId)
+    else if (hunt.runId) onGo('workflows', { search: `?run=${encodeURIComponent(hunt.runId)}` })
+    else return
+    setOpen(false)
+    setPreview(null)
+  }, [onGo, onOpenCase])
+
   const remember = useCallback((text: string) => {
     if (!userId) return
     setRecents(writeRecent(userId, text))
@@ -254,7 +272,11 @@ export default function CommandBar({
     setPreview(null)
     if (row.dest === 'Case' && row.caseId) onOpenCase(row.caseId)
     else if (row.dest === 'Page' && row.page) onGo(row.page)
-    // A finding has no detail route; taking the row records the search.
+    else if (row.dest === 'Alert' && row.findingId) {
+      // The popup hands focus back to its opener, which would reopen this menu.
+      inputRef.current?.blur()
+      onGo('overview', { search: `?alert=${encodeURIComponent(row.findingId)}` })
+    }
   }, [onGo, onOpenCase, query, remember])
 
   const choose = useCallback((row: PaletteRow) => {
@@ -273,7 +295,8 @@ export default function CommandBar({
     if (!preview || commandPreview(preview.id, preview.arg, jira, attachment).disabled) return
     const arg = preview.arg.trim()
     // The workflow this command starts, from the command table.
-    const workflowId = COMMANDS.find((c) => c.id === preview.id)?.workflowId ?? ''
+    const command = COMMANDS.find((c) => c.id === preview.id)
+    const workflowId = command?.workflowId ?? ''
     setRunning(true)
     try {
       switch (preview.id) {
@@ -286,6 +309,7 @@ export default function CommandBar({
             finding = false
           }
           await workflowApi.execute(workflowId, finding ? { finding_id: arg } : { context: arg })
+          notify('ok', `Started ${command?.runs}`)
           break
         }
         case 'hunt': {
@@ -334,9 +358,16 @@ export default function CommandBar({
           notify('ok', `Hunt started on case "${title}"`)
           break
         }
-        case 'replay':
-          onOpenCase(arg)
+        case 'replay': {
+          // Investigations come newest first.
+          const runId = (await casesApi.getById(arg)).data.investigations?.[0]?.run_id
+          if (runId) onGo('workflows', { search: `?run=${encodeURIComponent(runId)}` })
+          else {
+            onOpenCase(arg)
+            notify('info', `Case ${arg} has no run to replay`)
+          }
           break
+        }
         case 'ask':
           onOpenChat(arg)
           break
@@ -349,6 +380,7 @@ export default function CommandBar({
             notify('err', res.data.error || 'Jira export failed')
             return
           }
+          notify('ok', res.data?.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created')
           break
         }
         default: {
@@ -363,7 +395,7 @@ export default function CommandBar({
     } finally {
       setRunning(false)
     }
-  }, [attachment, jira, notify, onOpenCase, onOpenChat, preview, removeAttachment])
+  }, [attachment, jira, notify, onGo, onOpenCase, onOpenChat, preview, removeAttachment])
 
   const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
@@ -430,20 +462,21 @@ export default function CommandBar({
         <div className="vg-command-menu" id="vg-command-results" role="listbox">
           {rows.length === 0 && <div className="vg-command-empty">No matches</div>}
           {rows.map((row, index) => (
-            <button
-              key={row.key}
-              id={row.key}
-              type="button"
-              role="option"
-              aria-selected={index === highlighted}
-              disabled={row.disabled}
-              className="vg-command-row"
-              onClick={() => choose(row)}
-            >
-              <span className="vg-command-label">{row.label}</span>
-              {row.hint && <span className="vg-command-hint">{row.hint}</span>}
-              <span className="vg-command-dest">{row.dest}</span>
-            </button>
+            <LaterTip key={row.key} later={row.disabled}>
+              <button
+                id={row.key}
+                type="button"
+                role="option"
+                aria-selected={index === highlighted}
+                disabled={row.disabled}
+                className="vg-command-row"
+                onClick={() => choose(row)}
+              >
+                <span className="vg-command-label">{row.label}</span>
+                {row.hint && <span className="vg-command-hint">{row.hint}</span>}
+                <span className="vg-command-dest">{row.dest}</span>
+              </button>
+            </LaterTip>
           ))}
           {previewView && preview && (
             <div
@@ -499,6 +532,11 @@ export default function CommandBar({
                     </button>
                   )}
                   {previewView.note && <span className="vg-command-note">{previewView.note}</span>}
+                  {alreadyRunning && (alreadyRunning.caseId || alreadyRunning.runId) && (
+                    <button type="button" className="btn" onClick={() => openRunning(alreadyRunning)}>
+                      Open its case
+                    </button>
+                  )}
                   {pasting !== null && (
                     <div className="vg-command-paste">
                       <textarea

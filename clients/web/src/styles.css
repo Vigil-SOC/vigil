@@ -454,6 +454,25 @@
       padding: 8px;
    }
 
+   /* Disabled reads as placeholder text on a quiet fill (tokens: tx3, "Placeholder, disabled"), never as a live accent. */
+   .btn:disabled,
+   .btn:disabled:hover {
+      background: var(--bg-2);
+      border-color: var(--line);
+      color: var(--tx-faint);
+      cursor: not-allowed;
+   }
+
+   .btn.primary:disabled,
+   .btn.primary:disabled:hover {
+      background: var(--bg-3);
+   }
+
+   .btn.ghost:disabled,
+   .btn.ghost:disabled:hover {
+      background: transparent;
+   }
+
    .chip {
       display: inline-flex;
       align-items: center;
@@ -3987,6 +4006,12 @@
       border-color: var(--accent-line);
    }
 
+   .field-select:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      border-color: var(--line);
+   }
+
    .field-select .dd {
       color: var(--tx-faint);
       display: inline-flex;
@@ -4287,11 +4312,443 @@
       color: inherit;
    }
 
+   /* count of integrations needing attention: the shell's vg-nav-count, in the Settings nav */
+   .settings-nav-count {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 16px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--poor);
+      color: var(--ac-tx);
+   }
+
+   /* ---------- Settings > Integrations (board SettingsIntegrations.dc.html) ---------- */
+   .int-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px 10px 14px;
+      background: var(--poor-bg);
+      border: 1px solid var(--poor-ln);
+      border-radius: 12px;
+      color: var(--poor);
+   }
+
+   .int-banner-text {
+      flex: 1;
+      min-width: 0;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--tx0);
+   }
+
+   .int-banner-more { margin-left: 8px; color: var(--tx2); }
+
+   .int-tiles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+   }
+
+   .int-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+   }
+
+   .int-tile-k {
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.3;
+      color: var(--tx2);
+   }
+
+   .int-tile-v {
+      font-size: 20px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+   }
+
+   .int-table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+   }
+
+   .int-table th {
+      padding: 12px 8px 8px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx2);
+   }
+
+   .int-table td {
+      padding: 10px 8px;
+      border-top: 1px solid var(--ln0);
+      vertical-align: middle;
+      font-size: 12px;
+      color: var(--tx1);
+   }
+
+   .int-table th:first-child,
+   .int-table td:first-child { padding-left: 16px; }
+   .int-table th:last-child,
+   .int-table td:last-child { padding-right: 16px; text-align: right; }
+
+   .int-name {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .int-wip { color: var(--fair); font-size: 10px; }
+
+   .int-sub {
+      display: block;
+      font-size: 11px;
+      color: var(--tx2);
+   }
+
+   /* setup drawer: reuses the vg-side-panel shell; board SettingsIntegrations.dc.html */
+   .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
+   .int-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.2px; color: var(--tx0); }
+   .int-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+   .int-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      min-height: 40px;
+      padding: 4px 10px;
+      background: var(--bg1);
+      border: 1px solid var(--ln1);
+      border-radius: 10px;
+      color: var(--tx1);
+      font-size: 12px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+   }
+   .int-step > span:last-child { min-width: 0; line-height: 1.25; overflow-wrap: anywhere; }
+   .int-step[aria-selected="true"] { background: var(--ac-bg); border-color: var(--ac); color: var(--tx0); }
+   .int-step:disabled { opacity: .5; cursor: default; }
+   .int-step-n {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 1px solid var(--ln1);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--tx2);
+   }
+   .int-step[aria-selected="true"] .int-step-n { background: var(--ac); border-color: var(--ac); color: var(--ac-tx); }
+   .int-step.done .int-step-n { color: var(--good); border-color: var(--good-ln); background: var(--good-bg); }
+   .int-probe {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg2);
+      border-radius: 10px;
+      font-size: 12.5px;
+      color: var(--tx1);
+   }
+   .int-probe-name { flex-shrink: 0; font-family: var(--font-mono); color: var(--tx0); }
+   .int-probe-ic { flex-shrink: 0; display: inline-flex; padding-top: 1px; }
+   .int-probe-detail { margin-left: auto; text-align: right; color: var(--poor); min-width: 0; overflow-wrap: anywhere; }
+   .int-probe.pass .int-probe-ic { color: var(--good); }
+   .int-probe.fail .int-probe-ic { color: var(--poor); }
+   .int-sec {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border: 1px solid var(--ln0);
+      border-radius: 12px;
+   }
+   .int-sec-h { font-size: 13px; font-weight: 700; color: var(--tx0); }
+   .int-sec-row { display: flex; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--tx1); }
+   .int-sec-row svg { flex-shrink: 0; margin-top: 2px; color: var(--good); }
+
+   .int-neutral { font-size: 12px; font-weight: 650; color: var(--tx2); }
+   .int-time { white-space: nowrap; }
+   .int-note.poor { color: var(--poor); }
+
+   .int-clamp {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      line-height: 1.4;
+   }
+
+   .int-act {
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 650;
+   }
+
+   /* ---------- Settings > Integrations > Custom (board SettingsCustom.dc.html) ---------- */
+   .cb {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 18px;
+      border-radius: 14px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+   }
+
+   .cb-head { display: flex; flex-direction: column; gap: 3px; }
+   .cb-title { margin: 0; font-size: 15px; font-weight: 650; line-height: 1.35; color: var(--tx0); }
+   .cb-sub { margin: 0; font-size: 12px; line-height: 1.45; color: var(--tx2); }
+
+   .cb-steps { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+   .cb-step {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--bg2);
+      border: 1px solid var(--ln0);
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .cb-step.cur { background: var(--ac-bg); border-color: var(--ac-ln); }
+
+   .cb-step-n {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--tx2);
+      font-size: 11px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+   }
+
+   .cb-step.cur .cb-step-n { background: var(--ac); color: var(--ac-tx); }
+   .cb-step.done .cb-step-n { background: var(--good-bg); color: var(--good); }
+
+   .cb-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+
+   .cb-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      align-self: start;
+   }
+
+   .cb-docs { min-height: 120px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; resize: vertical; }
+   .cb-answer { min-height: 96px; resize: vertical; }
+   .cb-file { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+   .cb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+   .cb-reset { margin-left: auto; }
+
+   .cb-draft {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--bg2);
+   }
+
+   .cb-draft-title { font-size: 13px; font-weight: 650; line-height: 1.35; color: var(--tx0); }
+   .cb-label { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--tx2); }
+   .cb-question { margin: 0; font-size: 13px; line-height: 1.5; color: var(--tx0); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+   .cb-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13px; color: var(--tx0); }
+   .cb-meta b { font-weight: 650; }
+   .cb-meta code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11px; color: var(--tx2); }
+
+   .cb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+   .cb-chip {
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--bg3);
+      font-size: 12px;
+      color: var(--tx0);
+      display: inline-flex;
+      align-items: center;
+   }
+
+   .cb-tools {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 168px;
+      margin: 0;
+      padding: 0;
+      overflow-y: auto;
+      list-style: none;
+   }
+
+   .cb-tools li { display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
+   .cb-tools code { font-family: var(--font-mono); color: var(--tx0); overflow-wrap: anywhere; }
+   .cb-tool-d { color: var(--tx2); line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+
+   /* wraps rather than scrolls sideways */
+   .cb-code {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 200px;
+      padding: 10px;
+      border-radius: 8px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      color: var(--tx1);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      resize: vertical;
+      outline: none;
+   }
+
+   .cb-code:focus { border-color: var(--accent-line); }
+
+   .cb-result { display: flex; flex-direction: column; gap: 8px; }
+   .cb-checks { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--tx1); }
+   .cb-checks li { display: flex; align-items: center; gap: 6px; }
+   .cb-checks li svg { color: var(--good); }
+   .cb-checks li.bad, .cb-checks li.bad svg { color: var(--poor); }
+   .cb-syntax { font-family: var(--font-mono); font-size: 11px; color: var(--poor); overflow-wrap: anywhere; }
+
+   /* Vigil MCP server tab (board SettingsIntegrations.dc.html) */
+   .mcp-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+   }
+
+   /* the card is the frame; the table inside keeps only its rules */
+   .mcp-card .int-table {
+      border: 0;
+      background: none;
+   }
+
+   .mcp-callout {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--fair-bg);
+      border: 1px solid var(--fair-ln);
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--tx0);
+   }
+
+   .mcp-callout svg { color: var(--fair); vertical-align: -3px; }
+
+   .mcp-token {
+      margin: 0;
+      max-width: 100%;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 8px;
+      background: var(--bg2);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      user-select: all;
+   }
+
+   .mcp-head h3,
+   .mcp-head h4 {
+      margin: 0 0 3px;
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.35;
+      color: var(--tx0);
+   }
+
+   .mcp-head p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .mcp-onoff {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--bg2);
+   }
+
+   .mcp-onoff-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .mcp-onoff-text b {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .ag-switch:disabled { opacity: .5; cursor: not-allowed; }
+
    .settings-content {
       flex: 1;
       min-width: 0;
       overflow-y: auto;
-      padding: 22px;
+      /* bottom room so the floating Ask Vigil button never sits on the last row's control */
+      padding: 22px 22px 84px;
       display: flex;
       flex-direction: column;
       gap: 18px;
@@ -4355,11 +4812,559 @@
       border-bottom-color: var(--ln0);
    }
 
+   /* Alert collection: the master card and table sit on the board's 16px card padding */
+   .settings-content .fed-master .card-b {
+      padding: 14px 16px;
+   }
+
+   .settings-content .fed-master .toggle-row {
+      padding: 0;
+   }
+
+   .settings-content .fed-table thead th,
+   .settings-content .fed-table tbody td {
+      padding: 9px 12px;
+   }
+
+   .settings-content .fed-table thead th:first-child,
+   .settings-content .fed-table tbody td:first-child {
+      padding-left: 0;
+   }
+
+   .settings-content .fed-table thead th:last-child,
+   .settings-content .fed-table tbody td:last-child {
+      padding-right: 0;
+   }
+
+   /* SLA policies: severity dot, inline editor (SettingsSLA board) */
+   .sla-name {
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 600;
+      color: var(--tx0);
+   }
+
+   .sla-flag {
+      margin-left: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--tx3);
+   }
+
+   .sla-sev {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .sla-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      flex: 0 0 auto;
+   }
+
+   /* room under it for the floating Ask Vigil button */
+   .sla-edit {
+      border-color: var(--ac-ln);
+      scroll-margin-bottom: 96px;
+      margin-bottom: 72px;
+   }
+
+   .sla-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr 1fr; /* the Hours label is long */
+      gap: 14px 18px;
+      align-items: start;
+   }
+
+   .sla-grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+   }
+
+   .sla-readonly {
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      font-size: 13px;
+      color: var(--tx2);
+   }
+
+   .sla-edit .field-label .info-tip {
+      margin: -3px 0; /* the ⓘ is taller than the label line */
+   }
+
+   .sla-later {
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--bg3);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .sla-escalation {
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px dashed var(--ln1);
+      font-size: 12.5px;
+      color: var(--tx3);
+      opacity: 0.8;
+   }
+
+   .sla-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+   }
+
+   .sla-actions .grow {
+      flex: 1;
+   }
+
+   /* Limits and autonomy: profile cards, limit rows, tool classes (SettingsLimits board) */
+   .lim-switch {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-radius: 10px;
+      background: var(--bg2);
+   }
+
+   .lim-switch .toggle-row-text {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+   }
+
+   .lim-switch .toggle-row-label {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .lim-switch .toggle-row-hint {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .lim-profiles,
+   .lim-classes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+   }
+
+   .lim-profile {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1.5px solid var(--ln1);
+      background: var(--bg2);
+      color: var(--tx1);
+      text-align: left;
+      cursor: pointer;
+   }
+
+   .lim-profile.on {
+      border-color: var(--ac);
+      background: var(--ac-bg);
+   }
+
+   .lim-profile:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: 2px;
+   }
+
+   .lim-profile-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--tx0);
+   }
+
+   .lim-profile-flag {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--good);
+   }
+
+   .lim-profile-vals {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--tx1);
+   }
+
+   .lim-profile-vals.muted {
+      color: var(--tx2);
+   }
+
+   .lim-row {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr) minmax(0, 330px);
+      gap: 12px;
+      align-items: center;
+      padding: 10px 2px;
+      border-top: 1px solid var(--ln0);
+   }
+
+   .lim-row-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .lim-row-title span {
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .lim-row-tag {
+      font-size: 11px;
+      color: var(--tx3);
+   }
+
+   .lim-row-tag.fair {
+      color: var(--fair);
+   }
+
+   .lim-row-ctl {
+      justify-self: end;
+      min-width: 0;
+   }
+
+   .lim-class {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg2);
+      font-size: 12.5px;
+      color: var(--tx2);
+   }
+
+   .lim-class h4 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+   }
+
+   .lim-class.good h4 { color: var(--good); }
+   .lim-class.fair h4 { color: var(--fair); }
+   .lim-class.poor h4 { color: var(--poor); }
+
+   .lim-class-note {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      color: var(--tx0);
+   }
+
+   .lim-seg {
+      display: flex;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 10px;
+      background: var(--bg1);
+      border: 1px solid var(--ln1);
+   }
+
+   .lim-seg button {
+      flex: 1;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--tx2);
+      font-size: 12.5px;
+      white-space: nowrap;
+      cursor: pointer;
+   }
+
+   .lim-seg button[aria-pressed='true'] {
+      background: var(--bg3);
+      color: var(--tx0);
+      font-weight: 600;
+   }
+
+   .lim-seg button:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: 1px;
+   }
+
+   @media (max-width: 900px) {
+      .lim-profiles,
+      .lim-classes {
+         grid-template-columns: minmax(0, 1fr);
+      }
+
+      .lim-row {
+         grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .lim-row-tag {
+         grid-column: 1;
+         grid-row: 2;
+      }
+   }
+
    .settings-grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 14px;
    }
+
+   /* Data & uploads: one page of cards (SettingsData board) */
+   .data-page {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      max-width: 1280px;
+   }
+
+   .data-anchor {
+      scroll-margin-top: 22px;
+   }
+
+   .settings-card-actions a.btn {
+      text-decoration: none;
+   }
+
+   .level-pill.idle {
+      color: var(--tx2);
+      background: var(--bg3);
+      border-color: var(--ln1);
+   }
+
+   .data-loglm-fields {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px 16px;
+   }
+
+   .data-ro {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+   }
+
+   .data-ro-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .data-ro-value {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      background: var(--bg2);
+      border: 1px solid var(--ln1);
+      border-radius: 10px;
+      font-size: 12.5px;
+      color: var(--tx0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .data-ro-value.empty {
+      color: var(--tx3);
+   }
+
+   .data-ro-hint {
+      font-size: 12px;
+      color: var(--tx3);
+   }
+
+   .data-loglm-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      padding: 10px 12px;
+      background: var(--bg2);
+      border-radius: 10px;
+      font-size: 13px;
+      color: var(--tx1);
+   }
+
+   .data-loglm-msg {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .data-drop {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 26px;
+      text-align: center;
+      background: var(--bg2);
+      border: 1px dashed var(--ln2);
+      border-radius: 14px;
+      color: var(--ac);
+   }
+
+   .data-drop.over {
+      border-color: var(--ac);
+      background: var(--ac-bg);
+   }
+
+   .data-drop-title {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .data-drop-sub {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .data-job {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: var(--bg2);
+      border-radius: 10px;
+      font-size: 12.5px;
+   }
+
+   .data-job-name {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--tx0);
+   }
+
+   .data-job-msg {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: right;
+      color: var(--tx2);
+   }
+
+   /* Streams and rule-source tables: fixed layout so long settings or URLs ellipsize instead of widening the page */
+   .settings-content .tbl.data-table {
+      table-layout: fixed;
+   }
+
+   .data-table th:first-child,
+   .data-table td:first-child {
+      padding-left: 2px;
+   }
+
+   .data-table th:last-child,
+   .data-table td:last-child {
+      padding-right: 2px;
+   }
+
+   .data-table tbody td {
+      overflow: hidden;
+   }
+
+   .data-table td b {
+      font-weight: 700;
+      color: var(--tx0);
+   }
+
+   .data-table td.muted,
+   .data-table .muted {
+      color: var(--tx2);
+   }
+
+   .data-clip {
+      overflow: hidden;
+      text-overflow: ellipsis;
+   }
+
+   .data-table th:nth-child(1) { width: 24%; }
+   .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
+   .data-table:not(.data-rules) th:nth-child(4) { width: 90px; }
+   .data-rules th:nth-child(2) { width: 110px; }
+   .data-rules th:nth-child(4) { width: 90px; }
+   .data-rules th:nth-child(5) { width: 150px; }
+
+   .data-act {
+      text-align: right;
+   }
+
+   .data-act > * {
+      vertical-align: middle;
+   }
+
+   .data-act > * + * {
+      margin-left: 6px;
+   }
+
+   .data-link {
+      background: none;
+      border: 0;
+      padding: 4px 6px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--ac);
+      cursor: pointer;
+   }
+
+   .data-link:disabled {
+      color: var(--tx3);
+      cursor: default;
+   }
+
+   .data-table tbody tr.data-expand[hidden] {
+      display: none;
+   }
+
+   .data-table tbody tr.data-expand,
+   .data-table tbody tr.data-expand:hover {
+      background: transparent;
+   }
+
+   .data-table tbody tr.data-expand > td {
+      white-space: normal;
+      padding: 14px 2px 20px;
+      overflow: visible;
+   }
+
+   .chip.fmt-sigma { color: var(--ac); }
+   .chip.fmt-splunk { color: var(--good); }
+   .chip.fmt-elastic { color: var(--fair); }
+   .chip.fmt-kql { color: var(--vio); }
+   .chip.fmt-auto { color: var(--tx2); }
 
    /* inline status banner (success/error toasts inside a section) */
    .settings-banner {
@@ -5516,12 +6521,262 @@
       padding: 10px 0;
    }
 
-   /* ---------- Triage: alert column, expanded row, strip ⓘ ---------- */
-   .tq-alert {
-      display: block;
-      max-width: 34ch;
+   /* ---------- Triage queue: follows the Triage board and tokens.json ---------- */
+   .tq-page {
+      padding: 20px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+   }
+
+   .tq-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+   }
+
+   .tq-title {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+   }
+
+   .tq-title h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+      color: var(--tx0);
+   }
+
+   .tq-title p {
+      margin: 0;
+      max-width: 760px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--tx1);
+   }
+
+   .tq-tiles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+   }
+
+   .tq-tile {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      padding: 14px 16px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+   }
+
+   /* the ⓘ sits in the tile's top-right corner, where the board puts its level pill */
+   .tq-tile > .info-tip {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+   }
+
+   .tq-tile-label {
+      padding-right: 24px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .tq-tile-val {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      line-height: 1.2;
+      color: var(--tx0);
+   }
+
+   .tq-tile-val.unmeasured {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      color: var(--tx3);
+   }
+
+   .tq-tile-sub {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .tq-filters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .tq-group-head {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .tq-group-label {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--tx2);
+   }
+
+   .tq-rule {
+      width: 1px;
+      height: 20px;
+      margin: 0 6px;
+      background: var(--ln1);
+   }
+
+   .tq-summary {
+      margin-left: auto;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--ac);
+      white-space: nowrap;
+   }
+
+   .tq-summary button {
+      padding: 0;
+      background: none;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+   }
+
+   .tq-summary button:hover {
+      text-decoration: underline;
+   }
+
+   .tq-card {
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+      overflow: hidden;
+   }
+
+   /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
+   .tq-table {
+      table-layout: fixed;
+   }
+
+   .tq-table thead th {
+      position: static;
+      padding: 11px 16px;
+      background: transparent;
+      border-bottom: 0;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--tx2);
+   }
+
+   .tq-table tbody td {
+      padding: 11px 16px;
+      border-top: 1px solid var(--ln0);
+      border-bottom: 0;
+      font-size: 12px;
+      color: var(--tx1);
+      vertical-align: middle;
       overflow: hidden;
       text-overflow: ellipsis;
+   }
+
+   .tq-table tbody tr:hover {
+      background: var(--bg3);
+   }
+
+   .tq-table tbody td:nth-child(2) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
+   .tq-table thead th:nth-child(1) { width: 100px; }
+   .tq-table thead th:nth-child(2) { width: 124px; }
+   .tq-table thead th:nth-child(4) { width: 84px; }
+   .tq-table thead th:nth-child(5) { width: 112px; }
+   .tq-table thead th:nth-child(6) { width: 108px; }
+   .tq-table thead th:nth-child(7) { width: 176px; }
+   .tq-table thead th:nth-child(8) { width: 26%; }
+
+   .tq-th-info {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+   }
+
+   .tq-kind {
+      font-weight: 650;
+   }
+
+   .tq-alert {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      white-space: normal; /* .tbl cells are nowrap */
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--tx0);
+   }
+
+   .tq-score {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 8px;
+      border: 1px solid var(--ln1);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--tx3);
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+   }
+
+   .tq-time {
+      color: var(--tx2);
+      white-space: nowrap;
+   }
+
+   .tq-pill {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--tx1);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+   }
+
+   .tq-pill.launched { background: var(--good-bg); color: var(--good); }
+   .tq-pill.merged { background: var(--ac-bg); color: var(--ac); }
+   .tq-pill.expired { color: var(--tx2); }
+
+   .tq-why {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .tq-why a {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
    }
 
    .tbl tbody tr.row-expanded:hover {
@@ -5535,6 +6790,7 @@
    }
 
    .tq-panel {
+      width: min(560px, 100%);
       padding: 10px 12px;
       border-radius: 10px;
       background: var(--bg-2);
@@ -5578,13 +6834,6 @@
       align-items: center;
       gap: 12px;
       font-size: 12px;
-   }
-
-   /* the ⓘ sits in the tile's top-right corner, out of the label's ellipsis clip */
-   .kpi>.info-tip {
-      position: absolute;
-      top: 10px;
-      right: 12px;
    }
 
    .tech-expand>td {
@@ -6397,13 +7646,6 @@
    white-space: nowrap;
 }
 
-.soc-console .sk-offered .btn.icon {
-   flex: none;
-   padding: 0;
-   border: 0;
-   vertical-align: middle;
-}
-
 .soc-console .sk-offered-list {
    min-width: 0;
    overflow: hidden;
@@ -6416,12 +7658,6 @@
    align-items: center;
    gap: 2px;
    min-width: 0;
-}
-
-.soc-console .sk-usage .btn.icon {
-   flex: none;
-   padding: 0;
-   border: 0;
 }
 
 .soc-console .sk-ro {
@@ -6459,3 +7695,52 @@
       animation: none !important;
    }
 }
+
+   /* Add integration: category chips and search over a card grid; board SettingsIntegrations.dc.html */
+   .int-filters { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+   /* chips wrap inside their own block so search stays at their right until the row is too narrow */
+   .int-cats { display: flex; flex: 1 1 360px; flex-wrap: wrap; gap: 6px; }
+   .int-filters-end { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+   .int-filters-end .search { width: 260px; max-width: 100%; }
+
+   /* four columns once the row can hold four 200px cards, fewer below that */
+   .int-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, max(200px, calc((100% - 37px) / 4))), 1fr));
+      gap: 12px;
+   }
+   .int-card {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      min-width: 0;
+      padding: 14px;
+      border-radius: 14px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+   }
+   .int-card-head { display: flex; align-items: center; gap: 8px; align-self: stretch; min-width: 0; }
+   .int-card-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--tx0);
+   }
+   .int-card-state { flex-shrink: 0; font-size: 11px; font-weight: 650; color: var(--tx2); }
+   .int-card-state.on { color: var(--good); }
+   .int-card-line {
+      align-self: stretch;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+   .int-card-cta { margin-top: 4px; }

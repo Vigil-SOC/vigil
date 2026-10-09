@@ -172,7 +172,7 @@ class TestBoundsReachTheTool:
     def test_the_row_cap_is_pushed_into_the_call(self, client, monkeypatch):
         seen: dict = {}
 
-        async def _capture(tool, args):
+        async def _capture(tool, args, **_):
             seen.update(args)
             return [], True
 
@@ -185,7 +185,7 @@ class TestBoundsReachTheTool:
     ):
         seen: dict = {}
 
-        async def _capture(tool, args):
+        async def _capture(tool, args, **_):
             seen.update(args)
             return [], True
 
@@ -199,7 +199,7 @@ class TestBoundsReachTheTool:
     def test_the_cap_finds_the_name_the_tool_pages_on(self, client, monkeypatch):
         seen: dict = {}
 
-        async def _capture(tool, args):
+        async def _capture(tool, args, **_):
             seen.update(args)
             return [], True
 
@@ -214,7 +214,7 @@ class TestBoundsReachTheTool:
     ):
         seen: dict = {}
 
-        async def _capture(tool, args):
+        async def _capture(tool, args, **_):
             seen.update(args)
             return [], True
 
@@ -228,7 +228,7 @@ class TestBoundsReachTheTool:
     def test_get_finding_does_not_receive_limit(self, client, monkeypatch):
         seen: dict = {}
 
-        async def _capture(tool, args):
+        async def _capture(tool, args, **_):
             seen["tool"] = tool
             seen.update(args)
             return {"finding_id": "f-1"}, True
@@ -242,7 +242,7 @@ class TestBoundsReachTheTool:
     def test_get_case_does_not_receive_limit(self, client, monkeypatch):
         seen: dict = {}
 
-        async def _capture(tool, args):
+        async def _capture(tool, args, **_):
             seen["tool"] = tool
             seen.update(args)
             return {"case_id": "c-1"}, True

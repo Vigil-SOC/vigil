@@ -1,29 +1,51 @@
 // Talks to /api/custom-integrations/* by fetch — those endpoints aren't in
-// services/api.ts.
+// services/api.ts. Board: SettingsCustom.dc.html.
 import { useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { Field, Popup, Select, TextInput } from '../../shared/ui'
+import { InfoTip } from '../../shared/InfoTip'
+import { Field, Select, TextInput } from '../../shared/ui'
 import { basePath } from '../../config/basePath'
 import { INTEGRATION_CATEGORIES } from '../../config/integrations'
+import type { SectionProps } from './types'
 
 interface Props {
-  onClose: () => void
-  onSave: (integrationId: string) => void
+  notify: SectionProps['notify']
+  /** a file was written (Validate saves first): refetch the saved list */
+  onWrote: () => void
+  /** Save confirmed */
+  onSaved: (integrationId: string) => void
+}
+
+interface SettingField {
+  name: string
+  label: string
+  type: string
+  required?: boolean
 }
 
 interface GeneratedIntegration {
   integration_id: string
   integration_name: string
-  metadata: { category?: string; description?: string; fields?: { name: string; label: string; type: string; required?: boolean }[] }
+  metadata: { category?: string; description?: string; fields?: SettingField[] }
+  tools?: { name: string; description?: string }[]
   server_code: string
 }
 
-const STEPS = ['Provide Documentation', 'Review & Edit', 'Test & Save']
-const CATEGORY_OPTIONS = INTEGRATION_CATEGORIES.map((c) => ({ value: c, label: c }))
+interface Validation {
+  valid?: boolean
+  checks?: Record<string, boolean>
+  syntax_error?: string
+}
 
-export default function CustomIntegrationBuilder({ onClose, onSave }: Props) {
-  const [step, setStep] = useState(0)
-  const [loading, setLoading] = useState(false)
+const STEPS = ['Provide documentation', 'Review and edit', 'Test and save']
+const CATEGORY_OPTIONS = INTEGRATION_CATEGORIES.map((c) => ({ value: c, label: c }))
+const JSON_POST = { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } } as const
+
+const chipLabel = (f: SettingField) => (f.type === 'password' ? `${f.label} (secret)` : f.label)
+const checkLabel = (k: string) => k.replace(/_/g, ' ').replace(/^\w/, (l) => l.toUpperCase())
+
+export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: Props) {
+  const [busy, setBusy] = useState<'generate' | 'validate' | 'save' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const [documentation, setDocumentation] = useState('')
@@ -34,14 +56,16 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: Props) {
 
   const [generated, setGenerated] = useState<GeneratedIntegration | null>(null)
   const [serverCode, setServerCode] = useState('')
+  // the code last written to disk: Save only writes again when the code moved on
+  const [savedCode, setSavedCode] = useState<string | null>(null)
+  const [validation, setValidation] = useState<Validation | null>(null)
 
-  const [needsClarification, setNeedsClarification] = useState(false)
   const [conversation, setConversation] = useState<unknown[]>([])
-  const [claudeQuestion, setClaudeQuestion] = useState('')
+  const [question, setQuestion] = useState<string | null>(null)
   const [userAnswer, setUserAnswer] = useState('')
 
-  const [validation, setValidation] = useState<{ valid?: boolean; checks?: Record<string, boolean>; syntax_error?: string } | null>(null)
-  const [showCode, setShowCode] = useState(false)
+  const loading = busy !== null
+  const step = !generated ? 0 : validation ? 2 : 1
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -52,15 +76,28 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: Props) {
     reader.readAsText(file)
   }
 
+  const reset = () => {
+    setError(null)
+    setDocumentation('')
+    setIntegrationName('')
+    setCategory('Custom')
+    setUploadedFile(null)
+    setGenerated(null)
+    setServerCode('')
+    setSavedCode(null)
+    setValidation(null)
+    setConversation([])
+    setQuestion(null)
+    setUserAnswer('')
+  }
+
   const generate = async (userResponse?: string) => {
     if (!documentation.trim() && !userResponse) { setError('Please provide API documentation.'); return }
-    setLoading(true)
+    setBusy('generate')
     setError(null)
     try {
       const resp = await fetch(`${basePath}/api/custom-integrations/generate`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        ...JSON_POST,
         body: JSON.stringify({
           documentation,
           integration_name: integrationName || null,
@@ -72,222 +109,245 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: Props) {
       const result = await resp.json()
       if (!resp.ok || !result.success) throw new Error(result.detail || result.error || 'Failed to generate integration')
       if (result.needs_clarification) {
-        setNeedsClarification(true)
-        setClaudeQuestion(result.message)
+        setQuestion(result.message)
         setConversation(result.conversation_history || [])
         setUserAnswer('')
       } else {
         setGenerated(result)
         setServerCode(result.server_code)
-        setNeedsClarification(false)
-        setStep(1)
+        setSavedCode(null)
+        setValidation(null)
+        setQuestion(null)
       }
     } catch (e) {
       setError((e as { message?: string })?.message || 'Failed to generate integration')
     } finally {
-      setLoading(false)
+      setBusy(null)
     }
+  }
+
+  // writes the server file and metadata, unless this exact code is already on disk
+  const write = async (g: GeneratedIntegration) => {
+    if (savedCode === serverCode) return false
+    const resp = await fetch(`${basePath}/api/custom-integrations/save`, {
+      ...JSON_POST,
+      body: JSON.stringify({ integration_id: g.integration_id, metadata: g.metadata, server_code: serverCode }),
+    })
+    if (!resp.ok) throw new Error('Failed to save integration')
+    setSavedCode(serverCode)
+    return true
   }
 
   const validate = async () => {
     if (!generated) return
-    setLoading(true)
+    setBusy('validate')
     setError(null)
     try {
-      const save = await fetch(`${basePath}/api/custom-integrations/save`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ integration_id: generated.integration_id, metadata: generated.metadata, server_code: serverCode }),
-      })
-      if (!save.ok) throw new Error('Failed to save integration for validation')
+      const wrote = await write(generated)
+      if (wrote) onWrote()
       const res = await fetch(`${basePath}/api/custom-integrations/${generated.integration_id}/validate`, {
         method: 'POST',
         credentials: 'include',
       })
       if (!res.ok) throw new Error('Failed to validate integration')
       setValidation(await res.json())
-      setStep(2)
     } catch (e) {
       setError((e as { message?: string })?.message || 'Failed to validate integration')
     } finally {
-      setLoading(false)
+      setBusy(null)
     }
   }
 
-  const finalSave = async () => {
+  const save = async () => {
     if (!generated) return
-    setLoading(true)
+    setBusy('save')
     setError(null)
     try {
-      const resp = await fetch(`${basePath}/api/custom-integrations/save`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ integration_id: generated.integration_id, metadata: generated.metadata, server_code: serverCode }),
-      })
-      if (!resp.ok) throw new Error('Failed to save integration')
-      await resp.json()
-      onSave(generated.integration_id)
+      await write(generated)
+      notify('ok', `Custom integration "${generated.integration_id}" saved but not enabled. Configure it under Integrations to turn it on.`)
+      onSaved(generated.integration_id)
+      reset()
     } catch (e) {
       setError((e as { message?: string })?.message || 'Failed to save integration')
     } finally {
-      setLoading(false)
+      setBusy(null)
     }
   }
 
-  const next = () => {
-    if (step === 0) {
-      if (needsClarification) generate(userAnswer)
-      else generate()
-    } else if (step === 1) validate()
-    else finalSave()
-  }
-
-  const nextLabel = loading ? 'Processing…' : step === 2 ? 'Save Integration' : step === 1 ? 'Validate' : needsClarification ? 'Send Answer' : 'Generate'
-  const nextDisabled =
-    loading ||
-    (step === 0 && !needsClarification && !documentation.trim()) ||
-    (step === 0 && needsClarification && !userAnswer.trim())
+  const fields = generated?.metadata?.fields ?? []
+  const tools = generated?.tools ?? []
 
   return (
-    <Popup open onClose={onClose} title="AI-Powered Custom Integration Builder" width={720}>
-      {/* step indicator */}
-      <div className="flex items-center gap-2 mb-5">
-        {STEPS.map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-semibold ${i === step ? 'bg-[var(--accent)] text-white' : i < step ? 'bg-[var(--accent-dim)] text-accent-2' : 'bg-[var(--bg-3)] text-tx-3'}`}>{i + 1}</span>
-            <span className={`text-xs ${i === step ? 'text-tx' : 'text-tx-3'}`}>{s}</span>
-            {i < STEPS.length - 1 && <span className="w-5 h-px bg-line" />}
-          </div>
-        ))}
+    <section className="cb" aria-label="Build a custom integration">
+      <div className="cb-head">
+        <h3 className="cb-title">Build a custom integration</h3>
+        <p className="cb-sub">
+          For a tool Vigil does not support yet. Paste its API documentation; Vigil drafts the connector and you review and
+          edit it. Nothing is enabled until you configure it under Integrations.
+        </p>
       </div>
 
-      {error && <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> {error}</div>}
+      <ol className="cb-steps" aria-label="Steps">
+        {STEPS.map((s, i) => (
+          <li key={s} className={`cb-step${i === step ? ' cur' : i < step ? ' done' : ''}`} aria-current={i === step ? 'step' : undefined}>
+            <span className="cb-step-n">{i < step ? <Icon name="check2" size={12} /> : i + 1}</span>
+            {s}
+          </li>
+        ))}
+      </ol>
 
-      {step === 0 && !needsClarification && (
-        <div className="flex flex-col gap-3.5">
-          <p className="text-sm text-tx-3">Paste API documentation or upload a file. The AI analyzes it and generates a complete integration: MCP server code + configuration.</p>
-          <Field label="Integration Category">
+      {error && <div className="settings-banner err" role="alert"><Icon name="alert" size={14} /> {error}</div>}
+
+      <div className="cb-cols">
+        {/* once drafted, the inputs are what the draft was made from: Start over to change them */}
+        <fieldset className="cb-form" disabled={!!generated || !!question || loading}>
+          <Field label="Category">
             <Select value={category} options={CATEGORY_OPTIONS} onSelect={setCategory} />
           </Field>
-          <Field label="Integration Name (optional)" hint="Leave blank to auto-generate from documentation.">
-            <TextInput value={integrationName} placeholder="e.g. My Security Tool" onChange={(e) => setIntegrationName(e.target.value)} />
+          <Field label="Name" hint="Leave blank and Vigil names it from the documentation.">
+            <TextInput value={integrationName} placeholder="e.g. Acme XDR" onChange={(e) => setIntegrationName(e.target.value)} />
           </Field>
-          <div>
-            <input ref={fileRef} type="file" hidden accept=".txt,.md,.pdf,.doc,.docx" onChange={onFile} />
-            <button className="btn ghost" onClick={() => fileRef.current?.click()}>
-              <Icon name="upload" /> {uploadedFile ? uploadedFile.name : 'Upload Documentation File'}
-            </button>
-          </div>
-          <Field label="API Documentation">
+          <Field label="API documentation" hint="Paste text, or upload a documentation file.">
             <textarea
-              className="field-input"
-              style={{ minHeight: 200, fontFamily: 'var(--mono)', resize: 'vertical' }}
+              className="field-input cb-docs"
               value={documentation}
               onChange={(e) => setDocumentation(e.target.value)}
               placeholder={'Paste API documentation here…\n\nInclude: endpoints, auth details, request/response examples, parameter descriptions.'}
             />
           </Field>
-        </div>
-      )}
-
-      {step === 0 && needsClarification && (
-        <div className="flex flex-col gap-3.5">
-          <div className="settings-banner info"><Icon name="info" size={14} /> Claude needs more information. Answer the question below.</div>
-          <div className="card card-sq p-3.5">
-            <div className="flex items-start gap-2.5">
-              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-[var(--accent)] text-white text-xs font-semibold flex-shrink-0">AI</span>
-              <p className="text-sm text-tx whitespace-pre-wrap">{claudeQuestion}</p>
-            </div>
+          <div className="cb-actions">
+            <input ref={fileRef} type="file" hidden accept=".txt,.md,.pdf,.doc,.docx" onChange={onFile} aria-label="Documentation file" />
+            <button type="button" className="btn ghost int-act" onClick={() => fileRef.current?.click()}>
+              <Icon name="upload" /> <span className="cb-file">{uploadedFile ? uploadedFile.name : 'Upload documentation'}</span>
+            </button>
+            {!question && !generated && (
+              <button type="button" className="btn primary int-act" onClick={() => generate()} disabled={!documentation.trim()}>
+                {busy === 'generate' ? 'Generating…' : 'Generate draft'}
+              </button>
+            )}
           </div>
-          <Field label="Your Answer">
-            <textarea
-              className="field-input"
-              style={{ minHeight: 120, resize: 'vertical' }}
-              value={userAnswer}
-              onChange={(e) => setUserAnswer(e.target.value)}
-              placeholder="Be as specific as possible to help Claude generate the best integration."
-            />
-          </Field>
-        </div>
-      )}
+        </fieldset>
 
-      {step === 1 && generated && (
-        <div className="flex flex-col gap-3">
-          <div className="settings-banner info"><Icon name="info" size={14} /> Review the generated integration. You can view and edit the server code before saving.</div>
-          <div className="card card-sq p-3.5 flex flex-col gap-2.5">
-            <div className="kv-grid" style={{ gridTemplateColumns: '120px 1fr' }}>
-              <span className="k">Name</span><span className="v">{generated.integration_name}</span>
-              <span className="k">ID</span><span className="v font-mono text-xs">{generated.integration_id}</span>
-              <span className="k">Category</span><span className="v">{generated.metadata?.category}</span>
-              <span className="k">Description</span><span className="v">{generated.metadata?.description}</span>
-            </div>
-            {generated.metadata?.fields?.length ? (
-              <div>
-                <span className="text-xs text-tx-3">Configuration Fields</span>
-                <div className="flex gap-1.5 flex-wrap mt-1.5">
-                  {generated.metadata.fields.map((f) => (
-                    <span key={f.name} className={`chip${f.required ? ' sel' : ''}`}>{f.label} ({f.type})</span>
-                  ))}
-                </div>
+        <div className="cb-draft">
+          <span className="cb-draft-title">Vigil’s draft</span>
+
+          {!generated && !question && (
+            <p className="cb-sub" role={busy === 'generate' ? 'status' : undefined}>
+              {busy === 'generate'
+                ? 'Vigil is reading the documentation and drafting the connector…'
+                : 'Nothing drafted yet. Add the API documentation and choose Generate draft: the settings it will ask for, the tools agents will get and the code appear here.'}
+            </p>
+          )}
+
+          {!generated && question && (
+            <>
+              <div className="settings-banner info"><Icon name="info" size={14} /> Vigil needs more information. Answer the question below.</div>
+              <p className="cb-question">{question}</p>
+              <Field label="Your answer">
+                <textarea
+                  className="field-input cb-answer"
+                  value={userAnswer}
+                  onChange={(e) => setUserAnswer(e.target.value)}
+                  placeholder="Be as specific as possible to help Vigil draft the best integration."
+                />
+              </Field>
+              <div className="cb-actions">
+                <button type="button" className="btn primary int-act" onClick={() => generate(userAnswer)} disabled={loading || !userAnswer.trim()}>
+                  {busy === 'generate' ? 'Sending…' : 'Send answer'}
+                </button>
+                <button type="button" className="btn ghost int-act cb-reset" onClick={reset} disabled={loading}>Start over</button>
               </div>
-            ) : null}
-          </div>
-          <div className="card card-sq p-3.5 flex items-center justify-between">
-            <span className="text-sm text-tx flex items-center gap-2"><Icon name="doc" size={15} /> {serverCode.split('\n').length} lines of Python generated</span>
-            <button className="btn ghost" onClick={() => setShowCode(true)}><Icon name="eye" /> View / edit code</button>
-          </div>
-        </div>
-      )}
+            </>
+          )}
 
-      {step === 2 && validation && (
-        <div className="flex flex-col gap-3">
-          <div className={`settings-banner ${validation.valid ? 'ok' : 'err'}`}>
-            <Icon name={validation.valid ? 'check2' : 'alert'} size={14} />
-            <span>{validation.valid ? 'Integration code is valid and ready to use!' : 'There are issues with the generated code — you may need to edit it manually.'}</span>
-          </div>
-          {validation.checks && (
-            <div className="card card-sq p-3.5 flex flex-col gap-1.5">
-              {Object.entries(validation.checks).map(([k, v]) => (
-                <div key={k} className="flex items-center gap-2 text-sm">
-                  <Icon name={v ? 'check2' : 'alert'} size={14} />
-                  <span className={v ? 'text-tx-2' : 'text-crit'}>{k.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}</span>
+          {generated && (
+            <>
+              <div className="cb-meta">
+                <b>{generated.integration_name}</b>
+                <code>{generated.integration_id}</code>
+              </div>
+              {generated.metadata?.description && <p className="cb-sub">{generated.metadata.description}</p>}
+
+              <span className="cb-label">Settings it will ask for</span>
+              {fields.length ? (
+                <span className="cb-chips">
+                  {fields.map((f) => <span key={f.name} className="cb-chip">{chipLabel(f)}</span>)}
+                </span>
+              ) : (
+                <span className="cb-sub">None.</span>
+              )}
+
+              <span className="cb-label">Tools agents will get</span>
+              {tools.length ? (
+                <ul className="cb-tools">
+                  {tools.map((t) => (
+                    <li key={t.name} title={t.description || t.name}>
+                      <code>{t.name}</code>
+                      {t.description && <span className="cb-tool-d">{t.description}</span>}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span className="cb-sub">Vigil did not list any tools. Check the code below.</span>
+              )}
+
+              <label className="cb-label" htmlFor="cb-code">Server code</label>
+              <textarea
+                id="cb-code"
+                className="cb-code"
+                spellCheck={false}
+                value={serverCode}
+                onChange={(e) => {
+                  setServerCode(e.target.value)
+                  setValidation(null) // the result belongs to the code it checked
+                }}
+              />
+
+              {validation && (
+                <div className="cb-result" role="status">
+                  <div className={`settings-banner ${validation.valid ? 'ok' : 'err'}`}>
+                    <Icon name={validation.valid ? 'check2' : 'alert'} size={14} />
+                    <span>{validation.valid ? 'The code passes the static check.' : 'The static check found problems. Edit the code, then validate again.'}</span>
+                  </div>
+                  {validation.checks && (
+                    <ul className="cb-checks">
+                      {Object.entries(validation.checks).map(([k, v]) => (
+                        <li key={k} className={v ? '' : 'bad'}>
+                          <Icon name={v ? 'check2' : 'alert'} size={13} /> {checkLabel(k)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {validation.syntax_error && <code className="cb-syntax">{validation.syntax_error}</code>}
                 </div>
-              ))}
-            </div>
+              )}
+              {savedCode !== null && (
+                <p className="cb-sub">
+                  {savedCode === serverCode
+                    ? 'Saved, not enabled. Configure it under Integrations to turn it on.'
+                    : 'You changed the code since it was saved. Save writes it again.'}
+                </p>
+              )}
+
+              <div className="cb-actions">
+                <button type="button" className="btn ghost int-act" onClick={validate} disabled={loading}>
+                  {busy === 'validate' ? 'Validating…' : 'Validate'}
+                </button>
+                <InfoTip
+                  label="About Validate"
+                  align="start"
+                  source="The generated code: it must compile and define the MCP server entry points."
+                  limit="A static check that never calls the target API. Validate also saves the integration; it stays off until you configure it under Integrations."
+                />
+                <button type="button" className="btn primary int-act" onClick={save} disabled={loading}>
+                  {busy === 'save' ? 'Saving…' : 'Save'}
+                </button>
+                <button type="button" className="btn ghost int-act cb-reset" onClick={reset} disabled={loading}>Start over</button>
+              </div>
+            </>
           )}
-          {validation.syntax_error && (
-            <div className="settings-banner err"><Icon name="alert" size={14} /> <span className="font-mono text-xs">{validation.syntax_error}</span></div>
-          )}
-          <div className="settings-banner info">
-            <Icon name="info" size={14} />
-            <span>After saving: configure the integration under Integrations, enable it, and restart MCP servers if needed.</span>
-          </div>
         </div>
-      )}
-
-      {/* footer */}
-      <div className="flex justify-end gap-2.5 mt-6">
-        <button className="btn ghost" onClick={onClose} disabled={loading}>Cancel</button>
-        {step > 0 && <button className="btn ghost" onClick={() => { setStep(step - 1); setError(null) }} disabled={loading}>Back</button>}
-        <button className="btn primary" onClick={next} disabled={nextDisabled}>{nextLabel}</button>
       </div>
-
-      {/* nested code editor */}
-      {showCode && (
-        <Popup open onClose={() => setShowCode(false)} title="MCP Server Code" width={900}>
-          <textarea
-            className="field-input"
-            style={{ minHeight: 480, fontFamily: 'var(--mono)', fontSize: 12.5, resize: 'vertical' }}
-            value={serverCode}
-            onChange={(e) => setServerCode(e.target.value)}
-          />
-          <div className="flex justify-end mt-4">
-            <button className="btn primary" onClick={() => setShowCode(false)}>Done</button>
-          </div>
-        </Popup>
-      )}
-    </Popup>
+    </section>
   )
 }

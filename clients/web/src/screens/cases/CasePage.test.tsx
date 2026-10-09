@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { format } from 'date-fns'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen, { CasesDetail } from './CasesScreen'
 import { CASES_CHANGED } from './useCases'
@@ -95,7 +94,7 @@ const HUNT = {
     { hypothesis_id: 'h2', statement: 'Still forming', status: 'active', supports: 0, weakens: 0, resolution_reason: null, provenance: '' },
   ],
   evidence: [
-    { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
+    { evidence_id: 'e1', iteration: 2, source_system: 'elastic', summary: 'no login', is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [{ hypothesis_id: 'h1', relation: 'weakens' }] },
   ],
   evidence_count: 1,
   calls: [
@@ -209,11 +208,11 @@ describe('case page', () => {
     expect(await screen.findByRole('heading', { name: 'Hunt case' })).toBeInTheDocument()
     const header = document.querySelector('.detail-head') as HTMLElement
     expect(within(header).getByText('Executing')).toBeInTheDocument()
-    expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
+    expect(screen.getByText('Combined from 2 alerts')).toBeInTheDocument()
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(await within(now).findByText('Now · step 3')).toBeInTheDocument()
     expect(within(now).getByText('who logged in')).toBeInTheDocument()
-    const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
+    const clock = '09:14' // UTC, whatever the machine's zone
     expect(within(now).getByText(`threat_hunter · search · since ${clock}`)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
@@ -285,6 +284,34 @@ describe('case page', () => {
     expect(screen.getByText('sent to the reviewer')).toBeInTheDocument()
   })
 
+  it('keeps reading the hunt run once a newer root-cause run is on the case, and links to it', async () => {
+    huntCase('case-handoff')
+    const run = (workflow_id: string, run_id: string) => ({ ...investigation('completed', false, run_id), workflow_id })
+    testState.cases[0].investigations = [run('root-cause-analysis', 'run-rca'), run('threat-hunt', 'run-hunt')]
+    testState.runs['run-hunt'] = {
+      hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
+    }
+    renderCase('case-handoff')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim h')).toBeInTheDocument()
+    expect(workflowApi.getRun).not.toHaveBeenCalledWith('run-rca')
+    expect(screen.getByRole('link', { name: 'Open run run-rca' })).toHaveAttribute('href', '/workflows?run=run-rca')
+    expect(screen.getAllByText('Handed off').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/handed_off/)).not.toBeInTheDocument()
+  })
+
+  it('shows the Handed off pill alone while no root-cause run exists', async () => {
+    huntCase('case-no-rca')
+    testState.cases[0].investigations = [{ ...investigation('executing', true, 'run-hunt'), workflow_id: 'threat-hunt' }]
+    testState.runs['run-hunt'] = {
+      hunt: { ...HUNT, hypotheses: [{ hypothesis_id: 'h', statement: 'claim h', status: 'handed_off', supports: 2, weakens: 0, resolution_reason: null, provenance: '' }] },
+    }
+    renderCase('case-no-rca')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(await screen.findByText('claim h')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Open run/ })).not.toBeInTheDocument()
+  })
+
   it('shows an empty, loading and failed Explanations tab', async () => {
     huntCase('case-empty-expl')
     testState.runs['run-case-empty-expl'] = { hunt: { ...HUNT, hypotheses: [] } }
@@ -307,6 +334,117 @@ describe('case page', () => {
     renderCase('case-failed')
     fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
     expect((await screen.findAllByText('The run could not be read.')).length).toBeGreaterThan(0)
+  })
+
+  it('lays a hunt evidence trail out: stance, tier, by, a disabled row action, header counts', async () => {
+    testState.cases = [{
+      case_id: 'case-trail',
+      title: 'Trail case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-trail')],
+    }]
+    const base = { gap_detail: null, is_gap: false, source_tier: 'feed' }
+    testState.runs['run-trail'] = {
+      hunt: {
+        ...HUNT,
+        evidence_count: 7,
+        evidence: [
+          { ...HUNT.evidence[0] },
+          // Supports one explanation and weakens another: its stance on the leading one, each link named beneath.
+          { ...base, evidence_id: 'e2', iteration: 3, source_system: 'okta', summary: 'new session', bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }, { hypothesis_id: 'h1', relation: 'weakens' }] },
+          { ...base, evidence_id: 'e3', iteration: 1, source_system: 'dns', summary: 'plain lookup', source_tier: 'not_evidence', bears_on: [] },
+          // Gap row with no stamped tier, and an iteration the capped moves do not cover.
+          { ...base, evidence_id: 'e4', iteration: 9, source_system: 'mfa', summary: 'no push logs', is_gap: true, gap_detail: 'no source', source_tier: undefined, bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }] },
+        ],
+      },
+    }
+    renderCase('case-trail')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · 2 support · 0 go against · 1 neither' })).toBeInTheDocument()
+
+    const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
+    const first = row('e1')
+    // Read against the leading explanation (Still forming), a row that only bears on the ruled-out one is neither.
+    expect(within(first).getByText('Neither')).toBeInTheDocument()
+    expect(within(first).getByText('Telemetry')).toBeInTheDocument()
+    expect(within(first).getByText('threat_hunter')).toBeInTheDocument()
+    expect(within(first).getByText('The host is owned')).toBeInTheDocument()
+    const second = row('e2')
+    expect(within(second).queryByText('Mixed')).not.toBeInTheDocument()
+    expect(within(second).getByText('Feed')).toBeInTheDocument()
+    expect(within(second).getByText('threat_hunter')).toBeInTheDocument()
+    expect(within(second).getByText('Supports Still forming · Goes against The host is owned')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Neither')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('Not counted')).toBeInTheDocument()
+    expect(within(row('e3')).getByText('network_analyst')).toBeInTheDocument()
+    const gap = row('e4')
+    expect(within(gap).getByText('no push logs (gap)')).toBeInTheDocument()
+    expect(within(gap).getAllByText('—')).toHaveLength(2) // no tier, move not in the capped list
+
+    const act = within(first).getByRole('button', { name: 'Actions for this row' })
+    expect(act).toBeDisabled()
+    expect(act).toHaveAttribute('title', 'Coming in a later release')
+  })
+
+  it('shows loading, then a read error, instead of an empty evidence trail', async () => {
+    testState.cases = [{
+      case_id: 'case-err',
+      title: 'Error case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-err')],
+    }]
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
+    renderCase('case-err')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('The run could not be read.')).toBeInTheDocument()
+    expect(screen.queryByText('No evidence yet')).not.toBeInTheDocument()
+  })
+
+  it('says the run is loading while the fold is unread', async () => {
+    testState.cases = [{
+      case_id: 'case-wait',
+      title: 'Waiting case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-wait')],
+    }]
+    vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => undefined) as never)
+    renderCase('case-wait')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(screen.getByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('No evidence yet')).not.toBeInTheDocument()
+  })
+
+  it('says a hunt with no evidence rows has none yet', async () => {
+    testState.cases = [{
+      case_id: 'case-none',
+      title: 'Bare case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-none')],
+    }]
+    testState.runs['run-none'] = { hunt: { ...HUNT, evidence: [], evidence_count: 0 } }
+    renderCase('case-none')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByText('No evidence yet')).toBeInTheDocument()
   })
 
   it('gives an investigate run the honest line and puts findings in the evidence table', async () => {
@@ -337,13 +475,16 @@ describe('case page', () => {
 
     const now = await screen.findByRole('region', { name: 'Now' })
     expect(within(now).getByText('Now · step 2')).toBeInTheDocument()
-    expect(within(now).getByText('EXAMINE')).toBeInTheDocument()
+    expect(within(now).getByText('Examine')).toBeInTheDocument()
     expect(within(now).getByText('lead · since —')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /Explanations/ }))
     expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'About explanations' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
-    expect(await screen.findByText('benign traffic')).toBeInTheDocument()
+    const finding = (await screen.findByText('benign traffic')).closest('[data-evidence-id]') as HTMLElement
+    expect(screen.getByRole('heading', { name: 'Evidence trail · 1 row' })).toBeInTheDocument()
+    expect(within(finding).getAllByText('—')).toHaveLength(2) // no tier, no stance
+    expect(within(finding).getAllByText('lead')).toHaveLength(2) // source and by
     fireEvent.click(screen.getByRole('tab', { name: /Memory/ }))
     expect(await screen.findByText(/list users/)).toBeInTheDocument()
     expect(screen.getByText(/tool down/)).toBeInTheDocument()
@@ -374,7 +515,7 @@ describe('case page', () => {
 
   it('lists one agent per worker with its tool, and shows the door tiles with their sub-lines', async () => {
     testState.cases = [{ ...openCase('case-agents'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-hunt')] }]
-    testState.runs['run-hunt'] = { hunt: HUNT }
+    testState.runs['run-hunt'] = { status: 'running', hunt: HUNT }
     testState.recordRows = [
       { id: 'r1', kind: 'run', text: 'started', at: '2026-06-15T09:00:00Z', chained: true },
       { id: 'r2', kind: 'directive', text: 'note', at: '2026-06-15T09:01:00Z', chained: false },
@@ -384,7 +525,7 @@ describe('case page', () => {
     const table = await screen.findByRole('table', { name: 'Agents' })
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(2)
-    const clock = format(new Date('2026-06-15T09:14:00Z'), 'HH:mm')
+    const clock = '09:14' // UTC, whatever the machine's zone
     for (const text of ['threat_hunter', 'who logged in', 'search', clock, 'executing']) {
       expect(within(rows[0]).getByText(text)).toBeInTheDocument()
     }
@@ -393,12 +534,13 @@ describe('case page', () => {
     expect(within(rows[1]).getByText('network_analyst')).toBeInTheDocument()
     expect(within(rows[1]).getByText('proxy_query')).toBeInTheDocument()
     expect(within(rows[1]).queryByText('executing')).not.toBeInTheDocument()
+    expect(within(rows[1]).getByText('Idle')).toBeInTheDocument()
     expect(screen.queryByText(/incident-response · executing/)).not.toBeInTheDocument()
 
     const doors = screen.getByRole('region', { name: 'Audit doors' })
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
-    expect(within(doors).getByText('0 for · 1 against · shown')).toBeInTheDocument()
+    expect(within(doors).getByText('0 support · 0 go against · 1 neither')).toBeInTheDocument()
     expect(within(doors).getByText('$0.2000 · 0 gaps')).toBeInTheDocument()
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
@@ -425,6 +567,7 @@ describe('case page', () => {
   it('shows a dash for a lead decision time and keeps the honest explanations line', async () => {
     testState.cases = [{ ...openCase('case-lead'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-lead')] }]
     testState.runs['run-lead'] = {
+      status: 'running',
       projection: {
         iterations: 4,
         decisions: [
@@ -444,7 +587,7 @@ describe('case page', () => {
 
     const table = await screen.findByRole('table', { name: 'Agents' })
     const rows = within(table).getAllByRole('row')
-    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining('worker_bEXAMINE——'), expect.stringContaining('worker_aDISPATCH——')])
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining('worker_bExamine——'), expect.stringContaining('worker_aDispatch——')])
     expect(within(await screen.findByRole('region', { name: 'Now' })).getByText('worker_b · since —')).toBeInTheDocument()
     const doors = screen.getByRole('region', { name: 'Audit doors' })
     expect(within(doors).getByText('Does not test explanations yet')).toBeInTheDocument()
@@ -489,7 +632,15 @@ describe('case page', () => {
     expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
   })
 
-  it('shows a closed verdict and reopens through the status update', async () => {
+  const CLOSURE = {
+    closure_category: 'false_positive',
+    closed_by: 'ada',
+    closed_by_kind: 'analyst',
+    closed_at: '2026-06-15T15:48:00Z',
+    verdict: 'the scanner',
+  }
+
+  function closedCase(closure: Record<string, unknown> | null, investigations: unknown[] = [investigation('completed', false, 'run-closed')]) {
     testState.cases = [{
       case_id: 'case-closed',
       title: 'Closed case',
@@ -498,19 +649,83 @@ describe('case page', () => {
       finding_ids: [],
       created_at: '2026-06-15T09:14:00Z',
       combined_state: 'closed',
-      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', verdict: 'the scanner' },
-      investigations: [investigation('completed', false, 'run-closed')],
+      closure,
+      investigations,
     }]
+  }
+
+  it('shows the closed line and verdict, and reopens through the status update', async () => {
+    closedCase(CLOSURE)
     testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
     renderCase('case-closed')
 
-    expect(await screen.findByText('the scanner')).toBeInTheDocument()
-    expect(screen.getByText(/false_positive/)).toBeInTheDocument()
-    expect(screen.getByText('Closed by ada')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
+    expect(screen.getByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada · False positive · analyst$/)).toBeInTheDocument()
+    expect(screen.getByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toBeInTheDocument()
     expect(document.querySelector('.case-sla')).toBeNull()
-    expect(screen.getByText(/closed by ada \(analyst\)/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Replay' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agree' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Disagree' })).toBeDisabled()
+    expect(screen.getByText('Coming in a later release')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
+  })
+
+  it('lists the strongest hunt rows with step and stance, both sides first', async () => {
+    closedCase(CLOSURE)
+    const ev = (n: number, relation: string | null, extra: Record<string, unknown> = {}) => ({
+      evidence_id: `e${n}`, iteration: n, source_system: 'elastic', summary: `row ${n}`, is_gap: false, gap_detail: null,
+      bears_on: relation ? [{ hypothesis_id: 'h1', relation }] : [], ...extra,
+    })
+    testState.runs['run-closed'] = {
+      hunt: { ...HUNT, evidence: [ev(1, 'supports'), ev(2, 'supports'), ev(3, 'supports'), ev(4, 'weakens'), ev(5, null), ev(6, 'weakens', { is_gap: true })] },
+    }
+    renderCase('case-closed')
+
+    const list = await screen.findByRole('list')
+    const rows = within(list).getAllByRole('listitem').map((li) => li.textContent)
+    expect(rows).toEqual(['Step 1row 1For', 'Step 2row 2For', 'Step 4row 4Against'])
+  })
+
+  it('shows a lead fold’s answers with dashes for step and stance', async () => {
+    closedCase(CLOSURE)
+    testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [{ agent_id: 'triage', answer: 'benign scanner' }], calls: [], gaps: [], recall: null } }
+    renderCase('case-closed')
+
+    const list = await screen.findByRole('list')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['—benign scanner—'])
+  })
+
+  it('drops the time without a closed_at and shows a dash for an empty verdict', async () => {
+    closedCase({ ...CLOSURE, closed_at: null, verdict: '' })
+    testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
+    renderCase('case-closed')
+
+    expect(await screen.findByRole('heading', { name: '—' })).toBeInTheDocument()
+    expect(screen.getAllByText(/^Closed by ada/)).toHaveLength(2)
+    expect(document.body.textContent).not.toMatch(/Invalid Date/)
+    expect(screen.getByText('No findings yet.')).toBeInTheDocument()
+  })
+
+  it('says so while the run loads', async () => {
+    closedCase(CLOSURE)
+    vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
+    renderCase('case-closed')
+    expect(await screen.findByText('Loading the run…')).toBeInTheDocument()
+  })
+
+  it('says so when the run cannot be read', async () => {
+    closedCase(CLOSURE)
+    vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('boom'))
+    renderCase('case-closed')
+    expect(await screen.findByText('The run could not be read.')).toBeInTheDocument()
+  })
+
+  it('keeps "No findings yet." for a closed case with no run', async () => {
+    closedCase(CLOSURE, [])
+    renderCase('case-closed')
+    await screen.findByRole('heading', { name: 'the scanner' })
+    expect(screen.getByText('No findings yet.')).toBeInTheDocument()
   })
 
   it('lists linked findings in the Alerts fold on every tab', async () => {
@@ -532,7 +747,7 @@ describe('case page', () => {
     renderCase('case-links')
 
     const header = (await screen.findByRole('heading', { name: 'Linked case' })).closest('.detail-head') as HTMLElement
-    expect(within(header).getByText('3 alerts combined')).toBeInTheDocument()
+    expect(within(header).getByText('Combined from 3 alerts')).toBeInTheDocument()
     expect(within(header).queryByText('console alert')).not.toBeInTheDocument()
     const side = screen.getByRole('complementary', { name: 'Case details' })
     expect(within(side).getByText('Alerts (2)')).toBeInTheDocument()
@@ -551,6 +766,32 @@ describe('case page', () => {
     const evidence = screen.getByText('no login').closest('table') ?? screen.getByText('no login').closest('section')
     expect(evidence).toBeTruthy()
     expect(within(evidence as HTMLElement).queryByRole('link', { name: 'Open in source' })).not.toBeInTheDocument()
+  })
+
+  it('puts Details first in the side panel and folds Alerts after three with +N', async () => {
+    testState.cases = [{
+      case_id: 'case-many',
+      title: 'Many alerts',
+      status: 'open',
+      priority: 'high',
+      finding_ids: [],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-many')],
+      linked_findings: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ finding_id: id, title: `Alert ${id}`, source_link: null })),
+    }]
+    testState.runs['run-many'] = { hunt: HUNT }
+    renderCase('case-many')
+
+    const side = await screen.findByRole('complementary', { name: 'Case details' })
+    const titles = within(side).getAllByRole('heading').map((h) => h.textContent)
+    expect(titles.slice(0, 2)).toEqual(['Details', 'Alerts (5)'])
+    expect(within(side).queryByText('Alert d')).not.toBeInTheDocument()
+    fireEvent.click(within(side).getByRole('button', { name: '+2' }))
+    expect(within(side).getByText('Alert e')).toBeInTheDocument()
+    // Summary carries no count; the other tabs keep theirs.
+    expect(screen.getByRole('tab', { name: 'Summary' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^Explanations/ })).toHaveTextContent(/\d/)
   })
 
   it('shows a failed record read', async () => {
@@ -787,8 +1028,9 @@ describe('case page', () => {
     expect(screen.queryByText('no login')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'e1' }))
     expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
-    const row = (await screen.findByText('no login')).closest('tr')
+    const row = (await screen.findByText('no login')).closest('[data-evidence-id]')
     expect(row).toHaveAttribute('data-evidence-id', 'e1')
+    expect(row).toHaveClass('cite-target')
 
     showCase('case-next')
     expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
@@ -941,7 +1183,7 @@ describe('case page', () => {
       finding_ids: [],
       created_at: '2026-06-15T09:14:00Z',
       combined_state: 'closed',
-      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', verdict: 'the scanner' },
+      closure: { closure_category: 'false_positive', closed_by: 'ada', closed_by_kind: 'analyst', closed_at: null, verdict: 'the scanner' },
       investigations: [],
     }]
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({
@@ -951,7 +1193,7 @@ describe('case page', () => {
 
     expect(await screen.findByRole('heading', { name: 'Quarantine mailbox' })).toBeInTheDocument()
     const body = document.querySelector('.detail-body') as HTMLElement
-    expect(body.textContent?.indexOf('Quarantine mailbox')).toBeLessThan(body.textContent?.indexOf('Verdict') ?? -1)
+    expect(body.textContent?.indexOf('Quarantine mailbox')).toBeLessThan(body.textContent?.indexOf('Closed by ada') ?? -1)
     expect(screen.getByText('the scanner')).toBeInTheDocument()
     expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Decide on Summary' })).not.toBeInTheDocument()
@@ -1028,8 +1270,9 @@ describe('case page', () => {
       expect(within(head).getByText('High')).toBeInTheDocument()
       expect(within(head).getByText('Executing')).toHaveClass('state-pill', 'live')
       expect(await within(head).findByText('Incident response')).toBeInTheDocument()
-      expect(within(head).getByText('who logged in')).toHaveClass('case-reason')
-      expect(within(head).getByText('0 alerts combined')).toBeInTheDocument()
+      expect(within(head).getByText('Step 3 · 2 explanations · 1 evidence row so far')).toHaveClass('case-reason')
+      expect(within(head).queryByText('who logged in')).not.toBeInTheDocument()
+      expect(within(head).queryByText(/Combined from/)).not.toBeInTheDocument()
       const left = await within(head).findByText('7 h left')
       expect(left).toHaveClass('case-sla', 'good')
       expect(within(head).getByText(/Not measured yet/)).toBeInTheDocument()
@@ -1455,7 +1698,8 @@ describe('following a live run', () => {
     expect(screen.getByText('The budget refused another iteration: unpriced.')).toBeInTheDocument()
     expect(screen.queryByText(/Now · step/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'What the run reported' })).toBeInTheDocument()
-    expect(within(screen.getByRole('table', { name: 'Agents' })).queryByText('executing')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Agents' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Agents on this case, right now')).not.toBeInTheDocument()
 
     // A paused run can wake, so it keeps being read; a failed one does not.
     const before = reads()
@@ -1481,5 +1725,97 @@ describe('following a live run', () => {
   it('says handed off in Findings so far', async () => {
     open('case-words', live({ hunt: { ...HUNT, hypotheses: [{ ...HUNT.hypotheses[1], status: 'handed_off' }] } }))
     expect(await screen.findByText('handed off — Still forming')).toBeInTheDocument()
+  })
+})
+
+describe('watching a run, its cost and its agents', () => {
+  const hunt = (over: Record<string, unknown> = {}) => ({ ...HUNT, status: 'active', ...over })
+  const open = (id: string, run: unknown, ref: Record<string, unknown> = {}, props: Parameters<typeof renderDetail>[1] = {}) => {
+    testState.cases = [{ ...openCase(id), combined_state: 'executing', investigations: [{ ...investigation('executing', true, `run-${id}`), cost_usd: 0, max_cost_usd: 0, ...ref }] }]
+    testState.runs[`run-${id}`] = run
+    return renderDetail(id, props)
+  }
+  const side = async () => within(await screen.findByRole('complementary', { name: 'Case details' }))
+
+  it('links the Now card and the stopped card to Watch a run, and closes the drawer', async () => {
+    const onBack = vi.fn()
+    open('case-w', { status: 'running', hunt: hunt() }, {}, { onBack, onExpand: vi.fn() })
+    const link = await within(await screen.findByRole('region', { name: 'Now' })).findByRole('link', { name: 'Watch it run' })
+    expect(link).toHaveAttribute('href', '/workflows?run=run-case-w')
+    fireEvent.click(link)
+    expect(onBack).toHaveBeenCalled()
+    cleanup()
+
+    open('case-w2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
+    const stopped = await screen.findByRole('region', { name: 'Run state' })
+    expect(within(stopped).getByRole('link', { name: 'Watch it run' })).toHaveAttribute('href', '/workflows?run=run-case-w2')
+  })
+
+  it('offers no Watch link without a run', async () => {
+    testState.cases = [openCase('case-none')]
+    renderDetail('case-none')
+    await screen.findByText('No run on this case yet.')
+    expect(screen.queryByRole('link', { name: 'Watch it run' })).not.toBeInTheDocument()
+  })
+
+  it('shows a hunt’s live cost against the cap off the run, and keeps it once parked', async () => {
+    open('case-c', { status: 'running', hunt: hunt({ cost_usd: 1.4989, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
+    const panel = await side()
+    expect(await panel.findByText('$1.4989 of $5.0000')).toBeInTheDocument()
+    expect(panel.getByText('Good')).toBeInTheDocument()
+    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$5.0000')
+    expect(panel.queryByText('Not measured yet')).not.toBeInTheDocument()
+    // The header's trust strip is a different thing and stays.
+    expect(within(document.querySelector('.dh-meta') as HTMLElement).getByText(/Not measured yet/)).toBeInTheDocument()
+    cleanup()
+
+    open('case-c2', { status: 'running', hunt: hunt({ status: 'parked', cost_usd: 4.8, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
+    const parked = await side()
+    expect(await parked.findByText('$4.8000 of $5.0000')).toBeInTheDocument()
+    expect(parked.getByText('Poor')).toBeInTheDocument()
+  })
+
+  it('shows the cost alone when no cap is known, and Not measured only when no cost is', async () => {
+    open('case-c3', { status: 'running', hunt: hunt({ cost_usd: 0.4 }) })
+    const panel = await side()
+    expect(await panel.findByText('$0.4000')).toBeInTheDocument()
+    expect(panel.queryByRole('meter')).not.toBeInTheDocument()
+    expect(panel.queryByText('Good')).not.toBeInTheDocument()
+    cleanup()
+
+    open('case-c4', { status: 'running', hunt: hunt({ cost_usd: 0 }) })
+    expect(await (await side()).findByText('Not measured yet')).toBeInTheDocument()
+  })
+
+  it('lists agents only while the run is in flight', async () => {
+    open('case-a', { status: 'running', hunt: hunt() })
+    const table = await screen.findByRole('table', { name: 'Agents' })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    cleanup()
+
+    open('case-a2', { status: 'running', hunt: hunt({ status: 'parked', reason: 'budget' }) })
+    await screen.findByRole('region', { name: 'Run state' })
+    expect(screen.queryByRole('table', { name: 'Agents' })).not.toBeInTheDocument()
+    cleanup()
+
+    open('case-a3', { status: 'completed', hunt: hunt({ outcome: 'completed' }) })
+    await waitFor(() => expect(screen.getByText('No live investigation.')).toBeInTheDocument())
+    expect(screen.queryByRole('table', { name: 'Agents' })).not.toBeInTheDocument()
+  })
+
+  it('says a lead’s decision in plain words in the Now card, the title line and the agent rows', async () => {
+    open('case-words', {
+      status: 'running',
+      hunt: hunt({ moves: [
+        { query_intent: '', action: 'ABANDON', worker_agent_id: 'lead', iteration: 2, created_at: '2026-06-15T09:10:00Z' },
+        { query_intent: 'who logged in', action: 'INVESTIGATE', worker_agent_id: 'worker', iteration: 1, created_at: '2026-06-15T09:05:00Z' },
+      ] }),
+    })
+    const now = await screen.findByRole('region', { name: 'Now' })
+    expect(within(now).getByText('Rule out an explanation')).toBeInTheDocument()
+    expect(document.querySelector('.case-reason')).toHaveTextContent(/^Step \d+ · /)
+    const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')
+    expect(rows[1]).toHaveTextContent('who logged in')
+    expect(screen.queryByText('ABANDON')).not.toBeInTheDocument()
   })
 })

@@ -35,6 +35,8 @@ export interface EvidenceRow {
   summary: string
   is_gap: boolean
   gap_detail: string | null
+  /** Stamped by the API on non-gap hunt rows; a display label, as configured now. */
+  source_tier: string | null
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
@@ -101,6 +103,8 @@ export interface HuntFold {
   outcome: string | null
   reason: string
   costUsd: number | null
+  /** What this run was granted, extensions included; null when the run row carries no budgets. */
+  maxCostUsd: number | null
 }
 
 export interface LeadFold {
@@ -147,6 +151,45 @@ export function wordDisplay(word: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
+const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED'] as const
+type HuntAction = (typeof HUNT_ACTIONS)[number]
+
+function isHuntAction(token: string): token is HuntAction {
+  return (HUNT_ACTIONS as readonly string[]).includes(token)
+}
+
+/** A lead's decision action in plain words; an unknown token reads as a sentence, never the raw enum. */
+export function actionWords(token: string): string {
+  if (!isHuntAction(token)) return wordDisplay(token.toLowerCase())
+  switch (token) {
+    case 'INVESTIGATE':
+      return 'Look into a new lead'
+    case 'EXPAND':
+      return 'Widen the search'
+    case 'PIVOT':
+      return 'Switch to a different angle'
+    case 'DEEPEN':
+      return 'Dig deeper into the same lead'
+    case 'ABANDON':
+      return 'Rule out an explanation'
+    case 'VALIDATE':
+      return 'Check an explanation against the evidence'
+    case 'CHECKPOINT':
+      return 'Stop to ask you'
+    case 'CONCLUDE':
+      return 'Wrap up and report'
+    // The label core/workflows/hunt_preflight.py gives HANDOFF_IR.
+    case 'HANDOFF_IR':
+      return 'Start incident response on a proven explanation'
+    case 'STALLED':
+      return 'Stalled, no decision made'
+    default: {
+      const unhandled: never = token
+      return unhandled
+    }
+  }
+}
+
 const ADDED_BY: Record<string, string> = {
   hunt_spec: 'the hunt definition',
   operator: 'you',
@@ -157,6 +200,46 @@ const ADDED_BY: Record<string, string> = {
 /** "Added by" words for a hypothesis provenance; the raw token when unknown, '' when absent. */
 export function addedBy(provenance: string): string {
   return ADDED_BY[provenance] ?? provenance
+}
+
+export type Stance = 'supports' | 'weakens' | 'neither'
+
+export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', neither: 'Neither' }
+
+export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not counted' }
+
+/** The word for one link's relation; an unknown relation shows as written. */
+export function relationWord(relation: string): string {
+  return relation === 'supports' || relation === 'weakens' || relation === 'neither' ? STANCE_WORD[relation] : relation
+}
+
+const LEAD_ORDER = ['proven', 'standing', 'forming', 'weakened']
+
+/** The explanation the evidence is read against when none is picked: best status, then most net support, then first listed. */
+export function leadingExplanation(fold: HuntFold): HypothesisRow | null {
+  const rank = (h: HypothesisRow) => {
+    const i = LEAD_ORDER.indexOf(explanationWord(h.status, h.supports, h.weakens))
+    return i < 0 ? LEAD_ORDER.length : i
+  }
+  return [...fold.hypotheses].sort((a, b) => rank(a) - rank(b) || b.supports - b.weakens - (a.supports - a.weakens))[0] ?? null
+}
+
+/** A row bears on several explanations; it is counted once, by its link to this one (neither when it has none). */
+export function stanceOn(row: EvidenceRow, hypothesisId: string | undefined): Stance {
+  const relation = row.bears_on.find((link) => link.hypothesis_id === hypothesisId)?.relation
+  return relation === 'supports' || relation === 'weakens' ? relation : 'neither'
+}
+
+/** Totals over the rows shown, each row once; critic (not_evidence) rows are listed but not counted. */
+export function stanceTotals(fold: HuntFold, hypothesisId = leadingExplanation(fold)?.hypothesis_id): Record<Stance, number> {
+  const totals = { supports: 0, weakens: 0, neither: 0 }
+  for (const row of fold.evidence) if (row.source_tier !== 'not_evidence') totals[stanceOn(row, hypothesisId)]++
+  return totals
+}
+
+/** Who made the move at this iteration; null when it fell outside the capped list. */
+export function workerAt(fold: HuntFold, iteration: number): string | null {
+  return fold.moves.find((move) => move.iteration === iteration)?.worker || null
 }
 
 export function recordChip(kind: string): RecordChip {
@@ -247,7 +330,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
     return [{
-      doing: str(o.query_intent) || str(o.action),
+      doing: str(o.query_intent) || actionWords(str(o.action)),
       worker: str(o.worker_agent_id),
       at: typeof o.created_at === 'string' ? o.created_at : null,
       iteration: num(o.iteration),
@@ -286,10 +369,12 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           summary: str(o.summary),
           is_gap: o.is_gap === true,
           gap_detail: typeof o.gap_detail === 'string' ? o.gap_detail : null,
+          source_tier: typeof o.source_tier === 'string' ? o.source_tier : null,
           bears_on: bears,
         }]
       })
     : []
+  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
@@ -305,6 +390,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
+    maxCostUsd: budgets ? num(budgets.max_cost_usd) : null,
   }
 }
 
@@ -314,7 +400,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
   const rows = decisions.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
-    return [{ doing: str(o.action), worker: str(o.worker), at: null, iteration: null }]
+    return [{ doing: actionWords(str(o.action)), worker: str(o.worker), at: null, iteration: null }]
   }).reverse()
   const findings = Array.isArray(raw.findings)
     ? raw.findings.flatMap((item) => {
@@ -386,6 +472,17 @@ export function stoppedRun(fold: RunFold | null): StoppedRun | null {
   return { state: stopped ? 'stopped' : 'paused', line, raw }
 }
 
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+/** The header's sentence for a live run: where it stands, from what the fold already holds. */
+export function runSentence(fold: RunFold | null): string {
+  if (!fold) return ''
+  if (fold.kind === 'lead') return `Step ${fold.iterations} · ${plural(fold.findings.length, 'finding')} so far`
+  return `Step ${fold.iteration} · ${plural(fold.hypotheses.length, 'explanation')} · ${plural(fold.evidenceCount, 'evidence row')} so far`
+}
+
 export function recallEntityCalls(fold: RunFold | null): CallRow[] {
   if (!fold) return []
   return fold.calls.filter((call) => call.tool === 'recall_entity')
@@ -426,4 +523,29 @@ export function agentRows(fold: RunFold | null): AgentRow[] {
     seen.add(move.worker)
     return [{ who: move.worker, doing: move.doing, tool: moveTool(fold, move), at: move.at }]
   })
+}
+
+export interface StrongRow {
+  step: string
+  text: string
+  stance: 'For' | 'Against' | null
+}
+
+/** Up to 3 rows for the closed summary: a hunt's evidence that bears on a hypothesis, or a lead's answers. */
+export function strongestRows(fold: RunFold | null): StrongRow[] {
+  if (!fold) return []
+  if (fold.kind === 'lead') {
+    return fold.findings.slice(0, 3).map((row) => ({ step: '—', text: row.answer || '—', stance: null }))
+  }
+  const rows = fold.evidence.flatMap((row, i) => {
+    if (row.is_gap) return []
+    const relation = row.bears_on.find((link) => link.relation === 'supports' || link.relation === 'weakens')?.relation
+    if (!relation) return []
+    const stance: StrongRow['stance'] = relation === 'supports' ? 'For' : 'Against'
+    return [{ i, step: String(row.iteration), text: row.summary || row.evidence_id, stance }]
+  })
+  // Keep one of each stance first so both sides show, then fill in order.
+  const picked = new Set([rows.find((r) => r.stance === 'For'), rows.find((r) => r.stance === 'Against')].filter(Boolean))
+  for (const r of rows) if (picked.size < 3) picked.add(r)
+  return rows.filter((r) => picked.has(r)).map(({ step, text, stance }) => ({ step, text, stance }))
 }

@@ -205,7 +205,7 @@ describe("a later question the request has no room for", () => {
     const { seen, report } = await converse(harnessOf([{ deltas: ["never"] }]), turns);
 
     expect(report.status).toBe("failed");
-    expect(report.reason).toMatch(/no room for the current question/);
+    expect(report.reason).toMatch(/more than Ask can read at once/);
     expect(seen.flatMap(chatEvents)).toContainEqual({ error: report.reason });
   });
 });

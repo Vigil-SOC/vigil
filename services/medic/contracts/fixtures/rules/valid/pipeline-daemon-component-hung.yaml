@@ -1,0 +1,27 @@
+# Multi-signal · P-3.a (from E1 example 04). Expected trust: trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.daemon-component-hung
+title: Daemon processor reports running but has done no work
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.a]}
+lane: 3
+detection: absence
+signals:
+  status:    {sample: {signal: daemon_health, key: components.processor}}
+  processed: {sample: {signal: daemon_status.processor, key: processed}}
+  uptime:    {sample: {signal: daemon_health, key: uptime_seconds}}
+  arrivals:  {sample: {signal: daemon_status.poller, key: webhook_findings}}
+when:
+  all:
+    - {fn: latest, signal: status, op: "==", value: running}
+    - {fn: changes, signal: processed, window: 15m, op: "==", value: 0}
+    - {fn: increase, signal: arrivals, window: 15m, op: ">", value: 0}
+    - {fn: latest, signal: uptime, op: ">", value: 900}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: Findings are arriving but the soc-daemon processor has processed none for 15 minutes while reporting running.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report. Restarting
+    soc-daemon usually restores the processor; record that you did so.

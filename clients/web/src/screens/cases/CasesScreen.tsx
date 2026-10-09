@@ -12,6 +12,7 @@ import {
   CASES_CHANGED,
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
+  CLOSURE_CATEGORIES,
   type CaseFilters,
   type Phase,
 } from './useCases'
@@ -56,7 +57,7 @@ const STATE_OPTIONS = [
 function budgetCell(c: CaseRow): string {
   if (c.costUsd == null && c.maxCostUsd == null) return '—'
   const cost = c.costUsd == null ? '—' : c.costUsd.toFixed(2)
-  const max = c.maxCostUsd == null ? '—' : c.maxCostUsd.toFixed(2)
+  const max = c.maxCostUsd ? c.maxCostUsd.toFixed(2) : '—' // a run with no cap of its own has none to show
   return c.budgetHealth ? `${cost}/${max} ${c.budgetHealth}` : `${cost}/${max}`
 }
 
@@ -663,13 +664,6 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
 
 /** What a closer says a Case turned out to be. `duplicate` is bookkeeping rather
  *  than a determination, so it records a category and mints no verdict. */
-const CLOSURE_CATEGORIES = [
-  { value: 'resolved', label: 'Resolved' },
-  { value: 'false_positive', label: 'False positive' },
-  { value: 'duplicate', label: 'Duplicate' },
-  { value: 'unable_to_resolve', label: 'Unable to resolve' },
-] as const
-
 type ClosureCategory = (typeof CLOSURE_CATEGORIES)[number]['value']
 
 function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseRow | null; onClose: () => void; onSaved: () => void }) {

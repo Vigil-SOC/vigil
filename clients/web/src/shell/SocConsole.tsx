@@ -245,8 +245,12 @@ function SocConsoleInner() {
     prepareStop(tourIndex)
   }, [tourOn, tourIndex, prepareStop, wallMode, chatOpen, viewFull])
 
-  // screens that deep-link a detail re-assert viewFull from their own URL state
+  // screens that deep-link a detail re-assert viewFull from their own URL state; a child's effect
+  // runs before this one on first mount, so only a change of screen may clear what it set
+  const shownScreen = useRef(current)
   useEffect(() => {
+    if (shownScreen.current === current) return
+    shownScreen.current = current
     setViewFull(false)
     setWallMode(false)
   }, [current])
@@ -410,7 +414,7 @@ function SocConsoleInner() {
     chatOpen ? 'chat-active' : '',
   ].filter(Boolean).join(' ')
 
-  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || (current === 'cases' && !viewFull))
+  const ownsHeading = valid && allowed && (current === 'workflows' || current === 'settings' || current === 'triage' || (current === 'cases' && !viewFull))
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
   const effectiveChatWidth = viewportWidth <= 600 ? viewportWidth : CHAT_WIDTH
   const consoleStyle = { '--chat-w': `${effectiveChatWidth}px` } as CSSProperties
@@ -436,7 +440,10 @@ function SocConsoleInner() {
             onOpenChat={askVigil}
             caseOpen={openCaseId !== null}
             onOpenCase={setDrawerCase}
-            onGo={(next) => go(next)}
+            onGo={(next, options) => {
+              setDrawerCase(null) // the drawer would sit over the next screen
+              go(next, options)
+            }}
           />
           <div className="vg-header-end">
             {assist !== null && (
@@ -494,7 +501,7 @@ function SocConsoleInner() {
 
         {/* main */}
         <div className={mainClass}>
-          {/* Agents & workflows, Settings and the Cases list draw their own headings */}
+          {/* Agents & workflows, Triage, Settings and the Cases list draw their own headings */}
           {!wallMode && !ownsHeading && (
             <header className="topbar">
               <div className="title">
@@ -529,7 +536,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go(landing)}>Back to {landingLabel}</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} openCase={setDrawerCase} setViewFull={setViewFull} setWallMode={setWallMode} caseSeed={drawerCase ? null : caseSeed} onCaseSeedConsumed={clearCaseSeed} startTour={startTour} />
                 )}
               </ErrorBoundary>
             </div>

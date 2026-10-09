@@ -1,0 +1,54 @@
+/* Settings › AI models, top half: data-residency banner, provider cards, per-agent model table. Tokens only. */
+.aim-banner {
+  max-width: 1280px; /* the cards below it (.settings-card.wide) stop here too */
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--ac-bg);
+  border: 1px solid color-mix(in oklab, var(--ac) 35%, transparent);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--tx0);
+}
+.aim-banner > svg { flex: 0 0 auto; margin-top: 1px; color: var(--ac); }
+
+.aim-cards {
+  max-width: 1280px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.aim-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--ln0);
+  background: var(--bg1);
+  min-width: 0;
+}
+.aim-card.default { border-color: var(--ac); background: var(--ac-bg); }
+.aim-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.aim-card-name { font-size: 14px; font-weight: 700; color: var(--tx0); overflow-wrap: anywhere; }
+.aim-card-name small { font-size: 14px; font-weight: 500; color: var(--tx2); }
+.aim-card-keys { font-size: 12px; line-height: 1.45; color: var(--tx2); }
+.aim-card-where { font-size: 12px; font-weight: 600; color: var(--tx1); }
+.aim-card-where.local { color: var(--good); }
+
+.aim-table tbody td { white-space: normal; vertical-align: middle; }
+.aim-table th, .aim-table td { padding-left: 10px; padding-right: 10px; }
+.aim-model { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.aim-model > * { min-width: 0; }
+.aim-model > :first-child { flex: 0 0 150px; }
+.aim-model > :last-child { flex: 1 1 150px; }
+/* fixed width, so a long model id wraps instead of widening the table */
+.aim-fallback { width: 160px; }
+.aim-fallback .field-select { padding: 7px 7px 7px 9px; gap: 4px; font-size: 12px; }
+.aim-fallback .field-select > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.aim-muted { color: var(--tx2); }
+.aim-who { font-weight: 650; color: var(--tx0); }
+.aim-note { font-size: 11px; color: var(--tx2); }
+.aim-table tbody td.aim-nowrap { white-space: nowrap; }

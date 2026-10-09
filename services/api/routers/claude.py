@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -13,17 +13,29 @@ from pydantic import BaseModel, field_validator
 from core.agents.builtins import blank_model
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.agents.projections import agent_route
+from core.agents.prompts import _skills_section
 from core.auth import tool_principal
 from core.auth.permissions import permission_gate
 from core.cases.case_brief import case_brief
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
-from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
+from core.llm.chat_layers import (
+    chat_config,
+    granted_ids,
+    integrations_line,
+    run_id_for,
+)
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.router.router import get_provider_spec
 from core.llm.system_prompt import validate_system_prompt
-from core.llm.target import can_serve, model_for, provider_for
+from core.llm.target import (
+    component_fallback,
+    first_servable,
+    model_for,
+    note_fallback,
+    provider_for,
+)
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
@@ -172,13 +184,21 @@ def _resolve_provider_model_for_request(
     provider_id, assignment_model = resolved
     return (
         provider_id,
-        _servable_agent_model(provider_id, assignment_model, agent),
+        _servable_agent_model(
+            provider_id, assignment_model, agent, category, component_fallback(category)
+        ),
     )
 
 
-def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -> str:
-    """First of the agent's model, its fallback, and the assignment model
-    that the resolved provider can serve.
+def _servable_agent_model(
+    provider_id: str,
+    assignment_model: str,
+    agent: Any,
+    component: str = "",
+    component_fb: Optional[str] = None,
+) -> str:
+    """First of the agent's model, its fallback, the assignment model and the
+    assignment's own fallback that the resolved provider can serve.
 
     When none of them can, the assignment model is returned unchanged.
     ``chat_stream`` still runs ``model_for``, which substitutes.
@@ -189,7 +209,7 @@ def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -
         if agent is not None
         else None
     )
-    if not primary and not fallback:
+    if not primary and not fallback and not component_fb:
         return assignment_model
 
     # The named assignment provider only. provider_for substitutes the default
@@ -203,10 +223,14 @@ def _servable_agent_model(provider_id: str, assignment_model: str, agent: Any) -
     if provider is None:
         return assignment_model
 
-    for candidate in (primary, fallback, assignment_model):
-        if candidate and can_serve(provider, candidate):
-            return candidate
-    return assignment_model
+    chosen = first_servable(
+        provider, (primary, fallback, assignment_model, component_fb)
+    )
+    if chosen is None:
+        return assignment_model
+    if chosen == component_fb and chosen not in (primary, fallback, assignment_model):
+        note_fallback(component, assignment_model, chosen)
+    return chosen
 
 
 class ContentBlock(BaseModel):
@@ -260,17 +284,25 @@ class ChatRequest(BaseModel):
         return validate_system_prompt(v, source="chat")
 
 
+LATEST_ONLY = (
+    "Answer only the latest question; do not restate or summarise earlier answers."
+)
+
+
 def _page_case_sentence(page_context: Optional[str], case_id: Optional[str]) -> str:
     """One sentence naming the page key and case id, when either was sent."""
     page = (page_context or "").strip()
     case = (case_id or "").strip()
     if page and case:
-        return f"The analyst opened this from page {page} about case {case}."
-    if page:
+        sentence = f"The analyst opened this from page {page} about case {case}."
+    elif page:
         return f"The analyst opened this from page {page}."
-    if case:
-        return f"The analyst opened this about case {case}."
-    return ""
+    elif case:
+        sentence = f"The analyst opened this about case {case}."
+    else:
+        return ""
+    # Q3 was opening by restating Q2's answer.
+    return f"{sentence} {LATEST_ONLY}"
 
 
 def _with_page_case(
@@ -322,6 +354,13 @@ async def chat_stream(
         brief = await case_brief(request.case_id.strip(), workflows)
         if brief:
             system_prompt = f"{system_prompt}\n\n{brief}"
+    # Chat never goes through prompt_for_row, so a granted read_skill would have
+    # no index. Read per turn so a newly saved skill shows on the next message;
+    # skipped when an agent's own prompt already carries it.
+    if "<available_skills>" not in system_prompt:
+        skills = _skills_section(granted_ids(tools), None)
+        if skills:
+            system_prompt = f"{system_prompt}\n\n{skills}".strip()
 
     active_provider = provider_for(provider_id)
     if active_provider is None:
@@ -329,10 +368,13 @@ async def chat_stream(
     model = request.model = model_for(active_provider, request.model)
     provider_type = active_provider.provider_type
 
-    # Surface whatever MCP integrations are connected right now (VirusTotal, OTX,
-    # MISP, Shodan, …) so the assistant can call them the moment their server is
-    # connected — refreshed per turn, no restart.
+    # Whatever MCP integrations are connected right now (VirusTotal, OTX, MISP,
+    # Shodan, …), refreshed per turn, no restart. Named in the prompt rather than
+    # declared: the model finds and calls their tools on demand.
     mcp_tools = live_mcp_tools(registry) or None
+    connected = integrations_line(mcp_tools, registry.tool_servers())
+    if connected:
+        system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
     payload = {
@@ -353,20 +395,12 @@ async def chat_stream(
     if not payload["turns"]:
         raise HTTPException(status_code=400, detail="No messages provided")
 
-    def refit(maximum: int) -> Optional[Tuple[str, List[str]]]:
-        trimmed = trim_servers(tools, mcp_tools, registry.tool_servers(), maximum)
-        if trimmed is None:
-            return None
-        kept, dropped = trimmed
-        return chat_config(model, tools, kept, provider=provider_type), dropped
-
     return StreamingResponse(
         _relay(
             payload,
             request,
             session_id,
             getattr(current_user, "user_id", None),
-            refit if mcp_tools else None,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -393,78 +427,44 @@ def _turns_of(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 
 # Relayed rather than re-encoded: the agent layer already speaks the console's
 # vocabulary, so this reads the frames only to accumulate the turn for history.
-#
-# With ``refit``, frames are held until the model has taken the turn: a provider
-# that refuses the tools array does so before any text or tool call, and that
-# attempt is replaced — once — by one declaring fewer servers, rather than shown.
 async def _relay(
     payload: Dict[str, Any],
     request: ChatRequest,
     session_id: str,
     user_id: Optional[str],
-    refit: Optional[Callable[[int], Optional[Tuple[str, List[str]]]]] = None,
 ):
     import httpx
 
     said: List[str] = []
     finished = False
-    # Said only once the retried attempt answers, so a retry that fails too is
-    # relayed as a plain failure.
-    note: Optional[str] = None
+    # The turn's own failure, stored as the failed reply so a reload shows it.
+    failure: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=None) as client:
-            while True:
-                retry = None
-                held: Optional[List[str]] = [] if refit or note else None
-                async with client.stream(
-                    "POST",
-                    agent_route("/chat/stream"),
-                    json=payload,
-                    headers=_internal_headers(),
-                ) as upstream:
-                    if upstream.status_code != 200:
-                        detail = (await upstream.aread()).decode("utf-8", "replace")
-                        yield _frame(
-                            {"error": f"agent layer refused the turn: {detail}"}
-                        )
-                        return
-                    async for line in upstream.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        if held is not None:
-                            event = _event_in(line[6:])
-                            if event.get("type") == "context_windowed":
-                                held.append(line)
-                                continue
-                            if "error" in event:
-                                maximum = tools_ceiling(str(event["error"]))
-                                refitted = refit(maximum) if refit and maximum else None
-                                if refitted:
-                                    retry = (maximum, *refitted)
-                                    break
-                            elif note:
-                                said.append(note)
-                                yield _frame({"type": "text", "content": note})
-                            for frame in held:
-                                yield f"{frame}\n\n"
-                            held = None
-                        said.append(_text_in(line[6:]))
-                        yield f"{line}\n\n"
-                    if retry is None:
-                        for frame in held or []:
-                            yield f"{frame}\n\n"
-                        break
-                maximum, config, dropped = retry
-                payload = {**payload, "config": config}
-                refit = None
-                note = (
-                    f"_Left out of this answer, because the model takes at most "
-                    f"{maximum} tools: {', '.join(dropped)}._\n\n"
-                )
+            async with client.stream(
+                "POST",
+                agent_route("/chat/stream"),
+                json=payload,
+                headers=_internal_headers(),
+            ) as upstream:
+                if upstream.status_code != 200:
+                    detail = (await upstream.aread()).decode("utf-8", "replace")
+                    failure = f"agent layer refused the turn: {detail}"
+                    yield _frame({"error": failure})
+                    return
+                async for line in upstream.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    said.append(_text_in(line[6:]))
+                    error = _event_in(line[6:]).get("error")
+                    if error:
+                        failure = str(error)
+                    yield f"{line}\n\n"
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)
-        yield _frame({"error": INTERNAL_ERROR_DETAIL})
+        failure = INTERNAL_ERROR_DETAIL
+        yield _frame({"error": failure})
     finally:
         # Fail-open, and on abort too: GeneratorExit flows through finally.
         try:
@@ -474,11 +474,13 @@ async def _relay(
                 user_id=user_id,
                 agent_id=request.agent_id,
                 model=request.model,
-                user_text=payload["turns"][-1]["content"],
-                assistant_text="".join(said),
+                # The question as asked: the agent turns merge consecutive user messages.
+                user_text=_user_text_from_content(request.messages[-1].content).strip()
+                or payload["turns"][-1]["content"],
+                assistant_text=failure or "".join(said),
                 assistant_thinking=None,
                 tool_calls=[],
-                complete=finished,
+                complete=finished and failure is None,
                 case_id=request.case_id,
                 page_context=request.page_context,
             )
