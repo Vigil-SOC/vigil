@@ -103,6 +103,8 @@ export interface HuntFold {
   outcome: string | null
   reason: string
   costUsd: number | null
+  /** What this run was granted, extensions included; null when the run row carries no budgets. */
+  maxCostUsd: number | null
 }
 
 export interface LeadFold {
@@ -149,6 +151,45 @@ export function wordDisplay(word: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
+const HUNT_ACTIONS = ['INVESTIGATE', 'EXPAND', 'PIVOT', 'DEEPEN', 'ABANDON', 'VALIDATE', 'CHECKPOINT', 'CONCLUDE', 'HANDOFF_IR', 'STALLED'] as const
+type HuntAction = (typeof HUNT_ACTIONS)[number]
+
+function isHuntAction(token: string): token is HuntAction {
+  return (HUNT_ACTIONS as readonly string[]).includes(token)
+}
+
+/** A lead's decision action in plain words; an unknown token reads as a sentence, never the raw enum. */
+export function actionWords(token: string): string {
+  if (!isHuntAction(token)) return wordDisplay(token.toLowerCase())
+  switch (token) {
+    case 'INVESTIGATE':
+      return 'Look into a new lead'
+    case 'EXPAND':
+      return 'Widen the search'
+    case 'PIVOT':
+      return 'Switch to a different angle'
+    case 'DEEPEN':
+      return 'Dig deeper into the same lead'
+    case 'ABANDON':
+      return 'Rule out an explanation'
+    case 'VALIDATE':
+      return 'Check an explanation against the evidence'
+    case 'CHECKPOINT':
+      return 'Stop to ask you'
+    case 'CONCLUDE':
+      return 'Wrap up and report'
+    // The label core/workflows/hunt_preflight.py gives HANDOFF_IR.
+    case 'HANDOFF_IR':
+      return 'Start incident response on a proven explanation'
+    case 'STALLED':
+      return 'Stalled, no decision made'
+    default: {
+      const unhandled: never = token
+      return unhandled
+    }
+  }
+}
+
 const ADDED_BY: Record<string, string> = {
   hunt_spec: 'the hunt definition',
   operator: 'you',
@@ -161,27 +202,39 @@ export function addedBy(provenance: string): string {
   return ADDED_BY[provenance] ?? provenance
 }
 
-export type Stance = 'supports' | 'weakens' | 'mixed' | 'neither'
+export type Stance = 'supports' | 'weakens' | 'neither'
 
-export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', mixed: 'Mixed', neither: 'Neither' }
+export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', neither: 'Neither' }
 
-export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not evidence' }
+export const TIER_WORD: Record<string, string> = { telemetry: 'Telemetry', feed: 'Feed', not_evidence: 'Not counted' }
 
 /** The word for one link's relation; an unknown relation shows as written. */
 export function relationWord(relation: string): string {
   return relation === 'supports' || relation === 'weakens' || relation === 'neither' ? STANCE_WORD[relation] : relation
 }
 
-// A row can bear on several explanations, and a hunt routinely supports one and weakens another, so the row's
-// stance is only a single word when its links agree; "neither" links take no side. Counts are per link.
-export function stanceOf(row: EvidenceRow): Stance {
-  const relations = row.bears_on.map((link) => link.relation)
-  const supports = relations.includes('supports')
-  const weakens = relations.includes('weakens')
-  if (supports && weakens) return 'mixed'
-  if (weakens) return 'weakens'
-  if (supports) return 'supports'
-  return 'neither'
+const LEAD_ORDER = ['proven', 'standing', 'forming', 'weakened']
+
+/** The explanation the evidence is read against when none is picked: best status, then most net support, then first listed. */
+export function leadingExplanation(fold: HuntFold): HypothesisRow | null {
+  const rank = (h: HypothesisRow) => {
+    const i = LEAD_ORDER.indexOf(explanationWord(h.status, h.supports, h.weakens))
+    return i < 0 ? LEAD_ORDER.length : i
+  }
+  return [...fold.hypotheses].sort((a, b) => rank(a) - rank(b) || b.supports - b.weakens - (a.supports - a.weakens))[0] ?? null
+}
+
+/** A row bears on several explanations; it is counted once, by its link to this one (neither when it has none). */
+export function stanceOn(row: EvidenceRow, hypothesisId: string | undefined): Stance {
+  const relation = row.bears_on.find((link) => link.hypothesis_id === hypothesisId)?.relation
+  return relation === 'supports' || relation === 'weakens' ? relation : 'neither'
+}
+
+/** Totals over the rows shown, each row once; critic (not_evidence) rows are listed but not counted. */
+export function stanceTotals(fold: HuntFold, hypothesisId = leadingExplanation(fold)?.hypothesis_id): Record<Stance, number> {
+  const totals = { supports: 0, weakens: 0, neither: 0 }
+  for (const row of fold.evidence) if (row.source_tier !== 'not_evidence') totals[stanceOn(row, hypothesisId)]++
+  return totals
 }
 
 /** Who made the move at this iteration; null when it fell outside the capped list. */
@@ -277,7 +330,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
     return [{
-      doing: str(o.query_intent) || str(o.action),
+      doing: str(o.query_intent) || actionWords(str(o.action)),
       worker: str(o.worker_agent_id),
       at: typeof o.created_at === 'string' ? o.created_at : null,
       iteration: num(o.iteration),
@@ -321,6 +374,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
         }]
       })
     : []
+  const budgets = raw.budgets && typeof raw.budgets === 'object' ? (raw.budgets as Record<string, unknown>) : null
   return {
     kind: 'hunt',
     run,
@@ -336,6 +390,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
+    maxCostUsd: budgets ? num(budgets.max_cost_usd) : null,
   }
 }
 
@@ -345,7 +400,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
   const rows = decisions.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const o = item as Record<string, unknown>
-    return [{ doing: str(o.action), worker: str(o.worker), at: null, iteration: null }]
+    return [{ doing: actionWords(str(o.action)), worker: str(o.worker), at: null, iteration: null }]
   }).reverse()
   const findings = Array.isArray(raw.findings)
     ? raw.findings.flatMap((item) => {

@@ -1,0 +1,15 @@
+apiVersion: medic.suppression/v1
+kind: Suppression
+entries:
+  - parent: {class: llm}
+    children: {mode: P-4}
+    why: Triage stalls whenever the LLM path is down (B5 P-4.a). Show the LLM fault, not the stall.
+  - parent: {mode: L-5}
+    children: {cause: P-2.e}
+    why: A spent budget abandons runs (B5 P-2.e).
+  - parent: {mode: L-3}
+    children: {cause: P-2.e}
+    why: LLM jobs with no consumer stall runs (B5 P-2.e).
+  - parent: {cause: P-1.c}
+    children: {cause: P-6.e}
+    why: Memory distil depends on agent-serve being reachable (B5 P-6.e).

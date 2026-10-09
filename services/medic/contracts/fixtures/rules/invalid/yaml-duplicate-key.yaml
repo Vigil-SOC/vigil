@@ -1,0 +1,14 @@
+# expect: E-YAML-DUPKEY
+# why: A reviewer would read one lane, the engine another
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.dupkey
+title: Rule with a duplicated key
+revision: 1
+fault: {class: ingest, mode: I-3, causes: [I-3.j]}
+lane: 3
+signals:
+  d: {sample: {signal: daemon_status.kafka, key: decode_errors}}
+when: {fn: increase, signal: d, window: 15m, op: ">", value: 5}
+advice: {summary: Duplicate key rule, fix: Nothing to do.}
+lane: 1

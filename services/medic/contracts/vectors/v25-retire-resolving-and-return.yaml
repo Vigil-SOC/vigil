@@ -1,0 +1,141 @@
+id: v25-retire-resolving-and-return
+title: A resolving incident retires with its group; the same group returning later opens a new incident
+covers:
+- §3 group lifetime
+start: '2026-10-07T10:00:00Z'
+end: +24h30m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.source-erroring-slow
+    title: Vector rule ingest.source-erroring
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 2
+    signals:
+      errors:
+        sample:
+          signal: federation_sources
+          key: sources.consecutive_errors
+          by:
+          - source
+    when:
+      fn: latest
+      signal: errors
+      op: '>'
+      value: 3
+    group_by:
+    - source
+    for: 0s
+    keep_firing_for: 1h
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.federation
+  covers:
+  - federation_sources
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  federation_sources:
+    sources.consecutive_errors: gauge
+series:
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels:
+    source: a
+  steps:
+  - - +0s
+    - 0
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels: &id002
+    source: res
+  to: +10m
+  steps:
+  - - +0s
+    - 5
+  - - +5m
+    - 0
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels: &id001
+    source: back
+  to: +10m
+  steps:
+  - - +0s
+    - 5
+- signal: federation_sources
+  key: sources.consecutive_errors
+  labels: *id001
+  from: +24h20m
+  steps:
+  - - +24h20m
+    - 5
+expect:
+- at: +5m
+  rule: ingest.source-erroring-slow
+  eval: false
+  state: resolving
+  group: *id002
+  incident: R
+- at: +12h
+  rule: ingest.source-erroring-slow
+  eval: unknown
+  state: resolving
+  group: *id002
+  incident: R
+  note: unknown holds a resolving incident open (§4)
+- at: +24h10m
+  rule: ingest.source-erroring-slow
+  eval: unknown
+  state: inactive
+  group: *id002
+- at: +24h10m
+  rule: ingest.source-erroring-slow
+  eval: unknown
+  state: inactive
+  group: *id001
+- at: +24h20m
+  rule: ingest.source-erroring-slow
+  eval: true
+  state: firing
+  group: *id001
+  incident: B2
+  note: 'a returning group starts fresh: a new incident'
+incidents:
+  R:
+    rule: ingest.source-erroring-slow
+    active_since: +0s
+    opened_at: +0s
+    resolving_since: +5m
+    resolved_at: +24h10m
+    reason: group_retired
+    group: *id002
+    routed_at: +0s
+  B1:
+    rule: ingest.source-erroring-slow
+    active_since: +0s
+    opened_at: +0s
+    resolving_since: null
+    resolved_at: +24h10m
+    reason: group_retired
+    group: *id001
+    routed_at: +0s
+  B2:
+    rule: ingest.source-erroring-slow
+    active_since: +24h20m
+    opened_at: +24h20m
+    resolving_since: null
+    resolved_at: null
+    group: *id001
+    routed_at: +24h20m
