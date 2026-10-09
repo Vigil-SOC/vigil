@@ -198,6 +198,45 @@ describe('model for each agent', () => {
   })
 })
 
+describe('provider and model on a row that uses the default', () => {
+  const selects = (row: string) =>
+    Array.from((screen.getByText(row).closest('tr') as HTMLElement).querySelectorAll('button.field-select')) as HTMLButtonElement[]
+
+  it('are disabled, show the default’s choice, and do not open', () => {
+    mount()
+    const [provider, model] = selects('Triage Agent')
+    expect(provider.disabled).toBe(true)
+    expect(model.disabled).toBe(true)
+    expect(provider.textContent).toBe('anthropic-default')
+    expect(model.textContent).toBe('Sonnet')
+    fireEvent.click(provider)
+    fireEvent.click(model)
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('show the placeholders when there is no default, and turning Use default off leaves them blank and enabled', async () => {
+    assignment.mockReturnValue(assignmentsReady({ assignments: {} }))
+    mount()
+    expect(selects('Triage Agent').map((s) => s.textContent)).toEqual(['Select provider', 'Select model', 'Stops'])
+    fireEvent.click(screen.getByRole('switch', { name: 'Triage Agent uses the default' }))
+    const [provider, model] = selects('Triage Agent')
+    expect(provider.disabled).toBe(false)
+    expect(model.disabled).toBe(false)
+    expect(provider.textContent).toBe('Select provider')
+  })
+
+  it('persist a pick once Use default is turned off', async () => {
+    mount()
+    fireEvent.click(screen.getByRole('switch', { name: 'Triage Agent uses the default' }))
+    fireEvent.click(selects('Triage Agent')[0])
+    fireEvent.click(screen.getByRole('option', { name: 'anthropic-default' }))
+    fireEvent.click(selects('Triage Agent')[1])
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'haiku', {}))
+  })
+})
+
 describe('fallback for the built-in components', () => {
   const withFallback = (fb?: string) =>
     assignmentsReady({
