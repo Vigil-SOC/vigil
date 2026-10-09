@@ -784,7 +784,7 @@ describe('SocConsole', () => {
 
   it('opens the chat dock without error', () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
     expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
   })
 
@@ -792,7 +792,7 @@ describe('SocConsole', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
     renderConsole()
     expect(document.querySelector('.soc-console')).toHaveStyle({ '--chat-w': '400px' })
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
     expect(screen.queryByRole('separator', { name: 'Resize Vigil Assistant' })).toBeNull()
     expect(localStorage.getItem('soc.chat.width.v1')).toBeNull()
   })
@@ -805,7 +805,7 @@ describe('SocConsole', () => {
 
   it('opens the dock on the current page without a per-chat model', () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
     expect(screen.getByText('Using this page')).toBeInTheDocument()
     expect(document.querySelector('.cx-pill')).toHaveTextContent('Dashboard')
     expect(screen.queryByTitle('Chat settings')).toBeNull()
@@ -917,8 +917,8 @@ describe('SocConsole', () => {
     } as unknown as Response)
 
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'hi' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    fireEvent.change(screen.getByPlaceholderText('Ask Vigil · @ to attach a case'), { target: { value: 'hi' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     // waitFor re-queries each poll, so it settles on the final message node and

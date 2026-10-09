@@ -80,6 +80,8 @@ function readHidden(): string[] {
   }
 }
 
+const FIRST_RUN_HEADLINE = 'Nothing is connected yet, so nothing needs you'
+
 function headline(count: number): string {
   if (count === 0) return 'Board clear.'
   if (count === 1) return '1 decision waits on you. Everything else is running.'
@@ -336,6 +338,12 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const noAlerts = setup !== null && setup.alerts_exist === 0
   const doneCount = (setup?.steps ?? []).filter((step) => step.done).length
   const stepCount = setup?.steps.length ?? 0
+  // open steps first, then done ones, each in served order; the first open step is "next"
+  const checklist = [
+    ...(setup?.steps ?? []).filter((step) => !step.done),
+    ...(setup?.steps ?? []).filter((step) => step.done),
+  ]
+  const nextStepId = checklist.find((step) => !step.done)?.id
   const shownChips = fillCommand ? chips : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
@@ -355,7 +363,9 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
       <div className="home-page">
         {(shownCount !== null || share !== null || shownChips.length > 0) && (
           <div className="home-top">
-            {shownCount !== null && <p className="home-headline">{headline(shownCount)}</p>}
+            {shownCount !== null && (setup !== null || setupError !== null) && (
+              <p className="home-headline">{noAlerts ? FIRST_RUN_HEADLINE : headline(shownCount)}</p>
+            )}
             {(share !== null || shownChips.length > 0) && (
               <div className="home-chips">
                 {shownChips.map((chip) => (
@@ -450,23 +460,26 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
                 />
               </div>
               <ul className="home-checks" aria-label="Setup steps">
-                {setup.steps.map((step) => (
-                  <li key={step.id} className={`home-check${step.done ? ' done' : ''}`}>
-                    <span className="home-tick" aria-hidden="true">
-                      {step.done && <Icon name="check" size={13} />}
-                    </span>
-                    <div>
-                      <h3>
-                        {step.title}
-                        {step.done && <span className="sr-only"> (done)</span>}
-                      </h3>
-                      <p>{step.state_line}</p>
-                    </div>
-                    <Link className="btn" to={step.href}>
-                      {STEP_ACTION[step.id] ?? 'Open'}
-                    </Link>
-                  </li>
-                ))}
+                {checklist.map((step) => {
+                  const next = step.id === nextStepId
+                  return (
+                    <li key={step.id} className={`home-check${step.done ? ' done' : ''}${next ? ' next' : ''}`}>
+                      <span className="home-tick" aria-hidden="true">
+                        {step.done && <Icon name="check" size={13} />}
+                      </span>
+                      <div>
+                        <h3>
+                          {step.title}
+                          {step.done && <span className="sr-only"> (done)</span>}
+                        </h3>
+                        <p>{step.state_line}</p>
+                      </div>
+                      <Link className={next ? 'btn primary' : 'btn'} to={step.href}>
+                        {step.done ? 'Edit' : (STEP_ACTION[step.id] ?? 'Open')}
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
             <div className="home-first-side">

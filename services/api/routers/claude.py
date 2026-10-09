@@ -35,6 +35,7 @@ from core.llm.target import (
     model_for,
     note_fallback,
     provider_for,
+    resolve_effort,
 )
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
@@ -384,7 +385,13 @@ async def chat_stream(
         # The provider rides alongside the model so the gateway routes to the
         # account this request resolved to, rather than to whichever provider
         # claims the bare model name first.
-        "config": chat_config(model, tools, mcp_tools, provider=provider_type),
+        "config": chat_config(
+            model,
+            tools,
+            mcp_tools,
+            provider=provider_type,
+            effort=resolve_effort("chat_default"),
+        ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
         "principal": tool_principal.mint(current_user.username),
