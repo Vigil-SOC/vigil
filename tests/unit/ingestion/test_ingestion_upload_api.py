@@ -27,6 +27,7 @@ class _FakeService:
     calls: list = []
 
     def __init__(self):
+        self.first_error = None
         self.stats = {
             "findings_total": 0,
             "findings_imported": 0,

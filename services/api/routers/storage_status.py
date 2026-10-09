@@ -13,6 +13,7 @@ from core.backup.status import read_last_success_at
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_manager
 from core.storage.models import User
+from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user, require_settings_admin
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ async def get_storage_status():
             "backend": "unknown",
             "database_available": False,
             "demo_mode": False,
-            "error": str(e),
+            "error": INTERNAL_ERROR_DETAIL,
             "description": "Unable to determine storage backend",
         }
 
@@ -155,11 +156,12 @@ async def check_storage_health():
             }
 
         except Exception as e:
+            logger.error("Storage health check failed: %s", e)
             return {
                 "healthy": False,
                 "backend": "unknown",
                 "demo_mode": demo_mode,
-                "error": str(e),
+                "error": INTERNAL_ERROR_DETAIL,
                 "message": "Storage backend health check failed",
             }
 
@@ -169,7 +171,7 @@ async def check_storage_health():
             "healthy": False,
             "backend": "unknown",
             "demo_mode": False,
-            "error": str(e),
+            "error": INTERNAL_ERROR_DETAIL,
             "message": "Unable to perform health check",
         }
 

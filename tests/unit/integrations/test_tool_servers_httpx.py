@@ -394,27 +394,26 @@ async def test_palo_alto_threats_drops_a_null_limit(monkeypatch):
 
 
 @respx.mock
-async def test_cape_submit_file_path_streams_the_open_file(monkeypatch, tmp_path):
-    """The file_path branch hands httpx an open handle, not bytes."""
+async def test_cape_submit_file_refuses_a_local_path(monkeypatch, tmp_path):
+    """A model-supplied path is never opened: the tool takes content, not paths."""
     monkeypatch.setattr(
         cape, "_load_config", lambda: {"url": "http://cape.test", "api_key": "k"}
     )
-    sample = tmp_path / "dropper.bin"
-    sample.write_bytes(b"\x4d\x5a from disk")
-    seen = {}
-
-    def _capture(request: httpx.Request) -> httpx.Response:
-        seen["content"] = request.content
-        return httpx.Response(200, json={"task_ids": [11]})
-
-    respx.post("http://cape.test/apiv2/tasks/create/file/").mock(side_effect=_capture)
+    sample = tmp_path / "secret.txt"
+    sample.write_bytes(b"do not upload")
+    route = respx.post("http://cape.test/apiv2/tasks/create/file/").mock(
+        return_value=httpx.Response(200, json={"task_ids": [11]})
+    )
 
     body = _body(
         await cape.handle_call_tool("cape_submit_file", {"file_path": str(sample)})
     )
-    assert body["task_ids"] == [11]
-    assert b'filename="dropper.bin"' in seen["content"]
-    assert b"\x4d\x5a from disk" in seen["content"]
+    assert "error" in body
+    assert not route.called
+    schema = next(
+        t for t in await cape.handle_list_tools() if t.name == "cape_submit_file"
+    ).input_schema
+    assert "file_path" not in schema["properties"]
 
 
 @respx.mock

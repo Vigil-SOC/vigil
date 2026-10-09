@@ -57,7 +57,9 @@ def test_failed_batch_falls_back_to_rows(monkeypatch):
 
     result = service.bulk_create_findings([{"finding_id": i} for i in ids])
 
+    first_error = result.pop("first_error")
     assert result == {"imported": 2, "skipped": 2, "errors": 1}
+    assert first_error
     assert fake.calls == [["a", "bad", "old", "b"], ["a"], ["bad"], ["old"], ["b"]]
 
 
@@ -67,7 +69,9 @@ def test_unreachable_database_is_not_retried_row_by_row(monkeypatch):
 
     result = service.bulk_create_findings([{"finding_id": i} for i in "abc"])
 
+    first_error = result.pop("first_error")
     assert result == {"imported": 0, "skipped": 0, "errors": 3}
+    assert first_error
     assert len(fake.calls) == 1
 
 
@@ -86,4 +90,6 @@ def test_connection_lost_mid_fallback_counts_the_rest(monkeypatch):
         [{"finding_id": i} for i in ("a", "bad", "c", "d")]
     )
 
+    first_error = result.pop("first_error")
     assert result == {"imported": 1, "skipped": 0, "errors": 3}
+    assert first_error
