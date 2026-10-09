@@ -173,8 +173,8 @@ describe('SystemChecksStep', () => {
     vi.mocked(federationApi.getHealth).mockResolvedValue({ data: undefined } as never)
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: null } as never)
     render(<SystemChecksStep />)
-    await waitFor(() => expect(mark('Federation')).toBe('Needs you'))
-    expect(mark('MCP servers')).toBe('Needs you')
+    await waitFor(() => expect(mark('Alert collection')).toBe('Needs you'))
+    expect(mark('Tool servers')).toBe('Needs you')
     expect(screen.getAllByText('Could not read')).toHaveLength(2)
   })
 
