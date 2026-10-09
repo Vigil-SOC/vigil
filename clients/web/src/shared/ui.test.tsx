@@ -50,6 +50,65 @@ describe('shared UI', () => {
     expect(screen.queryByRole('dialog', { name: 'Review finding' })).not.toBeInTheDocument()
   })
 
+  describe('searchable Select', () => {
+    const models = [
+      { value: 'gemini-pro', label: 'Gemini Pro' },
+      { value: 'gemini-flash', label: 'Gemini Flash' },
+      { value: 'claude-opus', label: 'Claude Opus' },
+    ]
+    const setup = (onSelect = vi.fn()) => {
+      render(<Select searchable value="" placeholder="Pick model" options={models} onSelect={onSelect} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Pick model' }))
+      return { onSelect, input: screen.getByRole('combobox') }
+    }
+
+    it('filters options by label or value as you type and shows an empty row', () => {
+      const { input } = setup()
+      expect(input).toHaveFocus()
+
+      fireEvent.change(input, { target: { value: 'ge' } })
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Gemini Pro', 'Gemini Flash'])
+
+      fireEvent.change(input, { target: { value: 'OPUS' } })
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude Opus'])
+
+      fireEvent.change(input, { target: { value: 'zzz' } })
+      expect(screen.queryAllByRole('option')).toHaveLength(0)
+      expect(screen.getByText('No matches')).toBeInTheDocument()
+    })
+
+    it('selects with ArrowDown and Enter, then closes', () => {
+      const { onSelect } = setup()
+      fireEvent.keyDown(document, { key: 'ArrowDown' })
+      fireEvent.keyDown(document, { key: 'Enter' })
+      expect(onSelect).toHaveBeenCalledWith('gemini-flash')
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    })
+
+    it('closes only the Select on Escape inside a Popup', () => {
+      const onParentClose = vi.fn()
+      render(
+        <Popup open title="Review" onClose={onParentClose}>
+          <Select searchable value="" placeholder="Pick model" options={models} onSelect={() => undefined} />
+        </Popup>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Pick model' }))
+      fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' })
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+      expect(onParentClose).not.toHaveBeenCalled()
+    })
+  })
+
+  it('moves through a plain Select with the arrow keys', () => {
+    const onSelect = vi.fn()
+    render(<Select value="b" options={[{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }, { value: 'c', label: 'C' }]} onSelect={onSelect} />)
+    fireEvent.click(screen.getByRole('button', { name: 'B' }))
+    expect(screen.getByRole('option', { name: 'B' })).toHaveClass('active')
+    fireEvent.keyDown(document, { key: 'End' })
+    fireEvent.keyDown(document, { key: 'Enter' })
+    expect(onSelect).toHaveBeenCalledWith('c')
+  })
+
   it('restores focus to the element that opened the Popup', () => {
     function FocusExample() {
       const [open, setOpen] = useState(false)

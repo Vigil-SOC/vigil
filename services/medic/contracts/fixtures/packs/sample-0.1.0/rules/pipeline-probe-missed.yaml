@@ -1,0 +1,21 @@
+# Known-answer probe outcome (enum) · P-4 end to end (D1 probe_findings). Expected trust: trusted.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.probe-missed
+title: Daily known-answer probe was missed or went silent
+revision: 1
+fault: {class: pipeline, mode: P-4, causes: [P-4.a, P-4.b]}
+lane: 3
+signals:
+  outcome: {sample: {signal: probe_findings, key: latest_outcome, by: [probe]}}
+group_by: [probe]
+when:
+  any:
+    - {fn: latest, signal: outcome, op: "==", value: miss}
+    - {fn: latest, signal: outcome, op: "==", value: silent}
+keep_firing_for: 24h
+advice:
+  summary: A known-answer test finding was injected but Vigil didn't detect or triage it as expected.
+  fix: >-
+    Send this incident to DeepTempo Support with the evidence report. The probe
+    checks the whole path from ingestion to triage.

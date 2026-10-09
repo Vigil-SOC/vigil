@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List
 from unittest.mock import patch
 
@@ -23,7 +24,8 @@ REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from services.api.routers.ai_config import router as ai_config_router  # noqa: E402
-from core.storage.models import AIModelConfig, LLMProviderConfig  # noqa: E402
+from core.storage.models import AIModelConfig, ConfigAuditLog, LLMProviderConfig  # noqa: E402
+from services.api.middleware.auth import get_current_active_user  # noqa: E402
 from core.llm.providers.registry import ModelInfo  # noqa: E402
 from core.routing import request_unit_of_work  # noqa: E402
 
@@ -34,6 +36,7 @@ class _FakeSession:
     def __init__(self):
         self.assignments: Dict[str, AIModelConfig] = {}
         self.providers: Dict[str, LLMProviderConfig] = {}
+        self.audits: List[ConfigAuditLog] = []
 
     # --- get (PK lookup) ---
     def get(self, model, pk):
@@ -61,6 +64,8 @@ class _FakeSession:
     def add(self, row):
         if isinstance(row, AIModelConfig):
             self.assignments[row.component] = row
+        elif isinstance(row, ConfigAuditLog):
+            self.audits.append(row)
 
     def delete(self, row):
         if isinstance(row, AIModelConfig):
@@ -109,6 +114,7 @@ def client(session):
         return session
 
     app.dependency_overrides[request_unit_of_work] = _get_session
+    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(user_id="u-42")
     return TestClient(app)
 
 
@@ -204,6 +210,55 @@ def test_delete_missing_is_idempotent(client):
     r = client.delete("/api/ai/config/triage")
     assert r.status_code == 200
     assert r.json()["cleared"] is False
+
+
+# ---------------------------------------------------------------------------
+# Audit journal + updated_by
+# ---------------------------------------------------------------------------
+
+
+def _put(client, component, provider, model):
+    return client.put(
+        f"/api/ai/config/{component}",
+        json={"provider_id": provider, "model_id": model},
+    )
+
+
+def test_put_create_audits_and_stamps_actor(client, session):
+    r = _put(client, "triage", "ollama-local", "llama3:latest")
+    assert r.json()["updated_by"] == "u-42"
+    (a,) = session.audits
+    assert (a.config_type, a.config_key, a.action) == ("ai_model", "triage", "create")
+    assert a.old_value is None
+    assert a.new_value == {"provider_id": "ollama-local", "model_id": "llama3:latest"}
+    assert a.changed_by == "u-42"
+
+
+def test_put_update_audits_old_and_new(client, session):
+    _put(client, "triage", "anthropic-default", "a")
+    _put(client, "triage", "ollama-local", "b")
+    assert [x.action for x in session.audits] == ["create", "update"]
+    assert session.audits[1].old_value == {"provider_id": "anthropic-default", "model_id": "a"}
+    assert session.audits[1].new_value == {"provider_id": "ollama-local", "model_id": "b"}
+
+
+def test_put_unchanged_writes_no_audit(client, session):
+    _put(client, "triage", "anthropic-default", "a")
+    _put(client, "triage", "anthropic-default", "a")
+    assert len(session.audits) == 1
+
+
+def test_delete_audits_old_value(client, session):
+    _put(client, "triage", "anthropic-default", "a")
+    client.delete("/api/ai/config/triage")
+    a = session.audits[-1]
+    assert (a.action, a.changed_by, a.new_value) == ("delete", "u-42", None)
+    assert a.old_value == {"provider_id": "anthropic-default", "model_id": "a"}
+
+
+def test_delete_missing_writes_no_audit(client, session):
+    client.delete("/api/ai/config/triage")
+    assert session.audits == []
 
 
 # ---------------------------------------------------------------------------

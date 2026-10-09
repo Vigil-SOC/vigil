@@ -504,7 +504,7 @@ export default function FindingPopup({
                 compact
                 icon="alert"
                 title="Virtual-key budget spent"
-                body="The virtual-key budget is spent. Raise its ceiling under AI Config → Virtual Keys."
+                body="The virtual-key budget is spent. Raise its ceiling under AI models → Spending limit."
                 primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
               />
             )}

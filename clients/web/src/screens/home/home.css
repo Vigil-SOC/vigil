@@ -1,106 +1,589 @@
+.home-screen {
+  padding: 44px 44px 32px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.home-screen .home-page {
+  width: 100%;
+  max-width: 1140px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.home-screen .home-top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .home-screen .home-headline {
   margin: 0;
-  padding: 22px 22px 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  color: var(--tx0);
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .home-screen .home-share {
-  margin: 6px 0 0;
-  padding: 0 22px;
-  color: var(--tx-3);
-  font-size: 13px;
+  margin: 0;
+  color: var(--tx2);
+  font-size: 12px;
 }
 
+.home-screen .home-page > p[role='alert'],
+.home-screen section > p[role='alert'] {
+  margin: 0;
+}
+
+.home-screen section > p[role='alert'] {
+  margin-top: 10px;
+}
+
+.home-screen a {
+  text-decoration: none;
+}
+
+/* section heading row: title, sub-line and ⓘ on the left, link on the right */
 .home-screen .home-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
+  margin-bottom: 10px;
+}
+
+.home-screen .home-head-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 6px;
 }
 
 .home-screen .home-head h2 {
   margin: 0;
-  font-size: 16px;
+  color: var(--tx0);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
-.home-screen .home-cards {
+.home-screen .home-sub {
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.home-screen .home-head > a {
+  flex-shrink: 0;
+  color: var(--ac);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.home-screen .home-share .info-tip {
+  margin-left: 4px;
+}
+
+/* Get more from Vigil: one row of numbered cells joined by 1px lines */
+.home-screen .home-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--ln0);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.home-screen .home-step {
+  min-width: 0;
+  padding: 14px;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  background: var(--bg1);
+}
+
+.home-screen .home-step:hover {
+  background: var(--bg2);
+}
+
+.home-screen .home-step-no {
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--ln2);
+  border-radius: 999px;
+  color: var(--tx2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.home-screen .home-step-no.first {
+  border-color: var(--ac);
+  color: var(--ac);
+}
+
+.home-screen .home-step h3,
+.home-screen .home-step p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-screen .home-step h3 {
+  color: var(--tx0);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-screen .home-step p {
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.home-screen .home-step-foot {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.home-screen .home-step-skip {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--tx2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.home-screen .home-step-skip:hover {
+  color: var(--tx0);
+}
+
+.home-screen .home-step-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ac);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.home-screen .home-steps-none {
+  margin: 0;
+  padding: 18px;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+  color: var(--good);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Needs your attention: decision cards and the "+N more" tile in one grid */
+.home-screen .home-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
+}
+
+/* first run: decisions that do exist sit under the checklist, not against it */
+.home-screen .home-first-grid + .home-cards {
   margin-top: 14px;
+}
+
+.home-screen .home-card,
+.home-screen .home-more {
+  min-width: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 14px;
+}
+
+.home-screen .home-card {
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+}
+
+.home-screen .home-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.home-screen .home-waited {
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.home-screen .home-kind {
+  min-width: 0;
+  height: 22px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg3);
+  border-radius: 999px;
+  color: var(--tx1);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-screen .home-card h3 {
+  margin: 0;
+  color: var(--tx0);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.home-screen .home-card-meta {
+  margin: 0;
+  color: var(--tx1);
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.home-screen .home-actions {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.home-screen .home-btn,
+.home-screen .home-actions .home-hold {
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.home-screen .home-btn {
+  border: 1px solid transparent;
+}
+
+.home-screen .home-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.home-screen .home-btn.primary {
+  background: var(--ac);
+  color: var(--ac-tx);
+}
+
+.home-screen .home-btn.secondary {
+  background: var(--bg3);
+  border-color: var(--ln1);
+  color: var(--tx0);
+}
+
+.home-screen .home-btn.ghost {
+  background: transparent;
+  color: var(--tx1);
+}
+
+.home-screen .home-btn.ghost:hover {
+  background: var(--bg3);
+}
+
+.home-screen .home-reject {
+  order: 1;
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-screen .home-reject .home-btn {
+  align-self: flex-start;
+}
+
+.home-screen .home-more {
+  background: var(--bg2);
+  border: 1px dashed var(--ln2);
+}
+
+.home-screen .home-more h3 {
+  margin: 0;
+  color: var(--tx0);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-screen .home-more ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.home-screen .home-more li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--tx1);
+  font-size: 12px;
+}
+
+.home-screen .home-more b {
+  color: var(--tx0);
+  font-weight: 700;
+}
+
+.home-screen .home-more .home-btn {
+  margin-top: auto;
+  width: 100%;
 }
 
 .home-screen .home-meta {
   margin: 6px 0 0;
-  color: var(--tx-3);
+  color: var(--tx2);
   font-size: 12px;
 }
 
-.home-screen .home-reason {
-  margin: 8px 0 0;
-  color: var(--tx-2);
-  font-size: 13px;
-}
-
-.home-screen .home-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-top: 14px;
-}
-
-.home-screen .home-reject {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.home-screen .home-reject textarea {
-  min-width: 220px;
-  flex: 1;
-}
-
-.home-screen .home-steps {
-  list-style: none;
-  margin: 14px 0 0;
-  padding: 0;
+.home-screen .home-clear {
+  padding: 26px;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+
+.home-screen .home-clear h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--good);
+}
+
+.home-screen .home-clear p {
+  margin: 0;
+  color: var(--tx2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* first run: checklist left, empty state and demo stacked right */
+.home-screen .home-first-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.home-screen .home-ready {
+  padding: 18px 18px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--bg1);
+  border: 1px solid var(--ac-ln);
+  border-radius: 14px;
+}
+
+.home-screen .home-ready-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
   gap: 12px;
 }
 
-.home-screen .home-step {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.home-screen .home-step h3 {
+.home-screen .home-ready-head h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
 }
 
-.home-screen .home-step p {
-  margin: 4px 0 0;
-  color: var(--tx-3);
+.home-screen .home-ready-head p {
+  margin: 3px 0 0;
+  color: var(--tx2);
   font-size: 12px;
 }
 
-.home-screen .home-step-actions {
-  display: flex;
-  gap: 8px;
+.home-screen .home-ready-count {
+  color: var(--tx2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.home-screen .home-alerts {
+.home-screen .home-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg4);
+  overflow: hidden;
+}
+
+.home-screen .home-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ac);
+}
+
+.home-screen .home-bar span.done {
+  background: var(--good);
+}
+
+.home-screen .home-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.home-screen .home-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.home-screen .home-check > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-screen .home-check h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-screen .home-check.done h3 {
+  color: var(--tx3);
+  text-decoration: line-through;
+}
+
+.home-screen .home-check p {
+  margin: 2px 0 0;
+  color: var(--tx3);
+  font-size: 12px;
+}
+
+.home-screen .home-check .btn {
+  flex-shrink: 0;
+}
+
+.home-screen .home-tick {
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1.5px solid var(--ln2);
+}
+
+.home-screen .home-check.done .home-tick {
+  background: var(--good);
+  border-color: var(--good);
+  color: var(--bg1);
+}
+
+.home-screen .home-first-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-self: start;
+}
+
+.home-screen .home-empty {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  border: 1.5px dashed var(--ln2);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--bg1) 70%, transparent);
+}
+
+.home-screen .home-empty-icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.home-screen .home-empty h3,
+.home-screen .home-notready h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-screen .home-empty p,
+.home-screen .home-notready p {
+  margin: 0;
+  color: var(--tx2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.home-screen .home-empty p {
+  max-width: 360px;
+}
+
+.home-screen .home-notready {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+
+.home-screen .home-notready-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin-top: 14px;
 }

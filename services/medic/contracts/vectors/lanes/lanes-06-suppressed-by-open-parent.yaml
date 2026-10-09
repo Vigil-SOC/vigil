@@ -1,0 +1,12 @@
+id: lanes-06-suppressed-by-open-parent
+description: E3 6.1. The P-4 symptom (triage stalled, lane 3) opens while its LLM parent (lane 2) is open. It keeps its own incident and lane, carries suppressed_by, and is never routed. Only the cause routes (decided 1c, through E3).
+until: 3600
+suppression:
+  - {parent: llm.provider-keyless-default, child: pipeline.triage-stalled}
+  - {parent: llm.provider-keyless-default, child: pipeline.probe-missed}
+incidents:
+  - {id: p, rule: llm.provider-keyless-default, lane: 2, trust: trusted, signals: 2, samples: 1, opened_at: 0}
+  - {id: c, rule: pipeline.triage-stalled, lane: 3, trust: trusted, signals: 2, samples: 2, opened_at: 60}
+expect:
+  p: {lane: {value: 2, reason: rule}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: notify_admin, L2: {action: notify_admin, not_eligible: not_lane1}}, escalation: null}
+  c: {lane: {value: 3, reason: rule}, routed_at: null, suppressed_by: p, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}

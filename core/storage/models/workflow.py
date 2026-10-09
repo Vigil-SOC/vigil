@@ -36,6 +36,11 @@ IN_FLIGHT_INVESTIGATION_STATUSES = (
     "executing",
     "waiting_approval",
 )
+# A run with no ``Investigation`` row (``/hunt``) has three live-ish words of its
+# own. The case reads them as a running run ``executing`` and a held one ``paused``.
+RUN_LIVE_STATE = {"running": "executing", "paused": "paused"}
+# What a case's combined state may take from a run or an investigation.
+LIVE_CASE_STATES = LIVE_INVESTIGATION_STATUSES + ("paused",)
 
 
 class Investigation(Base):

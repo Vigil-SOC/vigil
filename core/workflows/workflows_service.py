@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.queue import new_run_id
 from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.documents.fence import fenced_document
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import disabled_message, is_enabled
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 # agent layer's vocabulary, so they are stated here once rather than inline.
 COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
+INVESTIGATE_RUN_KIND = "investigate"
 ROOT_CAUSE_RUN_KIND = "root_cause"
 ADJUDICATE_RUN_KIND = "adjudicate"
 # hunt and adjudicate drive the hypothesis loop. root_cause does not: it traces
@@ -726,6 +728,12 @@ class WorkflowsService:
 
         if context:
             parts.append(f"**Additional Context:** {context}")
+
+        document = parameters.get("document")
+        if document:
+            parts.append(
+                "\n".join(["**Attached document:**", "", *fenced_document(document)])
+            )
 
         if not parts:
             parts.append(

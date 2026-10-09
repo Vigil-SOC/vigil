@@ -317,6 +317,7 @@
           "severity": "severity-value",
           "status": "status-value",
           "timestamp": "2024-03-14T15:09:26.535000+00:00",
+          "title": "title-value",
           "updated_at": "2024-03-14T15:09:26.535000+00:00"
         }
       ],
@@ -1166,6 +1167,7 @@
       "severity": "severity-value",
       "status": "status-value",
       "timestamp": "2024-03-14T15:09:26.535000+00:00",
+      "title": "title-value",
       "updated_at": "2024-03-14T15:09:26.535000+00:00"
     },
     "empty.to_dict.default": {
@@ -1183,6 +1185,7 @@
       "severity": null,
       "status": null,
       "timestamp": null,
+      "title": null,
       "updated_at": null
     }
   },

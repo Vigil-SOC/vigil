@@ -765,6 +765,8 @@ def _resolve_row_key(row_dict: Dict[str, Any]) -> Optional[str]:
         return get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
     if provider_type == "openai":
         return get_secret("OPENAI_API_KEY")
+    if provider_type == "openrouter":
+        return get_secret("OPENROUTER_API_KEY")
     return None
 
 
@@ -995,9 +997,12 @@ async def record_gateway_rates(
     to the full sync. Returns each type's datasheet (None when unreachable) so
     the sync can reuse it as a stand-in catalogue instead of reading it twice.
     """
-    from core.llm.providers.registry import record_live_meta
+    from core.llm.providers.registry import OPENROUTER_VENDORS, record_live_meta
 
     types = list(dict.fromkeys(provider_types))
+    # An OpenRouter id OpenRouter's sheet lacks is priced from its vendor's.
+    if "openrouter" in types:
+        types += [v for v in OPENROUTER_VENDORS if v not in types]
     sheets = await asyncio.gather(*(fetch_catalogue_models(t) for t in types))
     for provider_type, meta in zip(types, sheets):
         if meta:

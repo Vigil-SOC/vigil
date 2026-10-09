@@ -168,6 +168,10 @@
   background: var(--bg3);
 }
 
+.vg-command-later {
+  display: block;
+}
+
 .vg-command-row:disabled {
   opacity: 0.45;
   cursor: default;
@@ -189,6 +193,7 @@
 
 .vg-command-preview {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-top: 4px;
@@ -198,9 +203,131 @@
 
 .vg-command-preview p {
   flex: 1;
+  min-width: 0;
   margin: 0;
   color: var(--tx1);
   font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* /hunt: the preview is a drop target, and carries the attach controls under the argument. */
+.vg-command-preview.dragging {
+  outline: 1px dashed var(--ac-ln);
+  outline-offset: -4px;
+  background: var(--ac-bg);
+}
+
+.vg-command-attach {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The board's secondary button: 28px, radius 10. */
+.vg-command-attach .btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-command-attach .btn:hover {
+  background: var(--bg3);
+  border-color: var(--ln2);
+  color: var(--tx0);
+}
+
+.vg-command-file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.vg-command-file-name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vg-command-file-meta,
+.vg-command-note {
+  color: var(--tx2);
+  font-size: 12px;
+}
+
+.vg-command-note {
+  flex: 0 0 100%;
+}
+
+.vg-command-paste {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.vg-command-paste textarea {
+  width: 100%;
+  height: 96px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--ln1);
+  border-radius: 10px;
+  background: var(--bg1);
+  color: var(--tx0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.vg-command-paste textarea:focus {
+  border-color: var(--ac-ln);
+}
+
+.vg-command-foot {
+  position: sticky;
+  bottom: -6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 6px -6px -6px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--ln0);
+  background: var(--bg1);
+  color: var(--tx2);
+  font-size: 11px;
+}
+
+.vg-command-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vg-command-foot kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--ln2);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--tx2);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .vg-drawer-scrim {
@@ -218,6 +345,7 @@
 .vg-case-drawer {
   width: 75%;
   height: 100%;
+  container-type: size; /* the case composer caps its thread at 40cqh */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -375,10 +503,17 @@ input.vg-side-input {
   border-top: 1px solid var(--ln0);
 }
 
+.vg-skill-foot-end {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .vg-side-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   height: 34px;
   padding: 0 13px;
   box-sizing: border-box;
@@ -587,6 +722,59 @@ select.vg-side-input {
   color: var(--crit);
 }
 
+/* Test results: not on the SkillEditor board, built from the field and file-row styles. */
+.vg-skill-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vg-skill-spin {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--ln1);
+  border-top-color: var(--ac);
+  border-radius: 50%;
+  animation: soc-spin 0.7s linear infinite;
+}
+
+.vg-skill-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--tx0);
+}
+
+.vg-skill-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.vg-skill-result-mark {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ok);
+}
+
+.vg-skill-result[data-passed='false'] .vg-skill-result-mark {
+  color: var(--crit);
+}
+
+.vg-skill-missing {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+}
+
 .vg-header-end {
   display: flex;
   align-items: center;
@@ -786,52 +974,65 @@ select.vg-side-input {
 
 .console-tour-ring {
   position: fixed;
-  border-radius: 10px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
-  outline: 2px solid var(--ac);
+  border-radius: var(--radius-button);
+  box-shadow: 0 0 0 3px var(--ac), 0 0 0 9999px var(--spot);
   pointer-events: none;
 }
 
+/* 16px radius is the board's; the token scale stops at 14px. */
 .console-tour-card {
   position: fixed;
-  width: 300px;
-  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 330px;
+  padding: 16px;
   background: var(--bg2);
-  border: 1px solid var(--ln2);
-  border-radius: 12px;
-  box-shadow: 0 16px 40px var(--shadow);
+  border: 1px solid var(--ac-ln);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px var(--shadow);
   color: var(--tx1);
   font-family: var(--font-ui);
   pointer-events: auto;
 }
 
 .console-tour-card h2 {
-  margin: 0 0 6px;
+  margin: 0;
   color: var(--tx0);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .console-tour-card p {
   margin: 0;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
-.console-tour-step {
-  margin-bottom: 6px;
-  color: var(--tx2);
+.console-tour-card .console-tour-step {
+  color: var(--ac);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .console-tour-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 4px;
+}
+
+.console-tour-skip {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .console-tour-spacer {

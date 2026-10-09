@@ -105,7 +105,7 @@ def test_per_agent_needs_two_distinct_models():
     assert one["done"] is False
     assert one["state_line"] == "All agents use one model"
     assert two["done"] is True
-    assert none["href"] == "/settings?section=ai-config"
+    assert none["href"] == "/settings?section=ai-config&tab=assignment"
 
 
 def test_alerts_exist_is_the_findings_count():

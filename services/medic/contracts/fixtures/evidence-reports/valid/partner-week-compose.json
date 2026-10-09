@@ -1,0 +1,260 @@
+{
+  "availability": {
+    "decisions_lost": 0,
+    "restarts": {
+      "clean": 1,
+      "crash": 0,
+      "oom": 0,
+      "signal": 0,
+      "unknown": 0,
+      "watchdog_stall": 1
+    },
+    "states": {
+      "blind": {
+        "intervals": 1,
+        "seconds": 1800
+      },
+      "crash_looping": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "degraded": {
+        "intervals": 2,
+        "seconds": 9000
+      },
+      "not_recording": {
+        "intervals": 0,
+        "seconds": 0
+      },
+      "not_running": {
+        "intervals": 1,
+        "seconds": 3400
+      },
+      "running": {
+        "intervals": 3,
+        "seconds": 590000
+      },
+      "starting": {
+        "intervals": 2,
+        "seconds": 600
+      }
+    },
+    "store_states_seen": [
+      "ok"
+    ],
+    "up_s": 599000
+  },
+  "chain": {
+    "anchors_in_period": 0,
+    "first_seq_in_period": 3807,
+    "head": {
+      "hash": "76792190d1855c71c2b6b076ba494b9b4f8f795f24a8e2a767823e571fea4f7d",
+      "seq": 4211
+    },
+    "last_seq_in_period": 4166,
+    "oldest": {
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "kind": "genesis",
+      "seq": 0
+    },
+    "resets_in_period": 0,
+    "verify": "ok"
+  },
+  "dev_mode": false,
+  "engine_api": "1.0",
+  "format": "medic.evidence/v1",
+  "generated_at": "2026-12-16T15:05:12Z",
+  "incidents": [
+    {
+      "adjudication": {
+        "false_alarm": 0,
+        "none": 3,
+        "true_fault": 0,
+        "unknown": 0,
+        "watcher_caused": 0
+      },
+      "detection_type": "absence",
+      "escalation_simulated": 0,
+      "feedback_live": {
+        "agree": 1,
+        "disagree": 0,
+        "false_alarm": 1,
+        "unrated": 1,
+        "wrong_lane": 0
+      },
+      "has_fix": true,
+      "lane": 2,
+      "lane_reason": "rule",
+      "open_at_end": 0,
+      "opened": 3,
+      "reopened": 1,
+      "revision": 2,
+      "routed": 3,
+      "rule_id": "ingest.source-silent",
+      "suppressed_quiet": 0,
+      "wrong_lane_suggested": {
+        "lane1": 0,
+        "lane2": 0,
+        "lane3": 0
+      }
+    },
+    {
+      "adjudication": {
+        "false_alarm": 0,
+        "none": 1,
+        "true_fault": 0,
+        "unknown": 0,
+        "watcher_caused": 0
+      },
+      "detection_type": "event",
+      "escalation_simulated": 0,
+      "feedback_live": {
+        "agree": 0,
+        "disagree": 0,
+        "false_alarm": 0,
+        "unrated": 1,
+        "wrong_lane": 0
+      },
+      "has_fix": false,
+      "lane": 3,
+      "lane_reason": "rule",
+      "open_at_end": 0,
+      "opened": 2,
+      "reopened": 0,
+      "revision": 1,
+      "routed": 1,
+      "rule_id": "llm.gateway-outage",
+      "suppressed_quiet": 1,
+      "wrong_lane_suggested": {
+        "lane1": 0,
+        "lane2": 0,
+        "lane3": 0
+      }
+    },
+    {
+      "adjudication": {
+        "false_alarm": 0,
+        "none": 1,
+        "true_fault": 0,
+        "unknown": 0,
+        "watcher_caused": 0
+      },
+      "detection_type": "event",
+      "escalation_simulated": 1,
+      "feedback_live": {
+        "agree": 0,
+        "disagree": 0,
+        "false_alarm": 0,
+        "unrated": 0,
+        "wrong_lane": 1
+      },
+      "has_fix": true,
+      "lane": 1,
+      "lane_reason": "rule",
+      "open_at_end": 0,
+      "opened": 1,
+      "reopened": 0,
+      "revision": 1,
+      "routed": 1,
+      "rule_id": "pipeline.daemon-component-hung",
+      "suppressed_quiet": 0,
+      "wrong_lane_suggested": {
+        "lane1": 0,
+        "lane2": 1,
+        "lane3": 0
+      }
+    }
+  ],
+  "install_shape": "compose",
+  "instance_id": "mi_3f9a2c1b0d4e5f60",
+  "medic_version": "0.1.0",
+  "overhead": {
+    "cpu_max_millicores": 640,
+    "cpu_p95_millicores": 120,
+    "gateway_req_per_min_p95": 9,
+    "limit_hits": 0,
+    "mem_max_mib": 262,
+    "mem_p95_mib": 210,
+    "samples": 9983,
+    "source": "medic_self",
+    "store_growth_kib_per_day": 2900
+  },
+  "pack_events": {
+    "imported": 0,
+    "override": 0,
+    "reverted": 0,
+    "rule_skipped": 0
+  },
+  "packs": [
+    {
+      "active_s": 604800,
+      "channel": "stable",
+      "id": "medic-core",
+      "version": "0.3.1"
+    }
+  ],
+  "period": {
+    "from": "2026-12-09T05:00:00Z",
+    "seconds": 604800,
+    "to": "2026-12-16T05:00:00Z"
+  },
+  "replay_feedback": {
+    "agree": 14,
+    "disagree": 2,
+    "false_alarm": 0,
+    "heads": [
+      "9c1e5b7a2f6d4e8c0b3a5f7e9d1c2b4a6f8e0d2c4b6a8f0e1d3c5b7a9f2e4d6c"
+    ],
+    "wrong_lane": 1
+  },
+  "retention_days": 90,
+  "rule_exposure": [
+    {
+      "exposed_s": 596300,
+      "loaded_s": 604800,
+      "revision": 1,
+      "rule_id": "ingest.integration-config-incomplete"
+    },
+    {
+      "exposed_s": 596300,
+      "loaded_s": 604800,
+      "revision": 2,
+      "rule_id": "ingest.source-silent"
+    },
+    {
+      "exposed_s": 598100,
+      "loaded_s": 604800,
+      "revision": 1,
+      "rule_id": "llm.gateway-outage"
+    },
+    {
+      "exposed_s": 599000,
+      "loaded_s": 604800,
+      "revision": 1,
+      "rule_id": "pipeline.daemon-component-hung"
+    }
+  ],
+  "sensors_blind": [
+    {
+      "intervals": 1,
+      "seconds": 900,
+      "signal": "bifrost_routability"
+    },
+    {
+      "intervals": 2,
+      "seconds": 2700,
+      "signal": "federation_sources"
+    }
+  ],
+  "unknown_signature": {
+    "opened": 0,
+    "routed": 0
+  },
+  "watcher_incidents": [
+    {
+      "open_s": 3600,
+      "opened": 3,
+      "rule_id": "watcher.sensor-blind"
+    }
+  ]
+}

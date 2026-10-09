@@ -34,6 +34,31 @@ def _generate_workflow_id(name: str) -> str:
     return f"wf-{_slugify(name)}-{uuid.uuid4().hex[:8]}"
 
 
+# Fields whose change is a new definition version.
+_DEFINITION_FIELDS = ("name", "description", "use_case", "trigger_examples", "phases")
+
+
+def _normalize_phases(phases: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Fill schema defaults so a phase saved without them equals one with them."""
+    # Deferred: the router imports this module.
+    from core.workflows.workflows_router import WorkflowPhaseSchema
+
+    out = []
+    for phase in phases or []:
+        try:
+            out.append(WorkflowPhaseSchema.model_validate(phase).model_dump())
+        except Exception:
+            out.append(phase)
+    return out
+
+
+def _definition_value(key: str, value: Any) -> Any:
+    """Comparable form of a definition field; None and empty are the same."""
+    if key == "phases":
+        return _normalize_phases(value)
+    return value or ("" if key in ("name", "description", "use_case") else [])
+
+
 def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
     """Ensure every phase's agent_id resolves against the unified pool.
 
@@ -136,7 +161,8 @@ class CustomWorkflowService:
         self, workflow_id: str, updates: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """
-        Update a workflow. Increments version on every update.
+        Update a workflow. Increments version once, only when a definition field
+        (name, description, use_case, trigger_examples, phases) changes.
 
         Args:
             workflow_id: The workflow to update.
@@ -162,10 +188,16 @@ class CustomWorkflowService:
             if not wf:
                 return None
 
+            changed = False
             for key, value in updates.items():
                 if key in allowed and value is not None:
+                    if key in _DEFINITION_FIELDS and _definition_value(
+                        key, value
+                    ) != _definition_value(key, getattr(wf, key)):
+                        changed = True
                     setattr(wf, key, value)
-            wf.version = (wf.version or 1) + 1
+            if changed:
+                wf.version = (wf.version or 1) + 1
             wf.updated_at = utcnow()
             session.flush()
             result = CustomWorkflowSchema.dump(wf)

@@ -31,7 +31,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 
 **Tabs:** Workflows, Agents, Skills, Commands, each with its count.
 
-**Later:** editing a workflow's stages; per-agent skill assignment; editing a skill's scripts; skill import; viewing or restoring an earlier version; "Describe a change and Vigil drafts it"; custom commands.
+**Later:** editing a workflow's stages; per-agent skill assignment; editing a skill's scripts; viewing or restoring an earlier version; "Describe a change and Vigil drafts it"; custom commands.
 
 **Omitted:** Tool permissions; per-tool autonomy settings; authorship.
 
@@ -73,6 +73,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 ### Skills tab
 
 - **AW-S1. Skill folders.** Every skill, built-in and the operator's own, with its description, file count, the workflows it is offered to, and "Built in" or "Yours". *The list and "Offered to" shipped (#1366) for built-in skills.* "Used by N agents" and the sources a skill touches are **Not measured yet**.
+- **AW-S1a. Import a skill.** "Import SKILL.md or zip" beside "Build a skill" takes a bare `SKILL.md` or a zipped skill folder (`SKILL.md` at its root, or inside one top-level folder) and opens the drawer on the result. The skill's `name` must be valid and unused: a taken name is refused, never overwritten, and the server's reason is shown beside the button.
 - **AW-S2. Skill drawer.** Name, when to use it, the steps, the files in the skill, Test with a sample, and Save new version.
   - The name and description limits the board states are enforced.
   - Editing a built-in skill saves a copy under a new name; the built-in is never changed.
@@ -110,4 +111,4 @@ On top of `PRD-phase1.md` section 14, this document is done when:
 
 ## 6. Phase 2 map
 
-Editing a workflow's stages. Per-agent skill assignment and per-skill usage. Editing a skill's scripts, and skill import. Version history with restore. Custom and role-gated commands. Tool permissions. Trust, tier and agreement as measured values. Adding helpers to single-agent workflows, if they should have them.
+Editing a workflow's stages. Per-agent skill assignment and per-skill usage. Editing a skill's scripts. Version history with restore. Custom and role-gated commands. Tool permissions. Trust, tier and agreement as measured values. Adding helpers to single-agent workflows, if they should have them.
