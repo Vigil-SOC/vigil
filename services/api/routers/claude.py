@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,9 +22,8 @@ from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import (
     chat_config,
     granted_ids,
+    integrations_line,
     run_id_for,
-    tools_ceiling,
-    trim_servers,
 )
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
@@ -369,10 +368,13 @@ async def chat_stream(
     model = request.model = model_for(active_provider, request.model)
     provider_type = active_provider.provider_type
 
-    # Surface whatever MCP integrations are connected right now (VirusTotal, OTX,
-    # MISP, Shodan, …) so the assistant can call them the moment their server is
-    # connected — refreshed per turn, no restart.
+    # Whatever MCP integrations are connected right now (VirusTotal, OTX, MISP,
+    # Shodan, …), refreshed per turn, no restart. Named in the prompt rather than
+    # declared: the model finds and calls their tools on demand.
     mcp_tools = live_mcp_tools(registry) or None
+    connected = integrations_line(mcp_tools, registry.tool_servers())
+    if connected:
+        system_prompt = f"{system_prompt}\n\n{connected}".strip()
 
     session_id = request.session_id or str(uuid.uuid4())
     payload = {
@@ -393,20 +395,12 @@ async def chat_stream(
     if not payload["turns"]:
         raise HTTPException(status_code=400, detail="No messages provided")
 
-    def refit(maximum: int) -> Optional[Tuple[str, List[str]]]:
-        trimmed = trim_servers(tools, mcp_tools, registry.tool_servers(), maximum)
-        if trimmed is None:
-            return None
-        kept, dropped = trimmed
-        return chat_config(model, tools, kept, provider=provider_type), dropped
-
     return StreamingResponse(
         _relay(
             payload,
             request,
             session_id,
             getattr(current_user, "user_id", None),
-            refit if mcp_tools else None,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -433,16 +427,11 @@ def _turns_of(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 
 # Relayed rather than re-encoded: the agent layer already speaks the console's
 # vocabulary, so this reads the frames only to accumulate the turn for history.
-#
-# With ``refit``, frames are held until the model has taken the turn: a provider
-# that refuses the tools array does so before any text or tool call, and that
-# attempt is replaced — once — by one declaring fewer servers, rather than shown.
 async def _relay(
     payload: Dict[str, Any],
     request: ChatRequest,
     session_id: str,
     user_id: Optional[str],
-    refit: Optional[Callable[[int], Optional[Tuple[str, List[str]]]]] = None,
 ):
     import httpx
 
@@ -450,61 +439,27 @@ async def _relay(
     finished = False
     # The turn's own failure, stored as the failed reply so a reload shows it.
     failure: Optional[str] = None
-    # Said only once the retried attempt answers, so a retry that fails too is
-    # relayed as a plain failure.
-    note: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=None) as client:
-            while True:
-                retry = None
-                held: Optional[List[str]] = [] if refit or note else None
-                async with client.stream(
-                    "POST",
-                    agent_route("/chat/stream"),
-                    json=payload,
-                    headers=_internal_headers(),
-                ) as upstream:
-                    if upstream.status_code != 200:
-                        detail = (await upstream.aread()).decode("utf-8", "replace")
-                        failure = f"agent layer refused the turn: {detail}"
-                        yield _frame({"error": failure})
-                        return
-                    async for line in upstream.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        if held is not None:
-                            event = _event_in(line[6:])
-                            if event.get("type") == "context_windowed":
-                                held.append(line)
-                                continue
-                            if "error" in event:
-                                maximum = tools_ceiling(str(event["error"]))
-                                refitted = refit(maximum) if refit and maximum else None
-                                if refitted:
-                                    retry = (maximum, *refitted)
-                                    break
-                            elif note:
-                                said.append(note)
-                                yield _frame({"type": "text", "content": note})
-                            for frame in held:
-                                yield f"{frame}\n\n"
-                            held = None
-                        said.append(_text_in(line[6:]))
-                        error = _event_in(line[6:]).get("error")
-                        if error:
-                            failure = str(error)
-                        yield f"{line}\n\n"
-                    if retry is None:
-                        for frame in held or []:
-                            yield f"{frame}\n\n"
-                        break
-                maximum, config, dropped = retry
-                payload = {**payload, "config": config}
-                refit = None
-                note = (
-                    f"_Left out of this answer, because the model takes at most "
-                    f"{maximum} tools: {', '.join(dropped)}._\n\n"
-                )
+            async with client.stream(
+                "POST",
+                agent_route("/chat/stream"),
+                json=payload,
+                headers=_internal_headers(),
+            ) as upstream:
+                if upstream.status_code != 200:
+                    detail = (await upstream.aread()).decode("utf-8", "replace")
+                    failure = f"agent layer refused the turn: {detail}"
+                    yield _frame({"error": failure})
+                    return
+                async for line in upstream.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    said.append(_text_in(line[6:]))
+                    error = _event_in(line[6:]).get("error")
+                    if error:
+                        failure = str(error)
+                    yield f"{line}\n\n"
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)

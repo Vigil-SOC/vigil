@@ -813,3 +813,56 @@ ALL_TOOLS = (
     + MEMORY_TOOLS
     + SKILL_TOOLS
 )
+
+# Chat's door to the connected MCP integrations (#1959). Declared in place of
+# every integration's own schemas, which outgrew what a provider will take, and
+# kept out of ALL_TOOLS: hunts curate their integrations in playbook_resolver.
+FIND_INTEGRATION_TOOLS = "find_integration_tools"
+CALL_INTEGRATION_TOOL = "call_integration_tool"
+
+INTEGRATION_TOOLS = [
+    {
+        "name": FIND_INTEGRATION_TOOLS,
+        "description": (
+            "Search the tools of the connected integrations (the servers named in "
+            "the system prompt) by keyword. Returns at most 8 matches, each with "
+            "its full name, description and input schema. Call this before "
+            "call_integration_tool, and pass a matching tool's name to it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What the tool should do, e.g. 'sigma rules for T1059' or 'ip reputation'",
+                },
+                "server": {
+                    "type": "string",
+                    "description": "Optional integration server name to search within, e.g. splunk-selfhosted",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": CALL_INTEGRATION_TOOL,
+        "description": (
+            "Run one connected integration tool that find_integration_tools "
+            "returned. Pass its exact name and arguments matching its input schema."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The tool's full name as find_integration_tools returned it",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "The tool's arguments, shaped by its input schema",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+]
