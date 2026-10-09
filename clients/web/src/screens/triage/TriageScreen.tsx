@@ -5,7 +5,7 @@ import { Icon } from '../../shared/icons'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { NotMeasured } from '../../shared/NotMeasured'
-import { useSourceBadge } from '../../shared/SourceChip'
+import { useSourceBadge } from '../../shared/useSourceBadge'
 import { EmptyState } from '../../shared/ui'
 import { utcClock } from '../../shared/utc'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -210,7 +210,7 @@ function Filters({
 }
 
 function SourceName({ source }: { source: string }) {
-  const { label } = useSourceBadge(source)
+  const { label } = useSourceBadge()(source)
   return <span className="tq-source" title={label}>{label}</span>
 }
 
