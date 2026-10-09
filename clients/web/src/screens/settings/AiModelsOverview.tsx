@@ -353,6 +353,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                           <Select
                             value={row.effort || 'default'}
                             options={EFFORT_OPTIONS}
+                            disabled={saving.includes(c)}
                             onSelect={(v) => update(c, { effort: v === 'default' ? '' : (v as Effort) })}
                           />
                         )}
