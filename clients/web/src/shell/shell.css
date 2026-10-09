@@ -261,8 +261,18 @@
   overflow-wrap: anywhere;
 }
 
+.chat .msg.vigil.err {
+  flex-direction: column;
+  gap: 6px;
+}
+
 .chat .msg.vigil.err .body {
   color: var(--crit);
+}
+
+.chat .msg-retry {
+  padding: 3px 10px;
+  font-size: 12px;
 }
 
 .chat .msg-actions {
