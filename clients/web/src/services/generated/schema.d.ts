@@ -9247,6 +9247,8 @@ export interface components {
             comment_count: number;
             /** Cost Usd */
             cost_usd?: number | null;
+            /** Description */
+            description?: string | null;
             /**
              * Findings Count
              * @default 0
@@ -9267,6 +9269,11 @@ export interface components {
             needs_you: boolean;
             /** Priority */
             priority?: string | null;
+            /**
+             * Sla Paused
+             * @default false
+             */
+            sla_paused: boolean;
             /** Sla Seconds Left */
             sla_seconds_left?: number | null;
             /** Title */
