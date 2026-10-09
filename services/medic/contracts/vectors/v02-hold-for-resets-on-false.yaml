@@ -1,0 +1,86 @@
+id: v02-hold-for-resets-on-false
+title: A blip shorter than for never opens an incident
+covers:
+- §4 pending→inactive
+start: '2026-10-07T10:00:00Z'
+end: +40m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.kafka-decode-burst
+    title: Vector rule ingest.kafka-decode-burst
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-3
+      causes:
+      - I-3.j
+    lane: 2
+    signals:
+      decode_errors:
+        sample:
+          signal: daemon_status.kafka
+          key: decode_errors
+    when:
+      fn: increase
+      signal: decode_errors
+      window: 5m
+      op: '>'
+      value: 5
+    for: 10m
+    keep_firing_for: 5m
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+series:
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 0
+  - - +20m
+    - 10
+expect:
+- at: +4m
+  rule: ingest.kafka-decode-burst
+  eval: unknown
+  state: inactive
+- at: +5m
+  rule: ingest.kafka-decode-burst
+  eval: false
+  state: inactive
+- at: +20m
+  rule: ingest.kafka-decode-burst
+  eval: true
+  state: pending
+- at: +24m45s
+  rule: ingest.kafka-decode-burst
+  eval: true
+  state: pending
+- at: +25m
+  rule: ingest.kafka-decode-burst
+  eval: false
+  state: inactive
+- at: +40m
+  rule: ingest.kafka-decode-burst
+  eval: false
+  state: inactive
+incidents: {}

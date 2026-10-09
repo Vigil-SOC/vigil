@@ -1,0 +1,20 @@
+apiVersion: medic.catalog/v1
+kind: TemplateCatalog
+vigil_commit: 76abec1a
+entries:
+  - {logger: core.integrations.elastic.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.elastic.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.elastic.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
+  - {logger: core.integrations.opensearch.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.opensearch.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.opensearch.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
+  - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.azure_sentinel.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
+  - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration incomplete (missing: %s); skipping polls until it is completed'}
+  - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration still incomplete (missing: %s); %d polls skipped'}
+  - {logger: core.integrations.microsoft_defender.ingestion, template: '%s configuration complete; polling resumed after %d skipped polls'}
+  - {logger: services.daemon.processor, template: 'Failed to connect LLM gateway, AI triage is skipped until it connects: %s'}
+  - {logger: services.daemon.processor, template: '%s; recovered after %d failures'}
+  - {logger: services.daemon.processor, template: '%s (still failing, %d failures)'}
+  - {logger: services.daemon.processor, template: 'No LLM provider configured, AI triage is skipped until one is set up'}

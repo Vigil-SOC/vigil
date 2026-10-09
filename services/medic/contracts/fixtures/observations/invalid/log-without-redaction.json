@@ -1,0 +1,37 @@
+{
+  "v": 1,
+  "id": "log.agent-worker:01JA8Z3K4M:12",
+  "kind": "log",
+  "signal": "log_agent_worker",
+  "sensor": {
+    "id": "log.agent-worker",
+    "run": "01JA8Z3K4M",
+    "seq": 12
+  },
+  "target": {
+    "service": "agent-worker",
+    "instance": "deeptempo-agent-worker",
+    "shape": "compose"
+  },
+  "t": "2026-10-07T10:00:06.500000Z",
+  "observed_at": "2026-10-07T10:00:07Z",
+  "source_ts": "2026-10-07T10:00:06.500000Z",
+  "outcome": "ok",
+  "skew_ms": -500,
+  "log": {
+    "format": "agent_json",
+    "level": "WARNING",
+    "logger": "lease",
+    "template": "sweep failed",
+    "template_trust": "untrusted",
+    "message": "sweep failed",
+    "exc_type": null,
+    "frames": [],
+    "fingerprint": "fp1_46dab60c130f0b2a",
+    "fingerprint_basis": "normalized",
+    "trace_id": null,
+    "line_hash": "100e7a09dce045f6",
+    "truncated": false
+  },
+  "$comment": "Every sample and log passes the redactor (K2)"
+}

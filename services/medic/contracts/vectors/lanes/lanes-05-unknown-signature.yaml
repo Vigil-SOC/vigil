@@ -1,0 +1,7 @@
+id: lanes-05-unknown-signature
+description: An incident no rule claims (rule null). E3 defines no catch-all in v1, so this is defensive. Unknown always goes to lane 3 (R4).
+until: 3600
+incidents:
+  - {id: a, rule: null, lane: null, opened_at: 0}
+expect:
+  a: {lane: {value: 3, reason: unknown_signature}, routed_at: 0, suppressed_by: null, would_have: {L0: record, L1: prepare_support_bundle, L2: {action: prepare_support_bundle, not_eligible: not_lane1}}, escalation: null}

@@ -1,0 +1,122 @@
+id: v08-absence-needs-coverage
+title: No arrivals for 1h can't fire until the watcher has watched for 1h
+covers:
+- §2 coverage
+- §2 lower bound
+start: '2026-10-07T10:00:00Z'
+end: +80m
+rules:
+- ref: ingest-source-silent.yaml
+  params:
+    quiet_window: 1h
+sensors:
+- id: http.federation
+  covers:
+  - federation_sources
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+- id: http.triage
+  covers:
+  - triage
+  interval: 30s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  federation_sources:
+    sources.enabled: bool
+    sources.last_success_at: timestamp
+  triage:
+    sources.arrivals: counter
+series:
+- signal: federation_sources
+  key: sources.enabled
+  labels: &id001
+    source: splunk
+  steps:
+  - - +0s
+    - true
+- signal: federation_sources
+  key: sources.last_success_at
+  labels: *id001
+  steps:
+  - - +0m
+    - '2026-10-07T10:00:00Z'
+  - - +5m
+    - '2026-10-07T10:05:00Z'
+  - - +10m
+    - '2026-10-07T10:10:00Z'
+  - - +15m
+    - '2026-10-07T10:15:00Z'
+  - - +20m
+    - '2026-10-07T10:20:00Z'
+  - - +25m
+    - '2026-10-07T10:25:00Z'
+  - - +30m
+    - '2026-10-07T10:30:00Z'
+  - - +35m
+    - '2026-10-07T10:35:00Z'
+  - - +40m
+    - '2026-10-07T10:40:00Z'
+  - - +45m
+    - '2026-10-07T10:45:00Z'
+  - - +50m
+    - '2026-10-07T10:50:00Z'
+  - - +55m
+    - '2026-10-07T10:55:00Z'
+  - - +60m
+    - '2026-10-07T11:00:00Z'
+  - - +65m
+    - '2026-10-07T11:05:00Z'
+  - - +70m
+    - '2026-10-07T11:10:00Z'
+  - - +75m
+    - '2026-10-07T11:15:00Z'
+  - - +80m
+    - '2026-10-07T11:20:00Z'
+- signal: triage
+  key: sources.arrivals
+  labels: *id001
+  steps:
+  - - +0s
+    - 50
+expect:
+- at: +30m
+  rule: ingest.source-silent
+  eval: unknown
+  state: inactive
+  group: *id001
+- at: +59m45s
+  rule: ingest.source-silent
+  eval: unknown
+  state: inactive
+  group: *id001
+- at: +60m
+  rule: ingest.source-silent
+  eval: true
+  state: pending
+  group: *id001
+- at: +74m45s
+  rule: ingest.source-silent
+  eval: true
+  state: pending
+  group: *id001
+- at: +75m
+  rule: ingest.source-silent
+  eval: true
+  state: firing
+  group: *id001
+  incident: A
+incidents:
+  A:
+    rule: ingest.source-silent
+    active_since: +60m
+    opened_at: +75m
+    resolving_since: null
+    resolved_at: null
+    group: *id001
+    routed_at: +75m

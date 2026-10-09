@@ -1,0 +1,120 @@
+id: v03-unknown-bridges-pending
+title: A sensor outage during pending doesn't reset the hold-for timer
+covers:
+- §2 freshness
+- §2 coverage
+- §4 unknown
+start: '2026-10-07T10:00:00Z'
+end: +60m
+rules:
+- ref: ingest-kafka-decode-errors.yaml
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_status.kafka
+  - daemon_status.processor
+  - daemon_status.poller
+  - daemon_health
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+  - - +24m
+    - error
+  - - +27m
+    - ok
+types:
+  daemon_status.kafka:
+    decode_errors: counter
+    missing_id_errors: counter
+    connected: bool
+series:
+- signal: daemon_status.kafka
+  key: decode_errors
+  steps:
+  - - +0s
+    - 0
+  - - +20m
+    - 10
+- signal: daemon_status.kafka
+  key: missing_id_errors
+  steps:
+  - - +0s
+    - 0
+expect:
+- at: +20m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: pending
+- at: +24m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: pending
+  note: newest ok read 23m45 is still fresh
+- at: +25m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: pending
+- at: +27m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: pending
+  note: gap in window, but lower bound 10 > 5
+- at: +30m
+  rule: ingest.kafka-decode-errors
+  eval: true
+  state: firing
+  incident: A
+- at: +36m
+  rule: ingest.kafka-decode-errors
+  eval: unknown
+  state: firing
+  incident: A
+  note: 'gap 23m45..27m still inside the window: lower bound 0'
+- at: +42m
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: resolving
+  incident: A
+- at: +56m45s
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: resolving
+  incident: A
+- at: +57m
+  rule: ingest.kafka-decode-errors
+  eval: false
+  state: inactive
+- at: +26m30s
+  rule: watcher.sensor-blind
+  eval: true
+  state: firing
+  group:
+    sensor: http.daemon
+  incident: SB
+- at: +27m
+  rule: watcher.sensor-blind
+  eval: false
+  state: inactive
+  group:
+    sensor: http.daemon
+incidents:
+  A:
+    rule: ingest.kafka-decode-errors
+    active_since: +20m
+    opened_at: +30m
+    resolving_since: +42m
+    resolved_at: +57m
+    reason: cleared
+    routed_at: +30m
+  SB:
+    rule: watcher.sensor-blind
+    active_since: +24m30s
+    opened_at: +26m30s
+    resolving_since: +27m
+    resolved_at: +27m
+    reason: cleared
+    group:
+      sensor: http.daemon
+    routed_at: +26m30s
