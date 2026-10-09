@@ -181,7 +181,10 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
-  const [savingFallback, setSavingFallback] = useState<string | null>(null)
+  // Components with a save in flight. A row's lock must not clear another row's.
+  const [saving, setSaving] = useState<string[]>([])
+  const lock = (component: string, on: boolean) =>
+    setSaving((s) => (on ? [...s, component] : s.filter((x) => x !== component)))
   const persist = async (component: string, next: RowState) => {
     try {
       if (next.inherit) {
@@ -194,20 +197,22 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       if (!next.providerId || !next.modelId) return
       const a = assignments[component]
       if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort(a) === next.effort) return
-      setSavingFallback(component) // the fallback PUT would carry this row's old model
-      // Other settings keys are carried over; the PUT replaces the whole object.
-      const rest = { ...a?.settings }
-      delete rest.effort
-      // A fallback never crosses a provider or equals the new model; null clears it.
-      if (rest[FALLBACK_KEY] && (a?.provider_id !== next.providerId || rest[FALLBACK_KEY] === next.modelId)) {
-        rest[FALLBACK_KEY] = null
+      lock(component, true) // the fallback PUT would carry this row's old model
+      try {
+        // Other settings keys are carried over; the PUT replaces the whole object.
+        const rest = { ...a?.settings }
+        delete rest.effort
+        // A fallback never crosses a provider or equals the new model; null clears it.
+        if (rest[FALLBACK_KEY] && (a?.provider_id !== next.providerId || rest[FALLBACK_KEY] === next.modelId)) {
+          rest[FALLBACK_KEY] = null
+        }
+        await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
+      } finally {
+        lock(component, false)
       }
-      await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
-    } finally {
-      setSavingFallback(null)
     }
   }
 
@@ -215,7 +220,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const setFallback = async (component: string, fallback: string) => {
     const a = assignments[component]
     if (!a) return
-    setSavingFallback(component)
+    lock(component, true)
     try {
       // The PUT replaces the whole settings object, so the effort rides along.
       await assign(component, a.provider_id, a.model_id, { ...a.settings, [FALLBACK_KEY]: fallback || null })
@@ -223,7 +228,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component} fallback.`)
     } finally {
-      setSavingFallback(null)
+      lock(component, false)
     }
   }
 
@@ -313,7 +318,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                           <Select
                             value={row.providerId}
                             placeholder="Select provider"
-                            disabled={savingFallback === c}
+                            disabled={saving.includes(c)}
                             options={providerIds.map((pid) => ({ value: pid, label: pid }))}
                             onSelect={(v) => update(c, { providerId: v, modelId: '' })}
                           />
@@ -321,7 +326,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                             value={row.modelId}
                             placeholder="Select model"
                             searchable
-                            disabled={savingFallback === c}
+                            disabled={saving.includes(c)}
                             options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
                             onSelect={(v) => update(c, { modelId: v })}
                           />
@@ -332,7 +337,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                         <Select
                           value={fallbackOf(c)}
                           placeholder="Stops"
-                          disabled={!assignments[c] || row.inherit || savingFallback === c}
+                          disabled={!assignments[c] || row.inherit || saving.includes(c)}
                           options={[
                             { value: '', label: 'Stops' },
                             ...fallbackModels(c).map((m) => ({ value: m.model_id, label: m.display_name || m.model_id })),
