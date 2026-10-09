@@ -13,6 +13,7 @@ import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
 import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
+import { INTEGRATIONS_DESC } from './integrationsData'
 import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsState'
 import SlaPoliciesSection from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
@@ -37,6 +38,8 @@ interface NavDef {
   desc: string
   icon: IconName
   Component: (props: SectionProps) => JSX.Element
+  /** the section renders its own PageHead (it has head actions) */
+  ownsHead?: boolean
 }
 
 interface SystemTabDef {
@@ -85,7 +88,7 @@ function SystemTabs({ notify }: SectionProps) {
 
 const NAV: NavDef[] = [
   { key: 'ai-config', label: 'AI models', desc: 'Which models Vigil uses, for which agent, and what happens when one is unavailable. Keys are stored encrypted and never shown again.', icon: 'sparkle', Component: AiConfigSection },
-  { key: 'integrations', label: 'Integrations', desc: 'The tools Vigil reads from and acts through.', icon: 'link', Component: IntegrationsSection },
+  { key: 'integrations', label: 'Integrations', desc: INTEGRATIONS_DESC, icon: 'link', Component: IntegrationsSection, ownsHead: true },
   { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection },
   { key: 'sla', label: 'SLA policies', desc: 'How fast a case must get a first response and be resolved, by severity.', icon: 'clock', Component: SlaPoliciesSection },
   { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, and what they may spend.', icon: 'bolt', Component: AutoInvestigateSection },
@@ -146,7 +149,7 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
       </nav>
 
       <div className="settings-content">
-        <PageHead title={current.label} description={current.desc} />
+        {!current.ownsHead && <PageHead title={current.label} description={current.desc} />}
         <Section notify={notify} />
       </div>
     </div>
