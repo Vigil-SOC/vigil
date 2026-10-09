@@ -157,9 +157,11 @@ function Filters({
 
   const group = (key: FilterKey, current: string, label: string, options: { value: string; label: string; dot?: string; title?: string }[], info?: ReactNode) => (
     <>
-      <span className="tq-group-label">{label}</span>
-      {info}
-      <FilterChip list label="All" count={counts.total} active={!current} dot="var(--tx2)" onClick={() => setFilter(key, '')} />
+      <span className="tq-group-head">
+        <span className="tq-group-label">{label}</span>
+        {info}
+        <FilterChip list label="All" count={counts.total} active={!current} dot="var(--tx2)" onClick={() => setFilter(key, '')} />
+      </span>
       {options.map((option) => (
         <FilterChip
           key={option.value}

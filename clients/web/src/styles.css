@@ -6915,6 +6915,12 @@
       gap: 6px;
    }
 
+   .tq-group-head {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+   }
+
    .tq-group-label {
       font-size: 12px;
       font-weight: 650;
