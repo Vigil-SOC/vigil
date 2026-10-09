@@ -566,7 +566,7 @@ describe("HANDOFF_IR", () => {
     // What an IR responder is handed: the claim, the numbers, the records, and
     // what the hunt could not see. Journaled, not written beside a ledger path.
     const caseFile = record.case_markdown!;
-    expect(caseFile).toMatch(/# IR case/);
+    expect(caseFile).toMatch(/# Handoff — /);
     expect(caseFile).toMatch(/h one/);
     expect(caseFile).toMatch(/2 corroborating source system\(s\)/);
     expect(caseFile).toContain(citations[0]!);
@@ -711,6 +711,6 @@ describe("a supervised hunt end to end", () => {
     expect(replayed.hypotheses.get(hypothesisId)!.status).toBe("handed_off");
     expect(replayed.resolutions).toHaveLength(3);
     expect(replayed.resolutions.every((resolution) => resolution.actor !== AUTO_ACTOR)).toBe(true);
-    expect(replayed.handoffs[0]!.case_markdown).toMatch(/# IR case/);
+    expect(replayed.handoffs[0]!.case_markdown).toMatch(/# Handoff — /);
   });
 });

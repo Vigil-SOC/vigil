@@ -99,6 +99,7 @@ class CaseClosureView(BaseModel):
     closure_category: str
     closed_by: str
     closed_by_kind: str
+    closed_at: Optional[str] = None
     verdict: str = ""
 
 

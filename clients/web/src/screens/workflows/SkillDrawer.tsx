@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HoldButton } from '../../shared/HoldButton'
 import { Popup } from '../../shared/ui'
-import { skillsApi, type ApiSkillDetail } from '../../services/skillsApi'
+import { skillsApi, type ApiSkillDetail, type ApiSkillTest } from '../../services/skillsApi'
 import type { Skill } from '../../data/appData'
 
 const PATH_UNSET = 'The skills path is unset. Set VIGIL_SKILLS_PATH to a directory before saving.'
@@ -34,6 +34,11 @@ export function SkillDrawer({
   const [rootUnset, setRootUnset] = useState(false)
   // The file shown read-only in place of the steps; null is the editable SKILL.md.
   const [openFile, setOpenFile] = useState<string | null>(null)
+  // "Test with a sample": null until run; one synchronous request, so only `testing` marks the wait.
+  const [testing, setTesting] = useState(false)
+  const [test, setTest] = useState<ApiSkillTest | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
+  const panel = useRef<HTMLDivElement>(null)
   const [file, setFile] = useState<{ content?: string; error?: string }>({})
 
   useEffect(() => {
@@ -93,7 +98,7 @@ export function SkillDrawer({
   // POST /api/skills overwrites an operator skill of the same name, so a taken name is refused here.
   const nameTaken = !nameLocked && !needsNewName && existingNames.includes(skillName.trim())
   const ready = creating || detail !== null
-  const saveDisabled = busy || !ready || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim()
+  const saveDisabled = busy || !ready || pathUnset || needsNewName || nameTaken || !skillName.trim() || !description.trim() || !body.trim()
 
   const save = () => {
     if (saveDisabled) return
@@ -113,6 +118,23 @@ export function SkillDrawer({
         setError(errMsg(e))
         setBusy(false)
       })
+  }
+
+  // The drawer scrolls and the panel sits below the fields: bring it into view when a run starts and when it lands.
+  useEffect(() => {
+    if (testing || test || testError) panel.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [testing, test, testError])
+
+  const runTest = () => {
+    if (name === null || testing) return
+    setTesting(true)
+    setTest(null)
+    setTestError(null)
+    skillsApi
+      .test(name)
+      .then(setTest)
+      .catch((e) => setTestError(errMsg(e)))
+      .finally(() => setTesting(false))
   }
 
   const origin = creating || !detail?.bundled ? 'Yours' : 'Built in'
@@ -178,6 +200,7 @@ export function SkillDrawer({
                 onChange={(e) => setDescription(e.target.value)}
               />
               <span className="vg-side-hint">Agents read this to decide whether the skill applies (1,024 characters at most)</span>
+              {!description.trim() && err('Describe when an agent should use this skill.')}
             </div>
             {openFile === null ? (
               <div className="vg-side-field">
@@ -189,6 +212,7 @@ export function SkillDrawer({
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
                 />
+                {!body.trim() && err('Add the steps an agent should follow.')}
               </div>
             ) : (
               <div className="vg-side-field">
@@ -225,12 +249,49 @@ export function SkillDrawer({
                 ))}
               </div>
             )}
+            {(testing || test || testError) && (
+              <div ref={panel} className="vg-side-field" role="status" aria-label="Test results">
+                <span className="vg-skill-files-title">Test results</span>
+                {testing && <span className="vg-side-hint vg-skill-wait"><span className="vg-skill-spin" aria-hidden="true" />Running the cases on the chat model…</span>}
+                {testError && err(testError)}
+                {test?.no_cases && <span className="vg-side-hint">This skill has no test cases.</span>}
+                {test && !test.no_cases && (
+                  <>
+                    <span className="vg-side-hint">
+                      {test.results.filter((r) => r.passed).length} of {test.results.length} passed
+                      {test.model && <> · {test.model}</>}
+                    </span>
+                    {test.results.map((r) => (
+                      <div key={r.name} className="vg-skill-result" data-passed={r.passed}>
+                        <span className="vg-skill-result-head">
+                          <span className="vg-skill-result-mark">{r.passed ? 'Pass' : 'Fail'}</span>
+                          <span className="min-w-0 break-words">{r.name}</span>
+                        </span>
+                        {r.missing.length > 0 && (
+                          <span className="vg-skill-missing">Missing: {r.missing.join(' · ')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
             {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
             <div className="vg-side-foot">
-              <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
-              <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
-                {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
-              </button>
+              {!creating && (
+                <button type="button" className="vg-side-btn" disabled={testing} onClick={runTest}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M9.5 3.5h5M10.5 3.5v6L5.4 18.2a1.6 1.6 0 0 0 1.4 2.3h10.4a1.6 1.6 0 0 0 1.4-2.3l-5.1-8.7v-6" />
+                  </svg>
+                  {testing ? 'Testing…' : 'Test with a sample'}
+                </button>
+              )}
+              <span className="vg-skill-foot-end">
+                <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
+                <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
+                  {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
+                </button>
+              </span>
             </div>
           </>
         )}
