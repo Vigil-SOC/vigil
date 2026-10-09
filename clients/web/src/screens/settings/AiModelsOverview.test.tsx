@@ -374,4 +374,13 @@ describe('reset to defaults', () => {
     rerender(<AiModelsOverview notify={notify} />)
     expect(reload).toHaveBeenCalledTimes(1)
   })
+
+  it('closes an open editor on a row about to be reset, so it cannot save into the reset', () => {
+    withOwn()
+    mount()
+    fireEvent.click(within(rowOf('Triage Agent')).getByRole('button', { name: 'Change' }))
+    expect(rowOf('Triage Agent').querySelector('.aim-model')).not.toBeNull()
+    fireEvent.click(resetButton())
+    expect(rowOf('Triage Agent').querySelector('.aim-model')).toBeNull()
+  })
 })

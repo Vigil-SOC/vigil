@@ -228,6 +228,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
+      setRows((prev) => ({ ...prev, [component]: rowFor(component, assignments[component]) }))
     }
   }
 
@@ -273,7 +274,9 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const ownOf = (c: string) => (resetting && c !== CHAT_DEFAULT_KEY ? undefined : assignments[c])
   const inheritsOf = (c: string) => c !== CHAT_DEFAULT_KEY && !ownOf(c)
 
-  const resetAll = () =>
+  const resetAll = () => {
+    // an open editor on a row about to be cleared would save into the reset
+    if (editing && editing !== CHAT_DEFAULT_KEY) stopEditing(editing)
     notifyUndoable({
       key: RESET_KEY,
       text: `${resettable.length} ${resettable.length === 1 ? 'agent' : 'agents'} back on the default model.`,
@@ -281,6 +284,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       doneText: 'Agents reset to the default model.',
       failText: (e) => (e as { message?: string })?.message || 'Failed to reset the agents to the default model.',
     })
+  }
 
   const stopEditing = (c: string) => {
     setRows((prev) => ({ ...prev, [c]: rowFor(c, assignments[c]) }))
@@ -441,8 +445,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                       <td className="aim-nowrap">
                         <button
                           className="btn ghost"
-                          disabled={resetting && c !== CHAT_DEFAULT_KEY}
-                          onClick={() => (editing === c ? stopEditing(c) : setEditing(c))}
+                          disabled={resetting && c !== CHAT_DEFAULT_KEY && editing !== c}
+                          onClick={() => {
+                            if (editing) stopEditing(editing)
+                            if (editing !== c) setEditing(c)
+                          }}
                         >
                           {editing === c ? 'Cancel' : 'Change'}
                         </button>
