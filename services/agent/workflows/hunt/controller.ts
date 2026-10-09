@@ -71,6 +71,7 @@ import {
   type DispatchResult,
   type Entity,
   type EvidenceRecord,
+  type EvidenceRelation,
   type Expansion,
   type HuntOutcome,
   type HuntState,
@@ -83,6 +84,7 @@ import {
   type WorkerEvidence,
   CALLS_PER_ITERATION,
   callsPerIteration,
+  NOT_RULED,
 } from "./types.js";
 
 // A dispatch that never ran because an operator had already halted the hunt.
@@ -147,6 +149,18 @@ const EXPANSION_BUDGET = 12_000;
 export class HuntAlreadyTerminal extends Error {}
 export class HuntParked extends Error {}
 export class InvalidDecision extends Error {}
+
+type Pair = { evidence_id: string; hypothesis_id: string };
+
+// Refused only for unruled pairs, which the lead can be asked to finish rather than redo.
+export class IncompleteRuling extends InvalidDecision {
+  constructor(message: string, readonly missing: readonly Pair[]) {
+    super(message);
+  }
+}
+
+// How many unruled pairs one re-ask names: what a lead can answer in one emission.
+export const RULING_BATCH = 20;
 
 interface FanOutTarget {
   focus: string;
@@ -228,9 +242,10 @@ function validateCoverage(decision: Decision, projection: Projection): void {
   const missing = unclassified(projection).filter((pair) => !covered.has(pairKey(pair.evidence_id, pair.hypothesis_id)));
   if (missing.length === 0) return;
   const [first] = missing;
-  throw new InvalidDecision(
+  throw new IncompleteRuling(
     `${decision.action} leaves ${missing.length} observation(s) unruled: evidence ${first!.evidence_id} ` +
       `against hypothesis ${first!.hypothesis_id}. Every active hypothesis needs supports, weakens or neither.`,
+    missing,
   );
 }
 
@@ -362,12 +377,53 @@ function validateFocus(decision: Decision, projection: Projection): void {
 
 // The violation goes back to the Hunt Lead as a digest note, which is where the
 // digest already carries controller-side observations, so the re-ask needs no
+const visibleEvidence = (digest: Digest): Set<string> =>
+  new Set([...digest.recent_evidence.map((e) => e.evidence_id), ...digest.expansions.map((e) => e.evidence_id)]);
+
 function withRejection(digest: Digest, reason: string): Digest {
   return {
     ...digest,
     notes: [
       ...digest.notes,
       `Your previous emission was rejected: ${reason}. Emit one decision from the closed vocabulary, citing only evidence ids present in this digest.`,
+    ],
+  };
+}
+
+// The lead's rulings from refused attempts, kept so a re-ask only has to finish the job.
+// The attempt in hand wins on a pair both rule.
+function withRulings(decision: Decision, carried: ReadonlyMap<string, EvidenceRelation>): Decision {
+  if (carried.size === 0) return decision;
+  const merged = new Map(carried);
+  for (const relation of decision.evidence_relations ?? []) {
+    merged.set(pairKey(relation.evidence_id, relation.hypothesis_id), relation);
+  }
+  return { ...decision, evidence_relations: [...merged.values()] };
+}
+
+// A pair the lead never ruled is a neither that says so, not a verdict it never gave.
+function withUnruledFilled(decision: Decision, missing: readonly Pair[]): Decision {
+  const filled = missing.map((pair): EvidenceRelation => ({ ...pair, relation: "neither", note: NOT_RULED }));
+  return { ...decision, evidence_relations: [...(decision.evidence_relations ?? []), ...filled] };
+}
+
+// Names only a batch of what is still unruled, and what the lead cannot see and so
+// will not be asked about, rather than re-presenting the whole set.
+function withUnruledNote(digest: Digest, action: string, asked: readonly Pair[], unseen: number): Digest {
+  const byEvidence = new Map<string, string[]>();
+  for (const pair of asked.slice(0, RULING_BATCH)) {
+    byEvidence.set(pair.evidence_id, [...(byEvidence.get(pair.evidence_id) ?? []), pair.hypothesis_id]);
+  }
+  const lines = [...byEvidence].map(([evidenceId, hypotheses]) => `${evidenceId}: ${hypotheses.join(", ")}`);
+  const omitted =
+    unseen > 0 ? ` ${unseen} further pair(s) rest on observations omitted from this digest; they will be recorded as not ruled.` : "";
+  return {
+    ...digest,
+    notes: [
+      ...digest.notes,
+      `Your ${action} left observations unruled. Your rulings so far are kept; do not repeat them. ` +
+        `Emit the same decision with evidence_relations for only these ${Math.min(asked.length, RULING_BATCH)} of ${asked.length} ` +
+        `remaining pairs (evidence: hypotheses), each supports, weakens or neither: ${lines.join("; ")}.${omitted}`,
     ],
   };
 }
@@ -662,9 +718,25 @@ export class HuntController {
     let presented = digest;
     let attempts = 0;
     let expansions = 0;
+    // Rulings from refused attempts, and the last decision refused only for unruled
+    // pairs: what is left to fill if the attempts run out on coverage alone.
+    let carried = new Map<string, EvidenceRelation>();
+    let incomplete: { result: DecisionResult; decision: Decision; missing: readonly Pair[] } | null = null;
     // Carried out of the loop so a stall names the model and prompt that failed
     // rather than what the spec merely asked for.
     let attribution = { model_id: projection.hunt.spec.model, prompt_version: "" };
+
+    // Left absent rather than empty when nothing was rejected, so a clean
+    // iteration journals exactly what it did before.
+    const accept = (result: DecisionResult) => ({
+      presented,
+      result: {
+        ...result,
+        cost_usd: spent,
+        duration_ms: Math.round(modelMs),
+        ...(rejected.length > 0 ? { rejected_attempts: rejected } : {}),
+      },
+    });
 
     const watch = this.watchForAbort();
     try {
@@ -693,15 +765,35 @@ export class HuntController {
         spent += result.cost_usd;
         attribution = { model_id: result.model_id, prompt_version: result.prompt_version };
 
+        const decision = withRulings(result.decision, carried);
         try {
-          validateDecision(result.decision, projection);
+          validateDecision(decision, projection);
         } catch (error) {
           if (!(error instanceof InvalidDecision)) throw error;
           attempts += 1;
           rejected.push(error.message);
-          presented = withRejection(presented, error.message);
+          if (!(error instanceof IncompleteRuling)) {
+            incomplete = null;
+            presented = withRejection(presented, error.message);
+            continue;
+          }
+
+          carried = new Map(
+            (decision.evidence_relations ?? []).map((r) => [pairKey(r.evidence_id, r.hypothesis_id), r]),
+          );
+          // EXPAND is a read, not a decision, so there is nothing to fill into.
+          incomplete = decision.action === "EXPAND" ? null : { result, decision, missing: error.missing };
+          // Rows the digest dropped cannot be ruled on, so the lead is not asked.
+          const shown = visibleEvidence(presented);
+          const asked = error.missing.filter((pair) => shown.has(pair.evidence_id));
+          if (asked.length === 0 && incomplete !== null) {
+            const closed = this.fillUnruled(incomplete, projection);
+            if (closed !== null) return accept(closed);
+          }
+          presented = withUnruledNote(presented, decision.action, asked, error.missing.length - asked.length);
           continue;
         }
+        result = { ...result, decision };
 
         // EXPAND is a read, not a move: it buys raw payloads and asks again without
         // advancing the iteration. Cost still accrues, so it is not free, only
@@ -718,18 +810,12 @@ export class HuntController {
           continue;
         }
 
-        // Left absent rather than empty when nothing was rejected, so a clean
-        // iteration journals exactly what it did before.
-        return {
-          presented,
-          result: {
-            ...result,
-            cost_usd: spent,
-            duration_ms: Math.round(modelMs),
-            ...(rejected.length > 0 ? { rejected_attempts: rejected } : {}),
-          },
-        };
+        return accept(result);
       }
+
+      // Coverage was the only thing wrong: record what was never ruled as such and go on.
+      const closed = incomplete === null ? null : this.fillUnruled(incomplete, projection);
+      if (closed !== null) return accept(closed);
 
       // A stalled iteration is a fact about the hunt, not an absence of one: it
       // presented a digest and was billed for emissions. Journaling it before the
@@ -742,6 +828,21 @@ export class HuntController {
     } finally {
       watch.stop();
     }
+  }
+
+  // Null when the decision is also wrong some other way, which still stalls.
+  private fillUnruled(
+    held: { result: DecisionResult; decision: Decision; missing: readonly Pair[] },
+    projection: Projection,
+  ): DecisionResult | null {
+    const decision = withUnruledFilled(held.decision, held.missing);
+    try {
+      validateDecision(decision, projection);
+    } catch (error) {
+      if (error instanceof InvalidDecision) return null;
+      throw error;
+    }
+    return { ...held.result, decision };
   }
 
   // Reuses the decision event rather than adding a kind of its own: what that
@@ -1824,8 +1925,17 @@ export class HuntController {
     for (const relation of decision.evidence_relations ?? []) {
       if (!this.ledger.projection.evidence.has(relation.evidence_id)) continue;
       if (!known.has(relation.hypothesis_id)) continue;
+      // A neither says nothing, so it cannot undo a supports or weakens already recorded.
+      if (relation.relation === "neither" && this.rulesOnPair(relation)) continue;
       this.ledger.append({ kind: "link", payload: { ...relation } });
     }
+  }
+
+  private rulesOnPair(pair: Pair): boolean {
+    return this.ledger.projection.links.some(
+      (link) =>
+        link.evidence_id === pair.evidence_id && link.hypothesis_id === pair.hypothesis_id && link.relation !== "neither",
+    );
   }
 
   private async write(

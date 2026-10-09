@@ -310,6 +310,11 @@
   font-size: 12px;
   line-height: 1.45;
   color: var(--tx2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .su-check-detail.needs {
@@ -377,7 +382,7 @@
 
 /* the card's action button, per the board: 28px, 12px type */
 .su-root .settings-card-actions .btn {
-  height: 28px;
+  height: var(--size-button-sm);
   padding: 0 10px;
   border-color: var(--ln2);
   border-radius: var(--radius-button);

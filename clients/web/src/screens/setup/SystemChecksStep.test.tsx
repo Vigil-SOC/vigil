@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import SystemChecksStep from './SystemChecksStep'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
 import { readProviderConfigured } from '../../routing/useSetupStatus'
@@ -167,6 +167,23 @@ describe('SystemChecksStep', () => {
     // Waiting with no source is not a warning
     await screen.findByText('1 enabled server running')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows Needs you when a federation or MCP read has no body', async () => {
+    vi.mocked(federationApi.getHealth).mockResolvedValue({ data: undefined } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: null } as never)
+    render(<SystemChecksStep />)
+    await waitFor(() => expect(mark('Alert collection')).toBe('Needs you'))
+    expect(mark('Tool servers')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
+  })
+
+  it('shows Could not read for a storage read with no body', async () => {
+    vi.mocked(storageApi.getStatus).mockResolvedValue({ data: undefined } as never)
+    render(<SystemChecksStep />)
+    await waitFor(() => expect(mark('Storage')).toBe('Needs you'))
+    expect(mark('Database')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
   })
 
   it('names an enabled MCP server that is not running', async () => {
