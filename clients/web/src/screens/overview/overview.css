@@ -418,3 +418,134 @@ a.ov-src:hover {
     animation: none;
   }
 }
+
+/* agents running now */
+.ov-agents {
+  margin: 4px 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ov-agents-h {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ov-agents-t {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ov-agents-t h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.ov-agents-h p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.ov-agents-link {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ac);
+  white-space: nowrap;
+}
+
+.ov-agents-link:hover {
+  text-decoration: underline;
+}
+
+.ov-agents-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ov-agent {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--ln0);
+  border-radius: 12px;
+  background: var(--bg1);
+}
+
+.ov-agent.fair {
+  border-color: var(--fair-ln);
+}
+
+.ov-agent.poor {
+  border-color: var(--poor-ln);
+}
+
+.ov-agent b {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--tx0);
+}
+
+.ov-agent-doing {
+  font-size: 12px;
+  color: var(--tx1);
+}
+
+.ov-agent b,
+.ov-agent-doing {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-agent-rate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--tx2);
+}
+
+.ov-agents-empty {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1.5px dashed var(--ln2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg1) 70%, transparent);
+}
+
+.ov-agents-empty .ov-tile {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+
+.ov-agents-empty .ov-txt {
+  flex: 1;
+}
+
+.ov-agents-empty .ov-txt span {
+  font-size: 12px;
+}
+
+.ov-agents-empty .btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}

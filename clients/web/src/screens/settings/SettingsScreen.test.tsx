@@ -5,8 +5,15 @@ import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import SettingsScreen from './SettingsScreen'
 
-vi.mock('./AiConfigSection', () => ({ default: () => <div>AI panel</div> }))
-// Integrations renders its own page head (it carries the head actions), so the stub does too
+// AI models and Integrations render their own page head (they carry head actions), so the stubs do too
+vi.mock('./AiConfigSection', () => ({
+  default: () => (
+    <>
+      <header className="page-head"><h2>AI models</h2><p>Stub description.</p></header>
+      <div>AI panel</div>
+    </>
+  ),
+}))
 vi.mock('./IntegrationsSection', () => ({
   default: () => (
     <>

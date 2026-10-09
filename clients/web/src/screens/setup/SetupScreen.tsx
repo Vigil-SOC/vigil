@@ -37,8 +37,8 @@ interface StepCopy {
   sub: string
   title: string
   desc: string
-  /** the existing panel's own card */
-  card: { title: string; desc: string }
+  /** the existing panel's own card; absent when the step renders its own cards */
+  card?: { title: string; desc?: string }
 }
 
 const STEP_COPY: Record<StepId, StepCopy> = {
@@ -47,10 +47,6 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     sub: 'System checks',
     title: 'Welcome to Vigil',
     desc: 'Vigil investigates your security alerts with AI agents and asks you before it changes anything. Setup takes about 15 minutes, and your progress is saved if you leave.',
-    card: {
-      title: 'System checks',
-      desc: 'API health, storage, an AI provider, federation and MCP servers, one at a time.',
-    },
   },
   data: {
     rail: 'Connect your data',
@@ -94,7 +90,7 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     sub: '',
     title: 'Vigil is ready',
     desc: 'The console works from here. Reopen this pass from the account menu.',
-    card: { title: 'Summary', desc: '' },
+    card: { title: 'Summary' },
   },
 }
 
@@ -190,6 +186,8 @@ const SetupWizard = () => {
     }
   }
 
+  const panel = stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))
+
   if (!hasPermission('settings.write')) {
     return (
       <>
@@ -239,9 +237,13 @@ const SetupWizard = () => {
                 <h1>{copy.title}</h1>
                 <p>{copy.desc}</p>
               </div>
-              <SettingsCard title={copy.card.title} desc={copy.card.desc || undefined}>
-                {stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))}
-              </SettingsCard>
+              {copy.card ? (
+                <SettingsCard title={copy.card.title} desc={copy.card.desc}>
+                  {panel}
+                </SettingsCard>
+              ) : (
+                panel
+              )}
             </div>
           </div>
           <footer className="su-foot">

@@ -11,6 +11,7 @@ import UsersSection from './UsersSection'
 import AutoInvestigateSection from './AutoInvestigateSection'
 import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
+import { AI_CONFIG_DESC } from '../../config/aiComponents'
 import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
 import { INTEGRATIONS_DESC } from './integrationsData'
@@ -87,7 +88,7 @@ function SystemTabs({ notify }: SectionProps) {
 }
 
 const NAV: NavDef[] = [
-  { key: 'ai-config', label: 'AI models', desc: 'Which models Vigil uses, for which agent, and what happens when one is unavailable. Keys are stored encrypted and never shown again.', icon: 'sparkle', Component: AiConfigSection },
+  { key: 'ai-config', label: 'AI models', desc: AI_CONFIG_DESC, icon: 'sparkle', Component: AiConfigSection, ownsHead: true },
   { key: 'integrations', label: 'Integrations', desc: INTEGRATIONS_DESC, icon: 'link', Component: IntegrationsSection, ownsHead: true },
   { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection },
   { key: 'sla', label: 'SLA policies', desc: 'How fast a case must get a first response and be resolved, by severity.', icon: 'clock', Component: SlaPoliciesSection },
