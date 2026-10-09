@@ -229,6 +229,7 @@ def chat_config(
     tools: Optional[List[str]] = None,
     mcp_tools: Optional[List[Dict[str, Any]]] = None,
     provider: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> str:
     """Render the agent layer's config document.
 
@@ -236,10 +237,12 @@ def chat_config(
     model rather than folded into it: Bifrost routes ``<provider>/<model>`` but
     the price catalogue is keyed by the bare id, so the agent needs both. Left
     out when unknown, which is what every caller did before this existed.
+    ``effort`` is the reasoning effort set on the model, left out when unset.
     """
     document = {
         "model": model,
         **({"provider": provider} if provider else {}),
+        **({"effort": effort} if effort else {}),
         "budgets": DEFAULT_BUDGETS,
         "runtime": DEFAULT_RUNTIME,
         "tools": _declare(tools, mcp_tools),
