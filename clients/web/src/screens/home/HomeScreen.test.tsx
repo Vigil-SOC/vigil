@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import HomeScreen, { parseCreatedAt } from './HomeScreen'
+import HomeScreen, { dropChips, parseCreatedAt } from './HomeScreen'
 import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, triageApi, type NeedsYouItem } from '../../services/api'
@@ -80,6 +80,74 @@ afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
   sessionStorage.clear()
+})
+
+function triageWith(rows: unknown[], share: number | null = 0.5) {
+  vi.mocked(triageApi.get).mockResolvedValue({
+    data: { strip: { picked_up: { launched_or_merged: 1, created_today: 2, share } }, rows },
+  } as never)
+}
+
+const today = () => new Date().toISOString().slice(0, 19)
+const droppedRow = (over: Record<string, unknown> = {}) => ({
+  kind: 'detection',
+  state: 'expired',
+  source: 'Okta',
+  finding_id: 'f-9',
+  decided_at: today(),
+  ...over,
+})
+
+describe('Home suggestion chips', () => {
+  beforeEach(() => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+  })
+
+  it('shows two chips for an alert that expired today, and a click fills the bar with the exact text', async () => {
+    triageWith([droppedRow()])
+    const fillCommand = vi.fn()
+    renderHome({ fillCommand })
+    fireEvent.click(await screen.findByRole('button', { name: '/investigate f-9' }))
+    expect(fillCommand).toHaveBeenLastCalledWith('/investigate f-9')
+    fireEvent.click(screen.getByRole('button', { name: 'Why was the Okta alert dropped?' }))
+    expect(fillCommand).toHaveBeenLastCalledWith('/ask Why was the Okta alert dropped? Finding f-9')
+    expect(screen.getByText('·')).toBeInTheDocument()
+    expect(screen.getByText(/50% of alerts picked up automatically today/)).toBeInTheDocument()
+  })
+
+  it('names the finding when the row has no source', async () => {
+    triageWith([droppedRow({ source: '' })])
+    const fillCommand = vi.fn()
+    renderHome({ fillCommand })
+    fireEvent.click(await screen.findByRole('button', { name: 'Why was alert f-9 dropped?' }))
+    expect(fillCommand).toHaveBeenCalledWith('/ask Why was alert f-9 dropped? Finding f-9')
+  })
+
+  it('shows no chips and no dot without a matching row, and none without fillCommand', async () => {
+    triageWith([droppedRow({ decided_at: '2020-01-01T00:00:00' }), droppedRow({ state: 'decided' }), droppedRow({ kind: 'approval' })])
+    const { unmount } = renderHome({ fillCommand: vi.fn() })
+    expect(await screen.findByText(/50% of alerts/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /investigate|dropped/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('·')).not.toBeInTheDocument()
+    unmount()
+
+    triageWith([droppedRow()])
+    renderHome()
+    expect(await screen.findByText(/50% of alerts/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /investigate|dropped/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('·')).not.toBeInTheDocument()
+  })
+
+  it('picks the newest of today (UTC) from zone-less or zoned timestamps', () => {
+    const now = Date.UTC(2026, 9, 7, 12, 0, 0)
+    const rows = [
+      droppedRow({ finding_id: 'old', decided_at: '2026-10-06T23:59:59' }),
+      droppedRow({ finding_id: 'a', decided_at: '2026-10-07T01:00:00' }),
+      droppedRow({ finding_id: 'b', decided_at: '2026-10-07T09:00:00Z' }),
+      droppedRow({ finding_id: null }),
+    ] as never
+    expect(dropChips(rows, now)[0].text).toBe('/investigate b')
+  })
 })
 
 describe('Home', () => {
@@ -220,6 +288,26 @@ describe('Home', () => {
     expect(rows().map((row) => row.querySelector('.home-step-no')?.textContent)).toEqual(['1', '2'])
   })
 
+  it('serves the custom skill step as a fifth card whose Add opens the Skills tab, and counts it on first run', async () => {
+    const skill = { id: 'custom_skill', title: 'Add a custom skill', state_line: 'Teach Vigil your team’s playbooks', done: false, href: '/workflows?tab=skills' }
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [...doneSteps.map((step) => ({ ...step, done: false })), skill], alerts_exist: 5, demo_enabled: false },
+    } as never)
+    const { unmount } = renderHome()
+    const card = (await screen.findByRole('heading', { name: 'Add a custom skill' })).closest('li') as HTMLElement
+    expect(within(card).getByRole('link', { name: 'Add' })).toHaveAttribute('href', '/workflows?tab=skills')
+    expect(card.querySelector('.home-step-no')).toHaveTextContent('5')
+    expect((document.querySelector('.home-steps') as HTMLElement).style.gridTemplateColumns).toBe('repeat(5, minmax(0, 1fr))')
+    unmount()
+
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [...doneSteps, { ...skill, done: true, state_line: '1 custom skill' }], alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+    expect(await screen.findByText('5 of 5 done')).toBeInTheDocument()
+  })
+
   it('says there is nothing to suggest when no step is open', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     renderHome()
@@ -284,7 +372,7 @@ describe('Home', () => {
     expect(screen.getByText('6 open · oldest first')).toBeInTheDocument()
   })
 
-  it('first run lists every step with done ones ticked and counts them from the response', async () => {
+  it('first run lists open steps before done ones, each in served order, and counts from the response', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: {
@@ -301,18 +389,84 @@ describe('Home', () => {
     const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem')
     expect(rows.map((row) => row.querySelector('h3')?.textContent)).toEqual([
       'Connect more tools',
-      'Where Vigil pings you (done)',
       'Link detection rules',
+      'Where Vigil pings you (done)',
     ])
-    expect(rows[1]).toHaveClass('done')
+    expect(rows[2]).toHaveClass('done')
     expect(rows[0]).not.toHaveClass('done')
-    expect(within(rows[2]).getByRole('link', { name: 'Link' })).toHaveAttribute(
+    expect(within(rows[1]).getByRole('link', { name: 'Link' })).toHaveAttribute(
       'href',
       '/settings?section=data&tab=detection',
+    )
+    expect(within(rows[2]).getByRole('link', { name: 'Edit' })).toHaveAttribute(
+      'href',
+      '/settings?section=integrations',
     )
     expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
     expect(screen.getByText('No alerts yet')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Connect data' })).toHaveAttribute('href', '/settings?section=data')
+  })
+
+  it('first run gives only the first open step the primary action', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: {
+        steps: [doneSteps[0], { ...doneSteps[1], done: false }, { ...doneSteps[2], done: false }, doneSteps[3]],
+        alerts_exist: 0,
+        demo_enabled: false,
+      },
+    } as never)
+    renderHome()
+
+    await screen.findByText('2 of 4 done')
+    const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem')
+    const actions = rows.map((row) => row.querySelector('a') as HTMLElement)
+    expect(rows.map((row) => row.querySelector('h3')?.textContent)).toEqual([
+      'Where Vigil pings you',
+      'Link detection rules',
+      'Connect more tools (done)',
+      'Pick a model per agent (done)',
+    ])
+    expect(actions.map((a) => a.classList.contains('primary'))).toEqual([true, false, false, false])
+    expect(rows[0]).toHaveClass('next')
+    expect(rows[1]).not.toHaveClass('next')
+    expect(actions.map((a) => a.textContent)).toEqual(['Set up', 'Link', 'Edit', 'Edit'])
+  })
+
+  it('first run with every step done has no primary action', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    renderHome()
+
+    await screen.findByText('4 of 4 done')
+    const list = screen.getByRole('list', { name: 'Setup steps' })
+    expect(list.querySelector('.primary')).toBeNull()
+    expect(list.querySelector('.next')).toBeNull()
+  })
+
+  it('first run says nothing is connected instead of Board clear, and waits for setup before choosing', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    let resolveSetup: (value: never) => void = () => {}
+    vi.mocked(configApi.getSetupSteps).mockReturnValue(new Promise((resolve) => (resolveSetup = resolve)) as never)
+    renderHome()
+
+    await flush()
+    expect(screen.queryByText('Board clear.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nothing is connected yet, so nothing needs you')).not.toBeInTheDocument()
+    await act(async () => {
+      resolveSetup({ data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false } } as never)
+    })
+    expect(await screen.findByText('Nothing is connected yet, so nothing needs you')).toBeInTheDocument()
+    expect(screen.queryByText('Board clear.')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the count headline when setup fails to load', async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('setup down'))
+    renderHome()
+    expect(await screen.findByText('Board clear.')).toBeInTheDocument()
   })
 
   it('first run: Take the tour calls startTour and is hidden without it', async () => {

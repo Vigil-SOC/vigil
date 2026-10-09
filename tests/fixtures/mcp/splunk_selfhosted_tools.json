@@ -1,0 +1,102 @@
+[
+ {
+  "name": "splunk_generate_spl",
+  "description": "Generate SPL from natural language",
+  "input_schema": {
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "indexes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "type": "object"
+  }
+ },
+ {
+  "name": "splunk_execute",
+  "description": "Execute SPL query.\nA search with no shaping returns up to max_results (default 100) full events, including _raw and Splunk's internal fields. When a count, distinct values, a time range or a few columns would answer the question, ask for that with stats, tstats, top, dedup, table, fields <list> or head. Pull raw events only when the event text itself is the evidence, and then keep head and max_results small.",
+  "input_schema": {
+   "properties": {
+    "spl_query": {
+     "type": "string"
+    },
+    "earliest": {
+     "type": "string",
+     "default": "0"
+    },
+    "max_results": {
+     "type": "integer",
+     "default": 100,
+     "description": "Events returned. The default is 100 full events; use a smaller number when you need raw events."
+    }
+   },
+   "required": [
+    "spl_query"
+   ],
+   "type": "object"
+  }
+ },
+ {
+  "name": "splunk_search_ip",
+  "description": "Search events for IP",
+  "input_schema": {
+   "properties": {
+    "ip_address": {
+     "type": "string"
+    },
+    "hours": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "ip_address"
+   ],
+   "type": "object"
+  }
+ },
+ {
+  "name": "splunk_search_host",
+  "description": "Search events for hostname",
+  "input_schema": {
+   "properties": {
+    "hostname": {
+     "type": "string"
+    },
+    "hours": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "hostname"
+   ],
+   "type": "object"
+  }
+ },
+ {
+  "name": "splunk_nl_search",
+  "description": "Natural language search (generate + execute). Takes no time range and reaches all time. Prefer splunk_execute, whose description lists what is held and which windows cover it, and which lets you narrow the span yourself.",
+  "input_schema": {
+   "properties": {
+    "query": {
+     "type": "string"
+    },
+    "max_results": {
+     "type": "integer",
+     "default": 100
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "type": "object"
+  }
+ }
+]

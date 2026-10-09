@@ -1,6 +1,8 @@
 // Shared by AI Config settings and the setup wizard, so the two can't drift.
 // Ids come from core/llm/providers/registry.py COMPONENTS.
 export const CHAT_DEFAULT_KEY = 'chat_default'
+// Where ai_model_configs.settings keeps a component's same-provider fallback model.
+export const FALLBACK_KEY = 'fallback_model_id'
 
 export const COMPONENT_LABELS: Record<string, { label: string; description: string }> = {
   chat_default: {
@@ -24,3 +26,6 @@ export const COMPONENT_LABELS: Record<string, { label: string; description: stri
     description: 'Reporter agent output — clarity and structure matter more than depth.',
   },
 }
+
+export const AI_CONFIG_DESC =
+  'Which models Vigil uses, for which agent, and what happens when one is unavailable. Keys are stored encrypted and never shown again.'

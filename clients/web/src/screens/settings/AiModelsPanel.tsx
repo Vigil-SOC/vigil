@@ -32,17 +32,32 @@ type BifrostCapabilityFlags = {
   supports_web_search?: boolean
 }
 
-export default function AiModelsPanel() {
+export default function AiModelsPanel({ open = true, onToggle }: { open?: boolean; onToggle?: () => void }) {
+  return (
+    <SettingsCard
+      wide
+      title="Model catalogue"
+      desc="Every model the gateway can route, with the rates it bills against. Selecting one shows what Bifrost knows about it — this is the same pricing that lands on the cost dashboard."
+      actions={
+        onToggle && (
+          <button className="btn ghost" aria-expanded={open} onClick={onToggle}>
+            <Icon name={open ? 'chevD' : 'chevR'} /> {open ? 'Hide' : 'Show'}
+          </button>
+        )
+      }
+    >
+      {open ? <Catalogue /> : <span className="text-xs text-tx-3">Hidden — click Show to browse the models the gateway offers.</span>}
+    </SettingsCard>
+  )
+}
+
+function Catalogue() {
   const [query, setQuery] = useState('')
   const { models, total, phase, error } = useBifrostModels(query)
   const [selected, setSelected] = useState<BifrostModel | null>(null)
 
   return (
-    <SettingsCard
-      wide
-      title="Model Catalogue"
-      desc="Every model the gateway can route, with the rates it bills against. Selecting one shows what Bifrost knows about it — this is the same pricing that lands on the cost dashboard."
-    >
+    <>
       <div className="max-w-[420px] mb-4">
         <Field label="Search" hint={phase === 'ready' ? `${total} models known to the gateway.` : ''}>
           <TextInput
@@ -94,7 +109,7 @@ export default function AiModelsPanel() {
           {selected && <ModelDetail model={selected} onClose={() => setSelected(null)} />}
         </div>
       )}
-    </SettingsCard>
+    </>
   )
 }
 

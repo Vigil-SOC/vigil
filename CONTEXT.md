@@ -490,7 +490,7 @@ _Avoid_: page, tab, view
 ## Flagged ambiguities
 
 - **"workflow" meant three things.** The five `WORKFLOW.md` definitions, the
-  DB-authored custom workflows built in `WorkflowBuilder.tsx`, and the
+  DB-authored custom workflows (the `custom_workflows` table), and the
   TypeScript control-flow modules under `services/agent/workflows/` were all
   "workflows", and `CONTEXT.md` itself glossed the domain as "multi-agent
   playbooks" — making "playbook" an informal synonym. #624 spent that word on a

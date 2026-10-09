@@ -371,3 +371,79 @@ def test_resolve_component_returns_registry_assignment_after_provider_lookup(
     )
     monkeypatch.setattr(router_mod, "get_default_provider_spec", lambda: None)
     assert target.resolve_component("investigation") == ("ollama", AN_OLLAMA_MODEL)
+
+
+# --- component fallback (settings.fallback_model_id) -------------------------
+
+
+def _warnings(caplog):
+    return [r for r in caplog.records if "its fallback" in r.getMessage()]
+
+
+def test_model_for_uses_fallback_before_provider_default_and_logs_once(caplog):
+    target._fallbacks_logged.clear()
+    oll = _spec()
+    with caplog.at_level("WARNING", logger=target.logger.name):
+        for _ in range(2):
+            assert (
+                target.model_for(oll, A_CLAUDE_MODEL, "qwen2.5", "triage") == "qwen2.5"
+            )
+    assert len(_warnings(caplog)) == 1
+
+
+def test_model_for_ignores_unservable_fallback_and_never_logs_for_a_servable_primary(
+    caplog,
+):
+    target._fallbacks_logged.clear()
+    oll = _spec()
+    with caplog.at_level("WARNING", logger=target.logger.name):
+        assert target.model_for(oll, A_CLAUDE_MODEL, "claude-also", "triage") == (
+            AN_OLLAMA_MODEL
+        )
+        assert target.model_for(oll, "qwen2.5", "mistral", "triage") == "qwen2.5"
+    assert _warnings(caplog) == []
+
+
+def test_resolve_component_lands_on_the_fallback(monkeypatch, caplog):
+    target._fallbacks_logged.clear()
+
+    class _Reg:
+        def resolve_model_for_component(self, component):
+            return ("ollama-local", A_CLAUDE_MODEL)
+
+        def fallback_for_component(self, component):
+            return "qwen2.5"
+
+    monkeypatch.setattr(registry_mod, "get_registry", lambda: _Reg())
+    monkeypatch.setattr(router_mod, "get_provider_spec", lambda pid: _spec())
+    with caplog.at_level("WARNING", logger=target.logger.name):
+        assert target.resolve_component("investigation") == ("ollama", "qwen2.5")
+    assert len(_warnings(caplog)) == 1
+
+
+def test_chat_tries_the_component_fallback_after_the_assignment_model(monkeypatch):
+    class _Reg:
+        def resolve_model_for_component(self, component):
+            return ("unit-ollama", A_CLAUDE_MODEL)
+
+    monkeypatch.setattr(claude, "get_registry", lambda: _Reg())
+    monkeypatch.setattr(claude, "component_fallback", lambda c: "qwen2.5")
+    monkeypatch.setattr(claude, "get_provider_spec", lambda pid: _spec(provider_id=pid))
+    assert claude._resolve_provider_model_for_request(None, None) == (
+        "unit-ollama",
+        "qwen2.5",
+    )
+
+
+def test_agent_model_still_beats_the_component_fallback(monkeypatch):
+    _install_agent(
+        monkeypatch,
+        "custom-hunter",
+        _ChatAgent(model="mistral"),
+        ("unit-ollama", A_CLAUDE_MODEL),
+    )
+    monkeypatch.setattr(claude, "component_fallback", lambda c: "qwen2.5")
+    assert claude._resolve_provider_model_for_request(None, "custom-hunter") == (
+        "unit-ollama",
+        "mistral",
+    )

@@ -1,5 +1,7 @@
 /** Command palette rows. The last four are display-only. */
 
+import type { IconName } from '../shared/icons'
+
 export type LiveCommandId = 'investigate' | 'hunt' | 'replay' | 'ask' | 'ticket'
 
 export type CommandId = LiveCommandId | 'hold' | 'isolate' | 'phish' | 'custom'
@@ -31,16 +33,35 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
 
-export type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent'
+export type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask'
+
+export type Section =
+  | 'Recent searches'
+  | 'Commands'
+  | 'Custom commands'
+  | 'Cases'
+  | 'Alerts'
+  | 'Pages'
+  | 'Ask Vigil'
 
 export interface BoardLink {
   key: string
   label: string
+  icon: IconName
+  desc: string
 }
+
+export type MatchType = 'case' | 'comment' | 'evidence'
 
 export interface Hit {
   id: string
   title: string
+  /** Whatever the read that found it carried; each may be missing. */
+  priority?: string
+  status?: string
+  dataSource?: string
+  severity?: string
+  matchType?: MatchType
 }
 
 export interface SearchHits {
@@ -55,6 +76,9 @@ export interface PaletteRow {
   label: string
   hint: string
   dest: DestTag
+  section: Section
+  icon: IconName
+  desc: string
   disabled: boolean
   commandId?: CommandId
   caseId?: string
@@ -88,6 +112,12 @@ export function readRecents(userId: string): string[] {
   } catch {
     return []
   }
+}
+
+export function removeRecent(userId: string, text: string): string[] {
+  const next = readRecents(userId).filter((item) => item !== text)
+  localStorage.setItem(recentsStorageKey(userId), JSON.stringify(next))
+  return next
 }
 
 export function writeRecent(userId: string, text: string): string[] {
@@ -187,6 +217,38 @@ export function huntTitle(hypothesis: string, max = HUNT_TITLE_MAX): string {
   return words.replace(/[\s,;:.\-–—]+$/, '')
 }
 
+/** The destination chip's text. */
+export function tagText(row: PaletteRow): string {
+  switch (row.dest) {
+    case 'Case':
+      return 'Opens case'
+    case 'Alert':
+    case 'Page':
+      return 'Opens page'
+    case 'Recent':
+      return 'Search'
+    case 'Ask':
+      return 'Opens Ask Vigil'
+    case 'Command':
+      return row.disabled ? 'Later' : 'Command'
+  }
+}
+
+const MATCH_DESC: Record<MatchType, string> = {
+  case: 'Matched title or description',
+  comment: 'Matched a comment',
+  evidence: 'Matched evidence',
+}
+
+function joinParts(parts: (string | undefined)[]): string {
+  return parts.filter((part) => part).join(' · ')
+}
+
+function caseDesc(hit: Hit): string {
+  const state = joinParts([hit.priority, hit.status])
+  return state || (hit.matchType ? MATCH_DESC[hit.matchType] : '')
+}
+
 export function isLiveCommand(id: CommandId): id is LiveCommandId {
   return id === 'investigate' || id === 'hunt' || id === 'replay' || id === 'ask' || id === 'ticket'
 }
@@ -284,17 +346,49 @@ function commandsFor(query: string): CommandDef[] {
       return token === '/' || token === 'custom' || token.startsWith('custom')
     })
   }
-  return COMMANDS.filter((command) => command.name.toLowerCase().includes(q))
+  return COMMANDS.filter((command) => command.id !== 'custom' && command.name.toLowerCase().includes(q))
 }
 
 function commandRow(command: CommandDef): PaletteRow {
+  const custom = command.id === 'custom'
   return {
     key: `cmd:${command.id}`,
-    label: command.name,
+    label: custom ? command.desc : command.name,
     hint: command.hint,
     dest: 'Command',
+    section: custom ? 'Custom commands' : 'Commands',
+    icon: custom ? 'plus' : 'bolt',
+    desc: custom ? 'Agents & workflows › Commands' : command.desc,
     disabled: command.later,
     commandId: command.id,
+  }
+}
+
+function recentRow(text: string): PaletteRow {
+  return {
+    key: `recent:${text}`,
+    label: text,
+    hint: '',
+    dest: 'Recent',
+    section: 'Recent searches',
+    icon: 'clock',
+    desc: '',
+    disabled: false,
+    recent: text,
+  }
+}
+
+function askRow(query: string): PaletteRow {
+  const q = query.trim()
+  return {
+    key: 'ask:vigil',
+    label: q ? `Ask Vigil: “${q}”` : 'Ask Vigil about this page',
+    hint: '',
+    dest: 'Ask',
+    section: 'Ask Vigil',
+    icon: 'sparkle',
+    desc: q ? 'Opens chat with your question' : 'Opens chat with this page as context',
+    disabled: false,
   }
 }
 
@@ -306,6 +400,9 @@ function pushCase(rows: PaletteRow[], seen: Set<string>, hit: Hit): void {
     label: hit.title || hit.id,
     hint: hit.id,
     dest: 'Case',
+    section: 'Cases',
+    icon: 'folder',
+    desc: caseDesc(hit),
     disabled: false,
     caseId: hit.id,
   })
@@ -319,62 +416,55 @@ export function buildRows(
 ): PaletteRow[] {
   const q = query.trim()
   const ql = q.toLowerCase()
-  if (!q) {
-    return [
-      ...recents.map((text) => ({
-        key: `recent:${text}`,
-        label: text,
-        hint: '',
-        dest: 'Recent' as const,
-        disabled: false,
-        recent: text,
-      })),
-      ...LIVE_COMMANDS.map(commandRow),
-    ]
-  }
+  if (!q) return [...recents.map(recentRow), ...LIVE_COMMANDS.map(commandRow), askRow('')]
 
+  // COMMANDS lists the custom row last, so it lands in its own section.
   if (q.startsWith('/')) return commandsFor(q).map(commandRow)
 
-  const rows: PaletteRow[] = []
+  const cases: PaletteRow[] = []
   const seen = new Set<string>()
-  if (hits?.caseExact) pushCase(rows, seen, hits.caseExact)
+  if (hits?.caseExact) pushCase(cases, seen, hits.caseExact)
+  const alerts: PaletteRow[] = []
   if (hits?.findingExact?.id) {
     const hit = hits.findingExact
-    rows.push({
+    alerts.push({
       key: `finding:${hit.id}`,
       label: hit.title || hit.id,
       hint: hit.id,
       dest: 'Alert',
+      section: 'Alerts',
+      icon: 'alert',
+      desc: joinParts([hit.dataSource, hit.severity]),
       disabled: false,
       findingId: hit.id,
     })
   }
-  for (const hit of hits?.textCases ?? []) pushCase(rows, seen, hit)
-  for (const hit of hits?.iocCases ?? []) pushCase(rows, seen, hit)
-  for (const board of boards) {
-    if (!board.label.toLowerCase().includes(ql)) continue
-    rows.push({
+  for (const hit of hits?.textCases ?? []) pushCase(cases, seen, hit)
+  for (const hit of hits?.iocCases ?? []) pushCase(cases, seen, hit)
+  const pages: PaletteRow[] = boards
+    .filter((board) => board.label.toLowerCase().includes(ql))
+    .map((board) => ({
       key: `page:${board.key}`,
       label: board.label,
       hint: '',
-      dest: 'Page',
+      dest: 'Page' as const,
+      section: 'Pages' as const,
+      icon: board.icon,
+      desc: board.desc,
       disabled: false,
       page: board.key,
-    })
-  }
-  for (const command of commandsFor(q)) rows.push(commandRow(command))
-  for (const text of recents) {
-    if (!text.toLowerCase().includes(ql)) continue
-    rows.push({
-      key: `recent:${text}`,
-      label: text,
-      hint: '',
-      dest: 'Recent',
-      disabled: false,
-      recent: text,
-    })
-  }
-  return rows
+    }))
+  const commands = commandsFor(q).map(commandRow)
+  const recent = recents.filter((text) => text.toLowerCase().includes(ql)).map(recentRow)
+  // An exact finding id with no exact case id puts Alerts first.
+  const alertsFirst = Boolean(hits?.findingExact?.id) && !hits?.caseExact
+  return [
+    ...(alertsFirst ? [...alerts, ...cases] : [...cases, ...alerts]),
+    ...pages,
+    ...commands,
+    ...recent,
+    askRow(q),
+  ]
 }
 
 export function firstEnabled(rows: PaletteRow[]): number {

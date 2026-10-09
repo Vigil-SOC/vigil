@@ -169,85 +169,6 @@
       margin-right: var(--chat-w);
    }
 
-   .user-pop {
-      min-width: 224px;
-      background: var(--bg-2);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 6px;
-      box-shadow: 0 18px 44px -18px #000;
-   }
-
-   .user-pop-head {
-      padding: 9px 11px 7px;
-   }
-
-   .user-pop-name {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--tx);
-   }
-
-   .user-pop-email {
-      font-size: 12px;
-      color: var(--tx-3);
-      margin-top: 2px;
-      word-break: break-all;
-   }
-
-   .user-pop-role {
-      font-size: 11px;
-      color: var(--tx-3);
-      margin-top: 4px;
-      text-transform: capitalize;
-   }
-
-   .user-pop-sep {
-      height: 1px;
-      background: var(--line);
-      margin: 5px 0;
-   }
-
-   .user-pop button {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      width: 100%;
-      text-align: left;
-      background: none;
-      border: none;
-      color: var(--tx-2);
-      padding: 8px 11px;
-      border-radius: 8px;
-      font-size: 12.5px;
-   }
-
-   .user-pop button:hover {
-      background: var(--hover);
-      color: var(--tx);
-   }
-
-   .user-pop button.danger {
-      color: var(--crit);
-   }
-
-   .user-pop button.danger:hover {
-      background: var(--crit-dim);
-   }
-
-   .user-pop-count {
-      color: var(--tx-3);
-   }
-
-   .user-pop-mfa {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      padding: 8px 11px;
-      font-size: 12px;
-      color: var(--ok);
-   }
-
    /* ---------- access denied (permission-gated screen) ---------- */
    .access-denied {
       min-height: 60vh;
@@ -350,32 +271,6 @@
       color: var(--tx-2);
    }
 
-   /* ---------- topbar ---------- */
-   .topbar {
-      height: 60px;
-      flex: 0 0 60px;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 0 22px;
-      border-bottom: 1px solid var(--line);
-      background: var(--bg-1);
-   }
-
-   .topbar .title h1 {
-      font-size: 18px;
-   }
-
-   .topbar .title p {
-      margin: 1px 0 0;
-      font-size: 12.5px;
-      color: var(--tx-3);
-   }
-
-   .topbar .grow {
-      flex: 1;
-   }
-
    .search {
       display: flex;
       align-items: center;
@@ -452,6 +347,25 @@
 
    .btn.icon {
       padding: 8px;
+   }
+
+   /* Disabled reads as placeholder text on a quiet fill (tokens: tx3, "Placeholder, disabled"), never as a live accent. */
+   .btn:disabled,
+   .btn:disabled:hover {
+      background: var(--bg-2);
+      border-color: var(--line);
+      color: var(--tx-faint);
+      cursor: not-allowed;
+   }
+
+   .btn.primary:disabled,
+   .btn.primary:disabled:hover {
+      background: var(--bg-3);
+   }
+
+   .btn.ghost:disabled,
+   .btn.ghost:disabled:hover {
+      background: transparent;
    }
 
    .chip {
@@ -670,12 +584,6 @@
       color: var(--tx-3);
    }
 
-   .kpi a.k-val {
-      color: inherit;
-      text-decoration: underline;
-      text-underline-offset: 3px;
-   }
-
    .kpi .k-label.as-stored {
       text-transform: none;
       letter-spacing: 0;
@@ -805,7 +713,7 @@
    }
 
    /* fixed-height list tables: rows scroll inside; sticky header + toolbar/pager
-     stay put instead of the whole table growing. Offsets cover topbar +
+     stay put instead of the whole table growing. Offsets cover the page heading +
      toolbar + pager (+ the KPI band for the Findings variant). */
    .list-scroll {
       overflow-y: auto;
@@ -823,7 +731,7 @@
    }
 
    /* Auto Ops investigation queue: bounded so the controls bar + KPI strip stay
-     put and only the rows scroll (offset covers topbar + bar-row + KPI strip +
+     put and only the rows scroll (offset covers the page heading + bar-row + KPI strip +
      the card header above). */
    .list-scroll.list-scroll-autoops {
       max-height: clamp(240px, calc(100vh - 300px), 1600px);
@@ -1819,8 +1727,8 @@
       right: 0;
       bottom: 0;
       width: var(--chat-w);
-      background: var(--bg-1);
-      border-left: 1px solid var(--line);
+      background: var(--bg1);
+      border-left: 1px solid var(--ln0);
       z-index: 30;
       display: flex;
       flex-direction: column;
@@ -1830,14 +1738,6 @@
 
    .chat.open {
       transform: none;
-   }
-
-   .chat-head {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--line);
    }
 
    .chat-note {
@@ -1874,56 +1774,6 @@
       color: var(--tx-faint);
       padding: 0 4px;
       cursor: pointer;
-   }
-
-   .chat-head .ch-ico {
-      color: var(--tx-2);
-      display: grid;
-      place-items: center;
-      flex: 0 0 auto;
-   }
-
-   .chat-head .ch-ico svg {
-      width: 17px;
-      height: 17px;
-   }
-
-   .chat-head .ch-title {
-      font-size: 13.5px;
-      font-weight: 500;
-      color: var(--tx);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
-      min-width: 0;
-   }
-
-   .chat-head .hbtns {
-      display: flex;
-      gap: 1px;
-      flex: 0 0 auto;
-   }
-
-   .chat-head .hbtns button {
-      width: 30px;
-      height: 30px;
-      border-radius: 7px;
-      border: none;
-      background: transparent;
-      color: var(--tx-3);
-      display: grid;
-      place-items: center;
-   }
-
-   .chat-head .hbtns button:hover {
-      background: var(--hover);
-      color: var(--tx);
-   }
-
-   .chat-head .hbtns svg {
-      width: 16px;
-      height: 16px;
    }
 
    .chat-body {
@@ -2032,50 +1882,6 @@
 
    .chat-input textarea::placeholder {
       color: var(--tx-faint);
-   }
-
-   .chat-mention {
-      position: absolute;
-      left: 8px;
-      right: 8px;
-      bottom: calc(100% + 6px);
-      z-index: 5;
-      max-height: 220px;
-      overflow-y: auto;
-      background: var(--bg-1);
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      box-shadow: 0 8px 24px -16px var(--shadow);
-   }
-
-   .chat-mention button {
-      display: flex;
-      width: 100%;
-      gap: 8px;
-      align-items: baseline;
-      text-align: left;
-      background: none;
-      border: none;
-      padding: 8px 10px;
-      color: var(--tx);
-      font-size: 13px;
-      cursor: pointer;
-   }
-
-   .chat-mention button:hover {
-      background: var(--hover);
-   }
-
-   .chat-mention .cm-id {
-      color: var(--tx-3);
-      font-family: var(--mono);
-      font-size: 11.5px;
-   }
-
-   .chat-mention .cm-empty {
-      padding: 8px 10px;
-      color: var(--tx-3);
-      font-size: 12.5px;
    }
 
    .ci-row {
@@ -2205,158 +2011,6 @@
          opacity: 1;
          transform: translateY(-3px);
       }
-   }
-
-   /* conversation history list */
-   .chat-history {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      max-height: 60vh;
-      overflow-y: auto;
-   }
-
-   .chist-row {
-      display: flex;
-      align-items: stretch;
-      gap: 4px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: var(--bg-2);
-      overflow: hidden;
-   }
-
-   .chist-row.current {
-      border-color: var(--accent-line);
-   }
-
-   .chist-main {
-      flex: 1;
-      min-width: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      align-items: flex-start;
-      text-align: left;
-      background: none;
-      border: none;
-      padding: 9px 11px;
-   }
-
-   .chist-main:hover {
-      background: var(--hover);
-   }
-
-   .chist-title {
-      font-size: 13px;
-      color: var(--tx);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 100%;
-   }
-
-   .chist-meta {
-      font-size: 11.5px;
-      color: var(--tx-3);
-   }
-
-   .chist-del {
-      flex: 0 0 auto;
-      width: 38px;
-      border: none;
-      background: none;
-      color: var(--tx-faint);
-      display: grid;
-      place-items: center;
-   }
-
-   .chist-del:hover {
-      background: var(--hover);
-      color: var(--crit);
-   }
-
-   .chist-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
-   }
-
-   .chist-search {
-      flex: 1;
-      min-width: 0;
-      padding: 6px 8px;
-      font-size: 12.5px;
-      color: var(--tx);
-      background: var(--bg-1, var(--bg-2));
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      outline: none;
-   }
-
-   .chist-day {
-      margin: 10px 2px 2px;
-      font-size: 11px;
-      letter-spacing: .02em;
-      color: var(--tx-3);
-   }
-
-   .chist-archtoggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      margin-left: auto;
-      font-size: 12px;
-      color: var(--tx-3);
-      cursor: pointer;
-   }
-
-   .chist-row.archived {
-      opacity: 0.55;
-   }
-
-   .chist-actions {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: stretch;
-   }
-
-   .chist-act {
-      width: 32px;
-      border: none;
-      background: none;
-      color: var(--tx-faint);
-      display: grid;
-      place-items: center;
-   }
-
-   .chist-act:hover {
-      background: var(--hover);
-      color: var(--tx);
-   }
-
-   .chist-act.chist-del:hover {
-      color: var(--crit);
-   }
-
-   .chist-act:disabled {
-      opacity: 0.4;
-      cursor: default;
-   }
-
-   .chist-rename {
-      flex: 1;
-      min-width: 0;
-      margin: 6px;
-      padding: 7px 9px;
-      font-size: 13px;
-      color: var(--tx);
-      background: var(--bg-1, var(--bg-2));
-      border: 1px solid var(--accent-line, var(--line));
-      border-radius: 7px;
-      outline: none;
    }
 
       /* reasoning trace (§5) — two-pane list + detail inside a Popup */
@@ -2713,56 +2367,6 @@
       padding-left: 12px;
       border-left: 3px solid var(--line);
       color: var(--tx-3);
-   }
-
-   /* SOC Agents reference cards (chat → SOC Agents popup) */
-   .agent-cards {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-   }
-
-   .agent-card {
-      border: 1px solid var(--line);
-      border-left-width: 3px;
-      border-radius: 9px;
-      background: var(--bg);
-      padding: 11px 13px;
-   }
-
-   .agent-card .ac-head {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      flex-wrap: wrap;
-   }
-
-   .agent-card .ac-ico {
-      font-size: 16px;
-   }
-
-   .agent-card .ac-name {
-      font-size: 13.5px;
-      font-weight: 600;
-      color: var(--tx);
-   }
-
-   .agent-card .ac-spec {
-      font-size: 10.5px;
-      font-weight: 600;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      color: var(--accent-2);
-      background: var(--accent-dim);
-      padding: 2px 7px;
-      border-radius: 5px;
-   }
-
-   .agent-card .ac-desc {
-      font-size: 12.5px;
-      color: var(--tx-2);
-      margin: 7px 0 0;
-      line-height: 1.45;
    }
 
    @media (max-width: 1100px) {
@@ -4265,6 +3869,12 @@
       border-color: var(--accent-line);
    }
 
+   .field-select:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      border-color: var(--line);
+   }
+
    .field-select .dd {
       color: var(--tx-faint);
       display: inline-flex;
@@ -5027,31 +4637,36 @@
       max-width: 1280px;
    }
 
-   /* Settings cards and tables, on the board's tokens (components/card.md, row-stack.md) */
-   .settings-content .settings-card {
+   /* Settings and Setup cards, on the board's tokens (components/card.md) */
+   .settings-content .settings-card,
+   .su-root .settings-card {
       background: var(--bg1);
       border-color: var(--ln0);
       border-radius: 14px;
       box-shadow: none;
    }
 
-   .settings-content .settings-card .card-h {
+   .settings-content .settings-card .card-h,
+   .su-root .settings-card .card-h {
       padding: 16px 18px 0;
       border-bottom: 0;
    }
 
-   .settings-content .settings-card .card-h h3 {
+   .settings-content .settings-card .card-h h3,
+   .su-root .settings-card .card-h h3 {
       font-size: 13px;
       font-weight: 650;
       color: var(--tx0);
    }
 
-   .settings-content .settings-card-head p {
+   .settings-content .settings-card-head p,
+   .su-root .settings-card-head p {
       font-size: 12px;
       color: var(--tx2);
    }
 
-   .settings-content .settings-card .card-b {
+   .settings-content .settings-card .card-b,
+   .su-root .settings-card .card-b {
       padding: 12px 18px 16px;
    }
 
@@ -6774,12 +6389,262 @@
       padding: 10px 0;
    }
 
-   /* ---------- Triage: alert column, expanded row, strip ⓘ ---------- */
-   .tq-alert {
-      display: block;
-      max-width: 34ch;
+   /* ---------- Triage queue: follows the Triage board and tokens.json ---------- */
+   .tq-page {
+      padding: 20px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+   }
+
+   .tq-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+   }
+
+   .tq-title {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+   }
+
+   .tq-title h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+      color: var(--tx0);
+   }
+
+   .tq-title p {
+      margin: 0;
+      max-width: 760px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--tx1);
+   }
+
+   .tq-tiles {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+   }
+
+   .tq-tile {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      padding: 14px 16px;
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+   }
+
+   /* the ⓘ sits in the tile's top-right corner, where the board puts its level pill */
+   .tq-tile > .info-tip {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+   }
+
+   .tq-tile-label {
+      padding-right: 24px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .tq-tile-val {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      line-height: 1.2;
+      color: var(--tx0);
+   }
+
+   .tq-tile-val.unmeasured {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      color: var(--tx3);
+   }
+
+   .tq-tile-sub {
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .tq-filters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .tq-group-head {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+   }
+
+   .tq-group-label {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--tx2);
+   }
+
+   .tq-rule {
+      width: 1px;
+      height: 20px;
+      margin: 0 6px;
+      background: var(--ln1);
+   }
+
+   .tq-summary {
+      margin-left: auto;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--ac);
+      white-space: nowrap;
+   }
+
+   .tq-summary button {
+      padding: 0;
+      background: none;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+   }
+
+   .tq-summary button:hover {
+      text-decoration: underline;
+   }
+
+   .tq-card {
+      background: var(--bg1);
+      border: 1px solid var(--ln0);
+      border-radius: 14px;
+      overflow: hidden;
+   }
+
+   /* Fixed tracks, so Alert takes the free width and wraps to two lines instead of widening the table */
+   .tq-table {
+      table-layout: fixed;
+   }
+
+   .tq-table thead th {
+      position: static;
+      padding: 11px 16px;
+      background: transparent;
+      border-bottom: 0;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--tx2);
+   }
+
+   .tq-table tbody td {
+      padding: 11px 16px;
+      border-top: 1px solid var(--ln0);
+      border-bottom: 0;
+      font-size: 12px;
+      color: var(--tx1);
+      vertical-align: middle;
       overflow: hidden;
       text-overflow: ellipsis;
+   }
+
+   .tq-table tbody tr:hover {
+      background: var(--bg3);
+   }
+
+   .tq-table tbody td:nth-child(2) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+   }
+
+   .tq-table thead th:nth-child(1) { width: 100px; }
+   .tq-table thead th:nth-child(2) { width: 124px; }
+   .tq-table thead th:nth-child(4) { width: 84px; }
+   .tq-table thead th:nth-child(5) { width: 112px; }
+   .tq-table thead th:nth-child(6) { width: 108px; }
+   .tq-table thead th:nth-child(7) { width: 176px; }
+   .tq-table thead th:nth-child(8) { width: 26%; }
+
+   .tq-th-info {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+   }
+
+   .tq-kind {
+      font-weight: 650;
+   }
+
+   .tq-alert {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      white-space: normal; /* .tbl cells are nowrap */
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--tx0);
+   }
+
+   .tq-score {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 8px;
+      border: 1px solid var(--ln1);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--tx3);
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+   }
+
+   .tq-time {
+      color: var(--tx2);
+      white-space: nowrap;
+   }
+
+   .tq-pill {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--tx1);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+   }
+
+   .tq-pill.launched { background: var(--good-bg); color: var(--good); }
+   .tq-pill.merged { background: var(--ac-bg); color: var(--ac); }
+   .tq-pill.expired { color: var(--tx2); }
+
+   .tq-why {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
+   .tq-why a {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
    }
 
    .tbl tbody tr.row-expanded:hover {
@@ -6787,7 +6652,7 @@
    }
 
    .tbl tbody tr.row-expanded>td {
-      padding: 0 22px 12px;
+      padding: 0 16px 12px;
       white-space: normal;
       overflow-wrap: anywhere;
    }
@@ -6836,13 +6701,6 @@
       align-items: center;
       gap: 12px;
       font-size: 12px;
-   }
-
-   /* the ⓘ sits in the tile's top-right corner, out of the label's ellipsis clip */
-   .kpi>.info-tip {
-      position: absolute;
-      top: 10px;
-      right: 12px;
    }
 
    .tech-expand>td {
@@ -7705,28 +7563,17 @@
    }
 }
 
-   /* Add integration: category chips over a card grid; board SettingsIntegrations.dc.html */
-   .int-cats { display: flex; flex-wrap: wrap; gap: 6px; }
-   .int-cat {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      height: 28px;
-      padding: 0 10px;
-      border-radius: 999px;
-      border: 1px solid var(--ln1);
-      background: transparent;
-      color: var(--tx1);
-      font-size: 12px;
-      font-weight: 600;
-      white-space: nowrap;
-   }
-   .int-cat[aria-pressed="true"] { background: var(--ac-bg); border-color: var(--ac-ln); color: var(--tx0); }
-   .int-cat-n { font-size: 11px; font-weight: 700; color: var(--tx2); }
+   /* Add integration: category chips and search over a card grid; board SettingsIntegrations.dc.html */
+   .int-filters { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+   /* chips wrap inside their own block so search stays at their right until the row is too narrow */
+   .int-cats { display: flex; flex: 1 1 360px; flex-wrap: wrap; gap: 6px; }
+   .int-filters-end { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+   .int-filters-end .search { width: 260px; max-width: 100%; }
 
+   /* four columns once the row can hold four 200px cards, fewer below that */
    .int-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, max(200px, calc((100% - 37px) / 4))), 1fr));
       gap: 12px;
    }
    .int-card {
@@ -7741,17 +7588,6 @@
       border: 1px solid var(--ln0);
    }
    .int-card-head { display: flex; align-items: center; gap: 8px; align-self: stretch; min-width: 0; }
-   .int-card-ic {
-      flex-shrink: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      background: var(--bg3);
-      color: var(--tx1);
-   }
    .int-card-name {
       flex: 1;
       min-width: 0;
@@ -7764,6 +7600,14 @@
    }
    .int-card-state { flex-shrink: 0; font-size: 11px; font-weight: 650; color: var(--tx2); }
    .int-card-state.on { color: var(--good); }
-   .int-card-cat { font-size: 11px; color: var(--tx2); }
-   .int-card-desc { font-size: 12px; color: var(--tx2); min-height: 2.8em; }
-   .int-card-cta { margin-top: auto; }
+   .int-card-line {
+      align-self: stretch;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+   .int-card-cta { margin-top: 4px; }

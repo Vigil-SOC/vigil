@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from core.auth import tool_principal
 from services.api.routers import claude
@@ -40,3 +41,37 @@ async def test_the_turn_carries_a_principal_for_the_signed_in_user(monkeypatch):
         pass
 
     assert tool_principal.verify(sent["principal"]) == "nestor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", ["high", None])
+async def test_the_turn_config_carries_the_chat_default_effort(monkeypatch, effort):
+    sent = {}
+
+    async def _relay(payload, *_args):
+        sent.update(payload)
+        yield ""
+
+    monkeypatch.setattr(
+        claude, "_resolve_provider_model_for_request", lambda *_: (None, "m")
+    )
+    monkeypatch.setattr(
+        claude, "provider_for", lambda _: SimpleNamespace(provider_type="gemini")
+    )
+    monkeypatch.setattr(claude, "model_for", lambda _p, model: model)
+    monkeypatch.setattr(claude, "live_mcp_tools", lambda _: [])
+    monkeypatch.setattr(claude, "_relay", _relay)
+    monkeypatch.setattr(
+        claude, "resolve_effort", lambda c: effort if c == "chat_default" else None
+    )
+
+    response = await claude.chat_stream(
+        claude.ChatRequest(messages=[{"role": "user", "content": "hi"}]),
+        current_user=SimpleNamespace(username="nestor", user_id="u-1"),
+        registry=MagicMock(),
+    )
+    async for _ in response.body_iterator:
+        pass
+
+    config = yaml.safe_load(sent["config"])
+    assert config.get("effort") == effort

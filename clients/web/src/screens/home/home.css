@@ -32,6 +32,38 @@
   font-size: 12px;
 }
 
+/* suggestion chips, then the pickup line: one left-aligned wrapping row */
+.home-screen .home-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-screen .home-chip {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--ln1);
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--tx1);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.home-screen .home-chip:hover {
+  border-color: var(--ac-ln);
+  color: var(--tx0);
+}
+
+.home-screen .home-dot {
+  margin-right: 8px;
+  color: var(--tx3);
+}
+
 .home-screen .home-page > p[role='alert'],
 .home-screen section > p[role='alert'] {
   margin: 0;
@@ -514,6 +546,10 @@
   justify-content: center;
   border-radius: 999px;
   border: 1.5px solid var(--ln2);
+}
+
+.home-screen .home-check.next .home-tick {
+  border-color: var(--ac);
 }
 
 .home-screen .home-check.done .home-tick {

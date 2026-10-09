@@ -12,6 +12,7 @@ export function FilterChip({
   list,
   dot,
   count,
+  title,
 }: {
   label: string
   active: boolean
@@ -19,12 +20,14 @@ export function FilterChip({
   list?: boolean
   dot?: string
   count?: number | string
+  title?: string
 }) {
   return (
     <button
       type="button"
       className={`filter-chip${list ? ' list' : ''}${active ? ' active' : ''}`}
       aria-pressed={active}
+      title={title}
       onClick={onClick}
     >
       {dot && <span className="chip-dot" style={{ background: dot }} aria-hidden="true" />}

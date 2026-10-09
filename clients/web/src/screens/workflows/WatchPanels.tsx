@@ -222,8 +222,8 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   return [budget, steps, scope]
 }
 
-/** Prose the critic wrote at length: two lines, with "Show all" once it overflows them. */
-function Prose({ text }: { text: string }) {
+/** Prose written at length: two lines, with "Show all" once it overflows them. `label` sits inside the clamp. */
+export function Prose({ text, label, className = '' }: { text: string; label?: string; className?: string }) {
   const box = useRef<HTMLSpanElement>(null)
   const [open, setOpen] = useState(false)
   const [overflows, setOverflows] = useState(false)
@@ -237,7 +237,10 @@ function Prose({ text }: { text: string }) {
   }, [text, open])
   return (
     <>
-      <span ref={box} className={`break-words ${open ? '' : 'line-clamp-2'}`}>{text}</span>
+      <span ref={box} className={`break-words ${className} ${open ? '' : 'line-clamp-2'}`}>
+        {label && <span className="text-[11px] uppercase tracking-[0.06em] text-[var(--tx2)] mr-1.5">{label}</span>}
+        {text}
+      </span>
       {(overflows || open) && (
         <button
           type="button" aria-expanded={open} onClick={() => setOpen(!open)}
