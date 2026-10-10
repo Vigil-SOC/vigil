@@ -1515,7 +1515,7 @@ describe('case page', () => {
       expect(document.querySelector('.case-needs-strip')).toBeNull()
     })
 
-    it('has Expand and Close only in the drawer', async () => {
+    it('drawer has Expand and Close; the full page has Close only', async () => {
       testState.cases = [open('case-9')]
       const onBack = vi.fn()
       const onExpand = vi.fn()
@@ -1525,12 +1525,36 @@ describe('case page', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Close' }))
       expect(onExpand).toHaveBeenCalledTimes(1)
       expect(onBack).toHaveBeenCalledTimes(1)
+      fireEvent.keyDown(window, { key: 'Escape' }) // the drawer owns Escape
+      expect(onBack).toHaveBeenCalledTimes(1)
       unmount()
 
-      renderDetail('case-9')
+      const onBackPage = vi.fn()
+      renderDetail('case-9', { onBack: onBackPage })
       await screen.findByRole('heading', { name: 'Frame case' })
       expect(screen.queryByRole('button', { name: 'Expand' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      expect(onBackPage).toHaveBeenCalledTimes(1)
+    })
+
+    it('full page: Escape calls onBack, unless a menu is open, the key was handled, or a field has focus', async () => {
+      testState.cases = [open('case-9')]
+      const onBack = vi.fn()
+      renderDetail('case-9', { onBack })
+      await screen.findByRole('heading', { name: 'Frame case' })
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      fireEvent.keyDown(document.body, { key: 'Escape' }) // closes only the menu
+      expect(onBack).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+      const box = document.createElement('textarea')
+      document.body.appendChild(box)
+      fireEvent.keyDown(box, { key: 'Escape' })
+      box.remove()
+      expect(onBack).toHaveBeenCalledTimes(1)
     })
 
     it('opens Edit and Merge from the ⋯ menu; Merge loads its own picker', async () => {
