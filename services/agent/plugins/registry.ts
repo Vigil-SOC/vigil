@@ -5,20 +5,23 @@ import { parse as parseYaml } from "yaml";
 import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
 
-// A plugin is a directory: plugin.yaml and a skills/ folder of SKILL.md files, shipped
-// with the worker and resolved against the package, not the cwd, as the arch files are.
+// A plugin is a directory holding plugin.yaml. Its skills are named there and
+// live in one library beside the plugins, skills/<name>/SKILL.md, so plugins
+// that share a skill share one copy of it. Shipped with the worker, resolved
+// against the package rather than the cwd, the same way the arch files are.
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
+const SKILLS = fileURLToPath(new URL("../skills/", import.meta.url));
 
 const cache = new Map<string, PluginManifest>();
 
-export function pluginFor(id: string, root: string = ROOT): PluginManifest {
-  const key = `${root}\n${id}`;
+export function pluginFor(id: string, root: string = ROOT, skills: string = SKILLS): PluginManifest {
+  const key = `${root}\n${skills}\n${id}`;
   const held = cache.get(key);
   if (held !== undefined) return held;
   const dir = join(root, id);
   const file = join(dir, "plugin.yaml");
   if (!existsSync(file)) throw new SpecError(`no plugin is named ${id}; looked for ${file}`);
-  const manifest = parsePlugin(readFileSync(file, "utf8"), loadSkills(join(dir, "skills")), file);
+  const manifest = parsePlugin(readFileSync(file, "utf8"), loadSkills(skills), file);
   if (manifest.id !== id) throw new SpecError(`${file} declares id ${manifest.id}, but lives under ${id}`);
   cache.set(key, manifest);
   return manifest;
