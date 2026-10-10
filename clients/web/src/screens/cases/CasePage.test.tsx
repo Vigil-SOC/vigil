@@ -1529,12 +1529,12 @@ describe('case page', () => {
       expect(await within(head).findByText('incident-response')).toBeInTheDocument()
     })
 
-    it('writes the empty header for a case with no workflow or SLA', async () => {
+    it('leaves the workflow slot out of the header for a case with no run or SLA', async () => {
       vi.mocked(casesApi.getSLA).mockRejectedValueOnce(new Error('no sla'))
       testState.cases = [open('case-9')]
       renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
-      expect(within(head).getByText('No workflow')).toBeInTheDocument()
+      expect(within(head).queryByText('No workflow')).not.toBeInTheDocument()
       expect(within(head).getByText(/Resolve by —/)).toBeInTheDocument()
       expect(within(head).getByText('Open')).toHaveClass('idle')
       expect(head.querySelector('.case-reason')).toBeNull()
