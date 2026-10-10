@@ -2970,7 +2970,9 @@ export interface paths {
          *     config of ``{}`` is still configured — secret-only rows keep the secret
          *     outside this dict. The integration's enabled flag does not block the
          *     probe: enabled MCP servers are contacted, and if none are enabled every
-         *     declared server is probed with a temporary session.
+         *     declared server is probed with a temporary session. Splunk and Elastic are
+         *     then also read with their saved URL and credentials (``credentials`` in the
+         *     answer), since a server starts whatever it is pointed at.
          */
         post: operations["post_api_config_integrations_integration_id_test"];
         delete?: never;
