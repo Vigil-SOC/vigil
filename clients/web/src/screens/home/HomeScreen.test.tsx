@@ -115,6 +115,17 @@ describe('Home suggestion chips', () => {
     expect(screen.getByText(/50% of alerts picked up automatically today/)).toBeInTheDocument()
   })
 
+  it('names the chip by the source badge label and keeps the finding id in the text', async () => {
+    triageWith([droppedRow({ source: 'aws_security_hub' })])
+    const fillCommand = vi.fn()
+    renderHome({ fillCommand })
+    fireEvent.click(await screen.findByRole('button', { name: 'Why was the Security Hub alert dropped?' }))
+    expect(fillCommand).toHaveBeenCalledWith('/ask Why was the Security Hub alert dropped? Finding f-9')
+    expect(dropChips([droppedRow({ source: 'aws_security_hub' })] as never, () => 'Security Hub')[1].label).toBe(
+      'Why was the Security Hub alert dropped?',
+    )
+  })
+
   it('names the finding when the row has no source', async () => {
     triageWith([droppedRow({ source: '' })])
     const fillCommand = vi.fn()
@@ -146,7 +157,7 @@ describe('Home suggestion chips', () => {
       droppedRow({ finding_id: 'b', decided_at: '2026-10-07T09:00:00Z' }),
       droppedRow({ finding_id: null }),
     ] as never
-    expect(dropChips(rows, now)[0].text).toBe('/investigate b')
+    expect(dropChips(rows, (source) => source, now)[0].text).toBe('/investigate b')
   })
 })
 
@@ -342,6 +353,15 @@ describe('Home', () => {
     expect(within(second).getByText('Checkpoint')).toBeInTheDocument()
     expect(second.querySelector('.home-card-meta')).toBeNull()
     expect(within(second).queryByRole('link', { name: 'Open case' })).not.toBeInTheDocument()
+  })
+
+  it('prints the served reason as the card meta line, with no ledger rule', async () => {
+    mockQueue([
+      item({ source_id: 'h', title: 'Isolate host', reason: 'Credential dumping is live on the host.', case_id: 'case-3' }),
+    ])
+    renderHome()
+    expect(await screen.findByText('Case case-3 · Credential dumping is live on the host.')).toBeInTheDocument()
+    expect(screen.queryByText(/human_only/)).not.toBeInTheDocument()
   })
 
   it('the Needs sub-line says showing 4 only while more wait, and the +N tile expands the list', async () => {

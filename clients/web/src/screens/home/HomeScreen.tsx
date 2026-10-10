@@ -5,6 +5,7 @@ import { approvalsApi, configApi, triageApi, type NeedsYouItem, type TriageRow }
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { useSourceBadge } from '../../shared/useSourceBadge'
 import { useToast } from '../../shell/toast'
 import './home.css'
 
@@ -41,7 +42,7 @@ type Pickup = { share: number; launched: number; today: number }
 type Chip = { label: string; text: string }
 
 /** Chips for the newest detection that timed out of the queue unworked today (UTC). None without one. */
-export function dropChips(rows: TriageRow[], now = Date.now()): Chip[] {
+export function dropChips(rows: TriageRow[], sourceLabel: (source: string) => string, now = Date.now()): Chip[] {
   const dayStart = now - (now % 86_400_000)
   let newest: { row: TriageRow; at: number } | null = null
   for (const row of rows) {
@@ -52,10 +53,11 @@ export function dropChips(rows: TriageRow[], now = Date.now()): Chip[] {
   }
   if (!newest) return []
   const { finding_id: id, source } = newest.row
+  const name = source ? sourceLabel(source) : ''
   return [
     { label: `/investigate ${id}`, text: `/investigate ${id}` },
-    source
-      ? { label: `Why was the ${source} alert dropped?`, text: `/ask Why was the ${source} alert dropped? Finding ${id}` }
+    name
+      ? { label: `Why was the ${name} alert dropped?`, text: `/ask Why was the ${name} alert dropped? Finding ${id}` }
       : { label: `Why was alert ${id} dropped?`, text: `/ask Why was alert ${id} dropped? Finding ${id}` },
   ]
 }
@@ -199,7 +201,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const [items, setItems] = useState<NeedsYouItem[]>([])
   const [count, setCount] = useState<number | null>(null)
   const [share, setShare] = useState<Pickup | null>(null)
-  const [chips, setChips] = useState<Chip[]>([])
+  const [dropRows, setDropRows] = useState<TriageRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -211,6 +213,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
   const { notify, notifyUndoable, pending, settled } = useToast()
+  const sourceBadge = useSourceBadge()
 
   const load = useCallback(async () => {
     const ticket = ++loadTicket.current
@@ -223,15 +226,15 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
         const { share: value, launched_or_merged: launched, created_today: today } = res.data.strip.picked_up
         return {
           pickup: typeof value === 'number' ? { share: value, launched, today } : null,
-          chips: dropChips(res.data.rows ?? []),
+          rows: res.data.rows ?? [],
         }
       },
-      () => ({ pickup: null, chips: [] as Chip[] }),
+      () => ({ pickup: null, rows: [] as TriageRow[] }),
     )
     const [needsResult, triage] = await Promise.all([needs, shareRead])
     if (ticket !== loadTicket.current) return
     setShare(triage.pickup)
-    setChips(triage.chips)
+    setDropRows(triage.rows)
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
       return
@@ -344,7 +347,7 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
     ...(setup?.steps ?? []).filter((step) => step.done),
   ]
   const nextStepId = checklist.find((step) => !step.done)?.id
-  const shownChips = fillCommand ? chips : []
+  const shownChips = fillCommand ? dropChips(dropRows, (source) => sourceBadge(source).label) : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
   const sectionHead = (title: string, sub: string | null, tip: ReactNode, link: ReactNode) => (
