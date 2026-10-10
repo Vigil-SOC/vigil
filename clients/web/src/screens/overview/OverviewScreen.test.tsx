@@ -86,6 +86,7 @@ function payload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
       status: 'new',
       terminal_state: 'waiting',
       terminal_label: 'Not in a case',
+      title: null,
       description: 'Odd login',
       created_at: '2026-10-01T00:01:00',
       evidence_links: [{ ref: 'https://example.test/alert/1' }],
@@ -404,6 +405,20 @@ describe('OverviewScreen', () => {
     expect(where()).toBe('')
   })
 
+  it('rail: the name leads, the description is the row tooltip, and the id is the last fallback', async () => {
+    const feed = [
+      item('f-both', { title: 'Brute force', description: 'raw event text' }),
+      item('f-desc', { title: null, description: 'Only words' }),
+      item('f-none', { title: '', description: null }),
+    ]
+    vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
+    renderScreen()
+    const rail = await screen.findByRole('complementary', { name: 'Incoming alerts' })
+    const lines = Array.from(rail.querySelectorAll('.ov-row-t'))
+    expect(lines.map((l) => l.textContent)).toEqual(['Brute force', 'Only words', 'f-none'])
+    expect(lines.map((l) => l.getAttribute('title'))).toEqual(['raw event text', 'Only words', 'f-none'])
+  })
+
   it('rail: rows as served with severity, time, description, badge and id; tabs filter and All restores', async () => {
     const feed = [
       item('f-new', { severity: 'critical', description: 'Newest thing', created_at: '2026-10-01T09:08:07', terminal_state: 'needs_you', terminal_label: 'Needs you' }),
@@ -511,15 +526,16 @@ describe('OverviewScreen', () => {
 
   it('popup: header, fact grid and "Open in <source> ↗" only with a source link', async () => {
     const feed = [
-      item('f-1', { severity: 'high', description: 'Odd login', case_id: 'case-7', status: 'new' }),
-      item('f-2', { source_link: null, description: 'Quiet one' }),
+      item('f-1', { severity: 'high', title: 'Odd login alert', description: 'Odd login', case_id: 'case-7', status: 'new' }),
+      item('f-2', { source_link: null, title: null, description: 'Quiet one' }),
     ]
     vi.mocked(overviewApi.get).mockResolvedValue({ data: payload({ feed }) } as never)
     const { openCase } = renderScreen('/overview?alert=f-1')
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent('High')
     expect(dialog).toHaveTextContent('f-1 · 00:01:00')
-    expect(within(dialog).getByText('Odd login')).toBeInTheDocument()
+    expect(dialog.querySelector('.ov-pop-d')).toHaveTextContent('Odd login alert')
+    expect(dialog.querySelector('.ov-pop-desc')).toHaveTextContent('Odd login')
     const facts = dialog.querySelector('.ov-facts')!
     expect(facts).toHaveTextContent('SourceSplunk')
     expect(facts).toHaveTextContent('Statusnew')
@@ -532,5 +548,8 @@ describe('OverviewScreen', () => {
     const second = await screen.findByRole('dialog')
     expect(second.querySelector('.ov-facts')).toHaveTextContent('CaseNot in a case yet')
     expect(within(second).queryByRole('link', { name: /^Open in/ })).not.toBeInTheDocument()
+    // no title: the description is the header and is not repeated
+    expect(second.querySelector('.ov-pop-d')).toHaveTextContent('Quiet one')
+    expect(second.querySelector('.ov-pop-desc')).toBeNull()
   })
 })

@@ -185,6 +185,7 @@ def _load() -> tuple[list[dict], dict[str, dict], dict[str, str], set[str]]:
                     "external_id": finding.external_id,
                     "evidence_links": list(finding.evidence_links or []),
                     "entity_context": finding.entity_context,
+                    "title": finding.title,
                     "description": finding.description,
                 }
         inv_ids = {row.investigation_id for row in triggers if row.investigation_id}
@@ -283,6 +284,7 @@ def _present(
             else None
         ),
         "source_evidence": _evidence(finding) if kind == "detection" else None,
+        "title": finding.get("title") if finding else None,
         "description": finding.get("description") if finding else None,
         "finding_id": row.get("finding_id"),
         "created_at": _iso(created if isinstance(created, datetime) else None),

@@ -1390,6 +1390,7 @@ export interface OverviewFeedItem {
   status: string
   terminal_state: string
   terminal_label: string
+  title: string | null
   description: string | null
   created_at: string | null
   evidence_links: Array<{ ref?: string }>
@@ -1441,6 +1442,7 @@ export interface TriageRow {
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null
+  title: string | null
   description: string | null
   finding_id: string | null
   created_at: string | null

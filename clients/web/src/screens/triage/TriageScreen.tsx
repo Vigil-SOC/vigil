@@ -68,8 +68,9 @@ function fmtArrived(createdAt: string | null): string {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${time}`
 }
 
+// Detections show the source's alert name, else its description, else the finding id
 function alertText(row: TriageRow): string {
-  const text = row.kind === 'human_ask' || row.kind === 'schedule' ? row.document : row.description
+  const text = row.kind === 'human_ask' || row.kind === 'schedule' ? row.document : row.title || row.description || row.finding_id
   return text || BLANK
 }
 
@@ -301,7 +302,9 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = ({ openCase }) 
       label: 'Alert, in the source’s words',
       render: (row) => {
         const text = alertText(row)
-        return <span className="tq-alert" title={text === BLANK ? undefined : text}>{text}</span>
+        // the full description stays reachable when a title stands in for it
+        const full = row.title && row.description ? row.description : text
+        return <span className="tq-alert" title={full === BLANK ? undefined : full}>{text}</span>
       },
     },
     {

@@ -916,6 +916,14 @@ button.ov-pill:hover {
   overflow-wrap: anywhere;
 }
 
+.ov-pop-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--tx1);
+  overflow-wrap: anywhere;
+}
+
 .ov-facts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
