@@ -656,8 +656,9 @@ export function CasePage({
       .getSLA(id)
       .then((res) => {
         if (cancelled) return
-        const due = res.data.resolution_due
-        const health = res.data.health_status
+        // null: the case has no SLA
+        const due = res.data?.resolution_due
+        const health = res.data?.health_status
         setSla(due ? { due, health: health || '' } : null)
       })
       .catch(() => {

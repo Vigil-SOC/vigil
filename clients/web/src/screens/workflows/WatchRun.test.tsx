@@ -205,6 +205,15 @@ describe('a hunt', () => {
     expect(screen.getByText(/timed out/)).toBeInTheDocument()
   })
 
+  it('fills the last step of a finished run, and leaves a live run’s newest step part-way', () => {
+    const fill = () => (screen.getByRole('listitem', { current: 'step' }).firstElementChild as HTMLElement).style.width
+    const { unmount } = render(<WatchRun d={hunt('completed', [move(2), move(1)])} onBack={vi.fn()} />)
+    expect(fill()).toBe('100%')
+    unmount()
+    render(<WatchRun d={hunt('running', [move(2), move(1)])} onBack={vi.fn()} />)
+    expect(fill()).toBe('35%')
+  })
+
   it('says when older steps were dropped, and counts only what is shown', () => {
     const d = hunt('completed', [move(52), move(51)], { iteration: 52 })
     render(<WatchRun d={d} onBack={vi.fn()} />)

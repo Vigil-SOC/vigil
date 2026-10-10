@@ -132,6 +132,15 @@ describe('SLACard', () => {
     expect(screen.queryByText('No SLA policy attached')).not.toBeInTheDocument()
   })
 
+  it('reads a null answer as no policy', async () => {
+    vi.mocked(casesApi.getSLA).mockResolvedValueOnce({ data: null } as never)
+    render(<SLACard caseId="case-2026-0142" />)
+
+    await waitFor(() =>
+      expect(screen.getByText('No SLA policy attached')).toBeInTheDocument(),
+    )
+  })
+
   it('treats a 404 as no policy rather than an error', async () => {
     vi.mocked(casesApi.getSLA).mockRejectedValueOnce({ response: { status: 404 } })
     render(<SLACard caseId="case-2026-0142" />)

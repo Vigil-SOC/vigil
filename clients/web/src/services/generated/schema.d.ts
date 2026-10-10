@@ -2435,7 +2435,7 @@ export interface paths {
         };
         /**
          * Get Case Sla
-         * @description Get SLA status for case.
+         * @description Get SLA status for case, or null when the case has no SLA.
          */
         get: operations["get_api_cases_case_id_sla"];
         put?: never;
@@ -16946,7 +16946,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CaseSLAStatusSchema"];
+                    "application/json": components["schemas"]["CaseSLAStatusSchema"] | null;
                 };
             };
             /** @description Validation Error */

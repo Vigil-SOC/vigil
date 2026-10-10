@@ -1530,7 +1530,7 @@ describe('case page', () => {
     })
 
     it('leaves the workflow slot out of the header for a case with no run or SLA', async () => {
-      vi.mocked(casesApi.getSLA).mockRejectedValueOnce(new Error('no sla'))
+      vi.mocked(casesApi.getSLA).mockResolvedValueOnce({ data: null } as never)
       testState.cases = [open('case-9')]
       renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement

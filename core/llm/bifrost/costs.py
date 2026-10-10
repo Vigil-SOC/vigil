@@ -257,7 +257,7 @@ def get_vk_quota(vk: str) -> Optional[Dict[str, Any]]:
                          "token_current_usage": 12345, ...}
         }
 
-    The Settings → LLM Providers → Budgets sub-panel uses this directly
+    The Settings › AI models spending limit card uses this directly
     to render "$X of $Y consumed" without round-tripping through Vigil's
     aggregations.
     """

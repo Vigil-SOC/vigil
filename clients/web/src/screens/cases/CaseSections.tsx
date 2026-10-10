@@ -331,7 +331,7 @@ function fmtCountdown(ms: number): string {
 }
 export function SLACard({ caseId }: { caseId: string }) {
   const { data, phase, reload } = useResource<Schema<'CaseSLAStatusSchema'> | null>(caseId, () =>
-    casesApi.getSLA(caseId).then((r) => r.data).catch((e: { response?: { status?: number } }) => {
+    casesApi.getSLA(caseId).then((r) => r.data ?? null).catch((e: { response?: { status?: number } }) => {
       if (e.response?.status === 404) return null
       throw e
     }),
