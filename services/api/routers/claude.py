@@ -136,7 +136,7 @@ NO_PROVIDER_DETAIL: Dict[str, str] = {
     "code": "no_llm_provider_configured",
     "message": (
         "No LLM provider is configured. "
-        "Add one in Settings → AI / LLM Providers, then try again."
+        "Add one in Settings › AI models, then try again."
     ),
     "settings_path": "/settings#llm-providers",
 }

@@ -4,8 +4,8 @@ Lives at ``/api/analytics/budget*`` (mounted under analytics so the cost
 dashboard can call it from the same axios client as the other cost
 endpoints).
 
-This is the read/write surface for the Settings → LLM Providers →
-Budgets sub-panel. Three endpoints:
+This is the read/write surface for the Settings › AI models
+spending limit card. Three endpoints:
 
 * ``GET  /api/analytics/budget``       — current persisted settings.
                                           ``budget_limit_usd`` and
@@ -120,8 +120,8 @@ async def get_budget_quota() -> Dict[str, Any]:
         return {
             "configured": False,
             "message": (
-                "No Bifrost virtual key configured. Set one in Settings → "
-                "LLM Providers → Budgets to enable spend tracking."
+                "No Bifrost virtual key configured. Set one in Settings › "
+                "AI models to enable spend tracking."
             ),
         }
 
