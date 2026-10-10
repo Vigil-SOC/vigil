@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { emptyRecall } from "../../contracts/memory.js";
 import { TOOL_APPROVAL } from "../../core/loop.js";

@@ -71,7 +71,7 @@ describe("resolving a run", () => {
 
   it("lets an explicit arch path override the registry's default", async () => {
     const job = startJob();
-    job.request.arch = join(import.meta.dirname, "..", "..", "arch", "threathunt.yaml");
+    job.request.arch = join(import.meta.dirname, "..", "..", "plugins", "hunt", "arch.yaml");
     expect((await resolveSpec(job)).dispatch.max_workers).toBe(4);
   });
 

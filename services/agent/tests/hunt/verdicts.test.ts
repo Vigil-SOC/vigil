@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import type { ToolResult } from "../../contracts/tool.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
@@ -418,7 +418,7 @@ describe("verdict thresholds are config", () => {
 describe('a verb that carries no query', () => {
   it('declares query_intent nullable, like its siblings', async () => {
     const { readFileSync } = await import('node:fs')
-    const arch = readFileSync(join(import.meta.dirname, '..', '..', 'arch', 'threathunt.yaml'), 'utf8')
+    const arch = readFileSync(join(import.meta.dirname, '..', '..', 'plugins', 'hunt', 'arch.yaml'), 'utf8')
     expect(arch).toContain('query_intent: { type: [string, "null"] }')
   })
 })

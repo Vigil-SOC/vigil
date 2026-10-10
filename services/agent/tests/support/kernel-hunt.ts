@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import type { ToolResult } from "../../contracts/tool.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";

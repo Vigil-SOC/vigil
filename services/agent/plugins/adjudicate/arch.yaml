@@ -1,7 +1,7 @@
 name: adjudicate
 
 # One decider, N workers. Serial is max_workers: 1 — there is no second loop.
-# Same fan-out as threathunt.yaml: workers answer questions, they never dispatch,
+# Same fan-out as plugins/hunt/arch.yaml: workers answer questions, they never dispatch,
 # so there is no depth to set.
 dispatch:
   topology: fan_out
@@ -128,7 +128,7 @@ roles:
       # validation, and is refused three times for a field nothing asked for.
       required: [action, rationale, evidence_citations]
       properties:
-        # threathunt.yaml's vocabulary minus HANDOFF_IR: an adjudicator proposes
+        # plugins/hunt/arch.yaml's vocabulary minus HANDOFF_IR: an adjudicator proposes
         # a response and starts none. The loop still handles the verb; this arch
         # has no use for it, which the loader allows.
         action:

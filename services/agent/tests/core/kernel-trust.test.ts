@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import type {
   CallPayload,

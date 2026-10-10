@@ -123,7 +123,7 @@ RECALL_TOOL = "recall_entity"
 # What the arch asks for; a ToolSpec binds it to the tool id via `provides`.
 RECALL_CAPABILITY = "entity_recall"
 
-# Keyed by the role names threathunt.yaml declares, not by a class called
+# Keyed by the role names plugins/hunt/arch.yaml declares, not by a class called
 # "worker" that appears in no file. Empties are decisions: the lead never
 # queries, and narrative search — the lead's alone — ships no tool here.
 RECALL_GRANTS: Mapping[str, Tuple[str, ...]] = {

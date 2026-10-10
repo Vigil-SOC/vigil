@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../plugins/hunt/checkpoints.js";
 import { EVIDENCE_SHOWN, huntProjection } from "../../plugins/hunt/projection.js";

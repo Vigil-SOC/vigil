@@ -39,12 +39,12 @@ PINNED = {
         "a001d2ee9f2cd3a8914fc789ec3145ecb5615afa0f74a2ccad6231d454dfcf96",
     ),
     "shadow-adjudication": (
-        1,
-        "af72161dab2da187b1a1c95ddf589723433e9641247b694dd59e9c2b8a01021f",
+        2,
+        "4e2197f669ee6aedf89b32e04fa9fa3c812c0d2edba19a1ac3528cf444c94731",
     ),
     "threat-hunt": (
-        1,
-        "925d2509a7a106ee3cc7ce9ff27e39f7bf75b355a36de12683c166b291bc120d",
+        2,
+        "ca7dd8932f5c2053242f6e269df05ab7aa0fd646a7a3ec931121145ade3b20c4",
     ),
 }
 

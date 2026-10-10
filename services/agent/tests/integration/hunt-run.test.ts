@@ -7,7 +7,7 @@ import { LeaseRepository } from "../../ledger/leases.js";
 import { advance, resolveSpec, spentOn } from "../../worker.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
 import { steer } from "../../plugins/hunt/inbox.js";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import type { RunJob } from "../../contracts/job.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";

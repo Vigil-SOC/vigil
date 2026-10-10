@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { PROVER_TOOL, type RootCauseKinds, type StepPayload } from "../../plugins/rootcause/proof.js";
 import { RECENT_SEARCHES, rootCauseProjection } from "../../plugins/rootcause/projection.js";

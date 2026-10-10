@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { nullMemory, recalling } from "../../core/memory.js";
 import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";

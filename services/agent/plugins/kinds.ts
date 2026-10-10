@@ -3,18 +3,18 @@ import type { AgentEvent, RunKind } from "../contracts/events.js";
 import type { Notes } from "../core/memory.js";
 import type { State } from "../core/seams.js";
 import { SpecError, type Owned } from "../core/spec.js";
-import { composeProjection } from "../plugins/compose/projection.js";
-import { huntDistil } from "../plugins/hunt/distil.js";
-import type { HuntKinds } from "../plugins/hunt/ledger.js";
-import { huntProjection, type ProjectionOptions } from "../plugins/hunt/projection.js";
-import { huntNotes } from "../plugins/hunt/recall.js";
-import { leadProjection } from "../plugins/investigate/legacy/projection.js";
+import { composeProjection } from "./compose/projection.js";
+import { huntDistil } from "./hunt/distil.js";
+import type { HuntKinds } from "./hunt/ledger.js";
+import { huntProjection, type ProjectionOptions } from "./hunt/projection.js";
+import { huntNotes } from "./hunt/recall.js";
+import { leadProjection } from "./investigate/legacy/projection.js";
 import { isAgentRun } from "../core/agent.js";
-import { investigateView } from "../plugins/investigate/view.js";
-import { huntView } from "../plugins/hunt/view.js";
-import type { LeadKinds } from "../plugins/investigate/legacy/vocabulary.js";
-import { rootCauseProjection } from "../plugins/rootcause/projection.js";
-import type { RootCauseKinds } from "../plugins/rootcause/proof.js";
+import { investigateView } from "./investigate/view.js";
+import { huntView } from "./hunt/view.js";
+import type { LeadKinds } from "./investigate/legacy/vocabulary.js";
+import { rootCauseProjection } from "./rootcause/projection.js";
+import type { RootCauseKinds } from "./rootcause/proof.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
 // than switched on in the worker: an agent type is a file and an entry, not a branch.
@@ -66,14 +66,14 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // that is the only kind episodic memory accepts for a run. Sharing it would
   // file an adjudication under a kind it is not.
   hunt: {
-    arch: packaged("threathunt.yaml"),
+    arch: packaged("hunt"),
     ...HUNT_LOOP,
     distil: (runId, events) => huntDistil(runId, events as readonly AgentEvent<HuntKinds>[]),
   },
   // One investigator, prose, no hunt vocabulary. checkpoints is owned so a
   // definition that sets hypothesis_approval: ask still parses and can park.
   root_cause: {
-    arch: packaged("rootcause.yaml"),
+    arch: packaged("rootcause"),
     workflow: "rootcause",
     actions: [],
     halts: [],
@@ -84,9 +84,9 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // intake admitted and the workflow intake chose, tests the stated intent against
   // the seeded benign account, and proposes a workflow without starting one. Same
   // HUNT_LOOP, no distil for the reason given above.
-  adjudicate: { arch: packaged("adjudicate.yaml"), ...HUNT_LOOP },
+  adjudicate: { arch: packaged("adjudicate"), ...HUNT_LOOP },
   investigate: {
-    arch: packaged("investigate.yaml"),
+    arch: packaged("investigate"),
     workflow: "lead",
     actions: ["EXAMINE", "CONCLUDE"],
     halts: ["CONCLUDE"],
@@ -98,7 +98,7 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // No actions: nothing emits one. A step ends when its agent answers, and the run
   // ends when the list does, so there is no verb for a model to choose or to halt on.
   compose: {
-    arch: packaged("compose.yaml"),
+    arch: packaged("compose"),
     workflow: "compose",
     actions: [],
     halts: [],
@@ -106,13 +106,13 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   },
   // No actions: the lead answers in prose, so there is no emission to constrain.
   // Served over SSE by serve.ts rather than the queue, so drive() never sees it.
-  chat: { arch: packaged("chat.yaml"), workflow: "lead", actions: [], halts: [] },
+  chat: { arch: packaged("chat"), workflow: "lead", actions: [], halts: [] },
 };
 
-// Resolved against the package rather than the cwd: the arch files ship with the
-// worker, so a run started from any directory finds the same ones.
-function packaged(file: string): string {
-  return fileURLToPath(new URL(`./${file}`, import.meta.url));
+// A plugin's arch.yaml, resolved against the package rather than the cwd: the
+// plugins ship with the worker, so a run started from any directory finds the same ones.
+function packaged(plugin: string): string {
+  return fileURLToPath(new URL(`./${plugin}/arch.yaml`, import.meta.url));
 }
 
 export function archFor(kind: RunKind): ArchEntry {

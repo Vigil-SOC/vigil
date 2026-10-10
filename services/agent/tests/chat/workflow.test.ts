@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { loadPlugin } from "../../plugins/index.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";

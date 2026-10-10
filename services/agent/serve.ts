@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import pg from "pg";
-import { archFor, isHuntLike, registeredKinds } from "./arch/registry.js";
+import { archFor, isHuntLike, registeredKinds } from "./plugins/kinds.js";
 import { cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";

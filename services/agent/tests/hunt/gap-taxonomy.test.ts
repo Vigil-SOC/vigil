@@ -8,7 +8,7 @@
 // the hunt agent queries the estate, and its observe hook decides what a failure was.
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { ZERO_TOKENS } from "../../contracts/budget.js";
 import type { ToolFailure, ToolResult } from "../../contracts/tool.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";

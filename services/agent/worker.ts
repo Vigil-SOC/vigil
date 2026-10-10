@@ -2,7 +2,7 @@ import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { archFor } from "./arch/registry.js";
+import { archFor } from "./plugins/kinds.js";
 import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";

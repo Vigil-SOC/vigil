@@ -18,7 +18,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON = REPO_ROOT / "core" / "agents" / "queue.py"
 TYPESCRIPT = REPO_ROOT / "services" / "agent" / "contracts" / "events.ts"
-REGISTRY = REPO_ROOT / "services" / "agent" / "arch" / "registry.ts"
+REGISTRY = REPO_ROOT / "services" / "agent" / "plugins" / "kinds.ts"
 
 # The conformance workflow. It proves the harness boundary holds without a real
 # domain, so it is deliberately not something the backend can enqueue. subagent is

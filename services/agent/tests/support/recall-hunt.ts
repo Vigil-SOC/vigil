@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
 import type { Harness } from "../../core/loop.js";

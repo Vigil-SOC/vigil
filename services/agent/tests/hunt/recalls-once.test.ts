@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import { InProcessState } from "../../core/state.js";
 import { recalledNotes, type RecallResult } from "../../contracts/memory.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";

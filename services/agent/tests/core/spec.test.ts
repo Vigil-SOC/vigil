@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor, isHuntLike, registeredKinds } from "../../arch/registry.js";
+import { archFor, isHuntLike, registeredKinds } from "../../plugins/kinds.js";
 import { buildSpec, parseConfig, SpecError, type SpecPaths } from "../../core/spec.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -84,7 +84,7 @@ describe("the registry resolves a run kind to an arch", () => {
 });
 
 describe("the shipped arches", () => {
-  it("loads threathunt.yaml unmodified, as a fan-out with a lead", () => {
+  it("loads plugins/hunt/arch.yaml unmodified, as a fan-out with a lead", () => {
     const spec = huntSpec();
     expect(spec.arch).toBe("threathunt");
     expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
@@ -94,8 +94,8 @@ describe("the shipped arches", () => {
   });
 
   // The hunt loop with an adjudicator's brief: same workers, critic and fan-out as
-  // threathunt.yaml, a lead that proposes a workflow and may not hand off to IR.
-  it("loads adjudicate.yaml as the hunt fan-out, minus HANDOFF_IR, plus proposed_workflow", () => {
+  // plugins/hunt/arch.yaml, a lead that proposes a workflow and may not hand off to IR.
+  it("loads plugins/adjudicate/arch.yaml as the hunt fan-out, minus HANDOFF_IR, plus proposed_workflow", () => {
     const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch }, archFor("adjudicate").actions);
     expect(spec.arch).toBe("adjudicate");
     expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
@@ -110,7 +110,7 @@ describe("the shipped arches", () => {
   });
 
   // The other shape the indirection has to carry: one role, its tools, no fan-out.
-  it("loads rootcause.yaml as one investigator answering in prose", () => {
+  it("loads plugins/rootcause/arch.yaml as one investigator answering in prose", () => {
     const spec = buildSpec(
       {
         arch: archFor("root_cause").arch,
@@ -140,7 +140,7 @@ describe("the shipped arches", () => {
     expect(spec.roles.lead?.needs).toEqual(["telemetry_search"]);
   });
 
-  it("loads investigate.yaml as a single lead with no workers and no critic", () => {
+  it("loads plugins/investigate/arch.yaml as a single lead with no workers and no critic", () => {
     const spec = buildSpec(CASE, archFor("investigate").actions);
     expect(spec.arch).toBe("investigate");
     expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });

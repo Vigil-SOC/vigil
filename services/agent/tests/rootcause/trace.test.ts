@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../arch/registry.js";
+import { archFor } from "../../plugins/kinds.js";
 import type { CheckpointPayload, DispatchPayload, TerminalPayload } from "../../contracts/events.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
