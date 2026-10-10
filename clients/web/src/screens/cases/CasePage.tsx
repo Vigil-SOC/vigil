@@ -83,6 +83,13 @@ function closedBy(closure: CaseClosureView | null): string {
   return time || who ? `Closed${time}${who}` : ''
 }
 
+/** The whole Closed line, shared by the header reason and the Summary: time, closer, category, closer kind. */
+function closedLine(closure: CaseClosureView | null): string {
+  return [closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
 }
@@ -609,7 +616,8 @@ export function CasePage({
   }, [runId, loadRun, setRunPhase])
   const detail = runId && run.detail?.run_id === runId ? run.detail : null
   const fold = useMemo(() => readFold(detail), [detail])
-  const foldPhase: Phase = !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+  // The run id is unknown until the case read returns, so the run is still loading, not absent.
+  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
 
   // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
   const seen = useRef<{ runId: string; status: string } | null>(null)
@@ -690,6 +698,11 @@ export function CasePage({
   const gaps = visibilityGaps(fold)
   const recalled = recallEntityCalls(fold)
   const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind) === chip)
+  const chipCounts = useMemo(() => {
+    const counts: Record<RecordChip, number> = { agent: 0, human: 0, memory: 0, system: 0 }
+    for (const row of rows) counts[recordChip(row.kind)] += 1
+    return counts
+  }, [rows])
 
   const promptFor = (text?: string) => {
     const base = c
@@ -831,7 +844,7 @@ export function CasePage({
   const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedBy(closure) : ''
+    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
   const needsBlock = (
     <CaseNeeds
       items={shownNeeds}
@@ -872,7 +885,7 @@ export function CasePage({
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
-              <span>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : 'No workflow'}</span>
+              {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_id}</span>}
               {c.findings > 0 && <span>Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}</span>}
               <span>Opened {created}</span>
               <span>
@@ -908,9 +921,7 @@ export function CasePage({
                 {needsBlock}
                 <section className="case-closed" aria-label="Closed summary">
                   <span className="case-closed-line">
-                    {[closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    {closedLine(closure)}
                   </span>
                   <h3>{closure?.verdict || '—'}</h3>
                   <ClosedRows fold={fold} phase={foldPhase} />
@@ -1044,7 +1055,7 @@ export function CasePage({
                 <div className="rec-chips" role="group" aria-label="Record source">
                   <FilterChip label={`All ${rows.length}`} active={chip === 'all'} onClick={() => setChip('all')} />
                   {RECORD_CHIPS.map((name) => (
-                    <FilterChip key={name} label={name[0].toUpperCase() + name.slice(1)} active={chip === name} onClick={() => setChip(name)} />
+                    <FilterChip key={name} label={`${name[0].toUpperCase() + name.slice(1)} ${chipCounts[name]}`} active={chip === name} onClick={() => setChip(name)} />
                   ))}
                   <InfoTip
                     label="About the record"
@@ -1066,7 +1077,14 @@ export function CasePage({
                     </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
-                  {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
+                  {latest && (latest.investigation_id ? (
+                    <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>
+                  ) : (
+                    <>
+                      <button type="button" className="rec-btn" disabled>Export audit</button>
+                      <InfoTip label="Why Export audit is unavailable" text="This run has no investigation record to export." />
+                    </>
+                  ))}
                 </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}
