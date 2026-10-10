@@ -87,6 +87,9 @@ describe('workflow reader pane', () => {
     expect(within(strip).getByText('Asks if spending looks unusual')).toBeInTheDocument()
     expect(within(strip).queryByText('Asks before widening scope')).toBeNull()
 
+    // the panels sit inside the "How it runs" box, under the strip
+    for (const name of ['Who does it', 'What it may do on its own', 'Stops when']) expect(within(strip).getByRole('region', { name })).toBeInTheDocument()
+
     // whole workflow: every role, row and class, the one model with its source, the budget as sentences
     expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText('Critic')).toBeInTheDocument()

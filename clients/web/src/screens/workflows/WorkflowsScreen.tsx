@@ -287,7 +287,7 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
       )}
       {phase === 'ready' && list.length > 0 && (
         <div className="wfk-layout" ref={layoutRef}>
-          <div className="wfk-col px-[22px] py-5">
+          <div className="wfk-col pl-[26px] pr-0 py-5">
             {list.map((w) => (
               <WorkflowCard key={w.id} wf={w} selected={shown?.id === w.id} onSelect={() => setOpenId(w.id)} />
             ))}
