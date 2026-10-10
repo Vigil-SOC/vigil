@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
+import { EmptyState, Popup, TextInput, Toggle, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
@@ -2938,7 +2938,7 @@ function AgentTable({ agents, onOpen, onToggle, renderActions }: {
                   </span>
                 </td>
                 <td className="ag-on" onClick={stop}>
-                  <button type="button" role="switch" aria-checked={a.enabled} aria-label={`${a.name} on`} className="ag-switch" onClick={() => onToggle(a, !a.enabled)}><span /></button>
+                  <Toggle checked={a.enabled} label={`${a.name} on`} onChange={(v) => onToggle(a, v)} />
                 </td>
               </tr>
             )

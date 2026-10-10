@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { Markdown } from '../../shared/Markdown'
+import { Toggle } from '../../shared/ui'
 import type { Workflow } from '../../data/appData'
 import { workflowApi } from '../../services/api'
 import { modelSource, useAgentMeta } from './useWorkflowsData'
@@ -498,16 +499,13 @@ function Header({ name, wf, actions, definition, onSave }: { name: string; wf: W
         <div className="flex items-center gap-2.5">
           <h2 className="m-0 text-[20px] leading-[1.25] tracking-[-0.2px] text-tx min-w-0" style={{ fontWeight: 700 }}>{name}</h2>
           {wf && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              aria-label={`${name} on`}
-              className="ag-switch shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            <Toggle
+              checked={enabled}
+              label={`${name} on`}
               disabled={!wf.canDisable}
               title={wf.canDisable ? undefined : ALWAYS_ON}
-              onClick={toggle}
-            ><span /></button>
+              onChange={toggle}
+            />
           )}
         </div>
         {definition.description && <p className="m-0 text-[12px] leading-[1.45] text-tx-3">{definition.description}</p>}

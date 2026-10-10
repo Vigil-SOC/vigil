@@ -4,7 +4,7 @@ import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { PageHead } from '../../shared/PageHead'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { EmptyState } from '../../shared/ui'
+import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
@@ -329,11 +329,10 @@ function RowToggle({ row, busy, onMcp, onMaster }: {
   const { name, integration, isEnabled, masterOn, masterMixed, extConfigured } = row
   if (row.isExtension && integration) {
     return (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={masterMixed ? 'mixed' : masterOn}
-        aria-label={`Toggle ${name}`}
+      <Toggle
+        checked={masterOn}
+        mixed={masterMixed}
+        label={`Toggle ${name}`}
         title={
           !extConfigured
             ? 'Configure the connector first'
@@ -342,24 +341,9 @@ function RowToggle({ row, busy, onMcp, onMaster }: {
               : undefined
         }
         disabled={busy === name || !extConfigured}
-        className={`toggle${masterOn ? ' on' : ''}${masterMixed ? ' mixed' : ''}`}
-        onClick={() => onMaster(name, integration.id, !masterOn)}
-      >
-        <span className="toggle-knob" />
-      </button>
+        onChange={(v) => onMaster(name, integration.id, v)}
+      />
     )
   }
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isEnabled}
-      aria-label={`Toggle ${name}`}
-      disabled={busy === name}
-      className={`toggle${isEnabled ? ' on' : ''}`}
-      onClick={() => onMcp(name, !isEnabled)}
-    >
-      <span className="toggle-knob" />
-    </button>
-  )
+  return <Toggle checked={isEnabled} label={`Toggle ${name}`} disabled={busy === name} onChange={(v) => onMcp(name, v)} />
 }
