@@ -51,7 +51,7 @@ conclusion:
         enum: [low, medium, high]
       citations:
         type: array
-        description: Refs of the tool results the answer rests on, such as s3.
+        description: Refs of the tool results the answer rests on, such as r3.
         items: { type: string }
       gaps:
         type: array

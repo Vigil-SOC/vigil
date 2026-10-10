@@ -160,7 +160,7 @@ export function fold(events: readonly HuntEvent[]): Projection {
         break;
       // The kernel's kinds. A hunt run on the workflow engine writes none of them;
       // they are listed so the fold stays exhaustive over the shared vocabulary.
-      case "step":
+      case "call":
       case "conclusion":
       case "review":
       case "finalize":

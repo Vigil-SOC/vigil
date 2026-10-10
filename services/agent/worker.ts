@@ -3,9 +3,8 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { archFor, startsOnPlugin } from "./arch/registry.js";
-import { isAgentRun, pluginGrants, runAgent, skillTool, type AgentKinds } from "./core/agent.js";
-import { registryOf } from "./core/registry.js";
-import { pluginFor } from "./plugins/registry.js";
+import { isAgentRun, runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
+import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
@@ -205,12 +204,14 @@ async function drive(
   }
   const entry = archFor(kind);
   if (entry.plugin !== undefined && (await onKernel(state, run_id, kind))) {
-    const plugin = pluginFor(entry.plugin);
-    const built = build(kind, spec, as<AgentKinds>(state), undefined, seed);
-    // The plugin's grants, not the arch's: the agent holds what its needs bind to
-    // here, plus the skill loader, and the reviewer holds nothing.
-    const harness = { ...built, registry: registryOf([...toolsFrom(spec.tools), skillTool(plugin)], pluginGrants(plugin, spec.tools)) };
-    const done = await runAgent(harness, { run_id, run_kind: kind, spec, plugin, started_by, answers: answersFor(), announce: announceFor(), signal });
+    const { manifest, hooks } = loadPlugin(entry.plugin);
+    const harness = build(kind, spec, as<AgentKinds>(state), undefined, seed);
+    // The plugin's grants, not the arch's: the kernel registers the deployment's
+    // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
+    const done = await runAgent(harness, {
+      run_id, run_kind: kind, spec, plugin: manifest, ...(hooks === undefined ? {} : { hooks }),
+      tools: toolsFrom(spec.tools), started_by, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
+    });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "hunt") {
@@ -235,6 +236,16 @@ async function drive(
     return null;
   }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
+}
+
+// An operator's stop, read off the same queue every workflow reads its directives from.
+function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
+  return async () => {
+    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
+    if (found === undefined) return null;
+    const { directive_id, actor, kind, text, created_at } = found;
+    return { directive_id, actor, kind, text, created_at };
+  };
 }
 
 // Which engine drives this run. A run the ledger already holds keeps the engine

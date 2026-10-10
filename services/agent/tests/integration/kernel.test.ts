@@ -7,7 +7,7 @@ import { LeaseRepository } from "../../ledger/leases.js";
 import { verifyLedger } from "../../ledger/verify.js";
 import { advance } from "../../worker.js";
 import type { RunJob } from "../../contracts/job.js";
-import type { CheckpointPayload, StepPayload } from "../../contracts/events.js";
+import type { CheckpointPayload, CallPayload } from "../../contracts/events.js";
 import { isAgentRun } from "../../core/agent.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
@@ -48,7 +48,7 @@ function resumeJob(id: string): RunJob {
 }
 
 const CONCLUDE: ScriptedTurn = {
-  emit: { summary: "a scheduled task holds a stale password", disposition: "malicious", confidence: "low", citations: ["s1"], gaps: [], next_steps: [] },
+  emit: { summary: "a scheduled task holds a stale password", disposition: "malicious", confidence: "low", citations: ["r1"], gaps: [], next_steps: [] },
 };
 
 describe("a kind listed in VIGIL_PLUGIN_KINDS runs on the kernel", () => {
@@ -62,8 +62,8 @@ describe("a kind listed in VIGIL_PLUGIN_KINDS runs on the kernel", () => {
 
     const events = await ledger.read(runId);
     expect(isAgentRun(events)).toBe(true);
-    expect(events.map((one) => one.kind).filter((kind) => kind !== "spend")).toEqual(["run", "step", "conclusion", "review", "terminal"]);
-    expect((events.find((one) => one.kind === "step")?.payload as StepPayload).tool).toBe("load_skill");
+    expect(events.map((one) => one.kind).filter((kind) => kind !== "spend")).toEqual(["run", "call", "conclusion", "review", "terminal"]);
+    expect((events.find((one) => one.kind === "call")?.payload as CallPayload).tool).toBe("load_skill");
     expect(await ledger.terminal(runId)).toMatchObject({ outcome: "completed", summary: "a scheduled task holds a stale password" });
     expect(await verifyLedger(pool, runId)).toMatchObject({ ok: true });
   });
@@ -90,7 +90,7 @@ describe("a kind listed in VIGIL_PLUGIN_KINDS runs on the kernel", () => {
 
     const events = await ledger.read(runId);
     expect(events.some((one) => (one.kind as string) === "decision")).toBe(false);
-    expect(events.filter((one) => one.kind === "step")).toHaveLength(1);
+    expect(events.filter((one) => one.kind === "call")).toHaveLength(1);
     expect(await ledger.terminal(runId)).toMatchObject({ outcome: "completed" });
     expect(await verifyLedger(pool, runId)).toMatchObject({ ok: true });
   });

@@ -1,5 +1,5 @@
 import { agentProjection, agentReplay, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
-import type { StepPayload } from "../../contracts/events.js";
+import type { CallPayload } from "../../contracts/events.js";
 import { callViews } from "../../workflows/call-view.js";
 import type { LeadProjection } from "../../workflows/lead/projection.js";
 import type { InvestigateReplay } from "../../workflows/lead/replay.js";
@@ -18,7 +18,7 @@ const VISIBILITY = new Set(["timeout", "unavailable"]);
 
 export function investigateView(runId: string, events: readonly Envelope[]): LeadProjection & { engine: "plugin"; kernel: AgentProjection } {
   const kernel = agentProjection(runId, events);
-  const byTurn = groupByTurn(kernel.steps);
+  const byTurn = groupByTurn(kernel.calls);
   const decisions = [...byTurn.entries()].map(([, steps]) => ({
     action: "EXAMINE",
     rationale: steps.find((one) => one.thought !== undefined)?.thought ?? "",
@@ -35,7 +35,7 @@ export function investigateView(runId: string, events: readonly Envelope[]): Lea
     outcome: kernel.outcome,
     reason: kernel.reason,
     iterations: decisions.length,
-    dispatched: kernel.steps.length,
+    dispatched: kernel.calls.length,
     cost_usd: kernel.cost_usd,
     decisions,
     findings: kernel.conclusion === null ? [] : [{ agent_id: "agent", answer: kernel.conclusion.value }],
@@ -48,7 +48,7 @@ export function investigateView(runId: string, events: readonly Envelope[]): Lea
         calls: steps.map((one) => ({ tool: one.tool, result: one.result, ...(one.duration_ms === undefined ? {} : { duration_ms: one.duration_ms }) })),
       })),
     ),
-    gaps: kernel.steps
+    gaps: kernel.calls
       .filter((one) => one.failure !== null && VISIBILITY.has(one.failure))
       .map((one) => ({ dispatch_id: one.ref, agent_id: "agent", failure_reason: one.failure, query_intent: one.thought ?? "" })),
     unbound: kernel.unbound,
@@ -67,7 +67,7 @@ export function investigateKernelReplay(runId: string, events: readonly Envelope
     rationale: turn.thought,
     worker: null,
     cost_usd: turn.cost_usd,
-    calls: turn.steps.map((one) => ({ ref: one.ref, tool: one.tool, arguments: one.arguments, result: one.result, ...(one.duration_ms === undefined ? {} : { duration_ms: one.duration_ms }) })),
+    calls: turn.calls.map((one) => ({ ref: one.ref, tool: one.tool, arguments: one.arguments, result: one.result, ...(one.duration_ms === undefined ? {} : { duration_ms: one.duration_ms }) })),
   }));
   const concluded = events.find((one) => one.kind === "conclusion");
   if (kernel.conclusion !== null && concluded !== undefined) {
@@ -84,8 +84,8 @@ export function investigateKernelReplay(runId: string, events: readonly Envelope
   return { run_id: runId, run_kind: "investigate", decisions, engine: "plugin", kernel };
 }
 
-function groupByTurn(steps: readonly StepPayload[]): Map<number, StepPayload[]> {
-  const grouped = new Map<number, StepPayload[]>();
+function groupByTurn(steps: readonly CallPayload[]): Map<number, CallPayload[]> {
+  const grouped = new Map<number, CallPayload[]>();
   for (const step of steps) grouped.set(step.turn, [...(grouped.get(step.turn) ?? []), step]);
   return grouped;
 }

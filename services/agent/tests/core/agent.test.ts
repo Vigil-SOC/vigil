@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor, startsOnPlugin } from "../../arch/registry.js";
 import { defineTool, type RegisteredTool } from "../../contracts/tool.js";
-import type { ResolutionPayload, ReviewPayload, StepPayload } from "../../contracts/events.js";
+import type { ResolutionPayload, ReviewPayload, CallPayload } from "../../contracts/events.js";
 import type { PluginManifest } from "../../contracts/plugin.js";
 import { historyOf, isAgentRun, pluginGrants, runAgent, skillTool, type AgentKinds, type AgentOptions } from "../../core/agent.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
@@ -76,25 +76,25 @@ describe("the kernel runs a plugin to a conclusion", () => {
       { content: "start from the method", calls: [{ tool: "load_skill", args: '{"name":"investigate-case"}' }] },
       { content: "read the finding", calls: [{ tool: "get_finding", args: '{"finding_id":"f-1"}' }] },
       STOP,
-      concluded("malicious", ["s2"]),
+      concluded("malicious", ["r2"]),
     ]);
 
     const report = await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
 
     expect(report.status).toBe("completed");
-    expect(report.steps).toBe(2);
+    expect(report.calls).toBe(2);
     const events = await state.read(RUN);
     expect(events.filter((one) => !["spend"].includes(one.kind)).map((one) => one.kind)).toEqual([
-      "run", "step", "step", "conclusion", "review", "terminal",
+      "run", "call", "call", "conclusion", "review", "terminal",
     ]);
-    const steps = events.filter((one) => one.kind === "step").map((one) => one.payload as StepPayload);
+    const steps = events.filter((one) => one.kind === "call").map((one) => one.payload as CallPayload);
     expect(steps.map((one) => [one.ref, one.turn, one.tool])).toEqual([
-      ["s1", 1, "load_skill"],
-      ["s2", 2, "get_finding"],
+      ["r1", 1, "load_skill"],
+      ["r2", 2, "get_finding"],
     ]);
     expect(steps[0]?.thought).toBe("start from the method");
     // The ref the model cites is the ref it was shown.
-    expect(steps[1]?.result).toContain('ref="s2"');
+    expect(steps[1]?.result).toContain('ref="r2"');
     expect(steps[0]?.result).toContain("Investigating a case");
     // A disposition nobody guards is not reviewed.
     expect((events.find((one) => one.kind === "review")?.payload as ReviewPayload).stance).toBe("skipped");
@@ -106,7 +106,7 @@ describe("the kernel runs a plugin to a conclusion", () => {
   it("tells the model its skills and how to cite, in a prefix that does not move", async () => {
     const spec = specOf();
     const state = new InProcessState<AgentKinds>();
-    const provider = scriptedProvider([{ calls: [{ tool: "get_finding", args: "{}" }] }, STOP, concluded("malicious", ["s1"])]);
+    const provider = scriptedProvider([{ calls: [{ tool: "get_finding", args: "{}" }] }, STOP, concluded("malicious", ["r1"])]);
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
 
     const systems = provider.requests.map((request) => request.messages[0]?.content);
@@ -121,18 +121,18 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const provider = scriptedProvider([
       { calls: [{ tool: "get_finding", args: "{}" }] },
       STOP,
-      concluded("benign", ["s1"]),
+      concluded("benign", ["r1"]),
       { emit: { stance: "uphold", reasons: "the task owner is named", missing: [] } },
     ]);
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
 
     const review = (await state.read(RUN)).find((one) => one.kind === "review")?.payload as ReviewPayload;
-    expect(review).toMatchObject({ stance: "uphold", cited: ["s1"], unknown_refs: [], guarded: { field: "disposition", asked: "benign", final: "benign" } });
+    expect(review).toMatchObject({ stance: "uphold", cited: ["r1"], unknown_refs: [], guarded: { field: "disposition", asked: "benign", final: "benign" } });
     expect((await state.terminal(RUN))?.summary).toBe("the lockouts are benign");
     // The reviewer holds no tools and is shown the step it was asked about.
     const asked = provider.requests.at(-1);
     expect(asked?.tools).toEqual([]);
-    expect(asked?.messages.map((one) => one.content).join("\n")).toContain('<vigil:record id="s1" cited="true">');
+    expect(asked?.messages.map((one) => one.content).join("\n")).toContain('<vigil:record id="r1" cited="true">');
   });
 
   it("holds a guarded answer for review when the reviewer finds it unsupported", async () => {
@@ -141,7 +141,7 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const provider = scriptedProvider([
       { calls: [{ tool: "splunk_search", args: '{"sql":"select 1"}' }] },
       STOP,
-      concluded("false_positive", ["s1"]),
+      concluded("false_positive", ["r1"]),
       { emit: { stance: "insufficient", reasons: "an empty search is the only support", missing: ["the task's owner"] } },
     ]);
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
@@ -156,13 +156,13 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const state = new InProcessState<AgentKinds>();
     const provider = scriptedProvider([
       STOP,
-      concluded("benign", ["s9"]),
+      concluded("benign", ["r9"]),
       { emit: { stance: "uphold", reasons: "looks fine", missing: [] } },
     ]);
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
 
     const review = (await state.read(RUN)).find((one) => one.kind === "review")?.payload as ReviewPayload;
-    expect(review.unknown_refs).toEqual(["s9"]);
+    expect(review.unknown_refs).toEqual(["r9"]);
     expect(review.guarded?.final).toBe("needs_review");
   });
 
@@ -172,7 +172,7 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const provider = scriptedProvider([
       { calls: [{ tool: "get_finding", args: "{}" }] },
       STOP,
-      concluded("benign", ["s1"]),
+      concluded("benign", ["r1"]),
       { fail: "the gateway hung up" },
     ]);
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
@@ -211,22 +211,22 @@ describe("the kernel runs a plugin to a conclusion", () => {
     const first = scriptedProvider([{ calls: [{ tool: "get_finding", args: "{}" }, { tool: "case_records", args: '{"case_id":"c-1"}' }] }]);
     const parked = await runAgent(harness(first), optionsOf(spec, plugin));
     expect(parked.status).toBe("waiting_approval");
-    expect(parked.steps).toBe(1);
+    expect(parked.calls).toBe(1);
     expect(ran).toBe(1);
     const checkpoint = parked.pending?.checkpoint_id as string;
 
     const approve: ResolutionPayload = { checkpoint_id: checkpoint, actor: "analyst", answer: "approve", text: "", resolved_at: new Date().toISOString() };
-    const second = scriptedProvider([{ calls: [{ tool: "case_records", args: '{"case_id":"c-1"}' }] }, STOP, concluded("malicious", ["s1", "s2"])]);
+    const second = scriptedProvider([{ calls: [{ tool: "case_records", args: '{"case_id":"c-1"}' }] }, STOP, concluded("malicious", ["r1", "r2"])]);
     const done = await runAgent(harness(second), optionsOf(spec, plugin, { answers: async () => [approve] }));
 
     expect(done.status).toBe("completed");
     // get_finding ran once, before the park; only the approved call ran after it.
     expect(ran).toBe(2);
-    const steps = (await state.read(RUN)).filter((one) => one.kind === "step").map((one) => one.payload as StepPayload);
-    expect(steps.map((one) => [one.ref, one.tool])).toEqual([["s1", "get_finding"], ["s2", "case_records"]]);
+    const steps = (await state.read(RUN)).filter((one) => one.kind === "call").map((one) => one.payload as CallPayload);
+    expect(steps.map((one) => [one.ref, one.tool])).toEqual([["r1", "get_finding"], ["r2", "case_records"]]);
     // The resumed model read what the first pass learned.
     const resumed = second.requests[0]?.messages ?? [];
-    expect(resumed.some((one) => one.role === "tool" && one.content.includes('ref="s1"'))).toBe(true);
+    expect(resumed.some((one) => one.role === "tool" && one.content.includes('ref="r1"'))).toBe(true);
   });
 
   it("ends as budget_exhausted when the budget refuses, without a conclusion", async () => {
@@ -250,7 +250,7 @@ describe("the console reads a kernel run in the investigate shape", () => {
     const provider = scriptedProvider([
       { content: "check the finding", calls: [{ tool: "get_finding", args: "{}" }] },
       STOP,
-      concluded("malicious", ["s1"]),
+      concluded("malicious", ["r1"]),
     ]);
     await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
     const events = await state.read(RUN);
@@ -264,18 +264,18 @@ describe("the console reads a kernel run in the investigate shape", () => {
 
     const replay = investigateKernelReplay(RUN, events);
     expect(replay.decisions.map((one) => one.action)).toEqual(["EXAMINE", "CONCLUDE"]);
-    expect(replay.kernel.turns[0]?.steps[0]?.ref).toBe("s1");
+    expect(replay.kernel.turns[0]?.calls[0]?.ref).toBe("r1");
   });
 });
 
 describe("historyOf", () => {
   it("rebuilds one assistant turn per model turn, each followed by its results", () => {
-    const step = (ref: string, turn: number, thought?: string): StepPayload => ({
+    const step = (ref: string, turn: number, thought?: string): CallPayload => ({
       ref, turn, call_id: `c-${ref}`, tool: "t", arguments: "{}", result: `r-${ref}`, ok: true, failure: null, ...(thought ? { thought } : {}),
     });
-    const history = historyOf([step("s1", 1, "first"), step("s2", 1), step("s3", 2, "second")]);
+    const history = historyOf([step("r1", 1, "first"), step("r2", 1), step("r3", 2, "second")]);
     expect(history.map((one) => one.role)).toEqual(["assistant", "tool", "tool", "assistant", "tool"]);
-    expect(history[0]).toMatchObject({ content: "first", tool_calls: [{ id: "c-s1" }, { id: "c-s2" }] });
+    expect(history[0]).toMatchObject({ content: "first", tool_calls: [{ id: "c-r1" }, { id: "c-r2" }] });
   });
 });
 
