@@ -1,7 +1,12 @@
 import { agentProjection, agentReplay, modelMs, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
 import { RECORD_TOOLS } from "../../core/record.js";
 import { callViews } from "../../workflows/call-view.js";
-import { HUNT_TOOLS } from "./hooks.js";
+import { HUNT_TOOLS, operatorOf } from "./hooks.js";
+import { recalledNotesOf } from "../../contracts/memory.js";
+import { replayFrames } from "../../core/replay.js";
+import { fold } from "../../workflows/hunt/ledger.js";
+import type { ReplayReport, ReplayedDecision } from "../../workflows/hunt/replay.js";
+import type { Digest } from "../../workflows/hunt/types.js";
 import type { CallPayload } from "../../contracts/events.js";
 import type { HuntEvent } from "../../workflows/hunt/ledger.js";
 import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type ProjectionOptions } from "../../workflows/hunt/projection.js";
@@ -62,8 +67,97 @@ export function huntView(
   return { ...base, moves, calls, engine: "plugin", kernel: agentProjection(runId, events) };
 }
 
-export function huntKernelReplay(runId: string, events: readonly Envelope[]): AgentReplay & { engine: "plugin" } {
-  return { ...agentReplay(runId, events), engine: "plugin" };
+// A kernel hunt's replay, in the shape the console reads a controller hunt's in:
+// one decision per move, keyed by the id the Moves tab sends. A controller move was
+// made against a digest; a kernel move against the board the agent's brief and
+// hunt_status render. So each decision carries the board as the ledger held it the
+// moment that move was made -- hypotheses, recent evidence, open questions, budget
+// left, what operators said -- folded from the ledger and nothing else. "Rebuilt"
+// means what it means for a kernel run: the model call that chose the move
+// reproduced exactly from the ledger (core/replay.ts).
+export function huntKernelReplay(runId: string, events: readonly Envelope[], decisionId: string | null = null): ReplayReport & { engine: "plugin"; kernel: AgentReplay } {
+  const kernel = agentReplay(runId, events);
+  const took = modelMs(events);
+  const costOfTurn = new Map(kernel.turns.map((turn) => [turn.turn, turn.cost_usd]));
+  const checked = new Map(
+    replayFrames(events)
+      .frames.filter((frame) => frame.role === "agent")
+      .map((frame) => [frame.call, frame.mismatch]),
+  );
+  const decisions: ReplayedDecision[] = [];
+  for (const [index, event] of events.entries()) {
+    if (event.kind !== "call") continue;
+    const call = event.payload as CallPayload;
+    if (QUIET.has(call.tool) || call.role !== undefined) continue;
+    if (decisionId !== null && call.ref !== decisionId) continue;
+    const board = boardAt(events.slice(0, index), call);
+    const mismatch = checked.get(call.turn);
+    const reproduced = mismatch === null;
+    const args = parsed(call.arguments);
+    decisions.push({
+      decision_id: call.ref,
+      iteration: call.turn,
+      action: VERB[call.tool] ?? "INVESTIGATE",
+      target: typeof args["hypothesis_id"] === "string" ? (args["hypothesis_id"] as string) : null,
+      cost_usd: costOfTurn.get(call.turn) ?? 0,
+      ...(took.get(call.turn) === undefined ? {} : { duration_ms: took.get(call.turn) as number }),
+      exact: reproduced,
+      rebuilt: reproduced ? board : null,
+      recorded: board,
+      mismatch: mismatch === undefined ? null : mismatch,
+    });
+  }
+  const hunt = fold(events as readonly HuntEvent[]).hunt;
+  return {
+    hunt_id: hunt.hunt_id,
+    decisions,
+    reproduced: decisions.filter((one) => one.rebuilt !== null).length,
+    inexact: decisions.filter((one) => !one.exact).length,
+    recalled: recalledNotesOf(events as never),
+    engine: "plugin",
+    kernel,
+  };
+}
+
+const EVIDENCE_SHOWN = 8;
+
+function boardAt(before: readonly Envelope[], call: CallPayload): Digest {
+  const view = fold(before as readonly HuntEvent[]);
+  const evidence = [...view.evidence.values()];
+  const shown = evidence.slice(-EVIDENCE_SHOWN);
+  const entity = view.hunt.scope["entity"] as { type?: string; value?: string } | undefined;
+  const args = parsed(call.arguments);
+  return {
+    hunt_id: view.hunt.hunt_id,
+    hunt_name: view.hunt.name,
+    iteration: call.turn,
+    narrative: view.hunt.narrative,
+    hypotheses: [...view.hypotheses.values()].map((one) => ({ hypothesis_id: one.hypothesis_id, statement: one.statement, status: one.status })),
+    recent_evidence: shown.map((one) => ({
+      evidence_id: one.evidence_id,
+      source_system: one.source_system,
+      summary: one.summary,
+      salience: one.salience,
+      why_notable: one.why_notable,
+      instruction_like: one.instruction_like,
+    })),
+    weakens: {},
+    entities: [],
+    focus: {
+      entity: entity?.type !== undefined && entity.value !== undefined ? `${entity.type}:${entity.value}` : null,
+      hypothesis: typeof args["hypothesis_id"] === "string" ? (args["hypothesis_id"] as string) : null,
+    },
+    pivot_candidates: [],
+    omitted: { count: evidence.length - shown.length, evidence_ids: evidence.slice(0, evidence.length - shown.length).map((one) => one.evidence_id) },
+    expansions: [],
+    open_questions: [...view.questions.values()].filter((one) => one.status === "open").map((one) => one.question),
+    budget_remaining: {
+      iterations: Math.max(0, view.hunt.budgets.max_iterations - view.hunt.iteration),
+      cost_usd: Number(Math.max(0, view.hunt.budgets.max_cost_usd - view.hunt.cost_usd).toFixed(4)),
+    },
+    directives: operatorOf(view),
+    notes: [],
+  } as Digest;
 }
 
 // duration_ms is the model call's wall time for the turn, as a controller move's was.

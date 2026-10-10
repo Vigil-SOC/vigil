@@ -69,7 +69,16 @@ describe("a hunt run by one agent", () => {
     expect(huntProjection(RUN, events).hypotheses[0]).toMatchObject({ status: "handed_off" });
     const view = huntView(RUN, events);
     expect(view.moves.map((move) => move.action)).toEqual(["CONCLUDE", "HANDOFF_IR", "VALIDATE", "INVESTIGATE", "INVESTIGATE", "INVESTIGATE"]);
-    expect(huntKernelReplay(RUN, events).turns.length).toBeGreaterThan(0);
+    expect(huntKernelReplay(RUN, events).kernel.turns.length).toBeGreaterThan(0);
+    // The console's move panel reads a decision per move, keyed by the id the Moves
+    // tab sends, carrying the board as it stood and whether the call reproduced.
+    const moveId = view.moves[0]!.decision_id;
+    const one = huntKernelReplay(RUN, events, moveId);
+    expect(one.decisions.map((decision) => decision.decision_id)).toEqual([moveId]);
+    expect(one.decisions[0]!.recorded.hypotheses.length).toBeGreaterThan(0);
+    expect(one.decisions[0]!.mismatch).toBeNull();
+    expect(one.decisions[0]!.rebuilt).toEqual(one.decisions[0]!.recorded);
+    expect(huntKernelReplay(RUN, events).decisions).toHaveLength(view.moves.length);
     // The Checked tab lists what the hunt asked the estate -- not its bookkeeping --
     // as a controller hunt's worker dispatches did.
     expect(view.calls.map((call) => call.tool)).toEqual(["splunk_search", "search_findings"]);

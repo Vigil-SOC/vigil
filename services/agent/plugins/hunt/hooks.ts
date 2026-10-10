@@ -337,7 +337,7 @@ export function briefOf(projection: Projection): string {
 // corrected premise), as the lead read them off its digest. Newest last, bounded.
 const OPERATOR_SHOWN = 12;
 
-function operatorOf(projection: Projection): string[] {
+export function operatorOf(projection: Projection): string[] {
   // Every operator-supplied string is scrubbed, capped and kept to one line: the
   // brief is what the agent works from, and a forged heading would read as its own.
   const benign = [...suppressedEntities(projection).entries()].map(

@@ -242,8 +242,10 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
   // A kernel hunt has no digest to rebuild: what each turn was shown is the calls before it.
   if (isAgentRun(events)) {
+    const report = huntKernelReplay(runId, events, decisionId);
+    if (decisionId !== null && report.decisions.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(huntKernelReplay(runId, events)));
+    res.end(JSON.stringify(report));
     return;
   }
 
