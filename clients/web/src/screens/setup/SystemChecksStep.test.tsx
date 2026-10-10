@@ -22,7 +22,7 @@ describe('SystemChecksStep', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'healthy' },
+      data: { status: 'healthy', storage: { database_available: true, demo_mode: false } },
     } as never)
     vi.mocked(storageApi.getStatus).mockResolvedValue({
       data: {
@@ -80,7 +80,6 @@ describe('SystemChecksStep', () => {
     for (const label of ['Storage', 'API health', 'Alert collection', 'Tool servers']) {
       expect(mark(label)).toBe('Waiting')
     }
-    expect(consoleApi.getHealth).not.toHaveBeenCalled()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     releaseProvider()
     expect(
@@ -88,19 +87,18 @@ describe('SystemChecksStep', () => {
     ).toBeInTheDocument()
   })
 
-  it('reads Database and Storage from one storage call', async () => {
+  it('reads Storage from one storage call and Database and API health from one health call', async () => {
     render(<SystemChecksStep />)
     await screen.findByText('1 enabled server running')
     expect(storageApi.getStatus).toHaveBeenCalledTimes(1)
+    expect(consoleApi.getHealth).toHaveBeenCalledTimes(1)
   })
 
   it('needs you when the database is not available', async () => {
-    vi.mocked(storageApi.getStatus).mockResolvedValue({
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
       data: {
-        backend: 'none',
-        description: 'PostgreSQL is not connected',
-        database_available: false,
-        demo_mode: false,
+        status: 'degraded',
+        storage: { backend: 'none', database_available: false, demo_mode: false },
       },
     } as never)
     render(<SystemChecksStep />)
@@ -109,14 +107,19 @@ describe('SystemChecksStep', () => {
     expect(mark('Storage')).toBe('Passed')
   })
 
+  it('needs you, not Could not read, when the storage route fails because the database is down', async () => {
+    vi.mocked(storageApi.getStatus).mockRejectedValue(new Error('500'))
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: { status: 'degraded', storage: { database_available: false, demo_mode: false } },
+    } as never)
+    render(<SystemChecksStep />)
+    expect(await screen.findByText('Not connected')).toBeInTheDocument()
+    expect(mark('Database')).toBe('Needs you')
+  })
+
   it('passes the database in demo mode', async () => {
-    vi.mocked(storageApi.getStatus).mockResolvedValue({
-      data: {
-        backend: 'demo',
-        description: 'Demo mode',
-        database_available: false,
-        demo_mode: true,
-      },
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: { status: 'healthy', storage: { database_available: false, demo_mode: true } },
     } as never)
     render(<SystemChecksStep />)
     expect(await screen.findByText('Demo data, no database needed')).toBeInTheDocument()
@@ -196,8 +199,8 @@ describe('SystemChecksStep', () => {
     vi.mocked(storageApi.getStatus).mockResolvedValue({ data: undefined } as never)
     render(<SystemChecksStep />)
     await waitFor(() => expect(mark('Storage')).toBe('Needs you'))
-    expect(mark('Database')).toBe('Needs you')
-    expect(screen.getAllByText('Could not read')).toHaveLength(2)
+    expect(mark('Database')).toBe('Passed')
+    expect(screen.getAllByText('Could not read')).toHaveLength(1)
   })
 
   it('names an enabled MCP server that is not running', async () => {
@@ -218,24 +221,24 @@ describe('SystemChecksStep', () => {
     vi.mocked(storageApi.getStatus).mockRejectedValue(new Error('down'))
     render(<SystemChecksStep />)
     expect(await screen.findByText('1 enabled server running')).toBeInTheDocument()
-    expect(mark('Database')).toBe('Needs you')
+    expect(mark('Database')).toBe('Passed')
     expect(mark('Storage')).toBe('Needs you')
-    expect(screen.getAllByText('Could not read')).toHaveLength(2)
+    expect(screen.getAllByText('Could not read')).toHaveLength(1)
     expect(
-      screen.getByText('2 warnings. You can continue; fix them before you rely on alerts.'),
+      screen.getByText('1 warning. You can continue; fix them before you rely on alerts.'),
     ).toBeInTheDocument()
   })
 
   it('Check again resets and reruns every check, and clears the summary', async () => {
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'degraded' },
+      data: { status: 'degraded', storage: { database_available: true } },
     } as never)
     render(<SystemChecksStep />)
     expect(
       await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
     ).toBeInTheDocument()
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'healthy' },
+      data: { status: 'healthy', storage: { database_available: true } },
     } as never)
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
     for (const label of [
