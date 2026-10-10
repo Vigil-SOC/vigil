@@ -74,12 +74,16 @@ describe('SlaPoliciesSection states', () => {
 
     const empty = screen.getByText('Low policy').closest('tr')!
     expect(within(empty).getByText('Business hours')).toBeInTheDocument()
+    expect(within(empty).getByText('Low').closest('.sev-mark')).toHaveClass('low')
     await waitFor(() => expect(within(empty).getByText('Not measured yet')).toBeInTheDocument())
     expect(within(empty).queryByText('0%')).not.toBeInTheDocument()
 
     const since = api.getUsage.mock.calls[0][1].since as string
     expect(since).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000Z$/)
     expect(screen.queryByText(/Timers pause/)).not.toBeInTheDocument()
+    const head = document.querySelector('.page-head') as HTMLElement
+    expect(within(head).getByRole('heading', { name: 'SLA policies' })).toBeInTheDocument()
+    expect(within(head).getByRole('button', { name: /New policy/ })).toBeInTheDocument()
   })
 })
 

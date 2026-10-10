@@ -4,11 +4,6 @@ import { EmptyState, Field, Popup, Select, SettingsCard, TextInput } from '../..
 import { useDetectionRules, type AddSourcePayload, type DetectionSource } from './useSettings'
 import type { SectionProps } from './types'
 
-// Rule formats come back from the detection-rules API as free-form strings, so
-// only the known ones get a tint (the `fmt-*` classes, on tokens); any other stays neutral.
-const KNOWN_FORMATS = new Set(['sigma', 'splunk', 'elastic', 'kql', 'auto'])
-const formatClass = (format: string) => (KNOWN_FORMATS.has(format) ? ` fmt-${format}` : '')
-
 // Show a repo as host/path, the way the board does; local sources keep their path.
 const whereOf = (url: string) => url.replace(/^https?:\/\//, '').replace(/\.git$/, '')
 
@@ -23,6 +18,10 @@ const FORMAT_OPTIONS = [
   { value: 'kql', label: 'KQL (MD/YAML/KQL)' },
   { value: 'auto', label: 'Auto-detect' },
 ]
+
+// Formats arrive as free-form strings: the short name of a known one, else the raw id.
+const formatName = (format: string) =>
+  FORMAT_OPTIONS.find((o) => o.value === format)?.label.replace(/ \(.*\)$/, '') ?? format
 
 const EMPTY_SOURCE: AddSourcePayload = {
   name: '',
@@ -133,15 +132,6 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
           </>
         }
       >
-        {stats && (
-          <div className="flex gap-2 flex-wrap mb-2">
-            <span className="chip" style={{ color: 'var(--accent-2)' }}>{fmtNum(stats.total_rules)} total rules</span>
-            {Object.entries(stats.by_format).map(([fmt, count]) => (
-              <span key={fmt} className={`chip${formatClass(fmt)}`}>{fmt}: {fmtNum(count)}</span>
-            ))}
-          </div>
-        )}
-
         {sources.length === 0 ? (
           <EmptyState
             compact
@@ -170,7 +160,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         </span>
                       )}
                     </td>
-                    <td><span className={`chip${formatClass(s.format)}`}>{s.format}</span></td>
+                    <td>{formatName(s.format)}</td>
                     <td className="data-clip font-mono" title={s.git_url || undefined}>{where || '—'}</td>
                     <td>{fmtNum(s.rule_count)}</td>
                     <td className="data-act">

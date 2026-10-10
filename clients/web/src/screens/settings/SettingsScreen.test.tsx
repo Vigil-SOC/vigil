@@ -5,7 +5,7 @@ import { ToastProvider } from '../../shell/toast'
 import type { ConsoleScreenProps } from '../../shared/types'
 import SettingsScreen from './SettingsScreen'
 
-// AI models and Integrations render their own page head (they carry head actions), so the stubs do too
+// AI models, Integrations and SLA policies render their own page head (they carry head actions), so the stubs do too
 vi.mock('./AiConfigSection', () => ({
   default: () => (
     <>
@@ -28,7 +28,15 @@ vi.mock('./IntegrationsState', () => ({
   useIntegrationsState: () => integrationsState,
 }))
 vi.mock('./FederationSection', () => ({ default: () => <div>Federation panel</div> }))
-vi.mock('./SlaPoliciesSection', () => ({ default: () => <div>SLA panel</div> }))
+vi.mock('./SlaPoliciesSection', () => ({
+  SLA_DESC: 'Stub SLA description.',
+  default: () => (
+    <>
+      <header className="page-head"><h2>SLA policies</h2><p>Stub description.</p></header>
+      <div>SLA panel</div>
+    </>
+  ),
+}))
 vi.mock('./AutoInvestigateSection', () => ({ default: () => <div>Autonomy panel</div> }))
 vi.mock('./ServicesSection', () => ({ default: () => <div>Services panel</div> }))
 vi.mock('./SystemSection', () => ({ default: () => <div>System panel</div> }))
