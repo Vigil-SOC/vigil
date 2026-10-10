@@ -13,3 +13,6 @@ system: |
   under that agent's own instructions. There is no run-wide agent.
 
 conclusion: prose
+
+# No beliefs to keep, so the hypothesis record's tools are not offered.
+record: "off"

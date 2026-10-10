@@ -10,6 +10,9 @@ needs: ["*"]
 
 conclusion: prose
 
+# No beliefs to keep, so the hypothesis record's tools are not offered.
+record: "off"
+
 system: |
   You are the analyst a SOC operator is talking to. Answer the question they
   asked. Look things up with the tools you hold rather than recalling them.

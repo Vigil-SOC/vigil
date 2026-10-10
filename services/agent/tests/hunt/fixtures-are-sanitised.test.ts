@@ -92,10 +92,16 @@ const swept = [...files, PSEUDONYMS, ...replayed];
 
 const dirOf = (name: string): string => (replayed.includes(name) ? REPLAY : RUNS);
 
+// A kernel ledger names its own content by hash -- sha256:<hex> on every frame and
+// content event. That is an address into the ledger, not an observed digest, and
+// it is the one hash form nothing observed is ever written in, so it is set aside
+// and only it: a bare digest in the same file is still held to the allowlist.
+const ADDRESS = /sha256:[0-9a-f]{64}/g;
+
 const textOf = (name: string): string =>
   name === PSEUDONYMS
     ? readFileSync(join(RUNS, name), "utf8")
-    : gunzipSync(readFileSync(join(dirOf(name), name))).toString("utf8");
+    : gunzipSync(readFileSync(join(dirOf(name), name))).toString("utf8").replace(ADDRESS, "sha256:address");
 
 // Parsed, so the payload-typed entities can be read the way the fold reads them.
 // A torn line is skipped rather than repaired: it is the subject of its own test.
@@ -132,8 +138,8 @@ describe("the committed fixtures carry nothing real", () => {
 
   // Counted so the sweep below cannot pass by reading nothing: a fixture that
   // stopped being found is a fixture that stopped being checked.
-  it("has the recorded run the replay gate reads", () => {
-    expect(replayed.filter((name) => name.endsWith(".jsonl.gz"))).toHaveLength(1);
+  it("has the recorded runs the replay gates read", () => {
+    expect(replayed.filter((name) => name.endsWith(".jsonl.gz"))).toEqual(["hunt-recall.jsonl.gz", "kernel-hunt.jsonl.gz"]);
   });
 
   it.each(swept)("%s holds no identifier outside the allowlist", (name) => {

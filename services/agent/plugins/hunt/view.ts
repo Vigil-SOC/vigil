@@ -8,7 +8,8 @@ import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type P
 
 const VERB: Readonly<Record<string, string>> = {
   record_evidence: "INVESTIGATE",
-  rule_evidence: "INVESTIGATE",
+  link_evidence: "INVESTIGATE",
+  propose_hypothesis: "INVESTIGATE",
   validate_hypothesis: "VALIDATE",
   abandon_hypothesis: "ABANDON",
   handoff_ir: "HANDOFF_IR",
@@ -18,7 +19,7 @@ const VERB: Readonly<Record<string, string>> = {
 };
 
 // Bookkeeping, not a move: reading the board or a playbook changes nothing.
-const QUIET = new Set(["hunt_status", "load_skill", "close_question"]);
+const QUIET = new Set(["hunt_status", "load_skill", "close_question", "open_question"]);
 
 interface Envelope {
   kind: string;

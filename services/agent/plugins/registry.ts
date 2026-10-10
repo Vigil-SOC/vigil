@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { isStructured, type ConclusionSpec, type GuardSpec, type PluginManifest, type SkillSpec } from "../contracts/plugin.js";
+import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
 
 // A plugin is a directory: plugin.yaml and a skills/ folder of SKILL.md files, shipped
@@ -42,6 +42,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
   if (max_turns !== undefined && (typeof max_turns !== "number" || !Number.isInteger(max_turns) || max_turns < 1)) {
     throw new SpecError(`${where}: max_turns must be a positive integer`);
   }
+  const record = recordOf(raw["record"], conclusion, where);
 
   return {
     id,
@@ -52,7 +53,27 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     conclusion,
     ...(guard === undefined ? {} : { guard }),
     ...(max_turns === undefined ? {} : { max_turns: max_turns as number }),
+    ...(record === undefined ? {} : { record }),
   };
+}
+
+// A required record has to surface in the answer: its conclusion names the field
+// the run declares its gaps in, and the schema requires that field.
+function recordOf(value: unknown, conclusion: ConclusionSpec, where: string): RecordMode | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !(RECORD_MODES as readonly string[]).includes(value)) {
+    throw new SpecError(`${where}: record must be one of ${RECORD_MODES.join(", ")}`);
+  }
+  if (value === "required") {
+    if (!isStructured(conclusion) || conclusion.open_questions_field === undefined) {
+      throw new SpecError(`${where}: a required record needs a structured conclusion that names its open_questions_field`);
+    }
+    const required = (conclusion.schema["required"] ?? []) as unknown[];
+    if (!required.includes(conclusion.open_questions_field)) {
+      throw new SpecError(`${where}: the conclusion schema must require ${conclusion.open_questions_field}, where the run declares its gaps`);
+    }
+  }
+  return value as RecordMode;
 }
 
 // `conclusion: prose` ends the run on what the agent last said; a mapping with a
@@ -66,11 +87,17 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
   const properties = ((schema as Record<string, unknown>)["properties"] ?? {}) as Record<string, unknown>;
   const summary_field = text_(raw, "summary_field", `${where}: conclusion`);
   const citations_field = raw["citations_field"] === undefined ? undefined : text_(raw, "citations_field", `${where}: conclusion`);
+  const open_questions_field = raw["open_questions_field"] === undefined ? undefined : text_(raw, "open_questions_field", `${where}: conclusion`);
   // A field the schema never asks for is one the run can never fill.
-  for (const field of [summary_field, citations_field]) {
+  for (const field of [summary_field, citations_field, open_questions_field]) {
     if (field !== undefined && !(field in properties)) throw new SpecError(`${where}: conclusion names ${field}, which the schema does not declare`);
   }
-  return { schema: schema as Record<string, unknown>, summary_field, ...(citations_field === undefined ? {} : { citations_field }) };
+  return {
+    schema: schema as Record<string, unknown>,
+    summary_field,
+    ...(citations_field === undefined ? {} : { citations_field }),
+    ...(open_questions_field === undefined ? {} : { open_questions_field }),
+  };
 }
 
 function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): GuardSpec {

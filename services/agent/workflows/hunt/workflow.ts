@@ -1,6 +1,6 @@
 import type { Announce } from "../../core/checkpoints.js";
-import { runAgent, type AgentKinds } from "../../core/agent.js";
-import type { Harness } from "../../core/loop.js";
+import { childOrdinal, runAgent, runChild, type AgentKinds } from "../../core/agent.js";
+import type { Harness, TurnConfig } from "../../core/loop.js";
 import type { RunKind, RunOutcome, TerminalHandoff } from "../../contracts/events.js";
 import type { RunSpec } from "../../core/spec.js";
 import { narrativeWriter } from "./adapters.js";
@@ -108,7 +108,10 @@ export async function narrateRun(
   // Empty recall_keys: the write-up recalls nothing. It runs after the terminal,
   // over a projection, and a keyed read there would be a read no decision was
   // made on.
-  const narrative = await narrativeWriter({ harness, spec, run_id: runId, run_kind: runKind, actions: [], recall_keys: [] }).narrate(
+  // The narrator is a judge of the run, so it runs as a child of it, on its own ledger.
+  const parent = { harness: harness as unknown as Harness<AgentKinds>, options: { run_id: runId, run_kind: runKind } };
+  const turn = async <T>(cfg: TurnConfig) => runChild<T>(parent, `${cfg.role}:${await childOrdinal(parent, cfg.role)}`, cfg);
+  const narrative = await narrativeWriter({ harness, spec, run_id: runId, run_kind: runKind, actions: [], recall_keys: [], turn }).narrate(
     narrativeInput(projection, buildReport(projection)),
   );
   await state.append(runId, [

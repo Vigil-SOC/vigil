@@ -62,7 +62,10 @@ function huntHarness(): HarnessFactory {
     emit: (schema) =>
       isLead(schema)
         ? { action: "CONCLUDE", rationale: "nothing to pursue", evidence_citations: [] }
-        : { results: [] },
+        : // The hunt's own conclusion: its account and what it could not settle.
+          "open_questions" in ((schema["properties"] ?? {}) as Record<string, unknown>)
+          ? { summary: "nothing to pursue", open_questions: [] }
+          : { results: [] },
     ticks: 0,
   });
   return (_kind, spec, state, memory = nullMemory, seed = FRESH) => ({

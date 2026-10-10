@@ -10,6 +10,7 @@ import { nullMemory, recalling } from "../../core/memory.js";
 import { registryOf } from "../../core/registry.js";
 import type { Memory } from "../../core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from "../../core/spec.js";
+import { replayFrames } from "../../core/replay.js";
 import { InProcessState } from "../../core/state.js";
 import type { StreamEvent } from "../../core/stream.js";
 import { chatEvents } from "../../workflows/chat/sse.js";
@@ -238,6 +239,24 @@ describe("what the request says about its agent and its model", () => {
 
     expect(await folds(specOf(`${CONFIG}context_window: 16384\n`))).toBeGreaterThan(0);
     expect(await folds(specOf())).toBe(0);
+  });
+
+  it("replays a turn the window folded exactly as it was sent, off the ledger alone", async () => {
+    const turns: Turn[] = [
+      ...ASKED,
+      { role: "assistant", content: "a".repeat(30_000) },
+      { role: "user", content: "and the next hop?" },
+      { role: "assistant", content: "b".repeat(30_000) },
+      { role: "user", content: "anything else?" },
+    ];
+    const state = new InProcessState();
+    await converse(harnessOf([{ content: "ok" }], state), turns, { spec: specOf(`${CONFIG}context_window: 16384\n`) });
+
+    const frames = (await state.read(RUN)).filter((event) => event.kind === "frame");
+    expect(frames.some((event) => (event.payload as { fold: { folded: number } }).fold.folded > 0)).toBe(true);
+    const replayed = replayFrames(await state.read(RUN));
+    expect(replayed.frames.length).toBeGreaterThan(0);
+    expect(replayed.frames.map((frame) => frame.mismatch)).toEqual(replayed.frames.map(() => null));
   });
 });
 

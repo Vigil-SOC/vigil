@@ -163,6 +163,9 @@ export function fold(events: readonly HuntEvent[]): Projection {
       case "call":
       case "conclusion":
       case "review":
+      case "frame":
+      case "content":
+      case "child":
       case "finalize":
       case "narrative":
       // Recall is an input to the run's decisions and never a belief of the hunt's:

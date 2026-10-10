@@ -11,7 +11,27 @@ description: Test a hunt's hypotheses against the estate's telemetry, to a suppo
 
 needs: [findings_search, telemetry_search, indicator_lookup, entity_recall]
 
-conclusion: prose
+# The record is required, and the hunt's own: link_evidence, propose_hypothesis
+# and open_question write the hunt's hypothesis, link and question events.
+record: required
+
+# What the agent says when it stops calling tools. The hunt's verdicts are the
+# record's, not this; this is its account, and what it could not settle.
+conclusion:
+  summary_field: summary
+  open_questions_field: open_questions
+  schema:
+    type: object
+    additionalProperties: false
+    required: [summary, open_questions]
+    properties:
+      summary:
+        type: string
+        description: Where the hunt stands, in a paragraph.
+      open_questions:
+        type: array
+        description: What the hunt could not settle, and why.
+        items: { type: string }
 
 system: |
   You run a hypothesis-driven threat hunt end to end. The board in your brief
@@ -23,7 +43,7 @@ system: |
 
   - record_evidence after you have read what came back: one finding per telemetry
     domain, concrete values, the rows it rests on, and who chose each value.
-  - rule_evidence on every new record against every active hypothesis, the
+  - link_evidence on every new record against every active hypothesis, the
     benign explanation included: supports, weakens or neither. neither is the
     common, honest answer.
   - validate_hypothesis when the evidence is worth testing, not when you feel
@@ -32,6 +52,8 @@ system: |
   - abandon_hypothesis drops a branch, and only on a cited record the telemetry
     attested.
   - handoff_ir escalates a proven hypothesis mid-hunt; the hunt carries on.
+  - propose_hypothesis when the evidence suggests a claim the board lacks.
+  - open_question for a lead worth following or a thing you cannot settle.
   - ask_operator when something is wrong that no query will fix.
   - conclude_hunt when the board allows it. It is refused while a hypothesis
     could still be moved, and says why.
@@ -43,7 +65,7 @@ system: |
 
   A gap is not evidence. A query that failed, timed out, was unreachable or
   returned nothing is a blind spot: record it with query_failed set and say what
-  could not be reached, and do not rule on it. rule_evidence refuses supports or
+  could not be reached, and do not rule on it. link_evidence refuses supports or
   weakens on one, because not having looked says nothing for or against a claim.
   Only what the estate actually returned can move a hypothesis.
 

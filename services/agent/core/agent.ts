@@ -2,6 +2,7 @@ import { defineTool, type RegisteredTool, type ToolResult } from "../contracts/t
 import type {
   AgentEvent,
   CallPayload,
+  ChildPayload,
   ConclusionPayload,
   DirectivePayload,
   NewEvent,
@@ -13,17 +14,20 @@ import type {
   TerminalPayload,
   UnboundPayload,
 } from "../contracts/events.js";
-import { isStructured, type GuardSpec, type PluginManifest } from "../contracts/plugin.js";
+import { isStructured, recordModeOf, type GuardSpec, type PluginManifest } from "../contracts/plugin.js";
 import { journalAnswers, noAnswers, type Answers } from "./answers.js";
 import { GatewayExhausted } from "./limiter.js";
 import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
 import type { Harness, Outcome, TurnConfig } from "./loop.js";
 import type { Message } from "./provider.js";
-import { registryOf } from "./registry.js";
+import { registryOf, type Registry } from "./registry.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
 import type { RunSpec, ToolSpec } from "./spec.js";
-import { drain, streamTurn, type StreamEvent } from "./stream.js";
+import { streamTurn, type StreamEvent } from "./stream.js";
+import { childRunId, Framer } from "./frames.js";
+import { classify, declaredGaps, grounded, kernelRecord, recordTools, type RecordBackend } from "./record.js";
+import type { RunEventKind } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
 // journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
@@ -82,8 +86,12 @@ export interface PluginHooks {
   tools?(ctx: PluginContext): readonly RegisteredTool[];
   // Wraps how a call reaches its tool, to shape what comes back.
   dispatch?(ctx: PluginContext, inner: ToolDispatch): ToolDispatch;
-  // Once, when the run starts: writes the run event and whatever opens it, from `base`,
-  // for a plugin whose record rides beside the run event. Absent writes the kernel's own.
+  // Where the record's tools write, for a plugin whose record is its own. Absent
+  // writes the kernel's own record events (core/record.ts).
+  record?(ctx: PluginContext): RecordBackend;
+  // Once, when the run starts: writes the run event and whatever opens it. Absent
+  // writes the kernel's own. A plugin whose record lives beside the run event --
+  // state its fold reads first -- writes the opening itself from \`base\`.
   open?(ctx: PluginContext, base: RunPayload): Promise<void>;
   // Each time the run is picked up, before the loop.
   before?(ctx: PluginContext): Promise<Early | null>;
@@ -278,14 +286,15 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     }
     const ending = (await options.hooks?.finish?.(ctx, loop.outcome)) ?? null;
     if (ending !== null && isParked(ending)) return wait(ctx, ending);
-    if (loop.conclusion !== null) await harness.state.append(run_id, [event(options, "conclusion", loop.conclusion)]);
+    if (loop.conclusion !== null) await harness.state.append(run_id, [event(options, "conclusion", await withGaps(ctx, loop.conclusion))]);
     if (ending !== null) return end(ctx, ending.outcome, ending.reason, ending.summary, ending.handoffs);
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
       return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason);
     }
-    conclusion = loop.conclusion;
-    if (conclusion === null) return end(ctx, "failed", "the run answered but nothing was concluded");
+    if (loop.conclusion === null) return end(ctx, "failed", "the run answered but nothing was concluded");
     held = await harness.state.read(run_id);
+    conclusion = lastPayload<ConclusionPayload>(held, "conclusion");
+    if (conclusion === null) return end(ctx, "failed", "the run answered but nothing was concluded");
   }
 
   // Reviewed once. A crash between the two is resumed here rather than re-run.
@@ -301,16 +310,39 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
 // plugin's own, and the skill loader, each shaped by the plugin if it asks.
 function equipped(harness: Harness<Kinds>, options: AgentOptions): Harness<Kinds> {
   const ctx: PluginContext = { harness, options };
-  const own = options.hooks?.tools?.(ctx) ?? [];
+  const own = [...(options.hooks?.tools?.(ctx) ?? []), ...recordToolsFor(ctx)];
   const registry =
-    options.tools === undefined && own.length === 0
-      ? harness.registry
+    options.tools === undefined
+      ? layered(harness.registry, own)
       : registryOf(
           dedupe([...(options.tools ?? []), ...own, ...(options.plugin.skills.length === 0 ? [] : [skillTool(options.plugin)])]),
           pluginGrants(options.plugin, options.spec.tools, own.map((tool) => tool.id)),
         );
   const dispatch = options.hooks?.dispatch?.(ctx, harness.dispatch) ?? harness.dispatch;
   return { ...harness, registry, dispatch };
+}
+
+// The record's tools (core/record.ts), unless the plugin keeps none.
+function recordToolsFor(ctx: PluginContext): RegisteredTool[] {
+  if (recordModeOf(ctx.options.plugin) === "off") return [];
+  const backend =
+    ctx.options.hooks?.record?.(ctx) ??
+    kernelRecord({
+      read: () => ctx.harness.state.read(ctx.options.run_id),
+      write: async (kind, payload) => {
+        await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, kind, payload)]);
+      },
+    });
+  return recordTools(backend);
+}
+
+// The harness's own registry with the run's in-process tools added to the agent's
+// grant: for a caller that registered the deployment's tools itself.
+function layered(base: Registry, own: readonly RegisteredTool[]): Registry {
+  if (own.length === 0) return base;
+  const granted = (role: string): readonly RegisteredTool[] =>
+    role === AGENT_ROLE ? dedupe([...base.granted(role), ...own]) : base.granted(role);
+  return { granted, get: (role, id) => granted(role).find((tool) => tool.id === id) };
 }
 
 // The later of two tools with one id wins: a plugin supplies the implementation
@@ -346,6 +378,13 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
   const task = options.conversation?.task ?? (await (options.hooks?.brief?.(ctx) ?? Promise.resolve(briefOf(options.spec))));
   const allowance = await options.hooks?.turns?.(ctx);
   const cfg = turnFor(options, calls, used, task, linked.signal, allowance);
+  const framer = await Framer.open(
+    harness.state,
+    options.run_id,
+    options.run_kind,
+    options.plugin.skills,
+    options.conversation === undefined ? agentCalls(calls).map((call) => call.ref) : null,
+  );
   const stream = streamTurn<unknown, Kinds>(cfg, harness);
 
   let turn = used;
@@ -362,6 +401,12 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
         break;
       }
       const seen = next.value;
+      // What the model is about to be shown, journaled before it is: the kernel's
+      // own record, not something a plugin or a reader of the stream acts on.
+      if (seen.type === "frame") {
+        await harness.state.append(options.run_id, framer.events(seen.frame) as Event[]);
+        continue;
+      }
       if (seen.type === "text_delta") spoken += seen.text;
       else if (seen.type === "usage") {
         // A model call has answered. Whatever it said before asking for tools is the
@@ -381,11 +426,14 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
           result: seen.attempt.wrapped.text,
           ok: seen.attempt.result.ok,
           failure: seen.attempt.wrapped.failure?.kind ?? null,
-          ...(first && thought.trim() !== "" ? { thought: thought.trim() } : {}),
+          class: classify(seen.attempt.result),
+          // Verbatim, so a transcript rebuilt from the ledger is the bytes the model sent.
+          ...(first && thought !== "" ? { thought } : {}),
           ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
         };
         first = false;
         await harness.state.append(options.run_id, [event(options, "call", call)]);
+        framer.note(call.ref);
       }
       const said = await options.hooks?.observe?.(ctx, seen);
       yield seen;
@@ -457,7 +505,7 @@ function turnFor(
     system: [systemOf(plugin), directivesOf(spec)].filter((part) => part !== "").join("\n\n"),
     task,
     schema: structured?.schema ?? null,
-    history: options.conversation === undefined ? historyOf(calls) : [...options.conversation.history],
+    history: options.conversation === undefined ? historyOf(agentCalls(calls)) : [...options.conversation.history],
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),
     approvals: new Set(spec.approvals),
@@ -551,6 +599,12 @@ export function callsIn(events: readonly { kind: string; payload: unknown }[]): 
   return events.filter((one) => one.kind === "call").map((one) => one.payload as CallPayload);
 }
 
+// The run's own agent's calls: a step a plugin ran under its own role keeps its
+// calls on the ledger, and never in the agent's transcript.
+export function agentCalls(calls: readonly CallPayload[]): CallPayload[] {
+  return calls.filter((call) => call.role === undefined);
+}
+
 // --- steps a plugin runs itself ----------------------------------------------
 
 // One turn under a role, prompt and grants the plugin chooses, for authored sequences
@@ -589,11 +643,16 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     recall_limit: options.spec.runtime.recall_limit,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
+  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, [], []);
   const stream = streamTurn<T, Kinds>(cfg, scoped);
   for (;;) {
     const next = await stream.next();
     if (next.done === true) return next.value;
     const seen = next.value;
+    if (seen.type === "frame") {
+      await harness.state.append(options.run_id, framer.events(seen.frame) as Event[]);
+      continue;
+    }
     if (seen.type === "usage") turn += 1;
     if (seen.type !== "tool_result") continue;
     count += 1;
@@ -606,11 +665,168 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
       result: seen.attempt.wrapped.text,
       ok: seen.attempt.result.ok,
       failure: seen.attempt.wrapped.failure?.kind ?? null,
+      class: classify(seen.attempt.result),
       role: sub.role,
       ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
     };
     await harness.state.append(options.run_id, [event(options, "call", call)]);
+    framer.note(call.ref);
   }
+}
+
+// --- child runs --------------------------------------------------------------
+
+export const CHILD_KIND: RunKind = "subagent";
+
+// A judge or subagent: one turn under its own prompt, on a ledger of its own,
+// linked both ways to the run that started it. Its frames, calls and answer are
+// on that ledger; its spend is the parent's, so the parent's budget and cost
+// count it. key names what it was for, and fixes its run id: a resumed parent
+// finds the child it already ran and reads its answer rather than asking again.
+// What a child needs of its parent: the harness, and which run it belongs to. A
+// plugin hook passes its context; a caller outside the loop passes just these.
+export interface ParentRun {
+  harness: Harness<Kinds>;
+  options: Pick<AgentOptions, "run_id" | "run_kind">;
+}
+
+export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig): Promise<Outcome<T> & { child_run_id: string }> {
+  const { harness, options } = ctx;
+  const child = childRunId(options.run_id, key);
+  const at = (kind: RunEventKind, payload: unknown): Event =>
+    ({ run_id: child, run_kind: CHILD_KIND, kind, payload }) as unknown as Event;
+
+  const held = await harness.state.read(child);
+  const ended = lastPayload<TerminalPayload>(held, "terminal");
+  if (ended !== null) {
+    await linkChild(ctx, child, turn.role, key, ended.outcome, ended.reason, held);
+    return { ...storedOutcome<T>(held, ended), child_run_id: child };
+  }
+  if (held.length === 0) {
+    const opening: RunPayload = {
+      run_kind: CHILD_KIND,
+      spec: { role: turn.role, key, system: turn.system, schema: turn.schema },
+      budgets: harness.budget.limits,
+      seed: child,
+      tenant_id: null,
+      started_by: options.run_id,
+      parent: { run_id: options.run_id, run_kind: options.run_kind, role: turn.role, key },
+    };
+    await harness.state.append(child, [at("run", opening)]);
+  }
+
+  const framer = await Framer.open(harness.state, child, CHILD_KIND, [], []);
+  const cfg: TurnConfig = { ...turn, run_id: child, run_kind: CHILD_KIND, spend_to: { run_id: options.run_id, run_kind: options.run_kind } };
+  const stream = streamTurn<T, Kinds>(cfg, harness);
+  let turns = 0;
+  let count = 0;
+  let outcome: Outcome<T>;
+  for (;;) {
+    const next = await stream.next();
+    if (next.done === true) {
+      outcome = next.value;
+      break;
+    }
+    const seen = next.value;
+    if (seen.type === "frame") await harness.state.append(child, framer.events(seen.frame) as Event[]);
+    else if (seen.type === "usage") turns += 1;
+    else if (seen.type === "tool_result") {
+      count += 1;
+      const call: CallPayload = {
+        ref: `${CALL_REF}${count}`,
+        turn: turns,
+        call_id: seen.call.id,
+        tool: seen.call.tool,
+        arguments: seen.call.args,
+        result: seen.attempt.wrapped.text,
+        ok: seen.attempt.result.ok,
+        failure: seen.attempt.wrapped.failure?.kind ?? null,
+        class: classify(seen.attempt.result),
+      };
+      await harness.state.append(child, [at("call", call)]);
+      framer.note(call.ref);
+    }
+  }
+  if (outcome.status === "waiting_approval") return { ...outcome, child_run_id: child };
+
+  const value = outcome.value;
+  const tail: Event[] = [];
+  if (outcome.status === "completed" && value !== null) {
+    const conclusion: ConclusionPayload = {
+      plugin: turn.role,
+      value: typeof value === "string" ? { text: value } : (value as Record<string, unknown>),
+      capped: outcome.capped,
+      turns: outcome.turns,
+      cost_usd: outcome.cost_usd,
+    };
+    tail.push(at("conclusion", conclusion));
+  }
+  const terminal: TerminalPayload = {
+    outcome: outcome.status === "completed" && value !== null ? "completed" : outcome.refusal === null ? "failed" : "budget_exhausted",
+    reason: outcome.reason,
+  };
+  tail.push(at("terminal", terminal));
+  await harness.state.append(child, tail);
+  await linkChild(ctx, child, turn.role, key, terminal.outcome, terminal.reason, await harness.state.read(child), outcome.cost_usd);
+  return { ...outcome, child_run_id: child };
+}
+
+// The parent's end of the link, written once.
+async function linkChild(
+  ctx: ParentRun,
+  child: string,
+  role: string,
+  key: string,
+  outcome: RunOutcome,
+  reason: string,
+  held: readonly { kind: string; payload: unknown }[],
+  cost?: number,
+): Promise<void> {
+  const parent = await ctx.harness.state.read(ctx.options.run_id);
+  if (parent.some((one) => one.kind === "child" && (one.payload as ChildPayload).child_run_id === child)) return;
+  const cost_usd = cost ?? lastPayload<ConclusionPayload>(held as Ledger, "conclusion")?.cost_usd ?? 0;
+  const payload: ChildPayload = { child_run_id: child, role, key, outcome, reason, cost_usd };
+  const link = { run_id: ctx.options.run_id, run_kind: ctx.options.run_kind, kind: "child", payload } as unknown as Event;
+  await ctx.harness.state.append(ctx.options.run_id, [link]);
+}
+
+// A child that already ended, read back as the outcome it ended on.
+function storedOutcome<T>(held: readonly { kind: string; payload: unknown }[], ended: TerminalPayload): Outcome<T> {
+  const conclusion = lastPayload<ConclusionPayload>(held as Ledger, "conclusion");
+  const raw = conclusion?.value ?? null;
+  const value = raw !== null && Object.keys(raw).length === 1 && typeof raw["text"] === "string" ? raw["text"] : raw;
+  return {
+    status: ended.outcome === "completed" ? "completed" : "failed",
+    value: (value ?? null) as T | null,
+    refusal: null,
+    pending: null,
+    capped: conclusion?.capped ?? false,
+    transcript: [],
+    calls: [],
+    turns: conclusion?.turns ?? 0,
+    rejected: [],
+    reason: ended.reason,
+    // Already on the parent's ledger when it was first run; nothing is spent again.
+    cost_usd: 0,
+  };
+}
+
+// How many children this run has already started under a role: the ordinal the
+// next one's key carries, so a judge asked twice is two children.
+export async function childOrdinal(ctx: ParentRun, role: string): Promise<number> {
+  const held = await ctx.harness.state.read(ctx.options.run_id);
+  return held.filter((one) => one.kind === "child" && (one.payload as ChildPayload).role === role).length + 1;
+}
+
+// What the run could not settle, as of its conclusion: the record's open
+// questions, the answer's own, and the calls the estate failed to answer.
+async function withGaps(ctx: PluginContext, conclusion: ConclusionPayload): Promise<ConclusionPayload> {
+  const held = await ctx.harness.state.read(ctx.options.run_id);
+  const structured = isStructured(ctx.options.plugin.conclusion) ? ctx.options.plugin.conclusion : null;
+  const field = structured?.open_questions_field;
+  const said = field === undefined ? [] : conclusion.value[field];
+  const declared = Array.isArray(said) ? said.filter((one): one is string => typeof one === "string" && one.trim() !== "") : [];
+  return { ...conclusion, declared_gaps: declaredGaps(held, callsIn(held), declared) };
 }
 
 // --- stopping ----------------------------------------------------------------
@@ -710,9 +926,20 @@ export async function reviewOf(ctx: PluginContext, conclusion: ConclusionPayload
     return { stance: "skipped", reasons: "no guarded value was asked for", missing: [], cited, unknown_refs };
   }
 
+  // A required record holds a guarded answer to it too: the answer has to stand on
+  // a cited result the record links to one of its claims, not on prose alone.
+  const required = recordModeOf(plugin) === "required";
+  const held = required ? await ctx.harness.state.read(ctx.options.run_id) : [];
+  const isGrounded = required ? grounded(held, calls, real) : undefined;
   const reviewed = await askReviewer(ctx, guard, conclusion, calls, real);
-  const stands = reviewed.stance === "uphold" && real.length > 0;
-  return { ...reviewed, cited, unknown_refs, guarded: { field: guard.field, asked, final: stands ? asked : guard.fallback } };
+  const stands = reviewed.stance === "uphold" && real.length > 0 && isGrounded !== false;
+  return {
+    ...reviewed,
+    cited,
+    unknown_refs,
+    guarded: { field: guard.field, asked, final: stands ? asked : guard.fallback },
+    ...(isGrounded === undefined ? {} : { grounded: isGrounded }),
+  };
 }
 
 async function askReviewer(
@@ -721,7 +948,7 @@ async function askReviewer(
   conclusion: ConclusionPayload,
   calls: readonly CallPayload[],
   real: readonly string[],
-): Promise<Pick<ReviewPayload, "stance" | "reasons" | "missing" | "failure">> {
+): Promise<Pick<ReviewPayload, "stance" | "reasons" | "missing" | "failure" | "child_run_id">> {
   const { options } = ctx;
   const cfg: TurnConfig = {
     run_id: options.run_id,
@@ -739,11 +966,12 @@ async function askReviewer(
     recall_keys: [],
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
-  const outcome = await drain(streamTurn<{ stance: ReviewPayload["stance"]; reasons: string; missing: string[] }, Kinds>(cfg, ctx.harness));
+  const outcome = await runChild<{ stance: ReviewPayload["stance"]; reasons: string; missing: string[] }>(ctx, REVIEW_ROLE, cfg);
+  const child = { child_run_id: outcome.child_run_id };
   if (outcome.status !== "completed" || outcome.value === null) {
-    return { stance: "insufficient", reasons: "the reviewer did not answer", missing: [], failure: outcome.reason };
+    return { stance: "insufficient", reasons: "the reviewer did not answer", missing: [], failure: outcome.reason, ...child };
   }
-  return { stance: outcome.value.stance, reasons: outcome.value.reasons, missing: outcome.value.missing };
+  return { stance: outcome.value.stance, reasons: outcome.value.reasons, missing: outcome.value.missing, ...child };
 }
 
 function reviewTask(conclusion: ConclusionPayload, calls: readonly CallPayload[], real: readonly string[]): string {
@@ -790,7 +1018,11 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   const summary = typeof own === "string" && own.trim() !== "" ? own.trim() : JSON.stringify(conclusion.value);
   const guarded = review.guarded;
   if (guarded === undefined || guarded.asked === guarded.final) return summary;
-  return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because the review was ${review.stance}${review.reasons ? `: ${review.reasons}` : ""}.`;
+  const why =
+    review.grounded === false && review.stance === "uphold"
+      ? "no cited result is linked to a claim on the record"
+      : `the review was ${review.stance}${review.reasons ? `: ${review.reasons}` : ""}`;
+  return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
 }
 
 // --- ledger ----------------------------------------------------------------

@@ -107,11 +107,14 @@ describe("the Tool port cannot be opted out of", () => {
 
 describe("event kinds are closed", () => {
   it("recognises exactly the domain-free set", () => {
-    expect(RUN_EVENT_KINDS).toHaveLength(13);
+    expect(RUN_EVENT_KINDS).toHaveLength(19);
     expect(RUN_EVENT_KINDS).toContain("terminal");
     // Domain-free because every run kind recalls, not because a hunt does.
     expect(RUN_EVENT_KINDS).toContain("recall");
-    expect(RUN_EVENT_KINDS).not.toContain("hypothesis");
+    // The record is the kernel's now, for every plugin; the hunt's verdict machinery is not.
+    expect(RUN_EVENT_KINDS).toContain("hypothesis");
+    expect(RUN_EVENT_KINDS).not.toContain("evidence");
+    expect(RUN_EVENT_KINDS).not.toContain("decision");
   });
 
   it("discriminates a payload by its kind", () => {

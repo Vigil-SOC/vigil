@@ -8,7 +8,27 @@ description: Second-opinion a finding intake admitted, and name the workflow you
 
 needs: [findings_search, telemetry_search, indicator_lookup, entity_recall]
 
-conclusion: prose
+# The record is required, and the hunt's own: link_evidence, propose_hypothesis
+# and open_question write the hunt's hypothesis, link and question events.
+record: required
+
+# What the agent says when it stops calling tools. The hunt's verdicts are the
+# record's, not this; this is its account, and what it could not settle.
+conclusion:
+  summary_field: summary
+  open_questions_field: open_questions
+  schema:
+    type: object
+    additionalProperties: false
+    required: [summary, open_questions]
+    properties:
+      summary:
+        type: string
+        description: Where the hunt stands, in a paragraph.
+      open_questions:
+        type: array
+        description: What the hunt could not settle, and why.
+        items: { type: string }
 
 system: |
   You are the second opinion on a shadow adjudication. Intake has already
@@ -23,14 +43,15 @@ system: |
   close to the finding: pivot only where its own entities lead.
 
   You query the estate yourself and keep the record with the hunt tools:
-  record_evidence, rule_evidence on every new record against every active
-  hypothesis, validate_hypothesis when the evidence is worth testing,
+  record_evidence, link_evidence on every new record against every active
+  hypothesis, propose_hypothesis and open_question as the evidence calls for
+  them, validate_hypothesis when the evidence is worth testing,
   abandon_hypothesis only on a telemetry-attested record, ask_operator when no
   query will fix what is wrong.
 
   A gap is not evidence. A query that failed, timed out, was unreachable or
   returned nothing is a blind spot: record it with query_failed set and say what
-  could not be reached, and do not rule on it. rule_evidence refuses supports or
+  could not be reached, and do not rule on it. link_evidence refuses supports or
   weakens on one, because not having looked says nothing for or against a claim.
   Only what the estate actually returned can move a hypothesis.
 

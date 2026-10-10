@@ -1,6 +1,6 @@
 import { setMaxListeners } from "node:events";
 import { drain, streamTurn } from "../../core/stream.js";
-import type { Attempt, Harness } from "../../core/loop.js";
+import type { Attempt, Harness, Outcome, TurnConfig } from "../../core/loop.js";
 import { clamp } from "../../core/security.js";
 import type { RunKind } from "../../contracts/events.js";
 import type { RoleSpec, RunSpec } from "../../core/spec.js";
@@ -32,6 +32,13 @@ export interface AdapterOptions {
   // the recall tool, and a second keyed read would be a second prefix.
   recall_keys: readonly string[];
   signal?: AbortSignal;
+  // How a turn is run. Absent runs it on this run's own ledger; the hunt plugin
+  // runs the critic and the narrator as child runs, each on a ledger of its own.
+  turn?: <T>(cfg: TurnConfig) => Promise<Outcome<T>>;
+}
+
+function runTurn<T>(options: AdapterOptions, cfg: TurnConfig): Promise<Outcome<T>> {
+  return options.turn === undefined ? drain(streamTurn<T, HuntKinds>(cfg, options.harness)) : options.turn<T>(cfg);
 }
 
 function role(spec: RunSpec, name: "lead" | "critic"): RoleSpec {
@@ -70,7 +77,7 @@ export function link(held?: AbortSignal, asked?: AbortSignal): Linked {
   return { signal: halt.signal, release: () => wired.forEach((unwire) => unwire()) };
 }
 
-function turnFor(options: AdapterOptions, id: string, spec: RoleSpec, task: string, signal?: AbortSignal) {
+function turnFor(options: AdapterOptions, id: string, spec: RoleSpec, task: string, signal?: AbortSignal): TurnConfig {
   const held = signal ?? options.signal;
   const { runtime } = options.spec;
   return {
@@ -131,7 +138,7 @@ export function narrativeWriter(options: AdapterOptions): Narrator {
         outcome = await charged(
           options.harness,
           before,
-          drain(streamTurn<NarrativeAnswer, HuntKinds>(turn, options.harness)),
+          runTurn<NarrativeAnswer>(options, turn),
         );
       } finally {
         linked.release();
@@ -312,9 +319,7 @@ export function disconfirmationCritic(options: AdapterOptions): DisconfirmationC
         outcome = await charged(
           options.harness,
           before,
-          drain(
-            streamTurn<CriticAnswer, HuntKinds>(turnFor(options, "critic", critic, task, linked.signal), options.harness),
-          ),
+          runTurn<CriticAnswer>(options, turnFor(options, "critic", critic, task, linked.signal)),
         );
       } finally {
         linked.release();

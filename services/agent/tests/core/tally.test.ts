@@ -66,7 +66,8 @@ describe("the conformance plugin", () => {
     // An iteration is a model call, counted by the harness that makes it.
     expect(report.iterations).toBe(2);
 
-    const kinds = (await state.read(RUN)).map((event) => event.kind);
+    // Frames and their content are the kernel's record of what each call was shown.
+    const kinds = (await state.read(RUN)).map((event) => event.kind).filter((kind) => kind !== "frame" && kind !== "content");
     expect(kinds).toEqual(["run", "spend", "call", "tally", "spend", "call", "tally", "terminal"]);
     expect(await state.terminal(RUN)).toEqual({ outcome: "completed", reason: "the count reached 3", summary: "the count reached 3" });
   });
@@ -147,9 +148,14 @@ describe("swapping a seam", () => {
   });
 });
 
+// Frames are left out, and with them every position: the swapped memory recalls
+// rows the plain one does not, and a frame records exactly that -- the model was
+// shown something else. What the run did with it is everything else, and is the same.
 async function bare(state: State<TallyKinds>): Promise<unknown[]> {
   const events = await state.read(RUN);
-  return events.map(({ ts, ...rest }: AgentEvent<TallyKinds>) => rest);
+  return events
+    .filter((event) => event.kind !== "frame" && event.kind !== "content")
+    .map(({ ts, seq, ...rest }: AgentEvent<TallyKinds>) => rest);
 }
 
 async function approve(state: State<TallyKinds>, checkpoint_id: string): Promise<void> {

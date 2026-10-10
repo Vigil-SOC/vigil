@@ -30,6 +30,9 @@ import {
 // The hunt's record, kept by one agent through tools. Every write is one the controller
 // made, so every fold over a hunt ledger reads a kernel hunt exactly as a controller one.
 
+// A hypothesis the agent proposed mid-hunt rather than one the hunt opened on.
+export const AGENT_HYPOTHESIS_PROVENANCE = "agent";
+
 // Prefixes the park a raised checkpoint sets, so lifting one can never lift the
 // budget park, which takes a different set of answers entirely.
 const AWAITING = "awaiting ";
@@ -122,9 +125,10 @@ export class HuntBook {
     return named.length === 1 ? named[0]! : null;
   }
 
-  // A blind spot: a call the estate could not answer. openGaps counts it once per tool,
-  // on the hypothesis it names or every claim, so it gap-locks as a failed dispatch did.
-  appendGap(tool: string, kind: "timeout" | "unavailable", hypothesisId: string | null): void {
+  // A blind spot: a call the estate could not answer. openGaps counts it once per
+  // tool, on the hypothesis it names or on every claim when it names none, so it
+  // gap-locks the way a failed dispatch did.
+  appendGap(tool: string, kind: "timeout" | "unavailable" | "backend_error", hypothesisId: string | null): void {
     this.appendEvidence([
       {
         source_system: "dispatcher",
@@ -193,6 +197,24 @@ export class HuntBook {
       ruled += 1;
     }
     return { ruled, skipped };
+  }
+
+  // A claim the agent put on the board itself, a peer of the playbook's own.
+  propose(statement: string): string {
+    const hypothesisId = newId("h", 4);
+    this.ledger.append({
+      kind: "hypothesis",
+      payload: {
+        hypothesis_id: hypothesisId,
+        statement: sanitizeQuestion(statement),
+        status: "active",
+        attack_technique: null,
+        provenance: AGENT_HYPOTHESIS_PROVENANCE,
+        resolution_reason: null,
+        evidence_strength: null,
+      },
+    });
+    return hypothesisId;
   }
 
   // --- questions ----------------------------------------------------------------

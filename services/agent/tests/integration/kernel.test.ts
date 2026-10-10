@@ -7,7 +7,8 @@ import { LeaseRepository } from "../../ledger/leases.js";
 import { verifyLedger } from "../../ledger/verify.js";
 import { advance } from "../../worker.js";
 import type { RunJob } from "../../contracts/job.js";
-import type { CheckpointPayload, CallPayload } from "../../contracts/events.js";
+import type { CheckpointPayload, CallPayload, ChildPayload, RunPayload } from "../../contracts/events.js";
+import { replayFrames } from "../../core/replay.js";
 import { isAgentRun } from "../../core/agent.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
@@ -56,10 +57,38 @@ describe("investigate runs on the kernel", () => {
 
     const events = await ledger.read(runId);
     expect(isAgentRun(events)).toBe(true);
-    expect(events.map((one) => one.kind).filter((kind) => kind !== "spend")).toEqual(["run", "call", "conclusion", "review", "terminal"]);
+    expect(events.map((one) => one.kind).filter((kind) => !["spend", "frame", "content"].includes(kind))).toEqual(["run", "call", "conclusion", "review", "terminal"]);
     expect((events.find((one) => one.kind === "call")?.payload as CallPayload).tool).toBe("load_skill");
     expect(await ledger.terminal(runId)).toMatchObject({ outcome: "completed", summary: "a scheduled task holds a stale password" });
     expect(await verifyLedger(pool, runId)).toMatchObject({ ok: true });
+  });
+
+  // get_finding has no implementation in this process, so the estate never answers
+  // it: r1 is a visibility gap, the record refuses it as evidence, and a dismissal
+  // resting on it is held for a person however firmly the reviewer upholds it.
+  it("runs the reviewer as a child run whose own chain verifies, and holds a dismissal over a blind call", async () => {
+    await advance(ledger, leases, startJob(runId), scriptedHarness([
+      { calls: [{ tool: "get_finding", args: "{}" }] },
+      { calls: [{ tool: "propose_hypothesis", args: '{"statement":"a stale scheduled task"}' }] },
+      { calls: [{ tool: "link_evidence", args: '{"links":[{"evidence_id":"r1","hypothesis_id":"h1","stance":"supports"}]}' }] },
+      { calls: [] },
+      { emit: { summary: "a scheduled task holds a stale password", disposition: "benign", confidence: "medium", citations: ["r1"], gaps: [], next_steps: [] } },
+      { emit: { stance: "uphold", reasons: "the task is named", missing: [] } },
+    ]));
+
+    const events = await ledger.read(runId);
+    const child = events.find((one) => one.kind === "child")?.payload as ChildPayload;
+    expect(child).toMatchObject({ role: "reviewer", outcome: "completed" });
+    const childEvents = await ledger.read(child.child_run_id);
+    expect((childEvents[0]?.payload as RunPayload).parent).toMatchObject({ run_id: runId, role: "reviewer" });
+    expect(await verifyLedger(pool, runId)).toMatchObject({ ok: true });
+    expect(await verifyLedger(pool, child.child_run_id)).toMatchObject({ ok: true });
+    // Read back through Postgres, whose jsonb reorders keys: every call still rebuilds.
+    expect(replayFrames(events).frames.filter((one) => one.mismatch !== null)).toEqual([]);
+    expect(replayFrames(childEvents).frames.filter((one) => one.mismatch !== null)).toEqual([]);
+    const calls = events.filter((one) => one.kind === "call").map((one) => one.payload as CallPayload);
+    expect(calls.map((one) => [one.tool, one.class])).toEqual([["get_finding", "visibility_gap"], ["propose_hypothesis", "served"], ["link_evidence", "defect"]]);
+    expect((await ledger.terminal(runId))?.summary).toContain("held as needs_review because no cited result is linked to a claim on the record");
   });
 
   it("parks on a gated call and resumes on the kernel once it is answered", async () => {

@@ -51,10 +51,13 @@ export interface Wrapped {
   failure: ToolFailure | null;
 }
 
-// timeout and unavailable are gaps in what the environment could answer; refused
-// and invalid_args are defects in the call and are never recorded as gaps.
+// timeout, unavailable and a backend's own error are gaps in what the environment
+// could answer; refused and invalid_args are defects in the call and are never
+// recorded as gaps. A backend error counts as a gap because the call reached the
+// estate and the estate did not answer: counting it as nothing would let an answer
+// stand on a source that was down.
 export function isVisibilityGap(failure: ToolFailure): boolean {
-  return failure.kind === "timeout" || failure.kind === "unavailable";
+  return failure.kind === "timeout" || failure.kind === "unavailable" || failure.kind === "backend_error";
 }
 
 // The one place a ToolResult becomes text a model reads. Rows serialise here and

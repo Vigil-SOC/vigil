@@ -21,8 +21,10 @@ TYPESCRIPT = REPO_ROOT / "services" / "agent" / "contracts" / "events.ts"
 REGISTRY = REPO_ROOT / "services" / "agent" / "arch" / "registry.ts"
 
 # The conformance workflow. It proves the harness boundary holds without a real
-# domain, so it is deliberately not something the backend can enqueue.
-BACKEND_EXCLUDES = frozenset({"tally"})
+# domain, so it is deliberately not something the backend can enqueue. subagent is
+# a child run -- a judge a run started on a ledger of its own -- which only the
+# agent layer starts, never a queue, and which resolves to no arch.
+BACKEND_EXCLUDES = frozenset({"tally", "subagent"})
 
 pytestmark = pytest.mark.unit
 

@@ -21,3 +21,6 @@ conclusion:
     properties:
       verb: { type: string, enum: [TALLY, HALT] }
       note: { type: string, maxLength: 200 }
+
+# The conformance plugin keeps no beliefs, so the record's tools are not offered.
+record: "off"

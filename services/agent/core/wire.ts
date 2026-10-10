@@ -126,6 +126,16 @@ class OpenAiSurface implements Provider {
     private readonly effort?: Effort,
   ) {}
 
+  // What every call is sent with besides its messages. No temperature is set, so
+  // the provider's default applies; the output ceiling and effort are this surface's.
+  get sampling(): Readonly<Record<string, unknown>> {
+    return {
+      wire_model: this.wire_model,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
+      ...effortFields(this.provider_type, this.effort),
+    };
+  }
+
   // Assembled before the events are emitted, so usage precedes the tool calls. The
   // deltas are not re-emitted: nothing downstream renders a partial turn.
   async *stream(request: TurnRequest): AsyncGenerator<ProviderEvent> {

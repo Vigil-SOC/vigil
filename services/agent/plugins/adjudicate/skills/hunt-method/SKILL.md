@@ -23,7 +23,7 @@ instead. Query for what separates them.
 ## Rule before you ask for more
 
 After every record_evidence, rule each new record against every active
-hypothesis with rule_evidence. Evidence that only ever accrues to the hypothesis
+hypothesis with link_evidence. Evidence that only ever accrues to the hypothesis
 it was gathered for is confirmation drift; ruling against the benign
 explanation is what stops a hunt only looking one way.
 
