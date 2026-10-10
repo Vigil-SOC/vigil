@@ -70,6 +70,12 @@ describe("a hunt run by one agent", () => {
     const view = huntView(RUN, events);
     expect(view.moves.map((move) => move.action)).toEqual(["CONCLUDE", "HANDOFF_IR", "VALIDATE", "INVESTIGATE", "INVESTIGATE", "INVESTIGATE"]);
     expect(huntKernelReplay(RUN, events).turns.length).toBeGreaterThan(0);
+    // The Checked tab lists what the hunt asked the estate -- not its bookkeeping --
+    // as a controller hunt's worker dispatches did.
+    expect(view.calls.map((call) => call.tool)).toEqual(["splunk_search", "search_findings"]);
+    expect(view.calls.every((call) => call.iteration !== undefined)).toBe(true);
+    // Each move carries the model call's wall time for its turn, as a controller move did.
+    expect(view.moves.every((move) => typeof move.duration_ms === "number")).toBe(true);
   });
 
   it("refuses to conclude while a hypothesis could still be moved, and the agent carries on", async () => {

@@ -10,6 +10,7 @@ import {
   type RunPayload,
   type CallPayload,
   type ChildPayload,
+  type FramePayload,
   type TerminalPayload,
   type UnboundPayload,
 } from "../contracts/events.js";
@@ -172,4 +173,23 @@ export function agentReplay(runId: string, events: readonly Envelope[]): AgentRe
     frames: replayFrames(events),
     children: events.filter((event) => event.kind === "child").map((event) => event.payload as ChildPayload),
   };
+}
+
+// How long each of the agent's model calls took, by the turn it answered: its frame
+// is written the moment before the call and its spend the moment the provider
+// reports, so the two stamps bound it. The engines the kernel replaced journaled
+// this on each decision, and the console still reads it there.
+export function modelMs(events: readonly Envelope[]): Map<number, number> {
+  const held = new Map<number, number>();
+  let open: { call: number; at: number } | null = null;
+  for (const event of events) {
+    if (event.kind === "frame" && (event.payload as FramePayload).role === "agent") {
+      open = { call: (event.payload as FramePayload).call, at: Date.parse(event.ts) };
+    } else if (event.kind === "spend" && open !== null && (event.payload as SpendPayload).role === "agent") {
+      const ms = Date.parse(event.ts) - open.at;
+      if (Number.isFinite(ms) && ms >= 0) held.set(open.call, ms);
+      open = null;
+    }
+  }
+  return held;
 }
