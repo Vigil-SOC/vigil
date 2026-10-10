@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { estateDispatch, loadCases, responseFor, resultOf, type EvalCase } from "../../eval/estate.js";
 import { keywordGrade, parseVerdict } from "../../eval/grade.js";
-import { report, score } from "../../eval/score.js";
+import { report, repriced, score } from "../../eval/score.js";
 
 // The eval's own arithmetic. A wrong count here would pass every engine off as
 // better or worse than it is, so the pieces that decide a number are held here.
@@ -121,5 +121,16 @@ describe("scoring", () => {
     expect(text).toContain("| **missed attacks** (closed as benign) | **1/1** | **0/1** |");
     expect(text).toContain("| a1 | attack | **benign** ✗ | undetermined |");
     expect(text).not.toContain("| b1 |");
+  });
+});
+
+describe("repricing", () => {
+  it("bills a cached share once, from tokens, at one price list", () => {
+    const row = { label: "x", engine_commit: "c", model: "vertex/m", case_id: "a", truth: "attack" as const, traps: [], verdict: "attack" as const, self_disposition: null, guarded: null, cost_usd: 99, unpriced_calls: 0, model_calls: 1, tokens: { input: 1_000, output: 100, cache_read: 900, cache_write: 0 }, tool_calls: 0, wall_ms: 0, error: null };
+    const prices = { m: { input: 1, output: 10, cache_read: 0.1, cache_write: 1.25 } };
+    // 100 uncached at $1/M, 900 cached at $0.10/M, 100 out at $10/M.
+    expect(repriced(row, prices).cost_usd).toBeCloseTo((100 * 1 + 900 * 0.1 + 100 * 10) / 1_000_000, 9);
+    const { tokens: _none, ...untokened } = row;
+    expect(repriced(untokened, prices).cost_usd).toBe(99);
   });
 });

@@ -43,6 +43,9 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     throw new SpecError(`${where}: max_turns must be a positive integer`);
   }
   const record = recordOf(raw["record"], conclusion, where);
+  const finish_with = raw["finish_with"];
+  if (finish_with !== undefined && finish_with !== "ask" && finish_with !== "tool") throw new SpecError(`${where}: finish_with must be ask or tool`);
+  if (finish_with === "tool" && !isStructured(conclusion)) throw new SpecError(`${where}: finish_with: tool needs a structured conclusion to take`);
   const min_results = raw["min_results"];
   if (min_results !== undefined && (typeof min_results !== "number" || !Number.isInteger(min_results) || min_results < 1)) {
     throw new SpecError(`${where}: min_results must be a positive integer`);
@@ -59,6 +62,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     ...(max_turns === undefined ? {} : { max_turns: max_turns as number }),
     ...(record === undefined ? {} : { record }),
     ...(min_results === undefined ? {} : { min_results: min_results as number }),
+    ...(finish_with === undefined ? {} : { finish_with: finish_with as "ask" | "tool" }),
   };
 }
 

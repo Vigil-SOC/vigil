@@ -26,7 +26,7 @@ export type Stance = LinkPayload["relation"];
 // write in a turn of its own is a model call that looked at nothing.
 export const RECORD_GUIDANCE = [
   "## Keeping the record",
-  "Tool calls in one turn run together. Write the record in the same turn as your next query rather than in turns of its own: link_evidence can propose a hypothesis by statement as it links, so one call keeps a whole step.",
+  "Write the record in the same turn as your next query, never in a turn of its own. link_evidence proposes a hypothesis by statement as it links.",
 ].join("\n");
 
 export interface ProposedLink {
@@ -140,7 +140,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
   return [
     local(
       PROPOSE_TOOL,
-      "Put a hypothesis on the record: one claim about what is happening that evidence could support or weaken. Returns its id. Propose the benign explanation too.",
+      "Put one claim about what is happening on the record. Returns its id.",
       { type: "object", additionalProperties: false, required: ["statement"], properties: { statement: { type: "string" } } },
       async (args) => {
         const statement = typeof args["statement"] === "string" ? args["statement"].trim() : "";
@@ -150,7 +150,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
     ),
     local(
       LINK_TOOL,
-      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name a hypothesis by hypothesis_id, or by statement to propose it in the same call. A result that failed or was refused is not evidence and is refused here.`,
+      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name each hypothesis by hypothesis_id, or by statement to propose it here. Failed results are not evidence.`,
       {
         type: "object",
         additionalProperties: false,
@@ -164,8 +164,8 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
               required: ["evidence_id", "stance"],
               properties: {
                 evidence_id: { type: "string" },
-                hypothesis_id: { type: "string", description: "A hypothesis already on the record." },
-                statement: { type: "string", description: "A new hypothesis, proposed by this call. Use instead of hypothesis_id." },
+                hypothesis_id: { type: "string" },
+                statement: { type: "string" },
                 stance: { type: "string", enum: [...backend.stances] },
               },
             },
@@ -201,7 +201,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
     ),
     local(
       QUESTION_TOOL,
-      "Record a question the run has not answered: a lead worth following, or something it could not settle. Open questions are declared gaps in the conclusion.",
+      "Record a question you could not settle. It is reported as a gap.",
       { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" }, hypothesis_id: { type: "string" } } },
       async (args) => {
         const question = typeof args["question"] === "string" ? args["question"].trim() : "";

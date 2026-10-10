@@ -671,11 +671,15 @@ const FOLD_LADDER: readonly FoldPolicy[] = [
 
 // What a run that stopped early is asked, with what it said when it stopped, so
 // it can see its own words. Its next answer, with or without tools, stands.
-export function persistAsk(said: string, gathered: number, left: number): string {
+// When the answer comes by tool (`by`), the ask is that tool's refusal instead, and
+// repeating the call is how the agent says it is sure.
+export function persistAsk(said: string, gathered: number, left: number | null, by?: string): string {
   return [
     said.trim() === "" ? "You stopped without saying anything." : `You stopped here, saying:\n\n${said.trim()}`,
-    `You have ${gathered} tool result(s) and ${left} turn(s) left. Your answer will be final and acted on.`,
-    "If a question you raised is still open and a tool you hold could answer it, keep investigating. Otherwise reply without calling a tool, and your answer will be asked for.",
+    `You have ${gathered} tool result(s)${left === null ? "" : ` and ${left} turn(s) left`}. Your answer will be final and acted on.`,
+    by === undefined
+      ? "If a question you raised is still open and a tool you hold could answer it, keep investigating. Otherwise reply without calling a tool, and your answer will be asked for."
+      : `If a question you raised is still open and a tool you hold could answer it, keep investigating. Otherwise call ${by} again with your answer, and it stands.`,
   ].join("\n\n");
 }
 
@@ -775,6 +779,13 @@ function compile(schema: Record<string, unknown>): ValidateFunction {
   const validate = ajv.compile(schema);
   compiled.set(key, validate);
   return validate;
+}
+
+// Why a value does not match a schema, or null when it does: for a caller that
+// takes an answer some other way than the emission, and holds it to the same shape.
+export function schemaErrors(schema: Record<string, unknown>, value: unknown): string | null {
+  const validate = compile(schema);
+  return validate(value) ? null : errorsOf(validate);
 }
 
 function errorsOf(validate: ValidateFunction): string {

@@ -24,7 +24,7 @@ import { registryOf, type Registry } from "./registry.js";
 import { scrub } from "./security.js";
 import type { ToolDispatch } from "./seams.js";
 import type { RunSpec, ToolSpec } from "./spec.js";
-import { streamTurn, type StreamEvent } from "./stream.js";
+import { persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
 import type { RunEventKind } from "../contracts/events.js";
@@ -35,6 +35,9 @@ import type { RunEventKind } from "../contracts/events.js";
 export const AGENT_ROLE = "agent";
 export const REVIEW_ROLE = "reviewer";
 export const SKILL_TOOL = "load_skill";
+// How an agent gives a structured answer in the turn it decides, for a plugin that
+// finishes with a tool rather than being asked.
+export const CONCLUDE_TOOL = "conclude";
 // Results are cited as r1, r2, ...: position alone, so a resume numbers them the same.
 export const CALL_REF = "r";
 
@@ -310,7 +313,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
 // plugin's own, and the skill loader, each shaped by the plugin if it asks.
 function equipped(harness: Harness<Kinds>, options: AgentOptions): Harness<Kinds> {
   const ctx: PluginContext = { harness, options };
-  const own = [...(options.hooks?.tools?.(ctx) ?? []), ...recordToolsFor(ctx)];
+  const own = [...(options.hooks?.tools?.(ctx) ?? []), ...recordToolsFor(ctx), ...concludeToolFor(ctx)];
   const registry =
     options.tools === undefined
       ? layered(harness.registry, own)
@@ -320,6 +323,44 @@ function equipped(harness: Harness<Kinds>, options: AgentOptions): Harness<Kinds
         );
   const dispatch = options.hooks?.dispatch?.(ctx, harness.dispatch) ?? harness.dispatch;
   return { ...harness, registry, dispatch };
+}
+
+// The answer as a tool call: one model call fewer than stopping and being asked.
+// Held to the conclusion's own schema, and to the same rule as stopping early: a
+// first conclude over fewer estate results than the plugin asks for is refused
+// once, with the same ask, and the second stands.
+function concludeToolFor(ctx: PluginContext): RegisteredTool[] {
+  const { plugin } = ctx.options;
+  if (plugin.finish_with !== "tool" || !isStructured(plugin.conclusion) || ctx.options.conversation !== undefined) return [];
+  const structured = plugin.conclusion;
+  const schema = structured.schema;
+  const local = new Set([CONCLUDE_TOOL, SKILL_TOOL, ...(ctx.options.hooks?.tools?.(ctx) ?? []).map((tool) => tool.id), ...recordToolsFor(ctx).map((tool) => tool.id)]);
+  return [
+    defineTool(
+      {
+        id: CONCLUDE_TOOL,
+        description: "Give your final answer, in the shape its parameters describe. This ends the run: call it alone, once you can answer.",
+        parameters: schema,
+        execute: async (args): Promise<ToolResult> => {
+          const wrong = schemaErrors(schema, args);
+          if (wrong !== null) return { ok: false, failure: { kind: "invalid_args", detail: `the answer does not match its shape: ${wrong}` } };
+          const min = plugin.min_results;
+          if (min !== undefined) {
+            const held = callsIn(await ctx.harness.state.read(ctx.options.run_id));
+            const looked = held.filter((call) => !local.has(call.tool) && call.ok).length;
+            const asked = held.some((call) => call.tool === CONCLUDE_TOOL && call.failure === "refused");
+            if (looked < min && !asked) {
+              const said = args[structured.summary_field];
+              return { ok: false, failure: { kind: "refused", detail: persistAsk(typeof said === "string" ? said : "", looked, null, CONCLUDE_TOOL) } };
+            }
+          }
+          return { ok: true, rows: [{ concluded: true }], rowCount: 1, capped: false, sourceSystem: "kernel" };
+        },
+      },
+      { maxRows: 1, timeoutMs: 5_000 },
+      true,
+    ),
+  ];
 }
 
 // The record's tools (core/record.ts), unless the plugin keeps none.
@@ -392,6 +433,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
   let thought = "";
   let first = true;
   let count = calls.length;
+  let spent = 0;
   let outcome: Outcome<unknown>;
   try {
     for (;;) {
@@ -412,6 +454,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
         // A model call has answered. Whatever it said before asking for tools is the
         // thought its calls are filed under.
         turn += 1;
+        spent += seen.payload.cost_usd ?? 0;
         thought = spoken;
         spoken = "";
         first = true;
@@ -449,6 +492,13 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
         await stream.return(undefined as never).catch(() => undefined);
         return { kind: "halted" };
       }
+      // The agent answered by tool: the call is journaled, and the run ends on it.
+      if (seen.type === "tool_result" && seen.call.tool === CONCLUDE_TOOL && seen.attempt.result.ok) {
+        halted = true;
+        halt.abort(new Error("the agent concluded"));
+        await stream.return(undefined as never).catch(() => undefined);
+        return answeredBy(options, JSON.parse(seen.call.args === "" ? "{}" : seen.call.args) as Record<string, unknown>, turn, used, spent);
+      }
     }
   } catch (error) {
     if (halted) return { kind: "halted" };
@@ -484,6 +534,24 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
     cost_usd: outcome.cost_usd,
   };
   return { kind: "answered", outcome, conclusion };
+}
+
+function answeredBy(options: AgentOptions, value: Record<string, unknown>, turn: number, used: number, spent: number): Loop {
+  const cost_usd = Number(spent.toFixed(6));
+  const outcome: Outcome<unknown> = {
+    status: "completed",
+    value,
+    refusal: null,
+    pending: null,
+    capped: false,
+    transcript: [],
+    calls: [],
+    turns: turn - used,
+    rejected: [],
+    reason: "the agent concluded",
+    cost_usd,
+  };
+  return { kind: "answered", outcome, conclusion: { plugin: options.plugin.id, value, capped: false, turns: turn, cost_usd } };
 }
 
 function turnFor(
@@ -545,7 +613,9 @@ export function systemOf(plugin: PluginManifest): string {
       ? ""
       : [
           "## How you finish",
-          "Work with your tools until you can answer, then stop calling them; you will be asked for your answer in a fixed shape.",
+          plugin.finish_with === "tool"
+            ? `Work with your tools until you can answer, then call ${CONCLUDE_TOOL} with your answer, on its own. That ends the run.`
+            : "Work with your tools until you can answer, then stop calling them; you will be asked for your answer in a fixed shape.",
           ...(structured.citations_field === undefined
             ? []
             : [`Each tool result opens with a ref, such as ${CALL_REF}3. Put the refs your answer rests on in ${structured.citations_field}.`]),

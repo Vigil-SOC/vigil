@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { parse as parseYaml } from "yaml";
 
 // Scores one or more result files side by side.
 //
@@ -184,6 +186,22 @@ function mark(row: Row | undefined): string {
   return wrong ? `**${row.verdict}** ✗` : row.verdict;
 }
 
+type Card = { input: number; output: number; cache_read: number; cache_write: number };
+
+// Every engine's cost from its own tokens, at one price list and one formula, so
+// the comparison does not rest on each engine's own arithmetic -- the engine the
+// kernel replaced billed a cache hit twice. input is the total, the cached share
+// included. A row without tokens keeps the cost its engine recorded.
+export function repriced(row: Row, prices: Readonly<Record<string, Card>>): Row {
+  const bare = row.model.slice(row.model.lastIndexOf("/") + 1);
+  const card = prices[bare];
+  if (row.tokens === undefined || card === undefined) return row;
+  const { input, output, cache_read, cache_write } = row.tokens;
+  const uncached = Math.max(0, input - cache_read - cache_write);
+  const cost = (uncached * card.input + output * card.output + cache_read * card.cache_read + cache_write * card.cache_write) / 1_000_000;
+  return { ...row, cost_usd: Number(cost.toFixed(6)) };
+}
+
 export function readRows(path: string): Row[] {
   return readFileSync(path, "utf8")
     .split("\n")
@@ -204,9 +222,10 @@ if (process.argv[1]?.endsWith("score.ts")) {
     console.error("usage: tsx eval/score.ts <results.jsonl>... [--md out.md]");
     process.exit(2);
   }
+  const prices = parseYaml(readFileSync(join(dirname(new URL(import.meta.url).pathname), "prices.yaml"), "utf8")) as Record<string, Card>;
   const groups = new Map<string, Row[]>();
   for (const path of positionals) {
-    const rows = latest(readRows(path));
+    const rows = latest(readRows(path)).map((row) => repriced(row, prices));
     groups.set(rows[0]?.label ?? path, rows);
   }
   const text = report(groups);

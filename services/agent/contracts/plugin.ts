@@ -68,6 +68,10 @@ export interface PluginManifest {
   // The results a run should gather before it may stop unasked. A run that stops
   // with fewer, and turns left, is asked once to keep going or confirm it is done.
   min_results?: number;
+  // How a structured answer is given. ask (the default): the agent stops calling
+  // tools and is then asked for it, a model call of its own. tool: the agent calls
+  // conclude with it, in the turn it decides, and that call ends the run.
+  finish_with?: "ask" | "tool";
 }
 
 export const RECORD_MODES = ["off", "available", "required"] as const;

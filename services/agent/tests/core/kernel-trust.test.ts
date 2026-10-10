@@ -425,3 +425,63 @@ describe("a run that stops early is asked once to keep going", () => {
     expect(ask(provider)).toBe(1);
   });
 });
+
+describe("an agent can answer by tool, in the turn it decides", () => {
+  const plugin = pluginFor("investigate");
+  const answer = (disposition: string, citations: string[]) => ({ summary: `the lockouts are ${disposition}`, disposition, confidence: "medium", citations, gaps: [], next_steps: [] });
+  const looked = [call("get_finding"), call("splunk_search", { sql: "a" }), call("search_findings"), call("lookup_indicators", { values: ["x"] })];
+
+  it("ends the run on conclude, with no model call asking for the answer", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([{ calls: looked }, { calls: [call("conclude", answer("malicious", ["r2"]))] }]);
+    const report = await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+
+    expect(report.status).toBe("completed");
+    expect(provider.requests).toHaveLength(2);
+    expect(provider.requests.some((request) => request.emit !== undefined)).toBe(false);
+    const events = await state.read(RUN);
+    const conclusion = events.find((one) => one.kind === "conclusion")?.payload as ConclusionPayload;
+    expect(conclusion.value).toMatchObject({ disposition: "malicious", citations: ["r2"] });
+    expect(await state.terminal(RUN)).toMatchObject({ outcome: "completed", summary: "the lockouts are malicious" });
+    expect(replayFrames(events).frames.filter((one) => one.mismatch !== null)).toEqual([]);
+  });
+
+  it("refuses an answer that does not match its shape, and takes the corrected one", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: looked },
+      { calls: [call("conclude", { summary: "x", disposition: "probably bad" })] },
+      { calls: [call("conclude", answer("suspicious", []))] },
+    ]);
+    await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+    const concluded = (await state.read(RUN)).filter((one) => one.kind === "call" && (one.payload as CallPayload).tool === "conclude").map((one) => one.payload as CallPayload);
+    expect(concluded.map((one) => one.failure)).toEqual(["invalid_args", null]);
+    expect(((await state.read(RUN)).find((one) => one.kind === "conclusion")?.payload as ConclusionPayload).value["disposition"]).toBe("suspicious");
+  });
+
+  it("refuses a first answer over too little looking, once, and the second stands", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [call("get_finding")] },
+      { calls: [call("conclude", answer("inconclusive", []))] },
+      { calls: [call("conclude", answer("inconclusive", []))] },
+    ]);
+    const report = await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+    expect(report.status).toBe("completed");
+    const concluded = (await state.read(RUN)).filter((one) => one.kind === "call" && (one.payload as CallPayload).tool === "conclude").map((one) => one.payload as CallPayload);
+    expect(concluded.map((one) => one.failure)).toEqual(["refused", null]);
+    expect(concluded[0]?.result).toContain("call conclude again");
+  });
+
+  it("still asks for the answer when the agent stops without calling conclude", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([{ calls: looked }, STOP, concluded("malicious", ["r1"])]);
+    const report = await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+    expect(report.status).toBe("completed");
+    expect(provider.requests.at(-1)?.emit).toBeDefined();
+  });
+});

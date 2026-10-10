@@ -249,6 +249,10 @@ async function runCase(engine: Engine, one: EvalCase, config: string, grader: Gr
   }
   const wall_ms = Date.now() - started;
   const events = await state.read(runId);
+  // Kept, so where a case's calls went can be read afterwards.
+  const ledgers = join(dirname(OUT), "ledgers", LABEL);
+  mkdirSync(ledgers, { recursive: true });
+  writeFileSync(join(ledgers, `${one.id}.jsonl`), events.map((event) => JSON.stringify(event)).join("\n") + "\n");
 
   const terminal = events.findLast((event) => event.kind === "terminal")?.payload as { outcome?: string; reason?: string; summary?: string } | undefined;
   const conclusion = events.findLast((event) => event.kind === "conclusion")?.payload as { value?: Record<string, unknown> } | undefined;
