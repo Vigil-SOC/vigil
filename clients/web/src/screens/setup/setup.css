@@ -533,7 +533,8 @@
   gap: 12px;
 }
 
-.su-actions .btn.test {
+.su-actions .btn.test,
+.su-keyrow .btn.test {
   border-color: var(--ac);
   color: var(--ac);
   font-weight: 650;
@@ -541,6 +542,7 @@
 
 .su-note {
   min-width: 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.45;
   color: var(--tx2);
@@ -595,4 +597,85 @@
 
 .su-root .settings-card-actions a.btn {
   text-decoration: none;
+}
+
+/* Choose where AI runs. Board: boards/OnboardingModel.dc.html */
+.su-choices.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.su-choice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.su-resid {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.su-resid.stays {
+  color: var(--good);
+}
+
+.su-keyrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.su-note.warn {
+  color: var(--fair);
+}
+
+.su-banner.poor {
+  border-color: var(--poor-ln);
+  background: var(--poor-bg);
+  color: var(--tx0);
+}
+
+.su-banner.poor > svg {
+  flex: none;
+  color: var(--poor);
+}
+
+/* What Vigil will use: component, assigned model, why. Prose wraps then stops at two lines. */
+.su-plan {
+  display: flex;
+  flex-direction: column;
+}
+
+.su-plan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--ln0);
+  font-size: 13px;
+}
+
+.su-plan-who {
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-plan-model {
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.su-plan-why {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

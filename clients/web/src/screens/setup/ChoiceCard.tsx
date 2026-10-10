@@ -8,6 +8,7 @@ export default function ChoiceCard({
   icon,
   chip,
   chipTone = 'ac',
+  badge,
   selected,
   onSelect,
 }: {
@@ -17,6 +18,8 @@ export default function ChoiceCard({
   icon?: ReactNode
   chip?: string
   chipTone?: 'ac' | 'vio'
+  /** shown at the right of the title line */
+  badge?: ReactNode
   selected: boolean
   onSelect: () => void
 }) {
@@ -33,7 +36,14 @@ export default function ChoiceCard({
           {chip && <span className={`su-chip ${chipTone}`}>{chip}</span>}
         </span>
       )}
-      <span className="su-choice-t">{title}</span>
+      {badge ? (
+        <span className="su-choice-head">
+          <span className="su-choice-t">{title}</span>
+          {badge}
+        </span>
+      ) : (
+        <span className="su-choice-t">{title}</span>
+      )}
       {body && <span className="su-choice-s">{body}</span>}
       {footer && <span className="su-choice-s">{footer}</span>}
     </button>

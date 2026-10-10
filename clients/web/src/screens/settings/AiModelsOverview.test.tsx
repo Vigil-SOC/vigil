@@ -79,7 +79,7 @@ describe('provider cards', () => {
     expect(screen.getAllByText('Poor')).toHaveLength(2)
     expect(screen.getByText('2 keys · via the gateway')).toBeTruthy()
     expect(screen.getByText('Not set up')).toBeTruthy()
-    expect(screen.getAllByText('Hosted: data leaves the site')).toHaveLength(2)
+    expect(screen.getAllByText('Hosted: data leaves your site')).toHaveLength(2)
     expect(screen.getByText('Local: data stays on site')).toBeTruthy()
     expect(screen.getByText('Where your data goes:').parentElement?.textContent).toMatch(/Changing the default model asks you to confirm and is logged\.$/)
   })
