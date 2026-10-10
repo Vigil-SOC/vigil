@@ -1,0 +1,15 @@
+# The compose plugin: run a playbook's phases in the order its author wrote them.
+# There is no decider. Each phase is one step under its own agent's prompt and
+# its own grants, run by the kernel as a subturn; the order, the gates and the
+# hand-offs between steps are the playbook's, and the hooks only walk them.
+id: compose
+description: Run an authored playbook's phases in order, each under its own agent and grants.
+
+# A phase names its own tools; the plugin asks for none of its own.
+needs: []
+
+system: |
+  Each phase of this run is carried out by the agent the playbook named for it,
+  under that agent's own instructions. There is no run-wide agent.
+
+conclusion: prose

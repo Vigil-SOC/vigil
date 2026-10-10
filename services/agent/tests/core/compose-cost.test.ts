@@ -128,3 +128,30 @@ describe("a phase tool this deployment lacks", () => {
     expect(composeProjection("run-gap", await state.read("run-gap"))).toMatchObject({ run_kind: "compose", unbound: [{ capability: "okta_get_user" }] });
   });
 });
+
+describe("a phase's tool call", () => {
+  it("is credited to the phase's agent, so its skill reads land on that agent (#1560)", async () => {
+    const base = composeSpecFor();
+    const [phase] = base.phases;
+    const spec: RunSpec = {
+      ...base,
+      tools: [{ id: "lookup", kind: "remote", description: "look one up", parameters: { type: "object" } }],
+      phases: [{ ...(phase as RunSpec["phases"][number]), tools: ["lookup"] }],
+    };
+    const credited: (string | undefined)[] = [];
+    const harness = scriptedHarness([
+      { calls: [{ tool: "lookup", args: "{}" }] },
+      ...Array.from({ length: 6 }, () => ({ emit: { summary: "done", handoff: "nothing follows" } })),
+    ])("compose", spec, new InProcessState<ComposeKinds>());
+    harness.dispatch = {
+      invoke: async (_tool, _args, _signal, agentId) => {
+        credited.push(agentId);
+        return { ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "test" };
+      },
+    };
+
+    const report = await runCompose(harness, { run_id: "run-credit", spec });
+    expect(report.status).toBe("completed");
+    expect(credited).toEqual(["reporter"]);
+  });
+});

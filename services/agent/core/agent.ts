@@ -49,13 +49,15 @@ export interface PluginContext {
 
 // Before the loop: park on a question of the plugin's own, or end the run here.
 export type Early =
-  | { kind: "park"; checkpoint_id: string; reason: string }
-  | { kind: "end"; outcome: RunOutcome; reason: string; summary?: string };
+  | { kind: "park"; checkpoint_id: string; reason: string; tool?: string | null; args?: string | null }
+  | { kind: "end"; outcome: RunOutcome; reason: string; summary?: string | null };
 
 export interface Ending {
   outcome: RunOutcome;
   reason: string;
-  summary?: string;
+  // What the run delivers. Null delivers nothing even on success; absent delivers
+  // the reason, unless the run failed.
+  summary?: string | null;
 }
 
 // Code a plugin ships beside its manifest. Every hook is optional, and a plugin
@@ -81,6 +83,8 @@ export interface PluginHooks {
   finish?(ctx: PluginContext, outcome: Outcome<unknown>): Promise<Ending | null>;
   // What a run an operator stopped leaves behind.
   stopped?(ctx: PluginContext, directive: DirectivePayload): Promise<string | undefined>;
+  // Once the terminal is on the ledger, for a plugin that reports it elsewhere too.
+  ended?(ctx: PluginContext, terminal: TerminalPayload): Promise<void>;
 }
 
 // An operator's stop, read from wherever they are queued. Null when there is none.
@@ -212,7 +216,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   if (early?.kind === "end") return end(ctx, early.outcome, early.reason, early.summary);
   if (early?.kind === "park") {
     await announceOpen(harness.state, run_id, options.run_kind, early.checkpoint_id, options.announce ?? noAnnounce);
-    return report(ctx, "waiting_approval", early.reason, { checkpoint_id: early.checkpoint_id, tool: null, args: null });
+    return report(ctx, "waiting_approval", early.reason, { checkpoint_id: early.checkpoint_id, tool: early.tool ?? null, args: early.args ?? null });
   }
 
   if (options.conversation !== undefined) {
@@ -487,6 +491,69 @@ export function callsIn(events: readonly { kind: string; payload: unknown }[]): 
   return events.filter((one) => one.kind === "call").map((one) => one.payload as CallPayload);
 }
 
+// --- steps a plugin runs itself ----------------------------------------------
+
+// One turn under a role, prompt and grants of the plugin's choosing: for a plugin
+// whose work is an authored sequence rather than one agent's judgement. Its calls
+// are journaled like the agent's, under its role, so every reader sees them.
+export interface Subturn {
+  role: string;
+  system: string;
+  task: string;
+  schema: Record<string, unknown> | null;
+  // Tool ids this step may call. Deny-by-default: nothing else is offered.
+  tools: readonly string[];
+  // The Vigil agent this step's skill reads are credited to (#1560).
+  agent_id?: string;
+}
+
+export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<Outcome<T>> {
+  const { harness, options } = ctx;
+  const available = dedupe([...(options.tools ?? []), ...(options.hooks?.tools?.(ctx) ?? [])]);
+  const known = new Set(available.map((tool) => tool.id));
+  const scoped: Harness<Kinds> = { ...harness, registry: registryOf(available, { [sub.role]: sub.tools.filter((id) => known.has(id)) }) };
+  const calls = callsIn(await harness.state.read(options.run_id));
+  let turn = calls.reduce((max, call) => Math.max(max, call.turn), 0);
+  let count = calls.length;
+  const cfg: TurnConfig = {
+    run_id: options.run_id,
+    run_kind: options.run_kind,
+    role: sub.role,
+    ...(sub.agent_id === undefined ? {} : { agent_id: sub.agent_id }),
+    system: sub.system,
+    task: sub.task,
+    schema: sub.schema,
+    max_turns: options.spec.runtime.max_turns,
+    approvals: new Set(options.spec.approvals),
+    verbs: [],
+    result_cap: options.spec.runtime.result_cap,
+    recall_limit: options.spec.runtime.recall_limit,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
+  const stream = streamTurn<T, Kinds>(cfg, scoped);
+  for (;;) {
+    const next = await stream.next();
+    if (next.done === true) return next.value;
+    const seen = next.value;
+    if (seen.type === "usage") turn += 1;
+    if (seen.type !== "tool_result") continue;
+    count += 1;
+    const call: CallPayload = {
+      ref: `${CALL_REF}${count}`,
+      turn,
+      call_id: seen.call.id,
+      tool: seen.call.tool,
+      arguments: seen.call.args,
+      result: seen.attempt.wrapped.text,
+      ok: seen.attempt.result.ok,
+      failure: seen.attempt.wrapped.failure?.kind ?? null,
+      role: sub.role,
+      ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
+    };
+    await harness.state.append(options.run_id, [event(options, "call", call)]);
+  }
+}
+
 // --- stopping ----------------------------------------------------------------
 
 async function stopOf(options: AgentOptions): Promise<DirectivePayload | null> {
@@ -705,16 +772,17 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
   ]);
 }
 
-async function end(ctx: PluginContext, outcome: RunOutcome, reason: string, summary?: string): Promise<AgentReport> {
+async function end(ctx: PluginContext, outcome: RunOutcome, reason: string, summary?: string | null): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
   const ended = await terminalOf(ctx.harness, ctx.options.run_id);
   if (ended !== null) return report(ctx, ended.outcome, ended.reason, null);
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
-  const deliver = summary ?? (outcome === "failed" ? undefined : reason);
-  const payload = deliver === undefined ? { outcome, reason } : { outcome, reason, summary: deliver };
+  const deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  const payload: TerminalPayload = deliver === undefined ? { outcome, reason } : { outcome, reason, summary: deliver };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
+  await ctx.options.hooks?.ended?.(ctx, payload);
   return report(ctx, outcome, reason, null);
 }
 

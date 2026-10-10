@@ -183,6 +183,9 @@ export interface CallPayload {
   // What the model said before asking, on the first call of its turn only.
   thought?: string;
   duration_ms?: number;
+  // The role that made the call, when it was not the run's one agent: a step a
+  // plugin ran under its own prompt and grants.
+  role?: string;
 }
 
 // The answer the run ends on, in the shape its plugin declared.
