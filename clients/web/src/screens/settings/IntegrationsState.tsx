@@ -1,5 +1,5 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react'
-import { buildRows, needsAttention, type ServerRow } from './integrationHealth'
+import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react'
+import { buildRows, keepConnected, needsAttention, type ServerRow } from './integrationHealth'
 import { useIntegrationsConfig, useMcpServers, type Phase } from './useSettings'
 
 interface IntegrationsState {
@@ -21,10 +21,11 @@ export function IntegrationsStateProvider({ children }: { children: ReactNode })
   const int = useIntegrationsConfig()
   const { servers, statuses, enabled, errors, missingCredentials } = mcp
   const { config } = int
+  const kept = useRef(new Set<string>())
   const phase: Phase = mcp.phase === 'error' ? 'error' : mcp.phase === 'ready' && int.phase === 'ready' ? 'ready' : 'loading'
   const rows = useMemo(
     () =>
-      phase !== 'ready' ? [] : buildRows({
+      phase !== 'ready' ? [] : keepConnected(buildRows({
         servers,
         statuses,
         enabled,
@@ -33,7 +34,7 @@ export function IntegrationsStateProvider({ children }: { children: ReactNode })
         enabledIntegrations: config.enabled_integrations,
         integrations: config.integrations,
         lastTest: config.last_test,
-      }),
+      }), kept.current),
     [phase, servers, statuses, enabled, errors, missingCredentials, config],
   )
   const attention = useMemo(() => rows.filter(needsAttention), [rows])
