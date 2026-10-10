@@ -12,8 +12,8 @@ import type { State } from "../../core/seams.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport } from "./report.js";
 import { toolsFrom } from "../../tools/remote.js";
-import { loadPlugin } from "../../plugins/index.js";
-import { huntHooks } from "../../plugins/hunt/hooks.js";
+import { loadPlugin } from "../index.js";
+import { huntHooks } from "./hooks.js";
 import { stopFrom } from "../rootcause/workflow.js";
 
 export interface HuntOptions {

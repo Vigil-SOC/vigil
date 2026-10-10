@@ -433,7 +433,7 @@ HUNT_ITERATIONS = 8
 
 # A turn dispatches up to this many workers, each running its own tool loop, plus the
 # lead and the critic; the two spare turns per agent are the emission retries.
-# Mirrored from services/agent/workflows/hunt/types.ts and held to it by a ratchet.
+# Mirrored from services/agent/plugins/hunt/types.ts and held to it by a ratchet.
 HUNT_MAX_WORKERS = 4
 CALLS_PER_ITERATION = (HUNT_MAX_WORKERS + 2) * (int(DEFAULT_RUNTIME["max_turns"]) + 2)
 # 90 minutes of wall: at several minutes an iteration, a half-hour ceiling ends the
@@ -609,7 +609,7 @@ def resolve_root_cause(
 CHECKPOINT_POLICIES = ("ask", "auto")
 
 # The four moments a hunt may stop and ask, and what each does unless a definition
-# says otherwise. Mirrored from services/agent/workflows/hunt/checkpoints.ts and
+# says otherwise. Mirrored from services/agent/plugins/hunt/checkpoints.ts and
 # held to it by a ratchet, so the reader can show a class the engine really has.
 CHECKPOINT_CLASSES = (
     "hypothesis_approval",

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { InProcessState } from "../../core/state.js";
 import { asHarnessEvents, gunzipped, historicalRuns, renamedGolden } from "../support/historical.js";
-import { fold, LedgerError, type HuntKinds } from "../../workflows/hunt/ledger.js";
-import { evidenceStrength } from "../../workflows/hunt/strength.js";
-import { buildReport } from "../../workflows/hunt/report.js";
+import { fold, LedgerError, type HuntKinds } from "../../plugins/hunt/ledger.js";
+import { evidenceStrength } from "../../plugins/hunt/strength.js";
+import { buildReport } from "../../plugins/hunt/report.js";
 
 const RUNS = historicalRuns();
 

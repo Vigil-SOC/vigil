@@ -25,8 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT = REPO_ROOT / "services" / "agent"
 TYPESCRIPT = AGENT / "contracts" / "memory.ts"
 ARCH = AGENT / "arch" / "threathunt.yaml"
-ENTITIES = AGENT / "workflows" / "hunt" / "entities.ts"
-HUNT_TYPES = AGENT / "workflows" / "hunt" / "types.ts"
+ENTITIES = AGENT / "plugins" / "hunt" / "entities.ts"
+HUNT_TYPES = AGENT / "plugins" / "hunt" / "types.ts"
 SCREENS = REPO_ROOT / "clients" / "web" / "src" / "screens"
 CONSOLE = SCREENS / "workflows" / "WorkflowsScreen.tsx"
 

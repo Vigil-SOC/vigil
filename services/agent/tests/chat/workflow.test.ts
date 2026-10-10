@@ -13,9 +13,9 @@ import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from
 import { replayFrames } from "../../core/replay.js";
 import { InProcessState } from "../../core/state.js";
 import type { StreamEvent } from "../../core/stream.js";
-import { chatEvents } from "../../workflows/chat/sse.js";
-import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from "../../workflows/chat/workflow.js";
-import { huntNotes } from "../../workflows/hunt/recall.js";
+import { chatEvents } from "../../plugins/chat/sse.js";
+import { conversationOf, grantsOf, runChat, type ChatReport, type Turn } from "../../plugins/chat/workflow.js";
+import { huntNotes } from "../../plugins/hunt/recall.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 

@@ -10,7 +10,7 @@ import { registryOf } from "../../core/registry.js";
 import type { Memory, ToolDispatch } from "../../core/seams.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import type { InProcessState } from "../../core/state.js";
-import type { HuntKinds } from "../../workflows/hunt/ledger.js";
+import type { HuntKinds } from "../../plugins/hunt/ledger.js";
 
 // A hunt driven by a scripted model that reads what it is shown, shared by the
 // kernel hunt tests and the script that records the kernel replay fixture.

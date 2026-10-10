@@ -19,11 +19,11 @@ import { registryOf } from "../../core/registry.js";
 import type { ToolDispatch } from "../../core/seams.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import { fold, type HuntEvent, type HuntKinds } from "../../workflows/hunt/ledger.js";
-import { buildReport } from "../../workflows/hunt/report.js";
-import { DEPLOYMENT_GAP_PROVENANCE, openGaps } from "../../workflows/hunt/strength.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { fold, type HuntEvent, type HuntKinds } from "../../plugins/hunt/ledger.js";
+import { buildReport } from "../../plugins/hunt/report.js";
+import { DEPLOYMENT_GAP_PROVENANCE, openGaps } from "../../plugins/hunt/strength.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-00000000ca95";
 const SPEC: RunSpec = (() => {

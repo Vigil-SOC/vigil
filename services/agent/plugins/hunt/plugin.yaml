@@ -2,7 +2,7 @@
 # verdict each. It replaces the hunt controller (a lead deciding each iteration,
 # workers fanned out under it, a digest between them). The agent queries, records
 # what it found, rules it against every belief on the board, and puts a belief up
-# for a verdict -- and the hunt's own record (workflows/hunt) is what it writes, so
+# for a verdict -- and the hunt's own record (book.ts) is what it writes, so
 # the projection, the distil episodic memory reads, and the report are unchanged.
 # The verdict rules are code, not prompt: a critic argues the null, corroboration
 # is counted over source systems, and conclude is refused until the board allows it.

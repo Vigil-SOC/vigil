@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { seedFrom } from "../../core/budget.js";
-import { steer } from "../../workflows/hunt/inbox.js";
-import { Journal } from "../../workflows/hunt/journal.js";
+import { steer } from "../../plugins/hunt/inbox.js";
+import { Journal } from "../../plugins/hunt/journal.js";
 import { bookOf, finalized, newLedger, question, reopen } from "../support/hunt.js";
 
 // coverage-is-satisfiable.test.ts went with the lead's decision schema: rule_evidence

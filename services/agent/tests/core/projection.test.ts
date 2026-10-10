@@ -4,10 +4,10 @@ import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { emptyRecall } from "../../contracts/memory.js";
 import { TOOL_APPROVAL } from "../../core/loop.js";
 import { InProcessState } from "../../core/state.js";
-import { composeProjection } from "../../workflows/compose/projection.js";
-import { leadProjection } from "../../workflows/lead/projection.js";
-import { investigateReplay } from "../../workflows/lead/replay.js";
-import type { LeadKinds } from "../../workflows/lead/vocabulary.js";
+import { composeProjection } from "../../plugins/compose/projection.js";
+import { leadProjection } from "../../plugins/investigate/legacy/projection.js";
+import { investigateReplay } from "../../plugins/investigate/legacy/replay.js";
+import type { LeadKinds } from "../../plugins/investigate/legacy/vocabulary.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-000000000629";
 const CHECKPOINT = "apr-c0ffee";

@@ -1,5 +1,5 @@
 # The investigate plugin: one analyst on one open case, as a single agent loop.
-# Replaces the lead workflow's one-decision-per-turn controller (workflows/lead)
+# Replaces the lead workflow's one-decision-per-turn controller; the ledgers it wrote are still read by legacy/
 # and the arch prompt in arch/investigate.yaml. The loop, ledger, recall, budgets
 # and parking are the kernel's; this file says what the agent is and how it ends.
 id: investigate

@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
 import type { TerminalHandoff } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import { huntDistil } from "../../workflows/hunt/distil.js";
-import type { HuntEvent, HuntKinds } from "../../workflows/hunt/ledger.js";
-import { fold } from "../../workflows/hunt/ledger.js";
-import { huntProjection } from "../../workflows/hunt/projection.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { huntDistil } from "../../plugins/hunt/distil.js";
+import type { HuntEvent, HuntKinds } from "../../plugins/hunt/ledger.js";
+import { fold } from "../../plugins/hunt/ledger.js";
+import { huntProjection } from "../../plugins/hunt/projection.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 import { huntKernelReplay, huntView } from "../../plugins/hunt/view.js";
 
 import { RUN, specOf, hypothesisIn, modelOf, estate, harnessOf, finding, shown, type Step } from "../support/kernel-hunt.js";

@@ -2,7 +2,7 @@ import type { RunOutcome } from "../../contracts/events.js";
 import { runAgent, type AgentKinds } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
 import { DEFAULT_BUDGETS, DEFAULT_DISPATCH, type RunSpec } from "../../core/spec.js";
-import { loadPlugin } from "../../plugins/index.js";
+import { loadPlugin } from "../index.js";
 import type { TallyKinds, TallyPayload } from "./vocabulary.js";
 
 export interface TallyOptions {

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
-import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
-import { EVIDENCE_SHOWN, huntProjection } from "../../workflows/hunt/projection.js";
-import { replay } from "../../workflows/hunt/replay.js";
+import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../plugins/hunt/checkpoints.js";
+import { EVIDENCE_SHOWN, huntProjection } from "../../plugins/hunt/projection.js";
+import { replay } from "../../plugins/hunt/replay.js";
 import { bookOf, evidenceOn, newLedger, provable, validate, type Started } from "../support/hunt.js";
 
 async function project(started: Started) {

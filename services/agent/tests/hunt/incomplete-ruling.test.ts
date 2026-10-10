@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evidenceStrength, unclassified } from "../../workflows/hunt/strength.js";
+import { evidenceStrength, unclassified } from "../../plugins/hunt/strength.js";
 import { bareEvidence, bookOf, evidenceOn, newLedger, relate, type Started } from "../support/hunt.js";
 
 // The controller's re-asks for an incomplete ruling, and its NOT_RULED fill, went

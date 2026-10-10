@@ -905,7 +905,7 @@ export interface GeneratedDraft {
 }
 
 /** What a hunt lead was shown before one decision. Mirrors `Digest` in
- *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
+ *  services/agent/plugins/hunt/types.ts; only what the console renders is typed. */
 export interface ReplayDigest {
   iteration: number
   narrative: string

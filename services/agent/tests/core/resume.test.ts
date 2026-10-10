@@ -10,7 +10,7 @@ import { InProcessState } from "../../core/state.js";
 import { advance, handle, MAX_STALLED_RESUMES, resolveSpec, specOf } from "../../worker.js";
 import { SpecError } from "../../core/spec.js";
 import type { HarnessFactory } from "../../harness.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
 

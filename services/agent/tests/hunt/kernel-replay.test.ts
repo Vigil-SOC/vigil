@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { CallPayload, ChildPayload, ConclusionPayload, RunPayload } from "../../contracts/events.js";
 import { recordOf } from "../../core/record.js";
 import { replayFrames, trajectoryOf } from "../../core/replay.js";
-import { fold, type HuntEvent } from "../../workflows/hunt/ledger.js";
+import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
 
 // The kernel replay gate: a recorded kernel hunt and its two child runs, each call's input
 // rebuilt from those ledgers alone and diffed against the hash it was sent with.

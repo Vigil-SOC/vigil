@@ -15,9 +15,9 @@ import {
   type NoticePayload,
   type RootCauseKinds,
   type StepPayload,
-} from "../../workflows/rootcause/proof.js";
-import { finishFrom, recordFrom } from "../../workflows/rootcause/tools.js";
-import { showing } from "../../workflows/rootcause/trim.js";
+} from "./proof.js";
+import { finishFrom, recordFrom } from "./tools.js";
+import { showing } from "./trim.js";
 
 // The root-cause plugin's code: the proof, and everything that hangs off it. The
 // loop, parking, stopping and ending are the kernel's.

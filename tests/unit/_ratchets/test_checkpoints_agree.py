@@ -17,7 +17,7 @@ from core.workflows.workflows_service import WorkflowsService
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[3]
-CHECKPOINTS_TS = ROOT / "services/agent/workflows/hunt/checkpoints.ts"
+CHECKPOINTS_TS = ROOT / "services/agent/plugins/hunt/checkpoints.ts"
 ARCH = ROOT / "services/agent/arch"
 
 

@@ -2,7 +2,7 @@ import type { NewEvent } from "../../contracts/events.js";
 import { defineTool, type RegisteredTool } from "../../contracts/tool.js";
 import type { Ending, PluginContext, PluginHooks } from "../../core/agent.js";
 import type { State } from "../../core/seams.js";
-import type { TallyKinds, TallyPayload, TallyVerb } from "../../workflows/tally/vocabulary.js";
+import type { TallyKinds, TallyPayload, TallyVerb } from "./vocabulary.js";
 
 // The whole domain: a count kept on the ledger, a tool that adds to it, and an
 // ending the model does not control -- the target, reached between two calls.

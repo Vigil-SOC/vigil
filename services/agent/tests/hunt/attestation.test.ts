@@ -15,13 +15,13 @@ import type { Message, Provider, ProviderEvent, ToolCall, TurnRequest } from "..
 import { registryOf } from "../../core/registry.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
-import { evidenceFrom } from "../../workflows/hunt/adapters.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import { fold, type HuntEvent, type HuntKinds } from "../../workflows/hunt/ledger.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
-import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { evidenceStrength, sensorAttested, unmetPredicates } from "../../workflows/hunt/strength.js";
-import type { EvidenceRecord } from "../../workflows/hunt/types.js";
+import { evidenceFrom } from "../../plugins/hunt/adapters.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { fold, type HuntEvent, type HuntKinds } from "../../plugins/hunt/ledger.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
+import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
+import { evidenceStrength, sensorAttested, unmetPredicates } from "../../plugins/hunt/strength.js";
+import type { EvidenceRecord } from "../../plugins/hunt/types.js";
 import { evidenceOn, newLedger } from "../support/hunt.js";
 
 const SENSOR = { field: "conn_count", authored: "sensor" as const };

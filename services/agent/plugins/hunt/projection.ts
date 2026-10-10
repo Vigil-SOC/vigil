@@ -1,6 +1,6 @@
 import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
-import { callViews, type CallView } from "../call-view.js";
+import { callViews, type CallView } from "../../core/call-view.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
 import { citedTechniques, isGap, NULL_CHECK_PROVENANCE, sensorAttested } from "./strength.js";
 import { renderReport, type HuntReport } from "./report.js";

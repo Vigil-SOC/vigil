@@ -13,12 +13,12 @@ import type { ToolDispatch } from "../../core/seams.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { huntView } from "../../plugins/hunt/view.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import { newId } from "../../workflows/hunt/ids.js";
-import type { HuntKinds } from "../../workflows/hunt/journal.js";
-import { fold, type HuntEvent } from "../../workflows/hunt/ledger.js";
-import { BASE_RATE_PROVENANCE, startHunt } from "../../workflows/hunt/opening.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { newId } from "../../plugins/hunt/ids.js";
+import type { HuntKinds } from "../../plugins/hunt/journal.js";
+import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
+import { BASE_RATE_PROVENANCE, startHunt } from "../../plugins/hunt/opening.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 import { huntSpecFor } from "../support/hunt.js";
 
 // The hunt with a different caller: handed intake's finding and chosen workflow, the agent

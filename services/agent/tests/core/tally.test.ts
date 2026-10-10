@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runTally, type TallyOptions } from "../../workflows/tally/workflow.js";
-import type { TallyKinds, TallyPayload } from "../../workflows/tally/vocabulary.js";
+import { runTally, type TallyOptions } from "../../plugins/tally/workflow.js";
+import type { TallyKinds, TallyPayload } from "../../plugins/tally/vocabulary.js";
 import { approvalId, type Harness } from "../../core/loop.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
 import { registryOf } from "../../core/registry.js";

@@ -4,8 +4,8 @@ import { runSubturn, type Early, type PluginContext, type PluginHooks } from "..
 import type { Outcome } from "../../core/loop.js";
 import type { State } from "../../core/seams.js";
 import type { PhaseSpec, RunSpec } from "../../core/spec.js";
-import type { Mirror, PhaseUpdate } from "../../workflows/compose/mirror.js";
-import { PHASE_APPROVAL, PHASE_SCHEMA, type ComposeKinds, type PhaseAnswer, type PhasePayload } from "../../workflows/compose/vocabulary.js";
+import type { Mirror, PhaseUpdate } from "./mirror.js";
+import { PHASE_APPROVAL, PHASE_SCHEMA, type ComposeKinds, type PhaseAnswer, type PhasePayload } from "./vocabulary.js";
 
 // The compose plugin's code: the playbook decided the order, so this walks it.
 // No step is skipped, reordered or repeated, and no decision is taken here.

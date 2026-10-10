@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { unboundCapabilities, type Roles, type ToolSpec } from "../../core/spec.js";
-import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { DEPLOYMENT_SOURCE } from "../../workflows/hunt/opening.js";
-import { buildReport } from "../../workflows/hunt/report.js";
-import { DEPLOYMENT_GAP_PROVENANCE, evidenceStrength, isGap, unmetPredicates } from "../../workflows/hunt/strength.js";
+import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
+import { DEPLOYMENT_SOURCE } from "../../plugins/hunt/opening.js";
+import { buildReport } from "../../plugins/hunt/report.js";
+import { DEPLOYMENT_GAP_PROVENANCE, evidenceStrength, isGap, unmetPredicates } from "../../plugins/hunt/strength.js";
 import { newLedger, provable, reopen, validate, type Started } from "../support/hunt.js";
 
 const SEARCH: ToolSpec = { id: "elastic_elastic_search_logs", kind: "remote", provides: "telemetry_search" };

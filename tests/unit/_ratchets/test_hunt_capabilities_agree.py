@@ -259,7 +259,7 @@ def test_both_sides_agree_what_a_turn_costs_in_calls():
     )
 
     types_ts = (
-        ROOT / "services" / "agent" / "workflows" / "hunt" / "types.ts"
+        ROOT / "services" / "agent" / "plugins" / "hunt" / "types.ts"
     ).read_text()
 
     # The formula, so a change to either side's arithmetic is a failure here and
@@ -307,7 +307,7 @@ def test_both_sides_ship_the_same_cost_ceiling():
     from core.workflows.playbook_resolver import HUNT_BUDGETS
 
     types_ts = (
-        ROOT / "services" / "agent" / "workflows" / "hunt" / "types.ts"
+        ROOT / "services" / "agent" / "plugins" / "hunt" / "types.ts"
     ).read_text()
     stated = re.search(r"max_cost_usd: ([\d.]+),", types_ts)
     assert stated is not None, "types.ts no longer states max_cost_usd"

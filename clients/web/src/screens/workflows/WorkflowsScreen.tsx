@@ -512,7 +512,7 @@ function looksUnfinished(line: string): boolean {
 /** The ten kinds a key can carry, held to the hunt's own closed set by the spec
  *  loader, which refuses anything else rather than coercing it. Spelled here so
  *  the operator is told before submitting, and ratcheted against
- *  `workflows/hunt/types.ts` by `test_recall_contract_agrees` — a list that
+ *  `plugins/hunt/types.ts` by `test_recall_contract_agrees` — a list that
  *  drifts tells them a key is fine that no reader will ever query. */
 const ENTITY_TYPES = ['ip', 'domain', 'host', 'url', 'email', 'hash', 'arn', 'aws_key', 'user', 'process']
 

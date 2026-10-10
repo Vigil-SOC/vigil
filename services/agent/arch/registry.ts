@@ -3,18 +3,18 @@ import type { AgentEvent, RunKind } from "../contracts/events.js";
 import type { Notes } from "../core/memory.js";
 import type { State } from "../core/seams.js";
 import { SpecError, type Owned } from "../core/spec.js";
-import { composeProjection } from "../workflows/compose/projection.js";
-import { huntDistil } from "../workflows/hunt/distil.js";
-import type { HuntKinds } from "../workflows/hunt/ledger.js";
-import { huntProjection, type ProjectionOptions } from "../workflows/hunt/projection.js";
-import { huntNotes } from "../workflows/hunt/recall.js";
-import { leadProjection } from "../workflows/lead/projection.js";
+import { composeProjection } from "../plugins/compose/projection.js";
+import { huntDistil } from "../plugins/hunt/distil.js";
+import type { HuntKinds } from "../plugins/hunt/ledger.js";
+import { huntProjection, type ProjectionOptions } from "../plugins/hunt/projection.js";
+import { huntNotes } from "../plugins/hunt/recall.js";
+import { leadProjection } from "../plugins/investigate/legacy/projection.js";
 import { isAgentRun } from "../core/agent.js";
 import { investigateView } from "../plugins/investigate/view.js";
 import { huntView } from "../plugins/hunt/view.js";
-import type { LeadKinds } from "../workflows/lead/vocabulary.js";
-import { rootCauseProjection } from "../workflows/rootcause/projection.js";
-import type { RootCauseKinds } from "../workflows/rootcause/proof.js";
+import type { LeadKinds } from "../plugins/investigate/legacy/vocabulary.js";
+import { rootCauseProjection } from "../plugins/rootcause/projection.js";
+import type { RootCauseKinds } from "../plugins/rootcause/proof.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
 // than switched on in the worker: an agent type is a file and an entry, not a branch.

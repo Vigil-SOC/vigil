@@ -9,7 +9,7 @@ import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
 import type { HarnessFactory } from "../../harness.js";
 import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest, type VerifyRun } from "../../serve.js";
-import type { ReplayReport } from "../../workflows/hunt/replay.js";
+import type { ReplayReport } from "../../plugins/hunt/replay.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";

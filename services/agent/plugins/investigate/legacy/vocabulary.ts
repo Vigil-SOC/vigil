@@ -1,4 +1,4 @@
-import type { UnboundPayload } from "../../contracts/events.js";
+import type { UnboundPayload } from "../../../contracts/events.js";
 
 // What the lead loop journaled, before investigate ran on the plugin kernel. Kept
 // so a ledger it wrote still projects and replays; nothing writes these now.

@@ -1,19 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { callsPerIteration, DEFAULT_BUDGETS, type Budgets } from "../../workflows/hunt/types.js";
-import { scoredFrontier } from "../../workflows/hunt/frontier.js";
+import { callsPerIteration, DEFAULT_BUDGETS, type Budgets } from "../../plugins/hunt/types.js";
+import { scoredFrontier } from "../../plugins/hunt/frontier.js";
 import {
   DEFAULT_TERMINATION,
   DEFAULT_VERDICTS,
   huntSpec,
   type Termination,
-} from "../../workflows/hunt/config.js";
-import { pendingCheckpoints } from "../../workflows/hunt/checkpoints.js";
-import { steer } from "../../workflows/hunt/inbox.js";
-import { Journal } from "../../workflows/hunt/journal.js";
-import { boundBy, boundReason } from "../../workflows/hunt/opening.js";
-import type { DirectiveQueue } from "../../workflows/hunt/ports.js";
-import { buildReport, renderReport } from "../../workflows/hunt/report.js";
-import { terminationVerdict } from "../../workflows/hunt/termination.js";
+} from "../../plugins/hunt/config.js";
+import { pendingCheckpoints } from "../../plugins/hunt/checkpoints.js";
+import { steer } from "../../plugins/hunt/inbox.js";
+import { Journal } from "../../plugins/hunt/journal.js";
+import { boundBy, boundReason } from "../../plugins/hunt/opening.js";
+import type { DirectiveQueue } from "../../plugins/hunt/ports.js";
+import { buildReport, renderReport } from "../../plugins/hunt/report.js";
+import { terminationVerdict } from "../../plugins/hunt/termination.js";
 import {
   bookOf,
   finalized,

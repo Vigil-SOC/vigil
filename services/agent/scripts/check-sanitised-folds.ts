@@ -18,12 +18,12 @@
 import { gunzipSync } from "node:zlib";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fold } from "../workflows/hunt/ledger.js";
-import { buildEntityGraph } from "../workflows/hunt/entities.js";
-import { evidenceStrength } from "../workflows/hunt/strength.js";
-import { buildReport } from "../workflows/hunt/report.js";
+import { fold } from "../plugins/hunt/ledger.js";
+import { buildEntityGraph } from "../plugins/hunt/entities.js";
+import { evidenceStrength } from "../plugins/hunt/strength.js";
+import { buildReport } from "../plugins/hunt/report.js";
 import { asHarnessEvents } from "../tests/support/historical.js";
-import type { Entity, EvidenceRecord } from "../workflows/hunt/types.js";
+import type { Entity, EvidenceRecord } from "../plugins/hunt/types.js";
 
 const read = (dir: string, name: string): string => gunzipSync(readFileSync(join(dir, name))).toString("utf8");
 

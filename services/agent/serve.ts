@@ -13,19 +13,19 @@ import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
 import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
-import { chatEvents, sse } from "./workflows/chat/sse.js";
-import { runChat, type Turn } from "./workflows/chat/workflow.js";
+import { chatEvents, sse } from "./plugins/chat/sse.js";
+import { runChat, type Turn } from "./plugins/chat/workflow.js";
 import { harnessFor, type HarnessFactory } from "./harness.js";
-import type { ProjectionOptions } from "./workflows/hunt/projection.js";
-import { narrateRun } from "./workflows/hunt/workflow.js";
-import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
-import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
+import type { ProjectionOptions } from "./plugins/hunt/projection.js";
+import { narrateRun } from "./plugins/hunt/workflow.js";
+import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
+import { replay, type ReplayReport } from "./plugins/hunt/replay.js";
 import { agentReplay } from "./core/agent-view.js";
-import { investigateReplay } from "./workflows/lead/replay.js";
+import { investigateReplay } from "./plugins/investigate/legacy/replay.js";
 import { isAgentRun } from "./core/agent.js";
 import { investigateKernelReplay } from "./plugins/investigate/view.js";
 import { huntKernelReplay } from "./plugins/hunt/view.js";
-import { rootCauseReplay } from "./workflows/rootcause/replay.js";
+import { rootCauseReplay } from "./plugins/rootcause/replay.js";
 
 const log = logger("agent.serve");
 

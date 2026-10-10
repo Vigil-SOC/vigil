@@ -1,6 +1,6 @@
 # The root-cause plugin: trace a confirmed compromise backward to where it began.
 # One investigator on the kernel's loop. The proof is the plugin's own code
-# (hooks.ts, workflows/rootcause/proof.ts): a link is proved by counting results
+# (hooks.ts, plugins/rootcause/proof.ts): a link is proved by counting results
 # the run was shown, never by the model saying so.
 id: rootcause
 description: Trace a confirmed compromise backward, step by proved step, to its origin.

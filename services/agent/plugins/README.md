@@ -98,7 +98,7 @@ authored sequence rather than one agent's judgement. Compose's phases use it.
 | `investigate` | investigate | Files only. The dismissal guard holds `benign`/`false_positive` for review. |
 | `hunt` | hunt | One agent keeps the hunt's record through its tools, in `book.ts`. The record is the controller's, unchanged, so the projection, the distil episodic memory reads and the report fold it as before. |
 | `adjudicate` | adjudicate | Same hooks as hunt, without escalation. |
-| `rootcause` | root_cause | The proof is code (`workflows/rootcause/proof.ts`); the model never says a link is proved. |
+| `rootcause` | root_cause | The proof is code (`plugins/rootcause/proof.ts`); the model never says a link is proved. |
 | `compose` | compose | Walks the playbook's authored phases in order, each a subturn under its own agent and grants. |
 | `chat` | chat | A conversation: the caller holds the transcript and nothing writes a terminal. |
 | `tally` | tally | The conformance plugin. If a plugin this small needs the kernel to know anything about it, the boundary is in the wrong place. |

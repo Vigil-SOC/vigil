@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BASE_RATE_PROVENANCE, OPERATOR_HYPOTHESIS_PROVENANCE } from "../../workflows/hunt/opening.js";
+import { BASE_RATE_PROVENANCE, OPERATOR_HYPOTHESIS_PROVENANCE } from "../../plugins/hunt/opening.js";
 import { briefOf } from "../../plugins/hunt/hooks.js";
-import { terminationVerdict } from "../../workflows/hunt/termination.js";
-import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
+import { terminationVerdict } from "../../plugins/hunt/termination.js";
+import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
 import { newLedger, type Started } from "../support/hunt.js";
 
 const board = (started: Started) => [...started.ledger.projection.hypotheses.values()];

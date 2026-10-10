@@ -1,15 +1,15 @@
 import { agentProjection, agentReplay, modelMs, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
 import { RECORD_TOOLS } from "../../core/record.js";
-import { callViews } from "../../workflows/call-view.js";
+import { callViews } from "../../core/call-view.js";
 import { HUNT_TOOLS, operatorOf } from "./hooks.js";
 import { recalledNotesOf } from "../../contracts/memory.js";
 import { replayFrames } from "../../core/replay.js";
-import { fold } from "../../workflows/hunt/ledger.js";
-import type { ReplayReport, ReplayedDecision } from "../../workflows/hunt/replay.js";
-import type { Digest } from "../../workflows/hunt/types.js";
+import { fold } from "./ledger.js";
+import type { ReplayReport, ReplayedDecision } from "./replay.js";
+import type { Digest } from "./types.js";
 import type { CallPayload } from "../../contracts/events.js";
-import type { HuntEvent } from "../../workflows/hunt/ledger.js";
-import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type ProjectionOptions } from "../../workflows/hunt/projection.js";
+import type { HuntEvent } from "./ledger.js";
+import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type ProjectionOptions } from "./projection.js";
 
 // A kernel hunt writes the controller's record, so the projection folds it unchanged. It
 // has no decision events, so its moves are read off the agent's calls under the same verbs.

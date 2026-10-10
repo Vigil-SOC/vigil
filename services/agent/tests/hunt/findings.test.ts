@@ -1,7 +1,7 @@
 // A hunt links the alerts its evidence cites to its case -- and only those.
 import { describe, expect, it } from "vitest";
-import { citedFindings } from "../../workflows/hunt/findings.js";
-import { newId } from "../../workflows/hunt/ids.js";
+import { citedFindings } from "../../plugins/hunt/findings.js";
+import { newId } from "../../plugins/hunt/ids.js";
 import { newLedger } from "../support/hunt.js";
 
 async function withPayloads(...payloads: Record<string, unknown>[]) {

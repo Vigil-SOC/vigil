@@ -1,16 +1,16 @@
 import { GatewayExhausted } from "../../core/limiter.js";
 import type { Budget } from "../../contracts/budget.js";
-import { AUTO_ACTOR, DEFAULT_CHECKPOINTS, pendingCheckpoints, raiseCheckpoint, resolutionOf, resolveCheckpoint, type Checkpoint, type CheckpointClass, type Checkpoints, type Resolution } from "../../workflows/hunt/checkpoints.js";
-import { DEFAULT_TERMINATION, verdictsOf, type Termination, type Verdicts } from "../../workflows/hunt/config.js";
-import { entitiesOf, fromText, key } from "../../workflows/hunt/entities.js";
-import { newId } from "../../workflows/hunt/ids.js";
-import { drain, grantOf, journalNote } from "../../workflows/hunt/inbox.js";
-import type { Journal } from "../../workflows/hunt/journal.js";
-import { boundBy, boundReason, standingOf, TOOL_FAILURE } from "../../workflows/hunt/opening.js";
-import { buildReport, renderCaseFile } from "../../workflows/hunt/report.js";
-import { criticPayload, sanitize, sanitizeQuestion } from "../../workflows/hunt/sanitize.js";
-import { evidenceStrength, isGap, OPERATOR_GAP_PROVENANCE, recordsFailedQuery, unmetPredicates, UNDECLARED_SOURCE, NULL_CHECK_PROVENANCE, CRITIC_SOURCE_SYSTEM } from "../../workflows/hunt/strength.js";
-import { terminationVerdict, type TerminationVerdict } from "../../workflows/hunt/termination.js";
+import { AUTO_ACTOR, DEFAULT_CHECKPOINTS, pendingCheckpoints, raiseCheckpoint, resolutionOf, resolveCheckpoint, type Checkpoint, type CheckpointClass, type Checkpoints, type Resolution } from "./checkpoints.js";
+import { DEFAULT_TERMINATION, verdictsOf, type Termination, type Verdicts } from "./config.js";
+import { entitiesOf, fromText, key } from "./entities.js";
+import { newId } from "./ids.js";
+import { drain, grantOf, journalNote } from "./inbox.js";
+import type { Journal } from "./journal.js";
+import { boundBy, boundReason, standingOf, TOOL_FAILURE } from "./opening.js";
+import { buildReport, renderCaseFile } from "./report.js";
+import { criticPayload, sanitize, sanitizeQuestion } from "./sanitize.js";
+import { evidenceStrength, isGap, OPERATOR_GAP_PROVENANCE, recordsFailedQuery, unmetPredicates, UNDECLARED_SOURCE, NULL_CHECK_PROVENANCE, CRITIC_SOURCE_SYSTEM } from "./strength.js";
+import { terminationVerdict, type TerminationVerdict } from "./termination.js";
 import {
   OUTCOME_PRECEDENCE,
   type Budgets,
@@ -25,7 +25,7 @@ import {
   type NullCheckResult,
   type OpenQuestion,
   type WorkerEvidence,
-} from "../../workflows/hunt/types.js";
+} from "./types.js";
 
 // The hunt's record, kept by one agent through tools. Every write is one the controller
 // made, so every fold over a hunt ledger reads a kernel hunt exactly as a controller one.

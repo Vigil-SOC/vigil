@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fold } from "../../workflows/hunt/ledger.js";
+import { fold } from "../../plugins/hunt/ledger.js";
 import { briefOf } from "../../plugins/hunt/hooks.js";
 import { asHarnessEvents, gunzipped } from "../support/historical.js";
 

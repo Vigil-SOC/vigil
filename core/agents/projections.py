@@ -90,7 +90,7 @@ async def read_projection(
 
 
 # What episodic memory reads once a run has ended, folded on the side that owns
-# the events; see services/agent/workflows/hunt/distil.ts for why it is not the
+# the events; see services/agent/plugins/hunt/distil.ts for why it is not the
 # projection. None reads as "nothing to distil yet", never as "this run saw
 # nothing" — the difference matters, because the second would be a fact.
 async def read_distil(run_id: str) -> Optional[Dict[str, Any]]:

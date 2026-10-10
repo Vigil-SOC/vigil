@@ -2,7 +2,7 @@ import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
 import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";
 import { DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
-import { DEFAULT_CHECKPOINTS, type Checkpoints } from "../../workflows/hunt/checkpoints.js";
+import { DEFAULT_CHECKPOINTS, type Checkpoints } from "../../plugins/hunt/checkpoints.js";
 import {
   DEFAULT_ENRICHMENT,
   DEFAULT_HYPOTHESIS_LOOP,
@@ -11,15 +11,15 @@ import {
   type HuntSpec,
   type Termination,
 
-} from "../../workflows/hunt/config.js";
-import { startHunt } from "../../workflows/hunt/opening.js";
+} from "../../plugins/hunt/config.js";
+import { startHunt } from "../../plugins/hunt/opening.js";
 import { HuntBook } from "../../plugins/hunt/book.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import { Journal, type HuntEvent, type HuntKinds } from "../../workflows/hunt/journal.js";
-import { newId } from "../../workflows/hunt/ids.js";
-import type { HuntReport } from "../../workflows/hunt/report.js";
-import { NULL_CHECK_PROVENANCE } from "../../workflows/hunt/strength.js";
-import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type EvidenceRecord, type LinkRelation, type NullCheckResult } from "../../workflows/hunt/types.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { Journal, type HuntEvent, type HuntKinds } from "../../plugins/hunt/journal.js";
+import { newId } from "../../plugins/hunt/ids.js";
+import type { HuntReport } from "../../plugins/hunt/report.js";
+import { NULL_CHECK_PROVENANCE } from "../../plugins/hunt/strength.js";
+import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type EvidenceRecord, type LinkRelation, type NullCheckResult } from "../../plugins/hunt/types.js";
 
 export const SCRIPTED_MODEL_ID = "scripted";
 

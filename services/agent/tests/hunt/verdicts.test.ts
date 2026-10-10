@@ -14,13 +14,13 @@ import {
   DEFAULT_VERDICTS,
   validateThresholds,
   verdictsOf,
-} from "../../workflows/hunt/config.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import { fold, type HuntEvent, type HuntKinds } from "../../workflows/hunt/ledger.js";
-import { newId } from "../../workflows/hunt/ids.js";
-import { startHunt } from "../../workflows/hunt/opening.js";
-import { evidenceStrength, isGap } from "../../workflows/hunt/strength.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+} from "../../plugins/hunt/config.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import { fold, type HuntEvent, type HuntKinds } from "../../plugins/hunt/ledger.js";
+import { newId } from "../../plugins/hunt/ids.js";
+import { startHunt } from "../../plugins/hunt/opening.js";
+import { evidenceStrength, isGap } from "../../plugins/hunt/strength.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 import {
   bookOf,
   evidenceOn,

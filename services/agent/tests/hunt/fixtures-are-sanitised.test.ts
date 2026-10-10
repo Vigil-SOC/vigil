@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { gunzipSync } from "node:zlib";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fromPayload, fromText } from "../../workflows/hunt/entities.js";
+import { fromPayload, fromText } from "../../plugins/hunt/entities.js";
 
 // The ledgers under tests/fixtures/runs are hunts over BOTS v3 rewritten by
 // scripts/sanitise-hunt-ledgers.ts. This is the gate on that rewrite: it asserts

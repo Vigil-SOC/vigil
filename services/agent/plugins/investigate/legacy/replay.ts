@@ -1,4 +1,4 @@
-import type { DispatchPayload } from "../../contracts/events.js";
+import type { DispatchPayload } from "../../../contracts/events.js";
 import type { DecisionPayload } from "./vocabulary.js";
 
 // What an investigate run decided, and the calls that followed each decision.

@@ -44,7 +44,7 @@ export function provenanceTag(provenance?: string): { text: string; title?: stri
   return null
 }
 
-/** The four checkpoint classes a hunt can raise (services/agent/workflows/hunt/checkpoints.ts),
+/** The four checkpoint classes a hunt can raise (services/agent/plugins/hunt/checkpoints.ts),
  *  in plain words. The buttons are labels only: the two answers stay approve and reject. */
 type CheckpointClass = 'hypothesis_approval' | 'scope_extension' | 'verdict_review' | 'budget_anomaly'
 interface ClassWords { why: string; approve: string; reject: string }

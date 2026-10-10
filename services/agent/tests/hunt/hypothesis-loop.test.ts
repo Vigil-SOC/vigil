@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { BASE_RATE_PROVENANCE, NULL_HYPOTHESIS, nullHypothesisFor } from "../../workflows/hunt/opening.js";
-import { scoredFrontier } from "../../workflows/hunt/frontier.js";
-import { unclassified } from "../../workflows/hunt/strength.js";
-import { evidenceFrom } from "../../workflows/hunt/adapters.js";
-import { terminationVerdict } from "../../workflows/hunt/termination.js";
+import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
+import { BASE_RATE_PROVENANCE, NULL_HYPOTHESIS, nullHypothesisFor } from "../../plugins/hunt/opening.js";
+import { scoredFrontier } from "../../plugins/hunt/frontier.js";
+import { unclassified } from "../../plugins/hunt/strength.js";
+import { evidenceFrom } from "../../plugins/hunt/adapters.js";
+import { terminationVerdict } from "../../plugins/hunt/termination.js";
 import { briefOf } from "../../plugins/hunt/hooks.js";
 import {
   bareEvidence,

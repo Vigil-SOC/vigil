@@ -72,7 +72,7 @@ export type WindowSource = (typeof WINDOW_SOURCES)[number];
 export const GAP_DISPOSITIONS = ["deprioritised", "no_evidence_gathered", "budget_exhausted"] as const;
 export type GapDisposition = (typeof GAP_DISPOSITIONS)[number];
 
-// The rule is `defang` then case-fold, in workflows/hunt/entities.ts. The
+// The rule is `defang` then case-fold, in plugins/hunt/entities.ts. The
 // exception is the half that breaks silently: an ARN's resource part and an AWS
 // key id are case-significant, so folding them makes two principals one key and
 // the join still returns rows, just the wrong ones.

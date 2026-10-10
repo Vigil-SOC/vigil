@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
 import { InProcessState } from "../../core/state.js";
 import { DEFAULT_BUDGETS, DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
-import { composeProjection } from "../../workflows/compose/projection.js";
-import { runCompose } from "../../workflows/compose/workflow.js";
-import type { Mirror, TerminalResult } from "../../workflows/compose/mirror.js";
-import type { ComposeKinds } from "../../workflows/compose/vocabulary.js";
+import { composeProjection } from "../../plugins/compose/projection.js";
+import { runCompose } from "../../plugins/compose/workflow.js";
+import type { Mirror, TerminalResult } from "../../plugins/compose/mirror.js";
+import type { ComposeKinds } from "../../plugins/compose/vocabulary.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 
 // A compose run ended without telling the mirror what it cost, so a finished run

@@ -4,12 +4,12 @@
 import { describe, expect, it } from "vitest";
 import type { Attempt } from "../../core/loop.js";
 import { wrap, scannerFor } from "../../core/security.js";
-import { callsOf, charged, link, salvaged } from "../../workflows/hunt/adapters.js";
+import { callsOf, charged, link, salvaged } from "../../plugins/hunt/adapters.js";
 import { getEventListeners, getMaxListeners } from "node:events";
-import { renderNullCheck } from "../../workflows/hunt/render.js";
-import { renderCaseFile } from "../../workflows/hunt/report.js";
+import { renderNullCheck } from "../../plugins/hunt/render.js";
+import { renderCaseFile } from "../../plugins/hunt/report.js";
 import { bookOf, evidenceOn, newLedger, relate } from "../support/hunt.js";
-import { newId } from "../../workflows/hunt/ids.js";
+import { newId } from "../../plugins/hunt/ids.js";
 
 const attempt = (tool: string, args: string, rows: readonly unknown[]): Attempt => {
   const result = { ok: true as const, rows, rowCount: rows.length, capped: false, sourceSystem: "duckdb" };

@@ -2,8 +2,8 @@
 // empty was ruled "weakens" on a rehearsal with no SIEM, so a hypothesis went Standing
 // to Weakened to Inconclusive with nothing ever found against it.
 import { describe, expect, it } from "vitest";
-import { evidenceFrom } from "../../workflows/hunt/adapters.js";
-import { evidenceStrength, isGap, openGaps, unclassified } from "../../workflows/hunt/strength.js";
+import { evidenceFrom } from "../../plugins/hunt/adapters.js";
+import { evidenceStrength, isGap, openGaps, unclassified } from "../../plugins/hunt/strength.js";
 import { bareEvidence, bookOf, evidenceOn, newLedger, relate } from "../support/hunt.js";
 
 const loop = () => newLedger({ hypothesisLoop: true });

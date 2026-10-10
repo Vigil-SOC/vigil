@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { prefixBytes, prefixMessages, prefixOf } from "../../core/context.js";
 import { recalledNotes, recalledRowsOf, type RecallResult } from "../../contracts/memory.js";
-import { fold, type HuntEvent } from "../../workflows/hunt/ledger.js";
-import { replay } from "../../workflows/hunt/replay.js";
+import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
+import { replay } from "../../plugins/hunt/replay.js";
 
 // The replay gate for episodic recall (#737).
 //

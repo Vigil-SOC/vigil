@@ -4,7 +4,7 @@ import type { Announce } from "../../core/checkpoints.js";
 import { runAgent, type AgentKinds, type StopSource } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
 import { SpecError, type RunSpec } from "../../core/spec.js";
-import { loadPlugin } from "../../plugins/index.js";
+import { loadPlugin } from "../index.js";
 import { toolsFrom } from "../../tools/remote.js";
 import type { DirectiveQueue } from "../hunt/ports.js";
 import type { NoticePayload, RootCauseKinds, StepPayload } from "./proof.js";

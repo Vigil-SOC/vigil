@@ -3,7 +3,7 @@ import { archFor } from "../../arch/registry.js";
 import { nullMemory, recalling } from "../../core/memory.js";
 import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";
-import { huntNotes } from "../../workflows/hunt/recall.js";
+import { huntNotes } from "../../plugins/hunt/recall.js";
 import { bookOf, newLedger, resolve, type Started } from "../support/hunt.js";
 
 const LIMIT = 8;

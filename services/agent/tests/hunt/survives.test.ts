@@ -10,9 +10,9 @@ import type { Provider, ProviderEvent, TurnRequest } from "../../core/provider.j
 import { registryOf } from "../../core/registry.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
-import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
-import type { HuntKinds } from "../../workflows/hunt/journal.js";
-import { runHunt } from "../../workflows/hunt/workflow.js";
+import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
+import type { HuntKinds } from "../../plugins/hunt/journal.js";
+import { runHunt } from "../../plugins/hunt/workflow.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 

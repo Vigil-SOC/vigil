@@ -3,7 +3,7 @@ import type { Harness, Outcome } from "../../core/loop.js";
 import type { Message } from "../../core/provider.js";
 import { SpecError, type RunSpec } from "../../core/spec.js";
 import type { StreamEvent } from "../../core/stream.js";
-import { loadPlugin } from "../../plugins/index.js";
+import { loadPlugin } from "../index.js";
 import { toolsFrom } from "../../tools/remote.js";
 
 const KIND = "chat";

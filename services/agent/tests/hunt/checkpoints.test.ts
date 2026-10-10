@@ -5,13 +5,13 @@ import {
   DEFAULT_CHECKPOINTS,
   pendingCheckpoints,
   resolutionOf,
-} from "../../workflows/hunt/checkpoints.js";
-import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { scoredFrontier, suppressedEntities } from "../../workflows/hunt/frontier.js";
-import { steer } from "../../workflows/hunt/inbox.js";
-import type { Journal } from "../../workflows/hunt/journal.js";
-import { renderReport } from "../../workflows/hunt/report.js";
-import { evidenceStrength, openGaps } from "../../workflows/hunt/strength.js";
+} from "../../plugins/hunt/checkpoints.js";
+import { DEFAULT_VERDICTS } from "../../plugins/hunt/config.js";
+import { scoredFrontier, suppressedEntities } from "../../plugins/hunt/frontier.js";
+import { steer } from "../../plugins/hunt/inbox.js";
+import type { Journal } from "../../plugins/hunt/journal.js";
+import { renderReport } from "../../plugins/hunt/report.js";
+import { evidenceStrength, openGaps } from "../../plugins/hunt/strength.js";
 import {
   bookOf,
   evidenceOn,
