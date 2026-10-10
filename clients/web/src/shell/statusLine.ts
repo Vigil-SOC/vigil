@@ -9,7 +9,7 @@ export interface StatusFold {
 
 export interface HealthRead {
   status?: string
-  storage?: { database_available?: boolean }
+  storage?: { database_available?: boolean; demo_mode?: boolean }
   schema?: { state?: string }
 }
 
@@ -53,11 +53,14 @@ export function foldStatus(reads: StatusReads): StatusFold {
   const facts: Fact[] = []
   const health = reads.health
   if (health) {
-    if (health.status && health.status !== 'healthy') {
-      facts.push({ level: 'poor', sentence: `Health is ${health.status}.` })
+    // Demo mode runs without a database by design; it is not a fault there.
+    const databaseDown = health.storage?.database_available === false && !health.storage.demo_mode
+    if (databaseDown) {
+      facts.push({ level: 'poor', sentence: 'Database is unavailable.' })
     }
-    if (health.storage?.database_available === false) {
-      facts.push({ level: 'poor', sentence: 'Storage is unavailable.' })
+    // a degraded status the database already explains would only repeat it
+    if (health.status && health.status !== 'healthy' && !databaseDown) {
+      facts.push({ level: 'poor', sentence: `Health is ${health.status}.` })
     }
     const state = health.schema?.state
     if (state === 'drifted' || state === 'empty') {

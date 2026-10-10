@@ -102,6 +102,24 @@ class DatabaseDataService:
         self._init_database()
         return self._db_connected
 
+    def probe_connection(self) -> None:
+        """Re-check a connection believed healthy, for the health route.
+
+        `_db_available` trusts `_db_connected` forever, so a database that dies
+        after startup would report as available until the process restarts. A
+        failed probe marks the service disconnected and starts the reconnect
+        cooldown, so the usual retry path takes over.
+        """
+        if self._demo_mode or not self._db_connected:
+            return
+        if get_db_manager().health_check():
+            return
+        logger.error("PostgreSQL connection lost")
+        self._db_connected = False
+        self._db_service = None
+        self._db_was_down = True
+        self._last_reconnect_attempt = time.monotonic()
+
     def is_using_database(self) -> bool:
         return self._db_available and self._db_service is not None
 
