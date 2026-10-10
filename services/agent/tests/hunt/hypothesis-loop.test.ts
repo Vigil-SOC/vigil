@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
 import { BASE_RATE_PROVENANCE, NULL_HYPOTHESIS, nullHypothesisFor } from "../../workflows/hunt/opening.js";
-import { buildDigest, scoredFrontier } from "../../workflows/hunt/digest.js";
+import { scoredFrontier } from "../../workflows/hunt/frontier.js";
 import { unclassified } from "../../workflows/hunt/strength.js";
 import { evidenceFrom } from "../../workflows/hunt/adapters.js";
 import { terminationVerdict } from "../../workflows/hunt/termination.js";
@@ -136,7 +136,7 @@ describe("one observation rules on every active hypothesis", () => {
     relate(started.ledger, evidenceId, first!, "supports");
     relate(started.ledger, evidenceId, second!, "weakens");
 
-    expect(buildDigest(started.ledger.projection, 1).weakens[second!]).toHaveLength(1);
+    expect(started.ledger.projection.links.filter((link) => link.hypothesis_id === second && link.relation === "weakens")).toHaveLength(1);
   });
 
 });

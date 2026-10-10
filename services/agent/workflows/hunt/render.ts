@@ -1,106 +1,17 @@
 import { scrub } from "../../core/security.js";
 import { sensorAttested } from "./strength.js";
-import type { Digest, EntityView, EvidenceView, HypothesisView, NullCheckInput } from "./types.js";
+import type { NullCheckInput } from "./types.js";
 
-// The digest as the lead reads it: buildDigest decides what is in it, this only
-// how it is written. Evidence carries its id, because the lead is asked to cite them.
+// What the critic is shown. Evidence carries its id, because the critic is asked to cite it.
 const EVIDENCE_CAP = 4_000;
 const DIRECTIVE_CAP = 2_000;
 
-// Operator text is direction, but the lead cannot tell a person's words from a
+// Operator text is direction, but a model cannot tell a person's words from a
 // line forged to look like a section: so it is scrubbed, capped, and kept to one
 // line, which cannot open a heading of its own.
-function bullet(text: string, cap: number): string {
-  return `- ${scrub(text, cap).replace(/\s*\n\s*/g, " ")}`;
+export function operatorLine(text: string): string {
+  return scrub(text, DIRECTIVE_CAP).replace(/\s*\n\s*/g, " ");
 }
-
-// One delimited shape for anything a model reads as evidence, expansions included:
-// a raw payload arriving undelimited would read as the digest's own voice.
-function evidenceBlock(id: string, body: string): string {
-  return `<vigil:evidence id="${id}">\n${body}\n</vigil:evidence>`;
-}
-
-function section(heading: string, body: string): string {
-  return body.trim() === "" ? "" : `## ${heading}\n${body.trim()}`;
-}
-
-function hypothesis(view: HypothesisView): string {
-  return `- ${view.hypothesis_id} (${view.status}): ${view.statement}`;
-}
-
-function evidence(view: EvidenceView): string {
-  const body = scrub(`${view.summary}\n${view.why_notable}`, EVIDENCE_CAP);
-  // instruction_like is stated rather than acted on: the lead is told the text
-  // reads like direction, and the block is what says it is still only data.
-  const flagged = view.instruction_like ? ' instruction_like="true"' : "";
-  return [
-    `<vigil:evidence id="${view.evidence_id}" source="${view.source_system}" salience="${view.salience}"${flagged}>`,
-    body,
-    `</vigil:evidence>`,
-  ].join("\n");
-}
-
-function entity(view: EntityView): string {
-  const suppressed = view.suppressed === true ? ", called benign by an operator" : "";
-  return `- ${view.type}:${view.value} (seen ${view.count}x${suppressed})`;
-}
-
-function weakening(weakens: Digest["weakens"]): string {
-  const entries = Object.entries(weakens).filter(([, views]) => views.length > 0);
-  if (entries.length === 0) return "Nothing yet weakens any hypothesis, which means the hunt has looked one way.";
-  return entries.map(([id, views]) => `Against ${id}:\n${views.map(evidence).join("\n")}`).join("\n\n");
-}
-
-// Two ceilings: which one binds is the fact worth having, and the slack on the other
-// matters too, since an operator reading the same line is who can lift it.
-function budgetLine(remaining: Digest["budget_remaining"]): string {
-  const cash = `$${remaining.cost_usd.toFixed(2)}`;
-  if (remaining.iterations <= 0) {
-    return `This is the last turn: none remain after this decision. ${cash} of the allowance is still unspent, so turns are what bound this hunt, not money.`;
-  }
-  if (remaining.cost_usd <= 0) {
-    return `The allowance is spent: ${remaining.iterations} turn(s) remain but there is nothing left to spend on them.`;
-  }
-  return `${remaining.iterations} turn(s) after this one and ${cash} left; whichever runs out first ends the hunt.`;
-}
-
-export function renderDigest(digest: Digest): string {
-  const budget = budgetLine(digest.budget_remaining);
-  const focus = [digest.focus.entity, digest.focus.hypothesis].filter((part) => part !== null).join(" / ");
-  const { count, evidence_ids: named } = digest.omitted;
-  const omitted =
-    count === 0
-      ? ""
-      : named.length < count
-        ? `${count} record(s) compressed out. The ${named.length} most salient, any of which can be expanded by id: ${named.join(", ")}`
-        : `${count} record(s) compressed out: ${named.join(", ")}`;
-
-  return [
-    `# ${digest.hunt_name} — iteration ${digest.iteration}`,
-    digest.narrative,
-    section("Hypotheses", digest.hypotheses.map(hypothesis).join("\n")),
-    section("Recent evidence", digest.recent_evidence.map(evidence).join("\n\n")),
-    section("Counter-evidence", weakening(digest.weakens)),
-    section("Entities seen", digest.entities.map(entity).join("\n")),
-    section("Focus", focus === "" ? "nothing in particular" : focus),
-    section("Pivot candidates", digest.pivot_candidates.map(entity).join("\n")),
-    section("Compressed", omitted),
-    section(
-      "Expanded on request",
-      digest.expansions.map((one) => evidenceBlock(one.evidence_id, scrub(one.payload, EVIDENCE_CAP))).join("\n\n"),
-    ),
-    section("Open questions", digest.open_questions.map((one) => `- ${one}`).join("\n")),
-    // Last, and named as direction: everything above is data, and the lead is
-    // told which is which rather than being left to infer it from position.
-    section("Operator directives", digest.directives.map((one) => bullet(one, DIRECTIVE_CAP)).join("\n")),
-    section("Notes", digest.notes.map((one) => bullet(one, EVIDENCE_CAP)).join("\n")),
-    section("Budget remaining", budget),
-  ]
-    .filter((part) => part !== "")
-    .join("\n\n");
-}
-
-
 
 // The critic argues against the records themselves, so they arrive delimited and
 // carrying the two attributes the argument turns on. Raw JSON would read as our voice.

@@ -1,5 +1,5 @@
 import { resolutionOf, type Checkpoint, type Resolution } from "./checkpoints.js";
-import { suppressedEntities } from "./digest.js";
+import { suppressedEntities } from "./frontier.js";
 import type { Projection } from "./ledger.js";
 import { citedTechniques, isGap, sensorAttested, unruledObservations } from "./strength.js";
 import { renderNarrative, type Narrative } from "./narrative.js";

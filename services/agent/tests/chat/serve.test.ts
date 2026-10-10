@@ -171,7 +171,7 @@ describe("who may call it", () => {
 describe("replaying what the hunt lead was shown", () => {
   // The route is the live test: the recorded hunt goes in through the store, the
   // report comes back over HTTP, and it says what recall-replay.test.ts says.
-  it("rebuilds every decision and the recalled rows from the ledger alone", async () => {
+  it("shows every decision as recorded, and the recalled rows, from the ledger alone", async () => {
     await listen([]);
     await state.append(HUNT, recordedHunt());
 
@@ -181,8 +181,9 @@ describe("replaying what the hunt lead was shown", () => {
     expect(report.hunt_id).toMatch(/^hunt-/);
     expect(report.recalled.join("\n")).toContain("192.0.2.10 is a scheduled backup target");
     expect(report.decisions.length).toBeGreaterThan(1);
-    expect(report.decisions.every((decision) => decision.mismatch === null)).toBe(true);
-    expect(report.reproduced).toBe(report.decisions.length);
+    // A controller ledger's digests are shown as recorded; nothing claims a rebuild.
+    expect(report.decisions.every((decision) => decision.rebuilt === null)).toBe(true);
+    expect(report.reproduced).toBe(0);
     expect(await state.read(HUNT)).toHaveLength(recordedHunt().length);
   });
 
@@ -196,7 +197,7 @@ describe("replaying what the hunt lead was shown", () => {
     expect(res.status).toBe(200);
     const report = (await res.json()) as ReplayReport;
     expect(report.decisions).toEqual([wanted]);
-    expect(report.reproduced).toBe(1);
+    expect(report.reproduced).toBe(0);
     expect(report.hunt_id).toBe(whole.hunt_id);
     expect(report.recalled).toEqual(whole.recalled);
   });

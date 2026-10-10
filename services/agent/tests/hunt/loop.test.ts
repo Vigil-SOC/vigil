@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seedFrom } from "../../core/budget.js";
-import { buildDigest } from "../../workflows/hunt/digest.js";
 import { steer } from "../../workflows/hunt/inbox.js";
-import { newId } from "../../workflows/hunt/ids.js";
 import { Journal } from "../../workflows/hunt/journal.js";
 import { bookOf, finalized, newLedger, question, reopen } from "../support/hunt.js";
 
@@ -95,44 +93,5 @@ describe("the book", () => {
     // says which of the two ran out.
     expect(ledger.projection.hunt.parked_reason).toMatch(/ran out of turns: iteration 1 of 1/);
     expect(ledger.projection.hunt.parked_reason).toMatch(/having spent \$/);
-  });
-});
-
-describe("digest", () => {
-  it("carries a weakens section and flags one-sidedness", async () => {
-    const { ledger, hypothesisIds } = await newLedger();
-    const hypothesisId = hypothesisIds[0]!;
-    const evidenceId = newId("ev");
-    ledger.append({
-      kind: "evidence",
-      payload: {
-        evidence_id: evidenceId,
-        dispatch_id: null,
-        iteration: 1,
-        source_system: "duckdb",
-        summary: "the identity has logged in from this ASN before",
-        payload: {},
-        salience: "routine",
-        why_notable: "",
-        provenance: "worker",
-        attacker_influenceable: false,
-        instruction_like: false,
-        entities: [],
-        captured_at: new Date().toISOString(),
-      },
-    });
-
-    const oneSided = buildDigest(ledger.projection, 1);
-    expect(oneSided.weakens[hypothesisId]).toEqual([]);
-    expect(oneSided.notes.join(" ")).toMatch(/One-sided support/);
-
-    ledger.append({
-      kind: "link",
-      payload: { evidence_id: evidenceId, hypothesis_id: hypothesisId, relation: "weakens" },
-    });
-    const balanced = buildDigest(ledger.projection, 1);
-    expect(balanced.weakens[hypothesisId]).toHaveLength(1);
-    // contradicting an active hypothesis promotes salience, and code may only raise
-    expect(balanced.weakens[hypothesisId]![0]!.salience).toBe("notable");
   });
 });

@@ -924,9 +924,10 @@ export interface ReplayedDecision {
   action: string
   target: string | null
   cost_usd: number
-  /** False when the ledger predates digest_seq and the prefix had to be inferred. */
+  /** False when the digest was not rebuilt exactly; always false now nothing is rebuilt. */
   exact: boolean
-  rebuilt: ReplayDigest
+  /** Null: the digest builder went with the controller, so the record is shown as journaled. */
+  rebuilt: ReplayDigest | null
   recorded: ReplayDigest
   mismatch: string | null
 }

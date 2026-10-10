@@ -1,5 +1,5 @@
 import { BASE_RATE_PROVENANCE } from "./opening.js";
-import { scoredFrontier } from "./digest.js";
+import { scoredFrontier } from "./frontier.js";
 import type { Projection } from "./ledger.js";
 import { DEFAULT_VERDICTS, type Termination, type Verdicts } from "./config.js";
 import { openGaps } from "./strength.js";

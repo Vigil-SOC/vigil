@@ -11,7 +11,7 @@ import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "../../workflows/hunt/adapters.js";
 import { pendingCheckpoints } from "../../workflows/hunt/checkpoints.js";
-import { suppressedEntities } from "../../workflows/hunt/digest.js";
+import { suppressedEntities } from "../../workflows/hunt/frontier.js";
 import { huntSpec } from "../../workflows/hunt/config.js";
 import { expandFrom } from "../../workflows/hunt/expand.js";
 import { citedFindings } from "../../workflows/hunt/findings.js";
@@ -21,6 +21,7 @@ import { narrativeInput, type Narrative } from "../../workflows/hunt/narrative.j
 import { startHunt } from "../../workflows/hunt/opening.js";
 import type { DirectiveQueue } from "../../workflows/hunt/ports.js";
 import { buildReport, renderReport } from "../../workflows/hunt/report.js";
+import { operatorLine } from "../../workflows/hunt/render.js";
 import { sensorAttested } from "../../workflows/hunt/strength.js";
 import type { Handoff, HuntOutcome } from "../../workflows/hunt/types.js";
 import { HuntBook } from "./book.js";
@@ -337,11 +338,15 @@ export function briefOf(projection: Projection): string {
 const OPERATOR_SHOWN = 12;
 
 function operatorOf(projection: Projection): string[] {
-  const benign = [...suppressedEntities(projection).entries()].map(([entity, why]) => `- ${entity} is known-benign${why ? ` (${why})` : ""}: its evidence stands; open no new work on it.`);
+  // Every operator-supplied string is scrubbed, capped and kept to one line: the
+  // brief is what the agent works from, and a forged heading would read as its own.
+  const benign = [...suppressedEntities(projection).entries()].map(
+    ([entity, why]) => `- ${operatorLine(entity)} is known-benign${why ? ` (${operatorLine(why)})` : ""}: its evidence stands; open no new work on it.`,
+  );
   const said = projection.directives
     .filter((directive) => directive.kind !== "benign" && typeof directive.text === "string" && directive.text.trim() !== "")
     .slice(-OPERATOR_SHOWN)
-    .map((directive) => `- ${directive.kind === "reject" ? "rejected" : directive.kind} (${directive.actor}): ${directive.text.trim()}`);
+    .map((directive) => `- ${directive.kind === "reject" ? "rejected" : directive.kind} (${operatorLine(directive.actor)}): ${operatorLine(directive.text.trim())}`);
   return [...benign, ...said];
 }
 

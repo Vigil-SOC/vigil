@@ -7,7 +7,7 @@ import {
   resolutionOf,
 } from "../../workflows/hunt/checkpoints.js";
 import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { scoredFrontier, suppressedEntities } from "../../workflows/hunt/digest.js";
+import { scoredFrontier, suppressedEntities } from "../../workflows/hunt/frontier.js";
 import { steer } from "../../workflows/hunt/inbox.js";
 import type { Journal } from "../../workflows/hunt/journal.js";
 import { renderReport } from "../../workflows/hunt/report.js";

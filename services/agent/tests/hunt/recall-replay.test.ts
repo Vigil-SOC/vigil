@@ -119,32 +119,19 @@ describe("the fold and the replay are unmoved by it", () => {
     expect(fold(LOG)).toEqual(fold(LOG.filter((event) => event.kind !== "recall")));
   });
 
-  // replay.ts had no caller until this test. Every decision the run made rebuilds
-  // to the digest it was journaled against, recall on the prefix included.
-  it("reproduces every digest the run decided against", () => {
+  // A controller hunt is no longer rebuilt: the digest builder went with the
+  // controller. Every decision is still shown with the digest it was journaled
+  // against, and the replay says plainly that nothing was rebuilt -- it never
+  // claims a match it did not check. Kernel runs are rebuilt call by call
+  // (kernel-replay.test.ts).
+  it("shows every decision with the digest it recorded, and claims no rebuild", () => {
     const report = replay(LOG);
+    const decisions = LOG.filter((event) => event.kind === "decision");
+    expect(report.decisions.length).toBe(decisions.length);
     expect(report.decisions.length).toBeGreaterThan(0);
-    expect(report.decisions.filter((decision) => decision.mismatch !== null)).toEqual([]);
-    expect(report.reproduced).toBe(report.decisions.length);
-  });
-
-  // What Postgres does to the recorded digest: jsonb keeps no key order, so a
-  // ledger read back from the store presents the same digest in different bytes.
-  it("reads a recorded digest with its keys reordered as the same digest", () => {
-    const reordered = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(reordered);
-      if (typeof value !== "object" || value === null) return value;
-      const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a > b ? -1 : 1));
-      return Object.fromEntries(entries.map(([key, held]) => [key, reordered(held)]));
-    };
-    const stored = LOG.map((event) =>
-      event.kind === "decision" ? { ...event, payload: { ...event.payload, digest_presented: reordered(event.payload.digest_presented) } } : event,
-    ) as HuntEvent[];
-    expect(replay(stored).decisions.filter((decision) => decision.mismatch !== null)).toEqual([]);
-  });
-
-  it("rebuilds each digest exactly, with no inferred prefix", () => {
-    expect(replay(LOG).inexact).toBe(0);
+    expect(report.decisions.every((decision) => decision.rebuilt === null && !decision.exact)).toBe(true);
+    expect(report.decisions.map((decision) => decision.recorded)).toEqual(decisions.map((event) => (event.payload as { digest_presented: unknown }).digest_presented));
+    expect(report.reproduced).toBe(0);
   });
 
   // The other half of what a decision was shown. A Replay that rebuilt only the

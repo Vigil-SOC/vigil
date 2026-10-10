@@ -20,6 +20,7 @@ import type { ProjectionOptions } from "./workflows/hunt/projection.js";
 import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
 import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
+import { agentReplay } from "./core/agent-view.js";
 import { investigateReplay } from "./workflows/lead/replay.js";
 import { isAgentRun } from "./core/agent.js";
 import { investigateKernelReplay } from "./plugins/investigate/view.js";
@@ -232,6 +233,12 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     res.end(JSON.stringify(rootCauseReplay(runId, events)));
     return;
   }
+  // A judge or subagent, replayed from its own ledger like any kernel run.
+  if (opened?.run_kind === "subagent") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(agentReplay(runId, events)));
+    return;
+  }
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
   // A kernel hunt has no digest to rebuild: what each turn was shown is the calls before it.
   if (isAgentRun(events)) {
@@ -253,7 +260,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     if (one.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
     // Counts follow the filtered list; hunt_id and recalled are report-level and stay.
     report.decisions = one;
-    report.reproduced = one.filter((decision) => decision.mismatch === null).length;
+    report.reproduced = one.filter((decision) => decision.rebuilt !== null && decision.mismatch === null).length;
     report.inexact = one.filter((decision) => !decision.exact).length;
   }
   res.writeHead(200, { "content-type": "application/json" });

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
-import { buildDigest } from "../../workflows/hunt/digest.js";
 import { EVIDENCE_SHOWN, huntProjection } from "../../workflows/hunt/projection.js";
 import { replay } from "../../workflows/hunt/replay.js";
 import { bookOf, evidenceOn, newLedger, provable, validate, type Started } from "../support/hunt.js";
@@ -306,8 +305,8 @@ describe("what the Watch page reads off a hunt", () => {
         prompt_version: "v1",
         cost_usd: 0.01,
         duration_ms: 42,
-        // What replay rebuilds against: the digest the lead was shown.
-        digest_presented: buildDigest(started.ledger.projection, 1),
+        // What the lead was shown, as a controller ledger records it.
+        digest_presented: {},
         created_at: new Date().toISOString(),
       } as never,
     });

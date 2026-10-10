@@ -19,8 +19,6 @@ import { gunzipSync } from "node:zlib";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fold } from "../workflows/hunt/ledger.js";
-import { buildDigest } from "../workflows/hunt/digest.js";
-import { digestOf } from "../workflows/hunt/config.js";
 import { buildEntityGraph } from "../workflows/hunt/entities.js";
 import { evidenceStrength } from "../workflows/hunt/strength.js";
 import { buildReport } from "../workflows/hunt/report.js";
@@ -61,12 +59,9 @@ const shapeOf = (projection: ReturnType<typeof fold>): unknown => {
   };
 };
 
-// Everything the fold derives, minus the two fields ordered by entity value.
+// Everything the fold derives. The digest went with the controller.
 const derivedOf = (projection: ReturnType<typeof fold>): unknown => {
-  const digest = buildDigest(projection, projection.hunt.iteration, digestOf(projection.hunt.spec));
-  const { entities: _entities, pivot_candidates: _pivots, ...rest } = digest;
   return {
-    digest: rest,
     strength: Object.fromEntries([...projection.hypotheses.keys()].map((id) => [id, evidenceStrength(projection, id)])),
     report: buildReport(projection),
   };

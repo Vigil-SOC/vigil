@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { callsPerIteration, DEFAULT_BUDGETS, type Budgets } from "../../workflows/hunt/types.js";
-import { scoredFrontier } from "../../workflows/hunt/digest.js";
+import { scoredFrontier } from "../../workflows/hunt/frontier.js";
 import {
   DEFAULT_TERMINATION,
   DEFAULT_VERDICTS,
