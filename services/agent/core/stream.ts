@@ -109,6 +109,9 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private spent = 0;
   private prose = "";
   private results = 0;
+  // Set once the model has been asked to keep going, and the ask it is carrying.
+  private nudged = false;
+  private nudge: string | null = null;
   private readonly folder: Folder<Kinds>;
 
   constructor(
@@ -215,13 +218,22 @@ class Run<T, Kinds extends Record<string, unknown>> {
       const refusal = await this.harness.budget.beginCall();
       if (refusal !== null) return this.exhausted(refusal);
 
-      const messages = this.assembled();
+      const tail = this.nudge;
+      this.nudge = null;
+      const messages = this.assembled(tail ?? "");
       if (this.lastFold > 0) yield { type: "folded", folded: this.lastFold, remaining: messages.length };
 
-      const turn = yield* this.burn({ messages, tools: this.prefix.tools }, null);
+      const turn = yield* this.burn({ messages, tools: this.prefix.tools }, tail);
       this.turns += 1;
       this.prose = turn.content;
-      if (turn.tool_calls.length === 0) return null;
+      if (turn.tool_calls.length === 0) {
+        if (this.stoppedEarly()) {
+          this.nudged = true;
+          this.nudge = persistAsk(turn.content, this.gathered(), this.cfg.max_turns - this.turns);
+          continue;
+        }
+        return null;
+      }
 
       this.transcript.push({ role: "assistant", content: turn.content, tool_calls: turn.tool_calls });
       for (const call of turn.tool_calls) {
@@ -251,6 +263,22 @@ class Run<T, Kinds extends Record<string, unknown>> {
     // still answers over what it gathered, and says the set was truncated.
     this.capped = true;
     return null;
+  }
+
+  // Stopped with turns in hand and next to nothing gathered, and not yet asked.
+  private stoppedEarly(): boolean {
+    const persist = this.cfg.persist;
+    if (persist === undefined || this.nudged || this.turns >= this.cfg.max_turns) return false;
+    return this.gathered() < persist.min_results;
+  }
+
+  // Results from tools outside this process: what the run has actually looked at.
+  // Loading a playbook or writing a record is not looking. A resumed run's own
+  // history is counted whole, which can only make it ask less.
+  private gathered(): number {
+    const local = new Set(this.tools.filter((tool) => tool.local).map((tool) => tool.id));
+    const prior = (this.cfg.history ?? []).filter((message) => message.role === "tool").length;
+    return prior + this.calls.filter((attempt) => !local.has(attempt.tool)).length;
   }
 
   // The store is the authority on whether the run is still going, so one
@@ -640,6 +668,16 @@ const FOLD_LADDER: readonly FoldPolicy[] = [
   { head: 2, tail: 4, max_messages: 10, max_chars: 60_000 },
   { head: 1, tail: 1, max_messages: 4, max_chars: 40_000 },
 ];
+
+// What a run that stopped early is asked, with what it said when it stopped, so
+// it can see its own words. Its next answer, with or without tools, stands.
+export function persistAsk(said: string, gathered: number, left: number): string {
+  return [
+    said.trim() === "" ? "You stopped without saying anything." : `You stopped here, saying:\n\n${said.trim()}`,
+    `You have ${gathered} tool result(s) and ${left} turn(s) left. Your answer will be final and acted on.`,
+    "If a question you raised is still open and a tool you hold could answer it, keep investigating. Otherwise reply without calling a tool, and your answer will be asked for.",
+  ].join("\n\n");
+}
 
 // A model call's input rebuilt from its parts, as assembled() built it: what a
 // replay compares against the frame's input hash.

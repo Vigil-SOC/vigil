@@ -65,6 +65,9 @@ export interface PluginManifest {
   // also holds a guarded answer to it and makes the conclusion declare its gaps;
   // off offers nothing, for a plugin with no beliefs to keep. Absent is available.
   record?: RecordMode;
+  // The results a run should gather before it may stop unasked. A run that stops
+  // with fewer, and turns left, is asked once to keep going or confirm it is done.
+  min_results?: number;
 }
 
 export const RECORD_MODES = ["off", "available", "required"] as const;

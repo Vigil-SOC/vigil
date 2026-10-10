@@ -43,6 +43,10 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     throw new SpecError(`${where}: max_turns must be a positive integer`);
   }
   const record = recordOf(raw["record"], conclusion, where);
+  const min_results = raw["min_results"];
+  if (min_results !== undefined && (typeof min_results !== "number" || !Number.isInteger(min_results) || min_results < 1)) {
+    throw new SpecError(`${where}: min_results must be a positive integer`);
+  }
 
   return {
     id,
@@ -54,6 +58,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     ...(guard === undefined ? {} : { guard }),
     ...(max_turns === undefined ? {} : { max_turns: max_turns as number }),
     ...(record === undefined ? {} : { record }),
+    ...(min_results === undefined ? {} : { min_results: min_results as number }),
   };
 }
 

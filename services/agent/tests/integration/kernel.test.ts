@@ -26,7 +26,7 @@ beforeEach(() => {
   runId = randomUUID();
 });
 
-function startJob(id: string): Extract<RunJob, { reason: "start" }> {
+function startJob(id: string, overrides?: Record<string, unknown>): Extract<RunJob, { reason: "start" }> {
   return {
     schema_version: 1,
     run_id: id,
@@ -35,7 +35,7 @@ function startJob(id: string): Extract<RunJob, { reason: "start" }> {
     enqueued_at: new Date().toISOString(),
     enqueued_by: "test",
     reason: "start",
-    request: { arch: "", playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml"), prompt: "go" },
+    request: { arch: "", playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml"), prompt: "go", ...(overrides === undefined ? {} : { overrides }) },
   };
 }
 
@@ -52,6 +52,8 @@ describe("investigate runs on the kernel", () => {
     await advance(ledger, leases, startJob(runId), scriptedHarness([
       { calls: [{ tool: "load_skill", args: '{"name":"investigate-case"}' }] },
       { calls: [] },
+      // Asked once to keep going, having looked at nothing: it stops again.
+      { calls: [] },
       CONCLUDE,
     ]));
 
@@ -67,10 +69,12 @@ describe("investigate runs on the kernel", () => {
   // it: r1 is a visibility gap, the record refuses it as evidence, and a dismissal
   // resting on it is held for a person however firmly the reviewer upholds it.
   it("runs the reviewer as a child run whose own chain verifies, and holds a dismissal over a blind call", async () => {
-    await advance(ledger, leases, startJob(runId), scriptedHarness([
+    // Room past the fixture's six calls: four turns, the ask to keep going, the answer and the review.
+    await advance(ledger, leases, startJob(runId, { budgets: { max_calls: 12 } }), scriptedHarness([
       { calls: [{ tool: "get_finding", args: "{}" }] },
       { calls: [{ tool: "propose_hypothesis", args: '{"statement":"a stale scheduled task"}' }] },
       { calls: [{ tool: "link_evidence", args: '{"links":[{"evidence_id":"r1","hypothesis_id":"h1","stance":"supports"}]}' }] },
+      { calls: [] },
       { calls: [] },
       { emit: { summary: "a scheduled task holds a stale password", disposition: "benign", confidence: "medium", citations: ["r1"], gaps: [], next_steps: [] } },
       { emit: { stance: "uphold", reasons: "the task is named", missing: [] } },
@@ -105,6 +109,7 @@ describe("investigate runs on the kernel", () => {
     }]);
     await advance(ledger, leases, resumeJob(runId), scriptedHarness([
       { calls: [{ tool: "case_records", args: '{"case_id":"c-1"}' }] },
+      { calls: [] },
       { calls: [] },
       CONCLUDE,
     ]));

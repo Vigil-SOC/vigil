@@ -25,6 +25,7 @@ import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { inputHash } from "../../core/stream.js";
 import { pluginFor } from "../../plugins/registry.js";
+import { quiet } from "../support/plugins.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
 // The five things the kernel owes every plugin so a run can be trusted and learned
@@ -84,7 +85,7 @@ const DISMISSAL: ScriptedTurn[] = [
 
 async function dismissed(): Promise<{ state: InProcessState<AgentKinds>; provider: ScriptedProvider }> {
   const spec = specOf();
-  const plugin = pluginFor("investigate");
+  const plugin = quiet(pluginFor("investigate"));
   const state = new InProcessState<AgentKinds>();
   const provider = scriptedProvider(DISMISSAL);
   const report = await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
@@ -126,7 +127,7 @@ describe("the hypothesis record", () => {
 
   it("refuses to link a result that was not served, or a claim that is not on the record", async () => {
     const spec = specOf();
-    const plugin = pluginFor("investigate");
+    const plugin = quiet(pluginFor("investigate"));
     const state = new InProcessState<AgentKinds>();
     const tools = spec.tools.map((one) => (one.id === "splunk_search" ? tool(one.id, () => ({ ok: false, failure: { kind: "timeout", timeoutMs: 1_000 } })) : tool(one.id)));
     const provider = scriptedProvider([
@@ -152,6 +153,85 @@ describe("the hypothesis record", () => {
   });
 });
 
+describe("the record costs as few model calls as it can", () => {
+  it("proposes a hypothesis by statement in the same call that links evidence to it", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [call("get_finding")] },
+      // One turn: the next query and the whole record step, run together.
+      {
+        calls: [
+          call("splunk_search", { sql: "select 1" }),
+          call("link_evidence", {
+            links: [
+              { evidence_id: "r1", statement: "a scheduled task", stance: "supports" },
+              { evidence_id: "r1", statement: "a password spray", stance: "weakens" },
+              { evidence_id: "r1", statement: "a scheduled task", stance: "supports" },
+            ],
+          }),
+        ],
+      },
+      STOP,
+      concluded("malicious", ["r1"]),
+    ]);
+    await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+
+    const record = recordOf(await state.read(RUN));
+    expect([...record.hypotheses.values()].map((one) => [one.hypothesis_id, one.statement])).toEqual([
+      ["h1", "a scheduled task"],
+      ["h2", "a password spray"],
+    ]);
+    expect(record.links.map((one) => [one.hypothesis_id, one.relation])).toEqual([["h1", "supports"], ["h2", "weakens"], ["h1", "supports"]]);
+    expect(provider.requests[0]?.messages[0]?.content).toContain("## Keeping the record");
+  });
+
+  it("refuses a link that names neither an id nor a statement", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [call("get_finding")] },
+      { calls: [call("link_evidence", { links: [{ evidence_id: "r1", stance: "supports" }] })] },
+      STOP,
+      concluded("malicious", ["r1"]),
+    ]);
+    await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+    const link = (await state.read(RUN)).filter((one) => one.kind === "call").map((one) => one.payload as CallPayload)[1];
+    expect(link?.class).toBe("defect");
+    expect(link?.result).toContain("names a hypothesis_id, or a statement");
+  });
+});
+
+describe("the reviewer reads what the answer stands on", () => {
+  it("sees every cited record, a bounded window of the rest, and no playbook", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const state = new InProcessState<AgentKinds>();
+    const big = (id: string): RegisteredTool => tool(id, () => ({ ok: true, rows: [{ blob: "x".repeat(7_000) }], rowCount: 1, capped: false, sourceSystem: id }));
+    const tools = spec.tools.map((one) => (one.id === "splunk_search" ? big(one.id) : tool(one.id)));
+    const provider = scriptedProvider([
+      { calls: [call("load_skill", { name: "investigate-case" }), call("get_finding")] },
+      { calls: [1, 2, 3, 4, 5].map((n) => call("splunk_search", { sql: `q${n}` })) },
+      { calls: [call("link_evidence", { links: [{ evidence_id: "r2", statement: "a scheduled task", stance: "supports" }] })] },
+      STOP,
+      concluded("benign", ["r2"]),
+      { emit: { stance: "uphold", reasons: "named owner", missing: [] } },
+    ]);
+    await runAgent(harnessOf(spec, plugin, provider, state, tools), optionsOf(spec, plugin));
+
+    const shown = provider.requests.at(-1)?.messages.map((one) => one.content).join("\n") ?? "";
+    expect(shown).toContain('<vigil:record id="r2" cited="true">');
+    expect(shown).not.toContain('id="r1"');
+    // Five 7k results, newest first, until the context window is spent.
+    const context = (shown.match(/<vigil:record id="r[3-7]">/g) ?? []).length;
+    expect(context).toBeGreaterThan(0);
+    expect(context).toBeLessThan(5);
+    expect(shown.length).toBeLessThan(30_000);
+  });
+});
+
 describe("tool results are classified by the kernel", () => {
   it("as served, a visibility gap, or a defect, and only gaps are declared", async () => {
     expect(classify({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "x" })).toBe("served");
@@ -162,7 +242,7 @@ describe("tool results are classified by the kernel", () => {
     expect(classify({ ok: false, failure: { kind: "invalid_args", detail: "" } })).toBe("defect");
 
     const spec = specOf();
-    const plugin = pluginFor("investigate");
+    const plugin = quiet(pluginFor("investigate"));
     const state = new InProcessState<AgentKinds>();
     const tools = spec.tools.map((one) => (one.id === "splunk_search" ? tool(one.id, () => ({ ok: false, failure: { kind: "unavailable", detail: "the index is down" } })) : tool(one.id)));
     const provider = scriptedProvider([
@@ -221,7 +301,7 @@ describe("judges run as child runs", () => {
     const { state } = await dismissed();
     const before = (await state.read(childRunId(RUN, "reviewer"))).length;
     const spec = specOf();
-    const plugin = pluginFor("investigate");
+    const plugin = quiet(pluginFor("investigate"));
     // Nothing left in the script: a second ask of the reviewer would throw.
     await runAgent(harnessOf(spec, plugin, scriptedProvider([]), state), optionsOf(spec, plugin));
     expect((await state.read(childRunId(RUN, "reviewer"))).length).toBe(before);
@@ -253,7 +333,7 @@ describe("replay reads the ledger and nothing else", () => {
 
   it("reproduces a run that parked on an approval and resumed", async () => {
     const spec = specOf();
-    const plugin = pluginFor("investigate");
+    const plugin = quiet(pluginFor("investigate"));
     const state = new InProcessState<AgentKinds>();
     const first = scriptedProvider([{ content: "look", calls: [call("get_finding"), call("case_records", { case_id: "c-1" })] }]);
     const parked = await runAgent(harnessOf(spec, plugin, first, state), optionsOf(spec, plugin));
@@ -279,5 +359,69 @@ describe("replay reads the ledger and nothing else", () => {
     expect(trajectory.review?.guarded?.final).toBe("benign");
     expect(trajectory.terminal?.outcome).toBe("completed");
     expect(trajectory.children.map((one) => one.role)).toEqual(["reviewer"]);
+  });
+});
+
+describe("a run that stops early is asked once to keep going", () => {
+  const persistent = pluginFor("investigate");
+  const ask = (provider: ScriptedProvider): number =>
+    provider.requests.filter((request) => request.messages.at(-1)?.role === "user" && request.messages.at(-1)?.content.includes("Your answer will be final")).length;
+
+  it("asks when it stops having looked at little, and goes on when the model does", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { content: "the investigation has just begun", calls: [call("get_finding")] },
+      { content: "nothing more to do", calls: [] },
+      { calls: [call("splunk_search", { sql: "select * from events" }), call("search_findings", { query: "ws" })] },
+      STOP,
+      concluded("malicious", ["r1", "r2"]),
+    ]);
+    await runAgent(harnessOf(spec, persistent, provider, state), optionsOf(spec, persistent));
+
+    expect(ask(provider)).toBe(1);
+    // The ask carries what the model said when it stopped.
+    expect(provider.requests[2]?.messages.at(-1)?.content).toContain("nothing more to do");
+    const calls = (await state.read(RUN)).filter((one) => one.kind === "call").map((one) => (one.payload as CallPayload).tool);
+    expect(calls).toEqual(["get_finding", "splunk_search", "search_findings"]);
+    // The ask is the asked call's tail, journaled on its frame, so the run still replays.
+    const replayed = replayFrames(await state.read(RUN));
+    expect(replayed.frames.filter((one) => one.mismatch !== null)).toEqual([]);
+    const frames = (await state.read(RUN)).filter((one) => one.kind === "frame").map((one) => one.payload as FramePayload);
+    expect(frames[2]?.tail).not.toBeNull();
+  });
+
+  it("asks only once, and the second stop stands", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([{ calls: [call("get_finding")] }, STOP, STOP, concluded("inconclusive", [])]);
+    const report = await runAgent(harnessOf(spec, persistent, provider, state), optionsOf(spec, persistent));
+    expect(report.status).toBe("completed");
+    expect(ask(provider)).toBe(1);
+  });
+
+  it("does not ask a run that has already looked enough", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [call("get_finding"), call("splunk_search", { sql: "a" }), call("search_findings"), call("lookup_indicators", { values: ["x"] })] },
+      STOP,
+      concluded("malicious", ["r1"]),
+    ]);
+    await runAgent(harnessOf(spec, persistent, provider, state), optionsOf(spec, persistent));
+    expect(ask(provider)).toBe(0);
+  });
+
+  it("does not count loading a playbook or writing the record as looking", async () => {
+    const spec = specOf();
+    const state = new InProcessState<AgentKinds>();
+    const provider = scriptedProvider([
+      { calls: [call("load_skill", { name: "investigate-case" }), call("propose_hypothesis", { statement: "x" }), call("open_question", { question: "y" }), call("get_finding")] },
+      STOP,
+      STOP,
+      concluded("inconclusive", []),
+    ]);
+    await runAgent(harnessOf(spec, persistent, provider, state), optionsOf(spec, persistent));
+    expect(ask(provider)).toBe(1);
   });
 });

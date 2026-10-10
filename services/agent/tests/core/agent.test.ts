@@ -14,6 +14,7 @@ import { buildSpec, SpecError, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { investigateKernelReplay, investigateView } from "../../plugins/investigate/view.js";
 import { parsePlugin, parseSkill, pluginFor } from "../../plugins/registry.js";
+import { quiet } from "../support/plugins.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -67,7 +68,7 @@ function concluded(disposition: string, citations: string[]): ScriptedTurn {
 }
 
 describe("the kernel runs a plugin to a conclusion", () => {
-  const plugin = pluginFor("investigate");
+  const plugin = quiet(pluginFor("investigate"));
 
   it("journals each call as a numbered step, then the conclusion, review and terminal", async () => {
     const spec = specOf();
@@ -263,7 +264,7 @@ describe("the kernel runs a plugin to a conclusion", () => {
 
 describe("the console reads a kernel run in the investigate shape", () => {
   it("answers projection and replay with the lead's fields and the kernel's beside them", async () => {
-    const plugin = pluginFor("investigate");
+    const plugin = quiet(pluginFor("investigate"));
     const spec = specOf();
     const state = new InProcessState<AgentKinds>();
     const provider = scriptedProvider([
@@ -300,7 +301,7 @@ describe("historyOf", () => {
 
 describe("plugins load from their directory", () => {
   it("loads investigate with its skill and guard", () => {
-    const plugin = pluginFor("investigate");
+    const plugin = quiet(pluginFor("investigate"));
     expect(plugin.skills.map((one) => one.name)).toEqual(["investigate-case"]);
     expect(plugin.guard).toMatchObject({ field: "disposition", fallback: "needs_review" });
     expect(pluginGrants(plugin, specOf().tools)["agent"]).toEqual(

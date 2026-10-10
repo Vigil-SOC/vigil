@@ -22,6 +22,13 @@ export const RECORD_TOOLS = [PROPOSE_TOOL, LINK_TOOL, QUESTION_TOOL] as const;
 
 export type Stance = LinkPayload["relation"];
 
+// What every agent that keeps a record is told about keeping it cheaply: a record
+// write in a turn of its own is a model call that looked at nothing.
+export const RECORD_GUIDANCE = [
+  "## Keeping the record",
+  "Tool calls in one turn run together. Write the record in the same turn as your next query rather than in turns of its own: link_evidence can propose a hypothesis by statement as it links, so one call keeps a whole step.",
+].join("\n");
+
 export interface ProposedLink {
   evidence_id: string;
   hypothesis_id: string;
@@ -143,7 +150,7 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
     ),
     local(
       LINK_TOOL,
-      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. A result that failed or was refused is not evidence and is refused here.`,
+      `Record how evidence bears on hypotheses. evidence_id is ${backend.evidence}. Name a hypothesis by hypothesis_id, or by statement to propose it in the same call. A result that failed or was refused is not evidence and is refused here.`,
       {
         type: "object",
         additionalProperties: false,
@@ -154,10 +161,11 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["evidence_id", "hypothesis_id", "stance"],
+              required: ["evidence_id", "stance"],
               properties: {
                 evidence_id: { type: "string" },
-                hypothesis_id: { type: "string" },
+                hypothesis_id: { type: "string", description: "A hypothesis already on the record." },
+                statement: { type: "string", description: "A new hypothesis, proposed by this call. Use instead of hypothesis_id." },
                 stance: { type: "string", enum: [...backend.stances] },
               },
             },
@@ -166,15 +174,29 @@ export function recordTools(backend: RecordBackend): RegisteredTool[] {
       },
       async (args) => {
         const raw = Array.isArray(args["links"]) ? (args["links"] as Record<string, unknown>[]) : [];
+        if (raw.length === 0) return refusedWith("name at least one link");
+        const bad = raw.find((one) => !backend.stances.includes(String(one["stance"] ?? "") as Stance));
+        if (bad !== undefined) return refusedWith(`stance must be one of ${backend.stances.join(", ")}`);
+        const unnamed = raw.find((one) => typeof one["hypothesis_id"] !== "string" && typeof one["statement"] !== "string");
+        if (unnamed !== undefined) return refusedWith("each link names a hypothesis_id, or a statement to propose one");
+        // A statement is proposed once however many links name it, before any link
+        // is written: one call keeps a whole step of the record.
+        const proposed = new Map<string, string>();
+        for (const one of raw) {
+          const statement = typeof one["hypothesis_id"] === "string" ? null : String(one["statement"]).trim();
+          if (statement === null || statement === "" || proposed.has(statement)) continue;
+          const result = await backend.propose(statement);
+          const id = result.ok ? (result.rows[0] as { hypothesis_id?: unknown } | undefined)?.hypothesis_id : undefined;
+          if (typeof id !== "string") return result.ok ? refusedWith(`could not propose: ${statement}`) : result;
+          proposed.set(statement, id);
+        }
         const links = raw.map((one) => ({
           evidence_id: String(one["evidence_id"] ?? ""),
-          hypothesis_id: String(one["hypothesis_id"] ?? ""),
-          relation: String(one["stance"] ?? "") as Stance,
+          hypothesis_id: typeof one["hypothesis_id"] === "string" ? one["hypothesis_id"] : (proposed.get(String(one["statement"]).trim()) ?? ""),
+          relation: String(one["stance"]) as Stance,
         }));
-        const bad = links.find((one) => !backend.stances.includes(one.relation));
-        if (bad !== undefined) return refusedWith(`stance must be one of ${backend.stances.join(", ")}`);
-        if (links.length === 0) return refusedWith("name at least one link");
-        return backend.link(links);
+        const linked = await backend.link(links);
+        return linked.ok && proposed.size > 0 ? okWith([...linked.rows, { proposed: Object.fromEntries(proposed) }]) : linked;
       },
     ),
     local(

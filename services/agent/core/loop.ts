@@ -62,6 +62,11 @@ export interface TurnConfig {
   // Numbers each result so the model can cite it: the nth call is `${prefix}${offset + n}`.
   // Absent leaves results unnumbered, as the workflows written before the kernel expect.
   refs?: { prefix: string; offset: number };
+  // Asked once more before the loop may stop, when the model stops calling tools
+  // with turns left and fewer than min_results results in its transcript: a run
+  // that quits after a look or two is asked to keep going or say it is done. The
+  // ask is the next call's transient tail, so it is journaled on that call's frame.
+  persist?: { min_results: number };
   // Where this turn's spend is journaled, when not on its own ledger: a child run's
   // model calls are its parent's spend, so the parent's budget and every fold of
   // its cost count them, and the child's ledger holds what it was shown and said.

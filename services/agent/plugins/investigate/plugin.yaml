@@ -9,6 +9,10 @@ description: Work one open case to a conclusion a reader can act on.
 # (max_calls, max_cost_usd, max_wall_ms) still bound it first.
 max_turns: 24
 
+# A run that stops with fewer estate results than this, and turns left, is asked
+# once to keep going or confirm it is done. Skills and record writes do not count.
+min_results: 4
+
 # Bound to this deployment's tools by their `provides` field, as an arch role's are.
 needs: [case_records, get_finding, telemetry_search, findings_search, indicator_lookup]
 

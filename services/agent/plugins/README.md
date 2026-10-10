@@ -15,6 +15,7 @@ whatever its kind, so no plugin writes it again:
 And the five things a run needs to be trusted and learned from:
 
 - **The hypothesis record** (`core/record.ts`). `propose_hypothesis`, `link_evidence` (supports or weakens) and `open_question`, offered to every plugin and journaled as `hypothesis`, `link` and `question` events. A plugin with a richer record supplies its own backend through the `record` hook, writing the same kinds in its own shape (the hunt's carry its verdict machinery). `record: required` also holds a guarded answer to the record: it stands only on a cited, served result the record links to a claim.
+- **A record that costs few calls.** `link_evidence` can propose a hypothesis by statement in the same call, and every agent that keeps a record is told to write it in the same turn as its next query: a record write in a turn of its own is a model call that looked at nothing.
 - **Declared gaps.** Every conclusion carries `declared_gaps`, computed off the ledger: the record's open questions, the answer's own `open_questions_field`, and every call the estate could not answer.
 - **Classified results.** Every call is `served`, a `visibility_gap` (timeout, unavailable, backend error) or a `defect` (refused, invalid arguments). Only gaps are gaps. A defect or a gap is refused as evidence.
 - **A frame per model call** (`core/frames.ts`). Before each call: hashes of the system prompt, task, recall block, each tool schema, each skill body, the emission ask and schema, the model, its sampling parameters, the fold policy and how much it folded, and the refs of the calls in the transcript. Each hash's bytes go on the ledger once, as a `content` event.
@@ -45,7 +46,13 @@ guard:                              # optional second look before a guarded answ
     ...
 max_turns: 24                       # optional; else the deployment's runtime.max_turns
 record: required                    # off | available (the default) | required
+min_results: 4                      # optional; see below
 ```
+
+`min_results`: a run that stops calling tools with turns left and fewer than this
+many results from the estate (playbooks and record writes do not count) is asked
+once to keep going or confirm it is done. The ask is the next call's transient
+tail, journaled on its frame, so the run still replays exactly.
 
 A required record needs a structured conclusion that names an `open_questions_field` its schema requires; the manifest is refused at load otherwise.
 
@@ -53,7 +60,7 @@ A skill is `skills/<name>/SKILL.md` with `name` and `description` front matter a
 the playbook as its body. The system prompt carries each skill's name and one
 line; the body arrives only when the agent calls `load_skill`.
 
-The guard is how a plugin makes some answers harder to give than others. When
+The guard is how a plugin makes some answers harder to give than others. The reviewer sees every cited record, then the uncited ones newest first up to a bounded window, and never a loaded playbook: the cited records are what the answer stands on, and an unbounded window was the reviewer's whole cost. When
 the answer's `field` holds a guarded value, a reviewer with no tools is shown the
 answer and the records it cites. The answer stands only if the reviewer upholds
 it over at least one cited ref that is a real call. Otherwise the run ends on the
