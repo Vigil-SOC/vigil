@@ -10,22 +10,18 @@ import {
   DEFAULT_VERDICTS,
   type HuntSpec,
   type Termination,
-  type Verdicts,
+
 } from "../../workflows/hunt/config.js";
-import { HuntController, startHunt } from "../../workflows/hunt/controller.js";
+import { startHunt } from "../../workflows/hunt/opening.js";
+import { HuntBook } from "../../plugins/hunt/book.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import { Journal, type HuntEvent, type HuntKinds } from "../../workflows/hunt/journal.js";
 import { newId } from "../../workflows/hunt/ids.js";
-import type { DecisionProvider, DisconfirmationCritic, Enricher, WorkerDispatcher } from "../../workflows/hunt/ports.js";
 import type { HuntReport } from "../../workflows/hunt/report.js";
-import {
-  SCRIPTED_MODEL_ID,
-  ScriptedDecisionProvider,
-  ScriptedDisconfirmationCritic,
-  type ScriptedDecision,
-} from "./scripted-hunt.js";
-import { NULL_CHECK_PROVENANCE, unclassified } from "../../workflows/hunt/strength.js";
-import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type EvidenceRecord, type LinkRelation } from "../../workflows/hunt/types.js";
+import { NULL_CHECK_PROVENANCE } from "../../workflows/hunt/strength.js";
+import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type EvidenceRecord, type LinkRelation, type NullCheckResult } from "../../workflows/hunt/types.js";
+
+export const SCRIPTED_MODEL_ID = "scripted";
 
 export const INVESTIGATE: Decision = { action: "INVESTIGATE", rationale: "look", query_intent: "baseline" };
 export const CONCLUDE: Decision = { action: "CONCLUDE", rationale: "nothing further to run" };
@@ -130,48 +126,6 @@ export function spender(state: State<HuntKinds>, runId: string): Spender {
   };
 }
 
-// Bills on the throw as well as the return: a call that died mid-turn still spent,
-// and the stream journals it before rethrowing.
-export function billedLead(provider: DecisionProvider, spend: Spender): DecisionProvider {
-  return {
-    decide: async (digest, signal) => {
-      try {
-        const result = await provider.decide(digest, signal);
-        await spend(result.cost_usd, "lead");
-        return result;
-      } catch (error) {
-        await spend(spentBefore(error), "lead");
-        throw error;
-      }
-    },
-  };
-}
-
-function billedWorker(dispatcher: WorkerDispatcher, spend: Spender): WorkerDispatcher {
-  return {
-    dispatch: async (request) => {
-      const result = await dispatcher.dispatch(request);
-      await spend(result.cost_usd, request.agent_id);
-      return result;
-    },
-  };
-}
-
-function billedCritic(critic: DisconfirmationCritic, spend: Spender): DisconfirmationCritic {
-  return {
-    argueNull: async (check) => {
-      const result = await critic.argueNull(check);
-      await spend(result.cost_usd, "critic");
-      return result;
-    },
-  };
-}
-
-function spentBefore(error: unknown): number {
-  const cost = (error as { cost_usd?: unknown }).cost_usd;
-  return typeof cost === "number" ? cost : 0;
-}
-
 // What answering a checkpoint hours later does: nothing of the writing process
 // carries over, and a directive queued while nobody held the ledger still waits.
 export async function reopen(started: Pick<Started, "ledger" | "state" | "queue" | "runId">, from?: Journal): Promise<Journal> {
@@ -179,45 +133,33 @@ export async function reopen(started: Pick<Started, "ledger" | "state" | "queue"
   return Journal.open(started.state, started.queue, started.runId);
 }
 
-export interface ControllerOptions {
-  critic?: ScriptedDisconfirmationCritic;
-  dispatcher?: WorkerDispatcher;
-  enricher?: Enricher;
-  costPerDecision?: number;
-  verdicts?: Verdicts;
-  // Any provider, not only the scripted one: a test that needs the lead to behave
-  // like the real one -- which reads the stored ledger, not this journal -- brings
-  // its own. The controller only ever asked for the interface.
-  provider?: DecisionProvider;
-  dispatch?: RunSpec["dispatch"];
-  maxWorkers?: number;
-  // Given when a test bills: the doubles' costs reach the ledger as spend events,
-  // which is the only way they reach hunt.cost_usd.
-  spend?: Spender;
+// The hunt's record as the kernel's hunt plugin keeps it: the same writes the
+// controller made, reached through the book its tools use.
+export function bookOf(ledger: Journal): HuntBook {
+  return new HuntBook(ledger);
 }
 
-export function controllerFor(
-  ledger: Journal,
-  decisions: ScriptedDecision[],
-  options: ControllerOptions = {},
-): HuntController {
-  const dispatch =
-    options.dispatch ??
-    (options.dispatcher === undefined
-      ? undefined
-      : { ...DEFAULT_DISPATCH, mode: "parallel" as const, max_workers: options.maxWorkers ?? 3 });
-  const provider = options.provider ?? new ScriptedDecisionProvider(decisions, options.costPerDecision ?? 0);
-  const { spend } = options;
-  return new HuntController(
-    ledger,
-    spend === undefined ? provider : billedLead(provider, spend),
-    spend === undefined || options.dispatcher === undefined ? options.dispatcher : billedWorker(options.dispatcher, spend),
-    dispatch,
-    undefined,
-    options.enricher,
-    spend === undefined || options.critic === undefined ? options.critic : billedCritic(options.critic, spend),
-    options.verdicts ?? DEFAULT_VERDICTS,
-  );
+// What the disconfirmation critic answers. survives true means the benign
+// explanation did not account for the evidence.
+export function nullCheck(survives: boolean, explanation = "a scheduled backup job"): NullCheckResult {
+  return {
+    survives,
+    strongest_benign_explanation: explanation,
+    rationale: survives ? "the benign explanation does not account for the evidence" : "the benign explanation accounts for it",
+    cost_usd: 0,
+    model_id: SCRIPTED_MODEL_ID,
+    prompt_version: "scripted",
+  };
+}
+
+// Puts one hypothesis up for a verdict the way validate_hypothesis does: the critic
+// argues against everything linked to it, and the book applies the rules.
+export function validate(ledger: Journal, hypothesisId: string, survives = true): { said: string; parked?: string } {
+  const book = bookOf(ledger);
+  const hypothesis = ledger.projection.hypotheses.get(hypothesisId);
+  if (hypothesis === undefined) throw new Error(`${hypothesisId} is not on the ledger`);
+  const argued = book.nullCheckInput(hypothesis).evidence.map((linked) => linked.record.evidence_id);
+  return book.applyVerdict(hypothesisId, nullCheck(survives), argued);
 }
 
 export interface EvidenceOptions {
@@ -364,24 +306,6 @@ export function question(ledger: Journal, text: string, fields: QuestionFields =
   return questionId;
 }
 
-export function validateOn(hypothesisId: string, citations: string[], extra: Partial<Decision> = {}): Decision {
-  return {
-    action: "VALIDATE",
-    rationale: "the support looks solid enough to put up for a verdict",
-    target_hypothesis_id: hypothesisId,
-    evidence_citations: citations,
-    ...extra,
-  };
-}
-
-// Rules on whatever the loop still needs ruled, as "neither": evidence gathered
-// for one hypothesis usually says nothing about the others, and silence is refused.
-export function ruled<T extends Decision>(ledger: Journal, decision: T): T {
-  const pending = unclassified(ledger.projection);
-  if (pending.length === 0) return decision;
-  return { ...decision, evidence_relations: pending.map((pair) => ({ ...pair, relation: "neither" as const })) };
-}
-
 // Terminal by any route the hunt actually has; the predicate cares that nothing
 // is active, not how it got there.
 export function resolve(ledger: Journal, hypothesisId: string, status = "parked"): void {
@@ -391,14 +315,11 @@ export function resolve(ledger: Journal, hypothesisId: string, status = "parked"
 // Drives one hypothesis to inconclusive through the real gap-lock path: enough
 // support to clear every other predicate, and enough blindness that it cannot be.
 export async function gapLock(ledger: Journal, hypothesisId: string): Promise<void> {
-  const citations = [
-    evidenceOn(ledger, hypothesisId, { source: "cloudtrail" }),
-    evidenceOn(ledger, hypothesisId, { source: "duckdb" }),
-  ];
+  evidenceOn(ledger, hypothesisId, { source: "cloudtrail" });
+  evidenceOn(ledger, hypothesisId, { source: "duckdb" });
   for (let gap = 0; gap < DEFAULT_VERDICTS.gap_lock_threshold; gap += 1) gapOn(ledger, hypothesisId);
-  await controllerFor(ledger, [ruled(ledger, validateOn(hypothesisId, citations))], {
-    critic: new ScriptedDisconfirmationCritic(true),
-  }).advanceIteration();
+  validate(ledger, hypothesisId, true);
+  await ledger.flush();
 }
 
 export function nullChecks(ledger: Journal): EvidenceRecord[] {

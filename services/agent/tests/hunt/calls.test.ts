@@ -4,21 +4,11 @@
 import { describe, expect, it } from "vitest";
 import type { Attempt } from "../../core/loop.js";
 import { wrap, scannerFor } from "../../core/security.js";
-import { callsOf, charged, link, salvaged, workerDispatcher } from "../../workflows/hunt/adapters.js";
+import { callsOf, charged, link, salvaged } from "../../workflows/hunt/adapters.js";
 import { getEventListeners, getMaxListeners } from "node:events";
-import { narrativeOf, renderDispatch, renderNullCheck } from "../../workflows/hunt/render.js";
-import { budgetOf, unmeteredQuota } from "../../core/budget.js";
-import { defineTool } from "../../contracts/tool.js";
-import { localDispatch } from "../../core/dispatch.js";
-import type { Harness } from "../../core/loop.js";
-import { nullMemory } from "../../core/memory.js";
-import { registryOf } from "../../core/registry.js";
-import type { RunSpec } from "../../core/spec.js";
-import { InProcessState } from "../../core/state.js";
-import type { HuntKinds } from "../../workflows/hunt/ledger.js";
-import { scriptedProvider } from "../support/scripted-provider.js";
+import { renderNullCheck } from "../../workflows/hunt/render.js";
 import { renderCaseFile } from "../../workflows/hunt/report.js";
-import { newLedger, relate } from "../support/hunt.js";
+import { bookOf, evidenceOn, newLedger, relate } from "../support/hunt.js";
 import { newId } from "../../workflows/hunt/ids.js";
 
 const attempt = (tool: string, args: string, rows: readonly unknown[]): Attempt => {
@@ -299,118 +289,8 @@ describe("the lease signal is not a place listeners accumulate", () => {
   });
 });
 
-// The salvage has to happen on the dispatcher's own failure path, not just in the
-// function it calls: returning evidence: [] there is what discarded eight searches.
-describe("the dispatcher's failure path, end to end", () => {
-  const SEARCH = defineTool(
-    {
-      id: "splunk_execute",
-      description: "run SPL",
-      parameters: { type: "object", properties: { spl_query: { type: "string" } } },
-      execute: async () => ({ ok: true as const, rows: [{ dest_ip: "45.77.53.176", count: 412 }], rowCount: 1, capped: false, sourceSystem: "cisco:asa" }),
-    },
-    { maxRows: 10, timeoutMs: 1_000 },
-    true,
-  );
-
-  const DIED = "read tcp 172.18.0.3:46528->160.79.104.10:443: read: connection timed out";
-
-  const SPEC = {
-    arch: "threathunt",
-    approvals: [],
-    runtime: { max_turns: 4, result_cap: 8_000, recall_limit: 0 },
-    roles: { workers: { network_analyst: { prompt: "look", description: "traffic", output_schema: { type: "object" }, tools: [], needs: [] } } },
-  } as unknown as RunSpec;
-
-  // One tool call that answers, then the write-up call dies -- the exact shape of
-  // every failed dispatch in the run that prompted this.
-  function dying(): Harness<HuntKinds> {
-    return {
-      provider: scriptedProvider([
-        { calls: [{ tool: "splunk_execute", args: '{"spl_query":"index=botsv3"}' }], tokens: { input: 900 } },
-        { fail: DIED, tokens: { input: 40 } },
-      ]),
-      registry: registryOf([SEARCH], { network_analyst: ["splunk_execute"] }),
-      dispatch: localDispatch,
-      budget: budgetOf({ max_calls: 12, max_cost_usd: 5, max_wall_ms: 600_000, max_park_ms: 1_000 }, unmeteredQuota),
-      memory: nullMemory,
-      state: new InProcessState(),
-    } as unknown as Harness<HuntKinds>;
-  }
-
-  it("reports the failure and still returns what it gathered", async () => {
-    const harness = dying();
-    const dispatcher = workerDispatcher({ harness, spec: SPEC, run_id: "run-1", run_kind: "hunt", actions: [], recall_keys: [] });
-    const result = await dispatcher.dispatch({
-      dispatch_id: "dsp-1",
-      agent_id: "network_analyst",
-      query_intent: "find beaconing",
-      focus: "",
-      target_hypothesis_id: null,
-      scope: {},
-    } as never);
-
-    expect(result.failed).toBe(true);
-    // The query ran; only the write-up died. Its rows are the iteration's whole point.
-    expect(result.evidence).toHaveLength(1);
-    expect(result.evidence[0]!.provenance).toBe("unsummarised");
-    const gathered = result.evidence[0]!.payload["gathered"] as { tool: string; rows: unknown[] }[];
-    expect(gathered[0]!.tool).toBe("splunk_execute");
-    expect(gathered[0]!.rows).toEqual([{ dest_ip: "45.77.53.176", count: 412 }]);
-    // Still journaled as an executed call, which is what an analyst re-runs.
-    expect(result.calls?.map((call) => call.tool)).toEqual(["splunk_execute"]);
-    // The query and the write-up that died, both billed: a ceiling that cannot see
-    // failed work is a ceiling a failing run walks straight through. A provider that
-    // dies escapes emit()'s retry loop, so the write-up is billed once here -- in a
-    // deployment the gateway and the limiter are what retry it.
-    expect(harness.budget.spent.tokens.input).toBe(940);
-  });
-});
-
-// The worker prompt tells it to cite "the hypothesis ids given to you" and to report
-// in scope. Both were dropped in the port, so it was told neither.
-describe("what a worker is actually told", () => {
-  const REQUEST = {
-    dispatch_id: "dsp-1",
-    hunt_id: "hunt-1",
-    agent_id: "network_analyst",
-    query_intent: "find hosts beaconing outbound",
-    focus: "192.168.3.130 [entity ip:192.168.3.130]",
-    target_hypothesis_id: "hyp-7",
-    scope: { index: "botsv3", earliest: "2018-08-20", latest: "2018-08-21" },
-  };
-
-  it("names the hypothesis, the scope and the scenario", () => {
-    const rendered = renderDispatch(REQUEST as never, "Frothly, a brewing company, August 2018.");
-
-    expect(rendered).toContain("find hosts beaconing outbound");
-    expect(rendered).toContain("192.168.3.130");
-    // Without this the worker cannot set supports/weakens at all.
-    expect(rendered).toContain("This bears on hypothesis hyp-7.");
-    // Without this it invents its own index and window.
-    expect(rendered).toContain('"index":"botsv3"');
-    expect(rendered).toContain('"earliest":"2018-08-20"');
-    expect(rendered).toContain("Frothly, a brewing company");
-  });
-
-  // The lead and the critic both read the run's own brief. A worker told only the
-  // playbook's standing one is querying an estate nobody described to it.
-  it("carries the run's own brief, not only the playbook's", () => {
-    const rendered = renderDispatch(
-      REQUEST as never,
-      narrativeOf({ narrative: "Standing brief.", prompt: "The data spans 2018-08-19 to 2018-08-20 only." }),
-    );
-    expect(rendered).toContain("Standing brief.");
-    expect(rendered).toContain("2018-08-19 to 2018-08-20");
-  });
-
-  it("says nothing about a hypothesis or scope it was not given", () => {
-    const bare = renderDispatch({ ...REQUEST, focus: "", target_hypothesis_id: null, scope: {} } as never, "");
-    expect(bare).not.toContain("bears on hypothesis");
-    expect(bare).not.toContain("## Scope");
-    expect(bare).toContain("find hosts beaconing outbound");
-  });
-});
+// The dispatcher's failure path and what a worker is told (renderDispatch) went with
+// the controller: the hunt agent runs its own queries, so there is no worker to brief.
 
 // The critic argues against the records, so they arrive delimited: raw JSON reads as
 // the prompt's own voice, which is what every other evidence path prevents.
@@ -454,5 +334,25 @@ describe("what the critic is actually told", () => {
 
   it("says so plainly when nothing is linked, rather than showing an empty list", () => {
     expect(renderNullCheck({ ...CHECK, evidence: [] } as never)).toContain("Nothing is linked to this hypothesis.");
+  });
+
+  // What validate_hypothesis hands the critic: everything linked, with the raw
+  // payloads, off the hunt's own record.
+  it("is handed every linked record off the ledger, whichever way it bears", async () => {
+    const { ledger, hypothesisIds } = await newLedger({ narrative: "Frothly, August 2018." });
+    const hypothesisId = hypothesisIds[0]!;
+    const supports = evidenceOn(ledger, hypothesisId, { source: "cisco:asa", restsOn: [{ field: "conn_count", authored: "sensor" }] });
+    const weakens = evidenceOn(ledger, hypothesisId, { source: "endpoint", relation: "weakens" });
+
+    const input = bookOf(ledger).nullCheckInput(ledger.projection.hypotheses.get(hypothesisId)!);
+    expect(input.evidence.map((linked) => [linked.record.evidence_id, linked.relation])).toEqual([
+      [supports, "supports"],
+      [weakens, "weakens"],
+    ]);
+    const rendered = renderNullCheck(input);
+    expect(rendered).toContain(`<vigil:evidence id="${supports}" relation="supports" source="cisco:asa" sensor_attested="true" rests_on="conn_count:sensor">`);
+    expect(rendered).toContain(`id="${weakens}" relation="weakens"`);
+    expect(rendered).toContain("45.77.53.176");
+    expect(rendered).toContain("Frothly, August 2018.");
   });
 });

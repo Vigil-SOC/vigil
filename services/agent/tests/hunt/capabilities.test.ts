@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { unboundCapabilities, type Roles, type ToolSpec } from "../../core/spec.js";
 import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { DEPLOYMENT_SOURCE } from "../../workflows/hunt/controller.js";
+import { DEPLOYMENT_SOURCE } from "../../workflows/hunt/opening.js";
 import { buildReport } from "../../workflows/hunt/report.js";
 import { DEPLOYMENT_GAP_PROVENANCE, evidenceStrength, isGap, unmetPredicates } from "../../workflows/hunt/strength.js";
-import { newLedger, provable, reopen, type Started } from "../support/hunt.js";
+import { newLedger, provable, reopen, validate, type Started } from "../support/hunt.js";
 
 const SEARCH: ToolSpec = { id: "elastic_elastic_search_logs", kind: "remote", provides: "telemetry_search" };
 
@@ -88,6 +88,31 @@ describe("what a declared gap does to a verdict", () => {
     const strength = evidenceStrength(started.ledger.projection, hypothesisId!);
     expect(strength.open_gaps).toBe(DEFAULT_VERDICTS.gap_lock_threshold);
     expect(unmetPredicates(strength, DEFAULT_VERDICTS)).toContain("3 open visibility gap(s) bear on it");
+  });
+
+  // Through the verdict itself, not only the strength it reads: the hunt agent's
+  // validate_hypothesis applies the same lock.
+  it("keeps a well-supported hypothesis at its earned status rather than proven when the deployment is that blind", async () => {
+    const started = await newLedger({
+      needs: ["telemetry_search", "indicator_lookup", "findings_search"],
+      checkpoints: { verdict_review: "auto" },
+    });
+    const [hypothesisId] = [...started.ledger.projection.hypotheses.keys()];
+    provable(started.ledger, hypothesisId!);
+
+    expect(validate(started.ledger, hypothesisId!, true).said).toContain("gap-locked");
+    const hypothesis = started.ledger.projection.hypotheses.get(hypothesisId!)!;
+    expect(hypothesis.status).toBe("active");
+    expect(hypothesis.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
+  });
+
+  it("still lets a verdict land when one capability is missing and the rest corroborate", async () => {
+    const started = await newLedger({ needs: ["telemetry_search"], checkpoints: { verdict_review: "auto" } });
+    const [hypothesisId] = [...started.ledger.projection.hypotheses.keys()];
+    provable(started.ledger, hypothesisId!);
+
+    validate(started.ledger, hypothesisId!, true);
+    expect(started.ledger.projection.hypotheses.get(hypothesisId!)!.status).toBe("proven");
   });
 
   it("earns no corroboration credit of its own: a missing tool corroborates nothing", async () => {

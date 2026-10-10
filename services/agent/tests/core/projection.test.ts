@@ -7,7 +7,7 @@ import { InProcessState } from "../../core/state.js";
 import { composeProjection } from "../../workflows/compose/projection.js";
 import { leadProjection } from "../../workflows/lead/projection.js";
 import { investigateReplay } from "../../workflows/lead/replay.js";
-import type { LeadKinds } from "../../workflows/lead/workflow.js";
+import type { LeadKinds } from "../../workflows/lead/vocabulary.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-000000000629";
 const CHECKPOINT = "apr-c0ffee";

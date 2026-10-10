@@ -59,7 +59,8 @@ function resumeJob(id: string): RunJob {
   };
 }
 
-const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "nothing to pursue", citations: [] } }];
+// The investigate plugin's answer: one turn that stops, then the conclusion.
+const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { summary: "nothing to pursue", disposition: "inconclusive", confidence: "low", citations: [], gaps: [], next_steps: [] } }];
 
 // investigate rather than hunt: what is under test is the worker -- opening a
 // ledger, re-entering one, refusing a settled run. The hunt has its own file.

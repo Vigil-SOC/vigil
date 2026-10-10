@@ -1,6 +1,6 @@
 import { scrub } from "../../core/security.js";
 import { sensorAttested } from "./strength.js";
-import type { Digest, DispatchRequest, EntityView, EvidenceView, HypothesisView, NullCheckInput } from "./types.js";
+import type { Digest, EntityView, EvidenceView, HypothesisView, NullCheckInput } from "./types.js";
 
 // The digest as the lead reads it: buildDigest decides what is in it, this only
 // how it is written. Evidence carries its id, because the lead is asked to cite them.
@@ -101,20 +101,6 @@ export function renderDigest(digest: Digest): string {
 }
 
 
-// What a worker is told. The hypothesis ids are here because the prompt asks it to
-// cite them, and the scope because without one a worker invents its own bounds.
-export function renderDispatch(request: DispatchRequest, narrative: string): string {
-  const lines = ["# Query intent", request.query_intent];
-  if (request.focus) lines.push("", "## Your focus", request.focus);
-  if (request.target_hypothesis_id !== null) {
-    lines.push("", `This bears on hypothesis ${request.target_hypothesis_id}.`);
-  }
-  // Defensive: this renders a prompt, and a throw would fail the whole dispatch.
-  const scope = request.scope ?? {};
-  if (Object.keys(scope).length > 0) lines.push("", "## Scope", JSON.stringify(scope));
-  if (narrative) lines.push("", "## Scenario", narrative);
-  return lines.join("\n");
-}
 
 // The critic argues against the records themselves, so they arrive delimited and
 // carrying the two attributes the argument turns on. Raw JSON would read as our voice.

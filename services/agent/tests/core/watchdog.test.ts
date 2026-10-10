@@ -14,7 +14,8 @@ import type { ScriptedTurn } from "../support/scripted-provider.js";
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const RUN = "7d3c2d3e-0000-4000-8000-000000000633";
 
-const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "done", citations: [] } }];
+// The investigate plugin's answer: one turn that stops, then the conclusion.
+const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { summary: "nothing to pursue", disposition: "inconclusive", confidence: "low", citations: [], gaps: [], next_steps: [] } }];
 
 let config: string;
 let state: InProcessState;

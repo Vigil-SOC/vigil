@@ -1,4 +1,7 @@
-import { topologyFor, type TopologyId } from "./topology.js";
+// The dispatch shapes an arch may declare. Validated at load so an arch naming a
+// shape nothing reads fails there; the plugin kernel runs one agent whatever it says.
+export const TOPOLOGIES = ["single", "fan_out", "swarm"] as const;
+export type TopologyId = (typeof TOPOLOGIES)[number];
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { DEFAULT_PARK_MS, type BudgetLimits } from "../contracts/budget.js";
@@ -282,7 +285,9 @@ function parseDispatch(raw: unknown, workers: readonly string[]): DispatchPolicy
   const policy = merge(raw, defaultDispatch(workers), "dispatch");
   // Throws on an unknown name, so an arch naming a shape nothing implements
   // fails at load rather than running as whatever the default happened to be.
-  topologyFor(policy.topology);
+  if (!(TOPOLOGIES as readonly string[]).includes(policy.topology)) {
+    throw new SpecError(`no topology ${String(policy.topology)} is implemented; expected one of ${TOPOLOGIES.join(", ")}`);
+  }
   if (policy.mode !== "serial" && policy.mode !== "parallel") {
     throw new SpecError(`dispatch.mode must be serial or parallel, got ${String(policy.mode)}`);
   }

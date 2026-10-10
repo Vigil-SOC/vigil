@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BASE_RATE_PROVENANCE, OPERATOR_HYPOTHESIS_PROVENANCE } from "../../workflows/hunt/controller.js";
-import { buildDigest } from "../../workflows/hunt/digest.js";
+import { BASE_RATE_PROVENANCE, OPERATOR_HYPOTHESIS_PROVENANCE } from "../../workflows/hunt/opening.js";
+import { briefOf } from "../../plugins/hunt/hooks.js";
 import { terminationVerdict } from "../../workflows/hunt/termination.js";
 import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
 import { newLedger, type Started } from "../support/hunt.js";
@@ -87,11 +87,11 @@ describe("the run's own brief reaches the lead", () => {
   });
 
   // Journalled once on the run event rather than re-rendered per turn, and read
-  // from there by the digest -- so a replay shows what the lead was actually told.
-  it("reaches every digest the lead reads", async () => {
+  // from there by the hunt agent's brief -- so a replay shows what it was actually told.
+  it("reaches the brief the hunt agent is handed", async () => {
     const started = await newLedger({ prompt: BRIEF });
 
-    expect(buildDigest(started.ledger.projection, 1).narrative).toContain(BRIEF);
+    expect(briefOf(started.ledger.projection)).toContain(BRIEF);
   });
 
   it("leaves the narrative as the playbook wrote it when the run carried no brief", async () => {

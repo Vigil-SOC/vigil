@@ -9,7 +9,7 @@ import type { Journal } from "../../workflows/hunt/journal.js";
 import { boundBy, boundReason, standingOf, TOOL_FAILURE } from "../../workflows/hunt/opening.js";
 import { buildReport, renderCaseFile } from "../../workflows/hunt/report.js";
 import { criticPayload, sanitize, sanitizeQuestion } from "../../workflows/hunt/sanitize.js";
-import { evidenceStrength, OPERATOR_GAP_PROVENANCE, unmetPredicates, UNDECLARED_SOURCE, NULL_CHECK_PROVENANCE, CRITIC_SOURCE_SYSTEM } from "../../workflows/hunt/strength.js";
+import { evidenceStrength, isGap, OPERATOR_GAP_PROVENANCE, recordsFailedQuery, unmetPredicates, UNDECLARED_SOURCE, NULL_CHECK_PROVENANCE, CRITIC_SOURCE_SYSTEM } from "../../workflows/hunt/strength.js";
 import { terminationVerdict, type TerminationVerdict } from "../../workflows/hunt/termination.js";
 import {
   OUTCOME_PRECEDENCE,
@@ -37,6 +37,11 @@ import {
 // Prefixes the park a raised checkpoint sets, so lifting one can never lift the
 // budget park, which takes a different set of answers entirely.
 const AWAITING = "awaiting ";
+
+// Why a hypothesis could not be settled when the cause is what the hunt could not see.
+export function couldNotFinish(gaps: number): string {
+  return `could not finish: ${gaps} source${gaps === 1 ? "" : "s"} unreachable`;
+}
 
 export class HuntBook {
   constructor(
@@ -84,8 +89,19 @@ export class HuntBook {
   // Every evidence source reaches the ledger through sanitize() and entity
   // extraction, whoever wrote it.
   appendEvidence(records: readonly WorkerEvidence[], dispatchId: string | null = null): EvidenceRecord[] {
-    return records.map(sanitize).map(({ supports, weakens, ...record }) => {
+    return records.map(sanitize).map(({ supports, weakens, query_failed, ...observed }) => {
       const evidenceId = newId("ev");
+      // A row recording a query that failed or came back empty is a blind spot (#2207),
+      // filed the way a failed call is and never linked: it bears on no ruling.
+      const gap = observed.provenance === "worker" && recordsFailedQuery({ ...observed, query_failed });
+      const record: WorkerEvidence = gap
+        ? {
+            ...observed,
+            provenance: TOOL_FAILURE,
+            payload: { ...observed.payload, tool: observed.source_system, kind: "empty", hypothesis_id: this.servedBy(supports, weakens) },
+            why_notable: "a blind spot in what this run could see, not a finding",
+          }
+        : observed;
       const stored: EvidenceRecord = {
         ...record,
         ...this.attributeSource(record),
@@ -98,13 +114,21 @@ export class HuntBook {
         captured_at: new Date().toISOString(),
       };
       this.ledger.append({ kind: "evidence", payload: stored });
-      this.link(evidenceId, supports, weakens);
+      if (!gap) this.link(evidenceId, supports, weakens);
       return stored;
     });
   }
 
-  // A blind spot: a call the estate could not answer. Counted exactly like the
-  // controller's, so it gap-locks a hypothesis it bears on the same way.
+  // The hypothesis a failed query was run for: the one known id the row names, as a
+  // dispatch served one. Naming none or several, it bears on every claim.
+  private servedBy(supports?: string[], weakens?: string[]): string | null {
+    const named = [...new Set([...(supports ?? []), ...(weakens ?? [])])].filter((id) => this.projection.hypotheses.has(id));
+    return named.length === 1 ? named[0]! : null;
+  }
+
+  // A blind spot: a call the estate could not answer. openGaps counts it once per
+  // tool, on the hypothesis it names or on every claim when it names none, so it
+  // gap-locks the way a failed dispatch did.
   appendGap(tool: string, kind: "timeout" | "unavailable", hypothesisId: string | null): void {
     this.appendEvidence([
       {
@@ -148,7 +172,8 @@ export class HuntBook {
     const skipped: string[] = [];
     let ruled = 0;
     for (const relation of relations) {
-      if (!this.projection.evidence.has(relation.evidence_id)) {
+      const record = this.projection.evidence.get(relation.evidence_id);
+      if (record === undefined) {
         skipped.push(`${relation.evidence_id} is not on the ledger`);
         continue;
       }
@@ -160,6 +185,15 @@ export class HuntBook {
         (link) => link.evidence_id === relation.evidence_id && link.hypothesis_id === relation.hypothesis_id && link.relation !== "neither",
       );
       if (relation.relation === "neither" && decided) continue;
+      // A gap is not evidence: not having looked is no reason to believe a claim and
+      // none to doubt it, so only neither is taken on a blind spot (#2207).
+      if (relation.relation !== "neither" && isGap(record)) {
+        skipped.push(
+          `${relation.evidence_id} records a query that failed or returned nothing, so it is a blind spot ` +
+            `and cannot be ruled ${relation.relation} against ${relation.hypothesis_id}; rule it neither`,
+        );
+        continue;
+      }
       this.ledger.append({ kind: "link", payload: { ...relation } });
       ruled += 1;
     }
@@ -234,15 +268,15 @@ export class HuntBook {
     if (record === undefined) return { said: `${hypothesisId}: the critic's argument could not be recorded` };
 
     const strength = evidenceStrength(this.projection, hypothesisId);
+    // Checked whichever way the critic argued: not having been able to look is never
+    // the same as having cleared it, so this never proves. Status is earned by rulings
+    // over real observations, so the hypothesis keeps it and says why it could not finish.
     if (strength.open_gaps >= this.verdicts.gap_lock_threshold) {
       this.ledger.patch("hypothesis", hypothesisId, {
-        status: "inconclusive",
-        resolution_reason:
-          `gap-locked: ${strength.open_gaps} open visibility gap(s) bear on this hypothesis, ` +
-          "so the hunt could not look rather than having cleared it",
+        resolution_reason: couldNotFinish(strength.open_gaps),
         evidence_strength: strength,
       });
-      return { said: `${hypothesisId} inconclusive (gap-locked)` };
+      return { said: `${hypothesisId} not proven (gap-locked): ${couldNotFinish(strength.open_gaps)}` };
     }
 
     const unmet = unmetPredicates(strength, this.verdicts, { projection: this.projection, hypothesisId });
@@ -385,12 +419,14 @@ export class HuntBook {
     const strength = evidenceStrength(this.projection, hypothesisId);
     if (strength.open_gaps >= this.verdicts.gap_lock_threshold) {
       this.ledger.patch("hypothesis", hypothesisId, {
-        status: "inconclusive",
-        resolution_reason:
-          `gap-locked before the approved verdict landed: ${strength.open_gaps} open visibility gap(s) ` +
-          "bear on this hypothesis, so the hunt could not look rather than having cleared it",
+        resolution_reason: couldNotFinish(strength.open_gaps),
         evidence_strength: strength,
       });
+      journalNote(
+        this.ledger,
+        `${actor} approved the verdict on ${hypothesisId}, but ${strength.open_gaps} open gap(s) now ` +
+          "bear on it. It is not proven and keeps the status its rulings earned — the approval stands, the evidence moved.",
+      );
       return;
     }
     const unmet = unmetPredicates(strength, this.verdicts, { projection: this.projection, hypothesisId });
@@ -526,8 +562,21 @@ export class HuntBook {
     };
     this.ledger.patch("hunt", hunt.hunt_id, { budgets });
     this.pool?.raise(budgets);
-    if (hunt.status === "parked" && !(hunt.parked_reason ?? "").startsWith(AWAITING) && boundBy(this.hunt) === null) {
-      this.ledger.patch("hunt", hunt.hunt_id, { status: "active", parked_at: null, parked_reason: null });
+    const asked = {
+      iterations: hunt.budgets.max_iterations + grant.iterations,
+      cost_usd: Number((hunt.budgets.max_cost_usd + grant.cost_usd).toFixed(6)),
+      wall_ms: hunt.budgets.max_wall_ms + grant.wall_ms,
+    };
+    if (budgets.max_iterations < asked.iterations || budgets.max_cost_usd < asked.cost_usd || budgets.max_wall_ms < asked.wall_ms) {
+      journalNote(
+        this.ledger,
+        `${directive.actor}'s extension was clamped to the hard ceiling: ${budgets.max_iterations} turns, $${budgets.max_cost_usd.toFixed(2)}, ` +
+          `${Math.round(budgets.max_wall_ms / 60_000)} minutes.`,
+      );
+    }
+    if (hunt.status === "parked" && !(hunt.parked_reason ?? "").startsWith(AWAITING)) {
+      if (boundBy(this.hunt) === null) this.ledger.patch("hunt", hunt.hunt_id, { status: "active", parked_at: null, parked_reason: null });
+      else journalNote(this.ledger, `${directive.actor}'s extension leaves no room to run -- ${boundReason(this.hunt)} -- so the hunt stays parked.`);
     }
   }
 
@@ -592,6 +641,13 @@ export class HuntBook {
     if (hunt.outcome !== null && OUTCOME_PRECEDENCE[hunt.outcome] >= OUTCOME_PRECEDENCE[outcome]) return;
     for (const hypothesis of this.projection.hypotheses.values()) {
       if (hypothesis.status !== "active") continue;
+      // An ending that could not look keeps the status the rulings earned and says what
+      // was out of reach; overwriting it with inconclusive would read as evidence turning.
+      const gaps = evidenceStrength(this.projection, hypothesis.hypothesis_id).open_gaps;
+      if (gaps >= this.verdicts.gap_lock_threshold) {
+        this.ledger.patch("hypothesis", hypothesis.hypothesis_id, { resolution_reason: couldNotFinish(gaps) });
+        continue;
+      }
       this.ledger.patch("hypothesis", hypothesis.hypothesis_id, {
         status: "inconclusive",
         resolution_reason: `hunt ended (${outcome}) with the hypothesis unresolved`,

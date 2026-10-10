@@ -10,6 +10,7 @@ import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "../../workflows/hunt/adapters.js";
 import { pendingCheckpoints } from "../../workflows/hunt/checkpoints.js";
+import { suppressedEntities } from "../../workflows/hunt/digest.js";
 import { huntSpec } from "../../workflows/hunt/config.js";
 import { expandFrom } from "../../workflows/hunt/expand.js";
 import { citedFindings } from "../../workflows/hunt/findings.js";
@@ -290,6 +291,7 @@ function outcomeOf(outcome: HuntOutcome | null): Ending["outcome"] {
 // record rather than from memory of it.
 export function briefOf(projection: Projection): string {
   const hunt = projection.hunt;
+  const operator = operatorOf(projection);
   const hypotheses = [...projection.hypotheses.values()].map(
     (one) => `- ${one.hypothesis_id} [${one.status}${one.provenance === "base_rate" ? ", the benign explanation" : ""}] ${one.statement}`,
   );
@@ -301,6 +303,7 @@ export function briefOf(projection: Projection): string {
     `## Hypotheses\n${hypotheses.join("\n") || "- none"}`,
     questions.length === 0 ? "" : `## Open questions\n${questions.join("\n")}`,
     domains,
+    operator.length === 0 ? "" : `## From the operator and the hunt's own rules\n${operator.join("\n")}`,
     `Budget: turn ${hunt.iteration} of ${hunt.budgets.max_iterations}, $${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}.`,
     "Call hunt_status whenever you need the board again.",
   ]
@@ -308,8 +311,23 @@ export function briefOf(projection: Projection): string {
     .join("\n\n");
 }
 
+// What an operator said, and what the hunt's own rules said back: a rejection's
+// reason, an entity cleared as known-benign, a correction to the premise. The agent
+// works from these the way the lead read them off its digest. Newest last, bounded.
+const OPERATOR_SHOWN = 12;
+
+function operatorOf(projection: Projection): string[] {
+  const benign = [...suppressedEntities(projection).entries()].map(([entity, why]) => `- ${entity} is known-benign${why ? ` (${why})` : ""}: its evidence stands; open no new work on it.`);
+  const said = projection.directives
+    .filter((directive) => directive.kind !== "benign" && typeof directive.text === "string" && directive.text.trim() !== "")
+    .slice(-OPERATOR_SHOWN)
+    .map((directive) => `- ${directive.kind === "reject" ? "rejected" : directive.kind} (${directive.actor}): ${directive.text.trim()}`);
+  return [...benign, ...said];
+}
+
 function statusOf(projection: Projection): Record<string, unknown> {
   return {
+    operator: operatorOf(projection),
     hunt: { status: projection.hunt.status, turn: projection.hunt.iteration, budgets: projection.hunt.budgets, cost_usd: projection.hunt.cost_usd },
     hypotheses: [...projection.hypotheses.values()].map((one) => ({
       hypothesis_id: one.hypothesis_id,
@@ -338,6 +356,7 @@ const RESULT_ITEM_FALLBACK = {
     payload: { type: "string" },
     supports: { type: "array", items: { type: "string" } },
     weakens: { type: "array", items: { type: "string" } },
+    query_failed: { type: "boolean", description: "True when the query behind this row failed, timed out or returned nothing." },
     attacker_influenceable: { type: "boolean" },
     rests_on: { type: "array", items: { type: "object" } },
     attack_technique: { type: "string" },

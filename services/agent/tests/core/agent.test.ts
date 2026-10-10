@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { archFor, startsOnPlugin } from "../../arch/registry.js";
+import { archFor } from "../../arch/registry.js";
 import { defineTool, type RegisteredTool } from "../../contracts/tool.js";
 import type { ResolutionPayload, ReviewPayload, CallPayload } from "../../contracts/events.js";
 import type { PluginManifest } from "../../contracts/plugin.js";
@@ -316,9 +316,4 @@ guard:
     expect(() => parseSkill("# no front matter")).toThrow(SpecError);
   });
 
-  it("starts a kind on the kernel only when the deployment lists it", () => {
-    expect(startsOnPlugin("investigate", {})).toBe(false);
-    expect(startsOnPlugin("investigate", { VIGIL_PLUGIN_KINDS: "investigate" })).toBe(true);
-    expect(startsOnPlugin("hunt", { VIGIL_PLUGIN_KINDS: "hunt" })).toBe(false);
-  });
 });

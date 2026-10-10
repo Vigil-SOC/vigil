@@ -2,8 +2,8 @@ import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { archFor, startsOnPlugin } from "./arch/registry.js";
-import { isAgentRun, runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
+import { archFor } from "./arch/registry.js";
+import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
@@ -32,7 +32,6 @@ import { LedgerRepository } from "./ledger/repository.js";
 import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./workflows/compose/mirror.js";
 import { runCompose } from "./workflows/compose/workflow.js";
 import type { ComposeKinds } from "./workflows/compose/vocabulary.js";
-import { runLead, type LeadKinds } from "./workflows/lead/workflow.js";
 import { runHunt } from "./workflows/hunt/workflow.js";
 import { runRootCause } from "./workflows/rootcause/workflow.js";
 import type { RootCauseKinds } from "./workflows/rootcause/proof.js";
@@ -203,7 +202,9 @@ async function drive(
     return null;
   }
   const entry = archFor(kind);
-  if (entry.plugin !== undefined && (await onKernel(state, run_id, kind))) {
+  // A kind whose plugin the worker drives directly: investigate. The others run their
+  // plugin through the wrappers below, which carry what each one reports out.
+  if (entry.plugin !== undefined) {
     const { manifest, hooks } = loadPlugin(entry.plugin);
     const harness = build(kind, spec, as<AgentKinds>(state), undefined, seed);
     // The plugin's grants, not the arch's: the kernel registers the deployment's
@@ -230,11 +231,6 @@ async function drive(
     await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
     return null;
   }
-  if (kind === "hunt" || kind === "investigate") {
-    const harness = build(kind, spec, as<LeadKinds>(state), undefined, seed);
-    await runLead(harness, { run_id, run_kind: kind, spec, actions: entry.actions, halts: entry.halts, started_by, answers: answersFor(), announce: announceFor(), signal });
-    return null;
-  }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
 }
 
@@ -246,14 +242,6 @@ function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
     const { directive_id, actor, kind, text, created_at } = found;
     return { directive_id, actor, kind, text, created_at };
   };
-}
-
-// Which engine drives this run. A run the ledger already holds keeps the engine
-// that opened it, whatever the deployment says now; a new one follows the setting.
-async function onKernel(state: State, runId: string, kind: RunJob["run_kind"]): Promise<boolean> {
-  const events = await state.read(runId);
-  if (events.length > 0) return isAgentRun(events);
-  return startsOnPlugin(kind);
 }
 
 // Resolves the spec on a start and reads it back off the ledger on a resume, so an

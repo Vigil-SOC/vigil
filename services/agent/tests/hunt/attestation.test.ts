@@ -3,9 +3,22 @@
 // something narrower -- whether the values it rests on were attested by the telemetry
 // or chosen by the adversary. One real run flagged all eight of its records
 // attacker-influenceable and could not have proven anything at any budget.
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { archFor } from "../../arch/registry.js";
+import { ZERO_TOKENS } from "../../contracts/budget.js";
+import type { ToolResult } from "../../contracts/tool.js";
+import { budgetOf, unmeteredQuota } from "../../core/budget.js";
+import type { Harness } from "../../core/loop.js";
+import { nullMemory } from "../../core/memory.js";
+import type { Message, Provider, ProviderEvent, ToolCall, TurnRequest } from "../../core/provider.js";
+import { registryOf } from "../../core/registry.js";
+import { buildSpec, type RunSpec } from "../../core/spec.js";
+import { InProcessState } from "../../core/state.js";
 import { evidenceFrom } from "../../workflows/hunt/adapters.js";
-import { InvalidDecision, validateDecision } from "../../workflows/hunt/controller.js";
+import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
+import { fold, type HuntEvent, type HuntKinds } from "../../workflows/hunt/ledger.js";
+import { runHunt } from "../../workflows/hunt/workflow.js";
 import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
 import { evidenceStrength, sensorAttested, unmetPredicates } from "../../workflows/hunt/strength.js";
 import type { EvidenceRecord } from "../../workflows/hunt/types.js";
@@ -14,6 +27,71 @@ import { evidenceOn, newLedger } from "../support/hunt.js";
 const SENSOR = { field: "conn_count", authored: "sensor" as const };
 const AUTHORED = { field: "filename", authored: "adversary" as const };
 const FEED = { field: "threat_label", authored: "third_party" as const };
+
+// A whole hunt on the kernel, as tests/hunt/kernel-hunt.test.ts drives one: a model
+// that reads ids off what it was shown, and an estate that answers with rows.
+const RUN = "7d3c2d3e-0000-4000-8000-00000000a7e5";
+const SPEC: RunSpec = (() => {
+  const entry = archFor("hunt");
+  const fixtures = join(import.meta.dirname, "..", "fixtures");
+  const spec = buildSpec({ arch: entry.arch, playbook: join(fixtures, "hunt.playbook.yaml"), config: join(fixtures, "hunt.config.yaml") }, entry.actions, entry.owned);
+  return { ...spec, sections: { ...spec.sections, hypotheses: ["a host is beaconing to C2"] } };
+})();
+
+const shown = (request: TurnRequest) => request.messages.map((message: Message) => message.content).join("\n");
+
+function hypothesisIn(request: TurnRequest): string {
+  const found = /- (h-[0-9a-f]+) \[active\]/.exec(shown(request));
+  if (found === null) throw new Error("no hypothesis on the board");
+  return found[1]!;
+}
+
+function evidenceIn(request: TurnRequest): string {
+  const found = [...shown(request).matchAll(/ev-[0-9a-f]{12}/g)].at(-1);
+  if (found === undefined) throw new Error("no evidence id in what the model was shown");
+  return found[0];
+}
+
+type Step = (request: TurnRequest) => { tool: string; args: unknown } | { say: string };
+
+function modelOf(steps: readonly Step[]): Provider {
+  let at = 0;
+  return {
+    model: "scripted/model",
+    provider_type: "scripted",
+    stream: async function* (request: TurnRequest): AsyncGenerator<ProviderEvent> {
+      if (request.emit !== undefined) {
+        const properties = (request.emit["properties"] ?? {}) as Record<string, unknown>;
+        const answer = "benign_explanation_stands" in properties
+          ? { benign_explanation: "a backup job", benign_explanation_stands: false, rationale: "too regular" }
+          : { summary: "s", what_happened: "w", next_steps: [] };
+        yield { type: "text_delta", text: JSON.stringify(answer) };
+        yield { type: "usage", tokens: ZERO_TOKENS };
+        return;
+      }
+      const step = request.tools.length === 0 ? undefined : steps[at];
+      if (step !== undefined) at += 1;
+      const next = step?.(request);
+      if (next !== undefined && "say" in next) yield { type: "text_delta", text: next.say };
+      yield { type: "usage", tokens: ZERO_TOKENS };
+      if (next !== undefined && "tool" in next) {
+        const call: ToolCall = { id: `c${at}`, tool: next.tool, args: JSON.stringify(next.args) };
+        yield { type: "tool_call", call };
+      }
+    },
+  };
+}
+
+function harnessOf(spec: RunSpec, provider: Provider, state: InProcessState<HuntKinds>): Harness<HuntKinds> {
+  return {
+    provider,
+    registry: registryOf([], {}),
+    dispatch: { invoke: async (tool, args): Promise<ToolResult> => (tool.local ? tool.invoke(args) : { ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: tool.id }) },
+    budget: budgetOf({ ...spec.budgets, max_calls: 40 }, unmeteredQuota),
+    memory: nullMemory,
+    state,
+  };
+}
 
 const record = (over: Partial<EvidenceRecord> = {}): EvidenceRecord =>
   ({
@@ -86,31 +164,53 @@ describe("what a verdict may rest on", () => {
 
 // The gate this flag was built for, and the one direction it was always right in: an
 // adversary must not be able to talk the hunt out of a branch by writing a benign value.
+// The gate now sits on the hunt agent's abandon_hypothesis tool, so it is driven
+// through a whole run: the model records a finding, then cites it to drop the branch.
 describe("what an ABANDON may rest on", () => {
-  it("refuses a drop citing only values the adversary chose", async () => {
-    const { ledger, hypothesisIds } = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
-    const hypothesisId = hypothesisIds[0]!;
-    const cited = evidenceOn(ledger, hypothesisId, { attackerInfluenceable: true, restsOn: [AUTHORED] });
+  const abandonCiting = async (restsOn: unknown[]) => {
+    const state = new InProcessState<HuntKinds>();
+    const provider = modelOf([
+      (request) => ({
+        tool: "record_evidence",
+        args: {
+          results: [
+            {
+              source_system: "network",
+              summary: "the beacon's filename looks like an updater",
+              salience: "notable",
+              why_notable: "a benign-looking value",
+              payload: "{}",
+              attacker_influenceable: true,
+              rests_on: restsOn,
+              supports: [hypothesisIn(request)],
+            },
+          ],
+        },
+      }),
+      (request) => ({ tool: "abandon_hypothesis", args: { hypothesis_id: hypothesisIn(request), reason: "looks benign", evidence_ids: [evidenceIn(request)] } }),
+      () => ({ say: "done" }),
+    ]);
+    await runHunt(harnessOf(SPEC, provider, state), { run_id: RUN, run_kind: "hunt", spec: SPEC, actions: [], queue: new InProcessDirectiveQueue() });
+    const events = (await state.read(RUN)) as readonly HuntEvent[];
+    const call = events.find((event) => event.kind === "call" && (event.payload as { tool: string }).tool === "abandon_hypothesis");
+    return { call: call?.payload as { ok: boolean; result: string }, hypothesis: [...fold(events).hypotheses.values()][0]! };
+  };
 
-    expect(() =>
-      validateDecision(
-        { action: "ABANDON", rationale: "the filename looks like an update", target_hypothesis_id: hypothesisId, evidence_citations: [cited] },
-        ledger.projection,
-      ),
-    ).toThrow(InvalidDecision);
+  it("refuses a drop citing only values the adversary chose", async () => {
+    const { call, hypothesis } = await abandonCiting([AUTHORED]);
+
+    expect(call.ok).toBe(false);
+    expect(call.result).toContain("attested");
+    // Never parked by the abandon: the run ending closes it inconclusive instead.
+    expect(hypothesis.resolution_reason ?? "").not.toMatch(/^abandoned/);
   });
 
   it("allows one citing something the telemetry attested", async () => {
-    const { ledger, hypothesisIds } = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
-    const hypothesisId = hypothesisIds[0]!;
-    const cited = evidenceOn(ledger, hypothesisId, { attackerInfluenceable: true, restsOn: [SENSOR] });
+    const { call, hypothesis } = await abandonCiting([SENSOR]);
 
-    expect(() =>
-      validateDecision(
-        { action: "ABANDON", rationale: "the interval is irregular in the counts", target_hypothesis_id: hypothesisId, evidence_citations: [cited] },
-        ledger.projection,
-      ),
-    ).not.toThrow();
+    expect(call.ok).toBe(true);
+    expect(hypothesis.status).toBe("parked");
+    expect(hypothesis.resolution_reason).toMatch(/^abandoned: looks benign/);
   });
 });
 

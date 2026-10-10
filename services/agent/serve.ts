@@ -23,6 +23,7 @@ import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
 import { investigateReplay } from "./workflows/lead/replay.js";
 import { isAgentRun } from "./core/agent.js";
 import { investigateKernelReplay } from "./plugins/investigate/view.js";
+import { huntKernelReplay } from "./plugins/hunt/view.js";
 import { rootCauseReplay } from "./workflows/rootcause/replay.js";
 
 const log = logger("agent.serve");
@@ -232,6 +233,12 @@ async function readReplay(state: State, runId: string, decisionId: string | null
     return;
   }
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
+  // A kernel hunt has no digest to rebuild: what each turn was shown is the calls before it.
+  if (isAgentRun(events)) {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(huntKernelReplay(runId, events)));
+    return;
+  }
 
   let report: ReplayReport;
   try {

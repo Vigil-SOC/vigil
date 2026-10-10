@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { briefOf } from "../../plugins/hunt/hooks.js";
 import {
   AUTO_ACTOR,
   DEFAULT_CHECKPOINTS,
@@ -6,46 +7,43 @@ import {
   resolutionOf,
 } from "../../workflows/hunt/checkpoints.js";
 import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { HuntParked, validateDecision } from "../../workflows/hunt/controller.js";
-import { buildDigest, scoredFrontier, suppressedEntities } from "../../workflows/hunt/digest.js";
+import { scoredFrontier, suppressedEntities } from "../../workflows/hunt/digest.js";
 import { steer } from "../../workflows/hunt/inbox.js";
 import type { Journal } from "../../workflows/hunt/journal.js";
-import type { DirectiveQueue, Enricher, WorkerDispatcher } from "../../workflows/hunt/ports.js";
 import { renderReport } from "../../workflows/hunt/report.js";
-import {
-  ScriptedDecisionProvider,
-  ScriptedDisconfirmationCritic,
-  ScriptedWorkerDispatcher,
-  type ScriptedDecision,
-} from "../support/scripted-hunt.js";
 import { evidenceStrength, openGaps } from "../../workflows/hunt/strength.js";
-import type { Decision, DispatchRequest, DispatchResult, Entity } from "../../workflows/hunt/types.js";
 import {
-  CONCLUDE,
-  controllerFor,
+  bookOf,
   evidenceOn,
   finalized,
-  INVESTIGATE,
   newLedger,
   provable,
   question,
   reopen,
   SEED_IP,
-  validateOn as validate,
+  validate,
   type Started,
 } from "../support/hunt.js";
 
 const SEED_KEY = `${SEED_IP.type}:${SEED_IP.value}`;
 const seen = (ledger: Journal) => ledger.projection.directives.map((directive) => directive.text).join(" ");
 
+// What the hunt plugin's before hook does at every boundary: operator input
+// first, then answers that reached the ledger some other way.
+async function boundary(ledger: Journal) {
+  const book = bookOf(ledger);
+  await book.applyDirectives();
+  book.reconcile();
+  await ledger.flush();
+  return book;
+}
+
 describe("the ledger is the authority, the console is delivery", () => {
   it("journals an auto resolution rather than silently skipping the checkpoint", async () => {
     const { ledger, hypothesisIds } = await newLedger({ checkpoints: { verdict_review: "auto" } });
-    const citations = provable(ledger, hypothesisIds[0]!);
+    provable(ledger, hypothesisIds[0]!);
 
-    await controllerFor(ledger, [validate(hypothesisIds[0]!, citations)], {
-      critic: new ScriptedDisconfirmationCritic(true),
-    }).advanceIteration();
+    validate(ledger, hypothesisIds[0]!);
 
     // The verdict landed exactly as it does with no checkpoint machinery at all…
     expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("proven");
@@ -62,14 +60,12 @@ describe("the ledger is the authority, the console is delivery", () => {
   });
 
   it("keeps a pending checkpoint out of the operator directive stream", async () => {
-    // Nothing the controller journals for itself may look like operator input:
-    // the drain counts operator directives to know what it has already taken.
+    // Nothing the hunt journals for itself may look like operator input: the
+    // drain counts operator directives to know what it has already taken.
     const { ledger, hypothesisIds } = await newLedger({ checkpoints: { verdict_review: "ask" } });
-    const citations = provable(ledger, hypothesisIds[0]!);
+    provable(ledger, hypothesisIds[0]!);
 
-    await controllerFor(ledger, [validate(hypothesisIds[0]!, citations)], {
-      critic: new ScriptedDisconfirmationCritic(true),
-    }).advanceIteration();
+    validate(ledger, hypothesisIds[0]!);
 
     expect(ledger.projection.directives.filter((directive) => directive.origin !== "controller")).toHaveLength(0);
     expect(pendingCheckpoints(ledger.projection)).toHaveLength(1);
@@ -80,12 +76,12 @@ describe("verdict review", () => {
   async function parkedOnVerdict() {
     const started = await newLedger({ checkpoints: { verdict_review: "ask" } });
     const hypothesisId = started.hypothesisIds[0]!;
-    const citations = provable(started.ledger, hypothesisId);
-    const result = await controllerFor(started.ledger, [validate(hypothesisId, citations)], {
-      critic: new ScriptedDisconfirmationCritic(true),
-    }).advanceIteration();
+    provable(started.ledger, hypothesisId);
+    const result = validate(started.ledger, hypothesisId);
+    await started.ledger.flush();
 
-    expect(result.hunt_status).toBe("parked");
+    expect(result.parked).toBeDefined();
+    expect(started.ledger.projection.hunt.status).toBe("parked");
     return {
       started,
       hypothesisId,
@@ -93,21 +89,24 @@ describe("verdict review", () => {
     };
   }
 
-  it("parks instead of proving, and refuses to step until it is answered", async () => {
+  it("parks instead of proving, and says what it waits on", async () => {
     const { started, hypothesisId } = await parkedOnVerdict();
 
     expect(started.ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
     expect(started.ledger.projection.hunt.outcome).toBeNull();
 
-    await expect(controllerFor(started.ledger, [CONCLUDE]).advanceIteration()).rejects.toThrow(HuntParked);
+    // Unanswered, a boundary changes nothing: the hunt stays parked.
+    await boundary(started.ledger);
+    expect(started.ledger.projection.hunt.status).toBe("parked");
+
     // Names the question and nothing internal: no hunt id, no directive syntax.
-    const reason = await controllerFor(started.ledger, [CONCLUDE]).advanceIteration().catch((error: Error) => error.message);
+    const reason = bookOf(started.ledger).suspendedBecause();
     expect(reason).toMatch(/^Waiting for your approval: Mark h-\w+ proven\?/);
     expect(reason).not.toContain(started.ledger.projection.hunt.hunt_id);
     expect(reason).not.toMatch(/directive/);
   });
 
-  it("survives process death: a controller from the ledger alone still shows it pending", async () => {
+  it("survives process death: the ledger alone still shows it pending", async () => {
     const { started, checkpointId } = await parkedOnVerdict();
 
     // Nothing of this process carries over — the ledger is the whole state.
@@ -117,7 +116,7 @@ describe("verdict review", () => {
     expect(reopened.projection.hunt.parked_reason).toContain(checkpointId);
   });
 
-  it("applies the patch VALIDATE computed, with the strength snapshot from then", async () => {
+  it("applies the patch the verdict computed, with the strength snapshot from then", async () => {
     const { started, hypothesisId, checkpointId } = await parkedOnVerdict();
     const atValidateTime = [...started.ledger.projection.checkpoints.values()][1]!.context![
       "evidence_strength"
@@ -125,7 +124,7 @@ describe("verdict review", () => {
 
     await steer(started.queue, started.runId, "approve", "reviewed the payloads, this holds", { checkpoint_id: checkpointId });
     const resumed = await reopen(started);
-    await controllerFor(resumed, [INVESTIGATE]).advanceIteration();
+    await boundary(resumed);
 
     // The snapshot is the one the reviewer was shown, never one recomputed on
     // approval: the same verdict delivered late, not a better-informed one.
@@ -133,6 +132,7 @@ describe("verdict review", () => {
     expect(hypothesis.status).toBe("proven");
     expect(hypothesis.evidence_strength).toEqual(atValidateTime);
     expect(hypothesis.evidence_strength!.corroborating_sources).toBe(2);
+    expect(resumed.projection.hunt.status).toBe("active");
   });
 
   it("refuses to land a verdict the argue-the-null pass no longer covers", async () => {
@@ -145,10 +145,10 @@ describe("verdict review", () => {
 
     await steer(started.queue, started.runId, "approve", "reviewed the payloads, this holds", { checkpoint_id: checkpointId });
     const resumed = await reopen(started);
-    await controllerFor(resumed, [INVESTIGATE]).advanceIteration();
+    await boundary(resumed);
 
     expect(resumed.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
-    expect(seen(resumed)).toMatch(/no longer carries it.*VALIDATE it again/s);
+    expect(seen(resumed)).toMatch(/evidence moved while it waited.*stays active/s);
   });
 
   it("keeps its earned status when the operator declares a gap and then approves", async () => {
@@ -162,7 +162,7 @@ describe("verdict review", () => {
     await steer(started.queue, started.runId, "approve", "looks right to me", { checkpoint_id: checkpointId });
 
     const resumed = await reopen(started);
-    await controllerFor(resumed, [INVESTIGATE]).advanceIteration();
+    await boundary(resumed);
 
     const hypothesis = resumed.projection.hypotheses.get(hypothesisId)!;
     expect(hypothesis.status).toBe("active");
@@ -172,18 +172,29 @@ describe("verdict review", () => {
     expect(hypothesis.evidence_strength!.open_gaps).toBe(3);
   });
 
-  it("leaves the hypothesis active on a rejection, with the reason in the next digest", async () => {
+  it("leaves the hypothesis active on a rejection, with the reason on the record", async () => {
     const { started, hypothesisId, checkpointId } = await parkedOnVerdict();
     await steer(started.queue, started.runId, "reject", "the second source is the same collector under another name", {
       checkpoint_id: checkpointId,
     });
 
-    const provider = new ScriptedDecisionProvider([INVESTIGATE]);
-    await controllerFor(started.ledger, [], { provider }).advanceIteration();
+    await boundary(started.ledger);
 
     expect(started.ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
     expect(started.ledger.projection.hunt.status).toBe("active");
-    expect(provider.seenDigests[0]!.directives.join(" ")).toMatch(/same collector under another name/);
+    expect(seen(started.ledger)).toMatch(/same collector under another name/);
+  });
+
+  // The agent reads an operator's reasons off its brief, as the lead read them off its digest.
+  it("tells the agent why its verdict was rejected", async () => {
+    const { started, checkpointId } = await parkedOnVerdict();
+    await steer(started.queue, started.runId, "reject", "the second source is the same collector under another name", {
+      checkpoint_id: checkpointId,
+    });
+
+    await boundary(started.ledger);
+
+    expect(briefOf(started.ledger.projection)).toMatch(/same collector under another name/);
   });
 
   it("answers a checkpoint by id, so a stale or duplicate answer changes nothing", async () => {
@@ -191,7 +202,7 @@ describe("verdict review", () => {
     await steer(started.queue, started.runId, "reject", "not yet", { checkpoint_id: checkpointId });
     await steer(started.queue, started.runId, "approve", "changed my mind", { checkpoint_id: checkpointId });
 
-    await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
     // The first answer stands, and the second is on the record as ignored.
     expect(started.ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
@@ -206,15 +217,17 @@ describe("verdict review", () => {
       resolution_reason: "dropped",
     });
 
-    const parked = await controllerFor(started.ledger, [CONCLUDE]).advanceIteration();
-    expect(parked.hunt_status).toBe("parked");
+    const parked = bookOf(started.ledger).conclude("nothing further to run");
+    expect(parked.concluded).toBe(false);
+    expect(parked.parked).toBeDefined();
+    expect(started.ledger.projection.hunt.status).toBe("parked");
     expect(started.ledger.projection.hunt.outcome).toBeNull();
 
     const checkpointId = pendingCheckpoints(started.ledger.projection)[0]!.checkpoint_id;
     await steer(started.queue, started.runId, "approve", "agreed, we are done", { checkpoint_id: checkpointId });
-    const result = await controllerFor(started.ledger, []).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_outcome).toBe("completed");
+    expect(started.ledger.projection.hunt.outcome).toBe("completed");
     // Finalize sits on terminate(), so an approval that ends a hunt still
     // produces the deliverable.
     expect(finalized(started.ledger)).toHaveLength(1);
@@ -226,13 +239,13 @@ describe("verdict review", () => {
       status: "parked",
       resolution_reason: "dropped",
     });
-    await controllerFor(started.ledger, [CONCLUDE]).advanceIteration();
+    bookOf(started.ledger).conclude("nothing further to run");
 
     const checkpointId = pendingCheckpoints(started.ledger.projection)[0]!.checkpoint_id;
     await steer(started.queue, started.runId, "reject", "check the second host first", { checkpoint_id: checkpointId });
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect(started.ledger.projection.hunt.outcome).toBeNull();
     expect(finalized(started.ledger)).toHaveLength(0);
   });
@@ -244,13 +257,15 @@ describe("the start approval", () => {
 
     expect(started.ledger.projection.hunt.status).toBe("pending_approval");
     expect(pendingCheckpoints(started.ledger.projection)[0]!.checkpoint_class).toBe("hypothesis_approval");
-    await expect(controllerFor(started.ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
+    await boundary(started.ledger);
+    expect(started.ledger.projection.hunt.status).toBe("pending_approval");
+    expect(bookOf(started.ledger).suspendedBecause()).toMatch(/^Waiting for your approval: Approve and start this hunt/);
 
     const checkpointId = pendingCheckpoints(started.ledger.projection)[0]!.checkpoint_id;
     await steer(started.queue, started.runId, "approve", "reviewed the hypotheses", { checkpoint_id: checkpointId });
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect(resolutionOf(started.ledger.projection, checkpointId)!.actor).not.toBe(AUTO_ACTOR);
   });
 
@@ -259,9 +274,9 @@ describe("the start approval", () => {
     const checkpointId = pendingCheckpoints(started.ledger.projection)[0]!.checkpoint_id;
     await steer(started.queue, started.runId, "reject", "wrong scope, start again", { checkpoint_id: checkpointId });
 
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_outcome).toBe("aborted");
+    expect(started.ledger.projection.hunt.outcome).toBe("aborted");
     expect(started.ledger.projection.hunt.termination_reason).toMatch(/rejected the hypotheses/);
     // Never disproven: nobody looked.
     expect(started.ledger.projection.hypotheses.get(started.hypothesisIds[0]!)!.status).toBe("inconclusive");
@@ -281,37 +296,17 @@ describe("the start approval", () => {
 });
 
 describe("the soft directive set", () => {
-  it("binds the Hunt Lead rather than only the digest", async () => {
+  // Known-benign used to bind the lead by refusing its INVESTIGATE/DEEPEN/PIVOT on
+  // the entity; there is no decision to validate now. What the agent is told is below.
+
+  // A known-benign entity reaches the agent's brief, so it opens no new work on it.
+  it("tells the agent an entity is known-benign", async () => {
     const started = await newLedger();
-    evidenceOn(started.ledger, started.hypothesisIds[0]!, { source: "duckdb", entities: [SEED_IP] });
     await steer(started.queue, started.runId, "benign", "our own scanner", { entity_key: SEED_KEY });
-    await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
 
-    // Dropping it from pivot candidates only makes the lead less likely to name
-    // it. An authorization the lead can decline to notice is a suggestion.
-    const citations = [...started.ledger.projection.evidence.keys()];
-    for (const action of ["INVESTIGATE", "DEEPEN", "PIVOT"] as const) {
-      expect(() =>
-        validateDecision(
-          { action, rationale: "chase it anyway", target_entity: SEED_KEY, evidence_citations: citations },
-          started.ledger.projection,
-        ),
-      ).toThrow(/known-benign/);
-    }
+    await boundary(started.ledger);
 
-    // ABANDON is the exception: closing work on a suppressed entity is the
-    // point of suppressing it.
-    expect(() =>
-      validateDecision(
-        {
-          action: "ABANDON",
-          rationale: "the operator cleared it",
-          target_entity: SEED_KEY,
-          evidence_citations: citations,
-        },
-        started.ledger.projection,
-      ),
-    ).not.toThrow();
+    expect(briefOf(started.ledger.projection)).toMatch(/known-benign/);
   });
 
   it("suppresses an entity without touching a single record, and lets a revoke lift it", async () => {
@@ -323,79 +318,42 @@ describe("the soft directive set", () => {
     const before = started.ledger.projection.evidence.get(evidenceId)!;
 
     await steer(started.queue, started.runId, "benign", "our own scanner", { entity_key: SEED_KEY });
-    await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
     expect([...suppressedEntities(started.ledger.projection).keys()]).toEqual([SEED_KEY]);
     // The evidence is exactly what it was: a suppression is an authorization,
     // not a deletion.
     expect(started.ledger.projection.evidence.get(evidenceId)).toEqual(before);
-
-    const digest = buildDigest(started.ledger.projection, 2);
-    expect(digest.entities.find((entity) => entity.value === SEED_IP.value)!.suppressed).toBe(true);
-    expect(digest.notes.join(" ")).toMatch(/known-benign/);
+    expect(seen(started.ledger)).toMatch(/known-benign/);
 
     await steer(started.queue, started.runId, "benign", "put it back in play", { entity_key: SEED_KEY, revoke: true });
-    await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
     expect(suppressedEntities(started.ledger.projection).size).toBe(0);
-    expect(
-      buildDigest(started.ledger.projection, 3).entities.find((entity) => entity.value === SEED_IP.value)!.suppressed,
-    ).toBeUndefined();
+    expect(seen(started.ledger)).toMatch(/lifted the known-benign suppression/);
   });
 
-  it("keeps a suppressed entity out of enrichment and out of the pivot candidates", async () => {
-    const started = await newLedger();
-    const enriched: string[] = [];
-    const enricher: Enricher = async (entity: Entity) => {
-      enriched.push(`${entity.type}:${entity.value}`);
-      return [];
-    };
-
-    await steer(started.queue, started.runId, "benign", "our own scanner", { entity_key: SEED_KEY });
-    await controllerFor(started.ledger, [INVESTIGATE], {
-      enricher,
-      dispatcher: new ScriptedWorkerDispatcher([
-        {
-          source_system: "duckdb",
-          summary: `10.0.0.5 talked to ${SEED_IP.value}`,
-          payload: { src_ip: "10.0.0.5", dest_ip: SEED_IP.value },
-          salience: "routine",
-          why_notable: "",
-          provenance: "worker",
-          attacker_influenceable: false,
-          instruction_like: false,
-        },
-      ]),
-    }).advanceIteration();
-
-    expect(enriched).toContain("ip:10.0.0.5");
-    expect(enriched).not.toContain(SEED_KEY);
-
-    // And it is not offered as somewhere to pivot to, having been cleared once.
-    const digest = buildDigest(started.ledger.projection, 2);
-    expect(digest.pivot_candidates.map((entity) => entity.value)).not.toContain(SEED_IP.value);
-  });
+  // Enrichment and pivot candidates were the controller's own fan-out; the agent
+  // enriches through its tools, so there is no controller enrichment to keep it out of.
 
   it("counts an operator-declared gap like a tool failure, up to gap-lock", async () => {
     const started = await newLedger();
     const hypothesisId = started.hypothesisIds[0]!;
-    const citations = provable(started.ledger, hypothesisId);
+    provable(started.ledger, hypothesisId);
 
     for (const text of ["no EDR on the 10.30.0.0/16 subnet", "no DNS logging before 03:00", "no proxy logs at all"]) {
       await steer(started.queue, started.runId, "gap", text, { hypothesis_id: hypothesisId });
     }
-    await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
     expect(openGaps(started.ledger.projection, hypothesisId)).toBe(DEFAULT_VERDICTS.gap_lock_threshold);
 
     // Enough blindness that the verdict is not given: the hunt could not look,
     // which is never the same as having cleared it, and it is not a ruling either.
-    const result = await controllerFor(started.ledger, [validate(hypothesisId, citations)], {
-      critic: new ScriptedDisconfirmationCritic(true),
-    }).advanceIteration();
+    const result = validate(started.ledger, hypothesisId);
 
     expect(started.ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
-    expect(result.note).toMatch(/gap-locked/);
+    expect(result.said).toMatch(/gap-locked/);
   });
 
   it("pins a boosted question to the top of the frontier", async () => {
@@ -408,7 +366,7 @@ describe("the soft directive set", () => {
     expect(scoredFrontier(started.ledger.projection, 1)[0]!.question.question_id).not.toBe(buried);
 
     await steer(started.queue, started.runId, "boost", "look at this one next", { question_id: buried });
-    await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
     const [top] = scoredFrontier(started.ledger.projection, 2);
     expect(top!.question.question_id).toBe(buried);
@@ -422,67 +380,38 @@ describe("the soft directive set", () => {
     const started = await newLedger();
     await steer(started.queue, started.runId, "note", "the 03:00 spike is our backup window, not exfil");
 
-    const provider = new ScriptedDecisionProvider([INVESTIGATE]);
-    await controllerFor(started.ledger, [], { provider }).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(provider.seenDigests[0]!.directives.join(" ")).toMatch(/backup window/);
+    expect(seen(started.ledger)).toMatch(/backup window/);
   });
-});
 
-describe("a hard abort preempts the work in flight", () => {
-  // Queues the halt while the first worker is running, which is what an
-  // operator hitting abort mid-iteration actually looks like.
-  class AbortingDispatcher implements WorkerDispatcher {
-    readonly seen: string[] = [];
-    constructor(
-      private readonly queue: DirectiveQueue,
-      private readonly runId: string,
-    ) {}
-
-    async dispatch(request: DispatchRequest): Promise<DispatchResult> {
-      this.seen.push(request.focus);
-      if (this.seen.length === 1) await steer(this.queue, this.runId, "abort", "operator halted the hunt");
-      return { dispatch_id: request.dispatch_id, evidence: [], failed: false, failure_reason: "", cost_usd: 0 };
-    }
-  }
-
-  it("skips the workers that had not started, journals why, and aborts through terminate()", async () => {
+  // A correction to the hunt's premise is in front of the agent at its next pick-up.
+  it("puts a premise correction in front of the agent", async () => {
     const started = await newLedger();
-    for (const text of ["check 10.0.0.1", "check 10.0.0.2", "check 10.0.0.3"]) question(started.ledger, text);
+    await steer(started.queue, started.runId, "note", "the 03:00 spike is our backup window, not exfil");
 
-    const dispatcher = new AbortingDispatcher(started.queue, started.runId);
-    await controllerFor(started.ledger, [INVESTIGATE, INVESTIGATE], { dispatcher }).advanceIteration();
+    await boundary(started.ledger);
 
-    // One worker ran; the other two never did, and the ledger says so rather
-    // than leaving two dispatches that look like they chose not to look.
-    expect(dispatcher.seen).toHaveLength(1);
-    const skipped = [...started.ledger.projection.dispatches.values()].filter(
-      (dispatch) => dispatch.failure_reason?.includes("abort") === true,
-    );
-    expect(skipped).toHaveLength(2);
-    expect(skipped.every((dispatch) => dispatch.status === "failed")).toBe(true);
-
-    // The boundary still owns the ending: aborted, coerced, finalized.
-    const result = await controllerFor(started.ledger, []).advanceIteration();
-    expect(result.hunt_outcome).toBe("aborted");
-    expect([...started.ledger.projection.hypotheses.values()].every((h) => h.status === "inconclusive")).toBe(true);
-    expect(finalized(started.ledger)).toHaveLength(1);
+    expect(briefOf(started.ledger.projection)).toMatch(/backup window/);
   });
 });
+
+// A hard abort preempting queued workers went with the workers: the agent makes
+// one call at a time, and the kernel's stop watch halts it mid-turn.
 
 describe("scope", () => {
   it("refuses a cross-tenant lead outright rather than raising a checkpoint", async () => {
     const started = await newLedger({ checkpoints: { scope_extension: "ask" }, scope: { tenant: "frothly" } });
     await steer(started.queue, started.runId, "lead", "check tenant:acme for the same key");
 
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
     // No checkpoint: a tenant boundary is not one an operator may waive from
     // inside the hunt, so there is nothing to approve.
     expect(pendingCheckpoints(started.ledger.projection)).toHaveLength(0);
-    expect(result.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect([...started.ledger.projection.questions.values()]).toHaveLength(0);
-    expect(seen(started.ledger)).toMatch(/names tenant acme.*Refused outright/s);
+    expect(seen(started.ledger)).toMatch(/names tenant acme.*Refused/s);
   });
 
   it("asks before growing past the declared scope, and grows on approval", async () => {
@@ -492,16 +421,17 @@ describe("scope", () => {
     });
     await steer(started.queue, started.runId, "lead", `pull on ${SEED_IP.value} as well`);
 
-    await expect(controllerFor(started.ledger, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
+    await boundary(started.ledger);
+    expect(started.ledger.projection.hunt.status).toBe("parked");
     const checkpoint = pendingCheckpoints(started.ledger.projection)[0]!;
     expect(checkpoint.checkpoint_class).toBe("scope_extension");
-    expect(checkpoint.question).toMatch(new RegExp(SEED_KEY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    expect(checkpoint.question).toContain(SEED_KEY);
     expect([...started.ledger.projection.questions.values()]).toHaveLength(0);
 
     await steer(started.queue, started.runId, "approve", "yes, it is ours", { checkpoint_id: checkpoint.checkpoint_id });
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect([...started.ledger.projection.questions.values()].map((entry) => entry.question)).toEqual([
       `pull on ${SEED_IP.value} as well`,
     ]);
@@ -512,9 +442,9 @@ describe("scope", () => {
     const started = await newLedger({ checkpoints: { scope_extension: "ask" } });
     await steer(started.queue, started.runId, "lead", `check ${SEED_IP.value}`);
 
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect(pendingCheckpoints(started.ledger.projection)).toHaveLength(0);
     expect([...started.ledger.projection.questions.values()].map((entry) => entry.question)).toEqual([
       `check ${SEED_IP.value}`,
@@ -530,39 +460,30 @@ describe("scope", () => {
     });
     await steer(started.queue, started.runId, "lead", `check what else ${SEED_IP.value} talked to`);
 
-    const result = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
+    await boundary(started.ledger);
 
-    expect(result.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect(pendingCheckpoints(started.ledger.projection)).toHaveLength(0);
   });
 });
 
-describe("HANDOFF_IR", () => {
-  const handoff = (hypothesisId: string | null): Decision => ({
-    action: "HANDOFF_IR",
-    rationale: "the key is being used right now; IR should rotate it",
-    target_hypothesis_id: hypothesisId,
-  });
-
+describe("handoff to incident response", () => {
   it("escalates a proven hypothesis, journals the case file, and keeps hunting", async () => {
     const started = await newLedger({
       checkpoints: { verdict_review: "auto" },
       hypotheses: ["h one", "h two"],
     });
     const citations = provable(started.ledger, started.hypothesisIds[0]!);
+    const book = bookOf(started.ledger);
 
-    const controller = controllerFor(
-      started.ledger,
-      [validate(started.hypothesisIds[0]!, citations), handoff(started.hypothesisIds[0]!), CONCLUDE],
-      { critic: new ScriptedDisconfirmationCritic(true) },
-    );
-    await controller.advanceIteration();
-    const escalated = await controller.advanceIteration();
+    validate(started.ledger, started.hypothesisIds[0]!);
+    const escalated = book.handoff(started.hypothesisIds[0]!, "the key is being used right now; IR should rotate it");
 
+    expect(escalated.refused).toBe(false);
     const hypothesis = started.ledger.projection.hypotheses.get(started.hypothesisIds[0]!)!;
     expect(hypothesis.status).toBe("handed_off");
     expect(hypothesis.spawned_case_id).toBeTruthy();
-    expect(escalated.hunt_status).toBe("active");
+    expect(started.ledger.projection.hunt.status).toBe("active");
 
     const record = started.ledger.projection.handoffs[0]!;
     expect(record.hypothesis_id).toBe(started.hypothesisIds[0]!);
@@ -582,65 +503,54 @@ describe("HANDOFF_IR", () => {
       status: "parked",
       resolution_reason: "dropped",
     });
-    const ended = await controller.advanceIteration();
-    expect(ended.hunt_outcome).toBe("completed");
+    expect(book.conclude("done").concluded).toBe(true);
+    expect(started.ledger.projection.hunt.outcome).toBe("completed");
     expect(renderReport(finalized(started.ledger)[0]!)).toMatch(/## Escalated to incident response/);
   });
 
-  it("refuses to escalate a hunch, and burns no re-prompt doing it", async () => {
+  it("refuses to escalate a hunch", async () => {
     const started = await newLedger();
-    const provider = new ScriptedDecisionProvider([handoff(started.hypothesisIds[0]!)]);
-    const result = await controllerFor(started.ledger, [], { provider }).advanceIteration();
+    const result = bookOf(started.ledger).handoff(started.hypothesisIds[0]!, "the key is being used right now");
 
-    expect(result.note).toMatch(/HANDOFF_IR refused: .* is active, not proven/);
+    expect(result.refused).toBe(true);
+    expect(result.said).toMatch(/refused: .* is active, not proven/);
     expect(started.ledger.projection.hypotheses.get(started.hypothesisIds[0]!)!.status).toBe("active");
     expect(started.ledger.projection.handoffs).toHaveLength(0);
-
-    // Schema- and citation-valid, so it stands on the record and cost exactly
-    // one call — the refusal is a controller judgement, not a bad emission.
-    expect(provider.seenDigests).toHaveLength(1);
-    expect(started.ledger.projection.decisions).toHaveLength(1);
-    expect(started.ledger.projection.decisions[0]!.rejected_attempts).toBeUndefined();
   });
 });
 
-describe("the CHECKPOINT verb", () => {
-  const raise: Decision = {
-    action: "CHECKPOINT",
-    rationale: "the evidence contradicts the premise of this hunt; I need a human",
-  };
+describe("asking the operator", () => {
+  const concern = "the evidence contradicts the premise of this hunt; I need a human";
 
   it("parks the hunt under the ask policy", async () => {
     const started = await newLedger({ checkpoints: { budget_anomaly: "ask" } });
-    const result = await controllerFor(started.ledger, [raise]).advanceIteration();
+    const result = bookOf(started.ledger).askOperator(concern, null);
 
-    expect(result.hunt_status).toBe("parked");
+    expect(result.parked).toBeDefined();
+    expect(started.ledger.projection.hunt.status).toBe("parked");
     const checkpoint = pendingCheckpoints(started.ledger.projection)[0]!;
     expect(checkpoint.checkpoint_class).toBe("budget_anomaly");
     expect(checkpoint.question).toMatch(/contradicts the premise/);
-    expect(checkpoint.context!["raised_by"]).toBe("hunt_lead");
+    expect(checkpoint.context!["raised_by"]).toBe("hunt_agent");
 
     await steer(started.queue, started.runId, "approve", "noted, keep going", { checkpoint_id: checkpoint.checkpoint_id });
-    const resumed = await controllerFor(started.ledger, [INVESTIGATE]).advanceIteration();
-    expect(resumed.hunt_status).toBe("active");
+    await boundary(started.ledger);
+    expect(started.ledger.projection.hunt.status).toBe("active");
   });
 
   it("journals it and carries on under the auto policy", async () => {
     const started = await newLedger({ checkpoints: { budget_anomaly: "auto" } });
-    const provider = new ScriptedDecisionProvider([raise, INVESTIGATE]);
-    const controller = controllerFor(started.ledger, [], { provider });
 
-    const result = await controller.advanceIteration();
-    expect(result.hunt_status).toBe("active");
+    const result = bookOf(started.ledger).askOperator(concern, null);
+
+    expect(result.parked).toBeUndefined();
+    expect(started.ledger.projection.hunt.status).toBe("active");
     expect(pendingCheckpoints(started.ledger.projection)).toHaveLength(0);
     expect(started.ledger.projection.resolutions.some((entry) => entry.actor === AUTO_ACTOR)).toBe(true);
-
-    // The concern is not lost: the Hunt Lead is told nobody was asked, so it
-    // acts on it rather than raising the same checkpoint every turn.
-    await controller.advanceIteration();
-    expect(
-      provider.seenDigests[1]!.notes.join(" ") + provider.seenDigests[1]!.directives.join(" "),
-    ).toMatch(/nobody was asked/);
+    // The concern is not lost: the agent is told nobody was asked, so it acts on
+    // it rather than raising the same checkpoint every turn.
+    expect(result.said).toMatch(/policy is auto/);
+    expect(seen(started.ledger)).toMatch(/nobody was asked/);
   });
 });
 
@@ -652,7 +562,8 @@ describe("the report carries the supervision", () => {
       status: "parked",
       resolution_reason: "dropped",
     });
-    await controllerFor(started.ledger, [CONCLUDE]).advanceIteration();
+    const book = await boundary(started.ledger);
+    book.conclude("nothing further to run");
 
     const report = finalized(started.ledger)[0]!;
     expect(report.checkpoints.map((checkpoint) => checkpoint.class)).toEqual([
@@ -676,41 +587,38 @@ describe("a supervised hunt end to end", () => {
       checkpoints: { hypothesis_approval: "ask", verdict_review: "ask" },
     });
     const hypothesisId = started.hypothesisIds[0]!;
-    const citations = provable(started.ledger, hypothesisId);
+    provable(started.ledger, hypothesisId);
 
     const start = pendingCheckpoints(started.ledger.projection)[0]!;
     await steer(started.queue, started.runId, "approve", "hypotheses look right", { checkpoint_id: start.checkpoint_id });
 
-    const decisions: ScriptedDecision[] = [
-      validate(hypothesisId, citations),
-      { action: "HANDOFF_IR", rationale: "escalate", target_hypothesis_id: hypothesisId },
-      CONCLUDE,
-    ];
-    const critic = new ScriptedDisconfirmationCritic(true);
-
     // Each leg reopens the ledger, because that is what an operator answering a
     // checkpoint hours later actually does. Every leg's writes must land first.
     let current = started.ledger;
-    const leg = async (script: ScriptedDecision[]) => {
+    const leg = async (act: (book: ReturnType<typeof bookOf>) => unknown) => {
       current = await reopen(started, current);
-      return { journal: current, result: await controllerFor(current, script, { critic }).advanceIteration() };
+      const book = await boundary(current);
+      const result = book.ended() ? null : act(book);
+      await current.flush();
+      return { book, result };
     };
 
-    expect((await leg(decisions)).result.hunt_status).toBe("parked");
+    expect((await leg((book) => validate(book.ledger, hypothesisId))).book.hunt.status).toBe("parked");
 
     current = await reopen(started, current);
     const review = pendingCheckpoints(current.projection)[0]!;
     expect(review.checkpoint_class).toBe("verdict_review");
     await steer(started.queue, started.runId, "approve", "checked the payloads", { checkpoint_id: review.checkpoint_id });
 
-    expect((await leg(decisions.slice(1))).result.note).toMatch(/handed off to incident response/);
-    expect((await leg(decisions.slice(2))).result.hunt_status).toBe("parked");
+    const handed = await leg((book) => book.handoff(hypothesisId, "escalate"));
+    expect((handed.result as { said: string }).said).toMatch(/handed off to incident response/);
+    expect((await leg((book) => book.conclude("done"))).book.hunt.status).toBe("parked");
 
     current = await reopen(started, current);
     const final = pendingCheckpoints(current.projection)[0]!;
     await steer(started.queue, started.runId, "approve", "ship it", { checkpoint_id: final.checkpoint_id });
 
-    expect((await leg([])).result.hunt_outcome).toBe("completed");
+    expect((await leg(() => null)).book.hunt.outcome).toBe("completed");
     const replayed = (await reopen(started, current)).projection;
     expect(replayed.hypotheses.get(hypothesisId)!.status).toBe("handed_off");
     expect(replayed.resolutions).toHaveLength(3);

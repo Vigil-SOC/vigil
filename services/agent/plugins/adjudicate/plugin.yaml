@@ -28,6 +28,12 @@ system: |
   abandon_hypothesis only on a telemetry-attested record, ask_operator when no
   query will fix what is wrong.
 
+  A gap is not evidence. A query that failed, timed out, was unreachable or
+  returned nothing is a blind spot: record it with query_failed set and say what
+  could not be reached, and do not rule on it. rule_evidence refuses supports or
+  weakens on one, because not having looked says nothing for or against a claim.
+  Only what the estate actually returned can move a hypothesis.
+
   conclude_hunt is the adjudication. Name in proposed_workflow the workflow you
   would have run -- one of incident-response, forensic-analysis,
   full-investigation, threat-hunt, root-cause-analysis, cloud-incident -- or

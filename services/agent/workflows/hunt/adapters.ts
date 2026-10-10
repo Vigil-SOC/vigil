@@ -1,31 +1,25 @@
 import { setMaxListeners } from "node:events";
 import { drain, streamTurn } from "../../core/stream.js";
-import type { Attempt, Harness, Outcome } from "../../core/loop.js";
-import { clamp, isVisibilityGap } from "../../core/security.js";
+import type { Attempt, Harness } from "../../core/loop.js";
+import { clamp } from "../../core/security.js";
 import type { RunKind } from "../../contracts/events.js";
 import type { RoleSpec, RunSpec } from "../../core/spec.js";
 import { SpecError } from "../../core/spec.js";
-import { narrativeOf, renderDigest, renderDispatch, renderNullCheck } from "./render.js";
+import { renderNullCheck } from "./render.js";
 import type { HuntKinds } from "./ledger.js";
-import type { DecisionProvider, DisconfirmationCritic, Narrator, WorkerDispatcher } from "./ports.js";
+import type { DisconfirmationCritic, Narrator } from "./ports.js";
 import { NARRATIVE_PROMPT, NARRATIVE_SCHEMA, stepsOf, type Narrative, type NarrativeAnswer } from "./narrative.js";
 import type {
-  Decision,
-  DecisionResult,
-  Digest,
-  DispatchRequest,
-  DispatchResult,
   NullCheckInput,
   NullCheckResult,
   RestsOn,
-  StoppedBy,
   ToolCall,
-  ToolGap,
   WorkerEvidence,
 } from "./types.js";
 
-// The hunt's four ports over the harness. The controller decides; these only
-// carry a question to a model and an answer back, and never touch the ledger.
+// The hunt's model calls that are not the agent's own: the disconfirmation critic
+// and the narrator. They carry a question to a model and an answer back, and never
+// touch the ledger; the hunt plugin decides what to write.
 export interface AdapterOptions {
   harness: Harness<HuntKinds>;
   spec: RunSpec;
@@ -122,44 +116,6 @@ export async function charged<T>(harness: Harness<HuntKinds>, before: number, ca
 
 // One digest in, one decision out. The digest is rendered rather than handed
 // over as an object, because what the lead reasons about is what it can read.
-export function decisionProvider(options: AdapterOptions): DecisionProvider {
-  const lead = role(options.spec, "lead");
-
-  return {
-    decide: async (digest: Digest, signal?: AbortSignal): Promise<DecisionResult> => {
-      const before = options.harness.budget.spent.cost_usd;
-      const linked = link(options.signal, signal);
-      let outcome;
-      try {
-        outcome = await charged(
-          options.harness,
-          before,
-          drain(streamTurn<Decision, HuntKinds>(turnFor(options, "lead", lead, renderDigest(digest), linked.signal), options.harness)),
-        );
-      } finally {
-        linked.release();
-      }
-      if (outcome.value === null) {
-        if (outcome.refusal !== null) throw new BudgetRefused(outcome.reason);
-        // pending is set only when the turn parked, so the park is read off the
-        // outcome rather than sniffed out of the reason text.
-        if (outcome.pending !== null) throw new LeadParked(outcome.reason);
-        throw new SpecError(`the lead emitted no decision: ${outcome.reason}`);
-      }
-
-      return {
-        decision: outcome.value,
-        model_id: options.harness.provider.model,
-        prompt_version: options.spec.arch,
-        cost_usd: outcome.cost_usd,
-        ...(outcome.rejected.length === 0 ? {} : { rejected_attempts: outcome.rejected }),
-      };
-    },
-  };
-}
-
-// Reuses the lead's role — same model and runtime, its own prompt and schema — since
-// this is one call at the end of a run, not a participant in the loop. Billed as "narrator".
 export function narrativeWriter(options: AdapterOptions): Narrator {
   const lead = role(options.spec, "lead");
 
@@ -316,102 +272,6 @@ export function evidenceFrom(answer: WorkerAnswer): WorkerEvidence[] {
   });
 }
 
-// The pool refused another call, which is nothing like a lead that emitted badly:
-// the run spent what it was given and is over. Its own error because the hunt loop
-// ends on it, the way compose, lead and tally all end on outcome.refusal.
-export class BudgetRefused extends Error {}
-
-// The lead stopped on a checkpoint nobody has answered. Its own error for the same
-// reason BudgetRefused is: a bounded re-ask cannot change it, and dies pretending it can.
-export class LeadParked extends Error {}
-
-// What stopped a worker that returned no answer, when it was not the estate. CONTEXT.md
-// says a refusal or a bad argument must never be recorded as a Visibility Gap, and a
-// worker that could not shape its answer, or one parked on an approval, is no more one.
-function stoppedBy(outcome: Outcome<unknown>): StoppedBy | null {
-  if (outcome.refusal !== null) return outcome.refusal.reason;
-  if (outcome.status === "waiting_approval") return "parked";
-  if (outcome.emission_rejected === true) return "emission_invalid";
-  return null;
-}
-
-// A failure is a result, not a throw: a worker that burned tokens and then died
-// still spent them, and the controller records the gap either way.
-export function workerDispatcher(options: AdapterOptions): WorkerDispatcher {
-  return {
-    dispatch: async (request: DispatchRequest): Promise<DispatchResult> => {
-      const worker = options.spec.roles.workers[request.agent_id];
-      if (worker === undefined) {
-        return {
-          dispatch_id: request.dispatch_id,
-          evidence: [],
-          failed: true,
-          failure_reason: `no worker ${request.agent_id} in this arch`,
-          cost_usd: 0,
-        };
-      }
-
-      const before = options.harness.budget.spent.cost_usd;
-      // The dispatch's own signal wins where it has one: an operator halting the
-      // hunt mid-query is a narrower stop than the run losing its lease.
-      const scoped = { ...options, ...(request.signal === undefined ? {} : { signal: request.signal }) };
-      const task = renderDispatch(request, narrativeOf(options.spec));
-      const linked = link(options.signal, request.signal);
-      let outcome;
-      try {
-        outcome = await charged(
-          options.harness,
-          before,
-          drain(
-            streamTurn<WorkerAnswer, HuntKinds>(
-              turnFor(scoped, request.agent_id, worker, task, linked.signal),
-              options.harness,
-            ),
-          ),
-        );
-      } finally {
-        linked.release();
-      }
-
-      const cost_usd = outcome.cost_usd;
-      if (outcome.value === null) {
-        return {
-          dispatch_id: request.dispatch_id,
-          evidence: salvaged(outcome.calls),
-          calls: callsOf(outcome.calls),
-          tool_gaps: gapsOf(outcome.calls),
-          failed: true,
-          failure_reason: outcome.reason,
-          stopped_by: stoppedBy(outcome),
-          cost_usd,
-        };
-      }
-      const questions = Array.isArray(outcome.value.ips_to_check) ? outcome.value.ips_to_check : [];
-      return {
-        dispatch_id: request.dispatch_id,
-        evidence: evidenceFrom(outcome.value),
-        calls: callsOf(outcome.calls),
-        tool_gaps: gapsOf(outcome.calls),
-        ...(questions.length === 0 ? {} : { questions }),
-        failed: false,
-        failure_reason: "",
-        cost_usd,
-      };
-    },
-  };
-}
-
-// Only timeout and unavailable: a refused or malformed call is a defect in the call.
-export function gapsOf(attempts: readonly Attempt[]): ToolGap[] {
-  const seen = new Map<string, ToolGap>();
-  for (const { tool, wrapped } of attempts) {
-    const failure = wrapped.failure;
-    if (failure === null || !isVisibilityGap(failure)) continue;
-    const kind = failure.kind as ToolGap["kind"];
-    seen.set(`${tool} ${kind}`, { tool, kind });
-  }
-  return [...seen.values()];
-}
 
 // Total characters of tool output one dispatch may journal. Shared rather than
 // per-call: one 500-row answer must not crowd the record of the calls after it.
@@ -462,18 +322,9 @@ export function disconfirmationCritic(options: AdapterOptions): DisconfirmationC
       }
 
       const cost_usd = outcome.cost_usd;
-      // A critic that could not answer leaves the hypothesis standing rather than
-      // proving it: an unargued null is not a null that failed.
-      if (outcome.value === null) {
-        return {
-          survives: true,
-          strongest_benign_explanation: "",
-          rationale: `the critic did not answer: ${outcome.reason}`,
-          cost_usd,
-          model_id: options.harness.provider.model,
-          prompt_version: options.spec.arch,
-        };
-      }
+      // A critic that could not answer is not one the hypothesis survived: an
+      // unargued null proves nothing, so this fails closed and the verdict is refused.
+      if (outcome.value === null) throw new SpecError(`the critic did not answer: ${outcome.reason}`);
 
       return {
         survives: outcome.value.benign_explanation_stands !== true,

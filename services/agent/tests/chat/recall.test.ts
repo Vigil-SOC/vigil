@@ -4,7 +4,7 @@ import { nullMemory, recalling } from "../../core/memory.js";
 import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";
 import { huntNotes } from "../../workflows/hunt/recall.js";
-import { controllerFor, newLedger, resolve, ruled, CONCLUDE, type Started } from "../support/hunt.js";
+import { bookOf, newLedger, resolve, type Started } from "../support/hunt.js";
 
 const LIMIT = 8;
 
@@ -12,7 +12,7 @@ const LIMIT = 8;
 async function concluded(): Promise<Started> {
   const started = await newLedger({ hypotheses: ["the host is beaconing to external infrastructure"] });
   resolve(started.ledger, started.hypothesisIds[0]!, "proven");
-  await controllerFor(started.ledger, [ruled(started.ledger, CONCLUDE)]).advanceIteration();
+  bookOf(started.ledger).conclude("the hunt reached its verdict");
   await started.ledger.flush();
   return started;
 }

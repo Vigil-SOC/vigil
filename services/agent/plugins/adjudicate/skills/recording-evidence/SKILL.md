@@ -22,6 +22,11 @@ so a summary with nothing behind it cannot be checked.
 
 **supports / weakens** name the hypothesis ids a finding genuinely bears on.
 
+A query that failed, timed out, was refused or returned nothing is not a
+finding. Record it as a row with **query_failed** set to true and say what could
+not be reached. Never set supports or weakens on it: a failure to look is a
+blind spot, and it bears on no hypothesis.
+
 **rests_on** names each field or aggregate the finding rests on and who chose
 that value:
 
