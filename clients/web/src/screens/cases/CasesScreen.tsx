@@ -726,7 +726,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
       setTitle(c.title)
       setPriority(c.prio)
       setStatus(c.status)
-      setAssignee(c.ownerName && c.ownerName !== '—' ? c.ownerName : '')
+      setAssignee(c.ownerName && c.ownerName !== '—' && c.ownerName !== 'unassigned' ? c.ownerName : '')
       setDescription(c.desc || '')
       setCategory('resolved')
       setReason('')
@@ -758,7 +758,8 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
         title: title.trim(),
         priority,
         ...(closing ? {} : { status }),
-        assignee: assignee.trim() || undefined,
+        // '' (not omitted) so clearing the field unassigns
+        assignee: assignee.trim(),
         description: description.trim() || undefined,
       })
       // Second, so a close that fails leaves the edits saved and the Case open,

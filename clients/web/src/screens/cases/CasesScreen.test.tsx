@@ -394,6 +394,39 @@ describe('unknown priority', () => {
   })
 })
 
+describe('edit case assignee', () => {
+  const openEdit = async () => {
+    renderCases(`/cases?case=${CASE.case_id}`)
+    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+    return within(screen.getByRole('dialog', { name: 'Edit case' }))
+  }
+  const sentBody = () => vi.mocked(casesApi.update).mock.lastCall?.[1]
+
+  it('sends the assignee it was preloaded with on a title-only edit', async () => {
+    testState.cases = [CASE]
+    const dialog = await openEdit()
+    fireEvent.change(dialog.getByDisplayValue(CASE.title), { target: { value: 'Renamed' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(sentBody()).toMatchObject({ title: 'Renamed', assignee: 'analyst' }))
+  })
+
+  it('sends an empty assignee, not an omitted key, when the field is cleared', async () => {
+    testState.cases = [CASE]
+    const dialog = await openEdit()
+    fireEvent.change(dialog.getByPlaceholderText('name or email'), { target: { value: '' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(sentBody()).toHaveProperty('assignee', ''))
+  })
+
+  it('does not preload "unassigned" into the field for an unassigned case', async () => {
+    testState.cases = [{ ...CASE, assignee: null }]
+    const dialog = await openEdit()
+    expect(dialog.getByPlaceholderText('name or email')).toHaveValue('')
+  })
+})
+
 const STRIP = {
   by_state: { investigating: 3, waiting_approval: 1, assigned: 2, executing: 0 },
   sla_at_risk: 4,

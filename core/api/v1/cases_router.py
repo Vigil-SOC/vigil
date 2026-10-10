@@ -502,6 +502,9 @@ def update_case(
         updates["status"] = case_data.status
     if case_data.priority is not None:
         updates["priority"] = case_data.priority
+    if case_data.assignee is not None:
+        # Empty or whitespace unassigns.
+        updates["assignee"] = case_data.assignee.strip() or None
     if case_data.notes is not None:
         case = data_service.get_case(case_id)
         if not case:
