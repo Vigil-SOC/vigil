@@ -72,7 +72,10 @@ export interface PluginHooks {
   // What the run is about, rendered each time it is picked up. Absent renders the playbook.
   brief?(ctx: PluginContext): Promise<string>;
   // Every event the loop yields, in order, after the kernel has journaled its own.
-  observe?(ctx: PluginContext, seen: StreamEvent<unknown>): Promise<void>;
+  // "halt" ends the loop there: a plugin's own ending, which the model does not
+  // control, reached between two calls. `halted` then says how the run ends.
+  observe?(ctx: PluginContext, seen: StreamEvent<unknown>): Promise<void | "halt">;
+  halted?(ctx: PluginContext): Promise<Ending>;
   // How the run ends once the loop has answered or been refused. Null takes the
   // kernel's own ending: review, then a summary off the answer.
   finish?(ctx: PluginContext, outcome: Outcome<unknown>): Promise<Ending | null>;
@@ -97,7 +100,19 @@ export interface AgentOptions {
   answers?: Answers;
   announce?: Announce;
   stop?: StopSource;
+  // One turn of an open-ended exchange rather than a run that ends: the caller
+  // holds the transcript and sends it whole, and nothing writes a terminal,
+  // because the person may always say something else.
+  conversation?: Conversation;
+  // The Vigil agent this run's skill reads are credited to (#1560). Absent records
+  // them unattributed.
+  agent_id?: string;
   signal?: AbortSignal;
+}
+
+export interface Conversation {
+  task: string;
+  history: readonly Message[];
 }
 
 export interface AgentReport {
@@ -106,6 +121,8 @@ export interface AgentReport {
   turns: number;
   calls: number;
   pending: Outcome<unknown>["pending"];
+  // What the agent answered, when it answered. A conversation reads it from here.
+  value?: unknown;
 }
 
 // How often an operator's stop is looked for while a call is in flight.
@@ -118,7 +135,11 @@ export function pluginGrants(
   tools: readonly ToolSpec[],
   own: readonly string[] = [],
 ): Record<string, readonly string[]> {
-  const bound = tools.filter((tool) => typeof tool["provides"] === "string" && plugin.needs.includes(tool["provides"] as string));
+  // "*" is every tool the deployment declares: a conversation's config is assembled
+  // per request, so which tools it may reach is the caller's answer, not the plugin's.
+  const bound = plugin.needs.includes("*")
+    ? [...tools]
+    : tools.filter((tool) => typeof tool["provides"] === "string" && plugin.needs.includes(tool["provides"] as string));
   const loader = plugin.skills.length === 0 ? [] : [SKILL_TOOL];
   return { [AGENT_ROLE]: [...new Set([...bound.map((tool) => tool.id), ...own, ...loader])], [REVIEW_ROLE]: [] };
 }
@@ -126,7 +147,7 @@ export function pluginGrants(
 // Needs this deployment answers with nothing. Declaration order, so a replay reads the same.
 export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[]): string[] {
   const provided = new Set(tools.map((tool) => tool["provides"]).filter((one): one is string => typeof one === "string"));
-  return plugin.needs.filter((need) => !provided.has(need));
+  return plugin.needs.filter((need) => need !== "*" && !provided.has(need));
 }
 
 // Progressive disclosure: the system prompt carries each skill's name and one
@@ -164,7 +185,18 @@ export function isAgentRun(events: readonly { kind: string; payload: unknown }[]
   return sections["engine"] === "plugin";
 }
 
+// For a caller that wants the report and nothing that happened on the way to it.
 export async function runAgent(harness: Harness<Kinds>, options: AgentOptions): Promise<AgentReport> {
+  const stream = streamAgent(harness, options);
+  for (;;) {
+    const next = await stream.next();
+    if (next.done === true) return next.value;
+  }
+}
+
+// The run as it happens: every event the loop yields, after the kernel has
+// journaled its own, then the report. A conversation streams this to its reader.
+export async function* streamAgent(harness: Harness<Kinds>, options: AgentOptions): AsyncGenerator<StreamEvent<unknown>, AgentReport> {
   const { run_id } = options;
   if ((await harness.state.latestSeq(run_id)) === null) await open(harness, options);
   await journalAnswers(harness.state, run_id, options.run_kind, options.answers ?? noAnswers);
@@ -183,12 +215,25 @@ export async function runAgent(harness: Harness<Kinds>, options: AgentOptions): 
     return report(ctx, "waiting_approval", early.reason, { checkpoint_id: early.checkpoint_id, tool: null, args: null });
   }
 
+  if (options.conversation !== undefined) {
+    const loop = yield* work(ctx, await harness.state.read(run_id));
+    if (loop.kind === "parked") return loop.report;
+    if (loop.kind === "stopped") return stopped(ctx, loop.directive);
+    if (loop.kind === "halted") return report(ctx, "completed", "the plugin ended the turn", null);
+    const status = loop.outcome.status === "completed" ? "completed" : "failed";
+    return { ...(await report(ctx, status, loop.outcome.reason, null)), value: loop.outcome.value };
+  }
+
   let held = await harness.state.read(run_id);
   let conclusion = lastPayload<ConclusionPayload>(held, "conclusion");
   if (conclusion === null) {
-    const loop = await work(ctx, held);
+    const loop = yield* work(ctx, held);
     if (loop.kind === "parked") return loop.report;
     if (loop.kind === "stopped") return stopped(ctx, loop.directive);
+    if (loop.kind === "halted") {
+      const ending = (await options.hooks?.halted?.(ctx)) ?? { outcome: "completed" as const, reason: "the plugin ended the run" };
+      return end(ctx, ending.outcome, ending.reason, ending.summary);
+    }
     const ending = (await options.hooks?.finish?.(ctx, loop.outcome)) ?? null;
     if (ending !== null) return end(ctx, ending.outcome, ending.reason, ending.summary);
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
@@ -235,18 +280,24 @@ function dedupe(tools: readonly RegisteredTool[]): RegisteredTool[] {
 type Loop =
   | { kind: "parked"; report: AgentReport }
   | { kind: "stopped"; directive: DirectivePayload }
+  | { kind: "halted" }
   | { kind: "answered"; outcome: Outcome<unknown>; conclusion: ConclusionPayload | null };
 
 // The agent's own loop, picked up wherever the ledger left it. Every result is
 // journaled the moment it arrives, so a park or a crash loses nothing it learned.
-async function work(ctx: PluginContext, held: Ledger): Promise<Loop> {
+async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEvent<unknown>, Loop> {
   const { harness, options } = ctx;
   const calls = callsIn(held);
-  const used = calls.reduce((max, call) => Math.max(max, call.turn), 0);
+  // A conversation's turns are each the caller's whole transcript, so none
+  // continues another's allowance or its history.
+  const used = options.conversation === undefined ? calls.reduce((max, call) => Math.max(max, call.turn), 0) : 0;
 
   const watch = watchForStop(options);
-  const linked = link(options.signal, watch.signal);
-  const cfg = turnFor(options, calls, used, await (options.hooks?.brief?.(ctx) ?? Promise.resolve(briefOf(options.spec))), linked.signal);
+  const halt = new AbortController();
+  let halted = false;
+  const linked = link(options.signal, watch.signal, halt.signal);
+  const task = options.conversation?.task ?? (await (options.hooks?.brief?.(ctx) ?? Promise.resolve(briefOf(options.spec))));
+  const cfg = turnFor(options, calls, used, task, linked.signal);
   const stream = streamTurn<unknown, Kinds>(cfg, harness);
 
   let turn = used;
@@ -288,9 +339,17 @@ async function work(ctx: PluginContext, held: Ledger): Promise<Loop> {
         first = false;
         await harness.state.append(options.run_id, [event(options, "call", call)]);
       }
-      await options.hooks?.observe?.(ctx, seen);
+      const said = await options.hooks?.observe?.(ctx, seen);
+      yield seen;
+      if (said === "halt") {
+        halted = true;
+        halt.abort(new Error("the plugin ended the run"));
+        await stream.return(undefined as never).catch(() => undefined);
+        return { kind: "halted" };
+      }
     }
   } catch (error) {
+    if (halted) return { kind: "halted" };
     const directive = watch.directive();
     if (directive !== null) return { kind: "stopped", directive };
     throw error;
@@ -305,7 +364,9 @@ async function work(ctx: PluginContext, held: Ledger): Promise<Loop> {
     }
     return { kind: "parked", report: await report(ctx, "waiting_approval", outcome.reason, outcome.pending) };
   }
-  if (outcome.status !== "completed" || outcome.value === null) return { kind: "answered", outcome, conclusion: null };
+  if (outcome.status !== "completed" || outcome.value === null || options.conversation !== undefined) {
+    return { kind: "answered", outcome, conclusion: null };
+  }
 
   const conclusion: ConclusionPayload = {
     plugin: options.plugin.id,
@@ -327,10 +388,11 @@ function turnFor(options: AgentOptions, calls: readonly CallPayload[], used: num
     run_id: options.run_id,
     run_kind: options.run_kind,
     role: AGENT_ROLE,
+    ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
     system: [systemOf(plugin), directivesOf(spec)].filter((part) => part !== "").join("\n\n"),
     task,
     schema: structured?.schema ?? null,
-    history: historyOf(calls),
+    history: options.conversation === undefined ? historyOf(calls) : [...options.conversation.history],
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),
     approvals: new Set(spec.approvals),
@@ -338,6 +400,9 @@ function turnFor(options: AgentOptions, calls: readonly CallPayload[], used: num
     result_cap: spec.runtime.result_cap,
     recall_limit: spec.runtime.recall_limit,
     recall_keys: openingKeys(spec),
+    // Only a conversation sizes its fold to the model's window (#2125): it only lowers
+    // Ask's ceiling, and every other kind keeps the flat one.
+    ...(options.conversation === undefined || spec.context_window === undefined ? {} : { context_window: spec.context_window }),
     // Numbered only when the answer can cite them.
     ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
     ...(signal === undefined ? {} : { signal }),

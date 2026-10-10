@@ -1,8 +1,10 @@
-import type { NewEvent } from "../../contracts/events.js";
-import { commitTurn, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
+import { streamAgent, type AgentKinds, type AgentReport } from "../../core/agent.js";
+import type { Harness, Outcome } from "../../core/loop.js";
 import type { Message } from "../../core/provider.js";
-import { SpecError, type RoleSpec, type RunSpec } from "../../core/spec.js";
-import { streamTurn, type StreamEvent } from "../../core/stream.js";
+import { SpecError, type RunSpec } from "../../core/spec.js";
+import type { StreamEvent } from "../../core/stream.js";
+import { loadPlugin } from "../../plugins/index.js";
+import { toolsFrom } from "../../tools/remote.js";
 
 const KIND = "chat";
 
@@ -42,31 +44,30 @@ export function conversationOf(turns: readonly Turn[]): { task: string; history:
   return { task: opening.content, history: rest.map(messageOf) };
 }
 
-// One turn of a conversation that is itself one run: the ledger carries what the
-// turn spent, and the client carries what was said.
+// One turn of a conversation that is itself one run: the chat plugin on the
+// kernel, as a conversation. The ledger carries what the turn spent and called,
+// and the client carries what was said.
 export async function* runChat(harness: Harness, options: ChatOptions): AsyncGenerator<StreamEvent<string>, ChatReport> {
-  const lead = leadOf(options.spec);
-  const turn = turnFor(options, lead);
-  if ((await harness.state.latestSeq(options.run_id)) === null) await open(harness, options);
-
+  const conversation = conversationOf(options.turns);
+  const { manifest, hooks } = loadPlugin("chat");
   // A reader who walks away mid-answer does not un-bill the calls already made. The
   // loop writes each spend before yielding it, so there is nothing to compensate.
-  const stream = streamTurn<string>(turn, harness);
+  const stream = streamAgent(harness as unknown as Harness<AgentKinds>, {
+    run_id: options.run_id,
+    run_kind: KIND,
+    spec: options.spec,
+    plugin: manifest,
+    ...(hooks === undefined ? {} : { hooks }),
+    tools: toolsFrom(options.spec.tools),
+    started_by: options.started_by ?? "console",
+    conversation,
+    ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
+  });
   for (;;) {
     const next = await stream.next();
-    if (next.done) {
-      await commitTurn(harness.state, options.run_id, []);
-      return reportOf(next.value);
-    }
-    yield next.value;
+    if (next.done) return reportOf(next.value);
+    yield next.value as StreamEvent<string>;
   }
-}
-
-function leadOf(spec: RunSpec): RoleSpec {
-  const lead = spec.roles.lead;
-  if (lead === undefined) throw new SpecError(`arch ${spec.arch} declares no lead, so it has nobody to answer with`);
-  if (lead.output_schema !== null) throw new SpecError(`arch ${spec.arch} answers in JSON, which is not a thing to say to a person`);
-  return lead;
 }
 
 function messageOf(turn: Turn): Message {
@@ -74,50 +75,7 @@ function messageOf(turn: Turn): Message {
   return { role: "user", content: turn.content };
 }
 
-function reportOf(outcome: Outcome<string>): ChatReport {
-  return { status: outcome.status, answer: outcome.value ?? "", reason: outcome.reason, pending: outcome.pending };
-}
-
-function turnFor(options: ChatOptions, lead: RoleSpec): TurnConfig {
-  const { runtime } = options.spec;
-  const { task, history } = conversationOf(options.turns);
-  return {
-    run_id: options.run_id,
-    run_kind: KIND,
-    role: "lead",
-    ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
-    system: lead.prompt,
-    task,
-    history,
-    schema: null,
-    max_turns: runtime.max_turns,
-    approvals: new Set(options.spec.approvals),
-    // No vocabulary: a conversation chooses no action, so the scanner has only
-    // its generic patterns to go on and there is no verb to smuggle.
-    verbs: [],
-    result_cap: runtime.result_cap,
-    recall_limit: runtime.recall_limit,
-    ...(options.spec.context_window === undefined ? {} : { context_window: options.spec.context_window }),
-  };
-}
-
-type Event = NewEvent<Record<never, never>>;
-
-function event(options: ChatOptions, kind: Event["kind"], payload: Event["payload"]): Event {
-  return { run_id: options.run_id, run_kind: KIND, kind, payload };
-}
-
-// A conversation is the run, so it opens once and stays open. Nothing writes a
-// terminal: the person may always say something else.
-async function open(harness: Harness, options: ChatOptions): Promise<void> {
-  await harness.state.append(options.run_id, [
-    event(options, "run", {
-      run_kind: KIND,
-      spec: options.spec,
-      budgets: harness.budget.limits,
-      seed: options.run_id,
-      tenant_id: null,
-      started_by: options.started_by ?? "console",
-    }),
-  ]);
+function reportOf(report: AgentReport): ChatReport {
+  const answer = typeof report.value === "string" ? report.value : "";
+  return { status: report.status === "waiting_approval" ? "waiting_approval" : report.status === "completed" ? "completed" : "failed", answer, reason: report.reason, pending: report.pending };
 }

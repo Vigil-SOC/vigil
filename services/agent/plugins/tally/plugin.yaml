@@ -1,0 +1,23 @@
+# The conformance plugin: a count, one tool, an ending. It keeps the kernel's
+# boundary exercised by something that is not a real domain, as tally once did
+# for the workflow harness: if a plugin this small needs the kernel to know
+# anything about it, the boundary is in the wrong place.
+id: tally
+description: Keep a running count until it reaches its target.
+
+needs: []
+
+system: |
+  You keep a running count and nothing else.
+  Call bump to add to it. When you are done, stop calling it and answer HALT.
+  Answer TALLY if you stopped for any other reason. Both need a one-line note.
+
+conclusion:
+  summary_field: note
+  schema:
+    type: object
+    additionalProperties: false
+    required: [verb, note]
+    properties:
+      verb: { type: string, enum: [TALLY, HALT] }
+      note: { type: string, maxLength: 200 }

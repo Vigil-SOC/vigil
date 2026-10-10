@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { runTally, type TallyOptions } from "../../workflows/tally/workflow.js";
-import { bumpTool } from "../../workflows/tally/tool.js";
 import type { TallyKinds, TallyPayload } from "../../workflows/tally/vocabulary.js";
 import { approvalId, type Harness } from "../../core/loop.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
@@ -29,7 +28,8 @@ function harnessOf(script: readonly ScriptedTurn[], wiring: Wiring = {}): Harnes
   const limits = { max_calls: wiring.max_calls ?? 10, max_cost_usd: 100, max_wall_ms: 600_000, max_park_ms: 604_800_000 };
   return {
     provider: scriptedProvider(script),
-    registry: registryOf([bumpTool()], { counter: ["bump"] }),
+    // The plugin brings its own tool; the kernel registers it.
+    registry: registryOf([], {}),
     dispatch: wiring.dispatch ?? localDispatch,
     budget: wiring.budget ?? budgetOf(limits, unmeteredQuota),
     memory: wiring.memory ?? nullMemory,
@@ -51,11 +51,12 @@ function emit(verb: "TALLY" | "HALT", note = "carrying on"): ScriptedTurn {
 
 const STOP: ScriptedTurn = { calls: [] };
 
-// Two bumps, six model calls, target reached on the second workflow pass.
-const TO_THREE: ScriptedTurn[] = [bump(2), STOP, emit("TALLY"), bump(1), STOP, emit("TALLY")];
+// Two bumps in one loop: the target is reached by the second, and the run ends
+// there whatever the model would have said next.
+const TO_THREE: ScriptedTurn[] = [bump(2), bump(1)];
 
-describe("the throwaway workflow", () => {
-  it("runs end to end on the harness and terminates", async () => {
+describe("the conformance plugin", () => {
+  it("runs end to end on the kernel and ends at its target", async () => {
     const state = new InProcessState<TallyKinds>();
     const harness = harnessOf(TO_THREE, { state });
     const report = await runTally(harness, options());
@@ -63,11 +64,11 @@ describe("the throwaway workflow", () => {
     expect(report.status).toBe("completed");
     expect(report.count).toBe(3);
     // An iteration is a model call, counted by the harness that makes it.
-    expect(report.iterations).toBe(6);
+    expect(report.iterations).toBe(2);
 
     const kinds = (await state.read(RUN)).map((event) => event.kind);
-    expect(kinds).toEqual(["run", "spend", "spend", "spend", "tally", "spend", "spend", "spend", "tally", "terminal"]);
-    expect(await state.terminal(RUN)).toEqual({ outcome: "completed", reason: "the count reached 3" });
+    expect(kinds).toEqual(["run", "spend", "call", "tally", "spend", "call", "tally", "terminal"]);
+    expect(await state.terminal(RUN)).toEqual({ outcome: "completed", reason: "the count reached 3", summary: "the count reached 3" });
   });
 
   it("ends on HALT before the target", async () => {
@@ -79,10 +80,10 @@ describe("the throwaway workflow", () => {
     expect(report.count).toBe(1);
   });
 
-  // The workflow's termination is a predicate the model does not control, so a
-  // model that never says HALT still ends -- against the harness's budget.
+  // The ending is a predicate the model does not control, so a model that never
+  // stops calling still ends -- against the harness's budget.
   it("is ended by the budget when the model never stops", async () => {
-    const forever = [emit("TALLY"), emit("TALLY"), emit("TALLY")].flatMap((turn) => [STOP, turn]);
+    const forever = [bump(1), bump(1), bump(1), bump(1)];
     const harness = harnessOf(forever, { max_calls: 2 });
     const report = await runTally(harness, options({ target: 99 }));
 
@@ -101,7 +102,7 @@ describe("the throwaway workflow", () => {
     expect(await state.terminal(RUN)).toBeNull();
 
     await approve(state, parked.pending!.checkpoint_id);
-    const resumed = await runTally(harnessOf([bump(3), STOP, emit("TALLY")], { state }), options({ approvals }));
+    const resumed = await runTally(harnessOf([bump(3)], { state }), options({ approvals }));
 
     expect(resumed.status).toBe("completed");
     expect(resumed.count).toBe(3);
