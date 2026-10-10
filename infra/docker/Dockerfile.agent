@@ -68,6 +68,9 @@ RUN npm ci --omit=dev \
 COPY --from=build /build/dist ./dist
 # tsc emits only .js; arch/registry.ts resolves the arch YAMLs next to itself.
 COPY --from=build /build/arch/*.yaml ./dist/arch/
+# Same for plugins: plugins/registry.ts resolves each plugin directory next to itself,
+# and a plugin is its plugin.yaml and skills/*/SKILL.md rather than code.
+COPY --from=build /build/plugins/ ./dist/plugins/
 
 RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 

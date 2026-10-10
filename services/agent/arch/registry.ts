@@ -9,6 +9,8 @@ import type { HuntKinds } from "../workflows/hunt/ledger.js";
 import { huntProjection, type ProjectionOptions } from "../workflows/hunt/projection.js";
 import { huntNotes } from "../workflows/hunt/recall.js";
 import { leadProjection } from "../workflows/lead/projection.js";
+import { isAgentRun } from "../core/agent.js";
+import { investigateView } from "../plugins/investigate/view.js";
 import type { LeadKinds } from "../workflows/lead/workflow.js";
 import { rootCauseProjection } from "../workflows/rootcause/projection.js";
 import type { RootCauseKinds } from "../workflows/rootcause/proof.js";
@@ -35,6 +37,10 @@ export interface ArchEntry {
   // itself says why it is not the projection. Absent means a run of this kind is
   // not distilled, which is the honest default rather than empty rows.
   distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
+  // The plugin that runs this kind on the kernel (core/agent.ts) instead of its
+  // workflow, when the deployment says so. Absent means the workflow is the only
+  // engine. A run keeps whichever engine opened it: the journaled spec says which.
+  plugin?: string;
 }
 
 // The hunt lead-loop, minus its arch prompt. `hunt` and `adjudicate` run this exact
@@ -82,7 +88,10 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     workflow: "lead",
     actions: ["EXAMINE", "CONCLUDE"],
     halts: ["CONCLUDE"],
-    projection: (runId, events) => leadProjection(runId, events as readonly AgentEvent<LeadKinds>[]),
+    plugin: "investigate",
+    // Either engine answers in the lead's shape, so the console needs no second view.
+    projection: (runId, events) =>
+      isAgentRun(events) ? investigateView(runId, events) : leadProjection(runId, events as readonly AgentEvent<LeadKinds>[]),
   },
   // No actions: nothing emits one. A step ends when its agent answers, and the run
   // ends when the list does, so there is no verb for a model to choose or to halt on.
@@ -122,4 +131,12 @@ export function registeredKinds(): RunKind[] {
 // widened by hand. Mirrors Python's is_hunt_like / HUNT_LIKE_RUN_KINDS.
 export function isHuntLike(kind: RunKind): boolean {
   return REGISTERED[kind]?.workflow === "hunt";
+}
+
+// Which kinds start on the kernel rather than their workflow: VIGIL_PLUGIN_KINDS,
+// comma-separated. Read only when a run starts; a resume goes by its own ledger.
+export function startsOnPlugin(kind: RunKind, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (REGISTERED[kind]?.plugin === undefined) return false;
+  const listed = (env["VIGIL_PLUGIN_KINDS"] ?? "").split(",").map((one) => one.trim());
+  return listed.includes(kind);
 }

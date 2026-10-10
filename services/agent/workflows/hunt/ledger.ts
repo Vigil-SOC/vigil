@@ -158,6 +158,11 @@ export function fold(events: readonly HuntEvent[]): Projection {
       case "spend":
         view.hunt.cost_usd += event.payload.cost_usd ?? 0;
         break;
+      // The kernel's kinds. A hunt run on the workflow engine writes none of them;
+      // they are listed so the fold stays exhaustive over the shared vocabulary.
+      case "step":
+      case "conclusion":
+      case "review":
       case "finalize":
       case "narrative":
       // Recall is an input to the run's decisions and never a belief of the hunt's:

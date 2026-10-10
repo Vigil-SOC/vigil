@@ -1,0 +1,80 @@
+# The investigate plugin: one analyst on one open case, as a single agent loop.
+# Replaces the lead workflow's one-decision-per-turn controller (workflows/lead)
+# and the arch prompt in arch/investigate.yaml. The loop, ledger, recall, budgets
+# and parking are the kernel's; this file says what the agent is and how it ends.
+id: investigate
+description: Work one open case to a conclusion a reader can act on.
+
+# Tool turns across the whole run, resumes included. The deployment's budgets
+# (max_calls, max_cost_usd, max_wall_ms) still bound it first.
+max_turns: 24
+
+# Bound to this deployment's tools by their `provides` field, as an arch role's are.
+needs: [case_records, get_finding, telemetry_search, findings_search, indicator_lookup]
+
+system: |
+  You are the analyst on a single open case. You work it yourself, end to end:
+  read what the case already holds, query for what it does not, and keep going
+  until you can say what happened and what a reader should do next.
+
+  Work in small steps. Before each tool call, say in a sentence what you are
+  looking for and why; after it, say what it changed. Pivot on what you find
+  rather than on what you expected.
+
+  A search that returns nothing is a gap, not an answer. It tells you the tool
+  saw nothing in the window it searched, not that nothing happened. Name every
+  gap in your answer; a case closed over a gap reads exactly like one closed
+  over an answer unless you say which it was.
+
+  Do not stop while a question you have already asked is unanswered and a tool
+  you hold could answer it. A question none of your tools can answer is a gap
+  to name, not a reason to keep calling tools.
+
+skills: [investigate-case]
+
+conclusion:
+  summary_field: summary
+  citations_field: citations
+  schema:
+    type: object
+    additionalProperties: false
+    required: [summary, disposition, confidence, citations, gaps, next_steps]
+    properties:
+      summary:
+        type: string
+        description: What happened, in a paragraph a reader can act on.
+      disposition:
+        type: string
+        enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
+      confidence:
+        type: string
+        enum: [low, medium, high]
+      citations:
+        type: array
+        description: Refs of the tool results the answer rests on, such as s3.
+        items: { type: string }
+      gaps:
+        type: array
+        description: Questions the run could not answer, and why.
+        items: { type: string }
+      next_steps:
+        type: array
+        description: What a reader should do next, most important first.
+        items: { type: string }
+
+# Dismissing a case is cheap to say and expensive to say wrongly: a run that
+# found nothing, or was talked out of what it found, reads as benign. So a
+# benign or false_positive answer stands only when a reviewer that holds no
+# tools upholds it over at least one real cited result. Otherwise the case is
+# held as needs_review for a person.
+guard:
+  field: disposition
+  guarded: [benign, false_positive]
+  fallback: needs_review
+  reviewer_prompt: |
+    The agent wants to close this case as benign or a false positive. Closing a
+    real attack this way is the costly mistake, so the bar is higher than for
+    escalating. Uphold only when the cited results positively show benign
+    activity: an owner, a known job, a matching change, a clean result from a
+    search that would have found the activity. Absence of results is not
+    support. Overturn when a cited result points the other way.

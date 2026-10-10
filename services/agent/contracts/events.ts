@@ -31,6 +31,12 @@ export const RUN_EVENT_KINDS = [
   "patch",
   "resumed",
   "terminal",
+  // The kernel's own: one tool call and its result, the structured answer a run
+  // ends on, and the second look that answer gets. Written for every plugin alike,
+  // so one projection, one replay and one distil read them all.
+  "step",
+  "conclusion",
+  "review",
 ] as const;
 export type RunEventKind = (typeof RUN_EVENT_KINDS)[number];
 
@@ -160,6 +166,50 @@ export interface TerminalHandoff {
   markdown: string;
 }
 
+// One tool call, journaled the moment its result is in. A plugin run is one long
+// loop rather than a decision per iteration, so these are what a resume rebuilds
+// the transcript from and what a reader cites: ref is the id the model was shown.
+export interface StepPayload {
+  ref: string;
+  // The model turn that asked for it, counted from 1 across resumes.
+  turn: number;
+  call_id: string;
+  tool: string;
+  arguments: string;
+  // What the model read: scrubbed, capped and delimited.
+  result: string;
+  ok: boolean;
+  failure: string | null;
+  // What the model said before asking, on the first call of its turn only.
+  thought?: string;
+  duration_ms?: number;
+}
+
+// The answer the run ends on, in the shape its plugin declared.
+export interface ConclusionPayload {
+  plugin: string;
+  value: Record<string, unknown>;
+  // True when the turn cap, not the model, ended the tool loop.
+  capped: boolean;
+  turns: number;
+  cost_usd: number;
+}
+
+// The second look: refs the conclusion cited that no step carries are counted
+// here, deterministically, whatever the reviewer said.
+export interface ReviewPayload {
+  stance: "uphold" | "overturn" | "insufficient" | "skipped";
+  reasons: string;
+  missing: string[];
+  cited: string[];
+  unknown_refs: string[];
+  // Set when the plugin guards a field: the value it asked for, and the value the
+  // run ends on once the guard has been applied.
+  guarded?: { field: string; asked: string; final: string };
+  // Set when the reviewer itself could not answer.
+  failure?: string;
+}
+
 export interface RunEventPayloads {
   run: RunPayload;
   spend: SpendPayload;
@@ -174,6 +224,9 @@ export interface RunEventPayloads {
   patch: PatchPayload;
   resumed: ResumedPayload;
   terminal: TerminalPayload;
+  step: StepPayload;
+  conclusion: ConclusionPayload;
+  review: ReviewPayload;
 }
 
 // snapshot holds the digest presented to the lead. Selected only by replay and

@@ -21,6 +21,8 @@ import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
 import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
 import { investigateReplay } from "./workflows/lead/replay.js";
+import { isAgentRun } from "./core/agent.js";
+import { investigateKernelReplay } from "./plugins/investigate/view.js";
 import { rootCauseReplay } from "./workflows/rootcause/replay.js";
 
 const log = logger("agent.serve");
@@ -221,7 +223,7 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   const opened = events[0];
   if (opened?.run_kind === "investigate") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(investigateReplay(runId, events)));
+    res.end(JSON.stringify(isAgentRun(events) ? investigateKernelReplay(runId, events) : investigateReplay(runId, events)));
     return;
   }
   if (opened?.run_kind === "root_cause") {

@@ -32,7 +32,7 @@ export type StreamEvent<T = unknown> =
   | { type: "text_delta"; text: string }
   | { type: "usage"; payload: SpendPayload }
   | { type: "tool_call"; call: ToolCall }
-  | { type: "tool_result"; call: ToolCall; attempt: Attempt }
+  | { type: "tool_result"; call: ToolCall; attempt: Attempt; ref?: string }
   | { type: "folded"; folded: number; remaining: number }
   | { type: "approval_required"; pending: Pending }
   | { type: "done"; outcome: Outcome<T> }
@@ -263,7 +263,9 @@ class Run<T, Kinds extends Record<string, unknown>> {
     duration_ms?: number,
   ): AsyncGenerator<StreamEvent<T>, void> {
     yield { type: "tool_call", call };
-    const wrapped = wrap(call.tool, result, this.scan, this.cfg.result_cap);
+    const refs = this.cfg.refs;
+    const ref = refs === undefined ? undefined : `${refs.prefix}${refs.offset + this.calls.length + 1}`;
+    const wrapped = wrap(call.tool, result, this.scan, this.cfg.result_cap, ref);
     const attempt: Attempt = {
       tool: call.tool,
       args: call.args,
@@ -275,7 +277,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     this.transcript.push({ role: "tool", call_id: call.id, content: wrapped.text });
     if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
     else if (call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result);
-    yield { type: "tool_result", call, attempt };
+    yield { type: "tool_result", call, attempt, ...(ref === undefined ? {} : { ref }) };
   }
 
   // The dispatch event's own id is the checkpoint's, so the next pass finds it by

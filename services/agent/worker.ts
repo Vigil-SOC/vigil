@@ -2,7 +2,11 @@ import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { archFor } from "./arch/registry.js";
+import { archFor, startsOnPlugin } from "./arch/registry.js";
+import { isAgentRun, pluginGrants, runAgent, skillTool, type AgentKinds } from "./core/agent.js";
+import { registryOf } from "./core/registry.js";
+import { pluginFor } from "./plugins/registry.js";
+import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
@@ -200,6 +204,15 @@ async function drive(
     return null;
   }
   const entry = archFor(kind);
+  if (entry.plugin !== undefined && (await onKernel(state, run_id, kind))) {
+    const plugin = pluginFor(entry.plugin);
+    const built = build(kind, spec, as<AgentKinds>(state), undefined, seed);
+    // The plugin's grants, not the arch's: the agent holds what its needs bind to
+    // here, plus the skill loader, and the reviewer holds nothing.
+    const harness = { ...built, registry: registryOf([...toolsFrom(spec.tools), skillTool(plugin)], pluginGrants(plugin, spec.tools)) };
+    const done = await runAgent(harness, { run_id, run_kind: kind, spec, plugin, started_by, answers: answersFor(), announce: announceFor(), signal });
+    return done.status === "waiting_approval" ? done.reason : null;
+  }
   if (entry.workflow === "hunt") {
     const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
     // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
@@ -222,6 +235,14 @@ async function drive(
     return null;
   }
   throw new SpecError(`no workflow is wired for run_kind ${kind}`);
+}
+
+// Which engine drives this run. A run the ledger already holds keeps the engine
+// that opened it, whatever the deployment says now; a new one follows the setting.
+async function onKernel(state: State, runId: string, kind: RunJob["run_kind"]): Promise<boolean> {
+  const events = await state.read(runId);
+  if (events.length > 0) return isAgentRun(events);
+  return startsOnPlugin(kind);
 }
 
 // Resolves the spec on a start and reads it back off the ledger on a resume, so an

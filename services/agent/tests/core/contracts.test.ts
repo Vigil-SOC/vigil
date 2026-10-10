@@ -107,7 +107,7 @@ describe("the Tool port cannot be opted out of", () => {
 
 describe("event kinds are closed", () => {
   it("recognises exactly the domain-free set", () => {
-    expect(RUN_EVENT_KINDS).toHaveLength(10);
+    expect(RUN_EVENT_KINDS).toHaveLength(13);
     expect(RUN_EVENT_KINDS).toContain("terminal");
     // Domain-free because every run kind recalls, not because a hunt does.
     expect(RUN_EVENT_KINDS).toContain("recall");
