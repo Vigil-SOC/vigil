@@ -747,10 +747,12 @@ describe('SocConsole', () => {
       await sentOnCase()
     })
 
-    it('keeps the floating Ask Vigil button off a case page opened by its URL', async () => {
+    it('opens the dock from the command bar on a case page opened by its URL', async () => {
       renderConsole('/cases?case=case-2026-0142')
       await screen.findByRole('tab', { name: /Summary/ })
-      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
+      expect(document.querySelector('.chat-fab')).not.toBeInTheDocument()
+      fireEvent.click(within(document.querySelector<HTMLElement>('.vg-header')!).getByRole('button', { name: 'Ask Vigil' }))
+      expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
     })
 
     it('opens the dock with the text when no case is open', async () => {
@@ -784,15 +786,28 @@ describe('SocConsole', () => {
 
   it('opens the chat dock without error', () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil' }))
     expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
+  })
+
+  // the boards show one Ask Vigil, in the command bar; no floating button in a corner
+  it('renders one Ask Vigil button, in the command bar, with or without the dock open', () => {
+    renderConsole()
+    const asks = screen.getAllByRole('button', { name: /Ask Vigil/ })
+    expect(asks).toHaveLength(1)
+    expect(asks[0]).toHaveClass('vg-command-ask')
+    expect(document.querySelector('.vg-header')).toContainElement(asks[0])
+    expect(document.querySelector('.chat-fab')).not.toBeInTheDocument()
+    fireEvent.click(asks[0])
+    expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
+    expect(document.querySelector('.chat-fab')).not.toBeInTheDocument()
   })
 
   it('keeps the dock at 400px above 600px', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
     renderConsole()
     expect(document.querySelector('.soc-console')).toHaveStyle({ '--chat-w': '400px' })
-    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil' }))
     expect(screen.queryByRole('separator', { name: 'Resize Vigil Assistant' })).toBeNull()
     expect(localStorage.getItem('soc.chat.width.v1')).toBeNull()
   })
@@ -805,7 +820,7 @@ describe('SocConsole', () => {
 
   it('opens the dock on the current page without a per-chat model', () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil' }))
     expect(screen.getByText('Using this page')).toBeInTheDocument()
     expect(document.querySelector('.cx-pill')).toHaveTextContent('Dashboard')
     expect(screen.queryByTitle('Chat settings')).toBeNull()
@@ -917,7 +932,7 @@ describe('SocConsole', () => {
     } as unknown as Response)
 
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil' }))
     fireEvent.change(screen.getByPlaceholderText('Ask Vigil · @ to attach a case'), { target: { value: 'hi' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -1159,7 +1174,8 @@ describe('SocConsole', () => {
         const label = this.getAttribute('aria-label')
         if (label === 'Primary') return domRect(40, 10, 500, 46)
         if (label === 'Needs your attention') return domRect(200, 24, 640, 180)
-        if (this.classList.contains('chat-fab')) return domRect(620, 800, 148, 44)
+        if (this.classList.contains('vg-command-ask')) return domRect(13, 600, 92, 26)
+        if (this.classList.contains('vg-header')) return domRect(0, 0, 1024, 52)
         return domRect(0, 0, 0, 0)
       })
     })
@@ -1218,10 +1234,13 @@ describe('SocConsole', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByRole('dialog', { name: ASK_TITLE })).toHaveTextContent('Conversations are private to you and kept in your history.')
+      // TourAsk: the ring hugs the command-bar button, the card hangs under the top bar from it
       const ask = document.querySelector('.console-tour-ring')
       expect(ask).toHaveAttribute('data-stop', 'ask')
-      expect(ask).toHaveStyle({ top: '614px', left: '794px' })
-      expect(screen.getByRole('button', { name: 'Ask Vigil chat assistant' })).toBeInTheDocument()
+      expect(ask).toHaveStyle({ top: '13px', left: '600px', width: '92px', height: '26px' })
+      expect(document.querySelector('.console-tour-card')).toHaveStyle({ top: '60px', left: '600px' })
+      expect(document.querySelector('.vg-command-ask')).toHaveAccessibleName('Ask Vigil')
+      expect(document.querySelector('.chat-fab')).not.toBeInTheDocument()
 
       fireEvent.click(screen.getByRole('button', { name: 'Done' }))
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -1231,18 +1250,19 @@ describe('SocConsole', () => {
     it('closes the dock and leaves wall mode so the stop target is mounted', async () => {
       renderConsole('/overview')
       await screen.findByRole('button', { name: 'Full screen' })
-      // Overview owns the full-height view, so it has no Ask Vigil button; Tab in the command bar opens the dock.
+      // Tab in the command bar opens the dock.
       const bar = screen.getByRole('combobox', { name: 'Find a case, ask Vigil, or run a command' })
       fireEvent.change(bar, { target: { value: 'hello' } })
       fireEvent.keyDown(bar, { key: 'Tab' })
-      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Ask Vigil' })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(await screen.findByRole('dialog', { name: ATTENTION_TITLE })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Ask Vigil chat assistant' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Ask Vigil' })).toHaveClass('vg-command-ask')
+      expect(screen.queryByRole('dialog', { name: 'Ask Vigil' })).not.toBeInTheDocument()
       expect(document.querySelector('.console-tour-ring')).toHaveAttribute('data-stop', 'ask')
     })
 

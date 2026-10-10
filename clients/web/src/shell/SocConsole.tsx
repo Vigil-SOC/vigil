@@ -218,16 +218,14 @@ function SocConsoleInner() {
     [navigate],
   )
 
-  // The nav is unmounted in wall mode, and Ask Vigil is unmounted while the
-  // dock or a full-bleed view is open. Mount the target before that stop.
+  // The nav and the header's Ask Vigil button are unmounted in wall mode.
+  // Mount the target before that stop, and close the dock so it does not sit
+  // under the Ask stop's card.
   const prepareStop = useCallback((index: number) => {
     const stop = tourStops[Math.min(index, Math.max(tourStops.length - 1, 0))]
     if (stop === 'attention') go('home')
     if (stop === 'nav' || stop === 'ask') setWallMode(false)
-    if (stop === 'ask') {
-      setChatOpen(false)
-      setViewFull(false)
-    }
+    if (stop === 'ask') setChatOpen(false)
   }, [tourStops, go])
 
   const showStop = useCallback((index: number) => {
@@ -618,21 +616,6 @@ function SocConsoleInner() {
         )}
       </div>
 
-      {/* floating Vigil assistant button — hidden while the chat dock is open
-          (the dock has its own close control, so showing both is redundant) and
-          while a full-bleed detail view is open (a case detail pins its own
-          Ask composer, so a second Vigil button would be redundant) */}
-      {!chatOpen && !viewFull && (
-        <button
-          className="chat-fab"
-          title="Ask Vigil - AI assistant"
-          aria-label="Ask Vigil chat assistant"
-          onClick={() => openChat()}
-        >
-          <Icon name="brain" />
-          <span>Ask Vigil</span>
-        </button>
-      )}
       {tourOn && (
         <ConsoleTour
           stops={tourStops}
