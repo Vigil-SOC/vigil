@@ -16,7 +16,7 @@ import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
 import { INTEGRATIONS_DESC } from './integrationsData'
 import { IntegrationsStateProvider, useIntegrationsState } from './IntegrationsState'
-import SlaPoliciesSection from './SlaPoliciesSection'
+import SlaPoliciesSection, { SLA_DESC } from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
 import type { SectionProps } from './types'
 
@@ -91,8 +91,8 @@ const NAV: NavDef[] = [
   { key: 'ai-config', label: 'AI models', desc: AI_CONFIG_DESC, icon: 'sparkle', Component: AiConfigSection, ownsHead: true },
   { key: 'integrations', label: 'Integrations', desc: INTEGRATIONS_DESC, icon: 'link', Component: IntegrationsSection, ownsHead: true },
   { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection },
-  { key: 'sla', label: 'SLA policies', desc: 'How fast a case must get a first response and be resolved, by severity.', icon: 'clock', Component: SlaPoliciesSection },
-  { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, and what they may spend.', icon: 'bolt', Component: AutoInvestigateSection },
+  { key: 'sla', label: 'SLA policies', desc: SLA_DESC, icon: 'clock', Component: SlaPoliciesSection, ownsHead: true },
+  { key: 'autoinvestigate', label: 'Limits & autonomy', desc: 'How much Vigil may do without you: whether agents start on their own, how many run at once, what they may spend, and which tools may act alone.', icon: 'bolt', Component: AutoInvestigateSection },
   { key: 'data', label: 'Data & uploads', desc: 'Bring data in without a live connector, and manage the detection rules applied to it.', icon: 'upload', Component: DataUploadsSection },
   { key: 'system', label: 'System', desc: 'Service health, system information, general options and users.', icon: 'wrench', Component: SystemTabs },
 ]

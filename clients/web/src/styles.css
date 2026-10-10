@@ -4650,19 +4650,6 @@
       color: var(--tx3);
    }
 
-   .sla-sev {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-   }
-
-   .sla-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 2px;
-      flex: 0 0 auto;
-   }
-
    /* room under it for the floating Ask Vigil button */
    .sla-edit {
       border-color: var(--ac-ln);
@@ -5157,12 +5144,6 @@
       padding: 14px 2px 20px;
       overflow: visible;
    }
-
-   .chip.fmt-sigma { color: var(--ac); }
-   .chip.fmt-splunk { color: var(--good); }
-   .chip.fmt-elastic { color: var(--fair); }
-   .chip.fmt-kql { color: var(--vio); }
-   .chip.fmt-auto { color: var(--tx2); }
 
    /* inline status banner (success/error toasts inside a section) */
    .settings-banner {

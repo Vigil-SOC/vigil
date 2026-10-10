@@ -4,11 +4,12 @@ import { formatDuration } from '../../shared/duration'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { NotMeasured } from '../../shared/NotMeasured'
+import { PageHead } from '../../shared/PageHead'
+import { SeverityMark } from '../../shared/SeverityMark'
 import {
   ConfirmDialog,
   Field,
   Select,
-  SettingsCard,
   TextInput,
   ToggleRow,
 } from '../../shared/ui'
@@ -21,20 +22,14 @@ const PRIORITIES = [
   { value: 'medium', label: 'Medium' },
   { value: 'low', label: 'Low' },
 ]
-// Priorities arrive from the API as free-form strings, so the lookup has to
-// admit a miss rather than claim every string resolves to a colour.
-const PRIORITY_COLOR = new Map([
-  ['critical', 'var(--crit)'],
-  ['high', 'var(--high)'],
-  ['medium', 'var(--med)'],
-  ['low', 'var(--ok)'],
-])
-const priorityColor = (priority: string) => PRIORITY_COLOR.get(priority) ?? 'var(--tx-2)'
 const severityRank = (p: SlaPolicy) => {
   const i = PRIORITIES.findIndex((o) => o.value === p.priority_level)
   return i === -1 ? PRIORITIES.length : i
 }
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+export const SLA_DESC =
+  'How fast a case must get a first response and be resolved, by severity. New cases use the default policy for their severity.'
 
 const HOURS_OPTIONS = [
   { value: 'around', label: 'Around the clock' },
@@ -197,18 +192,18 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
 
   return (
     <>
-      <SettingsCard
-        wide
-        title="Policies"
-        desc="New cases use the default policy for their severity."
+      <PageHead
+        title="SLA policies"
+        description={SLA_DESC}
         actions={
           <>
             <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
             <button className="btn primary" onClick={openCreate}><Icon name="plus" /> New policy</button>
           </>
         }
-      >
-        <div className="table-wrap">
+      />
+      <section className="card card-sq settings-card wide" aria-label="Policies">
+        <div className="card-b table-wrap">
           <table className="tbl sla-tbl">
             <thead>
               <tr>
@@ -247,10 +242,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
                       )}
                     </td>
                     <td>
-                      <span className="sla-sev">
-                        <i className="sla-dot" style={{ background: priorityColor(String(p.priority_level)) }} />
-                        {capitalise(String(p.priority_level))}
-                      </span>
+                      <SeverityMark level={String(p.priority_level)} />
                     </td>
                     <td>{formatDuration(p.response_time_hours)}</td>
                     <td>{formatDuration(p.resolution_time_hours)}</td>
@@ -266,7 +258,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
             </tbody>
           </table>
         </div>
-      </SettingsCard>
+      </section>
 
       {editing && (
         <section ref={panel} className="card card-sq settings-card wide sla-edit" aria-label="Edit policy">
