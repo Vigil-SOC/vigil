@@ -11,6 +11,8 @@ import { archFor } from "../../arch/registry.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import type { RunJob } from "../../contracts/job.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";
+import { ZERO_TOKENS } from "../../contracts/budget.js";
+import type { Provider, ProviderEvent, TurnRequest } from "../../core/provider.js";
 import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
 import { nullMemory } from "../../core/memory.js";
@@ -214,13 +216,24 @@ describe("a hunt started through the queue", () => {
 // and no cost, so the console showed a live run forever. The status posts are what
 // the row is written from.
 describe("a hunt that parks, as the console's run row sees it", () => {
-  // INVESTIGATE every turn, so only the turn limit stops it.
+  // A tool call every turn, so only the turn limit stops it. Asked for an answer --
+  // the account the hunt ends on -- it gives one.
   function investigating(): HarnessFactory {
-    const provider = respondingProvider({
-      emit: (schema) =>
-        isLead(schema) ? { action: "INVESTIGATE", rationale: "look", query_intent: "baseline", evidence_citations: [] } : { results: [] },
-      ticks: 0,
-    });
+    let n = 0;
+    const provider: Provider = {
+      model: "scripted/model",
+      provider_type: "scripted",
+      stream: async function* (request: TurnRequest): AsyncGenerator<ProviderEvent> {
+        if (request.emit !== undefined) {
+          yield { type: "text_delta", text: JSON.stringify({ summary: "s", what_happened: "w", next_steps: [] }) };
+          yield { type: "usage", tokens: ZERO_TOKENS };
+          return;
+        }
+        yield { type: "usage", tokens: ZERO_TOKENS };
+        n += 1;
+        yield { type: "tool_call", call: { id: `c${n}`, tool: "hunt_status", args: "{}" } };
+      },
+    };
     const base = huntHarness();
     return (kind, spec, state, memory, seed) => ({ ...base(kind, spec, state, memory, seed), provider });
   }
@@ -260,10 +273,10 @@ describe("a hunt that parks, as the console's run row sees it", () => {
 
     expect(await ledger.terminal(runId)).toBeNull();
     expect(sent.terminal).toBe(0);
-    // One write, and it is the pause: the iteration that parked it reports nothing as running.
-    expect(sent.status).toEqual([
-      { status: "paused", reason: expect.stringMatching(/^ran out of turns: iteration 1 of 1/), cost_usd: await spentOn(ledger, runId) },
-    ]);
+    // Running while it works, then the pause, with its reason and spend, last. A
+    // one-iteration hunt is six agent turns: the agent does its workers' querying.
+    expect(sent.status.at(-1)).toEqual({ status: "paused", reason: expect.stringMatching(/^ran out of turns: iteration 6 of 6/), cost_usd: await spentOn(ledger, runId) });
+    expect(sent.status.slice(0, -1).every((update) => update["status"] === "running")).toBe(true);
   });
 
   it("is paused with the refusal when the budget refuses another iteration", async () => {
@@ -294,9 +307,9 @@ describe("a hunt that parks, as the console's run row sees it", () => {
     await steer(queue, runId, "extend", "", { grant: { iterations: 2, cost_usd: 0, wall_ms: 0 } });
     const woken = await posting(() => advance(ledger, leases, resumeJob(), investigating(), queue));
 
-    // The first turn it bought runs, then the second parks it again on the new limit.
+    // The turns it bought run, then the new limit parks it again.
     expect(woken.status.map((update) => update["status"])).toEqual(["running", "paused"]);
     expect(woken.status[0]).toMatchObject({ reason: "", cost_usd: expect.any(Number) });
-    expect(woken.status[1]).toMatchObject({ reason: expect.stringMatching(/iteration 3 of 3/) });
+    expect(woken.status[1]).toMatchObject({ reason: expect.stringMatching(/iteration 8 of 8/) });
   });
 });
