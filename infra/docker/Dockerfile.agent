@@ -69,9 +69,9 @@ COPY --from=build /build/dist ./dist
 # tsc emits only .js; arch/registry.ts resolves the arch YAMLs next to itself.
 COPY --from=build /build/arch/*.yaml ./dist/arch/
 # Same for plugins: plugins/registry.ts resolves each plugin directory next to itself,
-# and the shared skill library (skills/*/SKILL.md) one level up, beside it.
+# and the repo's one skill library (core/skills/library) at dist/skills, beside it.
 COPY --from=build /build/plugins/ ./dist/plugins/
-COPY --from=build /build/skills/ ./dist/skills/
+COPY core/skills/library/ ./dist/skills/
 
 RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 

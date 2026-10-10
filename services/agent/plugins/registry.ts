@@ -6,11 +6,15 @@ import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type P
 import { SpecError } from "../core/spec.js";
 
 // A plugin is a directory holding plugin.yaml. Its skills are named there and
-// live in one library beside the plugins, skills/<name>/SKILL.md, so plugins
-// that share a skill share one copy of it. Shipped with the worker, resolved
-// against the package rather than the cwd, the same way the arch files are.
+// read from the repo's one skill library, core/skills/library/<name>/SKILL.md,
+// the same folder the Python agents and the console's skills screen use. Shipped
+// with the worker, resolved against the package rather than the cwd, the same
+// way the arch files are: the image copies the library to dist/skills; from
+// source it is three levels up.
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
-const SKILLS = fileURLToPath(new URL("../skills/", import.meta.url));
+const SKILLS = [new URL("../skills/", import.meta.url), new URL("../../../core/skills/library/", import.meta.url)]
+  .map((url) => fileURLToPath(url))
+  .find((dir) => existsSync(dir)) ?? fileURLToPath(new URL("../skills/", import.meta.url));
 
 const cache = new Map<string, PluginManifest>();
 
