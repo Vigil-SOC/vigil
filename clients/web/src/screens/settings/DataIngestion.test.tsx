@@ -239,13 +239,32 @@ describe('streams and buckets', () => {
     expect(screen.getByText('Browse & Ingest')).not.toBeVisible()
   })
 
-  it('offers a retry inside the S3 row when its config fails to load', async () => {
+  it('shows a load error with Retry, never Not set up, for every source whose read failed', async () => {
     vi.mocked(configApi.getS3).mockRejectedValue(new Error('backend unreachable'))
+    vi.mocked(configApi.getDarktrace).mockRejectedValue(new Error('backend unreachable'))
+    vi.mocked(kafkaApi.getConfig).mockRejectedValue(new Error('backend unreachable'))
+    vi.mocked(kafkaApi.getStatus).mockRejectedValue(new Error('backend unreachable'))
     renderPanel()
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up Amazon S3' }))
+    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument())
 
-    expect(await screen.findByText(/Couldn’t load S3 config/)).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible()
+    expect(screen.queryByText('Not set up')).not.toBeInTheDocument()
+    for (const name of ['Amazon S3', 'Kafka', 'Darktrace webhook']) {
+      expect(within(row(name)).getByText('Couldn’t load')).toBeInTheDocument()
+      expect(within(row(name)).getByText('Unavailable')).toBeInTheDocument()
+      expect(within(row(name)).getByRole('button', { name: `Retry ${name}` })).toBeInTheDocument()
+    }
+  })
+
+  it('Retry reloads that source and shows the real config once the API answers', async () => {
+    vi.mocked(configApi.getDarktrace).mockRejectedValueOnce(new Error('backend unreachable'))
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry Darktrace webhook' }))
+
+    expect(
+      await within(row('Darktrace webhook')).findByRole('button', { name: 'Set up Darktrace webhook' }),
+    ).toBeInTheDocument()
+    expect(configApi.getDarktrace).toHaveBeenCalledTimes(2)
+    expect(within(row('Darktrace webhook')).getByText('Not set up')).toBeInTheDocument()
   })
 })
 

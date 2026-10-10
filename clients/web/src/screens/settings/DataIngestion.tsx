@@ -408,12 +408,22 @@ const SASL_MECHANISMS = [
   { value: 'SCRAM-SHA-512', label: 'SCRAM-SHA-512' },
 ]
 
+function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
+  return (
+    <div className="py-6 text-center flex flex-col items-center gap-2.5">
+      <span className="text-sm text-tx-3">Couldn’t load {what}.</span>
+      <button className="btn ghost" onClick={onRetry}>Retry</button>
+    </div>
+  )
+}
+
 function KafkaForm({ notify, kafka }: SectionProps & { kafka: ReturnType<typeof useKafka> }) {
-  const { config, setConfig, stats, daemonReachable, phase, save } = kafka
+  const { config, setConfig, stats, daemonReachable, phase, reload, save } = kafka
   const [saving, setSaving] = useState(false)
   const [topicInput, setTopicInput] = useState('')
 
   if (phase === 'loading') return <div className="text-sm text-tx-3 py-6 text-center">Loading…</div>
+  if (phase === 'error') return <LoadError what="the Kafka settings" onRetry={reload} />
 
   const set = (patch: Partial<KafkaConfig>) => setConfig({ ...config, ...patch })
 
@@ -523,10 +533,11 @@ function KafkaForm({ notify, kafka }: SectionProps & { kafka: ReturnType<typeof 
 }
 
 function DarktraceForm({ notify, darktrace }: SectionProps & { darktrace: ReturnType<typeof useDarktrace> }) {
-  const { config, setConfig, phase, save } = darktrace
+  const { config, setConfig, phase, reload, save } = darktrace
   const [saving, setSaving] = useState(false)
 
   if (phase === 'loading') return <div className="text-sm text-tx-3 py-6 text-center">Loading…</div>
+  if (phase === 'error') return <LoadError what="the Darktrace settings" onRetry={reload} />
 
   const handleSave = async () => {
     setSaving(true)
@@ -586,6 +597,8 @@ interface StreamRow {
   settings: string
   status: StreamStatus
   action: string
+  /** reloads this row's config; the action when the read failed */
+  retry: () => void
   form: ReactNode
 }
 
@@ -605,6 +618,9 @@ export function StreamsCard({ notify }: SectionProps) {
   const kc = kafka.config
   const dc = darktrace.config
   const kafkaSetUp = kc.enabled || kc.topics.length > 0
+  // a failed read says nothing about what is set up, so it must not read as "Not set up"
+  const failed = { s3: s3.phase === 'error', kafka: kafka.phase === 'error', darktrace: darktrace.phase === 'error' }
+  const LOAD_FAILED = 'Couldn’t load'
 
   const s3Status: StreamStatus =
     s3.phase === 'loading' ? { level: null, text: 'Loading…' }
@@ -613,11 +629,13 @@ export function StreamsCard({ notify }: SectionProps) {
     : OFF
   const kafkaStatus: StreamStatus =
     kafka.phase === 'loading' ? { level: null, text: 'Loading…' }
+    : kafka.phase === 'error' ? { level: 'poor', text: 'Unavailable' }
     : kafka.stats?.connected ? { level: 'good', text: 'Good' }
     : kc.enabled ? { level: 'fair', text: 'Not connected' }
     : OFF
   const darktraceStatus: StreamStatus =
     darktrace.phase === 'loading' ? { level: null, text: 'Loading…' }
+    : darktrace.phase === 'error' ? { level: 'poor', text: 'Unavailable' }
     : dc.enabled && dc.configured ? { level: 'good', text: 'Good' }
     : dc.enabled ? { level: 'fair', text: 'No secret' }
     : OFF
@@ -626,29 +644,32 @@ export function StreamsCard({ notify }: SectionProps) {
     {
       key: 's3',
       name: 'Amazon S3',
-      settings: s3c.configured
+      settings: failed.s3 ? LOAD_FAILED : s3c.configured
         ? [s3c.bucket_name, s3c.region, s3c.auth_method === 'profile' ? 'AWS profile (SSO)' : 'Access keys'].filter(Boolean).join(' · ')
         : 'Not set up',
       status: s3Status,
-      action: s3c.configured ? 'Browse' : 'Set up',
+      action: failed.s3 ? 'Retry' : s3c.configured ? 'Browse' : 'Set up',
+      retry: s3.reload,
       form: <S3Form notify={notify} s3={s3} />,
     },
     {
       key: 'kafka',
       name: 'Kafka',
-      settings: kafkaSetUp
+      settings: failed.kafka ? LOAD_FAILED : kafkaSetUp
         ? [kc.bootstrap_servers, kc.topics.length ? `topics ${kc.topics.join(', ')}` : 'no topics', kc.security_protocol].join(' · ')
         : 'Not set up',
       status: kafkaStatus,
-      action: kafkaSetUp ? 'Edit' : 'Set up',
+      action: failed.kafka ? 'Retry' : kafkaSetUp ? 'Edit' : 'Set up',
+      retry: kafka.reload,
       form: <KafkaForm notify={notify} kafka={kafka} />,
     },
     {
       key: 'darktrace',
       name: 'Darktrace webhook',
-      settings: dc.configured ? dc.url || 'Webhook secret saved' : 'Not set up',
+      settings: failed.darktrace ? LOAD_FAILED : dc.configured ? dc.url || 'Webhook secret saved' : 'Not set up',
       status: darktraceStatus,
-      action: dc.configured ? 'Edit' : 'Set up',
+      action: failed.darktrace ? 'Retry' : dc.configured ? 'Edit' : 'Set up',
+      retry: darktrace.reload,
       form: <DarktraceForm notify={notify} darktrace={darktrace} />,
     },
   ]
@@ -669,9 +690,9 @@ export function StreamsCard({ notify }: SectionProps) {
                 <td className="data-act">
                   <button
                     className="data-link"
-                    aria-expanded={open === r.key}
+                    aria-expanded={r.action === 'Retry' ? undefined : open === r.key}
                     aria-label={`${open === r.key ? 'Close' : r.action} ${r.name}`}
-                    onClick={() => setOpen(open === r.key ? null : r.key)}
+                    onClick={() => (r.action === 'Retry' ? r.retry() : setOpen(open === r.key ? null : r.key))}
                   >
                     {open === r.key ? 'Close' : r.action}
                   </button>

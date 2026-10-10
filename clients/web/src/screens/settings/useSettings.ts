@@ -644,7 +644,7 @@ export function useAiOperations() {
         setPhase('ready')
       })
       .catch(() => {
-        if (!cancelled) setPhase('ready') // fall back to defaults
+        if (!cancelled) setPhase('error')
       })
     return () => {
       cancelled = true
@@ -1106,6 +1106,8 @@ export function useKafka() {
   const [stats, setStats] = useState<KafkaStats | null>(null)
   const [daemonReachable, setDaemonReachable] = useState(false)
   const [phase, setPhase] = useState<Phase>('loading')
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
   const loadStatus = useCallback(() => {
     return kafkaApi
@@ -1121,15 +1123,20 @@ export function useKafka() {
 
   useEffect(() => {
     let cancelled = false
+    setPhase('loading')
+    // a failed config read is an error, not an empty config; a failed status read is only "daemon unreachable"
+    let failed = false
     kafkaApi
       .getConfig()
       .then((res) => {
         if (!cancelled) setConfig((prev) => ({ ...prev, ...(res.data as Partial<KafkaConfig>) }))
       })
-      .catch(() => {})
+      .catch(() => {
+        failed = true
+      })
       .finally(() => {
         if (!cancelled) {
-          loadStatus().finally(() => !cancelled && setPhase('ready'))
+          loadStatus().finally(() => !cancelled && setPhase(failed ? 'error' : 'ready'))
         }
       })
     const t = setInterval(() => !cancelled && loadStatus(), 5000)
@@ -1137,7 +1144,7 @@ export function useKafka() {
       cancelled = true
       clearInterval(t)
     }
-  }, [loadStatus])
+  }, [loadStatus, reloadKey])
 
   const save = useCallback(
     (next: KafkaConfig) =>
@@ -1151,7 +1158,7 @@ export function useKafka() {
     [loadStatus],
   )
 
-  return { config, setConfig, stats, daemonReachable, phase, save }
+  return { config, setConfig, stats, daemonReachable, phase, reload, save }
 }
 
 export interface DarktraceConfig {
@@ -1187,7 +1194,7 @@ export function useDarktrace() {
         setPhase('ready')
       })
       .catch(() => {
-        if (!cancelled) setPhase('ready') // fall back to defaults
+        if (!cancelled) setPhase('error')
       })
     return () => {
       cancelled = true
