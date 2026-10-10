@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Icon } from '../../shared/icons'
@@ -202,12 +202,13 @@ function StageCard({ n, stage, on, gates, agent, onPick }: { n: number; stage: S
 
 const Arrow = () => <span aria-hidden className="flex items-center text-tx-faint shrink-0"><Icon name="arrowR" size={16} /></span>
 
-function HowItRuns({ strip, entries, pre, selected, onSelect }: {
+function HowItRuns({ strip, entries, pre, selected, onSelect, children }: {
   strip: Strip
   entries: Entry[]
   pre: Partial<Preflight>
   selected: number | null
   onSelect: (n: number | null) => void
+  children: ReactNode
 }) {
   const gatesOf = (stage: StageDef) => [
     ...stage.checkpoints.filter((c) => pre.checkpoints?.[c] === 'ask').map((c) => CHECKPOINT_CLASSES[c].gate),
@@ -256,6 +257,7 @@ function HowItRuns({ strip, entries, pre, selected, onSelect }: {
           {strip.after.map((stage) => card(stage))}
         </div>
       )}
+      {children}
     </section>
   )
 }
@@ -547,6 +549,21 @@ export default function WorkflowReaderPane(props: ReaderProps) {
   const strip = huntLike ? stripFor(runKind) : runKind === 'compose' ? composeStrip(pre.roles?.helpers ?? []) : null
   const stages = strip ? [...strip.before, ...strip.loop, ...strip.after] : []
   const stage = selected === null ? null : stages[selected] ?? null
+  const panels = single ? (
+    <div className="grid grid-cols-2 gap-3 items-start">
+      <RunsAsOneAgent definition={definition} entries={entries} pre={pre} missing={missing} />
+      <div className="flex flex-col gap-3">
+        <MayDo entries={entries} pre={pre} stage={null} missing={missing} />
+        <StopsAndCheckpoints definition={definition} single pre={pre} stage={null} selected={null} missing={missing} />
+      </div>
+    </div>
+  ) : (
+    <div className="grid grid-cols-3 gap-3 items-start">
+      <WhoDoesIt entries={entries} pre={pre} stage={stage} missing={missing} />
+      <MayDo entries={entries} pre={pre} stage={stage} missing={missing} />
+      <StopsAndCheckpoints definition={definition} single={false} pre={pre} stage={stage} selected={selected} missing={missing} />
+    </div>
+  )
   return (
     <>
       {props.onBack && (
@@ -560,22 +577,13 @@ export default function WorkflowReaderPane(props: ReaderProps) {
         {phase === 'ready' && (
           <>
             <Header name={'wf' in props ? props.wf.name : props.draft.name} wf={'wf' in props ? props.wf : null} actions={'wf' in props ? props : null} definition={definition} onSave={'draft' in props ? props.onSave : undefined} />
-            {strip && stages.length > 0 && <HowItRuns strip={strip} entries={entries} pre={pre} selected={selected} onSelect={setSelected} />}
-            {strip && stages.length === 0 && <Muted>{pre.roles ? pre.roles_note ?? 'This workflow declares no phases.' : missing}</Muted>}
-            {single ? (
-              <div className="grid grid-cols-2 gap-3 items-start">
-                <RunsAsOneAgent definition={definition} entries={entries} pre={pre} missing={missing} />
-                <div className="flex flex-col gap-3">
-                  <MayDo entries={entries} pre={pre} stage={null} missing={missing} />
-                  <StopsAndCheckpoints definition={definition} single pre={pre} stage={null} selected={null} missing={missing} />
-                </div>
-              </div>
+            {strip && stages.length > 0 ? (
+              <HowItRuns strip={strip} entries={entries} pre={pre} selected={selected} onSelect={setSelected}>{panels}</HowItRuns>
             ) : (
-              <div className="grid grid-cols-3 gap-3 items-start">
-                <WhoDoesIt entries={entries} pre={pre} stage={stage} missing={missing} />
-                <MayDo entries={entries} pre={pre} stage={stage} missing={missing} />
-                <StopsAndCheckpoints definition={definition} single={false} pre={pre} stage={stage} selected={selected} missing={missing} />
-              </div>
+              <>
+                {strip && <Muted>{pre.roles ? pre.roles_note ?? 'This workflow declares no phases.' : missing}</Muted>}
+                {panels}
+              </>
             )}
           </>
         )}

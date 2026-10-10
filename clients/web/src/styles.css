@@ -2401,7 +2401,7 @@
 
    /* the card column and the reader side by side, as the board draws them */
    .wfk-layout { display: flex; align-items: stretch; min-height: 0; }
-   .wfk-layout > .wfk-col { width: 364px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--ln0); }
+   .wfk-layout > .wfk-col { width: 346px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
    .wfk-reader { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
    /* the board's reader starts 16px from the column; standalone panes (draft) keep 22px */
    .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; }
