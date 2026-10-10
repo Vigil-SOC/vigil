@@ -10,6 +10,7 @@ Lives in ``core/`` because ``core`` must not import ``services``;
 ``services.daemon.config`` re-exports it as part of ``DaemonConfig``.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -30,6 +31,27 @@ def decision_rule(field: str, value: Any, observed: Optional[float] = None) -> s
         return f"{field}={value}"
     verdict = "met" if observed >= value else "not met"
     return f"{field}={value:.2f} {verdict} ({observed:.2f})"
+
+
+# The shapes decision_rule emits: ``field=value`` or ``field=0.90 met (0.92)``.
+_RULE = re.compile(r"[a-z_][a-z0-9_.]*=[^\s;=]+(?: (?:not )?met \([0-9.]+\))?")
+
+
+def split_decision_rule(reason: Optional[str]) -> tuple[str, Optional[str]]:
+    """Inverse of ``decision_rule`` on a stored reason: ``(narrative, rule)``.
+
+    The rule is the tail after the last ``"; "`` (or the whole string when
+    ``_put_action`` stored a bare rule) if it has a ``decision_rule`` shape;
+    otherwise the reason is all narrative and the rule is ``None``.
+    """
+    if not reason:
+        return "", None
+    narrative, sep, tail = reason.rpartition("; ")
+    if not sep:
+        narrative, tail = "", reason
+    if _RULE.fullmatch(tail):
+        return narrative, tail
+    return reason, None
 
 
 @dataclass
