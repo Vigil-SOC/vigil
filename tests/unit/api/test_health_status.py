@@ -16,6 +16,9 @@ class _Service:
     def __init__(self, info):
         self._info = info
 
+    def probe_connection(self):
+        pass
+
     def get_backend_info(self):
         return self._info
 
@@ -56,6 +59,9 @@ def _boom(monkeypatch, error):
     from services.api.main import app
 
     class Boom:
+        def probe_connection(self):
+            pass
+
         def get_backend_info(self):
             raise error
 
@@ -186,3 +192,32 @@ def test_ready_503_on_storage_check_failure_does_not_leak(client, monkeypatch):
     assert response.status_code == 503
     assert response.json()["storage"]["error"] == "storage_check_failed"
     assert _LEAK not in response.text
+
+
+def test_health_probes_the_connection_before_reading_the_backend(client, monkeypatch):
+    from services.api.main import app
+
+    calls = []
+
+    class Probed(_Service):
+        def probe_connection(self):
+            calls.append("probe")
+            self._info = {"backend": "none", "database_available": False, "demo_mode": False}
+
+        def get_backend_info(self):
+            calls.append("read")
+            return super().get_backend_info()
+
+    monkeypatch.setattr("core.config.is_demo_mode", lambda: False)
+    monkeypatch.setattr(
+        app.state,
+        "health_storage",
+        Probed({"backend": "postgresql", "database_available": True, "demo_mode": False}),
+        raising=False,
+    )
+
+    body = client.get("/api/health").json()
+
+    assert calls == ["probe", "read"]
+    assert body["status"] == "degraded"
+    assert body["storage"]["database_available"] is False

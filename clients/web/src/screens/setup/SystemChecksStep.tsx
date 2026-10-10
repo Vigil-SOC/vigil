@@ -27,8 +27,17 @@ interface StorageRead {
   demo_mode?: boolean
 }
 
-/** Database and Storage share one read per run */
-type Read = (storage: () => Promise<StorageRead>) => Promise<Result>
+interface HealthBody {
+  status?: string
+  storage?: { database_available?: boolean; demo_mode?: boolean }
+}
+
+/** One read each per run: Database and API health share the health call, Database and Storage the storage call */
+interface Reads {
+  storage: () => Promise<StorageRead>
+  health: () => Promise<HealthBody>
+}
+type Read = (reads: Reads) => Promise<Result>
 
 const COULD_NOT_READ: Result = { phase: 'needs', detail: 'Could not read' }
 
@@ -46,22 +55,23 @@ const NEEDS: { icon: IconName; title: string; sub: string }[] = [
   { icon: 'clock', title: 'About 15 minutes', sub: 'Nothing runs on its own until you finish' },
 ]
 
-const readHealth = async (): Promise<Result> => {
-  const res = await consoleApi.getHealth()
-  const status = (res.data as { status?: string } | undefined)?.status
+const readHealth: Read = async ({ health }) => {
+  const { status } = await health()
   if (status !== 'healthy') return { phase: 'needs', detail: `Status is ${status ?? 'unknown'}` }
   return { phase: 'passed', detail: status }
 }
 
-const readDatabase: Read = async (storage) => {
-  const read = await storage()
-  if (read.demo_mode) return { phase: 'passed', detail: 'Demo data, no database needed' }
-  return read.database_available
+// Health is public. The storage route needs a signed-in user, and that lookup
+// reads the database, so it fails outright when the database is the thing down.
+const readDatabase: Read = async ({ health }) => {
+  const read = (await health()).storage
+  if (read?.demo_mode) return { phase: 'passed', detail: 'Demo data, no database needed' }
+  return read?.database_available
     ? { phase: 'passed', detail: 'Connected' }
     : { phase: 'needs', detail: 'Not connected' }
 }
 
-const readStorage: Read = async (storage) => {
+const readStorage: Read = async ({ storage }) => {
   const { backend, description } = await storage()
   return {
     phase: 'passed',
@@ -152,6 +162,12 @@ export default function SystemChecksStep() {
     setChecks(INITIAL)
     setFinished(false)
     let storageRead: Promise<StorageRead> | undefined
+    let healthRead: Promise<HealthBody> | undefined
+    const health = () =>
+      (healthRead ??= consoleApi.getHealth().then((res) => {
+        if (!res.data) throw new Error('health has no body')
+        return res.data as HealthBody
+      }))
     const storage = () =>
       (storageRead ??= storageApi.getStatus().then((res) => {
         if (!res.data) throw new Error('storage status has no body')
@@ -162,7 +178,7 @@ export default function SystemChecksStep() {
       for (const { id, read } of CHECKS) {
         if (!live) return
         patch(id, { phase: 'checking', detail: '' })
-        const result = await read(storage).catch(() => COULD_NOT_READ)
+        const result = await read({ storage, health }).catch(() => COULD_NOT_READ)
         if (!live) return
         patch(id, result)
       }

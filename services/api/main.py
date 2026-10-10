@@ -717,6 +717,7 @@ def _check_storage(service) -> tuple[dict, dict]:
     """
     from core.config import state_dir_status
 
+    service.probe_connection()
     return service.get_backend_info(), state_dir_status()
 
 
