@@ -996,6 +996,22 @@ describe('case page', () => {
       await waitFor(() => expect(orchestratorApi.exportInvestigation).toHaveBeenCalledWith('inv-1'))
       expect(createUrl).toHaveBeenCalled()
     })
+    it('disables Export audit, with an ⓘ saying why, when the run has no investigation id', async () => {
+      testState.recordRows = rows
+      await openRecord(() => {
+        const [row] = testState.cases as unknown as { investigations: unknown[] }[]
+        row.investigations = row.investigations.map((item) => ({ ...(item as object), investigation_id: null }))
+        return renderCase('case-rec')
+      })
+      const button = await screen.findByRole('button', { name: 'Export audit' })
+      expect(button).toBeDisabled()
+      vi.mocked(orchestratorApi.exportInvestigation).mockClear()
+      fireEvent.click(button)
+      expect(orchestratorApi.exportInvestigation).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Why Export audit is unavailable' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('This run has no investigation record to export.')
+    })
+
   })
 
   it('pins Ask on the case and keeps Tell and Do from posting', async () => {

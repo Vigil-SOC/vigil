@@ -1053,7 +1053,14 @@ export function CasePage({
                     </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
-                  {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
+                  {latest && (latest.investigation_id ? (
+                    <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>
+                  ) : (
+                    <>
+                      <button type="button" className="rec-btn" disabled>Export audit</button>
+                      <InfoTip label="Why Export audit is unavailable" text="This run has no investigation record to export." />
+                    </>
+                  ))}
                 </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}
