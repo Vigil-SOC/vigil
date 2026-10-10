@@ -227,6 +227,16 @@ describe('server queue', () => {
     expect(await screen.findByText('Another case')).toBeInTheDocument()
   })
 
+  it('carries the full case id in the id cell', async () => {
+    const id = 'case-2026-10-09-0b43d6c8'
+    testState.cases = [{ ...CASE, case_id: id }]
+    renderCases('/cases')
+
+    const cell = (await screen.findByText(id)).closest('[role="cell"]')
+    expect(cell).toHaveClass('cg-id')
+    expect(cell).toHaveAttribute('title', id)
+  })
+
   it('labels needs-you rows and leaves the others unlabeled', async () => {
     testState.cases = [
       { ...CASE, case_id: 'needs', title: 'Waiting on a person', needs_you: true },

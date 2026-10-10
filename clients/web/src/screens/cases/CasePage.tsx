@@ -18,7 +18,8 @@ import Chat from '../../shell/Chat'
 import { EvidenceTrail } from './EvidenceTrail'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
-import { money, timeLeft, when } from './caseFormat'
+import { fmtCost } from '../../shared/cost'
+import { timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -315,7 +316,7 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   return {
     Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
     Evidence: evidence,
-    Checked: fold ? `${money(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
+    Checked: fold ? `${fold.costUsd == null ? '—' : fmtCost(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
     'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
@@ -795,7 +796,7 @@ export function CasePage({
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
           <span aria-hidden>›</span>
-          <span className="mono">Case {id}</span>
+          <span className="mono">{id.startsWith('case-') ? id : `Case ${id}`}</span>
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
             {onExpand && (
@@ -943,7 +944,7 @@ export function CasePage({
             ) : (
               <section className="case-card case-checked">
                 <h3>
-                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {money(fold.costUsd)}
+                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
                   <InfoTip
                     label="About the cost"
                     source="The run's total spend."
@@ -957,7 +958,7 @@ export function CasePage({
                       <span className="clamp2" title={call.question}>{call.question || '—'}</span>
                       <span className="src">{call.tool || '—'}</span>
                       <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
-                      <span className="num">{money(call.cost_usd)}</span>
+                      <span className="num">{fmtCost(call.cost_usd)}</span>
                       <span className="num">{latency(call.duration_ms)}</span>
                     </li>
                   ))}

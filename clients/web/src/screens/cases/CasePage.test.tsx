@@ -232,13 +232,13 @@ describe('case page', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
     const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-    expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.2000')
+    expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.20')
     expect(card).not.toHaveTextContent('no source')
     // the run's cost, not the row's; the row shows its own turn's cost and size in chars
     const row = within(card).getByText('who logged in').closest('li') as HTMLElement
     expect(row).toHaveTextContent('search')
     expect(row).toHaveTextContent('12 chars')
-    expect(row).toHaveTextContent('$0.0100')
+    expect(row).toHaveTextContent('$0.01')
     expect(row).toHaveTextContent('—')
   })
 
@@ -548,7 +548,7 @@ describe('case page', () => {
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
     expect(within(doors).getByText('0 support · 0 go against · 1 neither')).toBeInTheDocument()
-    expect(within(doors).getByText('$0.2000 · 0 gaps')).toBeInTheDocument()
+    expect(within(doors).getByText('$0.20 · 0 gaps')).toBeInTheDocument()
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
     fireEvent.click(within(doors).getByRole('button', { name: /^Checked/ }))
@@ -703,7 +703,7 @@ describe('case page', () => {
       leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
       await openChecked()
       const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
-      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.5000 · 1 with no source')
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.50 · 1 with no source')
       expect(card.querySelectorAll('li')).toHaveLength(1)
     })
 
@@ -1327,7 +1327,7 @@ describe('case page', () => {
       expect(screen.getByText('Loading case…')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
       expect(await screen.findByRole('heading', { name: 'Frame case' })).toBeInTheDocument()
-      expect(screen.getByText('Case case-9')).toBeInTheDocument()
+      expect(screen.getByText('case-9')).toBeInTheDocument()
       expect(screen.queryByText('All cases')).not.toBeInTheDocument()
     })
 
@@ -1531,9 +1531,9 @@ describe('case page', () => {
       renderDetail('case-9')
       const panel = await side()
       expect(await panel.findByText('Incident response')).toBeInTheDocument()
-      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.0000')
+      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.00')
       expect(await panel.findByText('host-1, ada')).toBeInTheDocument()
-      expect(panel.getByText('$1.0000 of $2.0000')).toBeInTheDocument()
+      expect(panel.getByText('$1.00 of $2.00')).toBeInTheDocument()
       expect(panel.getByText('Fair')).toHaveClass('fair')
       const meter = panel.getByRole('meter')
       expect(meter).toHaveAttribute('aria-valuenow', '50')
@@ -1846,9 +1846,9 @@ describe('watching a run, its cost and its agents', () => {
   it('shows a hunt’s live cost against the cap off the run, and keeps it once parked', async () => {
     open('case-c', { status: 'running', hunt: hunt({ cost_usd: 1.4989, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
     const panel = await side()
-    expect(await panel.findByText('$1.4989 of $5.0000')).toBeInTheDocument()
+    expect(await panel.findByText('$1.50 of $5.00')).toBeInTheDocument()
     expect(panel.getByText('Good')).toBeInTheDocument()
-    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$5.0000')
+    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$5.00')
     expect(panel.queryByText('Not measured yet')).not.toBeInTheDocument()
     // The header's trust strip is a different thing and stays.
     expect(within(document.querySelector('.dh-meta') as HTMLElement).getByText(/Not measured yet/)).toBeInTheDocument()
@@ -1856,14 +1856,14 @@ describe('watching a run, its cost and its agents', () => {
 
     open('case-c2', { status: 'running', hunt: hunt({ status: 'parked', cost_usd: 4.8, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
     const parked = await side()
-    expect(await parked.findByText('$4.8000 of $5.0000')).toBeInTheDocument()
+    expect(await parked.findByText('$4.80 of $5.00')).toBeInTheDocument()
     expect(parked.getByText('Poor')).toBeInTheDocument()
   })
 
   it('shows the cost alone when no cap is known, and Not measured only when no cost is', async () => {
     open('case-c3', { status: 'running', hunt: hunt({ cost_usd: 0.4 }) })
     const panel = await side()
-    expect(await panel.findByText('$0.4000')).toBeInTheDocument()
+    expect(await panel.findByText('$0.40')).toBeInTheDocument()
     expect(panel.queryByRole('meter')).not.toBeInTheDocument()
     expect(panel.queryByText('Good')).not.toBeInTheDocument()
     cleanup()
