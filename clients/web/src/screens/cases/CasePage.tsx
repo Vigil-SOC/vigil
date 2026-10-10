@@ -810,6 +810,21 @@ export function CasePage({
   const pillState = closed ? 'closed' : stopped?.state ?? pill
   // Only what exists: the live investigation's status, else the run's outcome.
   const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
+  // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
+  // else took the key (a menu or dialog is open, or a text field has focus).
+  useEffect(() => {
+    if (onExpand) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const t = e.target as HTMLElement | null
+      if (t?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      onBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onExpand, onBack])
+
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
   const tone = statePill(pillState, needsShown > 0).tone
@@ -837,15 +852,13 @@ export function CasePage({
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
             {onExpand && (
-              <>
-                <button type="button" className="btn ghost icon" aria-label="Expand" title="Expand" onClick={onExpand}>
-                  <Icon name="fit" size={15} />
-                </button>
-                <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onBack}>
-                  <Icon name="close" size={15} />
-                </button>
-              </>
+              <button type="button" className="btn ghost icon" aria-label="Expand" title="Expand" onClick={onExpand}>
+                <Icon name="fit" size={15} />
+              </button>
             )}
+            <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onBack}>
+              <Icon name="close" size={15} />
+            </button>
           </div>
         </div>
         {phase === 'error' ? (
