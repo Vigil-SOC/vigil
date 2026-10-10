@@ -211,6 +211,8 @@ export interface CaseResult {
   cost_usd: number;
   unpriced_calls: number;
   model_calls: number;
+  // Summed off the run's spend events, which carry what the provider reported.
+  tokens: { input: number; output: number; cache_read: number; cache_write: number };
   tool_calls: number;
   blind_calls: number;
   wall_ms: number;
@@ -251,7 +253,11 @@ async function runCase(engine: Engine, one: EvalCase, config: string, grader: Gr
   const terminal = events.findLast((event) => event.kind === "terminal")?.payload as { outcome?: string; reason?: string; summary?: string } | undefined;
   const conclusion = events.findLast((event) => event.kind === "conclusion")?.payload as { value?: Record<string, unknown> } | undefined;
   const review = events.findLast((event) => event.kind === "review")?.payload as { guarded?: { asked: string; final: string } } | undefined;
-  const spends = events.filter((event) => event.kind === "spend").map((event) => event.payload as { cost_usd: number | null });
+  const spends = events
+    .filter((event) => event.kind === "spend")
+    .map((event) => event.payload as { cost_usd: number | null; tokens?: Partial<Record<"input" | "output" | "cache_read" | "cache_write", number>> });
+  const tokens = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  for (const spend of spends) for (const key of Object.keys(tokens) as (keyof typeof tokens)[]) tokens[key] += spend.tokens?.[key] ?? 0;
   const report = terminal?.summary ?? terminal?.reason ?? "";
 
   let graded: Graded | null = null;
@@ -282,6 +288,7 @@ async function runCase(engine: Engine, one: EvalCase, config: string, grader: Gr
     cost_usd: Number(spends.reduce((total, spend) => total + (spend.cost_usd ?? 0), 0).toFixed(6)),
     unpriced_calls: spends.filter((spend) => spend.cost_usd === null).length,
     model_calls: spends.length,
+    tokens,
     tool_calls: calls.length,
     blind_calls: calls.filter((call) => {
       const response = one.tools[call.tool];

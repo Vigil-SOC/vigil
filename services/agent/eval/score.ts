@@ -24,6 +24,7 @@ interface Row {
   cost_usd: number;
   unpriced_calls: number;
   model_calls: number;
+  tokens?: { input: number; output: number; cache_read: number; cache_write: number };
   tool_calls: number;
   wall_ms: number;
   error: string | null;
@@ -61,6 +62,8 @@ export interface Score {
   cost_benign_per_case: number;
   unpriced_calls: number;
   model_calls_per_case: number;
+  input_tokens_per_case: number | null;
+  output_tokens_per_case: number | null;
   tool_calls_per_case: number;
   wall_s_per_case: number;
 }
@@ -110,6 +113,9 @@ export function score(rows: readonly Row[]): Score {
     cost_benign_per_case: mean(benign.map((row) => row.cost_usd)),
     unpriced_calls: rows.reduce((total, row) => total + row.unpriced_calls, 0),
     model_calls_per_case: mean(rows.map((row) => row.model_calls)),
+    // Null for result files written before tokens were recorded.
+    input_tokens_per_case: rows.every((row) => row.tokens !== undefined) ? mean(rows.map((row) => (row.tokens?.input ?? 0) + (row.tokens?.cache_read ?? 0))) : null,
+    output_tokens_per_case: rows.every((row) => row.tokens !== undefined) ? mean(rows.map((row) => row.tokens?.output ?? 0)) : null,
     tool_calls_per_case: mean(rows.map((row) => row.tool_calls)),
     wall_s_per_case: mean(rows.map((row) => row.wall_ms / 1000)),
   };
@@ -144,6 +150,11 @@ export function report(groups: ReadonlyMap<string, readonly Row[]>): string {
     line("cost on attack cases: total / per case", (one) => `$${one.cost_attack_total.toFixed(2)} / $${one.cost_attack_per_case.toFixed(4)}`),
     line("cost on benign cases: total / per case", (one) => `$${one.cost_benign_total.toFixed(2)} / $${one.cost_benign_per_case.toFixed(4)}`),
     line("model calls / tool calls per case", (one) => `${one.model_calls_per_case.toFixed(1)} / ${one.tool_calls_per_case.toFixed(1)}`),
+    line("input / output tokens per case", (one) =>
+      one.input_tokens_per_case === null || one.output_tokens_per_case === null
+        ? "not recorded"
+        : `${Math.round(one.input_tokens_per_case).toLocaleString("en-US")} / ${Math.round(one.output_tokens_per_case).toLocaleString("en-US")}`,
+    ),
     line("wall time per case", (one) => `${one.wall_s_per_case.toFixed(1)}s`),
   ];
 
