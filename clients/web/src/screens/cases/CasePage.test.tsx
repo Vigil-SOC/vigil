@@ -742,8 +742,8 @@ describe('case page', () => {
     renderCase('case-closed')
 
     expect(await screen.findByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
-    expect(screen.getByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada · False positive · analyst$/)).toBeInTheDocument()
-    expect(screen.getByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toBeInTheDocument()
+    // the header reason and the Summary read the same line
+    expect(screen.getAllByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada · False positive · analyst$/)).toHaveLength(2)
     expect(document.querySelector('.case-sla')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Replay' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agree' })).toBeDisabled()
@@ -751,6 +751,14 @@ describe('case page', () => {
     expect(screen.getByText('Coming in a later release')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
+  })
+
+  it('drops a missing category and closer kind from the Closed line without stray separators', async () => {
+    closedCase({ ...CLOSURE, closure_category: '', closed_by_kind: '' })
+    testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
+    renderCase('case-closed')
+
+    expect(await screen.findAllByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toHaveLength(2)
   })
 
   it('lists the strongest hunt rows with step and stance, both sides first', async () => {

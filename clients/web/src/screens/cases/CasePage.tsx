@@ -83,6 +83,13 @@ function closedBy(closure: CaseClosureView | null): string {
   return time || who ? `Closed${time}${who}` : ''
 }
 
+/** The whole Closed line, shared by the header reason and the Summary: time, closer, category, closer kind. */
+function closedLine(closure: CaseClosureView | null): string {
+  return [closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
 }
@@ -821,7 +828,7 @@ export function CasePage({
   const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedBy(closure) : ''
+    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
   const needsBlock = (
     <CaseNeeds
       items={shownNeeds}
@@ -900,9 +907,7 @@ export function CasePage({
                 {needsBlock}
                 <section className="case-closed" aria-label="Closed summary">
                   <span className="case-closed-line">
-                    {[closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    {closedLine(closure)}
                   </span>
                   <h3>{closure?.verdict || '—'}</h3>
                   <ClosedRows fold={fold} phase={foldPhase} />
