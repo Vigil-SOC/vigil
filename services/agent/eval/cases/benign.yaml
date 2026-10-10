@@ -1,0 +1,215 @@
+# Benign activity. The lookalikes are dressed as attacks and the benign proof is
+# findable: a change ticket, an owner, a sanctioned test, a known job. A run that
+# escalates them without looking for that proof raises a false alarm; one that
+# finds it and closes is right. Holding for review is counted apart from both.
+
+- id: ben-01-sanctioned-red-team
+  truth: benign
+  traps: [lookalike]
+  rationale: Mimikatz-like activity from a host and account registered for the authorised red-team engagement this week.
+  alert: |
+    EDR finding f-4001 on ws-0901: credential-access tooling detected (lsass access). Case c-4001.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4001, host: ws-0901, user: user0201, detection: "lsass access by known hacktool", severity: high }
+    case_records:
+      - rows:
+          - { case_id: c-4001, note: "Red-team engagement RT-2026-09 runs 2026-09-28 to 2026-10-03. Registered operator accounts: user0201. Registered hosts: ws-0901. Contact: security engineering." }
+    splunk_search:
+      - match: [ws-0901]
+        rows:
+          - { time: "2026-10-01T10:00:00Z", host: ws-0901, source: sysmon, event: process_create, detail: "mimikatz-style tool run by user0201; host tagged 'red-team-range' in the asset inventory" }
+    search_findings:
+      - match: [rt-2026]
+        rows:
+          - { finding_id: f-3999, detection: "Red-team engagement registration", engagement: RT-2026-09, hosts: [ws-0901], status: approved }
+
+- id: ben-02-backup-beacon
+  truth: benign
+  traps: [lookalike]
+  rationale: Regular outbound connections every 300s are the backup agent's heartbeat to the vendor's documented endpoint.
+  alert: |
+    Finding f-4101: srv-db-02 connects to 192.0.2.50 every 300 seconds with near-zero jitter. Case c-4101.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4101, host: srv-db-02, detection: "Periodic outbound connections (beacon-like)", destination: "192.0.2.50:443", interval_s: 300 }
+    splunk_search:
+      - match: [srv-db-02]
+        rows:
+          - { time: "2026-10-02T00:00:00Z", host: srv-db-02, source: sysmon, event: network, detail: "process BackupAgent.exe (signed by the backup vendor) -> 192.0.2.50:443 every 300s since install on 2025-11-02" }
+      - match: ["192.0.2.50"]
+        rows:
+          - { time: "2026-10-02T00:00:00Z", source: firewall, event: conn, detail: "37 servers with the backup agent contact 192.0.2.50 on the same schedule" }
+    lookup_indicators:
+      - match: ["192.0.2.50"]
+        rows:
+          - { indicator: "192.0.2.50", type: ip, verdict: benign, tags: [backup-vendor-heartbeat] }
+    case_records:
+      - rows:
+          - { case_id: c-4101, note: "Asset inventory: srv-db-02 runs the vendor backup agent, heartbeat endpoint 192.0.2.50" }
+
+- id: ben-03-admin-psexec-change-window
+  truth: benign
+  traps: [lookalike]
+  rationale: Remote service creation across servers by the patching account inside an approved change window.
+  alert: |
+    Finding f-4201: account svc-patch created services on 40 servers in 10 minutes. Case c-4201.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4201, user: svc-patch, detection: "Remote service creation across many hosts", hosts: 40 }
+    case_records:
+      - rows:
+          - { case_id: c-4201, note: "Change CHG-4412 approved: monthly patching of the app server pool, 2026-10-03 01:00-03:00, executed by svc-patch from the patch server patch-01." }
+    splunk_search:
+      - match: [svc-patch]
+        rows:
+          - { time: "2026-10-03T01:12:00Z", user: svc-patch, source: windows, event: service_install, detail: "PatchRunner service on 40 servers, binary signed by the patch tool vendor, launched from patch-01" }
+          - { time: "2026-10-03T01:40:00Z", user: svc-patch, source: windows, event: service_delete, detail: "PatchRunner removed after install completed" }
+
+- id: ben-04-impossible-travel-vpn
+  truth: benign
+  traps: [lookalike]
+  rationale: Sign-ins from two countries an hour apart are the user's laptop moving between the corporate VPN egress and home.
+  alert: |
+    Finding f-4301: impossible travel for user0230 (sign-ins from two countries 50 minutes apart). Case c-4301.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4301, user: user0230, detection: "Impossible travel", first: { ip: "192.0.2.10", country: A }, second: { ip: "198.51.100.10", country: B } }
+    lookup_indicators:
+      - match: ["192.0.2.10"]
+        rows:
+          - { indicator: "192.0.2.10", type: ip, verdict: benign, tags: [corporate-vpn-egress] }
+      - match: ["198.51.100.10"]
+        rows:
+          - { indicator: "198.51.100.10", type: ip, verdict: benign, tags: [residential-isp] }
+    splunk_search:
+      - match: [user0230]
+        rows:
+          - { time: "2026-10-04T08:00:00Z", user: user0230, source: idp, event: sign_in_success, detail: "same device id, compliant managed laptop, MFA by the user's registered phone, from 192.0.2.10 (corporate VPN egress, located in country A)" }
+          - { time: "2026-10-04T08:50:00Z", user: user0230, source: idp, event: sign_in_success, detail: "same device id, from 198.51.100.10 (user's home ISP, country B, where user0230 is based)" }
+    case_records:
+      - rows:
+          - { case_id: c-4301, note: "user0230 works remotely from country B; the corporate VPN egresses in country A" }
+
+- id: ben-05-encoded-powershell-sccm
+  truth: benign
+  traps: [lookalike]
+  rationale: Encoded PowerShell launched by the configuration manager agent running a signed inventory script.
+  alert: |
+    EDR finding f-4401 on ws-1022: powershell.exe launched with -EncodedCommand. Case c-4401.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4401, host: ws-1022, detection: "Encoded PowerShell", parent: CcmExec.exe, command_line: "powershell.exe -NoProfile -EncodedCommand JABpAG4AdgA..." }
+    splunk_search:
+      - match: [ws-1022]
+        rows:
+          - { time: "2026-10-05T12:00:00Z", host: ws-1022, source: sysmon, event: process_create, detail: "parent CcmExec.exe (configuration manager agent, signed); decoded command runs the hardware inventory collector; no network connections; same command on 2,300 hosts daily" }
+    search_findings:
+      - match: [ccmexec]
+        rows:
+          - { finding_id: f-4100, detection: "Tuning note: CcmExec encoded inventory script is expected", status: tuned }
+
+- id: ben-06-dns-heavy-av-updates
+  truth: benign
+  traps: [lookalike]
+  rationale: Long, random-looking DNS queries are the antivirus product's reputation lookups, seen fleet-wide.
+  alert: |
+    Finding f-4501: ws-0333 made 9,000 queries with long random-looking subdomains. Case c-4501.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4501, host: ws-0333, detection: "Possible DNS tunnelling", domain: "rep.av-vendor.example.com", queries: 9000 }
+    splunk_search:
+      - match: [rep.av-vendor]
+        rows:
+          - { time: "2026-10-06T10:00:00Z", source: dns, event: query, detail: "4,100 hosts query hashed subdomains of rep.av-vendor.example.com daily; responses are A records in the vendor's published range" }
+      - match: [ws-0333]
+        rows:
+          - { time: "2026-10-06T10:00:00Z", host: ws-0333, source: sysmon, event: dns, detail: "queries issued by the antivirus service process (signed), during a full disk scan scheduled by policy" }
+    lookup_indicators:
+      - match: [av-vendor]
+        rows:
+          - { indicator: "rep.av-vendor.example.com", type: domain, verdict: benign, tags: [security-vendor-cloud-lookup] }
+
+- id: ben-07-bulk-download-sanctioned-migration
+  truth: benign
+  traps: [lookalike]
+  rationale: A large SharePoint download by an IT engineer is the documented tenant migration.
+  alert: |
+    Finding f-4601: user0250 downloaded 38 GB from SharePoint in 2 hours. Case c-4601.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4601, user: user0250, detection: "Mass download from cloud storage", size_gb: 38 }
+    case_records:
+      - rows:
+          - { case_id: c-4601, note: "Project MIG-07: migration of the legal team's sites to the new tenant, owner user0250 (IT), window 2026-10-06 to 2026-10-10, approved by the CIO." }
+    splunk_search:
+      - match: [user0250]
+        rows:
+          - { time: "2026-10-07T09:00:00Z", user: user0250, source: sharepoint, event: download, detail: "38 GB from legal-team sites via the migration tool's registered app, from the IT jump host it-jump-01" }
+
+- id: ben-08-failed-logins-expired-password
+  truth: benign
+  traps: []
+  rationale: Repeated failed logins from one internal host are a service with a stale password after rotation; no success, no other accounts.
+  alert: |
+    Finding f-4701: 340 failed logins for svc-report from srv-bi-01 in one hour. Case c-4701.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4701, user: svc-report, host: srv-bi-01, detection: "Excessive authentication failures", failures: 340 }
+    splunk_search:
+      - match: [svc-report]
+        rows:
+          - { time: "2026-10-08T06:00:00Z", user: svc-report, source: ad, event: password_changed, detail: "password rotated by the vault at 05:58" }
+          - { time: "2026-10-08T06:01:00Z", user: svc-report, source: windows, event: logon_failure, detail: "340 failures from srv-bi-01 only, every 10s, status bad password; no successes from any other host" }
+    case_records:
+      - rows:
+          - { case_id: c-4701, note: "svc-report is the BI dashboard refresh service on srv-bi-01" }
+
+- id: ben-09-new-admin-onboarding
+  truth: benign
+  traps: []
+  rationale: A new privileged account was created through the access-request workflow with manager approval.
+  alert: |
+    Finding f-4801: new account adm-user0260 added to the server administrators group. Case c-4801.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4801, user: adm-user0260, detection: "New member of a privileged group" }
+    case_records:
+      - rows:
+          - { case_id: c-4801, note: "Access request AR-9921: admin account for user0260 (new sysadmin hire), approved by their manager and the platform lead on 2026-10-07, provisioned by the identity workflow." }
+    splunk_search:
+      - match: [adm-user0260]
+        rows:
+          - { time: "2026-10-08T09:00:00Z", source: ad, event: group_add, detail: "added by svc-idm (identity workflow) referencing AR-9921" }
+
+- id: ben-10-phish-report-clicked-no-payload
+  truth: benign
+  traps: []
+  rationale: A user clicked a reported phishing link, but the proxy blocked it and the host shows no execution or credential entry.
+  alert: |
+    Finding f-4901: user0270 clicked a link in an email later reported as phishing. Case c-4901.
+  tools:
+    get_finding:
+      - rows:
+          - { finding_id: f-4901, user: user0270, host: ws-1101, detection: "Click on reported phishing URL", url: "http://login-portal.example.org/" }
+    splunk_search:
+      - match: [ws-1101]
+        rows:
+          - { time: "2026-10-08T14:00:00Z", host: ws-1101, source: proxy, event: http_get, detail: "http://login-portal.example.org/ blocked by category 'phishing', no bytes returned" }
+          - { time: "2026-10-08T14:00:00Z", host: ws-1101, source: sysmon, event: none, detail: "no new processes, downloads or credential prompts in the 2 hours after the click" }
+      - match: [user0270]
+        rows:
+          - { time: "2026-10-08T14:00:00Z", user: user0270, source: idp, event: none, detail: "no sign-ins from new locations or devices; no password change" }
+    lookup_indicators:
+      - match: [login-portal]
+        rows:
+          - { indicator: "login-portal.example.org", type: domain, verdict: malicious, tags: [credential-phishing] }
