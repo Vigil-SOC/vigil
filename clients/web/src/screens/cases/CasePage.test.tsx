@@ -761,6 +761,22 @@ describe('case page', () => {
     expect(await screen.findAllByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toHaveLength(2)
   })
 
+  it('shows Loading the run, never the honest line, on Explanations while the case read is in flight', async () => {
+    const lead = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
+    testState.runs['run-closed'] = lead
+    closedCase(CLOSURE)
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const row = testState.cases[0]
+    vi.mocked(casesApi.getById).mockImplementationOnce((async () => { await held; return { data: row } }) as never)
+    renderCase('case-closed')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(screen.getByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+    release()
+    expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
+  })
+
   it('lists the strongest hunt rows with step and stance, both sides first', async () => {
     closedCase(CLOSURE)
     const ev = (n: number, relation: string | null, extra: Record<string, unknown> = {}) => ({

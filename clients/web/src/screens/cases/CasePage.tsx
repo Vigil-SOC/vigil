@@ -616,7 +616,8 @@ export function CasePage({
   }, [runId, loadRun, setRunPhase])
   const detail = runId && run.detail?.run_id === runId ? run.detail : null
   const fold = useMemo(() => readFold(detail), [detail])
-  const foldPhase: Phase = !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+  // The run id is unknown until the case read returns, so the run is still loading, not absent.
+  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
 
   // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
   const seen = useRef<{ runId: string; status: string } | null>(null)
