@@ -136,8 +136,9 @@ export default function CasesScreen({ setViewFull, openCase, caseSeed, onCaseSee
   const backToList = useCallback(() => setSearchParams({}), [setSearchParams])
 
   useEffect(() => {
-    setViewFull(selected !== null)
-  }, [selected, setViewFull])
+    // the list fills the view and scrolls inside its card; the full page is full-bleed too
+    setViewFull(true)
+  }, [setViewFull])
 
   return selected ? (
     <CasesDetail id={selected} onBack={backToList} pageKey="cases" seed={caseSeed} onSeedConsumed={onCaseSeedConsumed} />
@@ -210,7 +211,7 @@ function CasesTable({
   const kindName = (c: CaseRow) => (c.workflowId && workflowNames[c.workflowId]) || c.workflowId || '—'
 
   return (
-    <>
+    <div className="cases-list">
       <div className="cases-top">
         <PageHead
           title="Cases"
@@ -314,7 +315,7 @@ function CasesTable({
           <button className="btn ghost" onClick={() => setResults(null)}>Clear search</button>
         </div>
       )}
-      <div className="cases-card list-scroll">
+      <div className="cases-card list-scroll" data-testid="cases-scroll">
         <div className="cases-grid" role="table" aria-label="Cases">
           <div className="cg-row cg-head" role="row">
             <span role="columnheader"><span className="sr-only">Select</span></span>
@@ -422,7 +423,7 @@ function CasesTable({
       )}
 
       <NewCaseDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={reload} />
-    </>
+    </div>
   )
 }
 

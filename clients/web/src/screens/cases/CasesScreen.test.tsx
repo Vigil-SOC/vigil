@@ -652,3 +652,16 @@ describe('list states', () => {
     expect(chip('All open 6')).toHaveAttribute('aria-pressed', 'true')
   })
 })
+
+describe('list scrolling', () => {
+  it('keeps the table in a scroll box with its header inside, and the pager outside', async () => {
+    renderCases()
+
+    expect(await screen.findByText(CASE.title)).toBeInTheDocument()
+    const box = screen.getByTestId('cases-scroll')
+    expect(box).toHaveClass('list-scroll')
+    expect(within(box).getByRole('table', { name: 'Cases' })).toBeInTheDocument()
+    expect(within(box).getAllByRole('columnheader').length).toBeGreaterThan(0)
+    expect(box).not.toContainElement(screen.getByLabelText('Rows per page'))
+  })
+})
