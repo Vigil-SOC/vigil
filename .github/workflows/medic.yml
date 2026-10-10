@@ -10,16 +10,32 @@ on:
     paths:
       - "services/medic/**"
       - "infra/docker/Dockerfile.medic"
+      - "services/medic_gateway/**"
+      - "infra/docker/Dockerfile.medic-gateway"
+      - "services/medic_dockerproxy/**"
+      - "infra/docker/Dockerfile.medic-dockerproxy"
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
+      - "scripts/medic/**"
+      - "start.sh"
+      - "shutdown_all.sh"
+      - "scripts/lib.sh"
   pull_request:
     paths:
       - "services/medic/**"
       - "infra/docker/Dockerfile.medic"
+      - "services/medic_gateway/**"
+      - "infra/docker/Dockerfile.medic-gateway"
+      - "services/medic_dockerproxy/**"
+      - "infra/docker/Dockerfile.medic-dockerproxy"
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
+      - "scripts/medic/**"
+      - "start.sh"
+      - "shutdown_all.sh"
+      - "scripts/lib.sh"
   workflow_dispatch:
 
 permissions:
@@ -110,3 +126,232 @@ jobs:
           done
           docker logs medic
           exit 1
+
+  # The read-only gateway (C3 §4.6): its own lock and its own gates, checks 10
+  # and 11 in its tests, then the image it ships in.
+  medic-gateway:
+    name: Medic gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Install the gateway's locked dev dependencies
+        run: uv sync --project services/medic_gateway --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic_gateway --frozen ruff check services/medic_gateway
+          uv run --project services/medic_gateway --frozen ruff format --check services/medic_gateway
+
+      - name: Pytest
+        run: uv run --project services/medic_gateway --frozen pytest services/medic_gateway
+
+      - name: Import fence
+        run: uv run --project services/medic_gateway --frozen lint-imports
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/Dockerfile.medic-gateway
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.medic-gateway
+          push: false
+          load: true
+          tags: vigil-medic-gateway:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A credential in env: refuses to start (exit 2) and names it, not its value.
+      # (`if …; then exit 1` rather than `!`: set -e ignores a negated command.)
+      - name: Smoke test, credential in env
+        run: |
+          set +e
+          out=$(docker run --rm --read-only -e AGENT_INTERNAL_TOKEN=leak-me \
+            vigil-medic-gateway:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 2
+          grep -q AGENT_INTERNAL_TOKEN <<<"$out"
+          if grep -q leak-me <<<"$out"; then exit 1; fi
+
+      # As it will run: read-only root, no capabilities, password as a file. No
+      # backend: the image's own HEALTHCHECK command must still go green.
+      - name: Smoke test, healthy
+        run: |
+          printf 'not-a-real-password' > pw && chmod 0644 pw
+          docker run -d --name gw --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            -v "$PWD/pw:/run/secrets/medic_viewer_password:ro" \
+            -e VIGIL_MEDIC_GATEWAY_BACKEND=backend.invalid:6987 \
+            -e VIGIL_MEDIC_GATEWAY_MEDIC=medic.invalid:8470 \
+            -e VIGIL_MEDIC_GATEWAY_OUT_BIND=127.0.0.1:8471 \
+            -e VIGIL_MEDIC_GATEWAY_IN_BIND=127.0.0.1:8470 \
+            -e VIGIL_MEDIC_GATEWAY_VIEWER_USER=medic-viewer \
+            vigil-medic-gateway:ci
+          for _ in $(seq 1 20); do
+            if docker exec gw python -m services.medic_gateway check; then
+              docker exec gw id -u | grep -qx 10002
+              # /tmp, not /app: uid 10002 can't write /app on any filesystem.
+              if docker exec gw touch /tmp/x; then exit 1; fi
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs gw
+          exit 1
+
+  # The read-only Docker proxy (C3 §4.3, SP2): check 4 in its tests, against a
+  # fake socket and, because the runner has Docker, against the real engine too
+  # (test_live_docker.py: SP2's 43 with the negative control). Then the image.
+  medic-dockerproxy:
+    name: Medic Docker proxy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Install the proxy's locked dev dependencies
+        run: uv sync --project services/medic_dockerproxy --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic_dockerproxy --frozen ruff check services/medic_dockerproxy
+          uv run --project services/medic_dockerproxy --frozen ruff format --check services/medic_dockerproxy
+
+      # The live tests must run here, not skip: -m docker on its own first, and
+      # fail if it collected nothing.
+      - name: Pytest (live Docker, check 4)
+        run: |
+          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker -rs
+          uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy -m docker --collect-only -q | grep -q "^43/"
+
+      - name: Pytest
+        run: uv run --project services/medic_dockerproxy --frozen pytest services/medic_dockerproxy
+
+      - name: Import fence
+        run: uv run --project services/medic_dockerproxy --frozen lint-imports
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/Dockerfile.medic-dockerproxy
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build proxy image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.medic-dockerproxy
+          push: false
+          load: true
+          tags: vigil-medic-dockerproxy:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A credential in env: refuses to start (exit 2) and names it, not its value.
+      - name: Smoke test, credential in env
+        run: |
+          set +e
+          out=$(docker run --rm --read-only -e DAEMON_WEBHOOK_TOKEN=leak-me \
+            -e VIGIL_MEDIC_DOCKERPROXY_BIND=127.0.0.1:8472 vigil-medic-dockerproxy:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 2
+          grep -q DAEMON_WEBHOOK_TOKEN <<<"$out"
+          if grep -q leak-me <<<"$out"; then exit 1; fi
+
+      # As it will run: read-only root, no capabilities, the socket read-only and
+      # only its group added. The image's HEALTHCHECK command must go green
+      # (it pings Docker through the proxy), and check 4 must hold in the image.
+      - name: Smoke test, healthy and read-only
+        run: |
+          docker run -d --name dp --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --group-add "$(stat -c %g /var/run/docker.sock)" \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e VIGIL_MEDIC_DOCKERPROXY_BIND=127.0.0.1:8472 \
+            vigil-medic-dockerproxy:ci
+          for _ in $(seq 1 20); do
+            if docker exec dp python -m services.medic_dockerproxy check; then
+              docker exec dp id -u | grep -qx 10003
+              if docker exec dp touch /tmp/x; then exit 1; fi
+              docker exec dp python -c '
+          import http.client as h
+          def get(p):
+              c = h.HTTPConnection("127.0.0.1", 8472, timeout=5)
+              c.request("GET", p)
+              r = c.getresponse()
+              return r.status, r.read()
+          assert get("/containers/dp/export")[0] == 403
+          assert get("/containers/dp/archive?path=/")[0] == 403
+          st, body = get("/containers/dp/json")
+          assert st == 200 and b"Env" not in body and b"Cmd" not in body, body
+          '
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs dp
+          exit 1
+
+  # Host-native opt-in (S8; C3 §4.7, C5 ENG #3): `start.sh -d` runs Medic as its
+  # own OS user under a restart loop. The unit tests stub sudo; the e2e script
+  # then does it for real, creating the vigil-medic user, a sudo rule and two
+  # directories, which is why it runs only on a throwaway runner. macOS too:
+  # that's where host-native Vigil mostly runs.
+  medic-host-native:
+    name: Medic host-native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Shell syntax
+        run: for f in start.sh shutdown_all.sh scripts/medic/host-native/*.sh scripts/medic/host-native/tests/*.sh; do bash -n "$f"; done
+
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/medic/host-native/*.sh scripts/medic/host-native/tests/*.sh
+
+      - name: Install Medic's locked dependencies
+        run: uv sync --project services/medic --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic --frozen ruff check scripts/medic/host-native
+          uv run --project services/medic --frozen ruff format --check scripts/medic/host-native
+
+      - name: Pytest
+        run: uv run --project services/medic --frozen pytest -p no:cacheprovider scripts/medic/host-native/tests
+
+      # Checks 8, 12 and the host-native half of 9, as a real vigil-medic user.
+      - name: End to end
+        run: scripts/medic/host-native/tests/e2e_host_native.sh
