@@ -113,3 +113,17 @@ def test_chat_config_carries_effort_only_when_set():
 
     assert yaml.safe_load(chat_config("m", effort="high"))["effort"] == "high"
     assert "effort" not in yaml.safe_load(chat_config("m", effort=None))
+
+
+@pytest.mark.unit
+def test_chat_config_carries_context_window_only_when_known():
+    import yaml
+
+    from core.llm.chat_layers import chat_config
+
+    assert (
+        yaml.safe_load(chat_config("m", context_window=16384))["context_window"]
+        == 16384
+    )
+    assert "context_window" not in yaml.safe_load(chat_config("m", context_window=0))
+    assert "context_window" not in yaml.safe_load(chat_config("m"))

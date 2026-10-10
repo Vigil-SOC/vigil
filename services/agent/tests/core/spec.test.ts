@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor, isHuntLike, registeredKinds } from "../../arch/registry.js";
-import { buildSpec, SpecError, type SpecPaths } from "../../core/spec.js";
+import { buildSpec, parseConfig, SpecError, type SpecPaths } from "../../core/spec.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const scratch = mkdtempSync(join(tmpdir(), "vigil-arch-"));
@@ -268,6 +268,14 @@ describe("the config layer", () => {
   it("refuses an unknown budget key rather than defaulting past it", () => {
     const config = scratchFile("bad-budget.yaml", "model: m\nbudgets: { max_dollars: 4 }\n");
     expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(/unknown budgets key\(s\): max_dollars/);
+  });
+
+  it("reads a context window, and refuses one that is not a non-negative integer", () => {
+    expect(parseConfig("model: m\ncontext_window: 16384\n").context_window).toBe(16384);
+    expect(parseConfig("model: m\n").context_window).toBeUndefined();
+    for (const bad of ["-1", "1.5", "big"]) {
+      expect(() => parseConfig(`model: m\ncontext_window: ${bad}\n`)).toThrow(/context_window must be a non-negative integer/);
+    }
   });
 
   it("refuses a config that names no model", () => {

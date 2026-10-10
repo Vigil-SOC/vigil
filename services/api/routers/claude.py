@@ -319,6 +319,16 @@ def _with_page_case(
     return f"{base}\n\n{sentence}"
 
 
+def _context_window(provider_id: Optional[str], provider_type: str, model: str) -> int:
+    """The resolved model's window in tokens; 0 when unknown or the lookup fails."""
+    try:
+        info = get_registry().get_model_info(provider_id or "", provider_type, model)
+        return int(info.context_window or 0)
+    except Exception as exc:  # noqa: BLE001 - a lookup must never fail the turn
+        logger.warning("context window lookup failed for %s: %s", model, exc)
+        return 0
+
+
 @router.post("/chat/stream", dependencies=[permission_gate("ai_chat.use")])
 async def chat_stream(
     request: ChatRequest,
@@ -391,6 +401,7 @@ async def chat_stream(
             mcp_tools,
             provider=provider_type,
             effort=resolve_effort("chat_default"),
+            context_window=_context_window(provider_id, provider_type, model),
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
