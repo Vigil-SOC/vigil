@@ -24,6 +24,8 @@ interface Props {
   variant?: 'drawer' | 'setup'
   // drawer header: the stored last test, and the category line under the name
   lastTest?: LastTest
+  // the Connected table's health for this integration, so the two never disagree
+  health?: Level
   category?: string
   // a test ran in the drawer: the parent refreshes its health read
   onTested?: () => void
@@ -45,6 +47,7 @@ export default function IntegrationWizard({
   onSave,
   variant = 'drawer',
   lastTest,
+  health,
   category,
   onTested,
 }: Props) {
@@ -57,6 +60,10 @@ export default function IntegrationWizard({
   const [saved, setSaved] = useState<Record<string, unknown>>(existingConfig)
   const [probe, setProbe] = useState<Probe>({ state: 'idle' })
   const [tested, setTested] = useState<LastTest | undefined>(lastTest)
+  // a test run here is stored; once the parent has re-read it, show what it read
+  useEffect(() => {
+    if (lastTest) setTested(lastTest)
+  }, [lastTest])
 
   const fields = useMemo(
     () => (integration.proxy_supported ? [...integration.fields, ...PROXY_FIELDS] : integration.fields),
@@ -224,7 +231,8 @@ export default function IntegrationWizard({
     )
   }
 
-  const level: Level = tested?.success === true ? 'good' : tested?.success === false ? 'poor' : null
+  const level: Level =
+    health !== undefined ? health : tested?.success === true ? 'good' : tested?.success === false ? 'poor' : null
   const hasSecret = fields.some((f) => f.type === 'password')
   const lastRead = tested ? `last read ${relativeTime(tested.at)}` : 'never tested'
 

@@ -76,6 +76,19 @@ describe('IntegrationWizard drawer', () => {
     expect(test).toHaveBeenCalledTimes(2)
   })
 
+  it('shows the health the Connected table shows, even where nothing was ever tested', () => {
+    open({ health: 'good' })
+    expect(screen.getByText('Good')).toBeInTheDocument()
+    expect(screen.getByText(/never tested/)).toBeInTheDocument()
+  })
+
+  it('takes the table\'s level over the stored test, and its last-verified time', () => {
+    const at = new Date(Date.now() - 5 * 60_000).toISOString()
+    open({ health: 'poor', lastTest: { at, success: true, error: null } })
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+    expect(screen.getByText(/last read 5 min ago/)).toBeInTheDocument()
+  })
+
   it('lists the URL and credentials check as its own row, and fails the test on it', async () => {
     test.mockResolvedValue({
       data: {
