@@ -76,6 +76,23 @@ describe('IntegrationWizard drawer', () => {
     expect(test).toHaveBeenCalledTimes(2)
   })
 
+  it('lists the URL and credentials check as its own row, and fails the test on it', async () => {
+    test.mockResolvedValue({
+      data: {
+        success: false,
+        message: 'HTTP 401: security_exception',
+        servers: [{ name: 'elastic', success: true }],
+        credentials: { success: false, message: 'HTTP 401: security_exception' },
+      },
+    } as never)
+    open()
+    fireEvent.click(screen.getByRole('button', { name: 'Save and verify' }))
+    expect(await screen.findByText('Saved URL and credentials')).toBeInTheDocument()
+    expect(screen.getByText('HTTP 401: security_exception')).toBeInTheDocument()
+    expect(screen.getByText('Connected')).toBeInTheDocument()
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+  })
+
   it('error: a 400 says to save first; an unavailable MCP client is its own state', async () => {
     test.mockRejectedValueOnce({ response: { status: 400, data: { detail: 'Integration not configured' } } })
     open()

@@ -117,6 +117,19 @@ def saved():
     return _Config()
 
 
+@pytest.fixture(autouse=True)
+def credential_outcome(monkeypatch):
+    """What the read-only URL/credential check answers; None means no check."""
+    answer: dict = {"outcome": None, "asked": []}
+
+    async def fake(integration_id):
+        answer["asked"].append(integration_id)
+        return answer["outcome"]
+
+    monkeypatch.setattr("services.api.routers.config.check_credentials", fake)
+    return answer
+
+
 def _bridge(
     integrations: dict, enabled: Optional[list] = None
 ) -> IntegrationBridgeService:
@@ -242,6 +255,58 @@ def test_splunk_reports_each_server_and_fails_closed(client, saved):
     assert body["servers"][1]["success"] is False
     assert saved.tests[0]["success"] is False
     assert "splunk-selfhosted" in saved.tests[0]["error"]
+
+
+def test_servers_up_but_credentials_refused_is_a_failed_test(
+    client, saved, credential_outcome
+):
+    credential_outcome["outcome"] = (False, "HTTP 401: security_exception")
+    mcp = _Client({"elastic": (True, None, None)}, enabled=("elastic",))
+    response = _post(
+        client,
+        "elastic-siem",
+        _bridge({"elastic-siem": {"elasticsearch_url": "http://127.0.0.1:1"}}),
+        mcp,
+        saved,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["message"] == "HTTP 401: security_exception"
+    assert body["servers"][0]["success"] is True
+    assert body["credentials"] == {
+        "success": False,
+        "message": "HTTP 401: security_exception",
+    }
+    assert credential_outcome["asked"] == ["elastic-siem"]
+    # stored once, as the error the Note column shows
+    assert saved.tests[0]["success"] is False
+    assert saved.tests[0]["error"] == "HTTP 401: security_exception"
+
+
+def test_servers_up_and_credentials_accepted_passes(client, saved, credential_outcome):
+    credential_outcome["outcome"] = (True, "Connection successful")
+    mcp = _Client({"splunk": (True, None, None)}, enabled=("splunk",))
+    response = _post(
+        client,
+        "splunk",
+        _bridge({"splunk": {"server_url": "https://splunk.example"}}),
+        mcp,
+        saved,
+    )
+
+    body = response.json()
+    assert body["success"] is True
+    assert body["credentials"]["success"] is True
+    assert saved.tests[0]["success"] is True and saved.tests[0]["error"] is None
+
+
+def test_failed_servers_skip_the_credential_check(client, saved, credential_outcome):
+    mcp = _Client({"virustotal": (False, "connection refused", None)}, enabled=("virustotal",))
+    _post(client, "virustotal", _bridge({"virustotal": {}}), mcp, saved)
+
+    assert credential_outcome["asked"] == []
 
 
 def test_no_enabled_server_probes_every_declared_server_temporarily(client, saved):
