@@ -67,8 +67,8 @@ RUN npm ci --omit=dev \
 
 COPY --from=build /build/dist ./dist
 # tsc emits only .js; plugins/kinds.ts and plugins/registry.ts resolve each
-# plugin's arch.yaml and plugin.yaml next to themselves, so the plugin directories
-# ship as they are, and the repo's one skill library (core/skills/library) beside them.
+# plugin's plugin.yaml next to themselves, so the plugin directories ship as they
+# are, and the repo's one skill library (core/skills/library) beside them.
 COPY --from=build /build/plugins/ ./dist/plugins/
 COPY core/skills/library/ ./dist/skills/
 

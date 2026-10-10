@@ -29,7 +29,7 @@ const START: RunJob = {
   enqueued_at: "2026-08-07T00:00:00.000Z",
   enqueued_by: "user-1",
   reason: "start",
-  request: { arch: "plugins/hunt/arch.yaml", playbook: "demo.yaml", config: "vigil.config.yaml", prompt: "go" },
+  request: { arch: "plugins/hunt/plugin.yaml", playbook: "demo.yaml", config: "vigil.config.yaml", prompt: "go" },
 };
 
 const RESUME: RunJob = {

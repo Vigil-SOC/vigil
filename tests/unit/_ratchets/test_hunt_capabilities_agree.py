@@ -24,13 +24,13 @@ MCP_CONFIG = ROOT / "mcp-config.json"
 
 # Every arch that drives the hunt loop, with the definition it is resolved for.
 # Both resolve through resolve_hunt and are granted HUNT_CAPABILITIES, so both are
-# what this ratchet is about. plugins/rootcause/arch.yaml is not in this list: that trace binds
+# what this ratchet is about. plugins/rootcause/plugin.yaml is not in this list: that trace binds
 # telemetry_search on its own and does not ask the hunt for a roster. Not globbed:
 # compose and chat are granted something else entirely, and investigate is held to
 # INVESTIGATE_CAPABILITIES below.
 HUNT_LIKE = [
-    ("hunt/arch.yaml", "threat-hunt"),
-    ("adjudicate/arch.yaml", "shadow-adjudication"),
+    ("hunt/plugin.yaml", "threat-hunt"),
+    ("adjudicate/plugin.yaml", "shadow-adjudication"),
 ]
 ARCHES = [ROOT / "services" / "agent" / "plugins" / name for name, _ in HUNT_LIKE]
 ARCH = ARCHES[0]
@@ -93,13 +93,13 @@ def test_python_binds_every_capability_the_arch_asks_for(arch):
 # The investigate lead's needs are granted from its own tuple, so each has to be a
 # capability the resolver knows or the lead would silently hold nothing for it.
 def test_every_investigate_need_is_a_capability_the_resolver_binds():
-    arch = ROOT / "services" / "agent" / "plugins" / "investigate/arch.yaml"
+    arch = ROOT / "services" / "agent" / "plugins" / "investigate/plugin.yaml"
     needs = _needs_in_arch(arch)
     assert needs == set(INVESTIGATE_CAPABILITIES)
     assert needs <= set(CAPABILITIES)
 
 
-# Over the union, not per arch: a capability only plugins/rootcause/arch.yaml asks for is still
+# Over the union, not per arch: a capability only plugins/rootcause/plugin.yaml asks for is still
 # one the resolver is right to bind, and checking each alone would call it unused.
 def test_the_resolver_emits_nothing_any_hunt_like_arch_does_not_ask_for():
     asked = set().union(*(_needs_in_arch(arch) for arch in ARCHES))

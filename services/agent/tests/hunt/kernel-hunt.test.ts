@@ -174,6 +174,15 @@ describe("what a kernel hunt tells the console as it goes", () => {
 });
 
 describe("a failed query the agent records (#2207)", () => {
+  it.each(["hunt", "adjudicate"] as const)("can be flagged as one: %s's record_evidence offers query_failed", async (kind) => {
+    const provider = modelOf([() => ({ say: "nothing to do" })]);
+    await runHunt(harnessOf(specOf(kind), provider, new InProcessState<HuntKinds>()), { run_id: RUN, run_kind: kind, spec: specOf(kind), actions: [], queue: new InProcessDirectiveQueue() });
+
+    const record = provider.requests[0]?.tools.find((tool) => tool.id === "record_evidence");
+    const item = ((record?.parameters["properties"] as Record<string, { items?: { properties?: Record<string, unknown> } }>)["results"])?.items;
+    expect(item?.properties).toHaveProperty("query_failed");
+  });
+
   it("is filed as a blind spot, never linked, and a ruling on it is refused", async () => {
     const state = new InProcessState<HuntKinds>();
     const timedOut = (hypothesis: string) => ({

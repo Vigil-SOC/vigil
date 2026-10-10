@@ -55,9 +55,9 @@ def test_every_class_has_a_default():
 @pytest.mark.parametrize(
     ("kind", "arch"),
     [
-        ("hunt", "hunt/arch.yaml"),
-        ("adjudicate", "adjudicate/arch.yaml"),
-        ("root_cause", "rootcause/arch.yaml"),
+        ("hunt", "hunt/plugin.yaml"),
+        ("adjudicate", "adjudicate/plugin.yaml"),
+        ("root_cause", "rootcause/plugin.yaml"),
     ],
 )
 def test_the_lead_the_reader_names_holds_what_the_arch_grants(kind, arch):
@@ -71,7 +71,7 @@ def test_the_lead_the_reader_names_holds_what_the_arch_grants(kind, arch):
 def test_the_investigate_lead_is_the_arch_lead():
     from core.workflows.playbook_resolver import INVESTIGATE_CAPABILITIES
 
-    lead = yaml.safe_load((ARCH / "investigate/arch.yaml").read_text())["roles"]["lead"]
+    lead = yaml.safe_load((ARCH / "investigate/plugin.yaml").read_text())["roles"]["lead"]
 
     assert set(INVESTIGATE_CAPABILITIES) == set(lead["needs"])
 
@@ -80,7 +80,7 @@ def test_the_investigate_lead_is_the_arch_lead():
 # a worker the lead can ask for and never gets.
 @pytest.mark.parametrize(
     ("workflow_id", "arch"),
-    [("threat-hunt", "hunt/arch.yaml"), ("shadow-adjudication", "adjudicate/arch.yaml")],
+    [("threat-hunt", "hunt/plugin.yaml"), ("shadow-adjudication", "adjudicate/plugin.yaml")],
 )
 def test_the_rostered_helpers_are_arch_workers(workflow_id, arch):
     workers = yaml.safe_load((ARCH / arch).read_text())["roles"]["workers"]

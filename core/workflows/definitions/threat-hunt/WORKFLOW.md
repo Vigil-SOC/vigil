@@ -99,7 +99,7 @@ objectives:
   - "Enrich every observable and attribute where the evidence supports it"
   - "Report the hypothesis as confirmed, refuted or inconclusive, with reasons"
 # The roster, not an order: the lead dispatches whichever of these the question in
-# front of it needs. Their prompts and tool grants live in plugins/hunt/arch.yaml,
+# front of it needs. Their tool grants live in plugins/hunt/plugin.yaml,
 # so what stands here is who can be asked and what each is for.
 phases:
   - id: threat_hunter

@@ -9,7 +9,7 @@ import { SpecError } from "../core/spec.js";
 // read from the repo's one skill library, core/skills/library/<name>/SKILL.md,
 // the same folder the Python agents and the console's skills screen use. Shipped
 // with the worker, resolved against the package rather than the cwd, the same
-// way the arch files are: the image copies the library to dist/skills; from
+// way plugin.yaml is: the image copies the library to dist/skills; from
 // source it is three levels up.
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const SKILLS = [new URL("../skills/", import.meta.url), new URL("../../../core/skills/library/", import.meta.url)]

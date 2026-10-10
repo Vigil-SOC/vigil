@@ -109,10 +109,11 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   chat: { arch: packaged("chat"), workflow: "lead", actions: [], halts: [] },
 };
 
-// A plugin's arch.yaml, resolved against the package rather than the cwd: the
-// plugins ship with the worker, so a run started from any directory finds the same ones.
+// A plugin's plugin.yaml, which carries the arch layer too. Resolved against the
+// package rather than the cwd: the plugins ship with the worker, so a run started
+// from any directory finds the same ones.
 function packaged(plugin: string): string {
-  return fileURLToPath(new URL(`./${plugin}/arch.yaml`, import.meta.url));
+  return fileURLToPath(new URL(`./${plugin}/plugin.yaml`, import.meta.url));
 }
 
 export function archFor(kind: RunKind): ArchEntry {

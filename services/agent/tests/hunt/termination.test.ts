@@ -617,7 +617,7 @@ describe("turns and model calls are different budgets", () => {
   });
 
   // Off this spec's own fan-out, not the shipped arch's: the fixture dispatches
-  // one worker where plugins/hunt/arch.yaml dispatches four, and a ceiling read off the
+  // one worker where plugins/hunt/plugin.yaml dispatches four, and a ceiling read off the
   // shipped shape would be wrong for both.
   it("raises the call ceiling with the turns asked for, so calls stay a backstop", () => {
     const spec = specWith({ max_iterations: 20 });

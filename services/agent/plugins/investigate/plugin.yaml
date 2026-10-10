@@ -1,7 +1,7 @@
 # The investigate plugin: one analyst on one open case, as a single agent loop.
-# Replaces the lead workflow's one-decision-per-turn controller; the ledgers it wrote are still read by legacy/
-# and the arch prompt in plugins/investigate/arch.yaml. The loop, ledger, recall, budgets
-# and parking are the kernel's; this file says what the agent is and how it ends.
+# Replaces the lead workflow's one-decision-per-turn controller, whose ledgers
+# legacy/ still reads. The loop, ledger, recall, budgets and parking are the
+# kernel's; this file says what the agent is and how it ends.
 id: investigate
 description: Work one open case to a conclusion a reader can act on.
 
@@ -96,3 +96,8 @@ guard:
     activity: an owner, a known job, a matching change, a clean result from a
     search that would have found the activity. Absence of results is not
     support. Overturn when a cited result points the other way.
+
+# The lead's grants, as the spec builder and the Python preflight read them.
+roles:
+  lead:
+    needs: [case_records, get_finding, telemetry_search, findings_search, indicator_lookup]

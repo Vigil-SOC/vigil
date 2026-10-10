@@ -87,7 +87,7 @@ objectives:
   - "Name the catalogue workflow this finding warrants -- or none"
   - "State in one sentence whether intake's choice was right, and why; start nothing"
 # The roster, not an order: the lead dispatches whichever of these the question in
-# front of it needs. Their prompts and tool grants live in plugins/adjudicate/arch.yaml,
+# front of it needs. Their tool grants live in plugins/adjudicate/plugin.yaml,
 # so what stands here is who can be asked and what each is for.
 phases:
   - id: threat_hunter

@@ -16,3 +16,12 @@ conclusion: prose
 
 # No beliefs to keep, so the hypothesis record's tools are not offered.
 record: "off"
+
+# The phase window the compose hooks read; compose has no roles of its own.
+digest:
+  # How many completed steps a later one is shown. A playbook's last step usually
+  # writes up the ones before it, so this is the only window that matters here.
+  phase_window: 12
+
+# No roles. Which agent runs a step, what it is told and what it may call are all
+# resolved at run start, because an agent's prompt and grants are runtime state.

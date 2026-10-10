@@ -61,7 +61,7 @@ function rewriteBudget(iterations: number): void {
 
 describe("resolving a run", () => {
   it("routes the run kind through the registry to its arch file", async () => {
-    expect((await resolveSpec(startJob())).arch).toBe("threathunt");
+    expect((await resolveSpec(startJob())).arch).toBe("hunt");
   });
 
   // Startup, not runtime: the kind is resolved before the ledger opens.
@@ -71,7 +71,7 @@ describe("resolving a run", () => {
 
   it("lets an explicit arch path override the registry's default", async () => {
     const job = startJob();
-    job.request.arch = join(import.meta.dirname, "..", "..", "plugins", "hunt", "arch.yaml");
+    job.request.arch = join(import.meta.dirname, "..", "..", "plugins", "hunt", "plugin.yaml");
     expect((await resolveSpec(job)).dispatch.max_workers).toBe(4);
   });
 
@@ -109,7 +109,7 @@ describe("the arch a run started under is journaled", () => {
     await advance(state, leases, startJob(), scriptedHarness(CONCLUDE));
 
     const opened = await specOf(state, RUN);
-    expect(opened?.arch).toBe("threathunt");
+    expect(opened?.arch).toBe("hunt");
     // The turn count is the one that binds; max_calls is a backstop the hunt
     // raises off it, so this asserts the relationship rather than the arithmetic
     // -- the multiplier is a property of this arch's fan-out, not of the budget.

@@ -323,10 +323,10 @@ function assertVocabulary(schema: Record<string, unknown>, handled: readonly str
 
 function parseRole(raw: unknown, name: string): RoleSpec {
   const record = asRecord(raw, `roles.${name}`);
+  // Both optional: a role the kernel only grants tools to has no prompt of its own,
+  // and one with no output_schema answers in prose.
   const prompt = str(record["prompt"]);
-  if (prompt.trim() === "") throw new SpecError(`roles.${name} needs a prompt`);
-  const declared = record["output_schema"];
-  if (declared === undefined) throw new SpecError(`roles.${name} needs an output_schema`);
+  const declared = record["output_schema"] ?? PROSE;
 
   return {
     prompt,
@@ -343,8 +343,6 @@ function parseWorkers(raw: unknown, preamble: string): Record<string, RoleSpec> 
   return Object.fromEntries(
     Object.entries(asRecord(raw, "roles.workers")).map(([id, value]) => {
       const role = parseRole(value, `workers.${id}`);
-      // Without it the generated roster is blank and the lead chooses on the id alone.
-      if (role.description.trim() === "") throw new SpecError(`roles.workers.${id} needs a description`);
       return [id, preamble ? { ...role, prompt: `${preamble}\n\n${role.prompt}` } : role];
     }),
   );
@@ -372,8 +370,15 @@ function parseRoles(raw: unknown, handled: readonly string[]): Roles {
   return roles;
 }
 
+// The arch layer is a plugin's plugin.yaml: its roles, dispatch and digest, named
+// by the plugin's id. The plugin's own keys are the plugin registry's to read. A
+// file with no id is a bare arch, held to the arch layer's keys alone.
 export function parseArch(text: string, handled: readonly string[]): ArchSpec {
-  const [front] = read(text, "arch");
+  const parsed = asRecord(parseYaml(text), "document");
+  const [front] =
+    typeof parsed["id"] === "string"
+      ? [{ name: parsed["id"], roles: parsed["roles"], dispatch: parsed["dispatch"], digest: parsed["digest"] }]
+      : read(text, "arch");
   const roles = parseRoles(front["roles"], handled);
   return {
     name: str(front["name"]) || "unnamed",
@@ -517,30 +522,6 @@ function applyDirectives(roles: Roles, directives: Record<string, string>, decla
   return applied;
 }
 
-// Generated from the registry rather than written into the prompt, so the roster
-// the lead reads cannot drift from the workers that actually exist.
-function roster(workers: Record<string, RoleSpec>): string {
-  return [
-    "## Workers you may dispatch",
-    "Name exactly one of these in worker_agent_id when you dispatch.",
-    ...Object.entries(workers).map(([id, role]) => `- ${id} — ${role.description}`),
-  ].join("\n");
-}
-
-// The registry again, as a schema constraint: an unconstrained string is where a
-// struggling emission puts its overflow, and the id arrives carrying half a query.
-function constrainWorkerId(
-  schema: Record<string, unknown> | null,
-  workers: Record<string, RoleSpec>,
-): Record<string, unknown> | null {
-  if (schema === null) return null;
-  const properties = asRecord(schema["properties"], "roles.lead.output_schema.properties");
-  const field = properties["worker_agent_id"];
-  if (typeof field !== "object" || field === null) return schema;
-  const ids: (string | null)[] = [...Object.keys(workers), null];
-  return { ...schema, properties: { ...properties, worker_agent_id: { ...field, enum: ids } } };
-}
-
 // A field inside a worker's result rows, narrowed to a vocabulary the playbook declared:
 // a reader counting distinct values of a free string counts a typo as a second source.
 function constrainResultField(
@@ -656,27 +637,11 @@ export function assembleSpec(sources: SpecSources): RunSpec {
       ]),
     ),
   };
-  const staffed = Object.keys(roles.workers).length > 0;
-
-  // The roster and the worker-id constraint are the lead's alone. Without one
-  // there is nothing to dispatch from, because the phase list already said.
-  const led =
-    roles.lead === undefined
-      ? roles
-      : {
-          ...roles,
-          lead: {
-            ...roles.lead,
-            prompt: staffed ? `${roles.lead.prompt}\n\n${roster(roles.workers)}` : roles.lead.prompt,
-            output_schema: staffed ? constrainWorkerId(roles.lead.output_schema, roles.workers) : roles.lead.output_schema,
-          },
-        };
-
   return {
     ...config,
     sections: { ...config.sections, ...playbook.sections },
     arch: arch.name,
-    roles: led,
+    roles,
     dispatch: arch.dispatch,
     digest: arch.digest,
     name: playbook.name || arch.name,

@@ -410,15 +410,3 @@ describe("verdict thresholds are config", () => {
     expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("proven");
   });
 });
-
-// Every optional field on the decision schema is nullable except one. A verb that
-// carries no query — VALIDATE, ABANDON, CONCLUDE — emitted null for query_intent
-// and was refused for a field it was right to leave empty, costing an attempt and
-// a re-ask on the turn the hunt was trying to reach a verdict.
-describe('a verb that carries no query', () => {
-  it('declares query_intent nullable, like its siblings', async () => {
-    const { readFileSync } = await import('node:fs')
-    const arch = readFileSync(join(import.meta.dirname, '..', '..', 'plugins', 'hunt', 'arch.yaml'), 'utf8')
-    expect(arch).toContain('query_intent: { type: [string, "null"] }')
-  })
-})

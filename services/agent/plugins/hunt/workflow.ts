@@ -90,7 +90,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
 }
 
 // An account of a run, written now, from the spec the run itself was built with --
-// not from whatever the arch files say today. Standalone so a caller needs neither
+// not from whatever plugin.yaml says today. Standalone so a caller needs neither
 // the lease nor the loop: a finished hunt is the one whose write-up a person most
 // wants rewritten, and by then there is nothing left running to ask.
 export async function narrateRun(
