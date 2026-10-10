@@ -306,7 +306,12 @@ const unboundLines = (view: unknown) =>
 const budgetRow = (spent: number | null, max: number | null): LimitRow =>
   spent === null && max === null ? untracked('Budget')
     : max === null ? { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
-    : { label: 'Budget', value: <>{spent === null ? '…' : <Cost usd={spent} />} of {fmtCost(max)}</>, ...(spent === null ? {} : { pct: share(spent, max) }) }
+    : {
+      label: 'Budget',
+      // The ceiling is checked after a call, so the call that crosses it still bills: say so rather than show a plain fraction.
+      value: <>{spent === null ? '…' : <Cost usd={spent} />} of {fmtCost(max)}{spent !== null && spent > max ? ' · over budget' : ''}</>,
+      ...(spent === null ? {} : { pct: share(spent, max), ...(spent > max && { color: 'var(--poor)' }) }),
+    }
 
 /** An investigate run at one step. `costs` are the replay's per-decision spend, so the budget follows the step. */
 export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: number[]; at: number }) {
@@ -408,6 +413,8 @@ function ChainStep({ step }: { step: RecordedStep }) {
 export function RootCausePanels({ d, entries, budgets, at }: { d: WfRunDetail; entries: RootCauseEntry[]; budgets: RootCauseBudgets; at: number }) {
   const view = (d.projection ?? {}) as { cost_usd?: unknown; max_cost_usd?: unknown }
   const chain = chainAt(entries, at)
+  // A finished run that never wrote a chain step will not write one, so "yet" would mislead.
+  const noChain = d.status !== 'running' && d.status !== 'paused' && !entries.some((e) => e.kind === 'step')
   const seen = entries.slice(0, at + 1)
   const searches = seen.filter((e) => e.kind === 'search').length
   const noun = `search${searches === 1 ? '' : 'es'} so far`
@@ -419,7 +426,7 @@ export function RootCausePanels({ d, entries, budgets, at }: { d: WfRunDetail; e
   const budget = budgetRow(num(view.cost_usd), num(view.max_cost_usd))
   return (
     <Columns
-      explanations={chain.length === 0 ? <NoData>No step recorded yet.</NoData> : chain.map((s) => <ChainStep key={s.step_id} step={s} />)}
+      explanations={chain.length === 0 ? <NoData>{noChain ? 'This run ended without recording a step.' : 'No step recorded yet.'}</NoData> : chain.map((s) => <ChainStep key={s.step_id} step={s} />)}
       rows={[
         budget.value === NOT_TRACKED ? budget : { ...budget, note: 'Spend isn’t recorded per step, so this is the run’s total.' },
         max === undefined ? { label: 'Steps', value: `${searches} ${noun} · no step limit recorded` }
