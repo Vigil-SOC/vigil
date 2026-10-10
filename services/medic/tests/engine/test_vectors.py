@@ -1,8 +1,8 @@
 """E3 vectors through the engine (semantics.md §8): every checkpoint and every
 incident must match exactly, and nothing else may open.
 
-Part 2 vectors (grouping cap, flapping, suppression, upgrade windows, group
-retirement) are strict xfail: S4b2 has to flip each one when it lands.
+A vector waiting on a contract fix is strict xfail with its ⚑ (CONTRACT below), so
+the contract PR that fixes it has to flip it.
 """
 
 from __future__ import annotations
@@ -23,11 +23,12 @@ from services.medic.tests.engine.runner import (
     run,
 )
 
-# Part 2 (S4b2). v15 (one group per source), v24 and v27 (groups that never retire)
-# already hold on the part-1 engine, so they must pass now and keep passing.
-PART2 = {f"v{n}" for n in (13, 16, 17, 18, 19, 20, 23, 25, 26)}
+# Engine core part 2 (S4b2) landed: no vector is expected to fail.
+PART2: set[str] = set()
 # Vectors waiting on a contract decision (outputs/skeleton/S4b-notes.md, ⚑ list).
-CONTRACT: dict[str, str] = {}
+CONTRACT: dict[str, str] = {
+    "v26": "⚑ S4b2-1: v26 omits the sensor-blind incident §2 requires (S4b2-notes)",
+}
 RECORD = Draft202012Validator(
     json.loads((CONTRACTS / "decision-record.schema.json").read_text())
 )
@@ -58,17 +59,20 @@ def test_vector(path: Path) -> None:
 
     # Incidents: exactly the expected ones, field for field.
     label_to_id: dict[str, str] = {}
+    found: dict[str, dict] = {}
     for label, want in vector["incidents"].items():
         since = secs(want["active_since"])
         key = (want["rule"], group_key(want.get("group", {})), since)
         if key not in by_key:
             problems.append(f"incident {label} {key} never opened")
             continue
-        iid, got = by_key.pop(key)
-        label_to_id[label] = iid
-        for field, value in want.items():
+        label_to_id[label], found[label] = by_key.pop(key)
+    for label, got in found.items():
+        for field, value in vector["incidents"][label].items():
             if isinstance(value, str) and value.startswith("+"):
                 value = secs(value)
+            if field == "suppressed_by":  # a label naming the parent incident
+                value = label_to_id.get(value, value)
             if got.get(field) != value:
                 problems.append(
                     f"incident {label}.{field}: {got.get(field)} != {value}"
@@ -92,6 +96,8 @@ def test_vector(path: Path) -> None:
             )
         if "incident" in c and got["incident_id"] != label_to_id.get(c["incident"]):
             problems.append(f"{where}: not incident {c['incident']}")
+        if "suppressed" in c and got["suppressed"] != c["suppressed"]:
+            problems.append(f"{where}: suppressed {got['suppressed']}")
     assert problems == []
 
 
@@ -112,7 +118,6 @@ def test_vector_records_are_valid_decision_records(path: Path) -> None:
             rec["body"] = {
                 **body,
                 "lane": lane_ref.lane_of(inc),
-                "route": "routed",
                 "runbook": None,
                 "would_have": lane_ref.would_have(inc, lane),
             }
@@ -122,7 +127,7 @@ def test_vector_records_are_valid_decision_records(path: Path) -> None:
     assert prev is not None or not vector["incidents"]
 
 
-@pytest.mark.parametrize("path", [p for p in VECTORS if p.stem[:3] not in PART2])
+@pytest.mark.parametrize("path", VECTORS, ids=lambda p: p.stem)
 def test_same_inputs_give_byte_identical_records(path: Path) -> None:
     vector = load(path)
     first, second = run(vector).records, run(vector).records
@@ -130,24 +135,30 @@ def test_same_inputs_give_byte_identical_records(path: Path) -> None:
     assert canon(first) == canon(second)
 
 
-NEXT = {  # incident record -> the records that may follow it
-    "incident_opened": {"resolving", "evidence_added"},
-    "resolving": {"refiring", "evidence_added", "incident_resolved"},
-    "refiring": {"resolving", "evidence_added"},
+NEXT = {  # incident lifecycle record -> the lifecycle records that may follow it
+    "incident_opened": {"resolving"},
+    "resolving": {"refiring", "incident_resolved"},
+    "refiring": {"resolving"},
+    "closed": {"reopened"},  # §5 flapping damping reopens the most recent incident
+    "reopened": {"resolving"},
 }
+SIDE = {"evidence_added", "routed", "suppressed", "unsuppressed"}  # while open
 
 
 @pytest.mark.parametrize("path", VECTORS, ids=lambda p: p.stem)
 def test_record_sequences_are_legal(path: Path) -> None:
-    """Each incident: opened once, legal transitions (§4), nothing after resolved,
-    and evidence for at most one observation per rule signal (decision-record.md
-    §3, N4). Records don't name the rule signal, so that last check is a count."""
+    """Each incident: opened once, legal transitions (§4, §5), routing facts only
+    while open, routed at most once and never while suppressed (§6), and evidence
+    for at most one observation per rule signal (decision-record.md §3, N4).
+    Records don't name the rule signal, so that last check is a count."""
     vector = load(path)
     signals = {r.id: len(r.rule["signals"]) for r in rules_of(vector)}
     last: dict[str, str] = {}
     keys: set[tuple] = set()
     items: dict[str, int] = {}
     limit: dict[str, int] = {}
+    routed: dict[str, bool] = {}
+    suppressed: dict[str, bool] = {}
     for rec in run(vector).records:
         body = rec["body"]
         iid = body["incident_id"]
@@ -159,11 +170,27 @@ def test_record_sequences_are_legal(path: Path) -> None:
             items[iid] = len(body["evidence"])
             limit[iid] = signals.get(body["rule"]["id"], 1)
             last[iid] = "incident_opened"
+            routed[iid], suppressed[iid] = body["route"] == "routed", False
+            continue
+        step = body.get("change", rec["type"])
+        if body.get("how") in ("rule_retired", "group_retired"):
+            step = "retired"  # §4: ends an open incident at once, no resolving phase
+            assert last.get(iid) not in (None, "closed"), (iid, step)
+            last[iid] = "closed"
+        elif step in SIDE:
+            assert last.get(iid) not in (None, "closed"), (iid, step)
         else:
-            step = body.get("change", rec["type"])
-            assert last.get(iid) in NEXT and step in NEXT[last[iid]], (iid, step)
-            if step == "evidence_added":
-                items[iid] += len(body["evidence"])
-            else:
-                last[iid] = "closed" if step == "incident_resolved" else step
+            assert step in NEXT.get(last.get(iid, ""), ()), (iid, last.get(iid), step)
+            last[iid] = "closed" if step == "incident_resolved" else step
+        if step == "evidence_added":
+            items[iid] += len(body["evidence"])
+        elif step == "suppressed":
+            assert not routed[iid] and not suppressed[iid], (iid, step)
+            suppressed[iid] = True
+        elif step == "unsuppressed":
+            assert suppressed[iid], (iid, step)
+            suppressed[iid] = False
+        elif step == "routed":
+            assert not routed[iid] and not suppressed[iid], (iid, step)
+            routed[iid] = True
         assert items[iid] <= limit[iid], f"{iid}: more evidence than rule signals"
