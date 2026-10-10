@@ -1678,49 +1678,6 @@
    }
 
    /* ---------- Vigil chat dock ---------- */
-   /* bottom:52px (not 24px) lifts the FAB clear of the bottom pager row, so it
-     never covers the prev/next pagination buttons in the bottom-right corner */
-   .chat-fab {
-      position: fixed;
-      right: 24px;
-      bottom: 52px;
-      z-index: 25;
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      padding: 12px 18px 12px 16px;
-      border-radius: 999px;
-      border: none;
-      background: linear-gradient(150deg, var(--accent), var(--accent-2));
-      color: var(--ac-tx);
-      font-family: var(--font);
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--accent-line);
-      transition: transform .15s cubic-bezier(.4, 0, .2, 1), opacity .2s, box-shadow .15s;
-   }
-
-   .chat-fab:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 16px 34px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--accent-2);
-   }
-
-   .chat-fab:active {
-      transform: translateY(0);
-   }
-
-   .chat-fab svg {
-      width: 18px;
-      height: 18px;
-   }
-
-   .chat-active .chat-fab {
-      opacity: 0;
-      pointer-events: none;
-      transform: translateY(10px) scale(.96);
-   }
-
    .chat {
       position: fixed;
       top: 0;
@@ -2380,13 +2337,6 @@
       }
 
       /* .detail-body is already a single-column flex stack — nothing to change */
-      .chat-fab span {
-         display: none;
-      }
-
-      .chat-fab {
-         padding: 13px;
-      }
    }
 
    @media (max-width: 600px) {

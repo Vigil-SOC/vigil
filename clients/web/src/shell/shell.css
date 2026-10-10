@@ -2012,6 +2012,11 @@ select.vg-side-input {
   pointer-events: none;
 }
 
+/* the command-bar Ask Vigil button is a pill; the ring follows its shape */
+.console-tour-ring[data-stop="ask"] {
+  border-radius: var(--radius-round);
+}
+
 /* 16px radius is the board's; the token scale stops at 14px. */
 .console-tour-card {
   position: fixed;

@@ -20,16 +20,18 @@ const COPY: Record<TourStopId, { title: string; body: string; selector: string }
   ask: {
     title: 'Ask Vigil anywhere',
     body: 'Ask about the page you are on or any case. Conversations are private to you and kept in your history.',
-    selector: '.chat-fab',
+    selector: '.vg-command-ask',
   },
 }
 
-const PAD = 6
+// The ask stop's ring hugs the command-bar button, as the board's glow does.
+const PAD: Record<TourStopId, number> = { nav: 6, attention: 6, ask: 0 }
 const CARD_W = 330
 const CARD_H = 168 // first-paint guess; the rendered height replaces it
 const GAP = 12
 
-function cardPosition(stop: TourStopId, rect: DOMRect | null, cardH: number): { top: number; left: number } {
+// floor: the bottom edge of the bar the target sits in, if any
+function cardPosition(stop: TourStopId, rect: DOMRect | null, floor: number, cardH: number): { top: number; left: number } {
   const vw = window.innerWidth
   const vh = window.innerHeight
   const left = rect && rect.width > 0
@@ -42,8 +44,9 @@ function cardPosition(stop: TourStopId, rect: DOMRect | null, cardH: number): { 
     case 'nav':
     case 'attention':
       return { top: below + cardH < vh ? below : Math.max(12, above), left }
+    // TourAsk: the card hangs just under the top bar, from the button
     case 'ask':
-      return { top: above > 12 ? above : below, left }
+      return { top: Math.max(below, floor + 8), left }
     default: {
       const neverStop: never = stop
       return neverStop
@@ -65,6 +68,7 @@ export default function ConsoleTour({
   const stop = stops[Math.min(index, stops.length - 1)] ?? 'nav'
   const copy = COPY[stop]
   const [rect, setRect] = useState<DOMRect | null>(null)
+  const [floor, setFloor] = useState(0)
   const last = index >= stops.length - 1
   const cardRef = useRef<HTMLDivElement>(null)
   const [cardH, setCardH] = useState(CARD_H)
@@ -83,6 +87,7 @@ export default function ConsoleTour({
     const measure = () => {
       const el = document.querySelector(copy.selector)
       setRect(el ? el.getBoundingClientRect() : null)
+      setFloor(el?.closest('header')?.getBoundingClientRect().bottom ?? 0)
       return Boolean(el)
     }
     const watch = () => {
@@ -114,7 +119,8 @@ export default function ConsoleTour({
     }
   }, [copy.selector])
 
-  const card = cardPosition(stop, rect, cardH)
+  const card = cardPosition(stop, rect, floor, cardH)
+  const pad = PAD[stop]
 
   return (
     <div className="console-tour" role="dialog" aria-modal="false" aria-labelledby="console-tour-title">
@@ -123,10 +129,10 @@ export default function ConsoleTour({
           className="console-tour-ring"
           data-stop={stop}
           style={{
-            top: rect.top - PAD,
-            left: rect.left - PAD,
-            width: rect.width + PAD * 2,
-            height: rect.height + PAD * 2,
+            top: rect.top - pad,
+            left: rect.left - pad,
+            width: rect.width + pad * 2,
+            height: rect.height + pad * 2,
           }}
         />
       )}
