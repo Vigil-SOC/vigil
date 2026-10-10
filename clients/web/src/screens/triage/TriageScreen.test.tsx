@@ -38,6 +38,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
           provenance: 'embedded',
           payload_included: false,
         },
+        title: null,
         description: 'Odd login',
         finding_id: 'f-9',
         created_at: '2026-10-01T00:00:00',
@@ -63,6 +64,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         document: 'please look',
         source_link: null,
         source_evidence: null,
+        title: null,
         description: null,
         finding_id: null,
         created_at: '2026-10-01T00:00:00',
@@ -337,11 +339,27 @@ describe('TriageScreen', () => {
     expect(screen.queryByLabelText('Expanded row')).not.toBeInTheDocument()
   })
 
+  it('shows a detection by its title, with the description in the cell title, else the finding id', async () => {
+    const base = payload()
+    const [detection, ask] = base.rows
+    const rows = [
+      { ...detection, id: 10, title: 'Brute force', description: 'raw event text' },
+      { ...detection, id: 11, title: '', description: null, finding_id: 'f-bare' },
+      ask,
+    ]
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, rows } } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    expect(screen.getByText('Brute force')).toHaveAttribute('title', 'raw event text')
+    expect(screen.getByText('f-bare')).toHaveAttribute('title', 'f-bare')
+    expect(screen.getByText('please look')).toBeInTheDocument()
+  })
+
   it('hides Open in source without a link, and shows an Ask’s document', async () => {
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
     renderScreen()
     await screen.findByLabelText('Intake strip')
-    // the detection shows its description, clamped by CSS with the full text in title
+    // no title: the detection shows its description
     expect(screen.getByText('Odd login')).toHaveAttribute('title', 'Odd login')
     fireEvent.click(screen.getByText('please look'))
     await screen.findByLabelText('Expanded row')

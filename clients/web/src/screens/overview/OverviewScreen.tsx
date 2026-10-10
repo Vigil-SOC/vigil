@@ -41,7 +41,7 @@ function legendTitle(data: OverviewPayload): string {
   return `Health: Good ${pct(data.good_at)}% and up, Fair ${pct(data.fair_at)} to ${pct(data.good_at)}%, Poor under ${pct(data.fair_at)}%.`
 }
 
-/** The popup header: severity and "id · time" over the description. */
+/** The popup header: severity and "id · time" over the alert name. */
 function PopupTitle({ item }: { item: OverviewFeedItem }) {
   return (
     <span className="ov-pop-t">
@@ -49,7 +49,7 @@ function PopupTitle({ item }: { item: OverviewFeedItem }) {
         <SevMark severity={item.severity} />
         <span>{item.finding_id} · {clock(item.created_at)}</span>
       </span>
-      <span className="ov-pop-d">{item.description ?? item.finding_id}</span>
+      <span className="ov-pop-d">{item.title || item.description || item.finding_id}</span>
     </span>
   )
 }
@@ -346,6 +346,7 @@ export default function OverviewScreen({ go, openCase, setViewFull, setWallMode,
                 </dd>
               </div>
             </dl>
+            {open.title && open.description && <p className="ov-pop-desc">{open.description}</p>}
             <EvidenceBody item={open} />
             <div className="flex items-center gap-2 flex-wrap">
               <button type="button" className="btn ghost" onClick={markNoise}>

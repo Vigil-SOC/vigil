@@ -516,7 +516,12 @@ def test_alert_read_matches_the_feed_item_and_reaches_past_the_feed(client):
                     evidence_links=[{"ref": "https://console.example/old"}],
                 ),
                 _finding("ov-marked-one", base, noise_marked_at=base),
-                _finding("ov-in-feed", base + timedelta(hours=2), description="fresh"),
+                _finding(
+                    "ov-in-feed",
+                    base + timedelta(hours=2),
+                    title="Fresh alert",
+                    description="fresh",
+                ),
             ]
         )
         session.add_all(
@@ -532,6 +537,7 @@ def test_alert_read_matches_the_feed_item_and_reaches_past_the_feed(client):
     # in the feed: same item as the feed row
     body = client.get("/api/overview/alerts/ov-in-feed").json()
     assert body == feed["ov-in-feed"]
+    assert body["title"] == "Fresh alert" and body["description"] == "fresh"
     # older than the feed cap: still readable, with link and case
     old = client.get("/api/overview/alerts/ov-old").json()
     assert old["source_link"] == "https://console.example/old"

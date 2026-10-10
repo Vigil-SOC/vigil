@@ -66,7 +66,8 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
     e.preventDefault()
     onOpen(item.finding_id)
   }
-  const title = item.description ?? item.finding_id
+  const text = item.title || item.description || item.finding_id
+  const full = item.title && item.description ? item.description : text
   return (
     <div role="button" tabIndex={0} className="ov-row" onClick={() => onOpen(item.finding_id)} onKeyDown={onKey}>
       <div className="ov-row-1">
@@ -77,7 +78,7 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
           <time className="ov-time" title={item.created_at ?? undefined}>{clock(item.created_at)}</time>
         </span>
       </div>
-      <div className="ov-row-t" title={title}>{title}</div>
+      <div className="ov-row-t" title={full}>{text}</div>
       <div className="ov-row-3">
         <b>{badge.label}</b>
         <span>·</span>
