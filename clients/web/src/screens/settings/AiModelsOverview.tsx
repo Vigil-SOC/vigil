@@ -271,7 +271,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   }
 
   const resetting = fusing.includes(RESET_KEY)
-  // Rows with their own assignment, Chat (Default) aside; these are what Reset clears.
+  // Rows with their own assignment, Chat (Ask Vigil) aside; these are what Reset clears.
   const resettable = components.filter((c) => c !== CHAT_DEFAULT_KEY && assignments[c])
   // The assignment a row shows: none while its reset is pending, so the row reads as Use default.
   const ownOf = (c: string) => (resetting && c !== CHAT_DEFAULT_KEY ? undefined : assignments[c])
@@ -344,7 +344,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       wide
       id={AGENT_MODEL_TABLE_ID}
       title="Model for each agent"
-      desc="Pick a model per agent, and optionally how hard it thinks, or leave it on the default. Unassigned rows use Chat (Default). Workflow runs use the investigation assignment."
+      desc="Pick a model per agent, and optionally how hard it thinks, or leave it on the default. Unassigned rows use Chat (Ask Vigil). Workflow runs use the investigation assignment."
       actions={
         <button className="btn ghost" disabled={resettable.length === 0 || resetting} onClick={resetAll}>
           Reset to defaults
@@ -500,7 +500,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
         open={!!pending}
         danger={false}
         title="Change the default model?"
-        body="Chat (Default) is the model every agent without its own assignment falls back to, including custom agents. The change is logged with your name."
+        body="Chat (Ask Vigil) is the model every agent without its own assignment falls back to, including custom agents. The change is logged with your name."
         confirmLabel="Change default"
         onConfirm={confirm}
         onClose={cancel}

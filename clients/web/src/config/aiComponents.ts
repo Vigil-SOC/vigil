@@ -1,4 +1,4 @@
-// Shared by AI Config settings and the setup wizard, so the two can't drift.
+// Row copy for the Settings model table.
 // Ids come from core/llm/providers/registry.py COMPONENTS.
 export const CHAT_DEFAULT_KEY = 'chat_default'
 // Where ai_model_configs.settings keeps a component's same-provider fallback model.
@@ -6,24 +6,24 @@ export const FALLBACK_KEY = 'fallback_model_id'
 
 export const COMPONENT_LABELS: Record<string, { label: string; description: string }> = {
   chat_default: {
-    label: 'Chat (Default)',
-    description: 'Fallback for interactive chat and every component below when unset.',
+    label: 'Chat (Ask Vigil)',
+    description: 'Default for chat and anything not set below',
   },
   triage: {
-    label: 'Triage Agent',
-    description: 'Automated alert triage — cheaper/faster models work well here.',
+    label: 'Triage agent',
+    description: 'Runs on every alert: fast and cheap',
   },
   investigation: {
-    label: 'Investigation Agents',
-    description: 'Investigator, Threat Hunter, Correlator, etc. — the heavy lifters.',
+    label: 'Investigation agents',
+    description: 'Investigation, correlation, forensics, malware, network',
   },
   summarization: {
-    label: 'Context Summarization',
-    description: 'Compresses long conversations — a cheap model is usually fine.',
+    label: 'Summarizing long context',
+    description: 'Condenses long documents before a hunt reads them',
   },
   reporting: {
-    label: 'Report Generation',
-    description: 'Reporter agent output — clarity and structure matter more than depth.',
+    label: 'Reporting agent',
+    description: 'Summaries and briefs',
   },
 }
 
