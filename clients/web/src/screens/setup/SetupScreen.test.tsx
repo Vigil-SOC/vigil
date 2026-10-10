@@ -423,12 +423,34 @@ describe('SetupScreen', () => {
         })
       })
 
-      it('lists the missing credentials the server names', async () => {
-        failWith({ missing_credentials: ['CLIENT_ID', 'CLIENT_SECRET'] })
+      it('names the missing fields by their labels, not the server\'s variable names', async () => {
+        failWith({ missing_credentials: ['FALCON_CLIENT_ID', 'FALCON_CLIENT_SECRET'] })
         await openStep()
         fillCrowdStrike()
         testConnection()
-        expect(await screen.findByText('Missing required credentials: CLIENT_ID, CLIENT_SECRET.')).toBeInTheDocument()
+        const rows = await screen.findByRole('list', { name: 'Connection checks' })
+        expect(
+          within(rows).getByText(
+            "CrowdStrike Falcon didn't accept the connection: Client ID and Client Secret are missing or wrong. Check them and test again.",
+          ),
+        ).toBeInTheDocument()
+        expect(within(rows).getByRole('img', { name: 'Needs you' })).toBeInTheDocument()
+        expect(screen.queryByText(/FALCON_/)).not.toBeInTheDocument()
+        expect(screen.queryByText(/^Connected\./)).not.toBeInTheDocument()
+      })
+
+      it('turns the raw "missing credentials: VAR" error into a plain message', async () => {
+        failWith({ error: 'missing credentials: FALCON_CLIENT_ID', missing_credentials: undefined })
+        await openStep()
+        fillCrowdStrike()
+        testConnection()
+        const rows = await screen.findByRole('list', { name: 'Connection checks' })
+        expect(
+          within(rows).getByText(
+            "CrowdStrike Falcon didn't accept the connection: Client ID is missing or wrong. Check it and test again.",
+          ),
+        ).toBeInTheDocument()
+        expect(screen.queryByText(/missing credentials/)).not.toBeInTheDocument()
       })
 
       it('says the result could not be confirmed when the MCP service cannot say, with no banner', async () => {
