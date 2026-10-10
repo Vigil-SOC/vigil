@@ -202,7 +202,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
           </>
         }
       />
-      <section className="card card-sq settings-card wide" aria-label="Policies">
+      <section className="card card-sq settings-card wide sla-list" aria-label="Policies">
         <div className="card-b table-wrap">
           <table className="tbl sla-tbl">
             <thead>
@@ -238,7 +238,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
                         {p.is_active === false && <span className="sla-flag">Inactive</span>}
                       </div>
                       {n !== undefined && n !== null && (
-                        <div className="text-xs text-tx-3 mt-0.5">{n === 1 ? '1 case' : `${n} cases`} this month</div>
+                        <div className="sla-cases">{n === 1 ? '1 case' : `${n} cases`} this month</div>
                       )}
                     </td>
                     <td>

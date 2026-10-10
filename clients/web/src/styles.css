@@ -4634,13 +4634,30 @@
       padding-right: 0;
    }
 
-   /* SLA policies: severity dot, inline editor (SettingsSLA board) */
+   /* SLA policies: the table sits on the board's 16px card and 2px cell padding; inline editor (SettingsSLA board) */
+   .settings-content .sla-list .card-b {
+      padding: 8px 16px 10px;
+   }
+
+   .settings-content .sla-tbl thead th,
+   .settings-content .sla-tbl tbody td {
+      padding: 10px 2px;
+   }
+
    .sla-name {
       max-width: 280px;
       overflow: hidden;
       text-overflow: ellipsis;
       font-weight: 600;
+      line-height: 16px;
       color: var(--tx0);
+   }
+
+   .sla-cases {
+      margin-top: 2px;
+      font-size: 11px;
+      line-height: 13px;
+      color: var(--tx3);
    }
 
    .sla-flag {
