@@ -690,6 +690,11 @@ export function CasePage({
   const gaps = visibilityGaps(fold)
   const recalled = recallEntityCalls(fold)
   const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind) === chip)
+  const chipCounts = useMemo(() => {
+    const counts: Record<RecordChip, number> = { agent: 0, human: 0, memory: 0, system: 0 }
+    for (const row of rows) counts[recordChip(row.kind)] += 1
+    return counts
+  }, [rows])
 
   const promptFor = (text?: string) => {
     const base = c
@@ -1031,7 +1036,7 @@ export function CasePage({
                 <div className="rec-chips" role="group" aria-label="Record source">
                   <FilterChip label={`All ${rows.length}`} active={chip === 'all'} onClick={() => setChip('all')} />
                   {RECORD_CHIPS.map((name) => (
-                    <FilterChip key={name} label={name[0].toUpperCase() + name.slice(1)} active={chip === name} onClick={() => setChip(name)} />
+                    <FilterChip key={name} label={`${name[0].toUpperCase() + name.slice(1)} ${chipCounts[name]}`} active={chip === name} onClick={() => setChip(name)} />
                   ))}
                   <InfoTip
                     label="About the record"
