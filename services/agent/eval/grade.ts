@@ -57,15 +57,21 @@ export interface GraderClient {
   complete(system: string, user: string): Promise<{ text: string; cost_usd?: number }>;
 }
 
-// Asked twice at most: a grader that cannot be parsed is recorded as such, never guessed.
+export class GradeFailed extends Error {}
+
+// Asked three times at most. A grader that cannot be parsed is an error on the
+// result, never a verdict: counted as undetermined it would read as a run that
+// held the case, which is a claim about the engine the engine never made.
 export async function grade(client: GraderClient, report: string): Promise<Graded> {
   const user = `## Final report\n\n${report.trim() === "" ? "(the run left no report)" : report}`;
   let cost = 0;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  let last = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const answer = await client.complete(GRADER_PROMPT, user);
     cost += answer.cost_usd ?? 0;
+    last = answer.text;
     const parsed = parseVerdict(answer.text);
     if (parsed !== null) return { ...parsed, grader: client.model, cost_usd: cost };
   }
-  return { verdict: "undetermined", reason: "the grader did not answer in the expected shape", grader: client.model, cost_usd: cost };
+  throw new GradeFailed(`the grader did not answer in the expected shape: ${JSON.stringify(last.slice(0, 200))}`);
 }

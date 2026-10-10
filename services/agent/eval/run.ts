@@ -142,7 +142,9 @@ function graderClient(): GraderClient {
     complete: async (system, user) => {
       const response = await client.chat.completions.create({
         model: GRADER_MODEL,
-        max_tokens: 300,
+        // Room for a model that reasons before it answers: a thinking model given a
+        // small ceiling spends it all thinking and returns no text.
+        max_tokens: 2_000,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },

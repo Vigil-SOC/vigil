@@ -108,6 +108,8 @@ describe("scoring", () => {
     expect(scored.recall).toBeCloseTo(2 / 4);
     expect(scored.f1).toBeCloseTo((2 * (2 / 3) * 0.5) / (2 / 3 + 0.5));
     expect(scored.cost_per_case).toBeCloseTo(0.1);
+    expect(scored.cost_attack_total).toBeCloseTo(0.4);
+    expect(scored.cost_benign_per_case).toBeCloseTo(0.1);
   });
 
   it("lists, case by case, where two engines disagree", () => {
