@@ -362,7 +362,7 @@ function CasesTable({
                     <span role="cell" title="Coming in a later release" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" className="cg-check" disabled aria-label={`Select case ${c.id}`} />
                     </span>
-                    <span role="cell" className="cg-id">{c.id}</span>
+                    <span role="cell" className="cg-id" title={c.id}>{c.id}</span>
                     <span role="cell" className="cg-what" title={c.desc || c.title}>
                       <span className="cg-title">{c.title}</span>
                       <span className="cg-sub">{metaLine(c)}</span>

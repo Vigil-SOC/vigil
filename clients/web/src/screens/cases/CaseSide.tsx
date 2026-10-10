@@ -4,7 +4,8 @@ import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { MeterBar } from '../../shared/MeterBar'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
-import { money, timeLeft, when } from './caseFormat'
+import { fmtCost } from '../../shared/cost'
+import { timeLeft, when } from './caseFormat'
 import { IN_FLIGHT } from '../workflows/runRead'
 import type { RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
@@ -61,7 +62,7 @@ function Details({ latest, workflowNames, sla, closed, fold, spend }: {
         <dt>Workflow</dt>
         <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : '—'}</dd>
         <dt>Limit</dt>
-        <dd>{spend.cap ? money(spend.cap) : '—'}</dd>
+        <dd>{spend.cap ? fmtCost(spend.cap) : '—'}</dd>
         <dt>Resolve by</dt>
         <dd>
           {sla ? when(sla.due) : '—'}
@@ -115,7 +116,7 @@ function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
       {cost !== null && cost > 0 ? (
         <>
           <div className="side-cost">
-            <span>{cap ? `${money(cost)} of ${money(cap)}` : money(cost)}</span>
+            <span>{cap ? `${fmtCost(cost)} of ${fmtCost(cap)}` : fmtCost(cost)}</span>
             {cap && <LevelBadge level={level} className={`side-level ${level ?? ''}`} />}
           </div>
           {cap && <MeterBar pct={(cost / cap) * 100} level={level} label="Cost against the limit" />}
