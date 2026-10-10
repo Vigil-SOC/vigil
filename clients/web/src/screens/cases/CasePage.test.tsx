@@ -2004,6 +2004,30 @@ describe('watching a run, its cost and its agents', () => {
     expect(await (await side()).findByText('Not measured yet')).toBeInTheDocument()
   })
 
+  it('shows a lead run’s cost against the cap off its projection, and never past full', async () => {
+    const lead = (cost: number, cap: number) => ({
+      status: 'completed',
+      projection: { iterations: 2, decisions: [], findings: [], calls: [], gaps: [], recall: null, outcome: 'completed', reason: 'done', cost_usd: cost, max_cost_usd: cap },
+    })
+    open('case-l1', lead(2.1, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
+    const panel = await side()
+    expect(await panel.findByText('$2.10 of $15.00')).toBeInTheDocument()
+    expect(panel.getByText('Good')).toBeInTheDocument()
+    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$15.00')
+    cleanup()
+
+    open('case-l2', lead(20, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 20 })
+    const over = await side()
+    expect(await over.findByText('$20.00 of $15.00')).toBeInTheDocument()
+    expect(over.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
+    cleanup()
+
+    open('case-l3', lead(2.1, 0), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
+    const none = await side()
+    expect(await none.findByText('$2.10')).toBeInTheDocument()
+    expect(none.queryByRole('meter')).not.toBeInTheDocument()
+  })
+
   it('lists agents only while the run is in flight', async () => {
     open('case-a', { status: 'running', hunt: hunt() })
     const table = await screen.findByRole('table', { name: 'Agents' })

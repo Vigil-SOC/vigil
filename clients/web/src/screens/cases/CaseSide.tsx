@@ -31,12 +31,12 @@ interface Spend {
 /** What the newest run has spent against what it was granted. `fold` is that run's fold, or null when it is another run. */
 function spendOf(latest: CaseInvestigationRef | null, fold: RunFold | null): Spend {
   const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
-  const foldCap = fold?.kind === 'hunt' && fold.maxCostUsd ? fold.maxCostUsd : null
+  const foldCap = fold?.maxCostUsd ? fold.maxCostUsd : null
   // The refs are re-read only when a run ends, so a run in flight is read off its own fold.
   const cost = (inFlight ? fold.costUsd ?? latest?.cost_usd : latest?.cost_usd || fold?.costUsd) ?? null
   const cap = foldCap ?? (latest && latest.max_cost_usd > 0 ? latest.max_cost_usd : null)
   if (cost === null || cap === null) return { cost, cap, level: null }
-  // A live number or a fold's cap outruns the server's word, which a hunt's ref never had a cap for.
+  // A live number or a fold's cap outruns the server's word, which a run-only ref never had a cap for.
   const level = inFlight || foldCap !== null ? levelOf(cost / cap) : slaLevel(latest?.budget_health)
   return { cost, cap, level }
 }
