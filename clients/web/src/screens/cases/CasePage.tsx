@@ -12,6 +12,7 @@ import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
+import { useToast } from '../../shell/toast'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
@@ -160,8 +161,8 @@ function CaseNeeds({
   items: NeedsYouItem[]
   busy: boolean
   error: string | null
-  onApprove: (id: string) => void
-  onReject: (id: string, reason: string) => void
+  onApprove: (item: NeedsYouItem) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
 }) {
   if (items.length === 0) return null
   return (
@@ -182,8 +183,8 @@ function CaseNeed({
 }: {
   item: NeedsYouItem
   busy: boolean
-  onApprove: (id: string) => void
-  onReject: (id: string, reason: string) => void
+  onApprove: (item: NeedsYouItem) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
@@ -209,11 +210,11 @@ function CaseNeed({
       </dl>
       <div className="needs-actions">
         {reversible ? (
-          <button type="button" className="btn" disabled={busy} onClick={() => onApprove(item.source_id)}>
+          <button type="button" className="btn" disabled={busy} onClick={() => onApprove(item)}>
             Approve
           </button>
         ) : (
-          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item)} />
         )}
         <button
           type="button"
@@ -232,7 +233,7 @@ function CaseNeed({
             event.preventDefault()
             const text = reason.trim()
             if (!text) return
-            onReject(item.source_id, text)
+            onReject(item, text)
           }}
         >
           <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
@@ -538,6 +539,7 @@ export function CasePage({
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const decisionBusyRef = useRef<string | null>(null)
+  const { notifyUndoable, pending, settled } = useToast()
   const needsTicket = useRef(0)
   const seenCase = useRef(id)
   if (seenCase.current !== id) {
@@ -731,6 +733,38 @@ export function CasePage({
     }
   }
 
+  // a fused commit just landed or failed (maybe after this page was closed and reopened): refresh.
+  // onChanged is a fresh closure each render, so it is read through a ref, not an effect dependency.
+  const onChangedRef = useRef(onChanged)
+  onChangedRef.current = onChanged
+  const seenSettled = useRef(settled)
+  useEffect(() => {
+    if (seenSettled.current === settled) return
+    seenSettled.current = settled
+    void loadNeeds()
+    onChangedRef.current()
+  }, [settled, loadNeeds])
+
+  // Reversible approve and every reject commit through the toast's undo fuse, which owns the call
+  // and survives closing the case. A held (irreversible) approve commits at once via decide().
+  const fuse = (item: NeedsYouItem, verb: string, past: string, commit: () => Promise<unknown>) =>
+    notifyUndoable({
+      key: item.source_id,
+      text: `${verb}: ${item.title}`,
+      commit,
+      doneText: `${past}: ${item.title}`,
+      failText: (e) => detailOf(e, 'Could not update that decision'),
+    })
+
+  const approve = (item: NeedsYouItem) => {
+    const commit = () => approvalsApi.approve(item.source_id)
+    if (item.reversibility === 'reversible') fuse(item, 'Approving', 'Approved', commit)
+    else void decide(item.source_id, commit)
+  }
+
+  const reject = (item: NeedsYouItem, reason: string) =>
+    fuse(item, 'Rejecting', 'Rejected', () => approvalsApi.reject(item.source_id, reason))
+
   const decide = async (sourceId: string, act: () => Promise<unknown>) => {
     if (decisionBusyRef.current) return
     const forCase = id
@@ -766,27 +800,30 @@ export function CasePage({
     }
   }
 
+  // items whose fuse is running stay out of the block, the ask and the count, so a poll can't bring them back
+  const shownNeeds = needsItems.filter((it) => !pending.includes(it.source_id))
+  const needsShown = Math.max(0, needsCount - (needsItems.length - shownNeeds.length))
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
-  const stopped = closed || needsCount > 0 ? null : stoppedRun(fold)
+  const stopped = closed || needsShown > 0 ? null : stoppedRun(fold)
   const pillState = closed ? 'closed' : stopped?.state ?? pill
   // Only what exists: the live investigation's status, else the run's outcome.
   const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
-  const tone = statePill(pillState, needsCount > 0).tone
+  const tone = statePill(pillState, needsShown > 0).tone
   const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedBy(closure) : ''
+    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedBy(closure) : ''
   const needsBlock = (
     <CaseNeeds
-      items={needsItems}
+      items={shownNeeds}
       busy={decisionBusy !== null}
       error={decisionError}
-      onApprove={(sourceId) => void decide(sourceId, () => approvalsApi.approve(sourceId))}
-      onReject={(sourceId, reason) => void decide(sourceId, () => approvalsApi.reject(sourceId, reason))}
+      onApprove={approve}
+      onReject={reject}
     />
   )
 
@@ -818,7 +855,7 @@ export function CasePage({
             <h2>{c.title}</h2>
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
-              <StatePill state={pillState} needs={needsCount > 0} />
+              <StatePill state={pillState} needs={needsShown > 0} />
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
@@ -848,7 +885,7 @@ export function CasePage({
         />
       </div>
 
-      {needsCount > 0 && tab !== 'Summary' && <NeedsStrip ask={needsItems[0]?.title} onDecide={() => setTab('Summary')} />}
+      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={shownNeeds[0]?.title} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
