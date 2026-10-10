@@ -186,7 +186,7 @@ describe('SetupProviderStep', () => {
         },
       } as never)
       render(<SetupProviderStep onRoutable={() => {}} />)
-      expect(await screen.findByText('Triage Agent')).toBeInTheDocument()
+      expect(await screen.findByText('Triage agent')).toBeInTheDocument()
       expect(screen.getByText('claude-haiku-4-5')).toBeInTheDocument()
       expect(screen.getAllByText('Provider default')).toHaveLength(2)
       expect(screen.getByText('mystery')).toBeInTheDocument()
