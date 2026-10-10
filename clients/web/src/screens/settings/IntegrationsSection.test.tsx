@@ -126,6 +126,35 @@ describe('Integrations: Connected table', () => {
     expect(screen.getByText('Okta')).toBeInTheDocument()
   })
 
+  it('keeps a row on Connected, shown Off, when it is switched off, and switches back on', async () => {
+    let on = true
+    const statuses = () => ({
+      data: {
+        statuses: [
+          { name: 'github', status: 'running', enabled: true },
+          { name: 'security-detections', status: on ? 'running' : 'disconnected', enabled: on },
+        ],
+      },
+    })
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['github', 'security-detections'] } } as never)
+    vi.mocked(mcpApi.getStatuses).mockImplementation((() => Promise.resolve(statuses())) as never)
+    vi.mocked(mcpApi.setServerEnabled).mockImplementation(((_n: string, want: boolean) => {
+      on = want
+      return Promise.resolve({ data: { connected: want } })
+    }) as never)
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 2' })
+
+    fireEvent.click(row('Security Detections').getByRole('switch', { name: 'Toggle security-detections' }))
+    await waitFor(() => expect(mcpApi.setServerEnabled).toHaveBeenCalledWith('security-detections', false))
+    await waitFor(() => expect(row('Security Detections').getByText('Off')).toBeInTheDocument())
+    expect(screen.getByRole('tab', { name: 'Connected 2' })).toBeInTheDocument()
+
+    fireEvent.click(row('Security Detections').getByRole('switch', { name: 'Toggle security-detections' }))
+    await waitFor(() => expect(mcpApi.setServerEnabled).toHaveBeenLastCalledWith('security-detections', true))
+    await waitFor(() => expect(row('Security Detections').getByText('Good')).toBeInTheDocument())
+  })
+
   it('shows a dash, not a level, where nothing was ever tested', async () => {
     vi.mocked(configApi.getIntegrations).mockResolvedValue({
       data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },

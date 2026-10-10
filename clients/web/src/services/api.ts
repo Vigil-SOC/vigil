@@ -599,6 +599,8 @@ export interface IntegrationTestResult {
   // "not_testable": a catalog-only entry with no MCP server behind it
   reason?: string
   servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
+  /** the read-only check of the saved URL and credentials, for integrations that have one */
+  credentials?: { success: boolean; message: string }
 }
 
 export const configApi = {

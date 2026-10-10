@@ -18,7 +18,28 @@ export interface ConnectResult {
 
 type Outcome = { kind: 'testing' } | { kind: 'done'; result: ConnectResult } | { kind: 'failed'; message: string }
 
-const connectionRow = (name: string, o: Outcome): CheckRow => {
+/** The label of the form field an env var such as FALCON_CLIENT_ID stands for, else the var in words. */
+const fieldLabel = (integration: IntegrationMetadata, envVar: string): string => {
+  const token = envVar.toLowerCase()
+  const field = fieldsOf(integration).find((f) => token === f.name.toLowerCase() || token.endsWith(`_${f.name.toLowerCase()}`))
+  if (field) return field.label
+  const words = token.replace(/_+/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** What a refused connect says in words: which fields, never the server's "missing credentials: VAR". */
+const refusal = (integration: IntegrationMetadata, error?: string, missing?: string[]): string => {
+  const vars = missing?.length ? missing : /^missing credentials:\s*(.+)$/i.exec(error ?? '')?.[1].split(/[,\s]+/).filter(Boolean)
+  if (vars?.length) {
+    const labels = vars.map((v) => fieldLabel(integration, v))
+    const list = labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}` : labels[0]
+    return `${integration.name} didn't accept the connection: ${list} ${labels.length > 1 ? 'are' : 'is'} missing or wrong. Check ${labels.length > 1 ? 'them' : 'it'} and test again.`
+  }
+  return error || `Couldn't connect to ${integration.name}. Check the credentials and try again.`
+}
+
+const connectionRow = (integration: IntegrationMetadata, o: Outcome): CheckRow => {
+  const name = integration.name
   const row = { id: 'connection', label: 'Connection' }
   if (o.kind === 'testing') return { ...row, phase: 'checking', detail: `Connecting to ${name}…` }
   if (o.kind === 'failed') return { ...row, phase: 'needs', detail: o.message }
@@ -26,15 +47,7 @@ const connectionRow = (name: string, o: Outcome): CheckRow => {
   if (connected === true) return { ...row, phase: 'passed', detail: `Connected to ${name}` }
   if (connected === null)
     return { ...row, phase: 'waiting', detail: `Saved, but the connection to ${name} could not be confirmed` }
-  return {
-    ...row,
-    phase: 'needs',
-    detail:
-      error ||
-      (missing?.length
-        ? `Missing required credentials: ${missing.join(', ')}.`
-        : `Couldn't connect to ${name}. Check the credentials and try again.`),
-  }
+  return { ...row, phase: 'needs', detail: refusal(integration, error, missing) }
 }
 
 /** The inline "Connect <name>" card: fields, Test connection, its result rows and the Connected banner. */
@@ -87,7 +100,7 @@ export default function ConnectSource({
   }
 
   const passed = outcome?.kind === 'done' && outcome.result.connected === true
-  const rows = outcome ? [connectionRow(integration.name, outcome)] : []
+  const rows = outcome ? [connectionRow(integration, outcome)] : []
   const banner = passed && (
     <div className="su-banner" role="status">
       <CheckMark phase="passed" />

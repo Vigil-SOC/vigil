@@ -110,6 +110,10 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
   }
 
+  // the row the drawer belongs to: a connected one first (Splunk has two servers)
+  const wizardRow = wizardFor
+    ? (rows.find((r) => r.integration?.id === wizardFor.id && r.connected) ?? rows.find((r) => r.integration?.id === wizardFor.id))
+    : undefined
   const ready = phase === 'ready'
   const tabs: [IntegrationsTab, string, number | null][] = [
     ['connected', 'Connected', ready ? connected.length : null],
@@ -291,7 +295,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
           secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
           lastTest={intCfg.last_test[wizardFor.id]}
-          category={categoryOf(rows.find((r) => r.integration?.id === wizardFor.id)?.name ?? '')}
+          health={wizardRow?.level}
+          category={categoryOf(wizardRow?.name ?? '')}
           onTested={reloadInt}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {

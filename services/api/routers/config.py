@@ -24,6 +24,7 @@ from core.deps import (
 )
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
+from core.integrations.credential_check import check_credentials
 from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
@@ -1120,7 +1121,9 @@ async def test_integration(
     config of ``{}`` is still configured — secret-only rows keep the secret
     outside this dict. The integration's enabled flag does not block the
     probe: enabled MCP servers are contacted, and if none are enabled every
-    declared server is probed with a temporary session.
+    declared server is probed with a temporary session. Splunk and Elastic are
+    then also read with their saved URL and credentials (``credentials`` in the
+    answer), since a server starts whatever it is pointed at.
     """
     require_integrations_admin(current_user)
 
@@ -1181,6 +1184,16 @@ async def test_integration(
     success = all(server["success"] for server in servers)
     error_summary = None if success else _probe_error_summary(servers)
 
+    # The servers starting says nothing about the URL or credentials, so read
+    # the saved settings against the real service (read-only) before saying Good.
+    credentials = None
+    if success:
+        outcome = await check_credentials(integration_id)
+        if outcome is not None:
+            credentials = {"success": outcome[0], "message": outcome[1]}
+            if not outcome[0]:
+                success, error_summary = False, outcome[1]
+
     recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
         integration_id,
         success=success,
@@ -1195,13 +1208,16 @@ async def test_integration(
     else:
         message = error_summary or f"Integration '{integration_id}' failed to connect."
 
-    return {
+    result = {
         "success": success,
         "message": message,
         "status": status,
         "server_names": server_names,
         "servers": servers,
     }
+    if credentials is not None:
+        result["credentials"] = credentials
+    return result
 
 
 @router.get("/general")
