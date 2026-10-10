@@ -300,4 +300,5 @@ def overview_payload(
         "fair_at": FAIR_AT,
         "agents": _agent_rows(now),
         "feed": _feed(),
+        "feed_limit": FEED_LIMIT,
     }

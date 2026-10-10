@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { PageHead } from '../../shared/PageHead'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
@@ -13,6 +14,7 @@ import {
   SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
   prettyServerName,
+  INTEGRATIONS_DESC,
   tabFromQuery,
   type IntegrationsTab,
 } from './integrationsData'
@@ -125,6 +127,17 @@ export default function IntegrationsSection({ notify }: SectionProps) {
 
   // pb-20: the floating Ask Vigil button covers nothing at the end of the scroll
   return (
+    <>
+    <PageHead
+      title="Integrations"
+      description={INTEGRATIONS_DESC}
+      actions={
+        <>
+          <button className="btn ghost" onClick={() => setTab('custom')}><Icon name="sparkle" /> Build custom</button>
+          <button className="btn primary" onClick={() => setTab('add')}><Icon name="plus" /> Add integration</button>
+        </>
+      }
+    />
     <div className="settings-content-inner flex flex-col gap-4 pb-20" style={{ maxWidth: 1280 }}>
       {ready && (
         <>
@@ -296,6 +309,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         />
       )}
     </div>
+    </>
   )
 }
 

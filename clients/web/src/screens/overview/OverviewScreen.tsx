@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
+import AgentCards from './AgentCards'
+import AlertRail, { SevMark } from './AlertRail'
+import { clock } from './clock'
+import FlowDiagram from './FlowDiagram'
 import { LevelBadge } from '../../shared/LevelBadge'
+import { useSourceBadge } from '../../shared/useSourceBadge'
 import { EmptyState, Popup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
@@ -12,13 +16,11 @@ import api, {
   configApi,
   findingsApi,
   overviewApi,
-  type OverviewAgent,
   type OverviewFeedItem,
   type OverviewPayload,
 } from '../../services/api'
 
 const NOISE_INFO = 'The mark is stored and does not change scoring.'
-const CONNECT_DATA = '/settings?section=data'
 
 const POLL_MS = 10_000
 
@@ -26,17 +28,30 @@ type Phase = 'loading' | 'error' | 'ready'
 // The single read of an alert that is not in the feed.
 type AlertRead = { id: string; status: 'loading' | 'ready' | 'error' | 'missing'; item?: OverviewFeedItem }
 
-function fmtRate(rate: number | null): string {
-  if (rate === null) return '—'
-  return `${(rate * 100).toFixed(1)}%`
-}
-
 function errorText(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { detail?: unknown; error?: unknown } } })?.response?.data
   if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
   if (typeof data?.error === 'string' && data.error.trim()) return data.error
   const message = (error as { message?: string })?.message
   return message && message.trim() ? message : fallback
+}
+
+function legendTitle(data: OverviewPayload): string {
+  const pct = (n: number) => Math.round(n * 100)
+  return `Health: Good ${pct(data.good_at)}% and up, Fair ${pct(data.fair_at)} to ${pct(data.good_at)}%, Poor under ${pct(data.fair_at)}%.`
+}
+
+/** The popup header: severity and "id · time" over the description. */
+function PopupTitle({ item }: { item: OverviewFeedItem }) {
+  return (
+    <span className="ov-pop-t">
+      <span className="ov-pop-m">
+        <SevMark severity={item.severity} />
+        <span>{item.finding_id} · {clock(item.created_at)}</span>
+      </span>
+      <span className="ov-pop-d">{item.description ?? item.finding_id}</span>
+    </span>
+  )
 }
 
 function EvidenceBody({ item }: { item: OverviewFeedItem }) {
@@ -58,66 +73,15 @@ function EvidenceBody({ item }: { item: OverviewFeedItem }) {
   )
 }
 
-function ConnectData() {
-  return (
-    <Link className="btn primary no-underline" to={CONNECT_DATA}>
-      Connect data
-    </Link>
-  )
-}
-
-function Flow({ data }: { data: OverviewPayload }) {
-  return (
-    <div className="kpi-strip" aria-label="Today's flow">
-      {data.empty && (
-        <div className="kpi col-span-2 items-start" aria-label="Sources">
-          <div className="k-note">
-            Nothing is connected yet. Connect a source on the left and its alerts flow through the Vigil engine to the
-            outcomes on the right.
-          </div>
-          <ConnectData />
-        </div>
-      )}
-      {data.arrivals.map((arrival) => (
-        <div className="kpi" key={arrival.data_source} aria-label={arrival.data_source}>
-          <div className="k-label as-stored">{arrival.data_source}</div>
-          <Link className="k-val" to={`/triage?source=${encodeURIComponent(arrival.data_source)}`}>
-            {arrival.count}
-          </Link>
-          <div className="k-note">{arrival.source_text}</div>
-        </div>
-      ))}
-      <div className="kpi" aria-label="Engine">
-        <div className="k-label">Engine</div>
-        <div className="k-note">{data.engine.source_text}</div>
-      </div>
-      {data.outcomes.map((node) => (
-        <div className="kpi" key={node.state} aria-label={node.label}>
-          <div className="k-label">{node.label}</div>
-          {node.count === null ? (
-            <div className="k-val unmeasured">{node.unmeasured_text}</div>
-          ) : (
-            <div className="k-val">{node.count}</div>
-          )}
-          <div className="k-note">{node.source_text}</div>
-          {node.info && (
-            <button type="button" className="btn ghost icon" aria-label={node.info} title={node.info}>
-              <Icon name="info" size={14} />
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenProps) {
+export default function OverviewScreen({ go, openCase, setViewFull, setWallMode, chatOpen }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const alertId = searchParams.get('alert') || null // an empty value is no alert
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OverviewPayload | null>(null)
   const [wall, setWall] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const badgeOf = useSourceBadge()
   const [read, setRead] = useState<AlertRead | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [marked, setMarked] = useState(false)
@@ -166,11 +130,19 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
       })
   }, [])
 
+  // Pausing clears the interval; resuming loads at once and starts a fresh one.
   useEffect(() => {
+    if (paused) return
     load()
     const id = setInterval(load, POLL_MS)
     return () => clearInterval(id)
-  }, [load])
+  }, [load, paused])
+
+  // The rail scrolls on its own, so the screen takes the full-height view.
+  useEffect(() => {
+    setViewFull(true)
+    return () => setViewFull(false)
+  }, [setViewFull])
 
   useEffect(() => {
     let live = true
@@ -237,53 +209,12 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
     return () => window.removeEventListener('keydown', onKey)
   }, [wall, setWallMode])
 
-  const agentColumns = useMemo<ColumnDef<OverviewAgent>[]>(() => [
-    { key: 'name', label: 'Workflow', render: (row) => row.name, sortVal: (row) => row.name, searchVal: (row) => row.name },
-    { key: 'running', label: 'Running', render: (row) => row.running, sortVal: (row) => row.running },
-    { key: 'rate', label: '30-day rate', render: (row) => fmtRate(row.rate), sortVal: (row) => row.rate ?? -1 },
-    { key: 'sample_size', label: 'Sample', render: (row) => row.sample_size, sortVal: (row) => row.sample_size },
-    { key: 'level', label: 'Level', render: (row) => <LevelBadge level={row.level} />, sortVal: (row) => row.level ?? '' },
-    {
-      key: 'current_step',
-      label: 'Current step',
-      render: (row) => row.current_step ?? '—',
-      sortVal: (row) => row.current_step ?? '',
-    },
-  ], [])
-  const feedColumns = useMemo<ColumnDef<OverviewFeedItem>[]>(() => [
-    { key: 'finding_id', label: 'Finding', render: (row) => row.finding_id, sortVal: (row) => row.finding_id },
-    { key: 'severity', label: 'Severity', render: (row) => row.severity ?? '—', sortVal: (row) => row.severity ?? '' },
-    { key: 'data_source', label: 'Source', render: (row) => row.data_source, sortVal: (row) => row.data_source },
-    { key: 'status', label: 'Status', render: (row) => row.status, sortVal: (row) => row.status },
-    {
-      key: 'terminal_state',
-      label: 'Triage',
-      render: (row) => <span className="tag">{row.terminal_label}</span>,
-      sortVal: (row) => row.terminal_label,
-    },
-    {
-      key: 'case_id',
-      label: 'Case',
-      render: (row) =>
-        row.case_id ? (
-          <button
-            type="button"
-            className="tag cursor-pointer !font-[family-name:var(--mono)]"
-            onClick={(event) => {
-              event.stopPropagation() // the row opens the alert
-              openCase(row.case_id!)
-            }}
-          >
-            Case {row.case_id}
-          </button>
-        ) : null,
-      sortVal: (row) => row.case_id ?? '',
-    },
-    { key: 'description', label: 'Description', render: (row) => row.description ?? '—', sortVal: (row) => row.description ?? '' },
-    { key: 'created_at', label: 'Arrived', render: (row) => row.created_at ?? '—', sortVal: (row) => row.created_at ?? '' },
-  ], [openCase])
-  const agentSort = useTableSort(agentColumns, { key: 'name', dir: 'asc' })
-  const feedSort = useTableSort(feedColumns, { key: 'created_at', dir: 'desc' })
+  const sourceLabel = open ? badgeOf(open.data_source).label : ''
+
+  const openCaseFromPopup = (id: string) => {
+    setAlert(null) // one overlay at a time
+    openCase(id)
+  }
 
   const stillOpen = (findingId: string) => openId.current === findingId
 
@@ -340,20 +271,36 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
   }
 
   return (
-    <>
-      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">
-          {data ? `UTC ${data.day}` : 'Today'}
-        </span>
-        <div className="flex-1" />
-        <button type="button" className="btn ghost" aria-pressed={wall} onClick={toggleWall}>
-          <Icon name="fit" size={13} />
-          {wall ? 'Exit full screen' : 'Full screen'}
-        </button>
-        <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
-          <Icon name="refresh" />
-        </button>
-      </div>
+    <div className={`ov-screen${wall ? ' wall' : ''}`}>
+      <div className="ov-main">
+      {(!wall || phase !== 'ready') && (
+        <div className="ov-head">
+          <div>
+            <h1>Overview</h1>
+            <p>
+              {data?.empty
+                ? 'Where your data comes from, what Vigil does with it, and what comes out. Nothing is connected yet, so each part below shows where to connect.'
+                : `Where your data comes from, what Vigil does with it, and what came out. ${data ? `Today, UTC ${data.day}.` : ''}`.trim()}
+            </p>
+          </div>
+          <div className="ov-head-r">
+            {data && !data.empty && (
+              <div className="ov-legend" title={legendTitle(data)}>
+                <LevelBadge level="good" variant="pill" />
+                <LevelBadge level="fair" variant="pill" />
+                <LevelBadge level="poor" variant="pill" />
+              </div>
+            )}
+            <button type="button" className="ov-btn" aria-pressed={wall} onClick={toggleWall}>
+              <Icon name="fit" size={13} />
+              {wall ? 'Exit full screen' : 'Full screen'}
+            </button>
+            <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
+              <Icon name="refresh" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {phase === 'loading' && <EmptyState loading icon="graph" title="Loading overview…" />}
       {phase === 'error' && (
@@ -361,56 +308,17 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
       )}
       {phase === 'ready' && data && (
         <>
-          <Flow data={data} />
-          {!wall && (
-            <section className="section">
-              <div className="card">
-                <div className="card-h">
-                  <h3>Agents</h3>
-                  <button type="button" className="btn ghost icon" aria-label={data.rate_info} title={data.rate_info}>
-                    <Icon name="info" size={14} />
-                  </button>
-                </div>
-                <p className="text-[12px] text-tx-3 px-[18px] py-2">{data.running_source}</p>
-                <p className="text-[12px] text-tx-3 px-[18px] pb-2">{data.step_source}</p>
-                <DataTable
-                  columns={agentColumns}
-                  rows={sortRows(data.agents, agentColumns, agentSort.sort)}
-                  rowKey={(row) => row.workflow_id}
-                  sort={agentSort.sort}
-                  onSort={agentSort.toggle}
-                  emptyMessage="No workflows."
-                />
-              </div>
-            </section>
-          )}
-          <section className="section">
-            <div className="card">
-              <div className="card-h"><h3>Alerts</h3></div>
-              <DataTable
-                columns={feedColumns}
-                rows={sortRows(data.feed, feedColumns, feedSort.sort)}
-                rowKey={(row) => row.finding_id}
-                sort={feedSort.sort}
-                onSort={feedSort.toggle}
-                onRowClick={(row) => setAlert(row.finding_id)}
-                emptyMessage={
-                  data.empty ? (
-                    <span className="flex flex-col items-center gap-3">
-                      No alerts yet · Connect a SIEM, an EDR or the LogLM pipeline
-                      <ConnectData />
-                    </span>
-                  ) : (
-                    'No alerts.'
-                  )
-                }
-              />
-            </div>
-          </section>
+          <FlowDiagram data={data} wall={wall} onToggleWall={toggleWall} />
+          {!wall && <AgentCards data={data} go={go} />}
         </>
       )}
+      </div>
 
-      <Popup open={alertId !== null} onClose={() => setAlert(null)} title={alertId ?? 'Alert'}>
+      {phase === 'ready' && data && !chatOpen && (
+        <AlertRail data={data} paused={paused} onTogglePause={() => setPaused((p) => !p)} onOpen={setAlert} openCase={openCase} />
+      )}
+
+      <Popup open={alertId !== null} onClose={() => setAlert(null)} title={open ? <PopupTitle item={open} /> : (alertId ?? 'Alert')} width={860}>
         {!open && readStatus === 'missing' && <p>Alert {alertId} not found.</p>}
         {!open && readStatus === 'error' && (
           <>
@@ -421,12 +329,24 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
         {!open && readStatus === 'loading' && <p>Loading alert…</p>}
         {open && (
           <>
-            <p className="text-[13px] text-tx-2">{open.description ?? 'No description.'}</p>
-            <p className="text-[12px] text-tx-3">{open.status} · <span className="tag">{open.terminal_label}</span></p>
+            <dl className="ov-facts">
+              <div><dt>Source</dt><dd>{sourceLabel}</dd></div>
+              <div><dt>Status</dt><dd>{open.status}</dd></div>
+              <div><dt>Triage</dt><dd>{open.terminal_label}</dd></div>
+              <div>
+                <dt>Case</dt>
+                <dd>
+                  {open.case_id ? (
+                    <button type="button" className="ov-case-link" onClick={() => openCaseFromPopup(open.case_id!)}>
+                      Case {open.case_id}
+                    </button>
+                  ) : (
+                    'Not in a case yet'
+                  )}
+                </dd>
+              </div>
+            </dl>
             <EvidenceBody item={open} />
-            {open.source_link && (
-              <p><a href={open.source_link}>Open in source</a></p>
-            )}
             <div className="flex items-center gap-2 flex-wrap">
               <button type="button" className="btn ghost" onClick={markNoise}>
                 {marked ? 'Clear noise' : 'Mark as noise'}
@@ -436,14 +356,7 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
               </button>
               <button type="button" className="btn ghost" onClick={launch}>Send to triage</button>
               {open.case_id && (
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => {
-                    setAlert(null) // one overlay at a time
-                    openCase(open.case_id!)
-                  }}
-                >
+                <button type="button" className="btn ghost" onClick={() => openCaseFromPopup(open.case_id!)}>
                   Open case
                 </button>
               )}
@@ -461,9 +374,14 @@ export default function OverviewScreen({ openCase, setWallMode }: ConsoleScreenP
             )}
             {ticketNote && <p>{ticketNote}</p>}
             {actionError && <p role="alert">{actionError}</p>}
+            {open.source_link && (
+              <div className="ov-pop-f">
+                <a href={open.source_link}>Open in {sourceLabel} ↗</a>
+              </div>
+            )}
           </>
         )}
       </Popup>
-    </>
+    </div>
   )
 }

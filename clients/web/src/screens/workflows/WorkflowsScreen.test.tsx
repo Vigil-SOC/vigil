@@ -21,14 +21,12 @@ vi.mock('../../services/api', () => ({
   approvalsApi: {},
 }))
 vi.mock('../../services/skillsApi', () => ({ skillsApi: { list: h.listSkills } }))
-// the builder is its own screen; here only whether the header opens it matters
-vi.mock('./WorkflowBuilder', () => ({ default: () => <div role="dialog">Builder</div> }))
 
 const wf = (id: string) => ({ id, name: id, description: '', agents: [], source: 'file', runs_7d: 0, mean_cost_usd: null })
 
-function mount() {
+function mount(url = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[url]}>
       <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
     </MemoryRouter>,
   )
@@ -67,11 +65,19 @@ describe('Agents & workflows header', () => {
     }
   })
 
+  it('opens on the tab named by ?tab=, and on Workflows for anything else', async () => {
+    const { unmount } = mount('/workflows?tab=skills')
+    expect(await screen.findByRole('tab', { name: /^Skills/ })).toHaveAttribute('aria-selected', 'true')
+    unmount()
+    mount('/workflows?tab=bogus')
+    expect(await screen.findByRole('tab', { name: /^Workflows/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('opens the create flow from the header on a tab other than Workflows', async () => {
     mount()
     fireEvent.click(await screen.findByRole('tab', { name: 'Agents 3' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('Builder')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Generate with AI')
   })
 })

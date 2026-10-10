@@ -255,6 +255,7 @@ vi.mock('../services/api', () => ({
           cases_created_today: 0,
           trust_floor: 'Not measured yet',
         },
+        counts: { total: 0, kind: {}, source: {}, state: {} },
         sources: [],
         arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
         strip_info: {
@@ -340,6 +341,8 @@ afterEach(() => {
 })
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
+// Home draws its own headline, so the nav shows where the console is
+const here = () => screen.getByRole('navigation', { name: 'Primary' }).querySelector('[aria-current="page"]')?.textContent
 
 const MORE_LABELS = ['Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
 
@@ -379,7 +382,9 @@ describe('SocConsole', () => {
 
   it('puts Home first on the primary nav and opens it at /', async () => {
     renderConsole('/')
-    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Home')
+    await screen.findByRole('button', { name: 'Home' })
+    expect(here()).toBe('Home')
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     const nav = screen.getByRole('navigation', { name: 'Primary' })
     const names = within(nav).getAllByRole('button').map((button) => button.getAttribute('aria-label'))
     expect(names.slice(0, 6)).toEqual(['Home', 'Overview', 'Triage queue', 'Cases', 'Agents & workflows', 'Settings'])
@@ -425,12 +430,14 @@ describe('SocConsole', () => {
 
   it('renders the 404 screen for an unknown path and routes home', async () => {
     renderConsole('/does-not-exist')
-    expect(title()).toBe('Page not found')
     // an unknown path is probed as a page extension first, so the 404 body only
     // lands once that resolution settles
     expect(await screen.findByText('404')).toBeInTheDocument()
+    // the screen's own h2 is the only heading
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Page not found')
     fireEvent.click(screen.getByRole('button', { name: /Back to Home/ }))
-    expect(title()).toBe('Home')
+    expect(here()).toBe('Home')
   })
 
   it('sends the 404 button to Overview for an operator without the Home permission', async () => {
@@ -443,13 +450,15 @@ describe('SocConsole', () => {
   it('offers Back to Home on Access denied', () => {
     authState.allow = (permission: string) => permission !== 'cases.read'
     renderConsole('/cases')
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Access denied')
     fireEvent.click(screen.getByRole('button', { name: 'Back to Home' }))
-    expect(title()).toBe('Home')
+    expect(here()).toBe('Home')
   })
 
   it('lands / on Home, or on Overview without the Home permission', () => {
     renderConsole('/')
-    expect(title()).toBe('Home')
+    expect(here()).toBe('Home')
     cleanup()
     authState.allow = (permission: string) => permission !== 'ai_decisions.approve'
     renderConsole('/')
@@ -463,7 +472,7 @@ describe('SocConsole', () => {
       ['Agents & workflows', 'Agents & workflows'],
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
-      ['Triage queue', 'Triage queue'],
+      ['Triage queue', 'Triage queue'], // the screen draws its own heading
       ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],
@@ -475,6 +484,106 @@ describe('SocConsole', () => {
       clickScreen(navLabel)
       expect(title()).toBe(pageTitle)
     }
+    clickScreen('Home')
+    expect(here()).toBe('Home')
+  })
+
+  it('marks the active tab, and More for a screen inside it', () => {
+    renderConsole('/cases')
+    const cases = screen.getByRole('button', { name: 'Cases' })
+    expect(cases).toHaveAttribute('aria-current', 'page')
+    expect(cases).toHaveClass('active')
+    expect(screen.getByRole('button', { name: 'Overview' })).not.toHaveAttribute('aria-current')
+    const more = screen.getByRole('button', { name: 'More' })
+    expect(more).not.toHaveClass('active')
+    clickScreen('Health')
+    expect(screen.getByRole('button', { name: 'More' })).toHaveClass('active')
+  })
+
+  it('draws a rule between nav groups, never two together when Cases is hidden', () => {
+    const rules = () =>
+      Array.from(screen.getByRole('navigation', { name: 'Primary' }).children).map((el) =>
+        el.classList.contains('vg-nav-sep') ? '|' : 'x',
+      ).join('')
+    const { unmount } = renderConsole('/overview')
+    // Home | Overview | Triage queue Cases | Agents & workflows Settings | More | chips
+    expect(rules()).toBe('x|x|xx|xx|xx')
+    expect(screen.getAllByRole('navigation', { name: 'Primary' })[0].querySelectorAll('.vg-nav-sep')).toHaveLength(4)
+    unmount()
+
+    authState.allow = (permission: string) => permission !== 'cases.read'
+    renderConsole('/overview')
+    expect(rules()).toBe('x|x|x|xx|xx')
+  })
+
+  it('draws a page heading for a screen that has none of its own, and not for the ones that do', async () => {
+    renderConsole('/overview')
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Overview')
+    expect(document.querySelector('.vg-page-head')).toBeNull()
+    expect(document.querySelector('.topbar')).toBeNull()
+    clickScreen('Cases')
+    expect(title()).toBe('Cases')
+    expect(screen.getByText('Every open case, who owns it and what it is waiting on.')).toBeInTheDocument()
+    expect(document.querySelector('.vg-page-head')).toBeNull()
+    clickScreen('Triage queue')
+    expect(title()).toBe('Triage queue')
+    expect(document.querySelector('.vg-page-head')).toBeNull()
+    clickScreen('Health')
+    expect(title()).toBe('Health')
+    expect(screen.getByRole('heading', { level: 1 }).closest('.vg-page-head')?.parentElement).toHaveClass('screen')
+  })
+
+  it('shows no shell heading where the screen owns it', async () => {
+    renderConsole('/')
+    await screen.findByRole('button', { name: 'Home' })
+    for (const label of ['Home', 'Agents & workflows', 'Settings']) {
+      clickScreen(label)
+      expect(screen.queryAllByRole('heading', { level: 1 }).length).toBeLessThanOrEqual(1)
+      expect(document.querySelector('.vg-page-head')).toBeNull()
+    }
+  })
+
+  it('shows Finish setup with the open step count and links to /setup', async () => {
+    const step = (done: boolean) => ({ id: 'x', title: 'x', state_line: '', done, href: '/x' })
+    const read = (...steps: boolean[]) =>
+      vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+        data: { steps: steps.map(step), alerts_exist: 0, demo_enabled: false },
+      } as never)
+
+    read(true, false, false)
+    const first = renderConsole()
+    const chip = await screen.findByRole('link', { name: 'Finish setting up Vigil: 2 steps are left. Opens the setup guide.' })
+    expect(chip).toHaveTextContent('Finish setup')
+    expect(chip).toHaveTextContent('2 left')
+    expect(chip).toHaveAttribute('href', '/setup')
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByRole('menuitem', { name: 'Setup guide 2 left' })).toBeInTheDocument()
+    first.unmount()
+
+    read(true, false)
+    const second = renderConsole()
+    expect(await screen.findByRole('link', { name: 'Finish setting up Vigil: 1 step is left. Opens the setup guide.' })).toHaveTextContent('1 left')
+    // a step finished elsewhere shows on the next screen change
+    read(true, true)
+    clickScreen('Cases')
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument())
+    second.unmount()
+
+    vi.mocked(configApi.getSetupSteps).mockRejectedValue(new Error('boom'))
+    renderConsole()
+    await waitFor(() => expect(configApi.getSetupSteps).toHaveBeenCalled())
+    expect(screen.queryByRole('link', { name: /Finish setting up Vigil/ })).not.toBeInTheDocument()
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: [], alerts_exist: 1, demo_enabled: false },
+    } as never)
+  })
+
+  it('puts the status chip in the nav row, with no separate strip', async () => {
+    renderConsole()
+    const chip = await screen.findByRole('status', { name: 'System status' })
+    expect(chip.closest('nav')).toBe(screen.getByRole('navigation', { name: 'Primary' }))
+    expect(chip).toHaveAttribute('title', 'No problems reported.')
+    expect(document.querySelector('.vg-status')).toBeNull()
   })
 
   it('hides the nav row and the top bar while Overview is on the wall', async () => {
@@ -638,6 +747,12 @@ describe('SocConsole', () => {
       await sentOnCase()
     })
 
+    it('keeps the floating Ask Vigil button off a case page opened by its URL', async () => {
+      renderConsole('/cases?case=case-2026-0142')
+      await screen.findByRole('tab', { name: /Summary/ })
+      expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
+    })
+
     it('opens the dock with the text when no case is open', async () => {
       renderConsole('/cases')
       await screen.findByText('Defense Evasion: Obfuscated Loader')
@@ -669,15 +784,15 @@ describe('SocConsole', () => {
 
   it('opens the chat dock without error', () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    expect(screen.getByText(/investigate a finding/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    expect(screen.getByText('Ask about what you are looking at')).toBeInTheDocument()
   })
 
   it('keeps the dock at 400px above 600px', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
     renderConsole()
     expect(document.querySelector('.soc-console')).toHaveStyle({ '--chat-w': '400px' })
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
     expect(screen.queryByRole('separator', { name: 'Resize Vigil Assistant' })).toBeNull()
     expect(localStorage.getItem('soc.chat.width.v1')).toBeNull()
   })
@@ -690,9 +805,9 @@ describe('SocConsole', () => {
 
   it('opens the dock on the current page without a per-chat model', () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    expect(screen.getByText('Private to you')).toBeInTheDocument()
-    expect(screen.getByText('Using Dashboard')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    expect(screen.getByText('Using this page')).toBeInTheDocument()
+    expect(document.querySelector('.cx-pill')).toHaveTextContent('Dashboard')
     expect(screen.queryByTitle('Chat settings')).toBeNull()
     expect(screen.queryByPlaceholderText(/Override default system prompt/)).toBeNull()
   })
@@ -802,8 +917,8 @@ describe('SocConsole', () => {
     } as unknown as Response)
 
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
-    fireEvent.change(screen.getByPlaceholderText(/Ask Vigil/), { target: { value: 'hi' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+    fireEvent.change(screen.getByPlaceholderText('Ask Vigil · @ to attach a case'), { target: { value: 'hi' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     // waitFor re-queries each poll, so it settles on the final message node and
@@ -914,7 +1029,8 @@ describe('SocConsole', () => {
 
   it('shows Act, and Assist when force-manual is set or auto-response is off', async () => {
     const { unmount } = renderConsole()
-    expect(await screen.findByText('Autonomy · Act · reversible changes on its own')).toBeInTheDocument()
+    expect(await screen.findByText('Act · reversible changes on its own')).toBeInTheDocument()
+    expect(screen.getByText('Autonomy', { selector: '.vg-autonomy-label' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How autonomy is derived' }))
     expect(screen.getByRole('tooltip')).toHaveTextContent('force_manual_approval')
     expect(screen.getByRole('tooltip')).toHaveTextContent('auto_response_enabled')
@@ -924,14 +1040,14 @@ describe('SocConsole', () => {
       data: { auto_response_enabled: true, force_manual_approval: true },
     } as never)
     const forced = renderConsole()
-    expect(await screen.findByText('Autonomy · Assist · asks before changes')).toBeInTheDocument()
+    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
     forced.unmount()
 
     vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
       data: { auto_response_enabled: false, force_manual_approval: false },
     } as never)
     renderConsole()
-    expect(await screen.findByText('Autonomy · Assist · asks before changes')).toBeInTheDocument()
+    expect(await screen.findByText('Assist · asks before changes')).toBeInTheDocument()
   })
 
   it('opens Limits & autonomy from the chip in both Assist and Act', async () => {
@@ -955,21 +1071,21 @@ describe('SocConsole', () => {
     const root = container.querySelector('.soc-console')
     expect(root).toHaveClass('vg-dark')
     expect(root).toHaveAttribute('data-theme', 'dark')
-    await screen.findByText('Autonomy · Act · reversible changes on its own')
+    await screen.findByText('Act · reversible changes on its own')
     fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Light' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to light mode' }))
     expect(root).toHaveClass('vg-light')
     expect(root).not.toHaveClass('vg-dark')
     expect(root).toHaveAttribute('data-theme', 'light')
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Dark' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch to dark mode' }))
     expect(root).toHaveClass('vg-dark')
   })
 
   it('reads Good when the checks are clear and Poor when health is not', async () => {
     const { unmount } = renderConsole()
     const good = await screen.findByRole('status', { name: 'System status' })
-    expect(good).toHaveTextContent('Good')
     expect(good).toHaveTextContent('No problems reported.')
+    expect(good).toHaveAttribute('data-level', 'good')
     expect(good).not.toHaveClass('is-poor')
     unmount()
 
@@ -982,7 +1098,7 @@ describe('SocConsole', () => {
     } as never)
     renderConsole()
     const poor = await screen.findByRole('status', { name: 'System status' })
-    expect(poor).toHaveTextContent('Poor')
+    expect(poor).toHaveAttribute('data-level', 'poor')
     expect(poor).toHaveTextContent('Health is degraded.')
     expect(poor).toHaveClass('is-poor')
   })
@@ -991,13 +1107,14 @@ describe('SocConsole', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       renderConsole()
-      expect(await screen.findByRole('status', { name: 'System status' })).toHaveTextContent('Good')
+      expect(await screen.findByRole('status', { name: 'System status' })).toHaveAttribute('data-level', 'good')
       vi.mocked(consoleApi.getHealth).mockResolvedValue({ data: { status: 'degraded' } } as never)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30_000)
       })
       const line = screen.getByRole('status', { name: 'System status' })
       expect(line).toHaveClass('is-poor')
+      expect(line).toHaveTextContent('Health is degraded.')
     } finally {
       vi.useRealTimers()
     }
@@ -1007,7 +1124,7 @@ describe('SocConsole', () => {
     vi.mocked(consoleApi.getRoutability).mockRejectedValueOnce(new Error('403'))
     renderConsole()
     const line = await screen.findByRole('status', { name: 'System status' })
-    expect(line).toHaveTextContent('Good')
+    expect(line).toHaveAttribute('data-level', 'good')
     expect(line).not.toHaveTextContent('No routable provider.')
   })
 
@@ -1114,7 +1231,10 @@ describe('SocConsole', () => {
     it('closes the dock and leaves wall mode so the stop target is mounted', async () => {
       renderConsole('/overview')
       await screen.findByRole('button', { name: 'Full screen' })
-      fireEvent.click(screen.getByRole('button', { name: 'Ask Vigil chat assistant' }))
+      // Overview owns the full-height view, so it has no Ask Vigil button; Tab in the command bar opens the dock.
+      const bar = screen.getByRole('combobox', { name: 'Find a case, ask Vigil, or run a command' })
+      fireEvent.change(bar, { target: { value: 'hello' } })
+      fireEvent.keyDown(bar, { key: 'Tab' })
       expect(screen.queryByRole('button', { name: 'Ask Vigil chat assistant' })).not.toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
 

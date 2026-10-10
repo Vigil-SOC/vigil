@@ -223,3 +223,18 @@ describe('the keys table', () => {
     expect(screen.getByTitle('Delete provider')).toBeInTheDocument()
   })
 })
+
+describe('the page head’s Add provider', () => {
+  it('opens the dialog once when asked, and the Keys card keeps Add key but not Add provider', async () => {
+    listProviders.mockResolvedValue({ data: { providers: [{ name: 'anthropic' }] } })
+    listKeys.mockResolvedValue({ data: { keys: [], total: 0 } })
+    providerModels.mockResolvedValue({ data: { models: [], total: 0 } })
+    routability.mockResolvedValue({ data: { providers: {}, keys: {} } })
+    const opened = vi.fn()
+    render(<AiProvidersPanel notify={() => {}} addProviderRequested onAddProviderOpened={opened} />)
+    expect(await screen.findByRole('dialog', { name: 'Add provider' })).toBeInTheDocument()
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Add provider' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Add key' }).length).toBeGreaterThan(0)
+  })
+})

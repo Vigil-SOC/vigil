@@ -664,7 +664,7 @@ REASONING: [Brief explanation]
         default when the resolved row is inactive or missing. None when no provider is
         configured at all."""
         from core.llm.providers.registry import get_registry
-        from core.llm.target import model_for, provider_for
+        from core.llm.target import component_fallback, model_for, provider_for
 
         provider_id, model = None, None
         try:
@@ -677,7 +677,9 @@ REASONING: [Brief explanation]
         provider = provider_for(provider_id)
         if provider is None:
             return None
-        return provider.provider_id, model_for(provider, model)
+        return provider.provider_id, model_for(
+            provider, model, component_fallback("triage"), "triage"
+        )
 
     async def _get_ai_triage(self, prompt: str) -> Tuple[Optional[str], Optional[str]]:
         """Get AI triage response via the LLM queue.

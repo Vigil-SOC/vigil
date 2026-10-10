@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
 import { Icon, type IconName } from '../../shared/icons'
 import { SettingsCard } from '../../shared/ui'
-import { readProviderConfigured } from '../../routing/useSetupStatus'
+import { readProviderStatus } from '../../routing/useSetupStatus'
 import {
   failingFederationSource,
   stoppedMcpServer,
@@ -49,8 +49,8 @@ const NEEDS: { icon: IconName; title: string; sub: string }[] = [
 const readHealth = async (): Promise<Result> => {
   const res = await consoleApi.getHealth()
   const status = (res.data as { status?: string } | undefined)?.status
-  if (status && status !== 'healthy') return { phase: 'needs', detail: `Status is ${status}` }
-  return { phase: 'passed', detail: status || 'Reachable' }
+  if (status !== 'healthy') return { phase: 'needs', detail: `Status is ${status ?? 'unknown'}` }
+  return { phase: 'passed', detail: status }
 }
 
 const readDatabase: Read = async (storage) => {
@@ -70,15 +70,26 @@ const readStorage: Read = async (storage) => {
 }
 
 const readProvider = async (): Promise<Result> => {
-  const ready = await readProviderConfigured()
-  return ready
-    ? { phase: 'passed', detail: 'Ready' }
-    : { phase: 'needs', detail: 'You add a provider in step 3' }
+  const status = await readProviderStatus()
+  switch (status) {
+    case 'ready':
+      return { phase: 'passed', detail: 'Ready' }
+    case 'none':
+      return { phase: 'passed', detail: 'Running on this server · you add a provider in step 3' }
+    case 'unreachable':
+      return { phase: 'needs', detail: 'Could not reach the model gateway' }
+    default: {
+      const unreachable: never = status
+      return unreachable
+    }
+  }
 }
 
 const readFederation = async (): Promise<Result> => {
   const read = (await federationApi.getHealth()).data as FederationRead | undefined
-  const failing = failingFederationSource(read ?? null)
+  // no body is a failed read, not an empty list
+  if (!read) throw new Error('no federation health body')
+  const failing = failingFederationSource(read)
   if (failing) {
     return {
       phase: 'needs',
@@ -97,7 +108,9 @@ const readFederation = async (): Promise<Result> => {
 
 const readMcp = async (): Promise<Result> => {
   const read = (await mcpApi.getStatuses()).data as McpRead | undefined
-  const down = stoppedMcpServer(read ?? null)
+  // no body is a failed read, not "None enabled"
+  if (!read) throw new Error('no MCP status body')
+  const down = stoppedMcpServer(read)
   if (down) {
     return {
       phase: 'needs',
@@ -140,7 +153,10 @@ export default function SystemChecksStep() {
     setFinished(false)
     let storageRead: Promise<StorageRead> | undefined
     const storage = () =>
-      (storageRead ??= storageApi.getStatus().then((res) => (res.data ?? {}) as StorageRead))
+      (storageRead ??= storageApi.getStatus().then((res) => {
+        if (!res.data) throw new Error('storage status has no body')
+        return res.data as StorageRead
+      }))
     // one after another: only the current row shows Checking, the rest wait
     ;(async () => {
       for (const { id, read } of CHECKS) {

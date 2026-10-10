@@ -1,15 +1,17 @@
 /* The overview's states (loading, empty, error, populated) and the one rule that
    matters: only the chat_default row asks before it saves. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import AiModelsOverview from './AiModelsOverview'
 
 const bifrost = vi.fn()
 const assignment = vi.fn()
 const listCustom = vi.fn()
 const assign = vi.fn(() => Promise.resolve())
-const clearAssign = vi.fn(() => Promise.resolve())
+const clearAssign = vi.fn<(component: string) => Promise<void>>(() => Promise.resolve())
 
+const toast = vi.fn()
+vi.mock('../../shell/toast', () => ({ useToast: () => toast() }))
 vi.mock('./useBifrost', () => ({ useBifrostProviders: () => bifrost() }))
 vi.mock('./useSettings', () => ({ useModelAssignment: () => assignment() }))
 vi.mock('../../services/api', () => ({ agentsApi: { listCustom: () => listCustom(), updateCustom: vi.fn() } }))
@@ -40,12 +42,16 @@ const assignmentsReady = (over = {}) => ({
   ...over,
 })
 
-const mount = () => render(<AiModelsOverview notify={vi.fn()} />)
+const rowOf = (row: string) => screen.getByText(row).closest('tr') as HTMLElement
+const notify = vi.fn()
+const notifyUndoable = vi.fn<(o: { key: string; commit: () => Promise<unknown> }) => void>()
+const mount = () => render(<AiModelsOverview notify={notify} />)
 
 beforeEach(() => {
   vi.clearAllMocks()
   bifrost.mockReturnValue(providersReady())
   assignment.mockReturnValue(assignmentsReady())
+  toast.mockReturnValue({ notify, notifyUndoable, pending: [], settled: 0 })
   listCustom.mockResolvedValue({ data: { agents: [] } })
 })
 
@@ -124,8 +130,9 @@ describe('model for each agent', () => {
   })
 
   const pickModel = (row: string, model: string) => {
-    const cell = screen.getByText(row).closest('tr') as HTMLElement
-    // the second select in the row is the model
+    const cell = rowOf(row)
+    fireEvent.click(within(cell).getByRole('button', { name: 'Change' }))
+    // the second select in the editing row is the model
     fireEvent.click(cell.querySelectorAll('button.field-select')[1])
     fireEvent.click(screen.getByRole('option', { name: model }))
   }
@@ -165,8 +172,8 @@ describe('model for each agent', () => {
 
   const pickEffort = (row: string, effort: string) => {
     const cell = screen.getByText(row).closest('tr') as HTMLElement
-    // the third select in the row is the reasoning effort
-    fireEvent.click(cell.querySelectorAll('button.field-select')[2])
+    // outside edit mode the row's selects are the fallback, then the reasoning effort
+    fireEvent.click(cell.querySelectorAll('button.field-select')[1])
     fireEvent.click(screen.getByRole('option', { name: effort }))
   }
 
@@ -190,9 +197,213 @@ describe('model for each agent', () => {
     await waitFor(() => expect(assign).toHaveBeenLastCalledWith('triage', 'anthropic-default', 'sonnet', { temperature: 0.2 }))
   })
 
+  it('shows the saved model as text with its provider, and a default chip on a row that inherits', () => {
+    assignment.mockReturnValue(
+      assignmentsReady({
+        assignments: {
+          chat_default: { component: 'chat_default', provider_id: 'anthropic-default', model_id: 'sonnet' },
+          triage: { component: 'triage', provider_id: 'anthropic-default', model_id: 'haiku' },
+        },
+        components: ['chat_default', 'triage', 'reporting'],
+      }),
+    )
+    mount()
+    expect(within(rowOf('Triage Agent')).getByText('Haiku')).toBeTruthy()
+    expect(within(rowOf('Triage Agent')).queryByText('default')).toBeNull()
+    expect(within(rowOf('Chat (Default)')).queryByText('default')).toBeNull()
+    expect(rowOf('Chat (Default)').querySelector('button.field-select')).not.toBeNull()
+    expect(within(rowOf('Report Generation')).getByText('Sonnet')).toBeTruthy()
+    expect(within(rowOf('Report Generation')).getByText('default')).toBeTruthy()
+  })
+
+  it('Change swaps the cell into selects with Use default first, and Escape returns to text', () => {
+    assignment.mockReturnValue(
+      assignmentsReady({
+        assignments: {
+          chat_default: { component: 'chat_default', provider_id: 'anthropic-default', model_id: 'sonnet' },
+          triage: { component: 'triage', provider_id: 'anthropic-default', model_id: 'haiku' },
+        },
+      }),
+    )
+    mount()
+    const row = rowOf('Triage Agent')
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
+    expect(row.querySelectorAll('button.field-select')).toHaveLength(4)
+    fireEvent.click(row.querySelectorAll('button.field-select')[0])
+    expect(screen.getAllByRole('option')[0].textContent).toBe('Use default')
+    fireEvent.keyDown(document.body, { key: 'Escape' }) // closes the open menu
+    expect(row.querySelector('.aim-model')).not.toBeNull()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(row.querySelector('.aim-model')).toBeNull()
+    expect(within(row).getByText('Haiku')).toBeTruthy()
+    expect(assign).not.toHaveBeenCalled()
+    expect(within(row).getByRole('button', { name: 'Change' })).toBeTruthy()
+  })
+
+  it('offers no Use default on Chat (Default)', () => {
+    mount()
+    const row = rowOf('Chat (Default)')
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[0])
+    expect(screen.queryByRole('option', { name: 'Use default' })).toBeNull()
+  })
+
+  it('Use default clears the row\'s assignment', async () => {
+    assignment.mockReturnValue(
+      assignmentsReady({
+        assignments: {
+          chat_default: { component: 'chat_default', provider_id: 'anthropic-default', model_id: 'sonnet' },
+          triage: { component: 'triage', provider_id: 'anthropic-default', model_id: 'haiku' },
+        },
+      }),
+    )
+    mount()
+    const row = rowOf('Triage Agent')
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[0])
+    fireEvent.click(screen.getByRole('option', { name: 'Use default' }))
+    await waitFor(() => expect(clearAssign).toHaveBeenCalledWith('triage'))
+  })
+
   it('offers no effort on a row that uses the default', () => {
     mount()
     const cell = screen.getByText('Triage Agent').closest('tr') as HTMLElement
-    expect(cell.querySelectorAll('button.field-select')).toHaveLength(2)
+    expect(cell.querySelectorAll('button.field-select')).toHaveLength(1)
+  })
+})
+
+describe('a row that uses the default', () => {
+  it('shows the default’s model as text with a chip, or Not set when there is no default', () => {
+    const { unmount } = mount()
+    expect(within(rowOf('Triage Agent')).getByText('Sonnet')).toBeTruthy()
+    expect(within(rowOf('Triage Agent')).getByText('default')).toBeTruthy()
+    unmount()
+    assignment.mockReturnValue(assignmentsReady({ assignments: {} }))
+    mount()
+    expect(within(rowOf('Triage Agent')).getByText('Not set')).toBeTruthy()
+  })
+
+  it('persists a pick made through Change', async () => {
+    mount()
+    const row = rowOf('Triage Agent')
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[0])
+    fireEvent.click(screen.getByRole('option', { name: 'anthropic-default' }))
+    fireEvent.click(row.querySelectorAll('button.field-select')[1])
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('triage', 'anthropic-default', 'haiku', {}))
+  })
+})
+
+describe('fallback for the built-in components', () => {
+  const withFallback = (fb?: string) =>
+    assignmentsReady({
+      assignments: {
+        chat_default: {
+          component: 'chat_default',
+          provider_id: 'anthropic-default',
+          model_id: 'sonnet',
+          settings: fb ? { fallback_model_id: fb } : {},
+        },
+      },
+    })
+  // the first select in a row outside edit mode
+  const fallbackTrigger = (row: string) =>
+    (screen.getByText(row).closest('tr') as HTMLElement).querySelectorAll('button.field-select')[0] as HTMLButtonElement
+
+  it('shows Stops when unset, disabled for a row on Use default or with no model', () => {
+    assignment.mockReturnValue(withFallback())
+    mount()
+    expect(fallbackTrigger('Chat (Default)').textContent).toBe('Stops')
+    expect(fallbackTrigger('Chat (Default)').disabled).toBe(false)
+    expect(fallbackTrigger('Triage Agent').textContent).toBe('Stops')
+    expect(fallbackTrigger('Triage Agent').disabled).toBe(true)
+  })
+
+  it('lists the same provider’s other models, shows the stored one, and a row on Use default shows the default’s', () => {
+    assignment.mockReturnValue(withFallback('haiku'))
+    mount()
+    expect(fallbackTrigger('Chat (Default)').textContent).toBe('Haiku')
+    expect(fallbackTrigger('Triage Agent').textContent).toBe('Haiku')
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Stops', 'Haiku'])
+  })
+
+  it('saves on select without the default-model confirm, and Stops clears it', async () => {
+    assignment.mockReturnValue(withFallback())
+    const { unmount } = mount()
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', { fallback_model_id: 'haiku' }))
+    expect(screen.queryByText('Change the default model?')).toBeNull()
+    unmount()
+
+    assignment.mockReturnValue(withFallback('haiku'))
+    mount()
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    fireEvent.click(screen.getByRole('option', { name: 'Stops' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('chat_default', 'anthropic-default', 'sonnet', { fallback_model_id: null }))
+  })
+
+  it('reports a failed save', async () => {
+    assignment.mockReturnValue(withFallback())
+    assign.mockRejectedValueOnce(new Error('nope'))
+    mount()
+    fireEvent.click(fallbackTrigger('Chat (Default)'))
+    fireEvent.click(screen.getByRole('option', { name: 'Haiku' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('err', 'nope'))
+  })
+})
+
+describe('reset to defaults', () => {
+  const own = {
+    chat_default: { component: 'chat_default', provider_id: 'anthropic-default', model_id: 'sonnet' },
+    triage: { component: 'triage', provider_id: 'anthropic-default', model_id: 'haiku' },
+    reporting: { component: 'reporting', provider_id: 'anthropic-default', model_id: 'haiku' },
+  }
+  const withOwn = () =>
+    assignment.mockReturnValue(assignmentsReady({ assignments: own, components: ['chat_default', 'triage', 'reporting'] }))
+  const resetButton = () => screen.getByRole('button', { name: 'Reset to defaults' }) as HTMLButtonElement
+
+  it('is disabled when no row has its own assignment', () => {
+    mount()
+    expect(resetButton().disabled).toBe(true)
+  })
+
+  it('starts one undo fuse whose commit clears every own row but Chat (Default)', async () => {
+    withOwn()
+    mount()
+    fireEvent.click(resetButton())
+    expect(notifyUndoable).toHaveBeenCalledTimes(1)
+    const opts = notifyUndoable.mock.calls[0][0]
+    expect(opts.key).toBe('ai-model-reset')
+    expect(clearAssign).not.toHaveBeenCalled()
+    await opts.commit()
+    expect(clearAssign.mock.calls.map((c) => c[0]).sort()).toEqual(['reporting', 'triage'])
+  })
+
+  it('shows the pending rows as Use default while the fuse runs, and reloads once it settles', () => {
+    withOwn()
+    const reload = vi.fn()
+    assignment.mockReturnValue(assignmentsReady({ assignments: own, components: ['chat_default', 'triage', 'reporting'], reload }))
+    toast.mockReturnValue({ notify, notifyUndoable, pending: ['ai-model-reset'], settled: 0 })
+    const { rerender } = mount()
+    expect(within(rowOf('Triage Agent')).getByText('default')).toBeTruthy()
+    expect(within(rowOf('Chat (Default)')).queryByText('default')).toBeNull()
+    expect(resetButton().disabled).toBe(true)
+    expect(reload).not.toHaveBeenCalled()
+
+    toast.mockReturnValue({ notify, notifyUndoable, pending: [], settled: 1 })
+    rerender(<AiModelsOverview notify={notify} />)
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes an open editor on a row about to be reset, so it cannot save into the reset', () => {
+    withOwn()
+    mount()
+    fireEvent.click(within(rowOf('Triage Agent')).getByRole('button', { name: 'Change' }))
+    expect(rowOf('Triage Agent').querySelector('.aim-model')).not.toBeNull()
+    fireEvent.click(resetButton())
+    expect(rowOf('Triage Agent').querySelector('.aim-model')).toBeNull()
   })
 })

@@ -6,18 +6,18 @@
    ai_model_configs. Hosted-or-local is the setup wizard's rule
    (providerResidency), not a second one.
    ============================================================ */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
-import { InfoTip } from '../../shared/InfoTip'
+import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput } from '../../shared/ui'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { agentsApi, type AIModelInfo, type ComponentAssignment } from '../../services/api'
 import type { BifrostKey } from '../../services/bifrostApi'
 import { bifrostStaysOnSite, residencyCopy } from '../setup/providerResidency'
+import { useToast } from '../../shell/toast'
 import { useBifrostProviders } from './useBifrost'
 import { useModelAssignment } from './useSettings'
-import { COMPONENT_LABELS, CHAT_DEFAULT_KEY } from '../../config/aiComponents'
+import { COMPONENT_LABELS, CHAT_DEFAULT_KEY, FALLBACK_KEY } from '../../config/aiComponents'
 import type { SectionProps } from './types'
 import './aiModels.css'
 
@@ -51,7 +51,7 @@ function defaultProviderName(
 }
 
 /** Anchor for links that open Settings at the per-agent model table
- *  (Home's "Pick a model per agent" step sends ?tab=assignment). */
+ *  (Home's "Pick a model per agent" step sends ?tab=assignment, which AiConfigSection scrolls to). */
 export const AGENT_MODEL_TABLE_ID = 'ai-model-for-each-agent'
 
 export default function AiModelsOverview({ notify }: SectionProps) {
@@ -148,6 +148,9 @@ const EFFORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ]
+// First choice in an editing row's provider Select; picking it clears the assignment.
+const USE_DEFAULT = '__use_default__'
+const RESET_KEY = 'ai-model-reset'
 interface RowState { inherit: boolean; providerId: string; modelId: string; effort: Effort }
 
 const savedEffort = (a: ComponentAssignment | undefined): Effort => (a?.settings?.effort as Effort) || ''
@@ -169,7 +172,9 @@ interface CustomAgentRow {
 
 function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignment> } & SectionProps) {
   const { components, assignments, models, phase, error, reload, assign, clearAssign } = ma
+  const { notifyUndoable, pending: fusing, settled } = useToast()
   const [rows, setRows] = useState<Record<string, RowState>>({})
+  const [editing, setEditing] = useState<string | null>(null)
   const [pending, setPending] = useState<{ component: string; next: RowState } | null>(null)
 
   const modelsByProvider = useMemo(() => {
@@ -185,6 +190,19 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
+  // A fused reset commits in the toast provider; reload once it settles so the rows re-seed.
+  const seenSettled = useRef(settled)
+  useEffect(() => {
+    if (seenSettled.current === settled) return
+    seenSettled.current = settled
+    reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled])
+
+  // Components with a save in flight. A row's lock must not clear another row's.
+  const [saving, setSaving] = useState<string[]>([])
+  const lock = (component: string, on: boolean) =>
+    setSaving((s) => (on ? [...s, component] : s.filter((x) => x !== component)))
   const persist = async (component: string, next: RowState) => {
     try {
       if (next.inherit) {
@@ -197,13 +215,39 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       if (!next.providerId || !next.modelId) return
       const a = assignments[component]
       if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort(a) === next.effort) return
-      // Other settings keys are carried over; the PUT replaces the whole object.
-      const rest = { ...a?.settings }
-      delete rest.effort
-      await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
+      lock(component, true) // the fallback PUT would carry this row's old model
+      try {
+        // Other settings keys are carried over; the PUT replaces the whole object.
+        const rest = { ...a?.settings }
+        delete rest.effort
+        // A fallback never crosses a provider or equals the new model; null clears it.
+        if (rest[FALLBACK_KEY] && (a?.provider_id !== next.providerId || rest[FALLBACK_KEY] === next.modelId)) {
+          rest[FALLBACK_KEY] = null
+        }
+        await assign(component, next.providerId, next.modelId, next.effort ? { ...rest, effort: next.effort } : rest)
+      } finally {
+        lock(component, false)
+      }
       notify('ok', `${component} saved.`)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
+      setRows((prev) => ({ ...prev, [component]: rowFor(component, assignments[component]) }))
+    }
+  }
+
+  // Saves on select, no confirm: a fallback only acts once the model is unavailable.
+  const setFallback = async (component: string, fallback: string) => {
+    const a = assignments[component]
+    if (!a) return
+    lock(component, true)
+    try {
+      // The PUT replaces the whole settings object, so the effort rides along.
+      await assign(component, a.provider_id, a.model_id, { ...a.settings, [FALLBACK_KEY]: fallback || null })
+      notify('ok', `${component} fallback ${fallback ? 'saved' : 'cleared'}.`)
+    } catch (e) {
+      notify('err', (e as { message?: string })?.message || `Failed to save ${component} fallback.`)
+    } finally {
+      lock(component, false)
     }
   }
 
@@ -226,6 +270,50 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     else persist(component, next)
   }
 
+  const resetting = fusing.includes(RESET_KEY)
+  // Rows with their own assignment, Chat (Default) aside; these are what Reset clears.
+  const resettable = components.filter((c) => c !== CHAT_DEFAULT_KEY && assignments[c])
+  // The assignment a row shows: none while its reset is pending, so the row reads as Use default.
+  const ownOf = (c: string) => (resetting && c !== CHAT_DEFAULT_KEY ? undefined : assignments[c])
+  const inheritsOf = (c: string) => c !== CHAT_DEFAULT_KEY && !ownOf(c)
+
+  const resetAll = () => {
+    // an open editor on a row about to be cleared would save into the reset
+    if (editing && editing !== CHAT_DEFAULT_KEY) stopEditing(editing)
+    notifyUndoable({
+      key: RESET_KEY,
+      text: `${resettable.length} ${resettable.length === 1 ? 'agent' : 'agents'} back on the default model.`,
+      commit: () => Promise.all(resettable.map((c) => clearAssign(c))),
+      doneText: 'Agents reset to the default model.',
+      failText: (e) => (e as { message?: string })?.message || 'Failed to reset the agents to the default model.',
+    })
+  }
+
+  const stopEditing = (c: string) => {
+    setRows((prev) => ({ ...prev, [c]: rowFor(c, assignments[c]) }))
+    setEditing(null)
+  }
+
+  // On window, not the cell: an open Select swallows Escape on document first, so one Escape
+  // closes its menu and the next ends the edit.
+  useEffect(() => {
+    if (!editing) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && stopEditing(editing)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, assignments])
+
+  const pickProvider = (c: string, v: string) =>
+    v === USE_DEFAULT
+      ? (update(c, { inherit: true, providerId: '', modelId: '', effort: '' }), setEditing(null))
+      : update(c, { inherit: false, providerId: v, modelId: '' })
+
+  const pickModel = (c: string, v: string) => {
+    update(c, { modelId: v })
+    setEditing(null)
+  }
+
   const cancel = () => {
     if (pending) setRows((prev) => ({ ...prev, [pending.component]: rowFor(pending.component, assignments[pending.component]) }))
     setPending(null)
@@ -236,6 +324,19 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     setPending(null)
   }
 
+  // An inheriting row runs on chat_default's row, so it shows that fallback
+  const fallbackOf = (c: string) =>
+    (assignments[inheritsOf(c) ? CHAT_DEFAULT_KEY : c]?.settings?.[FALLBACK_KEY] as string | undefined) || ''
+  // The row's provider models but the selected one; a stored fallback the provider
+  // no longer lists stays in the list so it still shows
+  const fallbackModels = (c: string) => {
+    const a = assignments[inheritsOf(c) ? CHAT_DEFAULT_KEY : c]
+    const list = (modelsByProvider[a?.provider_id ?? ''] || []).filter((m) => m.model_id !== a?.model_id)
+    const stored = fallbackOf(c)
+    if (stored && !list.some((m) => m.model_id === stored)) list.push({ model_id: stored } as AIModelInfo)
+    return list
+  }
+
   const custom = useCustomAgents(notify)
 
   return (
@@ -244,6 +345,11 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
       id={AGENT_MODEL_TABLE_ID}
       title="Model for each agent"
       desc="Pick a model per agent, and optionally how hard it thinks, or leave it on the default. Unassigned rows use Chat (Default). Workflow runs use the investigation assignment."
+      actions={
+        <button className="btn ghost" disabled={resettable.length === 0 || resetting} onClick={resetAll}>
+          Reset to defaults
+        </button>
+      }
     >
       {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading AI config…" />}
       {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
@@ -261,7 +367,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                   <th>If it is unavailable</th>
                   <th>Thinking</th>
                   <th>Cost per case</th>
-                  <th>Use default</th>
+                  <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -269,51 +375,87 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                   const meta = COMPONENT_LABELS[c] || { label: c, description: '' }
                   const row = rows[c] || rowFor(c, undefined)
                   const providerModels = row.providerId ? modelsByProvider[row.providerId] || [] : []
+                  const inherits = inheritsOf(c)
+                  const shown = ownOf(c) ?? assignments[CHAT_DEFAULT_KEY]
+                  const shownModel = shown && models.find((m) => m.provider_id === shown.provider_id && m.model_id === shown.model_id)
                   return (
                     <tr key={c}>
-                      <td style={{ minWidth: 220, maxWidth: 300 }}>
+                      <td style={{ minWidth: 200, maxWidth: 300 }}>
                         <div className="aim-who">{meta.label}</div>
                         <div className="aim-note">{meta.description}</div>
                       </td>
-                      <td style={{ minWidth: 400 }}>
-                        <div className="aim-model">
-                          <Select
-                            value={row.providerId}
-                            placeholder="Select provider"
-                            options={providerIds.map((pid) => ({ value: pid, label: pid }))}
-                            onSelect={(v) => update(c, { providerId: v, modelId: '' })}
-                          />
-                          <Select
-                            value={row.modelId}
-                            placeholder="Select model"
-                            options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
-                            onSelect={(v) => update(c, { modelId: v })}
-                          />
+                      <td style={{ minWidth: 340 }}>
+                        {editing === c ? (
+                          <div className="aim-model">
+                            <Select
+                              value={row.inherit ? USE_DEFAULT : row.providerId}
+                              placeholder="Select provider"
+                              disabled={saving.includes(c)}
+                              options={[
+                                ...(c === CHAT_DEFAULT_KEY ? [] : [{ value: USE_DEFAULT, label: 'Use default' }]),
+                                ...providerIds.map((pid) => ({ value: pid, label: pid })),
+                              ]}
+                              onSelect={(v) => pickProvider(c, v)}
+                            />
+                            <Select
+                              value={row.modelId}
+                              placeholder="Select model"
+                              searchable
+                              disabled={saving.includes(c) || row.inherit}
+                              options={providerModels.map((m) => ({ value: m.model_id, label: m.display_name || m.model_id }))}
+                              onSelect={(v) => pickModel(c, v)}
+                            />
+                          </div>
+                        ) : shown ? (
+                          <div className="aim-model-text">
+                            <span className="aim-model-name">
+                              {shownModel?.display_name || shown.model_id}
+                              {inherits && <span className="aim-default-chip">default</span>}
+                            </span>
+                            <span className="aim-note">{shown.provider_id}</span>
+                          </div>
+                        ) : (
+                          <span className="aim-muted">Not set</span>
+                        )}
+                      </td>
+                      <td>
+                        <div className="aim-fallback">
+                        <Select
+                          value={fallbackOf(c)}
+                          placeholder="Stops"
+                          disabled={!ownOf(c) || saving.includes(c)}
+                          options={[
+                            { value: '', label: 'Stops' },
+                            ...fallbackModels(c).map((m) => ({ value: m.model_id, label: m.display_name || m.model_id })),
+                          ]}
+                          onSelect={(v) => setFallback(c, v)}
+                        />
                         </div>
                       </td>
-                      <td className="aim-muted">
-                        —{' '}
-                        <InfoTip label="About the fallback" text="A fallback is set on custom agents, not on these components." />
-                      </td>
-                      <td style={{ minWidth: 140 }}>
-                        {row.inherit ? (
+                      <td style={{ minWidth: 120 }}>
+                        {inherits ? (
                           <span className="aim-muted">—</span>
                         ) : (
                           <Select
                             value={row.effort || 'default'}
                             options={EFFORT_OPTIONS}
+                            disabled={saving.includes(c)}
                             onSelect={(v) => update(c, { effort: v === 'default' ? '' : (v as Effort) })}
                           />
                         )}
                       </td>
                       <td className="aim-nowrap"><NotMeasured /></td>
-                      <td>
-                        <Toggle
-                          label={`${meta.label} uses the default`}
-                          checked={row.inherit}
-                          disabled={c === CHAT_DEFAULT_KEY}
-                          onChange={(on) => update(c, { inherit: on, ...(on ? { providerId: '', modelId: '', effort: '' as Effort } : {}) })}
-                        />
+                      <td className="aim-nowrap">
+                        <button
+                          className="btn ghost"
+                          disabled={resetting && c !== CHAT_DEFAULT_KEY && editing !== c}
+                          onClick={() => {
+                            if (editing) stopEditing(editing)
+                            if (editing !== c) setEditing(c)
+                          }}
+                        >
+                          {editing === c ? 'Cancel' : 'Change'}
+                        </button>
                       </td>
                     </tr>
                   )

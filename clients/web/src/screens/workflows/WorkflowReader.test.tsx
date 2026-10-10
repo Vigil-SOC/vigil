@@ -2,6 +2,7 @@
    switch, and a draft that has no payload. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import type { Workflow } from '../../data/appData'
 
@@ -9,6 +10,7 @@ const api = vi.hoisted(() => ({
   get: vi.fn(),
   preflight: vi.fn(),
   setEnabled: vi.fn(),
+  listRuns: vi.fn(),
 }))
 vi.mock('../../services/api', () => ({
   workflowApi: api,
@@ -25,7 +27,12 @@ const row = (over: Partial<Workflow>): Workflow => ({
   id: 'x', icon: 'flow', name: 'X', desc: '', agents: [], cmds: [], source: 'file', useCase: '',
   runKind: 'compose', huntLike: false, runs7d: 0, successRate: null, successLevel: null, meanCostUsd: null, enabled: true, canDisable: true, ...over,
 })
-const actions = { onBack: vi.fn(), onWatch: vi.fn(), onRun: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onToggled: vi.fn() }
+const actions = { onBack: vi.fn(), onHistory: vi.fn(), onRun: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onToggled: vi.fn() }
+
+function Search() {
+  return <span data-testid="search">{useLocation().search}</span>
+}
+const renderPane = (ui: React.ReactElement) => render(<MemoryRouter>{ui}<Search /></MemoryRouter>)
 
 const checkpoints = { hypothesis_approval: 'ask', scope_extension: 'auto', verdict_review: 'auto', budget_anomaly: 'ask' }
 const hunt = {
@@ -68,7 +75,7 @@ beforeEach(() => {
 describe('workflow reader pane', () => {
   it('draws a hunt with its loop and lets a stage filter the panels', async () => {
     serve(hunt)
-    render(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
 
     const strip = await screen.findByRole('region', { name: 'How it runs' })
     expect(within(strip).getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual([
@@ -116,7 +123,7 @@ describe('workflow reader pane', () => {
   it('says a turned-off phase agent in Who does it even when every role is present', async () => {
     const note = 'Its phases cannot run as written: phase names agent threat_hunter is turned off'
     serve({ ...hunt, preflight: { ...hunt.preflight, roles_note: note } })
-    render(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
     await screen.findByRole('region', { name: 'How it runs' })
     expect(within(panel('Who does it')).getByText('Hunt lead')).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText(note)).toBeInTheDocument()
@@ -124,7 +131,7 @@ describe('workflow reader pane', () => {
 
   it('says an adjudication hands off nothing, and draws one stage per phase for a compose', async () => {
     serve({ definition: { ...hunt.definition, run_kind: 'adjudicate' }, preflight: { ...hunt.preflight, permissions: [] , permissions_note: 'It holds no tools.' } })
-    const { unmount } = render(<WorkflowReaderPane wf={row({ id: 'shadow-adjudication', runKind: 'adjudicate', huntLike: true })} {...actions} />)
+    const { unmount } = renderPane(<WorkflowReaderPane wf={row({ id: 'shadow-adjudication', runKind: 'adjudicate', huntLike: true })} {...actions} />)
     expect(await screen.findByText('Records a verdict and the workflow it would have run. It starts nothing.')).toBeInTheDocument()
     unmount()
 
@@ -141,7 +148,7 @@ describe('workflow reader pane', () => {
         checkpoints: {}, checkpoints_note: 'It pauses only at phases marked approval_required.',
       },
     })
-    render(<WorkflowReaderPane wf={row({ id: 'ransom', name: 'Ransom reply' })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'ransom', name: 'Ransom reply' })} {...actions} />)
     const strip = await screen.findByRole('region', { name: 'How it runs' })
     expect(within(strip).getAllByRole('button').map((b) => b.textContent)).toEqual([
       expect.stringContaining('Write'), expect.stringContaining('Check'),
@@ -168,7 +175,7 @@ describe('workflow reader pane', () => {
         checkpoints: {}, checkpoints_note: 'This workflow never pauses to ask.',
       },
     })
-    render(<WorkflowReaderPane wf={row({ id: 'cloud-incident', name: 'Cloud incident', runKind: 'investigate' })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'cloud-incident', name: 'Cloud incident', runKind: 'investigate' })} {...actions} />)
     const one = await screen.findByRole('region', { name: 'Runs as one agent' })
     expect(within(one).getByText('Lead analyst')).toBeInTheDocument()
     expect(within(one).getByText('Claude Sonnet 5')).toBeInTheDocument()
@@ -187,7 +194,7 @@ describe('workflow reader pane', () => {
 
   it('renders no model for a payload that carries none', async () => {
     serve({ definition: { run_kind: 'root_cause', hunt_like: false, objectives: [], phases: [] }, preflight: { ...hunt.preflight, roles: { lead: { name: 'Lead analyst', tools: [] }, helpers: [], reviewer: null }, model: null, model_source: null, budgets: { max_turns: 1024 } } })
-    render(<WorkflowReaderPane wf={row({ id: 'root-cause-analysis', runKind: 'root_cause' })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'root-cause-analysis', runKind: 'root_cause' })} {...actions} />)
     const one = await screen.findByRole('region', { name: 'Runs as one agent' })
     expect(within(one).getByText('Lead analyst')).toBeInTheDocument()
     expect(within(one).queryByText('Default')).toBeNull()
@@ -198,7 +205,7 @@ describe('the enable switch and header', () => {
   it('turns a workflow off optimistically, and puts it back with the reason when the server refuses', async () => {
     serve(hunt)
     api.setEnabled.mockRejectedValueOnce({ response: { data: { detail: 'it cannot be turned off' } } })
-    render(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
     const toggle = await screen.findByRole('switch', { name: 'Threat hunt on' })
     expect(screen.getByText('Built in · version 3')).toBeInTheDocument()
     fireEvent.click(toggle)
@@ -216,16 +223,14 @@ describe('the enable switch and header', () => {
 
   it('disables the switch for the workflow alerts fall back to, and offers edit and delete only on a custom row', async () => {
     serve(hunt)
-    const { unmount } = render(<WorkflowReaderPane wf={row({ id: 'incident-response', name: 'Incident response', canDisable: false })} {...actions} />)
+    const { unmount } = renderPane(<WorkflowReaderPane wf={row({ id: 'incident-response', name: 'Incident response', canDisable: false })} {...actions} />)
     expect(await screen.findByRole('switch', { name: 'Incident response on' })).toBeDisabled()
     expect(screen.getByText('Alerts land here when nothing else fits, so it stays on.')).toBeInTheDocument()
     expect(screen.queryByTitle('Edit workflow')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Watch it run/ }))
-    expect(actions.onWatch).toHaveBeenCalled()
     unmount()
 
     serve({ ...hunt, definition: { ...hunt.definition, updated_at: new Date(Date.now() - 2 * 86_400_000).toISOString() } })
-    render(<WorkflowReaderPane wf={row({ id: 'mine', name: 'Mine', source: 'custom' })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'mine', name: 'Mine', source: 'custom' })} {...actions} />)
     expect(await screen.findByText('Edited 2 days ago · version 3')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('Edit workflow'))
     fireEvent.click(screen.getByTitle('Delete workflow'))
@@ -233,19 +238,56 @@ describe('the enable switch and header', () => {
     expect(actions.onDelete).toHaveBeenCalled()
   })
 
+  it('opens the latest run from Watch it run, looked up on the click', async () => {
+    serve(hunt)
+    api.listRuns.mockResolvedValue({ data: { runs: [{ run_id: 'run-9' }] } })
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt' })} {...actions} />)
+    const watch = await screen.findByRole('button', { name: /Watch it run/ })
+    expect(api.listRuns).not.toHaveBeenCalled()
+    fireEvent.click(watch)
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe('?run=run-9'))
+    expect(api.listRuns).toHaveBeenCalledWith('threat-hunt', { limit: 1 })
+  })
+
+  it('says No runs yet, and stays put, when the workflow never ran', async () => {
+    serve(hunt)
+    api.listRuns.mockResolvedValue({ data: { runs: [] } })
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt' })} {...actions} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Watch it run/ }))
+    expect(await screen.findByRole('button', { name: /No runs yet/ })).toBeDisabled()
+    expect(screen.getByTestId('search').textContent).toBe('')
+  })
+
+  it('keeps Watch it run usable, naming the failure, when the lookup fails', async () => {
+    serve(hunt)
+    api.listRuns.mockRejectedValue(new Error('down'))
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt' })} {...actions} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Watch it run/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Watch it run/ })).toHaveAttribute('title', 'Couldn’t look up runs — down'))
+    expect(screen.getByRole('button', { name: /Watch it run/ })).toBeEnabled()
+  })
+
+  it('asks for History from the header', async () => {
+    serve(hunt)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt' })} {...actions} />)
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }))
+    expect(actions.onHistory).toHaveBeenCalled()
+  })
+
   it('renders an unsaved draft from its own phases, with no read and no switch', async () => {
-    render(
+    renderPane(
       <WorkflowReaderPane
         draft={{ name: 'Draft flow', description: 'Not saved', phases: [
           { agent_id: 'triage', name: 'Look', tools: ['get_finding'] },
           { agent_id: 'reporter', name: 'Tell', approval_required: true },
         ] }}
         onBack={vi.fn()}
+        onSave={vi.fn()}
       />,
     )
     const strip = await screen.findByRole('region', { name: 'How it runs' })
     expect(within(strip).getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringContaining('Look'), expect.stringContaining('Tell')])
-    expect(screen.getByText('Draft · not saved')).toBeInTheDocument()
+    expect(screen.getByText('AI draft — not saved')).toBeInTheDocument()
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByRole('button', { name: /Run workflow/ })).toBeNull()
     expect(within(panel('What it may do on its own')).getByText('Shown once the workflow is saved.')).toBeInTheDocument()
@@ -257,7 +299,7 @@ describe('the enable switch and header', () => {
   it('still shows the definition, labelled, when the preflight cannot be read', async () => {
     api.get.mockResolvedValue({ data: hunt.definition })
     api.preflight.mockRejectedValue(new Error('down'))
-    render(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
+    renderPane(<WorkflowReaderPane wf={row({ id: 'threat-hunt', name: 'Threat hunt', runKind: 'hunt', huntLike: true })} {...actions} />)
     expect(await screen.findByRole('heading', { name: 'Threat hunt' })).toBeInTheDocument()
     expect(within(panel('Who does it')).getByText('Couldn’t load this.')).toBeInTheDocument()
     expect(within(panel('What it may do on its own')).getByText('Couldn’t load this.')).toBeInTheDocument()

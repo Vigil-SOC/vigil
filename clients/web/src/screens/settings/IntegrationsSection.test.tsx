@@ -144,8 +144,20 @@ describe('Integrations: Connected table', () => {
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: { statuses: [] } } as never)
     renderSection()
     expect(await screen.findByText('Nothing is connected yet')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Add integration/ }))
+    // the head button of the same name sits above; the empty state's is the one inside the section body
+    const empty = screen.getByText('Nothing is connected yet').closest('.empty-state') as HTMLElement
+    fireEvent.click(within(empty).getByRole('button', { name: /Add integration/ }))
     expect(screen.getByRole('tab', { name: /Add integration/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('switches the tab strip from the page-head actions', async () => {
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 2' })
+    const head = within(screen.getByRole('banner'))
+    fireEvent.click(head.getByRole('button', { name: 'Add integration' }))
+    expect(screen.getByRole('tab', { name: /^Add integration/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(head.getByRole('button', { name: 'Build custom' }))
+    expect(screen.getByRole('tab', { name: /^Custom/ })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows loading, then an error with Retry', async () => {
@@ -349,14 +361,14 @@ describe('Integrations: Add integration tab', () => {
     } as never)
   })
 
-  it('counts chips from the catalog, marks connected cards and leaves WIP servers out', async () => {
+  it('lists a chip per category without counts, marks connected cards and leaves WIP servers out', async () => {
     await open()
     const chips = within(screen.getByRole('group', { name: 'Category' }))
-    // Slack is work in progress: no card, no count
+    // Slack is work in progress: no card
     expect(screen.queryByText('Slack', { selector: '.int-card-name' })).not.toBeInTheDocument()
-    // Entra ID is work in progress too: Okta alone makes Identity; Jira and PagerDuty make Incident Management
-    expect(chips.getByRole('button', { name: /Identity & Access/ })).toHaveTextContent('1')
-    expect(chips.getByRole('button', { name: /Incident Management/ })).toHaveTextContent('2')
+    expect(chips.getByRole('button', { name: 'All' })).toHaveTextContent(/^All$/)
+    expect(chips.getByRole('button', { name: 'Identity & Access' })).toHaveTextContent(/^Identity & Access$/)
+    expect(chips.getByRole('button', { name: 'Incident Management' })).toBeInTheDocument()
     expect(within(card('GitHub')).getByText('Connected')).toBeInTheDocument()
     expect(within(card('GitHub')).queryByRole('button', { name: /Connect/ })).not.toBeInTheDocument()
     expect(within(card('Okta')).getByText('Available')).toBeInTheDocument()

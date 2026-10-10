@@ -3248,7 +3248,7 @@ export interface paths {
         };
         /**
          * Get Setup Steps
-         * @description Home's setup list: tools, a notify route, rules on disk, and model variety.
+         * @description Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill.
          */
         get: operations["get_api_config_setup-steps"];
         put?: never;
@@ -9247,6 +9247,8 @@ export interface components {
             comment_count: number;
             /** Cost Usd */
             cost_usd?: number | null;
+            /** Description */
+            description?: string | null;
             /**
              * Findings Count
              * @default 0
@@ -9267,6 +9269,11 @@ export interface components {
             needs_you: boolean;
             /** Priority */
             priority?: string | null;
+            /**
+             * Sla Paused
+             * @default false
+             */
+            sla_paused: boolean;
             /** Sla Seconds Left */
             sla_seconds_left?: number | null;
             /** Title */
@@ -10007,10 +10014,6 @@ export interface components {
             created_by?: string | null;
             /** Description */
             description: string;
-            /** Graph Layout */
-            graph_layout?: {
-                [key: string]: unknown;
-            };
             /** Name */
             name: string;
             /** Phases */
@@ -10027,10 +10030,6 @@ export interface components {
         CustomWorkflowUpdate: {
             /** Description */
             description?: string | null;
-            /** Graph Layout */
-            graph_layout?: {
-                [key: string]: unknown;
-            } | null;
             /** Is Active */
             is_active?: boolean | null;
             /** Name */

@@ -36,6 +36,7 @@ def _row(case_id: str) -> CaseQueueRow:
         response_completed_at=None,
         resolution_completed_at=None,
         is_paused=False,
+        description=f"about {case_id}",
     )
 
 
@@ -88,6 +89,11 @@ def test_get_cases_passes_one_needs_you_read_into_the_page(monkeypatch):
     assert seen["offset"] == 1
     assert [row["case_id"] for row in body["cases"]] == ["waiting", "closer"]
     assert [row["needs_you"] for row in body["cases"]] == [True, False]
+    assert [row["description"] for row in body["cases"]] == [
+        "about waiting",
+        "about closer",
+    ]
+    assert [row["sla_paused"] for row in body["cases"]] == [False, False]
 
 
 def _get(**kwargs):

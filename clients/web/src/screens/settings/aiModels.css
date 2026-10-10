@@ -42,8 +42,18 @@
 .aim-table th, .aim-table td { padding-left: 10px; padding-right: 10px; }
 .aim-model { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .aim-model > * { min-width: 0; }
-.aim-model > :first-child { flex: 0 0 165px; }
-.aim-model > :last-child { flex: 1 1 200px; }
+.aim-model > :first-child { flex: 0 0 150px; }
+.aim-model > :last-child { flex: 1 1 150px; }
+/* fixed width, so a long model id wraps instead of widening the table */
+.aim-fallback { width: 160px; }
+.aim-fallback .field-select { padding: 7px 7px 7px 9px; gap: 4px; font-size: 12px; }
+.aim-fallback .field-select > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.aim-model-text { display: flex; flex-direction: column; min-width: 0; }
+.aim-model-name { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx0); overflow-wrap: anywhere; }
+.aim-default-chip {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px;
+  background: var(--bg3); color: var(--tx2); font-size: 10px; font-weight: 700; flex: 0 0 auto;
+}
 .aim-muted { color: var(--tx2); }
 .aim-who { font-weight: 650; color: var(--tx0); }
 .aim-note { font-size: 11px; color: var(--tx2); }

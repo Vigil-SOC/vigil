@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import SystemChecksStep from './SystemChecksStep'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
-import { readProviderConfigured } from '../../routing/useSetupStatus'
+import { readProviderStatus } from '../../routing/useSetupStatus'
 
 vi.mock('../../services/api', () => ({
   consoleApi: { getHealth: vi.fn() },
@@ -12,7 +12,7 @@ vi.mock('../../services/api', () => ({
 }))
 
 vi.mock('../../routing/useSetupStatus', () => ({
-  readProviderConfigured: vi.fn(),
+  readProviderStatus: vi.fn(),
 }))
 
 const row = (label: string) => screen.getByText(label).closest('[role="listitem"]') as HTMLElement
@@ -32,7 +32,7 @@ describe('SystemChecksStep', () => {
         demo_mode: false,
       },
     } as never)
-    vi.mocked(readProviderConfigured).mockResolvedValue(true)
+    vi.mocked(readProviderStatus).mockResolvedValue('ready')
     vi.mocked(federationApi.getHealth).mockResolvedValue({
       data: {
         sources: [{ source_id: 'splunk', enabled: true, consecutive_errors: 0 }],
@@ -68,9 +68,9 @@ describe('SystemChecksStep', () => {
 
   it('runs the checks in order, one Checking at a time, with no summary while loading', async () => {
     let releaseProvider!: () => void
-    vi.mocked(readProviderConfigured).mockReturnValue(
+    vi.mocked(readProviderStatus).mockReturnValue(
       new Promise((resolve) => {
-        releaseProvider = () => resolve(false)
+        releaseProvider = () => resolve('unreachable')
       }),
     )
     render(<SystemChecksStep />)
@@ -132,11 +132,25 @@ describe('SystemChecksStep', () => {
     expect(mark('API health')).toBe('Needs you')
   })
 
-  it('needs you when the provider is not configured', async () => {
-    vi.mocked(readProviderConfigured).mockResolvedValue(false)
+  it('passes with the board detail and no warning when no provider is configured yet', async () => {
+    vi.mocked(readProviderStatus).mockResolvedValue('none')
     render(<SystemChecksStep />)
-    expect(await screen.findByText('You add a provider in step 3')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Running on this server · you add a provider in step 3'),
+    ).toBeInTheDocument()
+    expect(mark('Model gateway')).toBe('Passed')
+    await screen.findByText('1 enabled server running')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('needs you, and counts a warning, when the model gateway cannot be reached', async () => {
+    vi.mocked(readProviderStatus).mockResolvedValue('unreachable')
+    render(<SystemChecksStep />)
+    expect(await screen.findByText('Could not reach the model gateway')).toBeInTheDocument()
     expect(mark('Model gateway')).toBe('Needs you')
+    expect(
+      await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
+    ).toBeInTheDocument()
   })
 
   it('names an enabled federation source that is erroring', async () => {
@@ -167,6 +181,23 @@ describe('SystemChecksStep', () => {
     // Waiting with no source is not a warning
     await screen.findByText('1 enabled server running')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows Needs you when a federation or MCP read has no body', async () => {
+    vi.mocked(federationApi.getHealth).mockResolvedValue({ data: undefined } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: null } as never)
+    render(<SystemChecksStep />)
+    await waitFor(() => expect(mark('Alert collection')).toBe('Needs you'))
+    expect(mark('Tool servers')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
+  })
+
+  it('shows Could not read for a storage read with no body', async () => {
+    vi.mocked(storageApi.getStatus).mockResolvedValue({ data: undefined } as never)
+    render(<SystemChecksStep />)
+    await waitFor(() => expect(mark('Storage')).toBe('Needs you'))
+    expect(mark('Database')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
   })
 
   it('names an enabled MCP server that is not running', async () => {

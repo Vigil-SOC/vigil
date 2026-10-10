@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { Markdown } from '../../shared/Markdown'
@@ -33,7 +34,7 @@ interface Preflight {
 
 interface Phase { agent?: string; agent_id?: string; name?: string; tools?: string[]; approval_required?: boolean }
 
-/** GET /workflows/{id}, or the builder's unsaved draft. */
+/** GET /workflows/{id}, or an unsaved draft. */
 interface Definition {
   description?: string
   version?: number
@@ -54,7 +55,7 @@ export interface DraftDefinition {
 export interface ReaderActions {
   /** Shown as "All workflows" when the pane stands alone; beside the card list it has none. */
   onBack?: () => void
-  onWatch: () => void
+  onHistory: () => void
   onRun: () => void
   onEdit: () => void
   onDelete: () => void
@@ -62,15 +63,19 @@ export interface ReaderActions {
   onToggled: () => void
 }
 
-export type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void }
+/** A draft's `onSave` resolves once the workflow exists and rejects with what the server said. */
+export type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void; onSave: () => Promise<unknown> }
 
 const DRAFT_MISSING = 'Shown once the workflow is saved.'
 const NOT_LOADED = 'Couldn’t load this.'
 const ALWAYS_ON = 'Alerts land here when nothing else fits, so it stays on.'
 
 function errMsg(e: unknown): string {
-  const r = e as { response?: { data?: { detail?: string } }; message?: string }
-  return r?.response?.data?.detail || r?.message || 'request failed'
+  const r = e as { response?: { data?: { detail?: unknown } }; message?: string }
+  const detail = r?.response?.data?.detail
+  // a 422's detail is a list of {loc, msg}, which would print as [object Object]
+  const text = Array.isArray(detail) ? detail.map((d) => d?.msg).filter(Boolean).join('; ') : detail
+  return (typeof text === 'string' && text) || r?.message || 'request failed'
 }
 
 interface Source {
@@ -428,10 +433,40 @@ function RunsAsOneAgent({ definition, entries, pre, missing }: { definition: Def
   )
 }
 
-function Header({ name, wf, actions, definition }: { name: string; wf: Workflow | null; actions: ReaderActions | null; definition: Definition }) {
+/** Opens the workflow's latest run as the Watch a run page. The run is looked up on
+ *  the click, not once per workflow on load, and a workflow that never ran says so. */
+function WatchButton({ wf }: { wf: Workflow }) {
+  const navigate = useNavigate()
+  const [state, setState] = useState<'idle' | 'busy' | 'none'>('idle')
+  const [failed, setFailed] = useState<string | null>(null)
+  const watch = () => {
+    setState('busy')
+    setFailed(null)
+    workflowApi
+      .listRuns(wf.id, { limit: 1 })
+      .then((res) => {
+        const latest = (res.data?.runs as { run_id?: string }[] | undefined)?.[0]?.run_id
+        if (!latest) return setState('none')
+        setState('idle')
+        navigate({ search: `?run=${encodeURIComponent(latest)}` })
+      })
+      .catch((e) => { setFailed(errMsg(e)); setState('idle') })
+  }
+  return (
+    <button
+      className="btn ghost" disabled={state !== 'idle'} onClick={watch}
+      title={state === 'none' ? 'No runs yet' : failed ? `Couldn’t look up runs — ${failed}` : 'Replay the latest run step by step'}
+    >
+      <Icon name="play" /> {state === 'none' ? 'No runs yet' : 'Watch it run'}
+    </button>
+  )
+}
+
+function Header({ name, wf, actions, definition, onSave }: { name: string; wf: Workflow | null; actions: ReaderActions | null; definition: Definition; onSave?: () => Promise<unknown> }) {
   // optimistic, dropped once the list reads the row again
   const [now, setNow] = useState<boolean | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   useEffect(() => setNow(null), [wf?.enabled])
   const enabled = now ?? wf?.enabled ?? true
   const toggle = () => {
@@ -444,8 +479,15 @@ function Header({ name, wf, actions, definition }: { name: string; wf: Workflow 
       setErr(`Couldn’t turn ${name} ${on ? 'on' : 'off'}: ${errMsg(e)}`)
     })
   }
+  // on success the screen swaps this pane out, so only a failure comes back here
+  const save = () => {
+    if (!onSave) return
+    setErr(null)
+    setSaving(true)
+    onSave().catch((e) => { setErr(`Couldn’t save ${name}: ${errMsg(e)}`); setSaving(false) })
+  }
   const version = definition.version ?? '—'
-  const edited = !wf ? 'Draft · not saved'
+  const edited = !wf ? 'AI draft — not saved'
     : wf.source !== 'custom' ? `Built in · version ${version}`
     : definition.updated_at && !Number.isNaN(new Date(definition.updated_at).getTime())
       ? `Edited ${formatDistanceToNowStrict(new Date(definition.updated_at), { addSuffix: true })} · version ${version}`
@@ -473,9 +515,15 @@ function Header({ name, wf, actions, definition }: { name: string; wf: Workflow 
         {wf && !wf.canDisable && <p className="m-0 text-[12px] leading-[1.45] text-tx-3">{ALWAYS_ON}</p>}
         {err && <p role="alert" className="m-0 text-[12px] leading-[1.45] text-[var(--poor)]">{err}</p>}
       </div>
+      {!wf && onSave && (
+        <div className="flex items-center gap-2 shrink-0">
+          <button className="btn primary disabled:opacity-50 disabled:cursor-not-allowed" disabled={saving} onClick={save}><Icon name="check2" /> {saving ? 'Saving…' : 'Save workflow'}</button>
+        </div>
+      )}
       {wf && actions && (
         <div className="flex items-center gap-2 shrink-0">
-          <button className="btn ghost" onClick={actions.onWatch}><Icon name="clock" /> Watch it run</button>
+          <WatchButton wf={wf} />
+          <button className="btn ghost" onClick={actions.onHistory}><Icon name="clock" /> History</button>
           {wf.source === 'custom' && (
             <>
               <button className="btn ghost icon" title="Edit workflow" onClick={actions.onEdit}><Icon name="edit" /></button>
@@ -508,12 +556,12 @@ export default function WorkflowReaderPane(props: ReaderProps) {
           <button className="btn ghost" onClick={props.onBack}><Icon name="chevL" size={13} /> All workflows</button>
         </div>
       )}
-      <div className="flex flex-col gap-3.5 px-[22px] pt-5 pb-[110px]">
+      <div className="wfk-pane flex flex-col gap-3.5 px-[22px] pt-5 pb-[110px]">
         {phase === 'loading' && <div className="muted text-[12.5px]">Loading…</div>}
         {phase === 'error' && <p className="m-0 text-[13px] text-tx-2">Couldn’t load this workflow.</p>}
         {phase === 'ready' && (
           <>
-            <Header name={'wf' in props ? props.wf.name : props.draft.name} wf={'wf' in props ? props.wf : null} actions={'wf' in props ? props : null} definition={definition} />
+            <Header name={'wf' in props ? props.wf.name : props.draft.name} wf={'wf' in props ? props.wf : null} actions={'wf' in props ? props : null} definition={definition} onSave={'draft' in props ? props.onSave : undefined} />
             {strip && stages.length > 0 && <HowItRuns strip={strip} entries={entries} pre={pre} selected={selected} onSelect={setSelected} />}
             {strip && stages.length === 0 && <Muted>{pre.roles ? pre.roles_note ?? 'This workflow declares no phases.' : missing}</Muted>}
             {single ? (

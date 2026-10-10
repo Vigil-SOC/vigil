@@ -2,12 +2,12 @@
 
 The load-bearing invariant here is the destructive-MCP filter: chat has no
 approval-resume path, so a direct-action tool (host isolation, IP block) must
-never be declared to the assistant. It gets recommended, not detonated.
+never be reachable by the assistant. It gets recommended, not detonated.
 """
 
 import pytest
 
-from core.llm.chat_layers import _declare, _is_destructive_mcp
+from core.llm.chat_layers import _declare, _is_destructive_mcp, integration_tools
 
 
 @pytest.mark.unit
@@ -58,40 +58,33 @@ def _mcp(name, description="something useful"):
     }
 
 
-@pytest.mark.unit
-def test_declare_drops_destructive_mcp_but_keeps_the_rest():
-    declared = {
-        t["id"]
-        for t in _declare(None, [_mcp("mde_isolate"), _mcp("virustotal_get_ip_report")])
-    }
-    assert "mde_isolate" not in declared
-    assert "virustotal_get_ip_report" in declared
+def _reachable(tools):
+    return {t["name"] for t in integration_tools(tools)}
 
 
 @pytest.mark.unit
-def test_declare_drops_blank_description_mcp_tool():
-    # A description-less MCP tool arrives as "" (registry no longer fabricates a
-    # "[server] " prefix), so the emptiness guard drops it.
-    declared = {t["id"] for t in _declare(None, [_mcp("shodan_host", description="")])}
-    assert "shodan_host" not in declared
+def test_chat_cannot_reach_destructive_mcp_but_reaches_the_rest():
+    reachable = _reachable([_mcp("mde_isolate"), _mcp("virustotal_get_ip_report")])
+    assert reachable == {"virustotal_get_ip_report"}
 
 
 @pytest.mark.unit
-def test_declare_drops_art_execute_but_keeps_splunk_execute():
-    declared = {
-        t["id"]
-        for t in _declare(
-            None,
-            [
-                _mcp("atomic_red_team_execute"),
-                _mcp("atomic-red-team_atomic_red_team_execute"),
-                _mcp("splunk-selfhosted_splunk_execute"),
-            ],
-        )
-    }
-    assert "atomic_red_team_execute" not in declared
-    assert "atomic-red-team_atomic_red_team_execute" not in declared
-    assert "splunk-selfhosted_splunk_execute" in declared
+def test_chat_cannot_reach_art_execute_but_reaches_splunk_execute():
+    reachable = _reachable(
+        [
+            _mcp("atomic_red_team_execute"),
+            _mcp("atomic-red-team_atomic_red_team_execute"),
+            _mcp("splunk-selfhosted_splunk_execute"),
+        ]
+    )
+    assert reachable == {"splunk-selfhosted_splunk_execute"}
+
+
+@pytest.mark.unit
+def test_integration_tools_are_never_declared_one_by_one():
+    declared = {t["id"] for t in _declare(None, [_mcp("virustotal_get_ip_report")])}
+    assert "virustotal_get_ip_report" not in declared
+    assert {"find_integration_tools", "call_integration_tool"} <= declared
 
 
 @pytest.mark.unit
@@ -110,3 +103,13 @@ def test_chat_config_keeps_approvals_empty_when_art_is_connected():
     assert "atomic-red-team_atomic_red_team_execute" not in {
         tool["id"] for tool in config["tools"]
     }
+
+
+@pytest.mark.unit
+def test_chat_config_carries_effort_only_when_set():
+    import yaml
+
+    from core.llm.chat_layers import chat_config
+
+    assert yaml.safe_load(chat_config("m", effort="high"))["effort"] == "high"
+    assert "effort" not in yaml.safe_load(chat_config("m", effort=None))
