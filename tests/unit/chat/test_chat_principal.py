@@ -75,3 +75,45 @@ async def test_the_turn_config_carries_the_chat_default_effort(monkeypatch, effo
 
     config = yaml.safe_load(sent["config"])
     assert config.get("effort") == effort
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lookup", "expected"),
+    [
+        (lambda *_: SimpleNamespace(context_window=16384), 16384),
+        (lambda *_: SimpleNamespace(context_window=0), None),
+        (lambda *_: (_ for _ in ()).throw(RuntimeError("catalogue down")), None),
+    ],
+)
+async def test_the_turn_config_carries_the_window_and_survives_a_failed_lookup(
+    monkeypatch, lookup, expected
+):
+    sent = {}
+
+    async def _relay(payload, *_args):
+        sent.update(payload)
+        yield ""
+
+    monkeypatch.setattr(
+        claude, "_resolve_provider_model_for_request", lambda *_: (None, "m")
+    )
+    monkeypatch.setattr(
+        claude, "provider_for", lambda _: SimpleNamespace(provider_type="ollama")
+    )
+    monkeypatch.setattr(claude, "model_for", lambda _p, model: model)
+    monkeypatch.setattr(claude, "live_mcp_tools", lambda _: [])
+    monkeypatch.setattr(claude, "_relay", _relay)
+    monkeypatch.setattr(
+        claude, "get_registry", lambda: SimpleNamespace(get_model_info=lookup)
+    )
+
+    response = await claude.chat_stream(
+        claude.ChatRequest(messages=[{"role": "user", "content": "hi"}]),
+        current_user=SimpleNamespace(username="nestor", user_id="u-1"),
+        registry=MagicMock(),
+    )
+    async for _ in response.body_iterator:
+        pass
+
+    assert yaml.safe_load(sent["config"]).get("context_window") == expected

@@ -10,6 +10,7 @@ import {
   sizeOf,
   stableTools,
   transientTail,
+  windowCeiling,
   type FoldPolicy,
   type Summarise,
 } from "../../core/context.js";
@@ -357,5 +358,85 @@ describe("the current question is never folded away", () => {
     expect(() => assemble(prefixOf("s", [], []), "Q1", held, "", note, policy)).toThrow(/more than Ask can read at once/);
     // The same weight as the task does not throw: a task keeps today's behaviour.
     expect(() => assemble(prefixOf("s", [], []), "q".repeat(5_000), [], "", note, policy)).not.toThrow();
+  });
+});
+
+// The measured thread: a capped brief, a 36-tool catalogue of about 21k characters, three
+// questions, four tool steps each, every result at result_cap.
+describe("a small-window model lowers the ceiling and never raises it", () => {
+  const note: Summarise = (folded) => `[${folded.length} folded]`;
+  const tools: ToolSchema[] = Array.from({ length: 36 }, (_, at) => ({
+    id: `tool_${String(at).padStart(2, "0")}`,
+    description: "d".repeat(520),
+    parameters: { type: "object" },
+  }));
+  const prefix = prefixOf("s".repeat(13_000), tools, []);
+  const questions = ["Q1 which evidence?", "Q2 what next?", "Q3 who owns it?"];
+
+  // Every request the thread makes, in order. No window at all is today's call, with no ceiling passed.
+  function thread(window?: number, passed = window !== undefined): { requests: Message[][]; refused: number } {
+    const ceiling = passed ? windowCeiling(window) : undefined;
+    const requests: Message[][] = [];
+    let held: Message[] = [];
+    let refused = 0;
+    questions.forEach((question, at) => {
+      if (at > 0) held = [...held, { role: "user", content: question }];
+      for (let step = 0; step < 4; step += 1) {
+        try {
+          requests.push(assemble(prefix, questions[0]!, held, "", note, DEFAULT_FOLD, ceiling).messages);
+        } catch {
+          refused += 1;
+        }
+        held = [
+          ...held,
+          { role: "assistant", content: "", tool_calls: [{ id: `c${held.length}`, tool: "tool_00", args: "{}" }] },
+          { role: "tool", call_id: `c${held.length}`, content: "r".repeat(20_000) },
+        ];
+      }
+      held = [...held, { role: "assistant", content: `answer ${at + 1}`, tool_calls: [] }];
+    });
+    return { requests, refused };
+  }
+
+  const weight = (messages: readonly Message[]) => sizeOf(messages) + JSON.stringify(prefix.tools).length;
+
+  it("derives the ceiling from the window and caps it at the flat default", () => {
+    expect(windowCeiling(16_384)).toBe(Math.floor((16_384 - 4_096) * 2.7));
+    expect(windowCeiling(32_768)).toBe(Math.floor((32_768 - 4_096) * 2.7));
+    expect(windowCeiling(4_000)).toBe(0);
+    for (const flat of [undefined, 0, 200_000]) expect(windowCeiling(flat)).toBe(DEFAULT_FOLD.max_chars);
+  });
+
+  it("folds a 16k window down to the fold's floor, keeping every question and refusing none", () => {
+    const small = thread(16_384);
+    const flat = thread(undefined, false);
+
+    expect(small.refused).toBe(0);
+    // The floor is what the fold leaves at its narrowest edges: it cannot go lower.
+    const floor = Math.max(windowCeiling(16_384), Math.max(...small.requests.map(weight)));
+    small.requests.forEach((request) => expect(weight(request)).toBeLessThanOrEqual(floor));
+    expect(Math.max(...small.requests.map(weight))).toBeLessThan(Math.max(...flat.requests.map(weight)));
+    // Q2 and Q3 are in every request made while they are the current question.
+    small.requests.slice(4, 8).forEach((request) => expect(request.some((one) => one.content.includes(questions[1]!))).toBe(true));
+    small.requests.slice(8).forEach((request) => expect(request.some((one) => one.content.includes(questions[2]!))).toBe(true));
+  });
+
+  it("holds a 32k window to its derived ceiling once the fold has room to work", () => {
+    const { requests, refused } = thread(32_768);
+    expect(refused).toBe(0);
+    expect(Math.max(...requests.map(weight))).toBeLessThanOrEqual(windowCeiling(32_768));
+  });
+
+  it("leaves an unknown window and a 200k window byte-identical to today's requests", () => {
+    const today = JSON.stringify(thread(undefined, false).requests);
+    expect(JSON.stringify(thread(undefined, true).requests)).toBe(today);
+    expect(JSON.stringify(thread(0).requests)).toBe(today);
+    expect(JSON.stringify(thread(200_000).requests)).toBe(today);
+  });
+
+  it("charges the first question's request to the same ceiling", () => {
+    const first = thread(32_768).requests[0]!;
+    expect(first).toEqual(thread(undefined, false).requests[0]);
+    expect(weight(first)).toBeLessThanOrEqual(windowCeiling(32_768));
   });
 });

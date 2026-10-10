@@ -93,6 +93,7 @@ function turnFor(options: ChatOptions, lead: RoleSpec): TurnConfig {
     verbs: [],
     result_cap: runtime.result_cap,
     recall_limit: runtime.recall_limit,
+    ...(options.spec.context_window === undefined ? {} : { context_window: options.spec.context_window }),
   };
 }
 
