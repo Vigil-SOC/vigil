@@ -8,6 +8,7 @@ import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
+import { mcpApi } from '../../services/api'
 import {
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
@@ -43,6 +44,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const { mcp, int, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
   const [busy, setBusy] = useState<string | null>(null)
+  const [reloadingServers, setReloadingServers] = useState(false)
   // saved custom integrations, from GET /api/custom-integrations/list; null until known or when it fails (non-admin)
   const [customCount, setCustomCount] = useState<number | null>(null)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
@@ -53,6 +55,24 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const reload = () => {
     reloadMcp()
     reloadInt()
+  }
+
+  // Refresh only re-reads; this asks the backend to rebuild its tool server catalog
+  const onReloadServers = async () => {
+    setReloadingServers(true)
+    try {
+      const res = await mcpApi.reloadServers()
+      const n = res.data?.total_servers
+      notify('ok', typeof n === 'number' ? `Tool servers reloaded. ${n} server${n === 1 ? '' : 's'} configured.` : 'Tool servers reloaded.')
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
+      const detail = err.response?.data?.detail
+      notify('err', `Could not reload tool servers: ${typeof detail === 'string' ? detail : err.message || 'unknown error'}.`)
+    } finally {
+      setReloadingServers(false)
+      // after a failure too: the catalog may have been cleared before the error
+      reload()
+    }
   }
 
   const reloadCustom = useCallback(async () => {
@@ -199,8 +219,19 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         />
       )}
       {tab === 'connected' && ready && connected.length > 0 && (
-        <div className="flex justify-end">
-          <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
+        <div className="flex justify-end gap-2">
+          <button className="btn ghost" onClick={reload} title="Re-reads the status shown here. Changes nothing on the server.">
+            <Icon name="refresh" /> Refresh
+          </button>
+          <button
+            className="btn ghost"
+            onClick={onReloadServers}
+            disabled={reloadingServers}
+            aria-busy={reloadingServers}
+            title="Re-reads tool server settings, so new or changed servers show up without restarting Vigil. Servers already connected keep their current session."
+          >
+            <Icon name="gear" /> {reloadingServers ? 'Reloading…' : 'Reload servers'}
+          </button>
         </div>
       )}
       {tab === 'connected' && ready && connected.length > 0 && (
