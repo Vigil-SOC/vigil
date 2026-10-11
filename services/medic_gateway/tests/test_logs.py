@@ -73,17 +73,24 @@ def test_no_credential_or_body_in_any_log_line(env, stream):
     env.backend.login_status = 401
     env.session.access = env.session.refresh_tok = None
     get(env)  # bad password
+    # The session handed the filter the password it read from the file.
+    assert logs.redact(PASSWORD) == "[secret]"
     # Direct attempts: the filter is the last line of defence, not the call sites.
+    # A canary the test remembers itself stands in for the password on the stdlib
+    # calls: CodeQL reads a logged value named "password" as a leak, even here.
+    canary = "direct-canary-" + "y" * 24
+    logs.remember(canary)
     log = logging.getLogger(logs.LOGGER)
-    log.info("leak %s %s", PASSWORD, min(tokens))
+    log.info("leak %s %s", canary, min(tokens))
     logs.event("leak", password=PASSWORD, token=max(tokens), nested={"t": PASSWORD})
     try:
-        raise RuntimeError(PASSWORD)
+        raise RuntimeError(canary)
     except RuntimeError:
-        log.exception("boom %s", PASSWORD)
-    logging.getLogger(logs.LOGGER + ".child").warning("child %s", PASSWORD)
+        log.exception("boom %s", canary)
+    logging.getLogger(logs.LOGGER + ".child").warning("child %s", canary)
     text = stream.getvalue()
     assert len(lines(stream)) >= 6
+    assert canary not in text
     assert PASSWORD not in text
     assert "canary-PW" not in text
     assert KEY not in text
@@ -91,6 +98,7 @@ def test_no_credential_or_body_in_any_log_line(env, stream):
     assert "eyJ" not in text
     for t in tokens:
         assert t not in text and t.split(".")[-1] not in text
+    logs.forget(canary)
 
 
 def test_redact_scrubs_jwt_shapes_without_knowing_them():
