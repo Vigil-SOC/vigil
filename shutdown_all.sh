@@ -59,12 +59,14 @@ echo "Stopping Vigil SOC..."
 
 # Kill by PID files
 for pidfile in logs/backend.pid logs/daemon.pid logs/frontend.pid logs/llm_worker.pid \
-               logs/agent-worker.pid logs/agent-serve.pid; do
+               logs/agent-worker.pid logs/agent-serve.pid logs/medic.pid; do
     [ -f "$pidfile" ] || continue
     pid="$(cat "$pidfile")"
     # A stale pidfile's PID may have been reused by an unrelated process.
-    if [ "$pidfile" = logs/frontend.pid ] &&
-       ! ps -p "$pid" -o args= 2>/dev/null | grep -qE 'vite|npm run dev'; then
+    if { [ "$pidfile" = logs/frontend.pid ] &&
+         ! ps -p "$pid" -o args= 2>/dev/null | grep -qE 'vite|npm run dev'; } ||
+       { [ "$pidfile" = logs/medic.pid ] &&
+         ! ps -p "$pid" -o args= 2>/dev/null | grep -q medic-loop; }; then
         rm -f "$pidfile"
         continue
     fi

@@ -138,6 +138,10 @@ celerybeat.pid
 .env.bak*
 .env.*.bak
 .venv
+# Medic gateway tests (services/medic_gateway/README.md): outside services/
+.venv-medic-gateway/
+# Medic Docker proxy tests (services/medic_dockerproxy/README.md): same reason
+.venv-medic-dockerproxy/
 env/
 venv/
 ENV/
