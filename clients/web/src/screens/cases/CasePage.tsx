@@ -5,7 +5,7 @@ import { approvalsApi, casesApi, orchestratorApi, workflowApi, type CaseRecordRo
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
 import { IN_FLIGHT, useRunDetail } from '../workflows/runRead'
-import { slaLevel } from '../../shared/LevelBadge'
+import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { SeverityMark } from '../../shared/SeverityMark'
 import { StatePill, statePill } from '../../shared/StatePill'
@@ -539,7 +539,10 @@ export function CasePage({
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
   const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState('') // Reopen's failure, on Summary
+  // Verify chain / Export audit outcome, shown in the Record header; level null while in flight
+  const [recStatus, setRecStatus] = useState<{ level: Level; text: string } | null>(null)
+  const recStatusTicket = useRef(0)
   const [busy, setBusy] = useState(false)
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
@@ -587,6 +590,12 @@ export function CasePage({
     setNote('')
     setChip('all')
   }, [id])
+
+  // leaving the Record tab (or the case) drops its status and ignores a call still in flight
+  useEffect(() => {
+    recStatusTicket.current += 1
+    setRecStatus(null)
+  }, [id, tab])
 
   // the command bar's text rides the composer's own seed path
   useEffect(() => {
@@ -714,14 +723,22 @@ export function CasePage({
 
   const verify = async () => {
     if (!runId) return
+    const ticket = ++recStatusTicket.current
+    const report = (status: { level: Level; text: string }) => {
+      if (ticket === recStatusTicket.current) setRecStatus(status)
+    }
     setBusy(true)
-    setNote('')
+    report({ level: null, text: 'Verifying…' })
     try {
       const res = await workflowApi.verifyRun(runId)
       const data = res.data as { ok?: boolean; events?: number; reason?: string }
-      setNote(data.ok ? `Chain verified (${data.events ?? 0} events).` : `Chain break${data.reason ? `: ${data.reason}` : ''}.`)
+      report(
+        data.ok
+          ? { level: 'good', text: `Chain verified · ${data.events ?? 0} events` }
+          : { level: 'poor', text: `Chain break${data.reason ? `: ${data.reason}` : ''}` },
+      )
     } catch (e) {
-      setNote(detailOf(e, 'Verify failed'))
+      report({ level: 'poor', text: detailOf(e, 'Verify failed') })
     } finally {
       setBusy(false)
     }
@@ -729,8 +746,9 @@ export function CasePage({
 
   const download = async () => {
     if (!latest?.investigation_id) return
+    const ticket = ++recStatusTicket.current
     setBusy(true)
-    setNote('')
+    setRecStatus(null)
     try {
       const res = await orchestratorApi.exportInvestigation(latest.investigation_id)
       const blob = res.data instanceof Blob ? res.data : new Blob([JSON.stringify(res.data)])
@@ -741,7 +759,7 @@ export function CasePage({
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
-      setNote(detailOf(e, 'Export failed'))
+      if (ticket === recStatusTicket.current) setRecStatus({ level: 'poor', text: detailOf(e, 'Export failed') })
     } finally {
       setBusy(false)
     }
@@ -1067,6 +1085,14 @@ export function CasePage({
                   />
                 </div>
                 <div className="rec-actions">
+                  <span className="rec-status" role="status" aria-live="polite">
+                    {recStatus && (
+                      <>
+                        <LevelBadge level={recStatus.level} variant="pill" />
+                        {recStatus.text}
+                      </>
+                    )}
+                  </span>
                   {runId ? (
                     <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
                       Replay
@@ -1122,7 +1148,7 @@ export function CasePage({
               )}
             </section>
           )}
-          {note && <p className="muted">{note}</p>}
+          {tab === 'Summary' && note && <p className="muted">{note}</p>}
         </div>
 
         <aside className="case-side" aria-label="Case details">

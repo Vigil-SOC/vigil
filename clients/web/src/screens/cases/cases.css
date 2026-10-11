@@ -1018,6 +1018,18 @@
   gap: 6px;
 }
 
+.case-page .rec-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--tx2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.case-page .rec-status:empty { display: none; }
+
 .case-page .rec-btn {
   display: inline-flex;
   align-items: center;

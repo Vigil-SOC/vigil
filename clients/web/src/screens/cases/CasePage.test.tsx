@@ -1008,17 +1008,41 @@ describe('case page', () => {
 
     it('Verify chain and Export audit keep their behaviour', async () => {
       testState.recordRows = rows
-      vi.mocked(workflowApi.verifyRun).mockResolvedValue({ data: { ok: true, events: 12 } } as never)
+      let resolveVerify: (v: unknown) => void = () => {}
+      vi.mocked(workflowApi.verifyRun).mockReturnValue(new Promise((r) => { resolveVerify = r }) as never)
       vi.mocked(orchestratorApi.exportInvestigation).mockResolvedValue({ data: { a: 1 } } as never)
       const createUrl = vi.fn(() => 'blob:x')
       Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: vi.fn() })
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'Verify chain' }))
-      expect(await screen.findByText('Chain verified (12 events).')).toBeInTheDocument()
+      const bar = document.querySelector('.rec-bar') as HTMLElement
+      expect(within(bar).getByText('Verifying…')).toBeInTheDocument()
+      resolveVerify({ data: { ok: true, events: 12 } })
+      const result = await within(bar).findByText(/Chain verified · 12 events/)
+      expect(result.closest('[aria-live="polite"]')).not.toBeNull()
+      expect(within(bar).getByText('Good')).toBeInTheDocument()
+      expect(document.querySelector('.detail-body > p.muted')).toBeNull()
       expect(workflowApi.verifyRun).toHaveBeenCalledWith('run/1')
       fireEvent.click(screen.getByRole('button', { name: 'Export audit' }))
       await waitFor(() => expect(orchestratorApi.exportInvestigation).toHaveBeenCalledWith('inv-1'))
       expect(createUrl).toHaveBeenCalled()
+    })
+    it('reports a chain break and a failed export as Poor in the Record header, and clears them on tab leave', async () => {
+      testState.recordRows = rows
+      vi.mocked(workflowApi.verifyRun).mockResolvedValue({ data: { ok: false, reason: 'hash mismatch at 4' } } as never)
+      vi.mocked(orchestratorApi.exportInvestigation).mockRejectedValue({ response: { data: { detail: 'Export failed: no access' } } })
+      await openRecord()
+      fireEvent.click(await screen.findByRole('button', { name: 'Verify chain' }))
+      const bar = document.querySelector('.rec-bar') as HTMLElement
+      expect(await within(bar).findByText(/Chain break: hash mismatch at 4/)).toBeInTheDocument()
+      expect(within(bar).getByText('Poor')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Export audit' }))
+      expect(await within(bar).findByText(/Export failed: no access/)).toBeInTheDocument()
+      expect(within(bar).getByText('Poor')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('tab', { name: /^Summary/ }))
+      fireEvent.click(await screen.findByRole('tab', { name: /^Record/ }))
+      await screen.findByRole('button', { name: 'Verify chain' })
+      expect(screen.queryByText(/Export failed/)).not.toBeInTheDocument()
     })
     it('disables Export audit, with an ⓘ saying why, when the run has no investigation id', async () => {
       testState.recordRows = rows
