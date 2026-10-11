@@ -21,7 +21,7 @@ export interface CatalogEntry {
   integration?: IntegrationMetadata
 }
 
-export const OTHER_CATEGORY = 'Other'
+const OTHER_CATEGORY = 'Other'
 
 const INTEGRATION_TO_SERVER = new Map([...SERVER_TO_INTEGRATION].map(([server, id]) => [id, server]))
 const categoryOf = (server: string) => MCP_CATEGORIES.find((c) => c.servers.includes(server))?.label ?? OTHER_CATEGORY

@@ -13,7 +13,7 @@ import { configApi } from '../services/api'
 import { fetchManifest } from './registry'
 import type { ExtensionMountPoint, RegisteredExtension } from './contracts'
 
-export interface ResolvedMountPoint {
+interface ResolvedMountPoint {
   ext: RegisteredExtension
   mount: ExtensionMountPoint
 }

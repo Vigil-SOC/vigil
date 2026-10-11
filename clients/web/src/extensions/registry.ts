@@ -8,7 +8,7 @@ import { extensionOriginAllowlist } from '../config/extensionAllowlist'
 
 /** major only, so a future breaking host refuses an old bundle rather than
  *  mis-mounting it */
-export function isHostApiCompatible(declared: string): boolean {
+function isHostApiCompatible(declared: string): boolean {
   const major = parseInt(String(declared ?? '').split('.')[0], 10)
   return Number.isFinite(major) && major === HOST_API_MAJOR
 }
@@ -25,7 +25,7 @@ function resolveUrl(base: string, maybeRelative: string): string {
  *  origin is arbitrary code execution: require https (http only for loopback)
  *  and, when configured, allowlist membership. The allowlist is shared with the
  *  backend CSP + SSRF guard (see config/extensionAllowlist.ts). */
-export function isTrustedConnectorUrl(raw: string): boolean {
+function isTrustedConnectorUrl(raw: string): boolean {
   let u: URL
   try {
     u = new URL(raw)
@@ -49,7 +49,7 @@ function sameOrigin(a: string, b: string): boolean {
 }
 
 /** skipped rather than thrown, deep inside the shell */
-export function validateManifest(raw: unknown): ExtensionManifest | null {
+function validateManifest(raw: unknown): ExtensionManifest | null {
   const m = raw as Partial<ExtensionManifest> | null
   if (!m || typeof m !== 'object') return null
   if (!isHostApiCompatible(String(m.hostApiVersion ?? ''))) {

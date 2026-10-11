@@ -1693,7 +1693,7 @@ function HuntFrontier({ runId, frontier, inFlight }: { runId: string; frontier: 
  *  validator's complaint and then the whole payload it complained about — hundreds of
  *  characters of the model's own prose, cut off mid-word, in a table cell. The
  *  complaint names the field; the payload is the digest the lead already reads. */
-export function refusalReason(rejection: string): string {
+function refusalReason(rejection: string): string {
   const payloadAt = rejection.indexOf('{')
   const complaint = (payloadAt === -1 ? rejection : rejection.slice(0, payloadAt)).replace(/[:\s]+$/, '')
   if (complaint === '') return 'the emission did not match the schema'
@@ -2641,7 +2641,7 @@ function HuntGaps({ gaps }: { gaps: HuntGap[] }) {
 
 /** One row per question, not per worker: a fan-out sends the same query_intent to
  *  every worker, so a failure would otherwise repeat it and bury the reasons. */
-export function groupedGaps(gaps: HuntGap[]) {
+function groupedGaps(gaps: HuntGap[]) {
   const byQuestion = new Map<string, { key: string; iteration: number; hypothesis_id: string | null; query_intent: string; reasons: string[]; workers: number }>()
   for (const gap of gaps) {
     const intent = gap.query_intent ?? ''

@@ -488,7 +488,7 @@ export interface GeneratedAgentDraft {
   enable_thinking: boolean
 }
 
-export interface CustomAgentPayload {
+interface CustomAgentPayload {
   name: string
   role: string
   description?: string | null
@@ -754,31 +754,13 @@ export const ingestionApi = {
   getJob: (jobId: string) => api.get<IngestionJob>(`/ingest/jobs/${jobId}`),
 }
 
-export interface CostEstimate {
-  provider_type: string
-  model_id: string
-  input_tokens: number
-  output_tokens_max: number
-  low_usd: number
-  high_usd: number
-  pricing_source: 'exact' | 'zero' | 'unknown'
-  token_count_method: 'anthropic_count_tokens' | 'tiktoken' | 'char_heuristic'
-}
-
-export interface RecalculateCostResult {
-  total_matched: number
-  updated: number
-  skipped: number
-  remaining: number
-}
-
 export interface BudgetSettings {
   default_vk: string
   budget_limit_usd: number
   enforcement_mode: 'warning' | 'hard_stop'
 }
 
-export interface BifrostBudgetTier {
+interface BifrostBudgetTier {
   id: string
   max_limit: number
   current_usage: number
@@ -898,7 +880,7 @@ export const localServicesApi = {
   setAutostart: (services: string[]) => api.put('/services/autostart', { services }),
 }
 
-export interface WorkflowPhase {
+interface WorkflowPhase {
   phase_id?: string
   order?: number
   agent_id: string
@@ -957,7 +939,7 @@ export interface ReplayReport {
   recalled: string[]
 }
 
-export interface HuntDocument {
+interface HuntDocument {
   text: string
   pages: number
   condensed: boolean
@@ -1102,7 +1084,7 @@ export interface FederationSourceView {
   default_interval_seconds: number
 }
 
-export interface FederationListResponse {
+interface FederationListResponse {
   sources: FederationSourceView[]
   global: { enabled: boolean }
 }
@@ -1161,7 +1143,7 @@ export interface ConversationSummary {
   last_message_at: string | null
 }
 
-export interface ConversationMessage {
+interface ConversationMessage {
   id: number
   conversation_id: string
   seq: number
@@ -1229,11 +1211,11 @@ export const kafkaApi = {
   getStatus: () => api.get('/kafka/status'),
 }
 
-export interface BootstrapStatus {
+interface BootstrapStatus {
   required: boolean
 }
 
-export interface BootstrapPayload {
+interface BootstrapPayload {
   username: string
   email: string
   password: string
@@ -1242,7 +1224,7 @@ export interface BootstrapPayload {
 
 // First-account creation: creating a user otherwise needs an existing admin.
 // Self-closes once any user exists.
-export interface OverviewArrival {
+interface OverviewArrival {
   data_source: string
   count: number
   source_text: string

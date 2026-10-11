@@ -1,8 +1,8 @@
 export const FINDINGS_VIEW_STORAGE_KEY = 'soc.findings.filters.v1'
 
-export type FindingsSeverityFilter = 'any' | 'critical' | 'high' | 'medium' | 'low'
+type FindingsSeverityFilter = 'any' | 'critical' | 'high' | 'medium' | 'low'
 
-export interface FindingsViewPreferences {
+interface FindingsViewPreferences {
   severity: FindingsSeverityFilter
   source: string
   hiddenColumns: string[] | null

@@ -4,18 +4,18 @@ import type { Phase } from '../cases/useCases'
 
 export type { Phase } from '../cases/useCases'
 
-export interface PriorityRow {
+interface PriorityRow {
   priority: string
   count: number
   closed_count: number
 }
 
-export interface StatusRow {
+interface StatusRow {
   status: string
   count: number
 }
 
-export interface AnalystRow {
+interface AnalystRow {
   analyst_id: string
   analyst_name: string
   cases_assigned: number

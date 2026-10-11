@@ -73,7 +73,7 @@ export const INITIAL_CASE_FILTERS: CaseFilters = {
   offset: 0,
 }
 
-export interface CaseStrip {
+interface CaseStrip {
   by_state: Record<string, number>
   sla_at_risk: number
   closed_today: number

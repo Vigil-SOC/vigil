@@ -7,7 +7,7 @@ import type { Phase } from '../cases/useCases'
 
 export type LayerVerdict = 'rule' | 'loglm' | 'both' | 'missed'
 
-export interface CoverageCitation {
+interface CoverageCitation {
   finding_id: string
   description?: string
   rule_name?: string
@@ -46,7 +46,7 @@ interface RollupRow {
   missed?: MissedStep[]
 }
 
-export interface AttackData {
+interface AttackData {
   techniques: AttackTechnique[]
   coverage: boolean
   runError: string | null

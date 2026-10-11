@@ -54,7 +54,7 @@ export function initials(name?: string): string {
   return (parts[0] || name).slice(0, 2).toUpperCase()
 }
 
-export function compactAge(iso?: string): string {
+function compactAge(iso?: string): string {
   if (!iso) return DASH
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return DASH
@@ -84,7 +84,7 @@ export function mapApiCase(c: ApiCase): CaseRow {
 }
 
 /** Queue row or a case record. Combined state is shown as given. */
-export interface QueueCase {
+interface QueueCase {
   case_id?: string | null
   title?: string | null
   description?: string | null
@@ -134,7 +134,7 @@ function slaText(seconds?: number | null, health?: string | null): string {
 }
 
 /** "22 h 50 min left"; paused clocks and cases with no running clock say so. */
-export function timeLeftText(seconds?: number | null, paused?: boolean | null): string {
+function timeLeftText(seconds?: number | null, paused?: boolean | null): string {
   if (paused) return 'Timer paused'
   if (seconds == null || Number.isNaN(seconds)) return DASH
   const mins = Math.round(Math.abs(seconds) / 60)

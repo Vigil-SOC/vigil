@@ -1,6 +1,6 @@
-export type SourceTelemetryKind = 'netflow' | 'dns' | 'http_session' | 'generic_log'
-export type SourceEvidenceStatus = 'available' | 'not_in_artifact' | 'redacted' | 'invalid'
-export type SourceEvidenceProvenance = 'embedded' | 'joined'
+type SourceTelemetryKind = 'netflow' | 'dns' | 'http_session' | 'generic_log'
+type SourceEvidenceStatus = 'available' | 'not_in_artifact' | 'redacted' | 'invalid'
+type SourceEvidenceProvenance = 'embedded' | 'joined'
 
 export interface SourceEvidence {
   version: 1

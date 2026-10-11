@@ -7,14 +7,14 @@ export const HOST_API_MAJOR = 1
 /** Composed so it crosses the element's shadow boundary. */
 export const EXTENSION_EVENT = 'vigil:extension'
 
-export interface ExtensionRender {
+interface ExtensionRender {
   mode: 'element'
   /** May be relative to the connector base; the registry resolves it absolute. */
   bundleUrl: string
   elementTag: string
 }
 
-export interface ExtensionGate {
+interface ExtensionGate {
   /** only mount when this integration id is in the enabled-integrations list */
   integration?: string
 }
@@ -34,7 +34,7 @@ export interface ExtensionMountPoint {
 
 /** Source-chip branding for findings whose `data_source` == this manifest's id.
  *  Owned by the connector so no vendor colour is hardcoded host-side. */
-export interface ExtensionBadge {
+interface ExtensionBadge {
   label?: string
   color?: string
   /** host IconName; unknown names fall back to neutral */

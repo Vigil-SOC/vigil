@@ -1,4 +1,4 @@
-export class NotificationService {
+class NotificationService {
   private static instance: NotificationService
   private isEnabled: boolean = true
   private permissionGranted: boolean = false

@@ -5,7 +5,7 @@ import { Icon } from '../../shared/icons'
 import { VigilLogo } from '../../shared/VigilLogo'
 import { feedbackHref, userInitials } from '../../shell/UserMenu'
 
-export interface RailStep {
+interface RailStep {
   title: string
   sub: string
 }

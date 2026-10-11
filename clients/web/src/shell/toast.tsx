@@ -21,7 +21,7 @@ interface Toast {
 }
 
 /** an action that commits after the fuse unless the user undoes it */
-export interface UndoableOpts {
+interface UndoableOpts {
   /** identifies the subject (e.g. a source_id); one fuse per key */
   key: string
   text: string

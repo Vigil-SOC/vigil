@@ -7,7 +7,7 @@ export interface Outcome {
 }
 
 /** "A", "A and B", "A, B and C", then "A, B, C +N" past three. */
-export function modelList(names: string[]): string {
+function modelList(names: string[]): string {
   const shown = names.slice(0, 3)
   if (names.length > 3) return `${shown.join(', ')} +${names.length - 3}`
   return shown.length < 2 ? shown.join('') : `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`

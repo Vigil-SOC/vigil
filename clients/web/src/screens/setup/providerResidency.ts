@@ -2,9 +2,9 @@ import type { LLMProvider } from '../../services/api'
 import { secretText, type BifrostKey } from '../../services/bifrostApi'
 import { urlIsLoopback } from '../../shared/loopback'
 
-export const DATA_STAYS_ON_SITE = 'Local: data stays on site'
-export const DATA_STAYS_IN_CLOUD = 'Data stays in your cloud'
-export const DATA_LEAVES_THE_SITE = 'Hosted: data leaves your site'
+const DATA_STAYS_ON_SITE = 'Local: data stays on site'
+const DATA_STAYS_IN_CLOUD = 'Data stays in your cloud'
+const DATA_LEAVES_THE_SITE = 'Hosted: data leaves your site'
 
 /** The providers behind "Your cloud account": the models run in the customer's own cloud. */
 export const CLOUD_PROVIDERS = ['bedrock', 'vertex', 'azure'] as const

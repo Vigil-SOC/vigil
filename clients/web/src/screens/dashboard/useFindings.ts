@@ -51,7 +51,7 @@ export function useFindings(exclusions: ExclusionView = 'hide') {
   return { rows, phase, error, reload }
 }
 
-export interface DashKpis {
+interface DashKpis {
   findingsTotal: number
   findingsCritical: number
   findingsHigh: number

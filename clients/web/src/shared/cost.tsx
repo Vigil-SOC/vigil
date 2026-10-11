@@ -6,10 +6,10 @@
 
 export type PricingSource = 'exact' | 'zero' | 'unknown'
 
-export const NOT_PRICED = 'not priced'
-export const NOT_BILLED = 'not billed'
-export const NOT_PRICED_HINT = 'No rate is known for this model, so its spend cannot be measured. Set one in the gateway’s pricing overrides.'
-export const NOT_BILLED_HINT = 'This model is not billed. A rate for a self-hosted model is set in the gateway’s pricing overrides.'
+const NOT_PRICED = 'not priced'
+const NOT_BILLED = 'not billed'
+const NOT_PRICED_HINT = 'No rate is known for this model, so its spend cannot be measured. Set one in the gateway’s pricing overrides.'
+const NOT_BILLED_HINT = 'This model is not billed. A rate for a self-hosted model is set in the gateway’s pricing overrides.'
 
 /** Provenance vocabulary, identical everywhere it appears. */
 export const PROVENANCE_LABEL: Record<PricingSource, string> = {
@@ -18,12 +18,12 @@ export const PROVENANCE_LABEL: Record<PricingSource, string> = {
   unknown: NOT_PRICED,
 }
 
-export type CostView =
+type CostView =
   | { kind: 'amount'; text: string; source?: PricingSource }
   | { kind: 'not-priced'; text: typeof NOT_PRICED; hint: string }
   | { kind: 'not-billed'; text: typeof NOT_BILLED; hint: string }
 
-export interface CostInput {
+interface CostInput {
   usd: number | null | undefined
   /** Upper bound of an estimate band; renders as `$low–$high`. */
   high?: number | null

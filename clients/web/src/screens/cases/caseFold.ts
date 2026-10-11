@@ -11,7 +11,7 @@ export interface CallRow {
 }
 
 /** One lead move, newest first in `moves`. Lead decisions carry no time or iteration. */
-export interface MoveRow {
+interface MoveRow {
   doing: string
   worker: string
   at: string | null
@@ -28,7 +28,7 @@ export interface HypothesisRow {
   provenance: string
 }
 
-export interface EvidenceRow {
+interface EvidenceRow {
   evidence_id: string
   iteration: number
   source_system: string
@@ -40,7 +40,7 @@ export interface EvidenceRow {
   bears_on: { hypothesis_id: string; relation: string }[]
 }
 
-export interface LeadGapRow {
+interface LeadGapRow {
   dispatch_id: string
   agent_id: string
   failure_reason: string | null
@@ -71,7 +71,7 @@ export interface RecalledGap extends RecallProvenance {
   statement: string
 }
 
-export interface RecallView {
+interface RecallView {
   keys: string[]
   gaps: RecalledGap[]
   sightings: RecalledSighting[]
@@ -80,7 +80,7 @@ export interface RecallView {
 }
 
 /** What the run row itself says, beside the fold of its ledger. */
-export interface RunMeta {
+interface RunMeta {
   status: string
   error: string
   reason: string
@@ -88,7 +88,7 @@ export interface RunMeta {
   huntStatus: string
 }
 
-export interface HuntFold {
+interface HuntFold {
   kind: 'hunt'
   run: RunMeta
   iteration: number
@@ -107,7 +107,7 @@ export interface HuntFold {
   maxCostUsd: number | null
 }
 
-export interface LeadFold {
+interface LeadFold {
   kind: 'lead'
   run: RunMeta
   iterations: number
@@ -504,7 +504,7 @@ export function visibilityGaps(fold: RunFold | null): { id: string; text: string
   }))
 }
 
-export interface AgentRow {
+interface AgentRow {
   who: string
   doing: string
   tool: string
@@ -528,7 +528,7 @@ export function agentRows(fold: RunFold | null): AgentRow[] {
   })
 }
 
-export interface StrongRow {
+interface StrongRow {
   step: string
   text: string
   stance: 'For' | 'Against' | null

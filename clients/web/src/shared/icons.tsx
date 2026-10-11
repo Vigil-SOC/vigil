@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 // Deliberately not annotated Record<string, string>: that widens IconName to
 // `string`, so a misspelled name type-checks and renders an empty svg instead
 // of failing the build.
-export const ICON = {
+const ICON = {
   shield: '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>',

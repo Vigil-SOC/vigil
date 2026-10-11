@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { slaPoliciesApi } from '../../services/api'
 
 export type Phase = 'loading' | 'ready' | 'error'
-export type PriorityLevel = 'critical' | 'high' | 'medium' | 'low'
+type PriorityLevel = 'critical' | 'high' | 'medium' | 'low'
 
 export interface SlaPolicy {
   policy_id: string
@@ -17,7 +17,7 @@ export interface SlaPolicy {
   is_default?: boolean
 }
 
-export interface SlaPolicyCreate {
+interface SlaPolicyCreate {
   policy_id: string
   name: string
   description?: string
@@ -29,17 +29,17 @@ export interface SlaPolicyCreate {
   is_default?: boolean
 }
 // notification_thresholds is stored but nothing acts on it, so it is never written from here
-export type SlaPolicyUpdate = Partial<Omit<SlaPolicyCreate, 'policy_id' | 'priority_level'>>
+type SlaPolicyUpdate = Partial<Omit<SlaPolicyCreate, 'policy_id' | 'priority_level'>>
 
 /** Case counts for one policy in the window the table reports on. */
-export interface SlaUsage {
+interface SlaUsage {
   total_cases: number
   breached_cases: number
   compliance_rate: number
 }
 
 /** Start of the current calendar month, UTC. */
-export const monthStartUtc = (now = new Date()) =>
+const monthStartUtc = (now = new Date()) =>
   new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
 
 export function useSlaPolicies() {

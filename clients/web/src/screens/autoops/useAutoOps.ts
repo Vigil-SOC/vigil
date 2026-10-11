@@ -4,7 +4,7 @@ import type { Phase } from '../cases/useCases'
 
 export type { Phase } from '../cases/useCases'
 
-export interface OrchestratorCost {
+interface OrchestratorCost {
   total_cost_usd: number
   active_cost_usd: number
   hourly_cost_usd: number

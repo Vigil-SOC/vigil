@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { orchestratorApi, reasoningApi } from '../../services/api'
 import type { Phase } from '../cases/useCases'
 
-export interface ProposedAction {
+interface ProposedAction {
   action?: string
   type?: string
   target?: string
@@ -13,7 +13,7 @@ export interface ProposedAction {
   description?: string
 }
 
-export interface LogEntry {
+interface LogEntry {
   ts?: string
   event?: string
   iteration?: number

@@ -1,7 +1,7 @@
 // The top-level entity_context keys the backend reads addresses from
 // (core/storage/ip_exclusion_repository.py FINDING_IP_KEYS). Kept in step by hand:
 // a key missing here only means the popup offers no Exclude button for it.
-export const FINDING_IP_KEYS = [
+const FINDING_IP_KEYS = [
   'src_ip', 'src_ips', 'source_ip', 'source_ips', 'srcip',
   'dst_ip', 'dst_ips', 'dest_ip', 'dest_ips', 'destination_ip', 'destination_ips', 'dstip',
   'ip', 'ips', 'ip_address', 'ip_addresses', 'local_ip', 'remote_ip', 'client_ip',

@@ -16,7 +16,7 @@ export interface ApiSkill {
 }
 
 /** A file in the skill folder: posix path relative to it, and size in bytes. */
-export interface ApiSkillFile {
+interface ApiSkillFile {
   path: string
   size: number
 }
@@ -29,7 +29,7 @@ export interface ApiSkillDetail extends ApiSkill {
   files: ApiSkillFile[]
 }
 
-export interface SkillWrite {
+interface SkillWrite {
   name: string
   description: string
   body: string

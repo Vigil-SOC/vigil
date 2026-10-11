@@ -25,9 +25,9 @@ export interface ColumnDef<T> {
   header?: ReactNode
 }
 
-export type SortState = { key: string; dir: 'asc' | 'desc' }
+type SortState = { key: string; dir: 'asc' | 'desc' }
 
-export type TablePhase = 'loading' | 'error' | 'ready'
+type TablePhase = 'loading' | 'error' | 'ready'
 
 export function searchRows<T>(rows: T[], columns: ColumnDef<T>[], query: string): T[] {
   const q = query.trim().toLowerCase()
@@ -63,7 +63,7 @@ function SortHeader<T>(
   )
 }
 
-export interface DataTableProps<T> {
+interface DataTableProps<T> {
   columns: ColumnDef<T>[]
   rows: T[]
   rowKey: (row: T) => string
