@@ -60,12 +60,6 @@ class MCPRegistry:
             return
         info["active"] = active
 
-    def retain_only(self, active_names: List[str]) -> None:
-        """Mark exactly ``active_names`` active; deactivate every other server."""
-        wanted = set(active_names)
-        for name, info in self._servers.items():
-            info["active"] = name in wanted
-
     def get_all_tools(self) -> List[Dict]:
         """
         Get all tools from all active servers, formatted for Claude API.
@@ -130,25 +124,6 @@ class MCPRegistry:
     def get_tool_names(self) -> List[str]:
         """Get all tool names (server-prefixed) from active servers."""
         return [t["name"] for t in self.get_all_tools()]
-
-    def get_summary(self) -> Dict[str, Any]:
-        """Get a summary of the registry state."""
-        return {
-            "servers": len(self._servers),
-            "active_servers": len(self.get_active_servers()),
-            "total_tools": sum(len(t) for t in self._tools_cache.values()),
-            "last_refresh": (
-                self._last_refresh.isoformat() if self._last_refresh else None
-            ),
-            "server_details": {
-                name: {
-                    "active": info.get("active", False),
-                    "tools_count": len(self._tools_cache.get(name, [])),
-                    "registered_at": info.get("registered_at"),
-                }
-                for name, info in self._servers.items()
-            },
-        }
 
 
 # Where the live MCP tool set comes from. This used to be a side effect of

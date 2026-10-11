@@ -577,30 +577,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/insights/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Refresh Analytics Insights
-         * @description Force a background regeneration of insights for the given time_range.
-         *
-         *     Returns immediately with ``{"status": "refreshing"}`` or
-         *     ``{"status": "already_generating"}`` if one is already in flight. Clients
-         *     should then poll GET /analytics/insights until ``generated_at`` changes.
-         */
-        post: operations["post_api_analytics_insights_refresh"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/recalculate-cost": {
         parameters: {
             query?: never;
@@ -1332,34 +1308,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/metrics/analyst/{analyst_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Analyst Performance
-         * @description Get analyst performance metrics.
-         *
-         *     Args:
-         *         analyst_id: Analyst user ID
-         *         start_date: Start date filter
-         *         end_date: End date filter
-         *
-         *     Returns:
-         *         Analyst performance metrics
-         */
-        get: operations["get_api_cases_metrics_analyst_analyst_id"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/metrics/breached": {
         parameters: {
             query?: never;
@@ -1463,33 +1411,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/metrics/dashboard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Dashboard
-         * @description Get dashboard metrics.
-         *
-         *     Args:
-         *         start_date: Start date filter
-         *         end_date: End date filter
-         *
-         *     Returns:
-         *         Dashboard metrics
-         */
-        get: operations["get_api_cases_metrics_dashboard"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/metrics/mttd": {
         parameters: {
             query?: never;
@@ -1546,33 +1467,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/metrics/sla-compliance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Sla Compliance
-         * @description Get SLA compliance report.
-         *
-         *     Args:
-         *         start_date: Start date filter
-         *         end_date: End date filter
-         *
-         *     Returns:
-         *         SLA compliance statistics
-         */
-        get: operations["get_api_cases_metrics_sla-compliance"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/metrics/summary": {
         parameters: {
             query?: never;
@@ -1600,32 +1494,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/metrics/velocity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Velocity
-         * @description Get case velocity (opened vs closed).
-         *
-         *     Args:
-         *         days: Number of days to analyze
-         *
-         *     Returns:
-         *         Velocity data
-         */
-        get: operations["get_api_cases_metrics_velocity"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/search": {
         parameters: {
             query?: never;
@@ -1640,32 +1508,6 @@ export interface paths {
          * @description Advanced case search.
          */
         post: operations["post_api_cases_search"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cases/search/advanced": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Advanced Search
-         * @description Perform advanced case search.
-         *
-         *     Args:
-         *         data: Search parameters
-         *
-         *     Returns:
-         *         Search results with pagination
-         */
-        post: operations["post_api_cases_search_advanced"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2370,35 +2212,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/{case_id}/remediation/jira": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Export Remediation To Jira
-         * @description Export remediation steps to JIRA as subtasks.
-         *
-         *     Args:
-         *         case_id: Case ID
-         *         request: Export configuration with parent issue key
-         *         current_user: Current authenticated user
-         *         session: Database session
-         *
-         *     Returns:
-         *         Export result with created subtask keys
-         */
-        post: operations["post_api_cases_case_id_remediation_jira"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cases/{case_id}/resolution-steps": {
         parameters: {
             query?: never;
@@ -2851,39 +2664,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/config/github": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Github Config
-         * @description Get GitHub integration configuration status.
-         *
-         *     Returns:
-         *         Configuration status (without exposing the token)
-         */
-        get: operations["get_api_config_github"];
-        put?: never;
-        /**
-         * Set Github Config
-         * @description Set GitHub integration configuration.
-         *
-         *     Args:
-         *         config: GitHub configuration
-         *
-         *     Returns:
-         *         Success status
-         */
-        post: operations["post_api_config_github"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/integrations": {
         parameters: {
             query?: never;
@@ -2922,29 +2702,6 @@ export interface paths {
          *         Success status
          */
         post: operations["post_api_config_integrations"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/integrations/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Integrations Status
-         * @description Get status of all integrations.
-         *
-         *     Returns:
-         *         Status information for all integrations
-         */
-        get: operations["get_api_config_integrations_status"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3135,29 +2892,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/config/s3/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test S3 Connection
-         * @description Test S3 connection with current configuration.
-         *
-         *     Returns:
-         *         Connection test result
-         */
-        post: operations["post_api_config_s3_test"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/secrets/migrate-to-encrypted": {
         parameters: {
             query?: never;
@@ -3253,29 +2987,6 @@ export interface paths {
          * @description Home's setup list: tools, a notify route, rules on disk, model variety, a custom skill.
          */
         get: operations["get_api_config_setup-steps"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config/state-directory": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get State Directory
-         * @description Resolved State Directory path and writability.
-         *
-         *     Authenticated: /api/health carries only the booleans, since it is public and
-         *     this names where credentials live.
-         */
-        get: operations["get_api_config_state-directory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3402,26 +3113,6 @@ export interface paths {
          * @description Generate a custom integration from API/MCP documentation using Claude AI.
          */
         post: operations["post_api_custom-integrations_generate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/custom-integrations/generate/upload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate From File
-         * @description Generate a custom integration from an uploaded documentation file.
-         */
-        post: operations["post_api_custom-integrations_generate_upload"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3891,32 +3582,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/findings/bulk-enrich": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Bulk Enrich Findings
-         * @description Bulk enrich multiple findings with MITRE ATT&CK and other data.
-         *
-         *     Args:
-         *         request: Bulk enrichment request with finding IDs and enrichment data
-         *
-         *     Returns:
-         *         Summary of enrichment results
-         */
-        post: operations["post_api_findings_bulk-enrich"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/findings/export": {
         parameters: {
             query?: never;
@@ -4107,55 +3772,6 @@ export interface paths {
          * @description Readiness: HTTP 503 exactly when ``/api/health`` reports "degraded".
          */
         get: operations["get_api_health_ready"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ingest/csv-template/{data_type}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Csv Template
-         * @description Get a CSV template for the specified data type.
-         *
-         *     Args:
-         *         data_type: Type of data ('finding' or 'case')
-         *
-         *     Returns:
-         *         CSV template string
-         */
-        get: operations["get_api_ingest_csv-template_data_type"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ingest/formats": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Supported Formats
-         * @description Get information about supported file formats.
-         *
-         *     Returns:
-         *         Dictionary of supported formats and their specifications
-         */
-        get: operations["get_api_ingest_formats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4384,146 +4000,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/integrations/vstrike/legend-runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Legend Runs
-         * @description List legend runs available for the network.
-         */
-        get: operations["get_api_integrations_vstrike_legend-runs"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/legend-runs/results": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Legend Run Results
-         * @description Return results for the specified legend run.
-         */
-        post: operations["post_api_integrations_vstrike_legend-runs_results"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/network-graph": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Network Graph
-         * @description Fetch the active network graph: {label, nodes, edges, bbox}.
-         */
-        post: operations["post_api_integrations_vstrike_network-graph"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/nodes/drift": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Node Drift
-         * @description Return end-node state changes for the supplied node.
-         */
-        post: operations["post_api_integrations_vstrike_nodes_drift"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/nodes/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Node Search
-         * @description Omni-search across nodes in the VStrike network.
-         */
-        post: operations["post_api_integrations_vstrike_nodes_search"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/storylines": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Storylines
-         * @description List storylines available for the network.
-         */
-        get: operations["get_api_integrations_vstrike_storylines"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/storylines/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Storyline Events
-         * @description List events in a storyline along with their properties.
-         */
-        post: operations["post_api_integrations_vstrike_storylines_events"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/integrations/vstrike/topology/asset/{asset_id}": {
         parameters: {
             query?: never;
@@ -4538,300 +4014,6 @@ export interface paths {
         get: operations["get_api_integrations_vstrike_topology_asset_asset_id"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/topology/asset/{asset_id}/adjacent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Adjacent Assets
-         * @description Proxy to VStrike adjacent-assets lookup.
-         */
-        get: operations["get_api_integrations_vstrike_topology_asset_asset_id_adjacent"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/topology/asset/{asset_id}/blast-radius": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Blast Radius
-         * @description Proxy to VStrike blast-radius lookup.
-         */
-        get: operations["get_api_integrations_vstrike_topology_asset_asset_id_blast-radius"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/camera-node": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Camera Node
-         * @description Move the camera to focus on the provided nodes.
-         */
-        post: operations["post_api_integrations_vstrike_ui_camera-node"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/camera-position": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Camera Position
-         * @description Set the camera position and rotation explicitly.
-         */
-        post: operations["post_api_integrations_vstrike_ui_camera-position"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/iframe-token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Iframe Token
-         * @description Return a short-lived auto-login token + the iframe URL.
-         *
-         *     Used by the VStrikeIframe frontend component to render
-         *     `<iframe src=iframe_url>`. The token comes from VStrike's `ui-login-token`
-         *     MCP tool and is meant to be one-shot.
-         */
-        post: operations["post_api_integrations_vstrike_ui_iframe-token"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/killchain-replay": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Killchain Replay
-         * @description Walk a kill-chain through the active VStrike iframe session.
-         *
-         *     Returns 501 when VStrike's MCP server hasn't shipped the
-         *     ``ui-killchain-replay`` tool yet — the frontend surfaces that as a
-         *     "VStrike server needs an upgrade" notice rather than a generic error.
-         */
-        post: operations["post_api_integrations_vstrike_ui_killchain-replay"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/legend-apply": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Legend Apply
-         * @description Apply a legend run inside the active VStrike iframe session.
-         */
-        post: operations["post_api_integrations_vstrike_ui_legend-apply"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/load-network": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Load Network
-         * @description Tell VStrike to load a network into the active iframe.
-         *
-         *     VStrike pushes the actual UI command via its own WebSocket; this endpoint
-         *     only triggers that push.
-         */
-        post: operations["post_api_integrations_vstrike_ui_load-network"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/networks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Ui List Networks
-         * @description List networks visible to the configured VStrike account.
-         */
-        get: operations["get_api_integrations_vstrike_ui_networks"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/rightpanel-focus": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Rightpanel Focus
-         * @description Open the right-hand details panel in the VStrike iframe.
-         *
-         *     Takes no parameters; the panel opens for whatever node is currently
-         *     selected in the session.
-         */
-        post: operations["post_api_integrations_vstrike_ui_rightpanel-focus"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/storyline-apply": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Storyline Apply
-         * @description Apply the specified storyline to the active network view.
-         */
-        post: operations["post_api_integrations_vstrike_ui_storyline-apply"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/storyline-backward": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Storyline Backward
-         * @description Step backward in the storyline timeline.
-         */
-        post: operations["post_api_integrations_vstrike_ui_storyline-backward"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/storyline-forward": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Storyline Forward
-         * @description Step forward in the storyline timeline.
-         */
-        post: operations["post_api_integrations_vstrike_ui_storyline-forward"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/integrations/vstrike/ui/storyline-mode": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ui Storyline Mode
-         * @description Set the timeslice mode for the VCR controls and reset frame counters.
-         */
-        post: operations["post_api_integrations_vstrike_ui_storyline-mode"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4938,81 +4120,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/llm/providers/discover-models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Discover Models
-         * @description Pre-save model discovery for the Add Provider dialog.
-         *
-         *     Admin-only because it makes an outbound HTTP request whose target
-         *     is influenced by the request body (``base_url``). The URL is run
-         *     through :func:`core.platform.url_safety.validate_provider_url` inside
-         *     each discovery helper, but we also require the caller to be an
-         *     authenticated admin so a stolen session is the only path to even
-         *     reach that validation.
-         */
-        post: operations["post_api_llm_providers_discover-models"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/llm/providers/refresh-models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Refresh All Provider Models
-         * @description Force live rediscovery across every active provider and push the
-         *     resulting allow-lists to Bifrost. Useful after enabling a new
-         *     provider or rotating keys in bulk.
-         */
-        post: operations["post_api_llm_providers_refresh-models"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/llm/providers/test-connection": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Connection
-         * @description Stateless pre-save connection test for the Add Provider wizard.
-         *
-         *     Admin-only and persists nothing: it probes the provider against the
-         *     credentials in the body. Same trust model as ``/discover-models`` — the
-         *     raw key is accepted in the body, but only an authenticated admin can
-         *     reach it. A static single-segment path, so it never collides with
-         *     ``/{provider_id}/test``.
-         */
-        post: operations["post_api_llm_providers_test-connection"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/llm/providers/{provider_id}": {
         parameters: {
             query?: never;
@@ -5026,79 +4133,6 @@ export interface paths {
         post?: never;
         /** Delete Provider */
         delete: operations["delete_api_llm_providers_provider_id"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/llm/providers/{provider_id}/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Models */
-        get: operations["get_api_llm_providers_provider_id_models"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/llm/providers/{provider_id}/refresh-models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Refresh Provider Models
-         * @description Force a live rediscovery for one provider and push the union of
-         *     same-type providers' models to Bifrost's allow-list. Invalidates the
-         *     registry's TTL cache so the next dropdown fetch sees fresh data.
-         */
-        post: operations["post_api_llm_providers_provider_id_refresh-models"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/llm/providers/{provider_id}/set-default": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Default Provider */
-        post: operations["post_api_llm_providers_provider_id_set-default"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/llm/providers/{provider_id}/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Test Provider */
-        post: operations["post_api_llm_providers_provider_id_test"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -5375,26 +4409,6 @@ export interface paths {
          * @description Enable the orchestrator at runtime.
          */
         post: operations["post_api_orchestrator_enable"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/orchestrator/intake": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Intake Triggers
-         * @description List intake trigger rows, newest first, with an optional state filter.
-         */
-        get: operations["get_api_orchestrator_intake"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6893,34 +5907,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/cases/metrics/analyst/{analyst_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Analyst Performance
-         * @description Get analyst performance metrics.
-         *
-         *     Args:
-         *         analyst_id: Analyst user ID
-         *         start_date: Start date filter
-         *         end_date: End date filter
-         *
-         *     Returns:
-         *         Analyst performance metrics
-         */
-        get: operations["get_api_v1_cases_metrics_analyst_analyst_id"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/cases/metrics/breached": {
         parameters: {
             query?: never;
@@ -7024,33 +6010,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/cases/metrics/dashboard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Dashboard
-         * @description Get dashboard metrics.
-         *
-         *     Args:
-         *         start_date: Start date filter
-         *         end_date: End date filter
-         *
-         *     Returns:
-         *         Dashboard metrics
-         */
-        get: operations["get_api_v1_cases_metrics_dashboard"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/cases/metrics/mttd": {
         parameters: {
             query?: never;
@@ -7107,33 +6066,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/cases/metrics/sla-compliance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Sla Compliance
-         * @description Get SLA compliance report.
-         *
-         *     Args:
-         *         start_date: Start date filter
-         *         end_date: End date filter
-         *
-         *     Returns:
-         *         SLA compliance statistics
-         */
-        get: operations["get_api_v1_cases_metrics_sla-compliance"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/cases/metrics/summary": {
         parameters: {
             query?: never;
@@ -7153,32 +6085,6 @@ export interface paths {
          *         Summary metrics including total cases, open cases, etc.
          */
         get: operations["get_api_v1_cases_metrics_summary"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/cases/metrics/velocity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Velocity
-         * @description Get case velocity (opened vs closed).
-         *
-         *     Args:
-         *         days: Number of days to analyze
-         *
-         *     Returns:
-         *         Velocity data
-         */
-        get: operations["get_api_v1_cases_metrics_velocity"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8496,44 +7402,6 @@ export interface components {
             /** Url */
             url?: string | null;
         };
-        /**
-         * AdvancedSearch
-         * @description Advanced search request.
-         */
-        AdvancedSearch: {
-            /** Assignee */
-            assignee?: string[] | null;
-            /** Created After */
-            created_after?: string | null;
-            /** Created Before */
-            created_before?: string | null;
-            /** Has Sla Breach */
-            has_sla_breach?: boolean | null;
-            /**
-             * Limit
-             * @default 100
-             */
-            limit: number;
-            /** Mitre Techniques */
-            mitre_techniques?: string[] | null;
-            /**
-             * Offset
-             * @default 0
-             */
-            offset: number;
-            /** Priority */
-            priority?: string[] | null;
-            /** Query Text */
-            query_text?: string | null;
-            /** Status */
-            status?: string[] | null;
-            /** Tags */
-            tags?: string[] | null;
-            /** Updated After */
-            updated_after?: string | null;
-            /** Updated Before */
-            updated_before?: string | null;
-        };
         /** AgentEnabledRequest */
         AgentEnabledRequest: {
             /** Enabled */
@@ -8592,18 +7460,6 @@ export interface components {
              * @default 1
              */
             pages: number;
-        };
-        /** Body_generate_from_file_api_custom_integrations_generate_upload_post */
-        Body_generate_from_file_api_custom_integrations_generate_upload_post: {
-            /**
-             * Category
-             * @default Custom
-             */
-            category: string | null;
-            /** File */
-            file: string;
-            /** Integration Name */
-            integration_name?: string | null;
         };
         /** Body_ingest_from_string_api_ingest_ingest_string_post */
         Body_ingest_from_string_api_ingest_ingest_string_post: {
@@ -8726,18 +7582,6 @@ export interface components {
              * @default warning
              */
             enforcement_mode: string;
-        };
-        /**
-         * BulkEnrichmentRequest
-         * @description Schema for bulk enrichment request.
-         */
-        BulkEnrichmentRequest: {
-            /** Enrichment Data */
-            enrichment_data: {
-                [key: string]: components["schemas"]["FindingUpdate"];
-            };
-            /** Finding Ids */
-            finding_ids: string[];
         };
         /** ByPriorityResponse */
         ByPriorityResponse: {
@@ -10108,22 +8952,6 @@ export interface components {
             kind: string;
         };
         /**
-         * DiscoverModelsRequest
-         * @description Ephemeral model-discovery: takes unsaved credentials and returns the
-         *     provider's model list. Used by the Add LLM Provider dialog to populate a
-         *     dropdown before the provider is saved.
-         */
-        DiscoverModelsRequest: {
-            /** Api Key */
-            api_key?: string | null;
-            /** Base Url */
-            base_url?: string | null;
-            /** Organization */
-            organization?: string | null;
-            /** Provider Type */
-            provider_type: string;
-        };
-        /**
          * EntityContext
          * @description Free-form entity context; ``source_evidence`` is the one named key.
          */
@@ -10504,14 +9332,6 @@ export interface components {
             /** Feedback */
             feedback?: string | null;
         };
-        /**
-         * GitHubConfig
-         * @description GitHub integration configuration.
-         */
-        GitHubConfig: {
-            /** Token */
-            token: string;
-        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -10807,16 +9627,6 @@ export interface components {
             success: boolean;
             /** Url */
             url?: string | null;
-        };
-        /**
-         * JiraRemediationExportRequest
-         * @description JIRA remediation export request.
-         */
-        JiraRemediationExportRequest: {
-            /** Assign To */
-            assign_to?: string | null;
-            /** Parent Issue Key */
-            parent_issue_key: string;
         };
         /**
          * KafkaConfigBody
@@ -12167,25 +10977,6 @@ export interface components {
             summary: string;
         };
         /**
-         * TestConnectionRequest
-         * @description Stateless connection test: takes unsaved credentials and probes the
-         *     provider without persisting anything. Lets the Add LLM Provider wizard
-         *     verify a connection before any row exists, so a cancelled wizard never
-         *     strands a half-configured provider (and its claimed ``provider_id``).
-         */
-        TestConnectionRequest: {
-            /** Api Key */
-            api_key?: string | null;
-            /** Base Url */
-            base_url?: string | null;
-            /** Default Model */
-            default_model?: string | null;
-            /** Organization */
-            organization?: string | null;
-            /** Provider Type */
-            provider_type: string;
-        };
-        /**
          * ThemeConfig
          * @description Theme configuration.
          */
@@ -12282,26 +11073,6 @@ export interface components {
             hop_distance: number;
             /** Segment */
             segment?: string | null;
-        };
-        /** VStrikeCameraNodeRequest */
-        VStrikeCameraNodeRequest: {
-            /** Network Id */
-            network_id?: string | null;
-            /** Node Ids */
-            node_ids: string[];
-        };
-        /** VStrikeCameraPositionRequest */
-        VStrikeCameraPositionRequest: {
-            /** Network Id */
-            network_id?: string | null;
-            /** Position */
-            position: {
-                [key: string]: number;
-            };
-            /** Rotation */
-            rotation?: {
-                [key: string]: number;
-            } | null;
         };
         /**
          * VStrikeEnrichment
@@ -12412,83 +11183,6 @@ export interface components {
             /** Reachable */
             reachable: boolean;
         };
-        /** VStrikeKillchainReplayRequest */
-        VStrikeKillchainReplayRequest: {
-            /**
-             * Auto Play
-             * @default true
-             */
-            auto_play: boolean;
-            /**
-             * Loop
-             * @default false
-             */
-            loop: boolean;
-            /** Network Id */
-            network_id: string;
-            /** Steps */
-            steps: components["schemas"]["VStrikeKillchainStep"][];
-        };
-        /** VStrikeKillchainStep */
-        VStrikeKillchainStep: {
-            /** Dwell Ms */
-            dwell_ms?: number | null;
-            /** Label */
-            label?: string | null;
-            /** Node Id */
-            node_id: string;
-            /** Technique */
-            technique?: string | null;
-            /** Timestamp */
-            timestamp: string;
-        };
-        /** VStrikeLegendApplyRequest */
-        VStrikeLegendApplyRequest: {
-            /** Legend Run Id */
-            legend_run_id: string;
-            /** Network Id */
-            network_id?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** VStrikeLegendRunResultsRequest */
-        VStrikeLegendRunResultsRequest: {
-            /** Legend Run Id */
-            legend_run_id: string;
-            /** Network Id */
-            network_id?: string | null;
-        };
-        /** VStrikeLoadNetworkRequest */
-        VStrikeLoadNetworkRequest: {
-            /** Network Id */
-            network_id: string;
-        };
-        /** VStrikeNetworkGraphRequest */
-        VStrikeNetworkGraphRequest: {
-            /** Network Id */
-            network_id?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** VStrikeNodeDriftRequest */
-        VStrikeNodeDriftRequest: {
-            /** Network Id */
-            network_id?: string | null;
-            /** Node Id */
-            node_id: string;
-        };
-        /** VStrikeNodeSearchRequest */
-        VStrikeNodeSearchRequest: {
-            /**
-             * Limit
-             * @default 50
-             */
-            limit: number;
-            /** Network Id */
-            network_id?: string | null;
-            /** Query */
-            query: string;
-        };
         /**
          * VStrikePushRequest
          * @description Batch payload from VStrike.
@@ -12535,38 +11229,6 @@ export interface components {
             results: components["schemas"]["VStrikeFindingResult"][];
             /** Updated */
             updated: number;
-        };
-        /**
-         * VStrikeRightpanelFocusRequest
-         * @description No declared fields. VStrike confirmed the tool takes no parameters.
-         *
-         *     The passthrough model is preserved so a future schema bump on VStrike's
-         *     end can be exercised by simply including the new fields in the request
-         *     body; they'll forward verbatim to the MCP call.
-         */
-        VStrikeRightpanelFocusRequest: {
-            [key: string]: unknown;
-        };
-        /** VStrikeStorylineApplyRequest */
-        VStrikeStorylineApplyRequest: {
-            /** Network Id */
-            network_id?: string | null;
-            /** Storyline Id */
-            storyline_id: string;
-        };
-        /** VStrikeStorylineEventsRequest */
-        VStrikeStorylineEventsRequest: {
-            /** Network Id */
-            network_id?: string | null;
-            /** Storyline Id */
-            storyline_id: string;
-        };
-        /** VStrikeStorylineModeRequest */
-        VStrikeStorylineModeRequest: {
-            /** Mode */
-            mode: string;
-            /** Network Id */
-            network_id?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -13962,41 +12624,6 @@ export interface operations {
             };
         };
     };
-    post_api_analytics_insights_refresh: {
-        parameters: {
-            query?: {
-                time_range?: string;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "post_api_analytics_recalculate-cost": {
         parameters: {
             query?: never;
@@ -15070,42 +13697,6 @@ export interface operations {
             };
         };
     };
-    get_api_cases_metrics_analyst_analyst_id: {
-        parameters: {
-            query?: {
-                start_date?: string | null;
-                end_date?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                analyst_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_cases_metrics_breached: {
         parameters: {
             query?: never;
@@ -15238,40 +13829,6 @@ export interface operations {
             };
         };
     };
-    get_api_cases_metrics_dashboard: {
-        parameters: {
-            query?: {
-                start_date?: string | null;
-                end_date?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_cases_metrics_mttd: {
         parameters: {
             query?: {
@@ -15342,40 +13899,6 @@ export interface operations {
             };
         };
     };
-    "get_api_cases_metrics_sla-compliance": {
-        parameters: {
-            query?: {
-                start_date?: string | null;
-                end_date?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_cases_metrics_summary: {
         parameters: {
             query?: {
@@ -15397,39 +13920,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMetricsSummaryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_cases_metrics_velocity: {
-        parameters: {
-            query?: {
-                days?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -15465,41 +13955,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseSearchResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_cases_search_advanced: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdvancedSearch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -16816,43 +15271,6 @@ export interface operations {
             };
         };
     };
-    post_api_cases_case_id_remediation_jira: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["JiraRemediationExportRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JiraExportResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "post_api_cases_case_id_resolution-steps": {
         parameters: {
             query?: never;
@@ -17762,72 +16180,6 @@ export interface operations {
             };
         };
     };
-    get_api_config_github: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_config_github: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GitHubConfig"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_config_integrations: {
         parameters: {
             query?: never;
@@ -17873,37 +16225,6 @@ export interface operations {
                 "application/json": components["schemas"]["IntegrationsConfig"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_config_integrations_status: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -18253,37 +16574,6 @@ export interface operations {
             };
         };
     };
-    post_api_config_s3_test: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "post_api_config_secrets_migrate-to-encrypted": {
         parameters: {
             query?: never;
@@ -18392,37 +16682,6 @@ export interface operations {
         };
     };
     "get_api_config_setup-steps": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "get_api_config_state-directory": {
         parameters: {
             query?: never;
             header?: {
@@ -18707,41 +16966,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CustomIntegrationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_custom-integrations_generate_upload": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_generate_from_file_api_custom_integrations_generate_upload_post"];
             };
         };
         responses: {
@@ -19579,41 +17803,6 @@ export interface operations {
             };
         };
     };
-    "post_api_findings_bulk-enrich": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BulkEnrichmentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_findings_export: {
         parameters: {
             query?: {
@@ -19925,70 +18114,6 @@ export interface operations {
             };
         };
     };
-    "get_api_ingest_csv-template_data_type": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                data_type: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_ingest_formats: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     "post_api_ingest_ingest-string": {
         parameters: {
             query?: never;
@@ -20290,261 +18415,6 @@ export interface operations {
             };
         };
     };
-    "get_api_integrations_vstrike_legend-runs": {
-        parameters: {
-            query?: {
-                network_id?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_legend-runs_results": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeLegendRunResultsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_network-graph": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeNetworkGraphRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_integrations_vstrike_nodes_drift: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeNodeDriftRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_integrations_vstrike_nodes_search: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeNodeSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_integrations_vstrike_storylines: {
-        parameters: {
-            query?: {
-                network_id?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_integrations_vstrike_storylines_events: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeStorylineEventsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_integrations_vstrike_topology_asset_asset_id: {
         parameters: {
             query?: never;
@@ -20557,508 +18427,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_integrations_vstrike_topology_asset_asset_id_adjacent: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                asset_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "get_api_integrations_vstrike_topology_asset_asset_id_blast-radius": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                asset_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_camera-node": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeCameraNodeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_camera-position": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeCameraPositionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_iframe-token": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_killchain-replay": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeKillchainReplayRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_legend-apply": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeLegendApplyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_load-network": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeLoadNetworkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_integrations_vstrike_ui_networks: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_rightpanel-focus": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["VStrikeRightpanelFocusRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_storyline-apply": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeStorylineApplyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_storyline-backward": {
-        parameters: {
-            query?: {
-                network_id?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_storyline-forward": {
-        parameters: {
-            query?: {
-                network_id?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_integrations_vstrike_ui_storyline-mode": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VStrikeStorylineModeRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -21350,107 +18718,6 @@ export interface operations {
             };
         };
     };
-    "post_api_llm_providers_discover-models": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DiscoverModelsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_llm_providers_refresh-models": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_llm_providers_test-connection": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TestConnectionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     put_api_llm_providers_provider_id: {
         parameters: {
             query?: never;
@@ -21489,138 +18756,6 @@ export interface operations {
         };
     };
     delete_api_llm_providers_provider_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                provider_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_llm_providers_provider_id_models: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                provider_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_llm_providers_provider_id_refresh-models": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                provider_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_llm_providers_provider_id_set-default": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                provider_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMProviderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_llm_providers_provider_id_test: {
         parameters: {
             query?: never;
             header?: {
@@ -22044,40 +19179,6 @@ export interface operations {
     post_api_orchestrator_enable: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_orchestrator_intake: {
-        parameters: {
-            query?: {
-                state?: string | null;
-                limit?: number;
-            };
             header?: {
                 authorization?: string | null;
             };
@@ -24642,42 +21743,6 @@ export interface operations {
             };
         };
     };
-    get_api_v1_cases_metrics_analyst_analyst_id: {
-        parameters: {
-            query?: {
-                start_date?: string | null;
-                end_date?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                analyst_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_v1_cases_metrics_breached: {
         parameters: {
             query?: never;
@@ -24810,40 +21875,6 @@ export interface operations {
             };
         };
     };
-    get_api_v1_cases_metrics_dashboard: {
-        parameters: {
-            query?: {
-                start_date?: string | null;
-                end_date?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_v1_cases_metrics_mttd: {
         parameters: {
             query?: {
@@ -24914,40 +21945,6 @@ export interface operations {
             };
         };
     };
-    "get_api_v1_cases_metrics_sla-compliance": {
-        parameters: {
-            query?: {
-                start_date?: string | null;
-                end_date?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_v1_cases_metrics_summary: {
         parameters: {
             query?: {
@@ -24969,39 +21966,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseMetricsSummaryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_v1_cases_metrics_velocity: {
-        parameters: {
-            query?: {
-                days?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

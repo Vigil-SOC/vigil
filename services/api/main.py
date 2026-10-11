@@ -772,8 +772,8 @@ async def _health_payload(request: Request) -> dict:
             # bypassed backend would otherwise show nothing. Public on purpose --
             # an unauthenticated caller can already tell by being served.
             "auth_bypassed": auth_bypassed,
-            # Booleans only — this route is public, and the resolved path names
-            # where credentials live. Full status: GET /api/config/state-directory.
+            # Booleans only — this route is public, and the resolved path
+            # names where credentials live.
             "state_directory": {
                 "exists": state_dir["exists"],
                 "writable": state_dir["writable"],

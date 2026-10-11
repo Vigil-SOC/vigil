@@ -13,7 +13,6 @@ if str(ROOT) not in sys.path:
 from core.integrations.integration_secrets import (  # noqa: E402
     INTEGRATION_SECRET_FIELDS,
     redact_secrets,
-    secret_field_names,
     secret_fields_for,
     split_secrets,
 )
@@ -95,11 +94,6 @@ def test_redact_secrets_unregistered_integration_passthrough():
     raw = {"foo": "bar"}
     redacted = redact_secrets("brand-new", raw)
     assert redacted == raw
-
-
-def test_secret_field_names_returns_form_field_names():
-    names = list(secret_field_names("vstrike"))
-    assert set(names) == {"username", "password"}
 
 
 def test_registry_is_a_mapping_not_a_dict_alias():

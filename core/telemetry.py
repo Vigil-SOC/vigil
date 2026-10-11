@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -30,26 +29,6 @@ logger = logging.getLogger(__name__)
 _initialized: bool = False
 _tracer_provider: Any = None
 _meter_provider: Any = None
-
-# Context variable for investigation correlation across async tasks
-_investigation_id_var: ContextVar[Optional[str]] = ContextVar(
-    "vigil_investigation_id", default=None
-)
-
-
-# ---------------------------------------------------------------------------
-# Context helpers
-# ---------------------------------------------------------------------------
-
-
-def set_investigation_id(investigation_id: Optional[str]) -> None:
-    """Attach an investigation ID to the current async context."""
-    _investigation_id_var.set(investigation_id)
-
-
-def get_investigation_id() -> Optional[str]:
-    """Return the investigation ID bound to the current async context."""
-    return _investigation_id_var.get()
 
 
 # ---------------------------------------------------------------------------
@@ -533,10 +512,6 @@ class _OTELJsonFormatter(logging.Formatter):
             "trace_id": trace_id,
             "span_id": span_id,
         }
-
-        inv_id = get_investigation_id()
-        if inv_id:
-            entry["vigil.investigation.id"] = inv_id
 
         if record.exc_info:
             exc_cls = record.exc_info[0]

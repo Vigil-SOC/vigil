@@ -199,7 +199,3 @@ export type AgentEvent<M> = RunEvent | EventsOf<M>;
 // What is appended. seq and ts are assigned by the repository, so no caller can
 // choose its own position in the log.
 export type NewEvent<M> = Omit<AgentEvent<M>, "seq" | "ts" | "schema_version">;
-
-export function isRunEventKind(kind: string): kind is RunEventKind {
-  return (RUN_EVENT_KINDS as readonly string[]).includes(kind);
-}

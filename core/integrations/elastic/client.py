@@ -316,26 +316,3 @@ class ElasticService:
         except Exception as exc:
             logger.error(f"Error fetching case {case_id}: {exc}")
             return None
-
-    async def update_case_status(
-        self,
-        case_id: str,
-        status: str,
-        version: str,
-    ) -> bool:
-        """Update a Kibana Security case status.
-
-        Args:
-            case_id: The Kibana case ID.
-            status: One of 'open', 'in-progress', 'closed'.
-            version: The case version string (required for optimistic concurrency).
-        """
-        body = {"cases": [{"id": case_id, "version": version, "status": status}]}
-        try:
-            resp = await self.kibana_client.patch("/api/cases", json=body)
-            resp.raise_for_status()
-            logger.info(f"Updated case {case_id} to status '{status}'")
-            return True
-        except Exception as exc:
-            logger.error(f"Error updating case {case_id}: {exc}")
-            return False

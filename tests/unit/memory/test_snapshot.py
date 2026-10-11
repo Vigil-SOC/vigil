@@ -29,7 +29,6 @@ from core.memory.snapshot import (
     SnapshotExists,
     create_snapshot,
     drop_snapshot,
-    get_snapshot,
     list_snapshots,
     pgoptions_for,
 )
@@ -303,7 +302,8 @@ def test_a_write_to_the_live_tier_does_not_reach_a_snapshot(live, snapshots):
     verdict(live, [KEY], investigation="hunt-2", concluded=EPOCH + timedelta(days=1))
     live.commit()
 
-    assert get_snapshot("frozen").rows["episodic_sightings"] == 1
+    frozen = {held.name: held for held in list_snapshots()}["frozen"]
+    assert frozen.rows["episodic_sightings"] == 1
     with reading("frozen"):
         result = recall_entity({"entity_key": KEY})
     assert len(result["sightings"]) == 1

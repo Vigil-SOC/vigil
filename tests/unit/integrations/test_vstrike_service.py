@@ -401,14 +401,6 @@ def test_has_ui_credentials_only_true_with_both():
     assert _service(username="u", password="p").has_ui_credentials is True
 
 
-def test_has_api_credentials_is_alias_for_has_ui_credentials():
-    """JWT-only auth: 'configured' means username+password, regardless of which
-    predicate name a caller queries."""
-    svc = _service()
-    assert svc.has_api_credentials is svc.has_ui_credentials is True
-    assert _service(username=None, password=None).has_api_credentials is False
-
-
 def test_get_vstrike_service_with_only_ui_credentials(isolate_secrets):
     isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
     isolate_secrets.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
@@ -417,7 +409,6 @@ def test_get_vstrike_service_with_only_ui_credentials(isolate_secrets):
         svc = get_vstrike_service()
     assert svc is not None
     assert svc.has_ui_credentials is True
-    assert svc.has_api_credentials is True
 
 
 def test_get_vstrike_service_returns_none_with_only_username(isolate_secrets):

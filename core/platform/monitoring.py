@@ -155,15 +155,6 @@ def before_send_filter(event, hint):
     return event
 
 
-def capture_exception(error: Exception, context: Optional[dict] = None) -> None:
-    """Manually capture an exception with additional context."""
-
-    if context:
-        sentry_sdk.set_context("custom", context)
-
-    sentry_sdk.capture_exception(error)
-
-
 def add_breadcrumb(
     message: str,
     category: str = "default",

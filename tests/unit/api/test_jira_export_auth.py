@@ -12,9 +12,7 @@ import pytest
 
 from services.api.routers.jira_export import (
     JiraExportRequest,
-    JiraRemediationExportRequest,
     export_case_to_jira,
-    export_remediation_to_jira,
 )
 
 pytestmark = pytest.mark.unit
@@ -121,48 +119,3 @@ def test_export_authenticates_with_resolved_username(monkeypatch):
     assert result.success is True
     assert captured["posts"][0]["auth"] == ("ada", "tok")
     assert captured["posts"][0]["json"]["fields"]["project"]["key"] == "FROM-BODY"
-
-
-def test_remediation_export_authenticates_with_resolved_username(monkeypatch):
-    captured = {}
-
-    def fake_get(url, auth=None, **_kwargs):
-        captured["get_auth"] = auth
-        return _Response({"fields": {"project": {"key": "SEC"}}})
-
-    def fake_post(url, auth=None, **_kwargs):
-        captured["post_auth"] = auth
-        return _Response({"key": "SEC-2"})
-
-    monkeypatch.setattr(
-        "services.api.routers.jira_export.resolve",
-        lambda _descriptor: {
-            "url": "https://jira.example",
-            "username": "ada",
-            "api_token": "tok",
-            "project_key": "SEC",
-        },
-    )
-    monkeypatch.setattr("services.api.routers.jira_export.httpx.get", fake_get)
-    monkeypatch.setattr("services.api.routers.jira_export.httpx.post", fake_post)
-    monkeypatch.setattr(
-        "services.api.routers.jira_export.AuthService.check_permission",
-        lambda *_args, **_kwargs: True,
-    )
-
-    class Session:
-        def query(self, model):
-            if getattr(model, "__name__", "") == "Case":
-                return _Query(_case())
-            return _Query([])
-
-    result = export_remediation_to_jira(
-        "case-9",
-        JiraRemediationExportRequest(parent_issue_key="SEC-1"),
-        _user(),
-        Session(),
-    )
-
-    assert result.success is True
-    assert captured["get_auth"] == ("ada", "tok")
-    assert captured["post_auth"] == ("ada", "tok")

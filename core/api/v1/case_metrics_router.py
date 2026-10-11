@@ -181,64 +181,6 @@ class ByStatusResponse(BaseModel):
 metrics_service = CaseMetricsService()
 
 
-@router.get("/dashboard", **_BETA)
-def get_dashboard(
-    start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
-):
-    """
-    Get dashboard metrics.
-
-    Args:
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        Dashboard metrics
-    """
-    metrics = metrics_service.get_dashboard_metrics(start_date, end_date)
-    return metrics
-
-
-@router.get("/sla-compliance", **_BETA)
-def get_sla_compliance(
-    start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
-):
-    """
-    Get SLA compliance report.
-
-    Args:
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        SLA compliance statistics
-    """
-    sla_service = CaseSLAService()
-    report = sla_service.get_sla_compliance_report(start_date, end_date)
-    return report
-
-
-@router.get("/analyst/{analyst_id}", **_BETA)
-def get_analyst_performance(
-    analyst_id: str,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-):
-    """
-    Get analyst performance metrics.
-
-    Args:
-        analyst_id: Analyst user ID
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        Analyst performance metrics
-    """
-    metrics = metrics_service.get_analyst_performance(analyst_id, start_date, end_date)
-    return metrics
-
-
 @router.get("/mttr", response_model=MttrResponse)
 def get_mttr(
     session: UnitOfWorkSession,
@@ -322,21 +264,6 @@ def get_mttr(
         "trend_data": trend_data,
         "total_cases": total_cases,
     }
-
-
-@router.get("/velocity", **_BETA)
-def get_velocity(days: int = 30):
-    """
-    Get case velocity (opened vs closed).
-
-    Args:
-        days: Number of days to analyze
-
-    Returns:
-        Velocity data
-    """
-    velocity = metrics_service.get_case_velocity(days)
-    return velocity
 
 
 @router.post(

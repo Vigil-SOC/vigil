@@ -32,7 +32,6 @@ from core.reporting.analytics_service import (
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.threat_intel.mitre_lookup import get_time_range
-from services.api.errors import INTERNAL_ERROR_DETAIL
 
 logger = logging.getLogger(__name__)
 
@@ -144,39 +143,6 @@ async def get_analytics_insights(
             logger.warning(f"Could not schedule insights regeneration: {e}")
 
     return cached
-
-
-@router.post("/analytics/insights/refresh")
-async def refresh_analytics_insights(
-    time_range: str = Query("7d", pattern="^(24h|7d|30d|all)$"),
-    *,
-    db: UnitOfWorkSession,
-) -> Dict[str, Any]:
-    """Force a background regeneration of insights for the given time_range.
-
-    Returns immediately with ``{"status": "refreshing"}`` or
-    ``{"status": "already_generating"}`` if one is already in flight. Clients
-    should then poll GET /analytics/insights until ``generated_at`` changes.
-    """
-    cached = ai_insights_service.get_cached_insights(time_range)
-    if cached["generating"]:
-        return {"status": "already_generating", "generated_at": cached["generated_at"]}
-
-    try:
-        metrics, time_series = await collect_insights_inputs(db, time_range)
-    except Exception as e:
-        logger.error(f"Could not collect inputs for insights refresh: {e}")
-        return {"status": "error", "message": INTERNAL_ERROR_DETAIL}
-
-    asyncio.create_task(
-        ai_insights_service.trigger_regeneration(
-            db=db,
-            metrics=metrics,
-            time_series=time_series,
-            time_range=time_range,
-        )
-    )
-    return {"status": "refreshing", "generated_at": cached["generated_at"]}
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.storage.s3_service import S3Service
-from services.api.routers import config as config_api
 from services.api.routers import ingestion as ingestion_api
 
 pytestmark = pytest.mark.unit
@@ -87,25 +86,6 @@ def test_uninitialized_client_raises_with_cause():
     svc._init_error = "boom"
     with pytest.raises(RuntimeError, match="boom"):
         svc.list_files()
-
-
-def test_connection_test_fails_on_denied_listing(monkeypatch):
-    svc = _service(lambda s: (s.add_response("head_bucket", {}), _denied(s)))
-    cfg = {"bucket_name": BUCKET, "parquet_prefix": "findings/"}
-
-    class _Cfg:
-        def get_integration_config(self, _name):
-            return {"config": cfg}
-
-    monkeypatch.setattr(config_api, "get_config_service", lambda: _Cfg())
-    monkeypatch.setattr(config_api, "get_secret", lambda _k: "secret")
-    monkeypatch.setattr(config_api, "S3Service", lambda **_kw: svc)
-
-    result = config_api.test_s3_connection()
-
-    assert result["success"] is False
-    assert "AccessDenied" in result["message"]
-    assert "files_found" not in result
 
 
 @pytest.fixture

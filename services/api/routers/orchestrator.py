@@ -285,31 +285,6 @@ def list_investigations(status: Optional[str] = Query(None)):
     }
 
 
-_INTAKE_LIST_DEFAULT = 100
-_INTAKE_LIST_MAX = 1000
-
-
-@router.get("/intake")
-def list_intake_triggers(
-    state: Optional[str] = Query(None),
-    limit: int = Query(_INTAKE_LIST_DEFAULT, ge=1, le=_INTAKE_LIST_MAX),
-):
-    """List intake trigger rows, newest first, with an optional state filter."""
-    # Query the table here. _get_orchestrator() builds a second Orchestrator
-    # in the API process whose in-memory state is never fed.
-    from core.storage.connection import get_db_manager
-    from core.storage.models import IntakeTrigger
-    from core.storage.schemas import IntakeTriggerSchema
-
-    with get_db_manager().session_scope() as session:
-        q = session.query(IntakeTrigger)
-        if state:
-            q = q.filter_by(state=state)
-        rows = q.order_by(IntakeTrigger.created_at.desc()).limit(limit).all()
-        triggers = IntakeTriggerSchema.dump_many(rows)
-    return {"triggers": triggers, "count": len(triggers)}
-
-
 @router.get("/investigations/{investigation_id}")
 def get_investigation(investigation_id: str):
     """Get detailed information about a specific investigation."""

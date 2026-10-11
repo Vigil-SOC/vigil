@@ -129,8 +129,6 @@ def secrets_store():
     with patch(
         "services.api.routers.llm_providers.set_secret", side_effect=fake_set
     ), patch(
-        "services.api.routers.llm_providers.get_secret", side_effect=fake_get
-    ), patch(
         "services.api.routers.llm_providers.delete_secret", side_effect=fake_delete
     ), patch(
         "core.llm.providers.provider_service.get_secret", side_effect=fake_get
@@ -378,31 +376,3 @@ def test_update_clear_last_of_type_blanks_bifrost_key(
     r = client.put("/api/llm/providers/openai-solo", json={"api_key": ""})
     assert r.status_code == 200
     assert ("openai", "") in bifrost_pushes
-
-
-def test_set_default_enforces_single_default(client, secrets_store, session):
-    client.post(
-        "/api/llm/providers/",
-        json={
-            "provider_id": "ollama-a",
-            "provider_type": "ollama",
-            "name": "A",
-            "default_model": "m",
-            "is_default": True,
-        },
-    )
-    client.post(
-        "/api/llm/providers/",
-        json={
-            "provider_id": "ollama-b",
-            "provider_type": "ollama",
-            "name": "B",
-            "default_model": "m",
-        },
-    )
-    r = client.post("/api/llm/providers/ollama-b/set-default")
-    assert r.status_code == 200
-    a = session.get(LLMProviderConfig, "ollama-a")
-    b = session.get(LLMProviderConfig, "ollama-b")
-    assert b.is_default is True
-    assert a.is_default is False
