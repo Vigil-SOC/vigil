@@ -103,9 +103,6 @@ vi.mock('../services/api', () => ({
       }),
     listCustom: () => Promise.resolve({ data: { agents: [] } }),
   },
-  claudeApi: {
-    getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
-  },
   mcpApi: {
     listServers: () => Promise.resolve({ data: { servers: [] } }),
     getStatuses: () => Promise.resolve({
@@ -224,21 +221,6 @@ vi.mock('../services/api', () => ({
   },
   orchestratorApi: {
     getStatus: () => Promise.resolve({ data: { enabled: false } }),
-  },
-  analyticsApi: {
-    estimateCost: () =>
-      Promise.resolve({
-        data: {
-          provider_type: 'anthropic',
-          model_id: 'claude-sonnet-4-6',
-          input_tokens: 0,
-          output_tokens_max: 4096,
-          low_usd: 0,
-          high_usd: 0,
-          pricing_source: 'exact',
-          token_count_method: 'anthropic_count_tokens',
-        },
-      }),
   },
   reasoningApi: {
     getSessionSummary: () => Promise.resolve(null),

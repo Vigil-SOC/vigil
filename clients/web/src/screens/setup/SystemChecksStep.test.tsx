@@ -105,10 +105,14 @@ describe('SystemChecksStep', () => {
         storage: { backend: 'none', database_available: false, demo_mode: false },
       },
     } as never)
+    vi.mocked(storageApi.getStatus).mockResolvedValue({
+      data: { backend: 'none', database_available: false, demo_mode: false },
+    } as never)
     render(<Harness />)
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     expect(mark('Database')).toBe('Needs you')
-    expect(mark('Storage')).toBe('Passed')
+    expect(await screen.findByText('Database unavailable')).toBeInTheDocument()
+    expect(mark('Storage')).toBe('Needs you')
   })
 
   it('needs you, not Could not read, when the storage route fails because the database is down', async () => {
@@ -119,6 +123,18 @@ describe('SystemChecksStep', () => {
     render(<Harness />)
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     expect(mark('Database')).toBe('Needs you')
+    expect(await screen.findByText('Database unavailable')).toBeInTheDocument()
+    expect(mark('Storage')).toBe('Needs you')
+    expect(screen.queryByText('Could not read')).not.toBeInTheDocument()
+  })
+
+  it('keeps Storage as Could not read when health also fails', async () => {
+    vi.mocked(storageApi.getStatus).mockRejectedValue(new Error('500'))
+    vi.mocked(consoleApi.getHealth).mockRejectedValue(new Error('down'))
+    render(<Harness />)
+    await waitFor(() => expect(mark('API health')).toBe('Needs you'))
+    expect(mark('Storage')).toBe('Needs you')
+    expect(screen.queryByText('Database unavailable')).not.toBeInTheDocument()
   })
 
   it('passes the database in demo mode', async () => {

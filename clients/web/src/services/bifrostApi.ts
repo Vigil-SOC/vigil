@@ -223,8 +223,6 @@ export const bifrostApi = {
   // `provider` in, `name` back out — Bifrost's create payload does not use the
   // field its response does, and sending `name` fails with "Missing provider".
   createProvider: (provider: string) => api.post<BifrostProvider>(`${bf}/providers`, { provider }),
-  updateProvider: (name: string, data: Partial<BifrostProvider>) =>
-    api.put<BifrostProvider>(`${bf}/providers/${encodeURIComponent(name)}`, data),
   removeProvider: (name: string) => api.delete(`${bf}/providers/${encodeURIComponent(name)}`),
 
   listKeys: (provider: string) =>

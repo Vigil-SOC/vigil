@@ -58,7 +58,6 @@ vi.mock('../../services/api', () => ({
   },
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
-  timelineApi: { getCaseTimeline: vi.fn(() => Promise.resolve({ data: { events: [] } })) },
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   conversationsApi: {
