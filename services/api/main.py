@@ -214,8 +214,9 @@ app.add_middleware(
     expose_headers=["X-MFA-Required"],
 )
 
-# CSRF middleware. On by default (VIGIL_CSRF_ENABLED=true); the frontend
-# echoes the csrf_token cookie back as X-CSRF-Token.
+# CSRF middleware. On by default (VIGIL_CSRF_ENABLED=true), report-only until
+# VIGIL_CSRF_REPORT_ONLY=false; the frontend echoes the csrf_token cookie back
+# as X-CSRF-Token.
 # Registered between CORS and SecurityHeaders so:
 #   - SecurityHeaders (outermost) applies to any 403 CSRF rejection.
 #   - CORS (innermost of these three) still short-circuits OPTIONS preflight.

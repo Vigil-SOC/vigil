@@ -1,8 +1,9 @@
 """
 Double-submit cookie CSRF middleware.
 
-On by default (`VIGIL_CSRF_ENABLED=true`). The frontend echoes the
-`csrf_token` cookie back as the `X-CSRF-Token` header.
+On by default (`VIGIL_CSRF_ENABLED=true`), in report-only mode unless
+`VIGIL_CSRF_REPORT_ONLY=false` (as `env.example` sets it). The frontend echoes
+the `csrf_token` cookie back as the `X-CSRF-Token` header.
 
 How it works:
 
