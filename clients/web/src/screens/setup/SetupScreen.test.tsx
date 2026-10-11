@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import SetupScreen from './SetupScreen'
 import { SETUP_DISMISSED_KEY, SETUP_PROGRESS_KEY } from './setupDismissed'
-import { configApi, federationApi, ingestionApi, mcpApi } from '../../services/api'
+import { configApi, consoleApi, federationApi, ingestionApi, mcpApi } from '../../services/api'
 import { TEST_POLL_MS, TEST_POLL_TRIES } from './SourceCollection'
 
 const auth = vi.hoisted(() => ({
@@ -20,7 +20,11 @@ vi.mock('../../contexts/ColorSchemeContext', () => ({
 }))
 
 vi.mock('../../services/api', () => ({
-  consoleApi: { getHealth: vi.fn(() => Promise.resolve({ data: { status: 'healthy' } })) },
+  consoleApi: {
+    getHealth: vi.fn(() =>
+      Promise.resolve({ data: { status: 'healthy', storage: { database_available: true } } }),
+    ),
+  },
   storageApi: { getStatus: vi.fn(() => Promise.resolve({ data: { backend: 'none' } })) },
   llmProviderApi: { list: vi.fn(() => Promise.resolve({ data: [] })) },
   aiConfigApi: { getConfig: vi.fn(() => Promise.resolve({ data: { components: [], assignments: {} } })) },
@@ -105,6 +109,9 @@ describe('SetupScreen', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: { status: 'healthy', storage: { database_available: true } },
+    } as never)
     auth.allowed = true
   })
 
@@ -144,7 +151,7 @@ describe('SetupScreen', () => {
     expect(screen.getByText('Step 1 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
   })
 
-  it('reads Finish setup on step 5 and the done page is not counted', () => {
+  it('reads Finish setup on step 5 and the done page is not counted', async () => {
     localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 5, passed: [1, 2, 3, 4] }))
     renderSetup()
     expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
@@ -152,7 +159,9 @@ describe('SetupScreen', () => {
     expect(screen.getByText('Setup complete', { selector: '.su-eyebrow' })).toBeInTheDocument()
     expect(screen.queryByText(/of 5/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Go to console/ })).toBeInTheDocument()
-    expect(rail().getAllByRole('button').filter((b) => b.querySelector('svg'))).toHaveLength(5)
+    await waitFor(() =>
+      expect(rail().getAllByRole('button').filter((b) => b.querySelector('svg'))).toHaveLength(5),
+    )
     expect(saved().passed).toContain(5)
   })
 
@@ -161,10 +170,67 @@ describe('SetupScreen', () => {
     renderSetup()
     expect(screen.getByText('Step 3 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
     const items = rail().getAllByRole('button').slice(0, 5)
-    expect(items.map((b) => !!b.querySelector('svg'))).toEqual([true, true, false, false, false])
+    await waitFor(() =>
+      expect(items.map((b) => !!b.querySelector('svg'))).toEqual([true, true, false, false, false]),
+    )
     expect(items[2]).toHaveAttribute('aria-current', 'step')
     fireEvent.click(items[4])
     expect(screen.getByText('Step 5 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+  })
+
+  describe('step 1 rail mark', () => {
+    const stored = (furthest: number) =>
+      localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest, passed: [1] }))
+    const unhealthy = (status: string) =>
+      vi.mocked(consoleApi.getHealth).mockResolvedValue({
+        data: { status, storage: { database_available: true } },
+      } as never)
+    const first = () => rail().getByRole('button', { name: /Before you start/ })
+
+    it('shows a warning, not a tick, when a continued step 1 has a Needs-you row', async () => {
+      unhealthy('degraded')
+      stored(2)
+      renderSetup()
+      await waitFor(() => expect(within(first()).getByRole('img', { name: 'Needs you' })).toBeInTheDocument())
+      expect(first()).not.toHaveClass('passed')
+      expect(first().querySelector('svg')).toBeNull()
+    })
+
+    it('ticks it when every row passes and keeps the number until the run finishes', async () => {
+      stored(2)
+      renderSetup()
+      expect(first()).not.toHaveClass('passed')
+      await waitFor(() => expect(first()).toHaveClass('passed'))
+      expect(first().querySelector('svg')).not.toBeNull()
+    })
+
+    it('flips the mark when Check again finds the failure', async () => {
+      localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 1, passed: [1] }))
+      renderSetup()
+      await waitFor(() => expect(first()).toHaveClass('passed'))
+      unhealthy('degraded')
+      fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+      await waitFor(() => expect(first()).toHaveClass('warning'))
+      expect(first()).not.toHaveClass('passed')
+    })
+
+    it('evaluates step 1 even when the wizard opens on step 3', async () => {
+      unhealthy('degraded')
+      localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 3, passed: [1, 2] }))
+      renderSetup()
+      expect(screen.getByText('Step 3 of 5', { selector: '.su-eyebrow' })).toBeInTheDocument()
+      await waitFor(() => expect(first()).toHaveClass('warning'))
+    })
+
+    it('does not tick step 1 on the done page while a check fails', async () => {
+      unhealthy('degraded')
+      localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest: 5, passed: [1, 2, 3, 4] }))
+      renderSetup()
+      fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+      await waitFor(() => expect(first()).toHaveClass('warning'))
+      expect(first()).not.toHaveClass('passed')
+      expect(rail().getAllByRole('button').filter((b) => b.classList.contains('passed'))).toHaveLength(4)
+    })
   })
 
   it('Save and finish later keeps progress, dismisses and leaves', () => {

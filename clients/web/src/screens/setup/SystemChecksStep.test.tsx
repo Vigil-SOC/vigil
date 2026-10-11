@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import SystemChecksStep from './SystemChecksStep'
+import { useSystemChecks } from './useSystemChecks'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
 import { readProviderStatus } from '../../routing/useSetupStatus'
 
@@ -14,6 +15,9 @@ vi.mock('../../services/api', () => ({
 vi.mock('../../routing/useSetupStatus', () => ({
   readProviderStatus: vi.fn(),
 }))
+
+// the wizard owns the run and hands it down
+const Harness = () => <SystemChecksStep {...useSystemChecks()} />
 
 const row = (label: string) => screen.getByText(label).closest('[role="listitem"]') as HTMLElement
 const mark = (label: string) => within(row(label)).getByRole('img').getAttribute('aria-label')
@@ -46,7 +50,7 @@ describe('SystemChecksStep', () => {
   })
 
   it('passes all six checks with a detail line each, offers Check again, and shows no summary', async () => {
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('1 enabled server running')).toBeInTheDocument()
     for (const label of [
       'Database',
@@ -73,7 +77,7 @@ describe('SystemChecksStep', () => {
         releaseProvider = () => resolve('unreachable')
       }),
     )
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('Connected')).toBeInTheDocument()
     expect(mark('Database')).toBe('Passed')
     expect(mark('Model gateway')).toBe('Checking')
@@ -88,7 +92,7 @@ describe('SystemChecksStep', () => {
   })
 
   it('reads Storage from one storage call and Database and API health from one health call', async () => {
-    render(<SystemChecksStep />)
+    render(<Harness />)
     await screen.findByText('1 enabled server running')
     expect(storageApi.getStatus).toHaveBeenCalledTimes(1)
     expect(consoleApi.getHealth).toHaveBeenCalledTimes(1)
@@ -101,7 +105,7 @@ describe('SystemChecksStep', () => {
         storage: { backend: 'none', database_available: false, demo_mode: false },
       },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     expect(mark('Database')).toBe('Needs you')
     expect(mark('Storage')).toBe('Passed')
@@ -112,7 +116,7 @@ describe('SystemChecksStep', () => {
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
       data: { status: 'degraded', storage: { database_available: false, demo_mode: false } },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     expect(mark('Database')).toBe('Needs you')
   })
@@ -121,7 +125,7 @@ describe('SystemChecksStep', () => {
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
       data: { status: 'healthy', storage: { database_available: false, demo_mode: true } },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('Demo data, no database needed')).toBeInTheDocument()
     expect(mark('Database')).toBe('Passed')
   })
@@ -130,14 +134,14 @@ describe('SystemChecksStep', () => {
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
       data: { status: 'degraded' },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('Status is degraded')).toBeInTheDocument()
     expect(mark('API health')).toBe('Needs you')
   })
 
   it('passes with the board detail and no warning when no provider is configured yet', async () => {
     vi.mocked(readProviderStatus).mockResolvedValue('none')
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(
       await screen.findByText('Running on this server · you add a provider in step 3'),
     ).toBeInTheDocument()
@@ -148,7 +152,7 @@ describe('SystemChecksStep', () => {
 
   it('needs you, and counts a warning, when the model gateway cannot be reached', async () => {
     vi.mocked(readProviderStatus).mockResolvedValue('unreachable')
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('Could not reach the model gateway')).toBeInTheDocument()
     expect(mark('Model gateway')).toBe('Needs you')
     expect(
@@ -165,7 +169,7 @@ describe('SystemChecksStep', () => {
         ],
       },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('splunk has consecutive errors')).toBeInTheDocument()
     expect(mark('Alert collection')).toBe('Needs you')
   })
@@ -176,7 +180,7 @@ describe('SystemChecksStep', () => {
         sources: [{ source_id: 'elastic', enabled: false, consecutive_errors: 2 }],
       },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(
       await screen.findByText('Nothing to check yet · the next step connects a source'),
     ).toBeInTheDocument()
@@ -189,7 +193,7 @@ describe('SystemChecksStep', () => {
   it('shows Needs you when a federation or MCP read has no body', async () => {
     vi.mocked(federationApi.getHealth).mockResolvedValue({ data: undefined } as never)
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({ data: null } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     await waitFor(() => expect(mark('Alert collection')).toBe('Needs you'))
     expect(mark('Tool servers')).toBe('Needs you')
     expect(screen.getAllByText('Could not read')).toHaveLength(2)
@@ -197,7 +201,7 @@ describe('SystemChecksStep', () => {
 
   it('shows Could not read for a storage read with no body', async () => {
     vi.mocked(storageApi.getStatus).mockResolvedValue({ data: undefined } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     await waitFor(() => expect(mark('Storage')).toBe('Needs you'))
     expect(mark('Database')).toBe('Passed')
     expect(screen.getAllByText('Could not read')).toHaveLength(1)
@@ -212,14 +216,14 @@ describe('SystemChecksStep', () => {
         ],
       },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('splunk-selfhosted is stopped')).toBeInTheDocument()
     expect(mark('Tool servers')).toBe('Needs you')
   })
 
   it('shows Could not read for a read that fails, counts it, and carries on', async () => {
     vi.mocked(storageApi.getStatus).mockRejectedValue(new Error('down'))
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(await screen.findByText('1 enabled server running')).toBeInTheDocument()
     expect(mark('Database')).toBe('Passed')
     expect(mark('Storage')).toBe('Needs you')
@@ -233,7 +237,7 @@ describe('SystemChecksStep', () => {
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
       data: { status: 'degraded', storage: { database_available: true } },
     } as never)
-    render(<SystemChecksStep />)
+    render(<Harness />)
     expect(
       await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
     ).toBeInTheDocument()

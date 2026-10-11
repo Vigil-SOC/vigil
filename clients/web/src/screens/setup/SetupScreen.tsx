@@ -16,7 +16,8 @@ import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
 import LimitsStep from './LimitsStep'
 import SummaryStep, { type SummaryTarget } from './SummaryStep'
-import { Rail, TopBar } from './SetupChrome'
+import { Rail, TopBar, type RailMark } from './SetupChrome'
+import { useSystemChecks, type SystemChecks } from './useSystemChecks'
 import {
   SETUP_STEP_COUNT,
   markSetupDismissed,
@@ -96,13 +97,14 @@ const RAIL = STEPS.slice(0, DONE).map((id) => ({
 
 function stepPanel(
   id: StepId,
+  checks: SystemChecks,
   onAdvance: () => void,
   onRoutable: () => void,
   onChange: (target: SummaryTarget) => void,
 ) {
   switch (id) {
     case 'checks':
-      return <SystemChecksStep />
+      return <SystemChecksStep {...checks} />
     case 'data':
       return <DataSourceDialog onAdvance={onAdvance} />
     case 'ai':
@@ -139,6 +141,7 @@ const SetupWizard = () => {
   const [progress, setProgress] = useState<SetupProgress>(readSetupProgress)
   const [index, setIndex] = useState(progress.furthest - 1)
   const [demoBusy, setDemoBusy] = useState(false)
+  const checks = useSystemChecks()
   const step = STEPS[index]
   const copy = STEP_COPY[step]
   const done = step === 'done'
@@ -168,6 +171,15 @@ const SetupWizard = () => {
     if (!progress.passed.includes(3)) save({ ...progress, passed: [...progress.passed, 3] })
   }
 
+  // step 1's mark follows the latest run, never the stored tick: no tick while a run is in flight
+  const railMark = (n: number): RailMark => {
+    const continued = done || progress.passed.includes(n)
+    if (!continued) return 'number'
+    if (n !== 1) return 'tick'
+    if (!checks.finished) return 'number'
+    return checks.warnings ? 'warning' : 'tick'
+  }
+
   const finishLater = () => {
     writeSetupProgress({ ...progress, furthest: Math.max(progress.furthest, index + 1) })
     dismiss()
@@ -186,7 +198,7 @@ const SetupWizard = () => {
     }
   }
 
-  const panel = stepPanel(step, advance, markRoutable, (target) =>
+  const panel = stepPanel(step, checks, advance, markRoutable, (target) =>
     setIndex(STEPS.indexOf(target)),
   )
 
@@ -226,7 +238,7 @@ const SetupWizard = () => {
         <Rail
           steps={RAIL}
           active={done ? -1 : index}
-          passed={(n) => done || progress.passed.includes(n)}
+          mark={railMark}
           onPick={setIndex}
           onDemo={lookAroundWithDemo}
           demoBusy={demoBusy}

@@ -51,37 +51,51 @@ export function TopBar() {
   )
 }
 
+/** a step's rail mark: its number, a tick, or "!" when its checks say Needs you */
+export type RailMark = 'number' | 'tick' | 'warning'
+
 interface RailProps {
   steps: readonly RailStep[]
   /** zero-based; -1 when no step is active (the done page) */
   active: number
-  passed: (n: number) => boolean
+  mark: (n: number) => RailMark
   onPick: (index: number) => void
   onDemo: () => void
   demoBusy: boolean
 }
 
-export function Rail({ steps, active, passed, onPick, onDemo, demoBusy }: RailProps) {
+export function Rail({ steps, active, mark, onPick, onDemo, demoBusy }: RailProps) {
   return (
     <aside className="su-rail" aria-label="Setup steps">
       <span className="su-rail-head">Set up Vigil</span>
-      {steps.map((s, i) => (
-        <button
-          key={s.title}
-          type="button"
-          className={`su-rail-item${i === active ? ' on' : ''}${passed(i + 1) ? ' passed' : ''}`}
-          aria-current={i === active ? 'step' : undefined}
-          onClick={() => onPick(i)}
-        >
-          <span className="su-rail-n">
-            {passed(i + 1) ? <Icon name="check" size={13} /> : i + 1}
-          </span>
-          <span>
-            <span className="su-rail-t">{s.title}</span>
-            <span className="su-rail-s">{s.sub}</span>
-          </span>
-        </button>
-      ))}
+      {steps.map((s, i) => {
+        const m = mark(i + 1)
+        return (
+          <button
+            key={s.title}
+            type="button"
+            className={`su-rail-item${i === active ? ' on' : ''}${m === 'tick' ? ' passed' : ''}${m === 'warning' ? ' warning' : ''}`}
+            aria-current={i === active ? 'step' : undefined}
+            onClick={() => onPick(i)}
+          >
+            <span className="su-rail-n">
+              {m === 'tick' ? (
+                <Icon name="check" size={13} />
+              ) : m === 'warning' ? (
+                <span role="img" aria-label="Needs you" title="Needs you">
+                  !
+                </span>
+              ) : (
+                i + 1
+              )}
+            </span>
+            <span>
+              <span className="su-rail-t">{s.title}</span>
+              <span className="su-rail-s">{s.sub}</span>
+            </span>
+          </button>
+        )
+      })}
       <span className="su-rail-gap" />
       <div className="su-guide">
         <span className="su-guide-t">

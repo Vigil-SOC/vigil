@@ -129,6 +129,11 @@
   color: var(--good);
 }
 
+.su-rail-item.warning .su-rail-n {
+  background: var(--poor-bg);
+  color: var(--poor);
+}
+
 .su-rail-t {
   display: block;
   font-size: 13px;
