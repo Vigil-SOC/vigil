@@ -54,6 +54,21 @@ def _hostport(env: Mapping[str, str], name: str) -> tuple[str, int]:
     return host, int(port)
 
 
+def _listener(env: Mapping[str, str], name: str) -> tuple[str, int]:
+    # Each listener binds to one network's address (SP1 ⚑6), never every
+    # interface, so Medic can't reach the inbound side and the backend can't
+    # reach the outbound. The refusal is on the resolved address, not the
+    # configured string: `0`, `0.0`, `0x0` and `00.0.0.0` all resolve to 0.0.0.0.
+    host, port = _hostport(env, name)
+    try:
+        addr = socket.gethostbyname(host)
+    except OSError:
+        raise ConfigError(f"{P}{name}: {host} does not resolve") from None
+    if addr == "0.0.0.0":  # nosec B104 - refused, never bound
+        raise ConfigError(f"{P}{name}: {host} is every interface; name one address")
+    return addr, port
+
+
 def load_config(env: Mapping[str, str]) -> Config:
     bad = [k for k in FORBIDDEN_ENV if k in env]
     if bad:
@@ -67,18 +82,12 @@ def load_config(env: Mapping[str, str]) -> Config:
     return Config(
         _hostport(env, "BACKEND"),
         _hostport(env, "MEDIC"),
-        _hostport(env, "OUT_BIND"),
-        _hostport(env, "IN_BIND"),
+        _listener(env, "OUT_BIND"),
+        _listener(env, "IN_BIND"),
         env[P + "VIEWER_USER"],
         Path(pw),
         context,
     )
-
-
-def _bind(hp: tuple[str, int]) -> tuple[str, int]:
-    # Each listener binds to one network's address (SP1 ⚑6), never 0.0.0.0, so
-    # Medic can't reach the inbound side and the backend can't reach the outbound.
-    return socket.gethostbyname(hp[0]), hp[1]
 
 
 def build(cfg: Config) -> list:
@@ -86,19 +95,19 @@ def build(cfg: Config) -> list:
     session = ViewerSession(backend, cfg.user, cfg.password_file)
     medic = server.Upstream(*cfg.medic, max_body=8 << 20)  # evidence export
     return [
-        server.make_server("outbound", _bind(cfg.out_bind), backend, session),
-        server.make_server("inbound", _bind(cfg.in_bind), medic),
+        server.make_server("outbound", cfg.out_bind, backend, session),
+        server.make_server("inbound", cfg.in_bind, medic),
     ]
 
 
 def check(cfg: Config) -> int:
     """Healthy = both listeners answer. The login state is a Medic signal, not health."""
     try:
-        conn = http.client.HTTPConnection(*_bind(cfg.out_bind), timeout=3)
+        conn = http.client.HTTPConnection(*cfg.out_bind, timeout=3)
         conn.request("GET", "/_gw/status")
         if conn.getresponse().status != 200:
             return 1
-        socket.create_connection(_bind(cfg.in_bind), timeout=3).close()
+        socket.create_connection(cfg.in_bind, timeout=3).close()
     except OSError:
         return 1
     return 0

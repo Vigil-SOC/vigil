@@ -117,7 +117,22 @@ def test_listeners_bind_to_the_named_address_only(cfg_env):
             s.server_close()
 
 
-@pytest.mark.parametrize("bind", ["0.0.0.0:8471", "[::]:8471", ":8471", "*:8471"])
+@pytest.mark.parametrize(
+    "bind",
+    [
+        "0.0.0.0:8471",
+        "[::]:8471",
+        ":8471",
+        "*:8471",
+        # Spellings the resolver turns into 0.0.0.0: the check is on the address.
+        "0:8471",
+        "0.0:8471",
+        "0.0.0:8471",
+        "0x0:8471",
+        "00.0.0.0:8471",
+        "no-such-host.invalid:8471",
+    ],
+)
 @pytest.mark.parametrize("name", ["OUT_BIND", "IN_BIND"])
 def test_wildcard_bind_is_refused(cfg_env, capsys, name, bind):
     """Review #5: each listener on one network's address, never every address."""
@@ -125,3 +140,4 @@ def test_wildcard_bind_is_refused(cfg_env, capsys, name, bind):
     stopped = threading.Event()
     stopped.set()  # if it did start, return at once instead of serving forever
     assert cli.main(["run"], env=cfg_env, stop=stopped) == 2
+    assert "VIGIL_MEDIC_GATEWAY_" + name in capsys.readouterr().err
