@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -216,8 +216,12 @@ def _profile_for(agent_id: str) -> Any:
 
 # Phase agents that are turned off, in phase order. One read of the switch for the
 # whole definition; hunt-like kinds name agents here without resolving profiles.
-def disabled_phase_agents(definition: Any) -> List[str]:
-    disabled = disabled_agent_ids()
+# A caller checking many definitions passes the set it already read.
+def disabled_phase_agents(
+    definition: Any, disabled: Optional[Set[str]] = None
+) -> List[str]:
+    if disabled is None:
+        disabled = disabled_agent_ids()
     named = (
         (phase or {}).get("agent") or (phase or {}).get("agent_id")
         for phase in definition.phases

@@ -202,6 +202,10 @@ function WorkflowCard({ wf: w, selected, onSelect }: { wf: Workflow; selected: b
   // an absent triggers list (older backend) draws no chip at all, not "started by hand"
   const triggers = w.triggers?.map((t) => TRIGGER_LABEL[t] ?? t) ?? []
   if (w.triggers?.length === 0) triggers.push('Started by hand')
+  const agentMeta = useAgentMeta()
+  // a switched-off workflow reads "Off"; a blocked one is on but refused at Run
+  const blocked = w.enabled ? (w.blockedBy ?? []).map((id) => agentMeta(id).label) : []
+  const blockedText = `Can't run · ${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} off`
   return (
     <div className={`wfk${w.enabled ? '' : ' off'}${selected ? ' sel' : ''}`}>
       <div
@@ -214,9 +218,12 @@ function WorkflowCard({ wf: w, selected, onSelect }: { wf: Workflow; selected: b
       >
         <span className="wfk-head">
           <span className="wfk-name" title={w.name}>{w.name}</span>
-          <LevelBadge variant="pill" level={w.successLevel} />
+          {blocked.length === 0 && <LevelBadge variant="pill" level={w.successLevel} />}
         </span>
         <span className="wfk-chips">
+          {blocked.length > 0 && (
+            <span className="wfk-chip warn" title={blockedText}>{blockedText}</span>
+          )}
           <span className="wfk-chip">{KIND_LABEL[w.runKind] ?? prettyHandle(w.runKind)}</span>
           {triggers.map((t) => <span key={t} className="wfk-chip acc">{t}</span>)}
           {commands.map((c) => <span key={c.id} className="wfk-chip acc">{c.name}</span>)}

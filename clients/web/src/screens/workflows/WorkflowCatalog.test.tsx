@@ -24,6 +24,7 @@ vi.mock('../../services/api', () => ({
             mean_cost_usd: null,
             triggers: [],
             enabled: false,
+            blocked_by: ['triage'],
             tools_used: ['read_skill'],
           },
           {
@@ -53,6 +54,7 @@ vi.mock('../../services/api', () => ({
             success_level: 'fair',
             mean_cost_usd: 1.5,
             triggers: ['schedule'],
+            blocked_by: ['hunt_lead'],
           },
           {
             id: 'cloud-incident',
@@ -212,6 +214,7 @@ describe('workflow catalog cards', () => {
     expect(beacon).toHaveTextContent('Started by hand')
     expect(beacon).toHaveTextContent('Off · not running')
     expect(beacon.querySelector('.level-pill')).toBeNull()
+    expect(beacon).not.toHaveTextContent("Can't run")
 
     // a finished run that cost nothing is a real zero
     const ransom = card('Ransom reply')
@@ -224,7 +227,9 @@ describe('workflow catalog cards', () => {
     expect(hunt).toHaveTextContent('Nightly')
     expect(hunt).toHaveTextContent('/hunt')
     expect(hunt).toHaveTextContent('Ran 61 times this week · 91.3% succeeded · $1.50 per run')
-    expect(hunt.querySelector('.level-pill.fair')).toHaveTextContent('Fair')
+    // a needed agent is off: the card says so, in the agent's Agents-tab name, in place of the pill
+    expect(await within(hunt).findByText("Can't run · Hunt Lead is off")).toBeInTheDocument()
+    expect(hunt.querySelector('.level-pill')).toBeNull()
 
     // runs but none finished: em dashes and no badge; only a command's own workflow shows its chip
     const cloud = card('Cloud incident')

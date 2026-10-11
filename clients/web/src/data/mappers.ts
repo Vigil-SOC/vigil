@@ -354,6 +354,8 @@ export interface ApiWorkflow {
   mean_cost_usd?: number | null
   /** what starts it: alerts, schedule, shadow; none means a person does */
   triggers?: string[]
+  /** turned-off agents the workflow needs; absent means none */
+  blocked_by?: string[]
   /** absent means on; only an explicit false is off */
   enabled?: boolean
   updated_at?: string
@@ -393,6 +395,7 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     successRate: typeof w.success_rate === 'number' ? w.success_rate : null,
     successLevel: w.success_level ?? null,
     triggers: w.triggers,
+    blockedBy: w.blocked_by ?? [],
     enabled: w.enabled !== false,
     meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
     updatedAt: w.updated_at,

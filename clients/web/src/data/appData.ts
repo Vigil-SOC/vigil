@@ -24,6 +24,9 @@ export interface Workflow {
   /** What starts it: "alerts", "schedule", "shadow". Empty means a person does;
    *  absent means the backend did not say. */
   triggers?: string[]
+  /** Agent ids the workflow needs that are turned off, so Run would be refused.
+   *  Absent (older backend) reads as none. */
+  blockedBy?: string[]
   /** Mean cost of those 7 days' finished runs. Null when none have finished. */
   meanCostUsd: number | null
   /** Custom workflows only; file workflows omit it. */
