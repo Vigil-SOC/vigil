@@ -20,7 +20,6 @@ SCOPED = (
     "core/api/v1/agent_runs_router.py",
     "core/agents/tool_registry.py",
     "core/agents/tools_router.py",
-    "core/llm/cost/rates.py",
     "core/agents/directives.py",
     "core/agents/internal_auth.py",
     "core/response/checkpoints.py",
