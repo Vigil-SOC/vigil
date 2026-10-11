@@ -2984,7 +2984,7 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
   )
 }
 
-const SKILL_GRANT_INFO = 'The grant offers the whole library.'
+const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. How much each skill is used is on its card.'
 const SKILL_USAGE_INFO = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
 
 // The card's usage line (#1560): skill reads are recorded now, so this
@@ -3009,7 +3009,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
     : null
-  const offeredText = offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')
+  const offeredText = offered === null ? '…' : offered.join(', ')
 
   const importFile = (file: File | undefined) => {
     if (!file) return
@@ -3027,8 +3027,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
       <div className="flex items-center gap-3 px-[22px] pt-[14px]">
         <div className="flex-1 min-w-0">
           <span className="block text-[12px] leading-[1.45] text-tx-3">A skill is a folder with a SKILL.md file: when to use it, the steps, and any scripts. Agents read the skills they are given. Editing one saves a new version.</span>
-          <span className="sk-offered" title={`Offered to ${offeredText}`}>
-            Offered to
+          <span className="sk-offered" title={`Every skill is offered to: ${offeredText}`}>
+            Every skill is offered to:
             <InfoTip label={SKILL_GRANT_INFO} text={SKILL_GRANT_INFO} align="start" />
             <span className="sk-offered-list">{offeredText}</span>
           </span>

@@ -16,16 +16,22 @@ interface AgentGrant {
   recommended_tools: string[]
 }
 
-/** Workflows whose phase agents are granted read_skill. An id the agent list
- *  does not have is skipped. Phase tool arrays are not the grant. */
+/** Surfaces offered the whole skill library: Ask Vigil first, then workflows
+ *  whose phase agents are granted read_skill. Ask Vigil is unconditional: a chat
+ *  with no agent_id declares every built-in tool (_declare(None) in
+ *  core/llm/chat_layers.py), so chat_stream adds <available_skills>. An agent id
+ *  the agent list does not have is skipped. Phase tool arrays are not the grant. */
 export function workflowsOffered(
   workflows: Pick<Workflow, 'name' | 'agents'>[],
   agents: AgentGrant[],
 ): string[] {
   const tools = new Map(agents.map((a) => [a.id, a.recommended_tools]))
-  return workflows
-    .filter((w) => w.agents.some((id) => (tools.get(id) ?? []).includes('read_skill')))
-    .map((w) => w.name)
+  return [
+    'Ask Vigil',
+    ...workflows
+      .filter((w) => w.agents.some((id) => (tools.get(id) ?? []).includes('read_skill')))
+      .map((w) => w.name),
+  ]
 }
 
 export type Phase = 'loading' | 'ready' | 'error'

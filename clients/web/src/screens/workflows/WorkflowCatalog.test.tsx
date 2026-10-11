@@ -194,6 +194,8 @@ vi.mock('../../services/skillsApi', () => ({
   },
 }))
 
+const GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. How much each skill is used is on its card.'
+
 const card = (name: string) => screen.getByText(name).closest('.wfk') as HTMLElement
 
 describe('workflow catalog cards', () => {
@@ -269,13 +271,13 @@ describe('workflow catalog cards', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('executive-summary')).toBeInTheDocument()
     expect(screen.getByText('desk-check')).toBeInTheDocument()
-    expect(await screen.findByText('Beacon hunt, Threat hunt')).toBeInTheDocument()
+    expect(await screen.findByText('Ask Vigil, Beacon hunt, Threat hunt')).toBeInTheDocument()
     expect(screen.queryByText('Ransom reply')).toBeNull()
     expect(screen.queryByText('Phase tools only')).toBeNull()
     expect(screen.queryByText('Orphan flow')).toBeNull()
     // once above the grid, not on every card
-    expect(screen.getAllByText('Offered to')).toHaveLength(1)
-    expect(screen.getAllByRole('button', { name: 'The grant offers the whole library.' })).toHaveLength(1)
+    expect(screen.getAllByText('Every skill is offered to:')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: GRANT_INFO })).toHaveLength(1)
     expect(screen.getByText('Built in')).toBeInTheDocument()
     expect(screen.getByText('Yours')).toBeInTheDocument()
     expect(screen.queryByText('Custom')).toBeNull()
@@ -287,8 +289,8 @@ describe('workflow catalog cards', () => {
     const usageInfo = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
     expect(screen.getAllByRole('button', { name: usageInfo })).toHaveLength(2)
     // each ⓘ opens a tooltip with its text
-    fireEvent.click(screen.getByRole('button', { name: 'The grant offers the whole library.' }))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('The grant offers the whole library.')
+    fireEvent.click(screen.getByRole('button', { name: GRANT_INFO }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent(GRANT_INFO)
     fireEvent.mouseEnter(screen.getAllByRole('button', { name: usageInfo })[0].parentElement!)
     expect(screen.getAllByRole('tooltip').some((x) => x.textContent === usageInfo)).toBe(true)
     expect(screen.getByText('Read-only')).toBeInTheDocument()
