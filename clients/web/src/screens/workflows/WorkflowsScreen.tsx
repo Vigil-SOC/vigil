@@ -105,7 +105,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
       </div>
       {tab === 'workflows' && draft && <WorkflowReaderPane draft={draft} onBack={() => setDraft(null)} onSave={saveDraft} />}
       {tab === 'workflows' && !draft && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing(true)} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} />}
+      {tab === 'agents' && <AgentsTab feed={agents} skillCount={skills.phase === 'ready' ? skills.rows.length : null} onToggled={workflows.reload} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
       {describing && <DescribeDialog onClose={() => setDescribing(false)} onDrafted={(d) => { setDescribing(false); setTab('workflows'); setDraft(d) }} />}
@@ -2796,7 +2796,8 @@ const SUCCESS_TIP = {
 }
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
-function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount: number | null }) {
+/** `onToggled` runs after an agent is switched, so the workflow cards (which say when an agent they need is off) read the new state. */
+function AgentsTab({ feed, skillCount, onToggled }: { feed: Feed<AgentTemplate>; skillCount: number | null; onToggled: () => void }) {
   const { rows, phase, error, reload } = feed
   const [busy, setBusy] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
@@ -2827,7 +2828,7 @@ function AgentsTab({ feed, skillCount }: { feed: Feed<AgentTemplate>; skillCount
   const setEnabled = (a: AgentTemplate, on: boolean) => {
     setToggleErr(null)
     setEnabledNow((m) => ({ ...m, [a.handle]: on }))
-    agentsApi.setEnabled(a.handle, on).catch((e) => {
+    agentsApi.setEnabled(a.handle, on).then(onToggled).catch((e) => {
       setEnabledNow((m) => ({ ...m, [a.handle]: !on }))
       setToggleErr(`Couldn’t turn ${a.name} ${on ? 'on' : 'off'}: ${(e as { message?: string })?.message || 'request failed'}`)
     })
