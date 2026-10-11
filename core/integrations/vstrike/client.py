@@ -15,7 +15,7 @@ Two auth modes are supported:
    `network-list`, `ui-network-load`) at `MCP_RPC_PATH` via JSON-RPC.
 
 Either mode (or both) is sufficient to construct the service. The
-`has_api_credentials` and `has_ui_credentials` properties let callers branch.
+`has_ui_credentials` property lets callers branch.
 """
 
 from __future__ import annotations
@@ -221,13 +221,6 @@ class VStrikeService:
     def has_ui_credentials(self) -> bool:
         """True when we can perform mcp-login + MCP tool calls for UI control."""
         return bool(self.username and self.password)
-
-    # Back-compat shim: a few callers still test ``has_api_credentials`` as
-    # a synonym for "can this service make outbound calls to VStrike?". With
-    # JWT-only auth, that's equivalent to having UI creds.
-    @property
-    def has_api_credentials(self) -> bool:
-        return self.has_ui_credentials
 
     # ------------------------------------------------------------------ #
     # REST topology helpers (JWT auth, with one-shot 401 retry)

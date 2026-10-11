@@ -6,7 +6,7 @@ import {
   type ToolAdapter,
   type ToolResult,
 } from "../../contracts/tool.js";
-import { RUN_EVENT_KINDS, isRunEventKind, type AgentEvent } from "../../contracts/events.js";
+import { RUN_EVENT_KINDS, type AgentEvent } from "../../contracts/events.js";
 import { jobIdFor, type RunJob } from "../../contracts/job.js";
 
 const rows = (n: number, sourceSystem = "duckdb"): ToolResult => ({
@@ -108,10 +108,10 @@ describe("the Tool port cannot be opted out of", () => {
 describe("event kinds are closed", () => {
   it("recognises exactly the domain-free set", () => {
     expect(RUN_EVENT_KINDS).toHaveLength(10);
-    expect(isRunEventKind("terminal")).toBe(true);
+    expect(RUN_EVENT_KINDS).toContain("terminal");
     // Domain-free because every run kind recalls, not because a hunt does.
-    expect(isRunEventKind("recall")).toBe(true);
-    expect(isRunEventKind("hypothesis")).toBe(false);
+    expect(RUN_EVENT_KINDS).toContain("recall");
+    expect(RUN_EVENT_KINDS).not.toContain("hypothesis");
   });
 
   it("discriminates a payload by its kind", () => {

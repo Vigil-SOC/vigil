@@ -23,7 +23,12 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from core.response.config import ResponseConfig, approval_requirement, decision_rule
+from core.response.config import (
+    ResponseConfig,
+    approval_requirement,
+    decision_rule,
+    split_decision_rule,
+)
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
@@ -678,7 +683,7 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 "kind": _kind_for_action(action),
                 "source_id": action.action_id,
                 "title": action.title,
-                "reason": action.reason,
+                "reason": split_decision_rule(action.reason)[0],
                 "created_at": action.created_at,
                 "reversibility": action.reversibility,
                 "case_id": resolved,

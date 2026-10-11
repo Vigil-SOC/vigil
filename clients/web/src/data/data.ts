@@ -85,6 +85,12 @@ export interface CaseRow {
   age: string
   sla: string
   slaState: 'warn' | 'danger' | 'ok'
+  /** "22 h 50 min left", "Timer paused" or "—" */
+  timeLeft: string
+  slaPaused: boolean
+  /** compact time since last activity, e.g. "3h" */
+  lastActive: string
+  slaHealth?: string | null
   updated: string
   /** display strings can't sort */
   updatedTs?: number

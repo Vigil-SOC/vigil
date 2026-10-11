@@ -12,7 +12,7 @@ free-tier / dev story:
                                disabling auth (free-tier / sentinel VK).
 
 Configuration lives in ``system_config['bifrost.virtual_keys']`` so
-operators edit it from the Settings → LLM Providers → Budgets sub-panel.
+operators edit it from the Settings › AI models spending limit card.
 The 60s runtime-config TTL the rest of Vigil uses applies here too.
 """
 

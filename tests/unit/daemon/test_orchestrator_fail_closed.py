@@ -32,12 +32,19 @@ def _count_raises(monkeypatch) -> None:
         raise RuntimeError("statement timeout")
 
     monkeypatch.setattr(orchestrator_module, "_count_investigations_in_flight", boom)
+    monkeypatch.setattr(orchestrator_module, "_count_investigations_running", boom)
 
 
 def test_failed_in_flight_count_reads_as_full(monkeypatch):
     _count_raises(monkeypatch)
     orch = _orchestrator()
     assert orch._in_flight() == orch.config.max_concurrent_agents
+
+
+def test_failed_running_count_reads_as_full(monkeypatch):
+    _count_raises(monkeypatch)
+    orch = _orchestrator()
+    assert orch._running() == orch.config.max_concurrent_agents
 
 
 @pytest.mark.asyncio
@@ -49,10 +56,28 @@ async def test_failed_in_flight_count_launches_nothing(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_failed_running_count_resumes_nothing(monkeypatch):
+    _count_raises(monkeypatch)
+    orch = _orchestrator()
+    orch._get_investigations_by_status = MagicMock(
+        return_value=[{"investigation_id": "inv-1"}]
+    )
+    orch._update_investigation_status = MagicMock()
+    orch._enqueue_investigation = AsyncMock()
+
+    await orch._pickup_assigned_investigations(None)
+
+    orch._enqueue_investigation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_readable_count_still_admits_up_to_the_cap(monkeypatch):
     launched = {"n": 0}
     monkeypatch.setattr(
         orchestrator_module, "_count_investigations_in_flight", lambda: launched["n"]
+    )
+    monkeypatch.setattr(
+        orchestrator_module, "_count_investigations_running", lambda: launched["n"]
     )
     orch = _orchestrator()
 
@@ -61,6 +86,28 @@ async def test_readable_count_still_admits_up_to_the_cap(monkeypatch):
 
     orch._process_intake_row = AsyncMock(side_effect=launch)
     await orch._drain_intake(None)
+    assert orch._process_intake_row.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_assigned_rows_filling_the_cap_do_not_block_drain(monkeypatch):
+    # Cap-many rows sit in `assigned` (the dry-run shape, #1874): they fill
+    # the in-flight count but none is running, so intake still launches.
+    launched = {"n": 0}
+    monkeypatch.setattr(
+        orchestrator_module, "_count_investigations_in_flight", lambda: 3
+    )
+    monkeypatch.setattr(
+        orchestrator_module, "_count_investigations_running", lambda: launched["n"]
+    )
+    orch = _orchestrator()
+
+    async def launch(row, _shutdown):
+        launched["n"] += 1
+
+    orch._process_intake_row = AsyncMock(side_effect=launch)
+    await orch._drain_intake(None)
+
     assert orch._process_intake_row.await_count == 3
 
 

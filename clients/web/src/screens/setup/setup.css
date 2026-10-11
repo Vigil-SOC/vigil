@@ -280,3 +280,402 @@
 .su-root .toast-viewport {
   bottom: 84px;
 }
+
+/* System checks table: components/row-stack.md */
+.su-check-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--ln0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.su-check-row {
+  display: grid;
+  grid-template-columns: 18px 150px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg2);
+}
+
+.su-check-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-check-detail {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.su-check-detail.needs {
+  color: var(--tx0);
+}
+
+.su-check-summary {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.su-check-summary.fair {
+  color: var(--fair);
+}
+
+.su-check-summary.good {
+  color: var(--good);
+}
+
+/* What you'll need */
+.su-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.su-needs li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.su-needs-icon {
+  flex: 0 0 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.su-needs li > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.su-needs-t {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-needs-s {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+/* the card's action button, per the board: 28px, 12px type */
+.su-root .settings-card-actions .btn {
+  height: var(--size-button-sm);
+  padding: 0 10px;
+  border-color: var(--ln2);
+  border-radius: var(--radius-button);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Choice cards and the Connect data step. Board: boards/OnboardingConnect.dc.html */
+.su-choices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.su-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1.5px solid var(--ln1);
+  border-radius: var(--radius-card);
+  background: var(--bg1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.su-choice:hover {
+  background: var(--bg3);
+}
+
+.su-choice.on {
+  background: var(--ac-bg);
+  border-color: var(--ac-ln);
+}
+
+.su-choice-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.su-choice-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg3);
+  color: var(--tx0);
+}
+
+.su-choice-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.su-chip {
+  height: 20px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-round);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.su-chip.ac {
+  background: var(--ac-bg);
+  color: var(--ac);
+}
+
+.su-chip.vio {
+  background: var(--vio-bg);
+  color: var(--vio);
+}
+
+.su-choice-t {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.su-choice-s {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ac);
+  cursor: pointer;
+}
+
+.su-more:hover {
+  text-decoration: underline;
+}
+
+.su-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.su-fields .field-hint {
+  overflow-wrap: anywhere;
+}
+
+.su-more-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.su-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx1);
+  cursor: pointer;
+}
+
+.su-toggle:hover {
+  color: var(--tx0);
+}
+
+.su-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.su-actions .btn.test,
+.su-keyrow .btn.test {
+  border-color: var(--ac);
+  color: var(--ac);
+  font-weight: 650;
+}
+
+.su-note {
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+}
+
+.su-note.err {
+  color: var(--poor);
+}
+
+.su-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--good-ln);
+  border-radius: 10px;
+  background: var(--good-bg);
+  font-size: 13px;
+  color: var(--tx0);
+}
+
+.su-banner > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.su-banner .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.su-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  border: 1.5px dashed var(--ln2);
+  border-radius: var(--radius-card);
+  background: var(--bg2);
+  text-align: center;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.su-collect {
+  border-top: 1px solid var(--ln0);
+  padding-top: 14px;
+}
+
+.su-root .settings-card-actions a.btn {
+  text-decoration: none;
+}
+
+/* Choose where AI runs. Board: boards/OnboardingModel.dc.html */
+.su-choices.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.su-choice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.su-resid {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.su-resid.stays {
+  color: var(--good);
+}
+
+.su-keyrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.su-note.warn {
+  color: var(--fair);
+}
+
+.su-banner.poor {
+  border-color: var(--poor-ln);
+  background: var(--poor-bg);
+  color: var(--tx0);
+}
+
+.su-banner.poor > svg {
+  flex: none;
+  color: var(--poor);
+}
+
+/* What Vigil will use: component, assigned model, why. Prose wraps then stops at two lines. */
+.su-plan {
+  display: flex;
+  flex-direction: column;
+}
+
+.su-plan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--ln0);
+  font-size: 13px;
+}
+
+.su-plan-who {
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.su-plan-model {
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.su-plan-why {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

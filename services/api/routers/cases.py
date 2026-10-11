@@ -342,14 +342,11 @@ async def assign_sla(case_id: str, data: SLAAssign):
     return CaseSLASchema.dump(assignment.sla)
 
 
-@router.get("/{case_id}/sla", response_model=CaseSLAStatusSchema)
+@router.get("/{case_id}/sla", response_model=Optional[CaseSLAStatusSchema])
 async def get_case_sla(case_id: str):
-    """Get SLA status for case."""
+    """Get SLA status for case, or null when the case has no SLA."""
     sla_service = CaseSLAService()
-    status = sla_service.get_sla_status(case_id)
-    if not status:
-        raise HTTPException(status_code=404, detail="No SLA found for case")
-    return status
+    return sla_service.get_sla_status(case_id)
 
 
 @router.post(

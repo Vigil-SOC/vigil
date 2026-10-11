@@ -195,7 +195,7 @@ vi.mock('../../services/skillsApi', () => ({
 const card = (name: string) => screen.getByText(name).closest('.wfk') as HTMLElement
 
 describe('workflow catalog cards', () => {
-  it('draws kind, triggers, command and the week\'s numbers, and keeps the actions', async () => {
+  it('draws kind, triggers, command and the week\'s numbers, with no actions on the card', async () => {
     render(
       <MemoryRouter>
         <WorkflowsScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={vi.fn()} setViewFull={vi.fn()} />
@@ -218,7 +218,6 @@ describe('workflow catalog cards', () => {
     expect(ransom).toHaveTextContent('Runs alongside')
     expect(ransom).toHaveTextContent('Ran 1 time this week · 100.0% succeeded · $0.00 per run')
     expect(ransom.querySelector('.level-pill.good')).toHaveTextContent('Good')
-    expect(within(ransom).getByTitle('Edit workflow')).toBeInTheDocument()
 
     const hunt = card('Threat hunt')
     expect(hunt).toHaveTextContent('Hunt')
@@ -226,7 +225,6 @@ describe('workflow catalog cards', () => {
     expect(hunt).toHaveTextContent('/hunt')
     expect(hunt).toHaveTextContent('Ran 61 times this week · 91.3% succeeded · $1.50 per run')
     expect(hunt.querySelector('.level-pill.fair')).toHaveTextContent('Fair')
-    expect(within(hunt).queryByTitle('Edit workflow')).toBeNull()
 
     // runs but none finished: em dashes and no badge; only a command's own workflow shows its chip
     const cloud = card('Cloud incident')
@@ -241,7 +239,14 @@ describe('workflow catalog cards', () => {
     expect(orphan.querySelector('.wfk-chip.acc')).toBeNull()
     expect(orphan).toHaveTextContent('Ran 0 times this week')
 
-    fireEvent.click(within(beacon).getByRole('button', { name: 'History' }))
+    // the actions are the reader header's: a card is one button that selects it
+    for (const c of [beacon, ransom, hunt, cloud, orphan]) {
+      expect(within(c).getAllByRole('button')).toHaveLength(1)
+      expect(c.querySelector('.wfk-acts')).toBeNull()
+    }
+
+    // the reader header opens History for the selected workflow
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }))
     expect(await screen.findByText('No runs yet')).toBeInTheDocument()
   })
 

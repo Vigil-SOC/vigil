@@ -303,7 +303,7 @@ class WorkflowDefinition:
             result["updated_at"] = self.updated_at
         if include_body:
             result["body"] = self.body
-        # Custom workflows carry structured phases for the builder UI
+        # Custom workflows carry structured phases for the reader pane
         if "phases" in self.metadata:
             result["phases"] = self.metadata["phases"]
         return result

@@ -297,40 +297,12 @@ export const casesApi = {
 
   deleteAll: () => api.delete<Schema<'CasePurgeResponse'>>('/cases/all'),
 
-  addActivity: (id: string, data: Schema<'ActivityAdd'>) =>
-    api.post<Schema<'CaseSchema'>>(`/cases/${id}/activities`, data),
-
-  addResolutionStep: (id: string, data: Schema<'ResolutionStepAdd'>) =>
-    api.post<Schema<'CaseSchema'>>(`/cases/${id}/resolution-steps`, data),
-
-  addFinding: (id: string, finding_id: string) =>
-    api.post<Schema<'CaseSchema'>>(`/cases/${id}/findings/${finding_id}`),
-
-  removeFinding: (id: string, finding_id: string) =>
-    api.delete<Schema<'CaseSchema'>>(`/cases/${id}/findings/${finding_id}`),
-
-  generateReport: (id: string) =>
-    api.post<Schema<'CaseReportResponse'>>(`/cases/${id}/generate-report`, null, {
-      timeout: LLM_TIMEOUT,
-    }),
-
   getSummary: () => api.get<Schema<'CaseSummaryResponse'>>('/cases/stats/summary'),
 
   getComments: (id: string) =>
     api.get<Schema<'CaseCommentsResponse'>>(`/cases/${id}/comments`),
   addComment: (id: string, data: Schema<'CommentAdd'>) =>
     api.post<Schema<'CaseCommentSchema'>>(`/cases/${id}/comments`, data),
-
-  getWatchers: (id: string) =>
-    api.get<Schema<'CaseWatchersResponse'>>(`/cases/${id}/watchers`),
-  addWatcher: (id: string, userId: string) =>
-    api.post<Schema<'CaseWatcherSchema'>>(`/cases/${id}/watchers`, { user_id: userId }),
-  removeWatcher: (id: string, userId: string) =>
-    api.delete<Schema<'CaseSuccessResponse'>>(`/cases/${id}/watchers/${userId}`),
-
-  // No /cases/{id}/tags route — left untyped on purpose. See #699.
-  updateTags: (id: string, tags: string[]) =>
-    api.put(`/cases/${id}/tags`, { tags }),
 
   /** Keeps the original of a hunt's attached document on the case, as one `document` evidence row. */
   attachDocument: (id: string, file: File, opts: { name?: string; pages: number }) => {
@@ -362,26 +334,6 @@ export const casesApi = {
 
   getSLA: (id: string) =>
     api.get<Schema<'CaseSLAStatusSchema'>>(`/cases/${id}/sla`),
-  assignSLA: (id: string, data: Schema<'SLAAssign'>) =>
-    api.post<Schema<'CaseSLASchema'>>(`/cases/${id}/sla`, data),
-  pauseSLA: (id: string) =>
-    api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/sla/pause`),
-  resumeSLA: (id: string) =>
-    api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/sla/resume`),
-
-  linkCase: (
-    id: string,
-    relatedCaseId: string,
-    relationshipType: string,
-    createdBy = 'SOC Analyst',
-  ) =>
-    api.post<Schema<'CaseRelationshipSchema'>>(`/cases/${id}/relationships`, {
-      related_case_id: relatedCaseId,
-      relationship_type: relationshipType,
-      created_by: createdBy,
-    }),
-  getLinkedCases: (id: string) =>
-    api.get<Schema<'CaseRelationshipsResponse'>>(`/cases/${id}/relationships`),
 
   closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
     api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
@@ -402,16 +354,6 @@ export const casesApi = {
       merged_by: 'user',
     }),
 
-  // No /cases/bulk-update route — left untyped on purpose. See #699.
-  bulkUpdate: (data: {
-    case_ids: string[]
-    updates: {
-      status?: string
-      priority?: string
-      assignee?: string
-      tags?: string[]
-    }
-  }) => api.post('/cases/bulk-update', data),
 }
 
 export const slaPoliciesApi = {
@@ -451,16 +393,10 @@ export const slaPoliciesApi = {
   
   delete: (policyId: string) => api.delete(`/sla-policies/${policyId}`),
   
-  setDefault: (policyId: string) =>
-    api.post(`/sla-policies/${policyId}/set-default`),
   
   getUsage: (policyId: string, params?: { since?: string }) =>
     api.get(`/sla-policies/${policyId}/usage`, { params }),
   
-  getCases: (policyId: string, params?: {
-    status?: string
-    breached_only?: boolean
-  }) => api.get(`/sla-policies/${policyId}/cases`, { params }),
 }
 
 export const caseMetricsApi = {
@@ -490,8 +426,6 @@ export const mcpApi = {
 
   getStatuses: () => api.get('/mcp/servers/status'),
 
-  getEnabledStates: () => api.get('/mcp/servers/enabled'),
-
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
 
@@ -509,10 +443,6 @@ export const mcpApi = {
 
   revokeCredential: (credentialId: string) =>
     api.delete(`/mcp/surface/credentials/${credentialId}`),
-}
-
-export const claudeApi = {
-  getModels: () => api.get('/claude/models'),
 }
 
 export const agentsApi = {
@@ -599,11 +529,11 @@ export interface IntegrationTestResult {
   // "not_testable": a catalog-only entry with no MCP server behind it
   reason?: string
   servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
+  /** the read-only check of the saved URL and credentials, for integrations that have one */
+  credentials?: { success: boolean; message: string }
 }
 
 export const configApi = {
-  getClaude: () => api.get('/config/claude'),
-  setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
   
   getS3: () => api.get('/config/s3'),
   setS3: (data: {
@@ -787,10 +717,6 @@ export const aiConfigApi = {
   clearComponent: (component: string) =>
     api.delete<{ component: string; cleared: boolean }>(`/ai/config/${component}`),
   listModels: () => api.get<{ models: AIModelInfo[] }>('/ai/models'),
-  getModelInfo: (modelId: string, providerId?: string) =>
-    api.get<AIModelInfo>(`/ai/models/${encodeURIComponent(modelId)}/info`, {
-      params: providerId ? { provider_id: providerId } : undefined,
-    }),
 }
 
 export interface IngestionJob {
@@ -891,28 +817,6 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
-export const analyticsApi = {
-  // token_count_method tells the UI how trustworthy the count is
-  estimateCost: (payload: {
-    provider_type: string
-    model_id: string
-    messages: Array<{ role: string; content: any }>
-    system_prompt?: string
-    tools?: any[]
-    max_tokens?: number
-  }) => api.post<CostEstimate>('/analytics/estimate-cost', payload),
-
-  // Bifrost caps each call at 1000 rows; the caller loops on `remaining`.
-  recalculateCost: (payload?: {
-    providers?: string[]
-    models?: string[]
-    start_time?: string
-    end_time?: string
-    missing_cost_only?: boolean
-    limit?: number
-  }) => api.post<RecalculateCostResult>('/analytics/recalculate-cost', payload || {}),
-}
-
 export const storageApi = {
   getStatus: () => api.get('/storage/status'),
   getHealth: () => api.get('/storage/health'),
@@ -938,10 +842,7 @@ export const attackApi = {
 }
 
 export const timelineApi = {
-  getCaseTimeline: (case_id: string) => api.get(`/timeline/case/${case_id}`),
   
-  getFindingContext: (finding_id: string, time_window_minutes: number = 60) =>
-    api.get(`/timeline/finding/${finding_id}/context`, { params: { time_window_minutes } }),
   
   getTimelineRange: (params: {
     start?: string
@@ -951,13 +852,11 @@ export const timelineApi = {
     limit?: number
   }) => api.get('/timeline/range', { params }),
   
-  getClusterTimeline: (cluster_id: string) => api.get(`/timeline/cluster/${cluster_id}`),
 }
 
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
   
-  getSource: (sourceId: string) => api.get(`/detection-rules/sources/${sourceId}`),
   
   addSource: (data: {
     name: string
@@ -979,7 +878,6 @@ export const detectionRulesApi = {
   
   getStats: () => api.get('/detection-rules/stats'),
   
-  getMcpEnv: () => api.get('/detection-rules/mcp-env'),
   
   reload: () => api.post('/detection-rules/reload'),
 }
@@ -990,8 +888,6 @@ export const localServicesApi = {
   stopSplunk: () => api.post('/services/splunk/stop'),
   restartSplunk: () => api.post('/services/splunk/restart'),
 
-  getPostgresStatus: () => api.get('/services/postgres/status'),
-
   // service names are allowlisted server-side
   list: () => api.get('/services'),
   getStatus: (name: string) => api.get(`/services/${name}/status`),
@@ -999,7 +895,6 @@ export const localServicesApi = {
   stop: (name: string) => api.post(`/services/${name}/stop`),
   restart: (name: string) => api.post(`/services/${name}/restart`),
 
-  getAutostart: () => api.get('/services/autostart'),
   setAutostart: (services: string[]) => api.put('/services/autostart', { services }),
 }
 
@@ -1016,6 +911,15 @@ export interface WorkflowPhase {
   approval_required?: boolean
   conditions?: any
   parallel_group?: string | null
+}
+
+/** What POST /workflows/generate returns: a definition that is not saved anywhere. */
+export interface GeneratedDraft {
+  name: string
+  description: string
+  use_case?: string
+  trigger_examples?: string[]
+  phases: WorkflowPhase[]
 }
 
 /** What a hunt lead was shown before one decision. Mirrors `Digest` in
@@ -1090,7 +994,6 @@ export const workflowApi = {
   // with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
     api.post('/workflows/threat-hunt/coverage', body, { timeout: LLM_TIMEOUT }),
-  reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
   // every prompt transcript
@@ -1134,7 +1037,6 @@ export const workflowApi = {
     use_case?: string
     trigger_examples?: string[]
     phases: WorkflowPhase[]
-    graph_layout?: Record<string, any>
     created_by?: string
   }) => api.post('/workflows/custom', data),
   updateCustom: (id: string, data: Partial<{
@@ -1143,7 +1045,6 @@ export const workflowApi = {
     use_case: string
     trigger_examples: string[]
     phases: WorkflowPhase[]
-    graph_layout: Record<string, any>
     is_active: boolean
   }>) => api.put(`/workflows/custom/${id}`, data),
   deleteCustom: (id: string) => api.delete(`/workflows/custom/${id}`),
@@ -1162,13 +1063,6 @@ export const orchestratorApi = {
   listInvestigations: (status?: string) =>
     api.get('/orchestrator/investigations', { params: status ? { status } : {} }),
   getInvestigation: (id: string) => api.get(`/orchestrator/investigations/${id}`),
-  createInvestigation: (params: {
-    skill_id?: string
-    finding_ids?: string[]
-    case_id?: string
-    hypothesis?: string
-    priority?: string
-  }) => api.post('/orchestrator/investigations', params),
   wakeInvestigation: (id: string) => api.post(`/orchestrator/investigations/${id}/wake`),
   killInvestigation: (id: string) => api.post(`/orchestrator/investigations/${id}/kill`),
   getInvestigationFile: (id: string, filename: string) =>
@@ -1179,8 +1073,6 @@ export const orchestratorApi = {
     }, { timeout: LLM_TIMEOUT }),
   reviewInvestigation: (id: string, action: 'approve' | 'rework', notes?: string) =>
     api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
-
-  getCost: () => api.get('/orchestrator/cost'),
 
   getChainOfCustody: (id: string) =>
     api.get(`/orchestrator/investigations/${id}/chain-of-custody`),
@@ -1216,7 +1108,6 @@ export interface FederationListResponse {
 }
 
 export const federationApi = {
-  getSettings: () => api.get<{ enabled: boolean }>('/federation/settings'),
   setSettings: (enabled: boolean) =>
     api.put<{ enabled: boolean }>('/federation/settings', { enabled }),
   listSources: () => api.get<FederationListResponse>('/federation/sources'),
@@ -1383,6 +1274,7 @@ export interface OverviewFeedItem {
   status: string
   terminal_state: string
   terminal_label: string
+  title: string | null
   description: string | null
   created_at: string | null
   evidence_links: Array<{ ref?: string }>
@@ -1405,6 +1297,7 @@ export interface OverviewPayload {
   fair_at: number
   agents: OverviewAgent[]
   feed: OverviewFeedItem[]
+  feed_limit: number
 }
 
 export const overviewApi = {
@@ -1433,6 +1326,7 @@ export interface TriageRow {
   document: string | null
   source_link: string | null
   source_evidence: Record<string, unknown> | null
+  title: string | null
   description: string | null
   finding_id: string | null
   created_at: string | null

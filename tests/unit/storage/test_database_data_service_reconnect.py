@@ -99,3 +99,55 @@ def test_demo_mode_never_attempts_reconnect():
     with patch("core.storage.database_data_service.init_database") as fake_init:
         assert svc._db_available is False
         fake_init.assert_not_called()
+
+
+def _make_connected_service() -> DatabaseDataService:
+    svc = DatabaseDataService()
+    svc._db_connected = True
+    svc._db_service = MagicMock()
+    return svc
+
+
+def test_probe_marks_a_connection_that_died_as_unavailable():
+    svc = _make_connected_service()
+    fake_manager = MagicMock()
+    fake_manager.health_check.return_value = False
+
+    with patch(
+        "core.storage.database_data_service.get_db_manager", return_value=fake_manager
+    ), patch("core.storage.database_data_service.init_database") as fake_init:
+        svc.probe_connection()
+        info = svc.get_backend_info()
+
+    assert info["database_available"] is False
+    assert info["backend"] == "none"
+    # the cooldown just started, so the read above did not retry the connection
+    fake_init.assert_not_called()
+
+
+def test_probe_leaves_a_healthy_connection_alone():
+    svc = _make_connected_service()
+    fake_manager = MagicMock()
+    fake_manager.health_check.return_value = True
+
+    with patch(
+        "core.storage.database_data_service.get_db_manager", return_value=fake_manager
+    ):
+        svc.probe_connection()
+
+    assert svc._db_connected is True
+    assert svc.get_backend_info()["database_available"] is True
+
+
+def test_probe_does_nothing_in_demo_mode_or_when_disconnected():
+    svc = _make_disconnected_service()
+    with patch("core.storage.database_data_service.get_db_manager") as fake_manager:
+        svc.probe_connection()
+    fake_manager.assert_not_called()
+
+    with patch("core.storage.database_data_service.is_demo_mode", return_value=True):
+        demo = DatabaseDataService(demo_data=MagicMock())
+    demo._db_connected = True
+    with patch("core.storage.database_data_service.get_db_manager") as fake_manager:
+        demo.probe_connection()
+    fake_manager.assert_not_called()

@@ -97,7 +97,7 @@ export function prettyServerName(name: string): string {
     .join(' ')
 }
 
-export const INTEGRATIONS_DESC = 'The tools Vigil reads from and acts through.'
+export const INTEGRATIONS_DESC = 'The tools Vigil reads from and acts through. Secrets are encrypted and never shown again.'
 
 export type IntegrationsTab = 'connected' | 'add' | 'custom' | 'surface'
 

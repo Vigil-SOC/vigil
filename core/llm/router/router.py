@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import get_settings
 from core.llm.cost.calls import compute_call_cost
@@ -22,8 +22,6 @@ from core.secrets import get_secret
 from core.telemetry import record_budget_unenforced, record_llm_call
 
 logger = logging.getLogger(__name__)
-
-DispatchPath = Literal["bifrost"]
 
 
 # Kept as the name the dispatch paths call. The policy is shared with the agent

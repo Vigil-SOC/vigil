@@ -5,11 +5,6 @@ export function when(value?: string | null): string {
   return utcDayClock(value) ?? value
 }
 
-export function money(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return `$${value.toFixed(4)}`
-}
-
 /** Resolve-by clock: "7 h left", or "2 d over" once past due. */
 export function timeLeft(due: string): string {
   const ms = new Date(due).getTime() - Date.now()

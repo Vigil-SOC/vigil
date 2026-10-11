@@ -62,11 +62,13 @@ def _case(
     assignee: str | None = None,
     updated_at: datetime | None = None,
     created_at: datetime | None = None,
+    description: str | None = None,
 ) -> Case:
     updated_at = updated_at or NOW
     case = Case(
         case_id=case_id,
         title=case_id,
+        description=description,
         status=status,
         priority=priority,
         assignee=assignee,
@@ -206,7 +208,12 @@ def test_default_queue_is_soonest_resolution_first_with_no_sla_last(session):
     )
     _case(session, "no-sla", updated_at=NOW)
     # Past due, but the clock is not running, so they sort after live clocks.
-    _case(session, "paused", updated_at=NOW - timedelta(hours=1))
+    _case(
+        session,
+        "paused",
+        updated_at=NOW - timedelta(hours=1),
+        description="held for legal",
+    )
     _sla(
         session,
         "paused",
@@ -250,6 +257,12 @@ def test_default_queue_is_soonest_resolution_first_with_no_sla_last(session):
     by_id = {row.case_id: row for row in shown}
     assert by_id["paused"].sla_seconds_left is None
     assert by_id["met"].sla_seconds_left is None
+    # the page reads description and the paused flag through
+    assert by_id["paused"].description == "held for legal"
+    assert by_id["paused"].sla_paused is True
+    assert by_id["met"].sla_paused is False
+    assert not by_id["no-sla"].description
+    assert by_id["no-sla"].sla_paused is False
 
     by_id_hit, id_total = CaseRepository(session).queue(query_text="tie-old", now=NOW)
     assert id_total == 1

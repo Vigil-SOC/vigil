@@ -4,7 +4,8 @@ import { LevelBadge, slaLevel, type Level } from '../../shared/LevelBadge'
 import { MeterBar } from '../../shared/MeterBar'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { commentCount, CommentsView, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
-import { money, timeLeft, when } from './caseFormat'
+import { fmtCost } from '../../shared/cost'
+import { timeLeft, when } from './caseFormat'
 import { IN_FLIGHT } from '../workflows/runRead'
 import type { RunFold } from './caseFold'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
@@ -30,12 +31,12 @@ interface Spend {
 /** What the newest run has spent against what it was granted. `fold` is that run's fold, or null when it is another run. */
 function spendOf(latest: CaseInvestigationRef | null, fold: RunFold | null): Spend {
   const inFlight = !!fold && IN_FLIGHT.includes(fold.run.status)
-  const foldCap = fold?.kind === 'hunt' && fold.maxCostUsd ? fold.maxCostUsd : null
+  const foldCap = fold?.maxCostUsd ? fold.maxCostUsd : null
   // The refs are re-read only when a run ends, so a run in flight is read off its own fold.
   const cost = (inFlight ? fold.costUsd ?? latest?.cost_usd : latest?.cost_usd || fold?.costUsd) ?? null
   const cap = foldCap ?? (latest && latest.max_cost_usd > 0 ? latest.max_cost_usd : null)
   if (cost === null || cap === null) return { cost, cap, level: null }
-  // A live number or a fold's cap outruns the server's word, which a hunt's ref never had a cap for.
+  // A live number or a fold's cap outruns the server's word, which a run-only ref never had a cap for.
   const level = inFlight || foldCap !== null ? levelOf(cost / cap) : slaLevel(latest?.budget_health)
   return { cost, cap, level }
 }
@@ -61,7 +62,7 @@ function Details({ latest, workflowNames, sla, closed, fold, spend }: {
         <dt>Workflow</dt>
         <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : '—'}</dd>
         <dt>Limit</dt>
-        <dd>{spend.cap ? money(spend.cap) : '—'}</dd>
+        <dd>{spend.cap ? fmtCost(spend.cap) : '—'}</dd>
         <dt>Resolve by</dt>
         <dd>
           {sla ? when(sla.due) : '—'}
@@ -115,7 +116,7 @@ function Cost({ spend: { cost, cap, level } }: { spend: Spend }) {
       {cost !== null && cost > 0 ? (
         <>
           <div className="side-cost">
-            <span>{cap ? `${money(cost)} of ${money(cap)}` : money(cost)}</span>
+            <span>{cap ? `${fmtCost(cost)} of ${fmtCost(cap)}` : fmtCost(cost)}</span>
             {cap && <LevelBadge level={level} className={`side-level ${level ?? ''}`} />}
           </div>
           {cap && <MeterBar pct={(cost / cap) * 100} level={level} label="Cost against the limit" />}

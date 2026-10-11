@@ -28,8 +28,6 @@ vi.mock('../services/notifications', () => ({
 vi.mock('../services/api', () => ({
   agentsApi: { listAgents: vi.fn(() => new Promise(() => undefined)) },
   aiConfigApi: { getConfig: vi.fn(() => new Promise(() => undefined)) },
-  analyticsApi: { estimateCost: vi.fn(() => new Promise(() => undefined)) },
-  claudeApi: { getModels: vi.fn(() => new Promise(() => undefined)) },
   conversationsApi: {
     list: vi.fn(() => new Promise(() => undefined)),
     get: vi.fn(),

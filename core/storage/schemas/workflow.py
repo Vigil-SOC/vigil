@@ -23,7 +23,6 @@ class CustomWorkflowSchema(ORMSchema):
     use_case: Optional[str] = None
     trigger_examples: JsonList = Field(default_factory=list)
     phases: JsonList = Field(default_factory=list)
-    graph_layout: JsonDict = Field(default_factory=dict)
     is_active: Optional[bool] = None
     created_by: Optional[str] = None
     version: Optional[int] = None

@@ -17,6 +17,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from services.medic.redact import Redactor, redact_observation
 from services.medic.sensors.base import CONTRACTS
 from services.medic.sensors.bus import Bus
 from services.medic.sensors.sink import Sink
@@ -39,6 +40,12 @@ RUNTIME_VALIDATED = frozenset({"sample", "sensor_health"})
 Choke = Callable[[dict[str, Any]], dict[str, Any]]
 
 
+def redaction_choke(redactor: Redactor | None = None) -> Choke:
+    """K2's choke point: every free-text field redacted, labels made label-safe."""
+    redactor = redactor or Redactor()
+    return lambda draft: redact_observation(draft, redactor)
+
+
 def new_run_id() -> str:
     return "".join(secrets.choice(_ALNUM) for _ in range(16))
 
@@ -48,14 +55,14 @@ class Pipeline:
         self,
         bus: Bus,
         sink: Sink,
-        choke: Choke,
+        choke: Choke | None = None,
         *,
         validate_kinds: frozenset[str] = RUNTIME_VALIDATED,
         run_id: Callable[[], str] = new_run_id,
     ) -> None:
         self.bus = bus
         self.sink = sink
-        self.choke = choke
+        self.choke = choke or redaction_choke()
         self.validate_kinds = validate_kinds
         self._run_id = run_id
         self._runs: dict[str, str] = {}

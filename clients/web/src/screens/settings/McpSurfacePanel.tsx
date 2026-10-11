@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { HoldButton } from '../../shared/HoldButton'
-import { EmptyState, TextInput } from '../../shared/ui'
+import { EmptyState, TextInput, Toggle } from '../../shared/ui'
 import { mcpApi } from '../../services/api'
 import type { SectionProps } from './types'
 
@@ -145,17 +145,7 @@ export default function McpSurfacePanel({ notify }: SectionProps) {
           <b>{surface.enabled ? 'Reachable from the network' : 'Not served'}</b>
           <span>When off, Vigil’s MCP server is not served at all</span>
         </span>
-        <button
-          type="button"
-          role="switch"
-          className="ag-switch"
-          aria-checked={surface.enabled}
-          aria-label="Vigil MCP server"
-          disabled={busy}
-          onClick={() => toggle(!surface.enabled)}
-        >
-          <span />
-        </button>
+        <Toggle checked={surface.enabled} label="Vigil MCP server" disabled={busy} onChange={toggle} />
       </div>
 
       {noCredentials && (

@@ -24,6 +24,8 @@ interface Props {
   variant?: 'drawer' | 'setup'
   // drawer header: the stored last test, and the category line under the name
   lastTest?: LastTest
+  // the Connected table's health for this integration, so the two never disagree
+  health?: Level
   category?: string
   // a test ran in the drawer: the parent refreshes its health read
   onTested?: () => void
@@ -45,6 +47,7 @@ export default function IntegrationWizard({
   onSave,
   variant = 'drawer',
   lastTest,
+  health,
   category,
   onTested,
 }: Props) {
@@ -57,6 +60,10 @@ export default function IntegrationWizard({
   const [saved, setSaved] = useState<Record<string, unknown>>(existingConfig)
   const [probe, setProbe] = useState<Probe>({ state: 'idle' })
   const [tested, setTested] = useState<LastTest | undefined>(lastTest)
+  // a test run here is stored; once the parent has re-read it, show what it read
+  useEffect(() => {
+    if (lastTest) setTested(lastTest)
+  }, [lastTest])
 
   const fields = useMemo(
     () => (integration.proxy_supported ? [...integration.fields, ...PROXY_FIELDS] : integration.fields),
@@ -224,7 +231,8 @@ export default function IntegrationWizard({
     )
   }
 
-  const level: Level = tested?.success === true ? 'good' : tested?.success === false ? 'poor' : null
+  const level: Level =
+    health !== undefined ? health : tested?.success === true ? 'good' : tested?.success === false ? 'poor' : null
   const hasSecret = fields.some((f) => f.type === 'password')
   const lastRead = tested ? `last read ${relativeTime(tested.at)}` : 'never tested'
 
@@ -331,7 +339,7 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
     </div>
   )
   const note = (text: string) => <p className="text-[13px] text-tx-2 leading-[1.5]">{text}</p>
-  if (probe.state === 'idle') return <>{note('Vigil connects to each server behind this integration with the saved settings and shows whether it answered.')}{again}</>
+  if (probe.state === 'idle') return <>{note('Vigil connects to each server behind this integration with the saved settings, then reads from the service with the saved URL and credentials.')}{again}</>
   if (probe.state === 'running') return <p className="text-[13px] text-tx-3" role="status">Running the test…</p>
   if (probe.state === 'error') {
     return (
@@ -348,7 +356,7 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
   const servers = result.servers ?? []
   return (
     <>
-      {note('Vigil connects to each server behind this integration with the saved settings and shows whether it answered.')}
+      {note('Vigil connects to each server behind this integration with the saved settings, then reads from the service with the saved URL and credentials.')}
       {servers.length === 0 && <Banner kind="err">{result.message || 'Nothing was tested.'}</Banner>}
       {servers.map((sv) => (
         <div key={sv.name} className={`int-probe ${sv.success ? 'pass' : 'fail'}`}>
@@ -359,6 +367,15 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
           </span>
         </div>
       ))}
+      {result.credentials && (
+        <div className={`int-probe ${result.credentials.success ? 'pass' : 'fail'}`}>
+          <span className="int-probe-ic"><Icon name={result.credentials.success ? 'check2' : 'close'} size={15} /></span>
+          <span className="int-probe-name">Saved URL and credentials</span>
+          <span className="int-probe-detail" style={result.credentials.success ? { color: 'var(--tx2)' } : undefined}>
+            {result.credentials.success ? 'Accepted' : result.credentials.message}
+          </span>
+        </div>
+      )}
       {again}
     </>
   )

@@ -501,18 +501,24 @@ export function Toggle({
   onChange,
   disabled,
   label,
+  title,
+  mixed,
 }: {
   checked: boolean
   onChange: (v: boolean) => void
   disabled?: boolean
   label?: string
+  title?: string
+  /** partially-on state: only changes aria-checked, no visual of its own */
+  mixed?: boolean
 }) {
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={checked}
+      aria-checked={mixed ? 'mixed' : checked}
       aria-label={label}
+      title={title}
       disabled={disabled}
       className={`toggle${checked ? ' on' : ''}`}
       onClick={() => !disabled && onChange(!checked)}

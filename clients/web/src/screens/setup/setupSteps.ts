@@ -5,4 +5,5 @@ export const DATA_SOURCE_CATEGORIES = new Set<string>([
   'Cloud Security',
   'Network Security',
   'Data Pipeline',
+  'Detection & AI',
 ])

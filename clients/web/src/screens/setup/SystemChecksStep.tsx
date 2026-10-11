@@ -1,48 +1,110 @@
 import { useEffect, useState } from 'react'
 import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
-import { Icon } from '../../shared/icons'
-import { readProviderConfigured } from '../../routing/useSetupStatus'
+import { Icon, type IconName } from '../../shared/icons'
+import { SettingsCard } from '../../shared/ui'
+import { readProviderStatus } from '../../routing/useSetupStatus'
 import {
   failingFederationSource,
   stoppedMcpServer,
   type FederationRead,
   type McpRead,
 } from '../../shell/statusLine'
-import CheckMark, { type CheckPhase } from './CheckMark'
+import type { CheckPhase } from './CheckMark'
+import CheckTable, { type CheckRow } from './CheckTable'
 
 export type { CheckPhase }
 
-type CheckId = 'health' | 'storage' | 'provider' | 'federation' | 'mcp'
+type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'federation' | 'mcp'
 
-export interface SystemCheck {
-  id: CheckId
-  label: string
-  phase: CheckPhase
-  detail: string
-}
+export type SystemCheck = CheckRow & { id: CheckId }
 
 type Result = Pick<SystemCheck, 'phase' | 'detail'>
 
+interface StorageRead {
+  backend?: string
+  description?: string
+  database_available?: boolean
+  demo_mode?: boolean
+}
+
+interface HealthBody {
+  status?: string
+  storage?: { database_available?: boolean; demo_mode?: boolean }
+}
+
+/** One read each per run: Database and API health share the health call, Database and Storage the storage call */
+interface Reads {
+  storage: () => Promise<StorageRead>
+  health: () => Promise<HealthBody>
+}
+type Read = (reads: Reads) => Promise<Result>
+
 const COULD_NOT_READ: Result = { phase: 'needs', detail: 'Could not read' }
 
-const readHealth = async (): Promise<Result> => {
-  const res = await consoleApi.getHealth()
-  const status = (res.data as { status?: string } | undefined)?.status
+const NEEDS: { icon: IconName; title: string; sub: string }[] = [
+  {
+    icon: 'link',
+    title: 'Access to one alert source',
+    sub: 'A SIEM, EDR or identity tool, or a file export to upload',
+  },
+  {
+    icon: 'bot',
+    title: 'An AI provider key, or a local model',
+    sub: 'Anthropic, OpenAI or your cloud; or an Ollama server for fully local use',
+  },
+  { icon: 'clock', title: 'About 15 minutes', sub: 'Nothing runs on its own until you finish' },
+]
+
+const readHealth: Read = async ({ health }) => {
+  const { status } = await health()
   if (status !== 'healthy') return { phase: 'needs', detail: `Status is ${status ?? 'unknown'}` }
   return { phase: 'passed', detail: status }
 }
 
-const readStorage = async (): Promise<Result> => {
-  const res = await storageApi.getStatus()
-  const backend = (res.data as { backend?: string } | undefined)?.backend
-  return { phase: 'passed', detail: backend || 'Unknown backend' }
+// Health is public. The storage route needs a signed-in user, and that lookup
+// reads the database, so it fails outright when the database is the thing down.
+const readDatabase: Read = async ({ health }) => {
+  const read = (await health()).storage
+  if (read?.demo_mode) return { phase: 'passed', detail: 'Demo data, no database needed' }
+  return read?.database_available
+    ? { phase: 'passed', detail: 'Connected' }
+    : { phase: 'needs', detail: 'Not connected' }
+}
+
+const DATABASE_UNAVAILABLE: Result = { phase: 'needs', detail: 'Database unavailable' }
+
+const readStorage: Read = async ({ storage, health }) => {
+  let read: StorageRead
+  try {
+    read = await storage()
+  } catch (err) {
+    // Auth fails first when the database is down; the public health read says why.
+    // If health fails too, or says the database is up, this stays a failed read.
+    const db = (await health()).storage
+    if (!db?.demo_mode && db?.database_available === false) return DATABASE_UNAVAILABLE
+    throw err
+  }
+  if (!read.demo_mode && read.database_available === false) return DATABASE_UNAVAILABLE
+  return {
+    phase: 'passed',
+    detail: [read.backend || 'Unknown backend', read.description].filter(Boolean).join(' · '),
+  }
 }
 
 const readProvider = async (): Promise<Result> => {
-  const ready = await readProviderConfigured()
-  return ready
-    ? { phase: 'passed', detail: 'Ready' }
-    : { phase: 'needs', detail: 'Not configured' }
+  const status = await readProviderStatus()
+  switch (status) {
+    case 'ready':
+      return { phase: 'passed', detail: 'Ready' }
+    case 'none':
+      return { phase: 'passed', detail: 'Running on this server · you add a provider in step 3' }
+    case 'unreachable':
+      return { phase: 'needs', detail: 'Could not reach the model gateway' }
+    default: {
+      const unreachable: never = status
+      return unreachable
+    }
+  }
 }
 
 const readFederation = async (): Promise<Result> => {
@@ -84,12 +146,13 @@ const readMcp = async (): Promise<Result> => {
   }
 }
 
-const CHECKS: { id: CheckId; label: string; read: () => Promise<Result> }[] = [
-  { id: 'health', label: 'API health', read: readHealth },
+const CHECKS: { id: CheckId; label: string; read: Read }[] = [
+  { id: 'database', label: 'Database', read: readDatabase },
+  { id: 'provider', label: 'Model gateway', read: readProvider },
   { id: 'storage', label: 'Storage', read: readStorage },
-  { id: 'provider', label: 'AI provider', read: readProvider },
-  { id: 'federation', label: 'Federation', read: readFederation },
-  { id: 'mcp', label: 'MCP servers', read: readMcp },
+  { id: 'health', label: 'API health', read: readHealth },
+  { id: 'federation', label: 'Alert collection', read: readFederation },
+  { id: 'mcp', label: 'Tool servers', read: readMcp },
 ]
 
 const INITIAL: SystemCheck[] = CHECKS.map(({ id, label }) => ({
@@ -101,6 +164,7 @@ const INITIAL: SystemCheck[] = CHECKS.map(({ id, label }) => ({
 
 export default function SystemChecksStep() {
   const [checks, setChecks] = useState<SystemCheck[]>(INITIAL)
+  const [finished, setFinished] = useState(false)
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
@@ -108,45 +172,77 @@ export default function SystemChecksStep() {
     const patch = (id: CheckId, result: Result) =>
       setChecks((rows) => rows.map((row) => (row.id === id ? { ...row, ...result } : row)))
     setChecks(INITIAL)
+    setFinished(false)
+    let storageRead: Promise<StorageRead> | undefined
+    let healthRead: Promise<HealthBody> | undefined
+    const health = () =>
+      (healthRead ??= consoleApi.getHealth().then((res) => {
+        if (!res.data) throw new Error('health has no body')
+        return res.data as HealthBody
+      }))
+    const storage = () =>
+      (storageRead ??= storageApi.getStatus().then((res) => {
+        if (!res.data) throw new Error('storage status has no body')
+        return res.data as StorageRead
+      }))
     // one after another: only the current row shows Checking, the rest wait
     ;(async () => {
       for (const { id, read } of CHECKS) {
         if (!live) return
         patch(id, { phase: 'checking', detail: '' })
-        const result = await read().catch(() => COULD_NOT_READ)
+        const result = await read({ storage, health }).catch(() => COULD_NOT_READ)
         if (!live) return
         patch(id, result)
       }
+      setFinished(true)
     })()
     return () => {
       live = false
     }
   }, [nonce])
 
+  // Alert collection stays Waiting until a source exists, so wait for the run, not for every row
+  const warnings = finished ? checks.filter((c) => c.phase === 'needs').length : 0
+
   return (
-    <div className="flex flex-col">
-      <div className="flex justify-end mb-1">
-        <button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
-          <Icon name="refresh" size={14} /> Retry
-        </button>
-      </div>
-      <div role="list" aria-label="System checks" aria-live="polite" className="flex flex-col">
-        {checks.map((check) => (
-          <div
-            key={check.id}
-            role="listitem"
-            className="grid grid-cols-[18px_7rem_minmax(0,1fr)] gap-3 items-center py-2.5 px-0.5 border-t border-line-soft text-sm"
-          >
-            <CheckMark phase={check.phase} />
-            <span className="text-tx font-semibold">{check.label}</span>
-            <span
-              className={`text-xs leading-snug ${check.phase === 'needs' ? 'text-tx' : 'text-tx-2'}`}
-            >
-              {check.detail}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <>
+      <SettingsCard
+        title="System checks"
+        desc="Vigil checked this server before you start."
+        actions={
+          <button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
+            <Icon name="refresh" size={14} /> Check again
+          </button>
+        }
+      >
+        <CheckTable
+          rows={checks}
+          label="System checks"
+          summary={
+            warnings
+              ? {
+                  tone: 'fair',
+                  text: `${warnings} ${warnings === 1 ? 'warning' : 'warnings'}. You can continue; fix them before you rely on alerts.`,
+                }
+              : undefined
+          }
+        />
+      </SettingsCard>
+      <SettingsCard title="What you'll need">
+        <ul className="su-needs">
+          {NEEDS.map((need) => (
+            <li key={need.title}>
+              <span className="su-needs-icon">
+                <Icon name={need.icon} size={16} />
+              </span>
+              <span>
+                <span className="su-needs-t">{need.title}</span>
+                <span className="su-needs-s">{need.sub}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </SettingsCard>
+    </>
   )
 }

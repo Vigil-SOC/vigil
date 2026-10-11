@@ -8,10 +8,10 @@ import { useColorScheme } from '../../contexts/ColorSchemeContext'
 import { Icon } from '../../shared/icons'
 import { SettingsCard } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
-import { configApi } from '../../services/api'
 import { ToastProvider, useToast } from '../../shell/toast'
 import SetupProviderStep from './SetupProviderStep'
 import DataSourceDialog from './DataSourceDialog'
+import { DEMO_ENV_NOTICE, turnOnDemoMode } from './demoMode'
 import SystemChecksStep from './SystemChecksStep'
 import WorkflowsStep from './WorkflowsStep'
 import LimitsStep from './LimitsStep'
@@ -37,8 +37,8 @@ interface StepCopy {
   sub: string
   title: string
   desc: string
-  /** the existing panel's own card */
-  card: { title: string; desc: string }
+  /** the existing panel's own card; absent when the step renders its own cards */
+  card?: { title: string; desc?: string }
 }
 
 const STEP_COPY: Record<StepId, StepCopy> = {
@@ -47,27 +47,18 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     sub: 'System checks',
     title: 'Welcome to Vigil',
     desc: 'Vigil investigates your security alerts with AI agents and asks you before it changes anything. Setup takes about 15 minutes, and your progress is saved if you leave.',
-    card: {
-      title: 'System checks',
-      desc: 'API health, storage, an AI provider, federation and MCP servers, one at a time.',
-    },
   },
   data: {
     rail: 'Connect your data',
     sub: 'At least one alert source',
     title: 'Connect your data',
     desc: 'Pick where your alerts live. Vigil reads alerts from it and asks before it changes anything there. You can add more sources later.',
-    card: { title: 'Connect data', desc: 'A SIEM or EDR so Vigil has alerts to triage.' },
   },
   ai: {
     rail: 'Choose where AI runs',
     sub: 'A model provider and key',
     title: 'Choose where AI runs',
     desc: 'Agents and chat need a language model. Pick where it runs. You can choose a different model for each agent later in Settings.',
-    card: {
-      title: 'Where AI runs',
-      desc: 'A local model keeps data on site. A hosted one sends it out.',
-    },
   },
   workflows: {
     rail: 'Agents and workflows',
@@ -94,7 +85,7 @@ const STEP_COPY: Record<StepId, StepCopy> = {
     sub: '',
     title: 'Vigil is ready',
     desc: 'The console works from here. Reopen this pass from the account menu.',
-    card: { title: 'Summary', desc: '' },
+    card: { title: 'Summary' },
   },
 }
 
@@ -103,14 +94,19 @@ const RAIL = STEPS.slice(0, DONE).map((id) => ({
   sub: STEP_COPY[id].sub,
 }))
 
-function stepPanel(id: StepId, onAdvance: () => void, onChange: (target: SummaryTarget) => void) {
+function stepPanel(
+  id: StepId,
+  onAdvance: () => void,
+  onRoutable: () => void,
+  onChange: (target: SummaryTarget) => void,
+) {
   switch (id) {
     case 'checks':
       return <SystemChecksStep />
     case 'data':
-      return <DataSourceDialog />
+      return <DataSourceDialog onAdvance={onAdvance} />
     case 'ai':
-      return <SetupProviderStep onSaved={onAdvance} />
+      return <SetupProviderStep onRoutable={onRoutable} />
     case 'workflows':
       return <WorkflowsStep />
     case 'limits':
@@ -167,6 +163,11 @@ const SetupWizard = () => {
     setIndex(n)
   }
 
+  // step 3 counts as passed once any provider can route, however the person got there
+  const markRoutable = () => {
+    if (!progress.passed.includes(3)) save({ ...progress, passed: [...progress.passed, 3] })
+  }
+
   const finishLater = () => {
     writeSetupProgress({ ...progress, furthest: Math.max(progress.furthest, index + 1) })
     dismiss()
@@ -176,19 +177,18 @@ const SetupWizard = () => {
   const lookAroundWithDemo = async () => {
     setDemoBusy(true)
     try {
-      const { data } = await configApi.getDemoMode()
-      if (data?.source === 'environment' && !data.enabled) {
-        notify('err', "Demo mode is set by the server's environment")
-        return
-      }
-      await configApi.setDemoMode(true)
-      dismiss()
+      if ((await turnOnDemoMode()) === 'environment') notify('err', DEMO_ENV_NOTICE)
+      else dismiss()
     } catch {
       notify('err', 'Demo data could not be turned on')
     } finally {
       setDemoBusy(false)
     }
   }
+
+  const panel = stepPanel(step, advance, markRoutable, (target) =>
+    setIndex(STEPS.indexOf(target)),
+  )
 
   if (!hasPermission('settings.write')) {
     return (
@@ -239,9 +239,13 @@ const SetupWizard = () => {
                 <h1>{copy.title}</h1>
                 <p>{copy.desc}</p>
               </div>
-              <SettingsCard title={copy.card.title} desc={copy.card.desc || undefined}>
-                {stepPanel(step, advance, (target) => setIndex(STEPS.indexOf(target)))}
-              </SettingsCard>
+              {copy.card ? (
+                <SettingsCard title={copy.card.title} desc={copy.card.desc}>
+                  {panel}
+                </SettingsCard>
+              ) : (
+                panel
+              )}
             </div>
           </div>
           <footer className="su-foot">

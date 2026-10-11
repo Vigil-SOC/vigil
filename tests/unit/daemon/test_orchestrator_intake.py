@@ -54,6 +54,7 @@ def _orchestrator(**extra) -> Orchestrator:
         return_value=(_Overlap.MERGED, "case-1")
     )
     orch._in_flight = MagicMock(return_value=0)
+    orch._running = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
     orch._hourly_budget_exhausted = MagicMock(return_value=False)
     orch._intake_surge_active = False

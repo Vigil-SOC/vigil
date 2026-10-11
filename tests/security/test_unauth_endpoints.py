@@ -27,12 +27,12 @@ sys.path.insert(0, str(REPO))
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-prod")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services.api import main as backend_main  # noqa: E402
-from core.config import get_settings  # noqa: E402
-from services.api.middleware import auth as auth_module  # noqa: E402
-from core.auth import (
+from core.auth import (  # noqa: E402  (DEV_MODE lives here)
     current_user as current_user_module,
-)  # noqa: E402  (DEV_MODE lives here)
+)
+from core.config import get_settings  # noqa: E402
+from services.api import main as backend_main  # noqa: E402
+from services.api.middleware import auth as auth_module  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -81,11 +81,6 @@ PROTECTED_ROUTES = [
     ("DELETE", "/api/findings/all", None),
     ("GET", "/api/config/secrets/status", None),
     ("GET", "/api/llm/providers/", None),
-    (
-        "POST",
-        "/api/llm/providers/discover-models",
-        {"provider_type": "ollama", "base_url": "http://127.0.0.1:11434"},
-    ),
     ("GET", "/api/custom-integrations/list", None),
     (
         "POST",
@@ -125,8 +120,6 @@ PROTECTED_ROUTES = [
     ("POST", "/api/webhooks/webhook-001/test", None),
     ("GET", "/api/webhooks/webhook-001/deliveries", None),
     ("GET", "/api/integrations/vstrike/health", None),
-    ("GET", "/api/integrations/vstrike/ui/networks", None),
-    ("POST", "/api/integrations/vstrike/ui/iframe-token", None),
     ("GET", "/api/integrations/vstrike/topology/asset/test-asset", None),
     # The agent layer's own surfaces. /api/* takes a session; /internal/* takes
     # the shared secret, and answers the same way when it is not presented.
@@ -138,9 +131,6 @@ PROTECTED_ROUTES = [
         {"kind": "note", "text": "auth gate test"},
     ),
     # Routes that were on bare `router` (no auth) — fixed in issue #286.
-    ("POST", "/api/integrations/vstrike/network-graph", {"network_id": "test"}),
-    ("POST", "/api/integrations/vstrike/ui/legend-apply", {"legend_run_id": "test"}),
-    ("POST", "/api/integrations/vstrike/ui/rightpanel-focus", None),
     # Versioned contract surface — the frozen /api/v1 routes must enforce auth
     # too (the epic is "auth on by default"). One per resource.
     ("GET", "/api/v1/findings", None),
@@ -251,11 +241,6 @@ ADMIN_ONLY_ROUTES = [
     ("DELETE", "/api/mcp/surface/credentials/mcpc-none", None),
     ("POST", "/api/mcp/servers/reload", None),
     ("POST", "/api/config/integrations/github/test", None),
-    (
-        "POST",
-        "/api/llm/providers/discover-models",
-        {"provider_type": "ollama", "base_url": "http://127.0.0.1:11434"},
-    ),
 ]
 
 

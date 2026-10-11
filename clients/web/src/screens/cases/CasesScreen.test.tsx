@@ -58,7 +58,6 @@ vi.mock('../../services/api', () => ({
   },
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
-  timelineApi: { getCaseTimeline: vi.fn(() => Promise.resolve({ data: { events: [] } })) },
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   conversationsApi: {
@@ -227,6 +226,16 @@ describe('server queue', () => {
     expect(await screen.findByText('Another case')).toBeInTheDocument()
   })
 
+  it('carries the full case id in the id cell', async () => {
+    const id = 'case-2026-10-09-0b43d6c8'
+    testState.cases = [{ ...CASE, case_id: id }]
+    renderCases('/cases')
+
+    const cell = (await screen.findByText(id)).closest('[role="cell"]')
+    expect(cell).toHaveClass('cg-id')
+    expect(cell).toHaveAttribute('title', id)
+  })
+
   it('labels needs-you rows and leaves the others unlabeled', async () => {
     testState.cases = [
       { ...CASE, case_id: 'needs', title: 'Waiting on a person', needs_you: true },
@@ -234,12 +243,129 @@ describe('server queue', () => {
     ]
     renderCases()
 
-    const needsRow = (await screen.findByText('Waiting on a person')).closest('tr')
-    const slaRow = screen.getByText('Closer to SLA').closest('tr')
+    const needsRow = (await screen.findByText('Waiting on a person')).closest('[role="row"]')
+    const slaRow = screen.getByText('Closer to SLA').closest('[role="row"]')
     expect(needsRow).not.toBeNull()
     expect(slaRow).not.toBeNull()
     expect(within(needsRow as HTMLElement).getByText('Needs you')).toBeInTheDocument()
     expect(within(slaRow as HTMLElement).queryByText('Needs you')).not.toBeInTheDocument()
+    expect(needsRow).toHaveClass('needs')
+    expect(slaRow).not.toHaveClass('needs')
+  })
+})
+
+describe('board grid', () => {
+  const rowOf = async (title: string) => (await screen.findByText(title)).closest('[role="row"]') as HTMLElement
+
+  it('lays a case out in the board columns, owner "(you)", kind by workflow name', async () => {
+    testState.cases = [{
+      ...CASE,
+      workflow_id: 'hunt-a',
+      findings_count: 1,
+      iteration_count: 4,
+      age_seconds: 2 * 86400,
+      last_activity: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      sla_seconds_left: 22 * 3600 + 50 * 60,
+      health_status: 'healthy',
+      cost_usd: 2,
+      max_cost_usd: 5,
+      budget_health: 'healthy',
+      comment_count: 3,
+    }]
+    renderCases()
+
+    const row = within(await rowOf(CASE.title))
+    expect(row.getByText(CASE.case_id)).toBeInTheDocument()
+    expect(row.getByText('1 alert · step 4 · active 3h ago · age 2d')).toBeInTheDocument()
+    expect(row.getByText('Hunt A')).toBeInTheDocument()
+    expect(row.getByText('High')).toBeInTheDocument()
+    expect(row.getByText('Open')).toBeInTheDocument()
+    expect(row.getByText('analyst (you)')).toBeInTheDocument()
+    expect(row.getByText('22 h 50 min left')).toBeInTheDocument()
+    expect(row.getByText('Good')).toHaveClass('level-pill', 'good')
+    expect(row.getByRole('meter')).toHaveAttribute('aria-valuenow', '40')
+    expect(row.getByText('40%')).toBeInTheDocument()
+    expect(row.getByText('3')).toBeInTheDocument()
+    // the old trash and arrow stay gone
+    expect(row.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the workflow id when it is not in the catalog, and a dash with none', async () => {
+    testState.cases = [
+      { ...CASE, case_id: 'a', title: 'Known elsewhere', workflow_id: 'unlisted' },
+      { ...CASE, case_id: 'b', title: 'No run yet', assignee: 'someone.else' },
+    ]
+    renderCases()
+
+    expect(within(await rowOf('Known elsewhere')).getByText('unlisted')).toBeInTheDocument()
+    const bare = within(await rowOf('No run yet'))
+    expect(bare.getByText('someone.else')).toBeInTheDocument()
+    expect(bare.queryByText(/\(you\)/)).not.toBeInTheDocument()
+  })
+
+  it('says Timer paused with no level pill when the SLA is paused', async () => {
+    testState.cases = [{ ...CASE, sla_paused: true, sla_seconds_left: null, health_status: 'healthy' }]
+    renderCases()
+
+    const row = within(await rowOf(CASE.title))
+    expect(row.getByText('Timer paused')).toBeInTheDocument()
+    expect(row.queryByText('Good')).not.toBeInTheDocument()
+  })
+
+  it('shows a dash for no SLA, and Poor once past due', async () => {
+    testState.cases = [
+      { ...CASE, case_id: 'a', title: 'No SLA' },
+      { ...CASE, case_id: 'b', title: 'Late', sla_seconds_left: -600, health_status: 'breached' },
+    ]
+    renderCases()
+
+    expect(within(await rowOf('No SLA')).queryByText('Poor')).not.toBeInTheDocument()
+    const late = within(await rowOf('Late'))
+    expect(late.getByText('10 min overdue')).toBeInTheDocument()
+    expect(late.getByText('Poor')).toHaveClass('poor')
+  })
+
+  it('shows a dash instead of a meter when there is no cap, and clamps over-spend', async () => {
+    testState.cases = [
+      { ...CASE, case_id: 'a', title: 'Uncapped', cost_usd: 3 },
+      { ...CASE, case_id: 'b', title: 'Over', cost_usd: 9, max_cost_usd: 5, budget_health: 'critical' },
+    ]
+    renderCases()
+
+    const uncapped = within(await rowOf('Uncapped'))
+    expect(uncapped.queryByRole('meter')).not.toBeInTheDocument()
+    expect(uncapped.queryByText(/%/)).not.toBeInTheDocument()
+    const over = within(await rowOf('Over'))
+    expect(over.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
+    // the shared MeterBar puts the level on its fill
+    expect(over.getByRole('meter').firstElementChild).toHaveClass('meter-fill', 'poor')
+  })
+
+  it('puts the description on hover and not in the row', async () => {
+    testState.cases = [{ ...CASE, description: 'Beaconing to a rare domain' }]
+    renderCases()
+
+    const row = await rowOf(CASE.title)
+    expect(within(row).queryByText('Beaconing to a rare domain')).not.toBeInTheDocument()
+    expect(screen.getByTitle('Beaconing to a rare domain')).toContainElement(screen.getByText(CASE.title))
+  })
+
+  it('has a disabled select box that neither opens the case nor claims a selection', async () => {
+    renderCases()
+
+    const box = await screen.findByRole('checkbox', { name: `Select case ${CASE.case_id}` })
+    expect(box).toBeDisabled()
+    expect(box.closest('[title]')).toHaveAttribute('title', 'Coming in a later release')
+    fireEvent.click(box.closest('[title]') as HTMLElement)
+    expect(openCase).not.toHaveBeenCalled()
+  })
+
+  it('opens a row from the keyboard', async () => {
+    renderCases()
+
+    const row = await rowOf(CASE.title)
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(openCase).toHaveBeenCalledWith(CASE.case_id)
   })
 })
 
@@ -264,6 +390,39 @@ describe('unknown priority', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
     expect(within(screen.getByRole('dialog', { name: 'Edit case' })).getByText('Unknown')).toBeInTheDocument()
+  })
+})
+
+describe('edit case assignee', () => {
+  const openEdit = async () => {
+    renderCases(`/cases?case=${CASE.case_id}`)
+    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+    return within(screen.getByRole('dialog', { name: 'Edit case' }))
+  }
+  const sentBody = () => vi.mocked(casesApi.update).mock.lastCall?.[1]
+
+  it('sends the assignee it was preloaded with on a title-only edit', async () => {
+    testState.cases = [CASE]
+    const dialog = await openEdit()
+    fireEvent.change(dialog.getByDisplayValue(CASE.title), { target: { value: 'Renamed' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(sentBody()).toMatchObject({ title: 'Renamed', assignee: 'analyst' }))
+  })
+
+  it('sends an empty assignee, not an omitted key, when the field is cleared', async () => {
+    testState.cases = [CASE]
+    const dialog = await openEdit()
+    fireEvent.change(dialog.getByPlaceholderText('name or email'), { target: { value: '' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(sentBody()).toHaveProperty('assignee', ''))
+  })
+
+  it('does not preload "unassigned" into the field for an unassigned case', async () => {
+    testState.cases = [{ ...CASE, assignee: null }]
+    const dialog = await openEdit()
+    expect(dialog.getByPlaceholderText('name or email')).toHaveValue('')
   })
 })
 
@@ -490,5 +649,18 @@ describe('list states', () => {
     await waitFor(() => expect(lastParams()).not.toHaveProperty('needs_you'))
     expect(lastParams()).not.toHaveProperty('kind')
     expect(chip('All open 6')).toHaveAttribute('aria-pressed', 'true')
+  })
+})
+
+describe('list scrolling', () => {
+  it('keeps the table in a scroll box with its header inside, and the pager outside', async () => {
+    renderCases()
+
+    expect(await screen.findByText(CASE.title)).toBeInTheDocument()
+    const box = screen.getByTestId('cases-scroll')
+    expect(box).toHaveClass('list-scroll')
+    expect(within(box).getByRole('table', { name: 'Cases' })).toBeInTheDocument()
+    expect(within(box).getAllByRole('columnheader').length).toBeGreaterThan(0)
+    expect(box).not.toContainElement(screen.getByLabelText('Rows per page'))
   })
 })

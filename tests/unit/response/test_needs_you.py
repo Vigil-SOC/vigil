@@ -84,6 +84,7 @@ def seeded(throwaway_database):
                     "ny-direct",
                     OLDER,
                     title="Direct case",
+                    reason="Paused at the isolate step",
                     workflow_run_id="ny-run",
                     parameters={
                         "checkpoint_id": "chk-1",
@@ -95,6 +96,7 @@ def seeded(throwaway_database):
                     "ny-from-run",
                     OLDER + timedelta(hours=1),
                     title="Run case",
+                    reason="Credential dumping is live.; approval.human_only=True",
                     workflow_run_id="ny-run",
                     parameters={
                         "case_id": "  ",
@@ -174,6 +176,10 @@ def test_needs_you_is_oldest_pending_approvals_only(client, seeded):
     assert from_run["case_id"] == "ny-from-run"
     assert from_inv["case_id"] == "ny-case-inv"
     assert none["case_id"] is None
+    # The ledger's rule tail is not served; a checkpoint's reason is as stored.
+    assert from_run["reason"] == "Credential dumping is live."
+    assert direct["reason"] == "Paused at the isolate step"
+    assert none["reason"] == "because"
     assert {item["source_id"] for item in mine}.isdisjoint({"ny-approved", "ny-auto"})
 
 

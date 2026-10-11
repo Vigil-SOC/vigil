@@ -2,8 +2,8 @@
 
 import json
 
-import pytest
 import httpx
+import pytest
 import respx
 
 from core.integrations.elastic.client import ElasticService
@@ -383,28 +383,6 @@ class TestCasesAPI:
         case = await service.get_case("case-1")
         assert case is not None
         assert case["id"] == "case-1"
-        await service.close()
-
-    @respx.mock
-    @pytest.mark.asyncio
-    async def test_update_case_status(self, service):
-        respx.patch(f"{KIBANA_URL}/api/cases").mock(
-            return_value=httpx.Response(200, json=[{"id": "case-1"}])
-        )
-
-        ok = await service.update_case_status("case-1", "closed", "v1")
-        assert ok is True
-        await service.close()
-
-    @respx.mock
-    @pytest.mark.asyncio
-    async def test_update_case_status_failure(self, service):
-        respx.patch(f"{KIBANA_URL}/api/cases").mock(
-            return_value=httpx.Response(409, text="Conflict")
-        )
-
-        ok = await service.update_case_status("case-1", "closed", "v1")
-        assert ok is False
         await service.close()
 
 

@@ -548,6 +548,10 @@
   border: 1.5px solid var(--ln2);
 }
 
+.home-screen .home-check.next .home-tick {
+  border-color: var(--ac);
+}
+
 .home-screen .home-check.done .home-tick {
   background: var(--good);
   border-color: var(--good);

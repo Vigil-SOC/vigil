@@ -38,6 +38,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
           provenance: 'embedded',
           payload_included: false,
         },
+        title: null,
         description: 'Odd login',
         finding_id: 'f-9',
         created_at: '2026-10-01T00:00:00',
@@ -63,6 +64,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
         document: 'please look',
         source_link: null,
         source_evidence: null,
+        title: null,
         description: null,
         finding_id: null,
         created_at: '2026-10-01T00:00:00',
@@ -167,7 +169,7 @@ describe('TriageScreen', () => {
     expect(filters.getAllByRole('button', { name: 'All 12' })).toHaveLength(3)
     expect(filters.getByRole('button', { name: 'Alert 7' })).toBeInTheDocument()
     expect(filters.getAllByRole('button', { name: 'Ask 2' })).toHaveLength(2) // the Kind chip and the Source chip
-    expect(filters.getByRole('button', { name: 'splunk 7' })).toHaveAttribute('title', '2 arrived today · Quiet')
+    expect(filters.getByRole('button', { name: 'Splunk 7' })).toHaveAttribute('title', '2 arrived today · Quiet')
     expect(filters.getByRole('button', { name: 'Waiting for a slot 3' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Picked up or started a case 5' })).toBeInTheDocument()
     expect(filters.getByRole('button', { name: 'Added to a case 4' })).toBeInTheDocument()
@@ -184,6 +186,11 @@ describe('TriageScreen', () => {
     renderScreen()
     await screen.findByLabelText('Intake strip')
     const filters = within(screen.getByRole('group', { name: 'Filters' }))
+    // the chip shows the label; the request keeps the stored id
+    fireEvent.click(filters.getByRole('button', { name: 'Splunk 7' }))
+    await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ source: 'splunk' }))
+    fireEvent.click(filters.getAllByRole('button', { name: 'All 12' })[1])
+    await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({}))
     fireEvent.click(filters.getByRole('button', { name: 'Waiting for a slot 3' }))
     await waitFor(() => expect(triageApi.get).toHaveBeenLastCalledWith({ state: 'queued' }))
     expect(filters.getByRole('button', { name: 'Waiting for a slot 3' })).toHaveAttribute('aria-pressed', 'true')
@@ -202,13 +209,22 @@ describe('TriageScreen', () => {
   it('keeps a linked source as a selected chip with 0, and says when the cap hides rows', async () => {
     const base = payload()
     vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, matched: 340, counts: { ...base.counts, total: 340 } } } as never)
-    renderScreen('/triage?source=okta')
+    renderScreen('/triage?source=microsoft_defender')
     await screen.findByLabelText('Intake strip')
-    expect(screen.getByRole('button', { name: 'okta 0' })).toHaveAttribute('aria-pressed', 'true')
-    expect(triageApi.get).toHaveBeenCalledWith({ source: 'okta' })
+    expect(screen.getByRole('button', { name: 'Defender 0' })).toHaveAttribute('aria-pressed', 'true')
+    expect(triageApi.get).toHaveBeenCalledWith({ source: 'microsoft_defender' })
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     expect(await screen.findByText('Showing 200 of 340')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument()
+  })
+
+  it('shows a stored source name as its label in the row', async () => {
+    const base = payload()
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, rows: [{ ...base.rows[0], source: 'microsoft_defender' }] } } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    expect(screen.getByText('Defender')).toHaveClass('tq-source')
+    expect(screen.queryByText('microsoft_defender')).not.toBeInTheDocument()
   })
 
   it('lays the rows out in the board’s columns and words', async () => {
@@ -323,11 +339,27 @@ describe('TriageScreen', () => {
     expect(screen.queryByLabelText('Expanded row')).not.toBeInTheDocument()
   })
 
+  it('shows a detection by its title, with the description in the cell title, else the finding id', async () => {
+    const base = payload()
+    const [detection, ask] = base.rows
+    const rows = [
+      { ...detection, id: 10, title: 'Brute force', description: 'raw event text' },
+      { ...detection, id: 11, title: '', description: null, finding_id: 'f-bare' },
+      ask,
+    ]
+    vi.mocked(triageApi.get).mockResolvedValue({ data: { ...base, rows } } as never)
+    renderScreen()
+    await screen.findByLabelText('Intake strip')
+    expect(screen.getByText('Brute force')).toHaveAttribute('title', 'raw event text')
+    expect(screen.getByText('f-bare')).toHaveAttribute('title', 'f-bare')
+    expect(screen.getByText('please look')).toBeInTheDocument()
+  })
+
   it('hides Open in source without a link, and shows an Ask’s document', async () => {
     vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
     renderScreen()
     await screen.findByLabelText('Intake strip')
-    // the detection shows its description, clamped by CSS with the full text in title
+    // no title: the detection shows its description
     expect(screen.getByText('Odd login')).toHaveAttribute('title', 'Odd login')
     fireEvent.click(screen.getByText('please look'))
     await screen.findByLabelText('Expanded row')

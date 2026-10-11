@@ -584,11 +584,6 @@
       color: var(--tx-3);
    }
 
-   .kpi .k-label.as-stored {
-      text-transform: none;
-      letter-spacing: 0;
-   }
-
    .kpi .k-note {
       font-size: 12px;
       color: var(--tx-faint);
@@ -1354,14 +1349,6 @@
       gap: 10px;
    }
 
-   .case-row .cr-title {
-      font-size: 13.5px;
-      font-weight: 500;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-   }
-
    .case-row .cr-meta {
       display: flex;
       align-items: center;
@@ -1580,12 +1567,6 @@
       animation: soc-fade .18s ease;
    }
 
-   .case-stage {
-      display: flex;
-      flex: 1;
-      min-height: 0;
-   }
-
    .cite-row {
       display: flex;
       flex-wrap: wrap;
@@ -1601,43 +1582,6 @@
       font-size: 12px;
       color: var(--accent-2);
       cursor: pointer;
-   }
-
-   tr.cite-target {
-      background: var(--accent-dim);
-   }
-
-   .case-count {
-      margin-left: 4px;
-      color: var(--tx-faint);
-      font-variant-numeric: tabular-nums;
-   }
-
-   .case-mark {
-      display: inline-flex;
-      vertical-align: middle;
-      margin-left: 6px;
-      color: var(--tx-3);
-   }
-
-   .case-later {
-      display: flex;
-      gap: 10px;
-      align-items: baseline;
-      opacity: 0.55;
-      padding: 6px 0;
-   }
-
-   .case-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-   }
-
-   .case-fold > summary {
-      cursor: pointer;
-      font-weight: 600;
-      margin: 4px 0;
    }
 
    /* flex-shrink:0 is essential: without it the cards compress to fit the
@@ -1686,49 +1630,6 @@
    }
 
    /* ---------- Vigil chat dock ---------- */
-   /* bottom:52px (not 24px) lifts the FAB clear of the bottom pager row, so it
-     never covers the prev/next pagination buttons in the bottom-right corner */
-   .chat-fab {
-      position: fixed;
-      right: 24px;
-      bottom: 52px;
-      z-index: 25;
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      padding: 12px 18px 12px 16px;
-      border-radius: 999px;
-      border: none;
-      background: linear-gradient(150deg, var(--accent), var(--accent-2));
-      color: var(--ac-tx);
-      font-family: var(--font);
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--accent-line);
-      transition: transform .15s cubic-bezier(.4, 0, .2, 1), opacity .2s, box-shadow .15s;
-   }
-
-   .chat-fab:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 16px 34px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--accent-2);
-   }
-
-   .chat-fab:active {
-      transform: translateY(0);
-   }
-
-   .chat-fab svg {
-      width: 18px;
-      height: 18px;
-   }
-
-   .chat-active .chat-fab {
-      opacity: 0;
-      pointer-events: none;
-      transform: translateY(10px) scale(.96);
-   }
-
    .chat {
       position: fixed;
       top: 0;
@@ -1746,15 +1647,6 @@
 
    .chat.open {
       transform: none;
-   }
-
-   .chat-note {
-      display: flex;
-      gap: 10px;
-      padding: 6px 14px;
-      font-size: 12px;
-      color: var(--tx-3);
-      border-bottom: 1px solid var(--line);
    }
 
    .chat-case {
@@ -2377,24 +2269,6 @@
       color: var(--tx-3);
    }
 
-   /* The queue has more columns than the pane. A floor lets the existing
-      table scroll sideways instead of crushing SLA and last activity. */
-   .cases-tbl {
-      min-width: 1180px;
-   }
-
-   /* Title column: truncate long titles with an ellipsis (full text on hover). */
-   .cases-tbl td.case-title {
-      max-width: 340px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-   }
-
-   .cases-tbl td.case-title .tag {
-      margin-right: 8px;
-   }
-
    @media (max-width: 1100px) {
       .main.chat-open {
          margin-right: 0;
@@ -2406,13 +2280,6 @@
       }
 
       /* .detail-body is already a single-column flex stack — nothing to change */
-      .chat-fab span {
-         display: none;
-      }
-
-      .chat-fab {
-         padding: 13px;
-      }
    }
 
    @media (max-width: 600px) {
@@ -2453,8 +2320,8 @@
       flex: 0 0 auto;
    }
 
-   /* Workflow cards: the Agents board's 320px left column. Heights are equal across
-      built-in workflows (clamped name and stats reserve two lines each); a custom one adds a row of actions. */
+   /* Workflow cards: the Agents board's 320px left column. A card is its name, badge,
+      chips and stats line, so heights follow the chips; the actions live in the reader header. */
    .wfk-col {
       width: 320px;
       display: flex;
@@ -2477,8 +2344,10 @@
 
    /* the card column and the reader side by side, as the board draws them */
    .wfk-layout { display: flex; align-items: stretch; min-height: 0; }
-   .wfk-layout > .wfk-col { width: 364px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--ln0); }
+   .wfk-layout > .wfk-col { width: 346px; flex-shrink: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
    .wfk-reader { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+   /* the board's reader starts 16px from the column; standalone panes (draft) keep 22px */
+   .wfk-reader .wfk-pane { padding-left: 16px; padding-right: 16px; }
    .wfk.off .wfk-name { color: var(--tx2); }
 
    .wfk-main {
@@ -2501,7 +2370,6 @@
       font-size: 13px;
       font-weight: 700;
       line-height: 1.35;
-      min-height: 2lh; /* cards stay one height whether the name is 1 or 2 lines */
       color: var(--tx0);
       display: -webkit-box;
       -webkit-line-clamp: 2;
@@ -2536,23 +2404,12 @@
    .wfk-line {
       font-size: 12px;
       line-height: 1.45;
-      min-height: 2lh;
       color: var(--tx2);
       font-variant-numeric: tabular-nums;
    }
 
    .wfk-line > span { white-space: nowrap; }
 
-   .wfk-acts {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap; /* a custom workflow's edit and delete push the row past 290px */
-      gap: 6px;
-      padding-top: 8px;
-      border-top: 1px solid var(--ln0);
-   }
-
-   .wfk-acts .btn.primary { margin-left: auto; }
    .btn.wfk-btn { padding: 4px 9px; font-size: 12px; }
    .btn.icon.wfk-btn { padding: 4px 6px; }
 
@@ -2566,7 +2423,7 @@
    }
 
    /* Agents table. Scoped overrides that follow the Agents board and
-      tokens.json (sentence-case 12px heads, square initial, green switch,
+      tokens.json (sentence-case 12px heads, square initial,
       22px state pills); the shared .tbl, .toggle and .row-act rules stay. */
    .ag-page {
       padding: 14px 26px 96px; /* bottom room so the Ask Vigil button never covers the last row */
@@ -2826,90 +2683,6 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-   }
-
-   .ag-switch {
-      position: relative;
-      display: block;
-      width: 38px;
-      height: 22px;
-      padding: 0;
-      border: 0;
-      border-radius: 999px;
-      background: var(--ln2);
-      transition: background .15s;
-   }
-
-   .ag-switch[aria-checked="true"] {
-      background: var(--good);
-   }
-
-   .ag-switch span {
-      position: absolute;
-      top: 3px;
-      left: 3px;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: #fff;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
-      transition: left .15s;
-   }
-
-   .ag-switch[aria-checked="true"] span {
-      left: 19px;
-   }
-
-   .tmpl-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--tx-2);
-      background: var(--bg-3);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 2px 8px;
-   }
-
-   .tmpl-badge svg {
-      width: 11px;
-      height: 11px;
-      color: var(--tx-3);
-   }
-
-   .sk-toggle {
-      width: 38px;
-      height: 22px;
-      border-radius: 12px;
-      background: var(--bg-3);
-      border: 1px solid var(--line);
-      position: relative;
-      cursor: pointer;
-      transition: background .16s, border-color .16s;
-      flex: 0 0 auto;
-   }
-
-   .sk-toggle .kn {
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: var(--tx-3);
-      transition: transform .16s, background .16s;
-   }
-
-   .sk-toggle.on {
-      background: var(--accent);
-      border-color: var(--accent);
-   }
-
-   .sk-toggle.on .kn {
-      transform: translateX(16px);
-      background: #fff;
    }
 
    /* ---------- AI Decisions ---------- */
@@ -4051,13 +3824,13 @@
    .toggle {
       position: relative;
       flex: 0 0 auto;
-      width: 34px;
-      height: 19px;
+      width: 38px;
+      height: 22px;
       border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--bg-3);
+      border: 0;
+      background: var(--ln2);
       cursor: pointer;
-      transition: background .16s, border-color .16s;
+      transition: background .15s;
       padding: 0;
    }
 
@@ -4067,23 +3840,30 @@
    }
 
    .toggle.on {
-      background: var(--accent);
-      border-color: var(--accent);
+      background: var(--good);
    }
 
    .toggle-knob {
       position: absolute;
-      top: 1px;
-      left: 1px;
-      width: 15px;
-      height: 15px;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
       background: #fff;
-      transition: transform .16s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+      transition: left .15s;
    }
 
    .toggle.on .toggle-knob {
-      transform: translateX(15px);
+      left: 19px;
+   }
+
+   @media (prefers-reduced-motion: reduce) {
+      .toggle,
+      .toggle-knob {
+         transition: none;
+      }
    }
 
    .toggle-row {
@@ -4630,8 +4410,6 @@
       color: var(--tx0);
    }
 
-   .ag-switch:disabled { opacity: .5; cursor: not-allowed; }
-
    .settings-content {
       flex: 1;
       min-width: 0;
@@ -4663,31 +4441,36 @@
       max-width: 1280px;
    }
 
-   /* Settings cards and tables, on the board's tokens (components/card.md, row-stack.md) */
-   .settings-content .settings-card {
+   /* Settings and Setup cards, on the board's tokens (components/card.md) */
+   .settings-content .settings-card,
+   .su-root .settings-card {
       background: var(--bg1);
       border-color: var(--ln0);
       border-radius: 14px;
       box-shadow: none;
    }
 
-   .settings-content .settings-card .card-h {
+   .settings-content .settings-card .card-h,
+   .su-root .settings-card .card-h {
       padding: 16px 18px 0;
       border-bottom: 0;
    }
 
-   .settings-content .settings-card .card-h h3 {
+   .settings-content .settings-card .card-h h3,
+   .su-root .settings-card .card-h h3 {
       font-size: 13px;
       font-weight: 650;
       color: var(--tx0);
    }
 
-   .settings-content .settings-card-head p {
+   .settings-content .settings-card-head p,
+   .su-root .settings-card-head p {
       font-size: 12px;
       color: var(--tx2);
    }
 
-   .settings-content .settings-card .card-b {
+   .settings-content .settings-card .card-b,
+   .su-root .settings-card .card-b {
       padding: 12px 18px 16px;
    }
 
@@ -4725,13 +4508,30 @@
       padding-right: 0;
    }
 
-   /* SLA policies: severity dot, inline editor (SettingsSLA board) */
+   /* SLA policies: the table sits on the board's 16px card and 2px cell padding; inline editor (SettingsSLA board) */
+   .settings-content .sla-list .card-b {
+      padding: 8px 16px 10px;
+   }
+
+   .settings-content .sla-tbl thead th,
+   .settings-content .sla-tbl tbody td {
+      padding: 10px 2px;
+   }
+
    .sla-name {
       max-width: 280px;
       overflow: hidden;
       text-overflow: ellipsis;
       font-weight: 600;
+      line-height: 16px;
       color: var(--tx0);
+   }
+
+   .sla-cases {
+      margin-top: 2px;
+      font-size: 11px;
+      line-height: 13px;
+      color: var(--tx3);
    }
 
    .sla-flag {
@@ -4739,19 +4539,6 @@
       font-size: 11px;
       font-weight: 600;
       color: var(--tx3);
-   }
-
-   .sla-sev {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-   }
-
-   .sla-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 2px;
-      flex: 0 0 auto;
    }
 
    /* room under it for the floating Ask Vigil button */
@@ -5248,12 +5035,6 @@
       padding: 14px 2px 20px;
       overflow: visible;
    }
-
-   .chip.fmt-sigma { color: var(--ac); }
-   .chip.fmt-splunk { color: var(--good); }
-   .chip.fmt-elastic { color: var(--fair); }
-   .chip.fmt-kql { color: var(--vio); }
-   .chip.fmt-auto { color: var(--tx2); }
 
    /* inline status banner (success/error toasts inside a section) */
    .settings-banner {
@@ -6673,13 +6454,12 @@
    }
 
    .tbl tbody tr.row-expanded>td {
-      padding: 0 22px 12px;
+      padding: 0 16px 12px;
       white-space: normal;
       overflow-wrap: anywhere;
    }
 
    .tq-panel {
-      width: min(560px, 100%);
       padding: 10px 12px;
       border-radius: 10px;
       background: var(--bg-2);

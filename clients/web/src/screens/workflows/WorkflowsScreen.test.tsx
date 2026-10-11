@@ -21,8 +21,6 @@ vi.mock('../../services/api', () => ({
   approvalsApi: {},
 }))
 vi.mock('../../services/skillsApi', () => ({ skillsApi: { list: h.listSkills } }))
-// the builder is its own screen; here only whether the header opens it matters
-vi.mock('./WorkflowBuilder', () => ({ default: () => <div role="dialog">Builder</div> }))
 
 const wf = (id: string) => ({ id, name: id, description: '', agents: [], source: 'file', runs_7d: 0, mean_cost_usd: null })
 
@@ -80,6 +78,6 @@ describe('Agents & workflows header', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'Agents 3' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('Builder')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Generate with AI')
   })
 })

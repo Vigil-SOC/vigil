@@ -18,7 +18,7 @@ import {
   type TurnConfig,
 } from "./loop.js";
 import { ProviderError, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
-import { assemble, prefixOf, type FoldPolicy, type Prefix } from "./context.js";
+import { assemble, DEFAULT_FOLD, prefixOf, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
 import { scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
 
@@ -362,14 +362,14 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Prefix, then the folded history, then a tail that is never persisted. What
   // summarising drops is the fold's to decide, and the edges are never dropped.
   private assembled(working = ""): Message[] {
-    const policy = this.tightened ?? undefined;
     const { messages, folded } = assemble(
       this.prefix,
       this.cfg.task,
       this.transcript,
       working,
       summariseFolded,
-      ...(policy === undefined ? [] : ([policy] as const)),
+      this.tightened ?? DEFAULT_FOLD,
+      windowCeiling(this.cfg.context_window),
     );
     this.lastFold = folded;
     return messages;

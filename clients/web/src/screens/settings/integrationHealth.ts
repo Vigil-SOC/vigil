@@ -82,6 +82,15 @@ export function buildRows(i: HealthInput): ServerRow[] {
   })
 }
 
+/**
+ * A row switched off stays on Connected, shown Off, while the page lives, so it
+ * can be switched back on there. `kept` collects every server seen connected.
+ */
+export function keepConnected(rows: ServerRow[], kept: Set<string>): ServerRow[] {
+  for (const r of rows) if (r.connected) kept.add(r.name)
+  return rows.map((r) => (!r.connected && kept.has(r.name) ? { ...r, connected: true, word: 'Off' } : r))
+}
+
 /** The one definition of "Need attention": Poor. */
 export const needsAttention = (r: ServerRow) => r.level === 'poor'
 

@@ -1,16 +1,17 @@
 /* ============================================================
    Settings · AI models — the overview (providers, data residency, model for
    each agent), then Keys, Spending limit and Advanced as cards on the page,
-   with the Bifrost model catalogue behind a second tab.
+   with the Bifrost model catalogue collapsed at the end.
 
    Keys and the spending limit read and write the Bifrost gateway's own config
    store through the backend passthrough, so what this page shows is what
    actually routes. Which model each component uses is Vigil's own concept and
    lives in the overview; Advanced holds Vigil runtime knobs.
    ============================================================ */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
+import { PageHead } from '../../shared/PageHead'
 import { NumberInput, SettingsCard, ToggleRow } from '../../shared/ui'
 import AiProvidersPanel from './AiProvidersPanel'
 import AiModelsPanel from './AiModelsPanel'
@@ -21,53 +22,39 @@ import {
   useAiOperations,
   type AIOperationsSettings,
 } from './useSettings'
+import { AI_CONFIG_DESC } from '../../config/aiComponents'
 import type { SectionProps } from './types'
 
-type AiTab = 'keys' | 'catalogue'
-const TABS: [AiTab, string][] = [
-  ['keys', 'Keys & limits'],
-  ['catalogue', 'Models'],
-]
-
-// ?tab= picks the tab below the overview. Anything else falls back to Keys &
-// limits; Home's `assignment` also scrolls to the per-agent table in the
-// overview (see the effect below).
-function tabFromQuery(value: string | null): AiTab {
-  return TABS.find(([k]) => k === value)?.[0] ?? 'keys'
-}
-
+// ?tab=assignment scrolls to the per-agent table (Home links there); ?tab=catalogue opens the
+// Model catalogue card. Any other value is ignored.
 export default function AiConfigSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
   const query = searchParams.get('tab')
-  const requested = tabFromQuery(query)
-  const [tab, setTab] = useState<AiTab>(requested)
+  const [catalogue, setCatalogue] = useState(query === 'catalogue')
 
   useEffect(() => {
-    setTab(requested)
-  }, [requested])
-
-  useEffect(() => {
+    if (query === 'catalogue') setCatalogue(true)
     if (query === 'assignment') document.getElementById(AGENT_MODEL_TABLE_ID)?.scrollIntoView?.({ block: 'start' })
   }, [query])
 
+  // The Keys panel owns the add-provider dialog; the head asks it to open once.
+  const [addProvider, setAddProvider] = useState(false)
+  const opened = useCallback(() => setAddProvider(false), [])
+
   return (
     <>
-      <AiModelsOverview notify={notify} />
-      <div className="tabs" style={{ gap: 4 }}>
-        {TABS.map(([k, label]) => (
-          <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>
-            {label}
-          </button>
-        ))}
+      <PageHead
+        title="AI models"
+        description={AI_CONFIG_DESC}
+        actions={<button className="btn primary" onClick={() => setAddProvider(true)}><Icon name="plus" /> Add provider</button>}
+      />
+      <div className="settings-content-inner flex flex-col gap-4 pb-20">
+        <AiModelsOverview notify={notify} />
+        <AiProvidersPanel notify={notify} addProviderRequested={addProvider} onAddProviderOpened={opened} />
+        <AiBudgetsPanel notify={notify} />
+        <AdvancedPanel notify={notify} />
+        <AiModelsPanel open={catalogue} onToggle={() => setCatalogue((c) => !c)} />
       </div>
-      {tab === 'keys' && (
-        <>
-          <AiProvidersPanel notify={notify} />
-          <AiBudgetsPanel notify={notify} />
-          <AdvancedPanel notify={notify} />
-        </>
-      )}
-      {tab === 'catalogue' && <AiModelsPanel />}
     </>
   )
 }

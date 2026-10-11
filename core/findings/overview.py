@@ -212,6 +212,7 @@ def _feed_items(load) -> list[dict]:
                     "data_source": finding.data_source,
                     "external_id": finding.external_id,
                     "status": finding.status,
+                    "title": finding.title,
                     "description": finding.description,
                     "created_at": created,
                     "evidence_links": list(finding.evidence_links or []),
@@ -300,4 +301,5 @@ def overview_payload(
         "fair_at": FAIR_AT,
         "agents": _agent_rows(now),
         "feed": _feed(),
+        "feed_limit": FEED_LIMIT,
     }

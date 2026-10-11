@@ -13,7 +13,7 @@ const GLYPH = { stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round'
 /** The board's status mark: dashed ring, spinner, tick or "!". The label is the accessible name. */
 export default function CheckMark({ phase }: { phase: CheckPhase }) {
   const color =
-    phase === 'passed' ? 'var(--good)' : phase === 'needs' ? 'var(--fair)' : 'var(--tx-3)'
+    phase === 'passed' ? 'var(--good)' : phase === 'needs' ? 'var(--poor)' : 'var(--tx-3)'
   return (
     <span
       role="img"

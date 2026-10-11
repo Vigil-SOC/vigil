@@ -70,6 +70,7 @@ def _finding(finding_id: str, severity: str, **kw) -> None:
                 severity=severity,
                 external_id=kw.get("external_id"),
                 evidence_links=kw.get("evidence_links"),
+                title=kw.get("title"),
                 description=kw.get("description"),
                 entity_context=kw.get("entity_context"),
                 created_at=kw.get("created_at", NOW),
@@ -149,6 +150,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
         "high",
         data_source="splunk",
         evidence_links=[{"ref": "https://console.example/alert/1"}],
+        title="Odd login alert",
         description="Odd login",
     )
     waiting = _trigger(state="queued", finding_id="tr-waiting", created_at=NOW)
@@ -210,6 +212,8 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[waiting]["pickup_seconds"] is None
     assert rows[waiting]["source"] == "splunk"
     assert rows[waiting]["source_link"] == "https://console.example/alert/1"
+    assert rows[waiting]["title"] == "Odd login alert"
+    assert rows[waiting]["description"] == "Odd login"
     assert rows[waiting]["score"] is None
     assert rows[waiting]["trust"] is None
     assert rows[waiting]["weight"] is None

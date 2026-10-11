@@ -338,6 +338,27 @@ class IngestionService:
                     self.stats["findings_skipped"] += 1
                     return True
 
+                # A re-upload may give the alert a new finding_id while its
+                # external id is already stored for this source. That is the
+                # same duplicate, counted the same way; without this check
+                # the insert fails on the unique (source, external_id) index
+                # and the row is reported as an error (#1935).
+                external_id = finding_data.get("external_id")
+                if external_id:
+                    lookup = getattr(
+                        self.db_service, "get_finding_by_external_id", None
+                    )
+                    if lookup is not None and lookup(
+                        finding_data.get("data_source", "imported"), external_id
+                    ):
+                        logger.debug(
+                            "Finding with external_id %s already exists for "
+                            "this source, skipping",
+                            external_id,
+                        )
+                        self.stats["findings_skipped"] += 1
+                        return True
+
                 timestamp = self.parse_timestamp(finding_data.get("timestamp"))
 
                 # Create finding in database
@@ -372,7 +393,9 @@ class IngestionService:
             return False
 
         except Exception as e:
-            self._record_error(f"Finding {finding_id}: {e}")
+            # The recorded error is what the console shows, so it stays a
+            # plain sentence; the driver detail is in the log only (#1935).
+            self._record_error(f"Finding {finding_id} could not be saved")
             self.stats["findings_errors"] += 1
             logger.error(f"Error ingesting finding {finding_id}: {e}")
             return False
@@ -424,7 +447,8 @@ class IngestionService:
                 self._record_error(result["first_error"])
         except Exception as e:
             logger.error(f"Error bulk ingesting findings: {e}")
-            self._record_error(f"Error bulk ingesting findings: {e}")
+            # Plain language for the console; the detail is logged above.
+            self._record_error("Findings could not be saved (database error)")
             self.stats["findings_errors"] += len(valid)
 
     def _ingest_findings_batched(self, findings, batch_size: int = 1000) -> None:

@@ -35,6 +35,7 @@ from core.llm.target import (
     model_for,
     note_fallback,
     provider_for,
+    resolve_effort,
 )
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
@@ -135,7 +136,7 @@ NO_PROVIDER_DETAIL: Dict[str, str] = {
     "code": "no_llm_provider_configured",
     "message": (
         "No LLM provider is configured. "
-        "Add one in Settings → AI / LLM Providers, then try again."
+        "Add one in Settings › AI models, then try again."
     ),
     "settings_path": "/settings#llm-providers",
 }
@@ -318,6 +319,16 @@ def _with_page_case(
     return f"{base}\n\n{sentence}"
 
 
+def _context_window(provider_id: Optional[str], provider_type: str, model: str) -> int:
+    """The resolved model's window in tokens; 0 when unknown or the lookup fails."""
+    try:
+        info = get_registry().get_model_info(provider_id or "", provider_type, model)
+        return int(info.context_window or 0)
+    except Exception as exc:  # noqa: BLE001 - a lookup must never fail the turn
+        logger.warning("context window lookup failed for %s: %s", model, exc)
+        return 0
+
+
 @router.post("/chat/stream", dependencies=[permission_gate("ai_chat.use")])
 async def chat_stream(
     request: ChatRequest,
@@ -384,7 +395,14 @@ async def chat_stream(
         # The provider rides alongside the model so the gateway routes to the
         # account this request resolved to, rather than to whichever provider
         # claims the bare model name first.
-        "config": chat_config(model, tools, mcp_tools, provider=provider_type),
+        "config": chat_config(
+            model,
+            tools,
+            mcp_tools,
+            provider=provider_type,
+            effort=resolve_effort("chat_default"),
+            context_window=_context_window(provider_id, provider_type, model),
+        ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
         "principal": tool_principal.mint(current_user.username),

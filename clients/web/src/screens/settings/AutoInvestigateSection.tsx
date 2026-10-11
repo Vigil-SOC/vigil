@@ -393,7 +393,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       <SettingsCard
         wide
         title="What tools may do on their own"
-        desc="Applies to new cases. Individual tools can be changed in Agents & workflows › Tool permissions."
+        desc="Applies to new cases. Each workflow’s own tool permissions are shown in Agents & workflows."
       >
         {approval.phase === 'error' ? (
           <div className="settings-banner err">

@@ -127,6 +127,8 @@ class QueueItem:
     sla_seconds_left: Optional[float]
     health_status: Optional[str]
     needs_you: bool = False
+    description: Optional[str] = None
+    sla_paused: bool = False
 
 
 def queue_item(row, now: datetime, *, needs_you: bool = False) -> QueueItem:
@@ -159,4 +161,6 @@ def queue_item(row, now: datetime, *, needs_you: bool = False) -> QueueItem:
         sla_seconds_left=seconds_left,
         health_status=health,
         needs_you=needs_you,
+        description=row.description,
+        sla_paused=row.is_paused,
     )

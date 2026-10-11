@@ -13,7 +13,6 @@ from core.config import (
     get_settings,
     is_demo_mode,
     load_integrations_config,
-    state_dir_status,
     vigil_path,
 )
 from core.deps import (
@@ -24,6 +23,7 @@ from core.deps import (
 )
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations._base.descriptor import iter_descriptors
+from core.integrations.credential_check import check_credentials
 from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
@@ -46,7 +46,6 @@ from core.skills.skill_library import (
 )
 from core.storage.config_service import get_config_service
 from core.storage.models import AIModelConfig, CustomAgent, User
-from core.storage.s3_service import S3_LIST_ERRORS, S3Service, describe_s3_error
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import (
@@ -128,12 +127,6 @@ class GeneralConfig(BaseModel):
     show_notifications: bool = True
     theme: str = "dark"
     enable_keyring: bool = False  # Whether to use OS keyring for secrets
-
-
-class GitHubConfig(BaseModel):
-    """GitHub integration configuration."""
-
-    token: str
 
 
 class PostgreSQLConfig(BaseModel):
@@ -551,80 +544,6 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     }
 
 
-@router.post("/s3/test", dependencies=_INTEGRATIONS_WRITE)
-def test_s3_connection():
-    """
-    Test S3 connection with current configuration.
-
-    Returns:
-        Connection test result
-    """
-    # Load S3 config
-    config_service = get_config_service()
-    s3_integration = config_service.get_integration_config("s3")
-
-    if not s3_integration:
-        # Fallback to file-based config
-        config_file = vigil_path("s3_config.json")
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                s3_integration = json.load(f)
-        else:
-            raise HTTPException(status_code=400, detail="S3 not configured")
-
-    # Unwrap nested config if present
-    cfg = s3_integration
-    if isinstance(s3_integration.get("config"), dict):
-        cfg = s3_integration["config"]
-
-    auth_method = cfg.get("auth_method", "credentials")
-    aws_profile = cfg.get("aws_profile", "")
-
-    if auth_method == "profile" and aws_profile:
-        s3_service = S3Service(
-            bucket_name=cfg.get("bucket_name"),
-            region_name=cfg.get("region", "us-east-1"),
-            aws_profile=aws_profile,
-        )
-    else:
-        access_key_id = get_secret("AWS_ACCESS_KEY_ID")
-        secret_access_key = get_secret("AWS_SECRET_ACCESS_KEY")
-
-        if not access_key_id or not secret_access_key:
-            raise HTTPException(
-                status_code=400,
-                detail="S3 credentials not found. Please configure S3 in Settings.",
-            )
-
-        s3_service = S3Service(
-            bucket_name=cfg.get("bucket_name"),
-            region_name=cfg.get("region", "us-east-1"),
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key,
-        )
-
-    # Test connection
-    success, message = s3_service.test_connection()
-
-    result = {
-        "bucket": cfg.get("bucket_name"),
-        "region": cfg.get("region", "us-east-1"),
-    }
-    if not success:
-        return {"success": False, "message": message, **result}
-
-    # List under the configured prefix: that is what sync uses, and scoped roles can't list the root.
-    try:
-        files = s3_service.list_files(prefix=cfg.get("parquet_prefix") or "")
-    except S3_LIST_ERRORS as e:
-        return {
-            "success": False,
-            "message": f"{message}, but listing objects failed: {describe_s3_error(e)}",
-            **result,
-        }
-    return {"success": True, "message": message, "files_found": len(files), **result}
-
-
 @router.get("/theme")
 def get_theme_config():
     """
@@ -998,31 +917,6 @@ def set_integrations_config(
     return {"success": True, "message": "Integrations configuration saved"}
 
 
-@router.get("/state-directory")
-def get_state_directory():
-    """Resolved State Directory path and writability.
-
-    Authenticated: /api/health carries only the booleans, since it is public and
-    this names where credentials live.
-    """
-    return {"success": True, "state_directory": state_dir_status()}
-
-
-@router.get("/integrations/status")
-def get_integrations_status(
-    bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
-):
-    """
-    Get status of all integrations.
-
-    Returns:
-        Status information for all integrations
-    """
-    statuses = bridge.get_all_integration_statuses()
-
-    return {"success": True, "statuses": statuses}
-
-
 def _connected_session(mcp_client: Any, server_name: str) -> Any:
     """Live session for a server that is already connected, if any.
 
@@ -1120,7 +1014,9 @@ async def test_integration(
     config of ``{}`` is still configured — secret-only rows keep the secret
     outside this dict. The integration's enabled flag does not block the
     probe: enabled MCP servers are contacted, and if none are enabled every
-    declared server is probed with a temporary session.
+    declared server is probed with a temporary session. Splunk and Elastic are
+    then also read with their saved URL and credentials (``credentials`` in the
+    answer), since a server starts whatever it is pointed at.
     """
     require_integrations_admin(current_user)
 
@@ -1181,6 +1077,16 @@ async def test_integration(
     success = all(server["success"] for server in servers)
     error_summary = None if success else _probe_error_summary(servers)
 
+    # The servers starting says nothing about the URL or credentials, so read
+    # the saved settings against the real service (read-only) before saying Good.
+    credentials = None
+    if success:
+        outcome = await check_credentials(integration_id)
+        if outcome is not None:
+            credentials = {"success": outcome[0], "message": outcome[1]}
+            if not outcome[0]:
+                success, error_summary = False, outcome[1]
+
     recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
         integration_id,
         success=success,
@@ -1195,13 +1101,16 @@ async def test_integration(
     else:
         message = error_summary or f"Integration '{integration_id}' failed to connect."
 
-    return {
+    result = {
         "success": success,
         "message": message,
         "status": status,
         "server_names": server_names,
         "servers": servers,
     }
+    if credentials is not None:
+        result["credentials"] = credentials
+    return result
 
 
 @router.get("/general")
@@ -1300,45 +1209,6 @@ def set_general_config(
         logger.warning(f"Could not update secrets manager: {e}")
 
     return {"success": True, "message": "General settings saved"}
-
-
-@router.get("/github")
-def get_github_config():
-    """
-    Get GitHub integration configuration status.
-
-    Returns:
-        Configuration status (without exposing the token)
-    """
-    try:
-        token = get_secret("GITHUB_TOKEN")
-        has_token = bool(token)
-
-        return {
-            "configured": has_token,
-            "token_preview": f"{token[:12]}..." if has_token else None,
-        }
-    except Exception as e:
-        logger.error(f"Error getting GitHub config: {e}")
-        return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
-
-
-@router.post("/github", dependencies=_SETTINGS_WRITE)
-def set_github_config(config: GitHubConfig):
-    """
-    Set GitHub integration configuration.
-
-    Args:
-        config: GitHub configuration
-
-    Returns:
-        Success status
-    """
-    success = set_secret("GITHUB_TOKEN", config.token)
-    if success:
-        return {"success": True, "message": "GitHub token saved securely"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to save GitHub token")
 
 
 @router.get("/postgresql")

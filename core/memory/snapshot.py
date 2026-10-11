@@ -276,25 +276,6 @@ def list_snapshots(*, session: Optional[Session] = None) -> List[Snapshot]:
         ]
 
 
-def get_snapshot(name: str, *, session: Optional[Session] = None) -> Snapshot:
-    """One snapshot by name, or :class:`SnapshotError` if there is no such thing."""
-    snapshot = _validated(name)
-    schema = _schema_for(snapshot)
-    with unit_of_work(session) as db:
-        if not _schema_exists(db, schema):
-            raise SnapshotError(f"no snapshot named {snapshot!r}")
-        created = db.execute(
-            text(
-                "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace "
-                "WHERE nspname = :schema"
-            ),
-            {"schema": schema},
-        ).scalar()
-        return Snapshot(
-            name=snapshot, created_at=_stamp(created), rows=_row_counts(db, schema)
-        )
-
-
 def drop_snapshot(
     name: str,
     *,

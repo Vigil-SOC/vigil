@@ -326,6 +326,31 @@ describe('a root-cause run, as of the selected step', () => {
     expect(screen.getAllByText('No flow logs.').length).toBeGreaterThan(0)
   })
 
+  it('marks a run that spent past its ceiling as over budget, in the Poor colour', async () => {
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({ data: { run_id: 'run-5', run_kind: 'root_cause', steps, budgets: { max_calls: 10 } } } as never)
+    render(<WatchRun d={trace({ projection: { run_kind: 'root_cause', cost_usd: 0.5322, max_cost_usd: 0.5 } })} onBack={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('listitem', { name: /^Step 1:/ }))
+    await screen.findByText('Step 1 of 5 · Search')
+    expect(limit('Budget')).toBe('Budget$0.53 of $0.50 · over budget')
+    expect(screen.getByText('Budget').closest('div')?.querySelector('span[style*="--poor"]')).not.toBeNull()
+  })
+
+  it('at the ceiling is not over budget', async () => {
+    await open({ budgets: { max_calls: 10 } }) // $0.50 of $2.00
+    expect(limit('Budget')).not.toMatch(/over budget/)
+  })
+
+  it('says why the chain is empty: a finished run that recorded no step, against one still going or a step not yet reached', async () => {
+    const searches = steps.filter((e) => e.kind === 'search')
+    vi.mocked(workflowApi.replayRun).mockResolvedValue({ data: { run_id: 'run-5', run_kind: 'root_cause', steps: searches, budgets: {} } } as never)
+    const { unmount } = render(<WatchRun d={trace()} onBack={vi.fn()} />)
+    expect(await screen.findByText('This run ended without recording a step.')).toBeInTheDocument()
+    expect(screen.queryByText('No step recorded yet.')).not.toBeInTheDocument()
+    unmount()
+    render(<WatchRun d={trace({ status: 'running' })} onBack={vi.fn()} />)
+    expect(await screen.findByText('No step recorded yet.')).toBeInTheDocument()
+  })
+
   it('says there is no step limit on a ledger with no budgets, and has no reviewer or scope', async () => {
     await open({})
     expect(limit('Steps')).toBe('Steps1 search so far · no step limit recorded')

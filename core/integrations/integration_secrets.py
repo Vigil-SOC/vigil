@@ -287,11 +287,6 @@ def redact_secrets(integration_id: str, config: Dict[str, object]) -> Dict[str, 
     return {k: v for k, v in config.items() if k not in mapping}
 
 
-def secret_field_names(integration_id: str) -> Iterable[str]:
-    """Iterable over the form-field names that are secrets for an integration."""
-    return secret_fields_for(integration_id).keys()
-
-
 # Config keys that say where the integration connects (server_url, connectorUrl,
 # base_url, host, tenant, region, ...).
 _DESTINATION_KEY = re.compile(

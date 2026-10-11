@@ -170,6 +170,73 @@
 .case-needs .needs-reject label { font-size: 12px; color: var(--tx2); }
 .case-needs .needs-reject textarea { box-sizing: border-box; }
 
+/* Checked tab: a card holding a row stack (card.md, row-stack.md) */
+.case-page .case-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+  container-type: inline-size;
+}
+
+.case-page .case-card > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.case-page .case-card > h3 .info-tip { margin: -4px 2px; }
+
+.case-page .case-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-page .case-checked li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 84px 60px 64px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  background: var(--stack-row-bg);
+  font-size: 13px;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.case-page .case-checked li .src { color: var(--tx2); font-size: 12px; }
+
+.case-page .case-checked li .num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: normal;
+}
+
+.case-page .case-checked li.gap {
+  background: var(--poor-bg);
+  color: var(--poor);
+}
+
+/* Narrow card (phone, or the drawer): the question takes a line, the figures share the next */
+@container (max-width: 520px) {
+  .case-page .case-checked li { grid-template-columns: auto auto auto 1fr; gap: 6px 16px; }
+  .case-page .case-checked li > :first-child,
+  .case-page .case-checked li .src { grid-column: 1 / -1; }
+  .case-page .case-checked li .src { margin-top: -6px; }
+}
+
 .case-needs-strip {
   flex-shrink: 0;
   display: flex;
@@ -519,6 +586,7 @@
 
 .case-page .case-assess > span:first-child { margin-right: 4px; }
 .case-page .case-assess .case-assess-later { font-size: 12px; color: var(--tx3); }
+.case-page .case-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .case-page .case-assess .case-actions { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -596,7 +664,14 @@
 .case-page .watch-link { align-self: flex-start; flex-shrink: 0; }
 .case-page .case-stopped .watch-link { margin-left: auto; align-self: center; }
 
+.case-page .case-stage { display: flex; flex: 1; min-height: 0; }
+.case-page .case-mark { display: inline-flex; vertical-align: middle; margin-left: 6px; color: var(--tx2); }
+.case-page .case-fold > summary { cursor: pointer; font-weight: 600; margin: 4px 0; }
+
 .case-page .case-later {
+  display: flex;
+  gap: 10px;
+  opacity: 0.55;
   align-items: center;
   padding: 12px 18px;
   border: 1px solid var(--ln0);
@@ -1024,6 +1099,17 @@
   cursor: pointer;
 }
 
+/* Cases list fills the view (the screen is view-full): head and chips on top, the card takes the
+   rest and scrolls inside, the pager stays below it. */
+.cases-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto; /* only if the head, chips and an open search panel outgrow a short window */
+}
+.cases-list > * { flex-shrink: 0; }
+
 /* Cases list head and chip rows (boards/Cases.dc.html) */
 .cases-top {
   display: flex;
@@ -1268,3 +1354,140 @@
   .case-composer .composer-note { grid-row: 2; grid-column: 1 / -1; white-space: normal; padding-bottom: 2px; }
   .case-composer .ci-send { grid-row: 1; grid-column: 2; }
 }
+/* Cases list table: the board's grid card (boards/Cases.dc.html) */
+.cases-card.list-scroll {
+  margin: 16px 26px 0;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+  min-height: 230px; /* room for an ⓘ popover under a short list */
+  flex: 1 1 0; /* the rows scroll inside the card instead of growing the page */
+  max-height: none;
+  margin-bottom: 0;
+}
+
+.cases-grid { min-width: 1000px; }
+
+.cg-row {
+  display: grid;
+  grid-template-columns: 26px 176px minmax(0, 3fr) 110px 86px 118px 150px 150px 110px 44px;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 16px;
+  border-top: 1px solid var(--ln0);
+}
+
+.cg-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg1);
+  border-top: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tx2);
+}
+
+.cg-th-info { display: flex; align-items: center; gap: 4px; }
+
+.cg-case { scroll-margin-top: 44px; /* a focused row clears the pinned header */ cursor: pointer; font-size: 12px; color: var(--tx1); }
+.cg-case:hover { background: var(--bg2); }
+.cg-case:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+.cg-case.needs { background: color-mix(in oklab, var(--poor) 6%, var(--bg1)); }
+.cg-case.needs:hover { background: color-mix(in oklab, var(--poor) 10%, var(--bg1)); }
+
+.cg-state { border-top: 1px solid var(--ln0); }
+.cg-head + [role='rowgroup'] > .cg-state:first-child { border-top: 0; }
+
+.cg-check {
+  appearance: none;
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border-radius: 5px;
+  border: 1.5px solid var(--ln2);
+  background: transparent;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cg-id { font-family: var(--font-mono); color: var(--tx0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.cg-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cg-title,
+.cg-sub,
+.cg-kind,
+.cg-owner-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cg-title { font-size: 13px; font-weight: 650; color: var(--tx0); }
+.cg-sub { color: var(--tx2); }
+
+.cg-owner { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cg-owner-name { color: var(--tx0); }
+.cg-avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--tx1);
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px var(--bg1);
+}
+
+.cg-time { display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: var(--tx0); white-space: nowrap; }
+
+.cg-limit { display: flex; align-items: center; gap: 8px; }
+.cg-limit .meter-bar { flex: 1 1 0; min-width: 0; } /* the shared bar has no width of its own */
+.cg-pct { width: 32px; text-align: right; font-size: 11px; color: var(--tx1); }
+
+.cg-comments { display: inline-flex; align-items: center; gap: 4px; color: var(--tx1); }
+.cg-comments.none { color: var(--tx3); }
+
+.cases-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 12px 26px;
+  font-size: 12px;
+  color: var(--tx2);
+}
+
+.cases-pager label { display: inline-flex; align-items: center; gap: 8px; }
+
+.cases-pager select {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--ln1);
+  background: var(--bg2);
+  color: var(--tx1);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cases-pager-nav { display: flex; gap: 6px; }
+
+.cases-pager-nav button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid var(--ln2);
+  background: transparent;
+  color: var(--tx1);
+  cursor: pointer;
+}
+
+.cases-pager-nav button:hover:not(:disabled) { background: var(--bg3); color: var(--tx0); }
+.cases-pager-nav button:disabled { opacity: 0.4; cursor: not-allowed; }

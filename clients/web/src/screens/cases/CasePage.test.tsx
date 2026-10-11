@@ -48,7 +48,6 @@ vi.mock('../../services/api', () => ({
   orchestratorApi: { exportInvestigation: vi.fn() },
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
-  timelineApi: { getCaseTimeline: vi.fn() },
   default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   conversationsApi: {
@@ -231,8 +230,15 @@ describe('case page', () => {
     expect(await screen.findByText('no login')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /Checked/ }))
-    const latency = await screen.findByRole('columnheader', { name: 'Latency' })
-    expect(within(latency.closest('table') as HTMLElement).getByText('—')).toBeInTheDocument()
+    const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+    expect(card).toHaveTextContent('What Vigil checked · 2 queries · $0.20')
+    expect(card).not.toHaveTextContent('no source')
+    // the run's cost, not the row's; the row shows its own turn's cost and size in chars
+    const row = within(card).getByText('who logged in').closest('li') as HTMLElement
+    expect(row).toHaveTextContent('search')
+    expect(row).toHaveTextContent('12 chars')
+    expect(row).toHaveTextContent('$0.01')
+    expect(row).toHaveTextContent('—')
   })
 
   const huntCase = (id: string) => {
@@ -541,11 +547,11 @@ describe('case page', () => {
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
     expect(within(doors).getByText('0 support · 0 go against · 1 neither')).toBeInTheDocument()
-    expect(within(doors).getByText('$0.2000 · 0 gaps')).toBeInTheDocument()
+    expect(within(doors).getByText('$0.20 · 0 gaps')).toBeInTheDocument()
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())
     fireEvent.click(within(doors).getByRole('button', { name: /^Checked/ }))
-    expect(await screen.findByRole('columnheader', { name: 'Latency' })).toBeInTheDocument()
+    expect(await screen.findByText(/What Vigil checked/)).toBeInTheDocument()
   })
 
   it('shows a run started on the case with no investigation row, before it has reported', async () => {
@@ -632,6 +638,81 @@ describe('case page', () => {
     expect(screen.queryByRole('region', { name: 'Now' })).not.toBeInTheDocument()
   })
 
+  describe('Checked tab', () => {
+    const leadCase = (run: unknown) => {
+      testState.cases = [{
+        case_id: 'case-chk',
+        title: 'Checked case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [investigation('completed', false, 'run-chk')],
+      }]
+      testState.runs['run-chk'] = run
+      renderCase('case-chk')
+    }
+    const openChecked = async () => {
+      await screen.findByRole('heading', { name: 'Checked case' })
+      fireEvent.click(screen.getByRole('tab', { name: /^Checked/ }))
+    }
+    const lead = (extra: Record<string, unknown>) => ({
+      projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null, outcome: null, reason: '', cost_usd: null, ...extra },
+    })
+
+    it('says the run is loading, not that nothing was asked', async () => {
+      testState.cases = [{ ...testState.cases[0], case_id: 'case-chk', title: 'Checked case', finding_ids: [], investigations: [investigation('open', false, 'run-chk')] }]
+      vi.mocked(workflowApi.getRun).mockReturnValueOnce(new Promise(() => {}))
+      renderCase('case-chk')
+      await openChecked()
+      expect(await screen.findByText('Loading the run…', { selector: 'h3' })).toBeInTheDocument()
+      expect(screen.queryByText('No questions asked yet')).not.toBeInTheDocument()
+    })
+
+    it('says the run could not be read', async () => {
+      testState.cases = [{ case_id: 'case-chk', title: 'Checked case', status: 'open', priority: 'low', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [investigation('open', false, 'run-chk')] }]
+      vi.mocked(workflowApi.getRun).mockRejectedValueOnce(new Error('down'))
+      renderCase('case-chk')
+      await openChecked()
+      expect(await screen.findByRole('alert')).toHaveTextContent('The run could not be read.')
+    })
+
+    it('puts no-source gaps after the calls, in red, outside the query count; "—" when the run has no cost', async () => {
+      leadCase(lead({
+        calls: [{ question: 'who logged in', tool: 'okta', result_length: 1240, cost_usd: 0.02, duration_ms: 800 }],
+        gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: 'tool down', query_intent: 'list users' }],
+      }))
+      await openChecked()
+      const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 1 query · — · 1 with no source')
+      const rows = card.querySelectorAll('li')
+      expect(rows).toHaveLength(2)
+      expect(rows[0]).toHaveTextContent('okta')
+      expect(rows[0]).toHaveTextContent('1,240 chars')
+      expect(rows[0]).toHaveTextContent('0.8 s')
+      expect(rows[1]).toHaveClass('gap')
+      expect(rows[1]).toHaveTextContent('list users — tool down')
+      expect(rows[1]).toHaveTextContent('No source')
+      fireEvent.click(within(card).getByRole('button', { name: 'About the cost' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent(/turn's cost/)
+    })
+
+    it('keeps the header and red rows when there are gaps but no calls', async () => {
+      leadCase(lead({ cost_usd: 0.5, gaps: [{ dispatch_id: 'dsp-1', agent_id: 'worker', failure_reason: null, query_intent: 'list users' }] }))
+      await openChecked()
+      const card = (await screen.findByText(/What Vigil checked/)).closest('section') as HTMLElement
+      expect(card.querySelector('h3')).toHaveTextContent('What Vigil checked · 0 queries · $0.50 · 1 with no source')
+      expect(card.querySelectorAll('li')).toHaveLength(1)
+    })
+
+    it('shows the empty state for a ready run with no calls and no gaps', async () => {
+      leadCase(lead({}))
+      await openChecked()
+      expect(await screen.findByText('No questions asked yet')).toBeInTheDocument()
+    })
+  })
+
   const CLOSURE = {
     closure_category: 'false_positive',
     closed_by: 'ada',
@@ -660,8 +741,8 @@ describe('case page', () => {
     renderCase('case-closed')
 
     expect(await screen.findByRole('heading', { name: 'the scanner' })).toBeInTheDocument()
-    expect(screen.getByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada · False positive · analyst$/)).toBeInTheDocument()
-    expect(screen.getByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toBeInTheDocument()
+    // the header reason and the Summary read the same line
+    expect(screen.getAllByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada · False positive · analyst$/)).toHaveLength(2)
     expect(document.querySelector('.case-sla')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Replay' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agree' })).toBeDisabled()
@@ -669,6 +750,30 @@ describe('case page', () => {
     expect(screen.getByText('Coming in a later release')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
     await waitFor(() => expect(casesApi.update).toHaveBeenCalledWith('case-closed', { status: 'open' }))
+  })
+
+  it('drops a missing category and closer kind from the Closed line without stray separators', async () => {
+    closedCase({ ...CLOSURE, closure_category: '', closed_by_kind: '' })
+    testState.runs['run-closed'] = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
+    renderCase('case-closed')
+
+    expect(await screen.findAllByText(/^Closed Jun 15, 2026 · \d\d:\d\d by ada$/)).toHaveLength(2)
+  })
+
+  it('shows Loading the run, never the honest line, on Explanations while the case read is in flight', async () => {
+    const lead = { projection: { iterations: 1, decisions: [], findings: [], calls: [], gaps: [], recall: null } }
+    testState.runs['run-closed'] = lead
+    closedCase(CLOSURE)
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const row = testState.cases[0]
+    vi.mocked(casesApi.getById).mockImplementationOnce((async () => { await held; return { data: row } }) as never)
+    renderCase('case-closed')
+    fireEvent.click(await screen.findByRole('tab', { name: /Explanations/ }))
+    expect(screen.getByText('Loading the run…')).toBeInTheDocument()
+    expect(screen.queryByText('This workflow does not test explanations yet.')).not.toBeInTheDocument()
+    release()
+    expect(await screen.findByText('This workflow does not test explanations yet.')).toBeInTheDocument()
   })
 
   it('lists the strongest hunt rows with step and stance, both sides first', async () => {
@@ -843,13 +948,14 @@ describe('case page', () => {
       expect(screen.getByText('Lead started step 7').closest('.rec-row')).toHaveTextContent('chained')
       expect(screen.getByText('M. Kaur closed the task').closest('.rec-row')).not.toHaveTextContent('chained')
       expect(screen.queryByRole('button', { name: 'Gate' })).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Human' }))
-      expect(screen.getByRole('button', { name: 'Human' })).toHaveAttribute('aria-pressed', 'true')
+      for (const name of ['Agent 1', 'Human 1', 'Memory 1', 'System 1']) expect(screen.getByRole('button', { name })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Human 1' }))
+      expect(screen.getByRole('button', { name: 'Human 1' })).toHaveAttribute('aria-pressed', 'true')
       expect(screen.getByText('M. Kaur closed the task')).toBeInTheDocument()
       expect(screen.queryByText('Lead started step 7')).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Memory' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Memory 1' }))
       expect(screen.getByText('Recalled 3 rows')).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'System' }))
+      fireEvent.click(screen.getByRole('button', { name: 'System 1' }))
       expect(screen.getByText('Run started')).toBeInTheDocument()
       expect(screen.queryByText('Recalled 3 rows')).not.toBeInTheDocument()
     })
@@ -878,7 +984,7 @@ describe('case page', () => {
       expect(onBack).toHaveBeenCalled()
     })
 
-    it('has no Replay link without a run', async () => {
+    it('shows Replay disabled, with an ⓘ saying why, without a run', async () => {
       testState.recordRows = rows
       testState.cases = [{
         case_id: 'case-rec',
@@ -894,6 +1000,9 @@ describe('case page', () => {
       fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
       await screen.findByText('Lead started step 7')
       expect(screen.queryByRole('link', { name: 'Replay' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Replay' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Why Replay is unavailable' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('This case has no run to replay.')
       expect(screen.queryByRole('button', { name: 'Verify chain' })).not.toBeInTheDocument()
     })
 
@@ -911,6 +1020,22 @@ describe('case page', () => {
       await waitFor(() => expect(orchestratorApi.exportInvestigation).toHaveBeenCalledWith('inv-1'))
       expect(createUrl).toHaveBeenCalled()
     })
+    it('disables Export audit, with an ⓘ saying why, when the run has no investigation id', async () => {
+      testState.recordRows = rows
+      await openRecord(() => {
+        const [row] = testState.cases as unknown as { investigations: unknown[] }[]
+        row.investigations = row.investigations.map((item) => ({ ...(item as object), investigation_id: null }))
+        return renderCase('case-rec')
+      })
+      const button = await screen.findByRole('button', { name: 'Export audit' })
+      expect(button).toBeDisabled()
+      vi.mocked(orchestratorApi.exportInvestigation).mockClear()
+      fireEvent.click(button)
+      expect(orchestratorApi.exportInvestigation).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Why Export audit is unavailable' }))
+      expect(screen.getByRole('tooltip')).toHaveTextContent('This run has no investigation record to export.')
+    })
+
   })
 
   it('pins Ask on the case and keeps Tell and Do from posting', async () => {
@@ -1037,32 +1162,25 @@ describe('case page', () => {
     await waitFor(() => expect(screen.queryByText(/The row e1 matters/)).not.toBeInTheDocument())
   })
 
-  it('approves a reversible ask on one press and holds an irreversible ask for 1600ms', async () => {
-    testState.cases = [{
-      case_id: 'case-dec',
-      title: 'Decision case',
-      status: 'open',
-      priority: 'high',
-      finding_ids: [],
-      created_at: '2026-06-15T09:14:00Z',
-      combined_state: 'open',
-      investigations: [],
-    }]
-    vi.mocked(approvalsApi.needsYou).mockResolvedValue({
-      data: {
-        count: 2,
-        items: [
-          need(),
-          need({
-            source_id: 'act-irr',
-            title: 'Isolate host',
-            reason: '',
-            kind: 'checkpoint',
-            reversibility: 'irreversible',
-          }),
-        ],
-      },
-    } as never)
+  const decCase = {
+    case_id: 'case-dec',
+    title: 'Decision case',
+    status: 'open',
+    priority: 'high',
+    finding_ids: [],
+    created_at: '2026-06-15T09:14:00Z',
+    combined_state: 'open',
+    investigations: [],
+  }
+  const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+  const queue = (...items: NeedsYouItem[]) =>
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: items.length, items } } as never)
+  const irreversible = () =>
+    need({ source_id: 'act-irr', title: 'Isolate host', reason: '', kind: 'checkpoint', reversibility: 'irreversible' })
+
+  it('shows a reversible and an irreversible ask with their own controls', async () => {
+    testState.cases = [decCase]
+    queue(need(), irreversible())
     renderCase('case-dec')
 
     expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
@@ -1077,18 +1195,93 @@ describe('case page', () => {
     expect(screen.getAllByRole('button', { name: /Press and hold to confirm/ })).toHaveLength(1)
     expect(screen.getByText('Hold to approve')).toBeInTheDocument()
     expect(approvalsApi.needsYou).toHaveBeenCalledWith('case-dec')
+  })
 
-    const before = vi.mocked(approvalsApi.needsYou).mock.calls.length
+  it('approves a reversible ask after the 8 s fuse, not before, then refreshes the list', async () => {
+    testState.cases = [decCase]
+    queue(need())
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    renderCase('case-dec')
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
     const changed = vi.fn()
     window.addEventListener(CASES_CHANGED, changed)
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    expect(approvalsApi.approve).toHaveBeenCalledWith('act-1')
-    await waitFor(() => expect(vi.mocked(approvalsApi.needsYou).mock.calls.length).toBeGreaterThan(before))
-    // The list behind the drawer refreshes too.
-    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
-    window.removeEventListener(CASES_CHANGED, changed)
 
-    const hold = screen.getByRole('button', { name: /Press and hold to confirm/ })
+    vi.useFakeTimers()
+    try {
+      const before = vi.mocked(approvalsApi.needsYou).mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      expect(screen.getByText('Approving: Block 1.2.3.4')).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+
+      await tick(7999)
+      expect(approvalsApi.approve).not.toHaveBeenCalled()
+      expect(changed).not.toHaveBeenCalled()
+      queue()
+      await tick(1)
+      expect(approvalsApi.approve).toHaveBeenCalledWith('act-1')
+      expect(screen.getByText('Approved: Block 1.2.3.4')).toBeInTheDocument()
+      expect(vi.mocked(approvalsApi.needsYou).mock.calls.length).toBeGreaterThan(before)
+      expect(changed).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(CASES_CHANGED, changed)
+      vi.useRealTimers()
+    }
+  })
+
+  it('Undo sends nothing and brings the block back', async () => {
+    testState.cases = [decCase]
+    queue(need())
+    renderCase('case-dec')
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      await tick(3000)
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+      expect(screen.getByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+      await tick(10_000)
+      expect(approvalsApi.approve).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sends the typed reason when rejecting, through the fuse', async () => {
+    testState.cases = [decCase]
+    queue(need({ source_id: 'act-no', title: 'Disable account' }))
+    vi.mocked(approvalsApi.reject).mockResolvedValue({} as never)
+    renderCase('case-dec')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
+    const submit = screen.getByRole('button', { name: 'Confirm reject' })
+    expect(submit).toBeDisabled()
+    fireEvent.submit(submit.closest('form') as HTMLFormElement)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rejection reason' }), {
+      target: { value: 'not our host' },
+    })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(submit)
+      expect(approvalsApi.reject).not.toHaveBeenCalled()
+      expect(screen.getByText('Rejecting: Disable account')).toBeInTheDocument()
+      await tick(8000)
+      expect(approvalsApi.reject).toHaveBeenCalledOnce()
+      expect(approvalsApi.reject).toHaveBeenCalledWith('act-no', 'not our host')
+      expect(screen.getByText('Rejected: Disable account')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('commits a held irreversible approve at once, with no fuse', async () => {
+    testState.cases = [decCase]
+    queue(irreversible())
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    renderCase('case-dec')
+    const hold = await screen.findByRole('button', { name: /Press and hold to confirm/ })
+
     vi.useFakeTimers()
     try {
       fireEvent.pointerDown(hold)
@@ -1099,44 +1292,91 @@ describe('case page', () => {
       act(() => {
         vi.advanceTimersByTime(1600)
       })
-      expect(approvalsApi.approve).not.toHaveBeenCalledWith('act-irr')
+      expect(approvalsApi.approve).not.toHaveBeenCalled()
 
       fireEvent.pointerDown(hold)
       act(() => {
         vi.advanceTimersByTime(1600)
       })
       expect(approvalsApi.approve).toHaveBeenCalledWith('act-irr')
+      expect(screen.queryByText(/Approving:/)).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('sends the typed reason when rejecting from the case', async () => {
-    testState.cases = [{
-      case_id: 'case-dec',
-      title: 'Decision case',
-      status: 'open',
-      priority: 'high',
-      finding_ids: [],
-      created_at: '2026-06-15T09:14:00Z',
-      combined_state: 'open',
-      investigations: [],
-    }]
-    vi.mocked(approvalsApi.needsYou).mockResolvedValue({
-      data: { count: 1, items: [need({ source_id: 'act-no', title: 'Disable account' })] },
-    } as never)
-    renderCase('case-dec')
+  it('keeps the item hidden across a needs-you poll while the commit is in flight', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      testState.cases = [decCase]
+      queue(need())
+      vi.mocked(approvalsApi.approve).mockReturnValue(new Promise(() => {}) as never)
+      renderCase('case-dec')
+      await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
-    const submit = screen.getByRole('button', { name: 'Confirm reject' })
-    expect(submit).toBeDisabled()
-    fireEvent.submit(submit.closest('form') as HTMLFormElement)
-    expect(approvalsApi.reject).not.toHaveBeenCalled()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Rejection reason' }), {
-      target: { value: 'not our host' },
-    })
-    fireEvent.click(submit)
-    expect(approvalsApi.reject).toHaveBeenCalledWith('act-no', 'not our host')
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      const before = vi.mocked(approvalsApi.needsYou).mock.calls.length
+      await tick(21_000) // past the 8 s fuse and the 20 s poll; the server still lists the item
+      expect(approvalsApi.approve).toHaveBeenCalledOnce()
+      expect(vi.mocked(approvalsApi.needsYou).mock.calls.length).toBeGreaterThan(before)
+      expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Needs you')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refreshes the list when the fused commit fails, and the block returns', async () => {
+    testState.cases = [decCase]
+    queue(need())
+    vi.mocked(approvalsApi.approve).mockRejectedValue({ response: { data: { detail: 'already decided' } } })
+    renderCase('case-dec')
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+    const changed = vi.fn()
+    window.addEventListener(CASES_CHANGED, changed)
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      await tick(8000)
+      expect(screen.getByRole('alert')).toHaveTextContent('already decided')
+      expect(screen.getByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+      expect(changed).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(CASES_CHANGED, changed)
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the fuse running when the case page is closed', async () => {
+    testState.cases = [decCase]
+    queue(need())
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    const view = render(
+      <MemoryRouter>
+        <ToastProvider>
+          <CasesDetail id="case-dec" onBack={vi.fn()} pageKey="cases" />
+        </ToastProvider>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      await tick(3000)
+      view.rerender(
+        <MemoryRouter>
+          <ToastProvider>{null}</ToastProvider>
+        </MemoryRouter>,
+      )
+      await tick(4999)
+      expect(approvalsApi.approve).not.toHaveBeenCalled()
+      await tick(1)
+      expect(approvalsApi.approve).toHaveBeenCalledWith('act-1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('titles the block with how long it has waited and drops empty rows', async () => {
@@ -1167,11 +1407,12 @@ describe('case page', () => {
     expect(document.querySelector('.case-needs')).toBeNull()
     unmount()
 
-    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need()] } } as never)
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 1, items: [need({ reversibility: 'irreversible' })] } } as never)
     vi.mocked(approvalsApi.approve).mockRejectedValueOnce({ response: { data: { detail: 'Already decided' } } })
     renderCase('case-dec')
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Already decided')
+    const hold = await screen.findByRole('button', { name: /Press and hold to confirm/ })
+    fireEvent.pointerDown(hold)
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already decided'), { timeout: 3000 })
   })
 
   it('puts the decision block ahead of the verdict on a closed case', async () => {
@@ -1242,7 +1483,7 @@ describe('case page', () => {
       expect(screen.getByText('Loading case…')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Case actions' })).not.toBeInTheDocument()
       expect(await screen.findByRole('heading', { name: 'Frame case' })).toBeInTheDocument()
-      expect(screen.getByText('Case case-9')).toBeInTheDocument()
+      expect(screen.getByText('case-9')).toBeInTheDocument()
       expect(screen.queryByText('All cases')).not.toBeInTheDocument()
     })
 
@@ -1287,12 +1528,12 @@ describe('case page', () => {
       expect(await within(head).findByText('incident-response')).toBeInTheDocument()
     })
 
-    it('writes the empty header for a case with no workflow or SLA', async () => {
-      vi.mocked(casesApi.getSLA).mockRejectedValueOnce(new Error('no sla'))
+    it('leaves the workflow slot out of the header for a case with no run or SLA', async () => {
+      vi.mocked(casesApi.getSLA).mockResolvedValueOnce({ data: null } as never)
       testState.cases = [open('case-9')]
       renderDetail('case-9')
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
-      expect(within(head).getByText('No workflow')).toBeInTheDocument()
+      expect(within(head).queryByText('No workflow')).not.toBeInTheDocument()
       expect(within(head).getByText(/Resolve by —/)).toBeInTheDocument()
       expect(within(head).getByText('Open')).toHaveClass('idle')
       expect(head.querySelector('.case-reason')).toBeNull()
@@ -1314,7 +1555,7 @@ describe('case page', () => {
       expect(document.querySelector('.case-needs-strip')).toBeNull()
     })
 
-    it('has Expand and Close only in the drawer', async () => {
+    it('drawer has Expand and Close; the full page has Close only', async () => {
       testState.cases = [open('case-9')]
       const onBack = vi.fn()
       const onExpand = vi.fn()
@@ -1324,12 +1565,36 @@ describe('case page', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Close' }))
       expect(onExpand).toHaveBeenCalledTimes(1)
       expect(onBack).toHaveBeenCalledTimes(1)
+      fireEvent.keyDown(window, { key: 'Escape' }) // the drawer owns Escape
+      expect(onBack).toHaveBeenCalledTimes(1)
       unmount()
 
-      renderDetail('case-9')
+      const onBackPage = vi.fn()
+      renderDetail('case-9', { onBack: onBackPage })
       await screen.findByRole('heading', { name: 'Frame case' })
       expect(screen.queryByRole('button', { name: 'Expand' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      expect(onBackPage).toHaveBeenCalledTimes(1)
+    })
+
+    it('full page: Escape calls onBack, unless a menu is open, the key was handled, or a field has focus', async () => {
+      testState.cases = [open('case-9')]
+      const onBack = vi.fn()
+      renderDetail('case-9', { onBack })
+      await screen.findByRole('heading', { name: 'Frame case' })
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Case actions' }))
+      fireEvent.keyDown(document.body, { key: 'Escape' }) // closes only the menu
+      expect(onBack).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+      const box = document.createElement('textarea')
+      document.body.appendChild(box)
+      fireEvent.keyDown(box, { key: 'Escape' })
+      box.remove()
+      expect(onBack).toHaveBeenCalledTimes(1)
     })
 
     it('opens Edit and Merge from the ⋯ menu; Merge loads its own picker', async () => {
@@ -1446,9 +1711,9 @@ describe('case page', () => {
       renderDetail('case-9')
       const panel = await side()
       expect(await panel.findByText('Incident response')).toBeInTheDocument()
-      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.0000')
+      expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$2.00')
       expect(await panel.findByText('host-1, ada')).toBeInTheDocument()
-      expect(panel.getByText('$1.0000 of $2.0000')).toBeInTheDocument()
+      expect(panel.getByText('$1.00 of $2.00')).toBeInTheDocument()
       expect(panel.getByText('Fair')).toHaveClass('fair')
       const meter = panel.getByRole('meter')
       expect(meter).toHaveAttribute('aria-valuenow', '50')
@@ -1761,9 +2026,9 @@ describe('watching a run, its cost and its agents', () => {
   it('shows a hunt’s live cost against the cap off the run, and keeps it once parked', async () => {
     open('case-c', { status: 'running', hunt: hunt({ cost_usd: 1.4989, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
     const panel = await side()
-    expect(await panel.findByText('$1.4989 of $5.0000')).toBeInTheDocument()
+    expect(await panel.findByText('$1.50 of $5.00')).toBeInTheDocument()
     expect(panel.getByText('Good')).toBeInTheDocument()
-    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$5.0000')
+    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$5.00')
     expect(panel.queryByText('Not measured yet')).not.toBeInTheDocument()
     // The header's trust strip is a different thing and stays.
     expect(within(document.querySelector('.dh-meta') as HTMLElement).getByText(/Not measured yet/)).toBeInTheDocument()
@@ -1771,20 +2036,44 @@ describe('watching a run, its cost and its agents', () => {
 
     open('case-c2', { status: 'running', hunt: hunt({ status: 'parked', cost_usd: 4.8, budgets: { max_iterations: 10, max_cost_usd: 5 } }) })
     const parked = await side()
-    expect(await parked.findByText('$4.8000 of $5.0000')).toBeInTheDocument()
+    expect(await parked.findByText('$4.80 of $5.00')).toBeInTheDocument()
     expect(parked.getByText('Poor')).toBeInTheDocument()
   })
 
   it('shows the cost alone when no cap is known, and Not measured only when no cost is', async () => {
     open('case-c3', { status: 'running', hunt: hunt({ cost_usd: 0.4 }) })
     const panel = await side()
-    expect(await panel.findByText('$0.4000')).toBeInTheDocument()
+    expect(await panel.findByText('$0.40')).toBeInTheDocument()
     expect(panel.queryByRole('meter')).not.toBeInTheDocument()
     expect(panel.queryByText('Good')).not.toBeInTheDocument()
     cleanup()
 
     open('case-c4', { status: 'running', hunt: hunt({ cost_usd: 0 }) })
     expect(await (await side()).findByText('Not measured yet')).toBeInTheDocument()
+  })
+
+  it('shows a lead run’s cost against the cap off its projection, and never past full', async () => {
+    const lead = (cost: number, cap: number) => ({
+      status: 'completed',
+      projection: { iterations: 2, decisions: [], findings: [], calls: [], gaps: [], recall: null, outcome: 'completed', reason: 'done', cost_usd: cost, max_cost_usd: cap },
+    })
+    open('case-l1', lead(2.1, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
+    const panel = await side()
+    expect(await panel.findByText('$2.10 of $15.00')).toBeInTheDocument()
+    expect(panel.getByText('Good')).toBeInTheDocument()
+    expect(panel.getByText('Limit').nextElementSibling).toHaveTextContent('$15.00')
+    cleanup()
+
+    open('case-l2', lead(20, 15), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 20 })
+    const over = await side()
+    expect(await over.findByText('$20.00 of $15.00')).toBeInTheDocument()
+    expect(over.getByRole('meter')).toHaveAttribute('aria-valuenow', '100')
+    cleanup()
+
+    open('case-l3', lead(2.1, 0), { workflow_id: 'root-cause-analysis', live: false, cost_usd: 2.1 })
+    const none = await side()
+    expect(await none.findByText('$2.10')).toBeInTheDocument()
+    expect(none.queryByRole('meter')).not.toBeInTheDocument()
   })
 
   it('lists agents only while the run is in flight', async () => {

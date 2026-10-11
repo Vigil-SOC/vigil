@@ -121,6 +121,8 @@ export interface LeadFold {
   outcome: string | null
   reason: string
   costUsd: number | null
+  /** What this run was granted; null when the projection carries no positive cap. */
+  maxCostUsd: number | null
 }
 
 export type RunFold = HuntFold | LeadFold
@@ -435,6 +437,7 @@ function asLead(raw: Record<string, unknown>, run: RunMeta): LeadFold {
     outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
     reason: str(raw.reason),
     costUsd: num(raw.cost_usd),
+    maxCostUsd: (num(raw.max_cost_usd) ?? 0) > 0 ? num(raw.max_cost_usd) : null,
   }
 }
 

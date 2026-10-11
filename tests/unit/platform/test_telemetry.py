@@ -8,8 +8,9 @@ data patterns are scrubbed before leaving the process.
 import json
 import os
 import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,21 +164,6 @@ class TestMeterProviderReaders:
 # ---------------------------------------------------------------------------
 
 
-class TestInvestigationContext:
-    def test_default_is_none(self):
-        from core.telemetry import get_investigation_id
-
-        get_investigation_id()  # must not raise
-
-    def test_set_and_get(self):
-        from core.telemetry import set_investigation_id, get_investigation_id
-
-        set_investigation_id("inv-test-123")
-        assert get_investigation_id() == "inv-test-123"
-        set_investigation_id(None)
-        assert get_investigation_id() is None
-
-
 # ---------------------------------------------------------------------------
 # Structured logging
 # ---------------------------------------------------------------------------
@@ -226,7 +212,9 @@ class TestJsonLogging:
         import core.telemetry as tel
 
         monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
-        monkeypatch.setattr(tel, "get_settings", lambda: MagicMock(vigil_log_format="json"))
+        monkeypatch.setattr(
+            tel, "get_settings", lambda: MagicMock(vigil_log_format="json")
+        )
         root = logging.getLogger()
         saved, level = root.handlers[:], root.level
         try:

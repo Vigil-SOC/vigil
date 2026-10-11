@@ -16,7 +16,7 @@ vi.mock('../../services/api', () => ({
 
 const sources = [
   { id: 'sigma', name: 'SigmaHQ', type: 'git', git_url: 'https://github.com/SigmaHQ/sigma.git', format: 'sigma', subdirectory: '', story_subdirectory: '', rule_count: 3120, last_updated: null, status: 'ready' },
-  { id: 'esc', name: 'Splunk ESCU', type: 'git', git_url: 'https://github.com/splunk/security_content', format: 'splunk', subdirectory: '', story_subdirectory: '', rule_count: 0, last_updated: null, status: 'not_cloned' },
+  { id: 'esc', name: 'Security Content', type: 'git', git_url: 'https://github.com/splunk/security_content', format: 'splunk', subdirectory: '', story_subdirectory: '', rule_count: 0, last_updated: null, status: 'not_cloned' },
   { id: 'odd', name: 'Odd', type: 'local', git_url: '', format: 'weird', subdirectory: '', story_subdirectory: '', rule_count: 5, last_updated: null, status: 'error' },
 ]
 
@@ -38,33 +38,33 @@ describe('detection rule sources', () => {
     renderPanel()
     const row = (await screen.findByText('SigmaHQ')).closest('tr') as HTMLElement
 
-    expect(within(row).getByText('sigma')).toBeInTheDocument()
+    expect(within(row).getByText('Sigma')).toBeInTheDocument()
     expect(within(row).getByText('github.com/SigmaHQ/sigma')).toBeInTheDocument()
     expect(within(row).getByText('3,120')).toBeInTheDocument()
-    expect(screen.getByText('3,125 total rules')).toBeInTheDocument()
+    expect(screen.getByText(/searches across 3,125 rules/)).toBeInTheDocument()
   })
 
-  it('tints known formats by token class, with no inline colour', async () => {
+  it('names a known format plainly and falls back to the raw id', async () => {
     renderPanel()
-    const row = (await screen.findByText('SigmaHQ')).closest('tr') as HTMLElement
+    const sigma = (await screen.findByText('SigmaHQ')).closest('tr') as HTMLElement
 
-    const chip = within(row).getByText('sigma')
-    expect(chip).toHaveClass('fmt-sigma')
-    expect(chip.getAttribute('style')).toBeNull()
-    expect(within(screen.getByText('Odd').closest('tr') as HTMLElement).getByText('weird')).not.toHaveClass('fmt-weird')
+    expect(within(sigma).getByText('Sigma')).not.toHaveClass('chip')
+    expect(within(screen.getByText('Security Content').closest('tr') as HTMLElement).getByText('Splunk ESCU')).toBeInTheDocument()
+    expect(within(screen.getByText('Odd').closest('tr') as HTMLElement).getByText('weird')).toBeInTheDocument()
+    expect(screen.queryByText(/total rules/)).not.toBeInTheDocument()
   })
 
   it('keeps clone and remove, and updates a source in place', async () => {
     vi.mocked(detectionRulesApi.updateSource).mockResolvedValue({ data: {} } as never)
     const notify = renderPanel()
-    const esc = (await screen.findByText('Splunk ESCU')).closest('tr') as HTMLElement
+    const esc = (await screen.findByText('Security Content')).closest('tr') as HTMLElement
 
     expect(within(esc).getByText('Not cloned')).toBeInTheDocument()
     fireEvent.click(within(esc).getByRole('button', { name: 'Clone' }))
     await waitFor(() => expect(detectionRulesApi.updateSource).toHaveBeenCalledWith('esc'))
     await waitFor(() => expect(notify).toHaveBeenCalledWith('ok', 'Source updated and MCP server restarted.'))
 
-    fireEvent.click(within(esc).getByRole('button', { name: 'Remove Splunk ESCU' }))
+    fireEvent.click(within(esc).getByRole('button', { name: 'Remove Security Content' }))
     expect(await screen.findByText('Remove (keep files)')).toBeInTheDocument()
   })
 

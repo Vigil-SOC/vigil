@@ -76,6 +76,7 @@ def _orchestrator(**extra) -> Orchestrator:
         return_value=(_Overlap.MERGED, "case-1")
     )
     orch._in_flight = MagicMock(return_value=0)
+    orch._running = MagicMock(return_value=0)
     orch._schedule_runs_in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
     orch._hourly_budget_exhausted = MagicMock(return_value=False)
@@ -199,6 +200,7 @@ async def test_one_slot_launches_critical_then_older_high():
     orch.config.max_concurrent_agents = 1
     orch._create_investigation = create
     orch._in_flight = lambda: inflight["n"]
+    orch._running = lambda: inflight["n"]
 
     findings = {
         "f-h1": {
@@ -248,6 +250,7 @@ async def test_one_slot_launches_medium_before_low_before_unrated():
     orch.config.max_concurrent_agents = 1
     orch._create_investigation = create
     orch._in_flight = lambda: inflight["n"]
+    orch._running = lambda: inflight["n"]
     findings = {
         "f-none": {"finding_id": "f-none", "severity": None, "entity_context": {}},
         "f-low": {"finding_id": "f-low", "severity": "low", "entity_context": {}},
@@ -277,6 +280,7 @@ async def test_one_slot_launches_medium_before_low_before_unrated():
 async def test_past_ttl_expires_with_a_reason_even_when_no_slot_is_free():
     orch = _orchestrator()
     orch._in_flight = MagicMock(return_value=orch.config.max_concurrent_agents)
+    orch._running = MagicMock(return_value=orch.config.max_concurrent_agents)
     expired = _detection(
         "critical",
         age_s=TTL + 1,
@@ -305,6 +309,7 @@ async def test_past_ttl_expires_with_a_reason_even_when_no_slot_is_free():
 async def test_overlap_and_expiry_resolve_when_the_fleet_is_full():
     orch = _orchestrator()
     orch._in_flight = MagicMock(return_value=orch.config.max_concurrent_agents)
+    orch._running = MagicMock(return_value=orch.config.max_concurrent_agents)
     orch.shared_intel.check_overlap.side_effect = lambda finding: (
         ["inv-1"] if finding["finding_id"] == "f-overlap" else None
     )
@@ -360,6 +365,7 @@ def _slot_orchestrator(rows, *, inflight=0, schedule_inflight=0):
     orch._create_investigation = create
     orch._create_manual_investigation = create
     orch._in_flight = lambda: count["n"]
+    orch._running = lambda: count["n"]
     orch._schedule_runs_in_flight = MagicMock(return_value=schedule_inflight)
     orch._hydrate_detection_finding = MagicMock(
         side_effect=lambda row: {
@@ -452,3 +458,42 @@ async def test_pickup_only_walks_assigned():
 
     assert seen == ["assigned"]
     orch._enqueue_investigation.assert_not_awaited()
+
+
+def _pickup_orchestrator(assigned, *, running=0):
+    """Pickup over `assigned` dict rows; each enqueue starts a running row."""
+    state = {"running": running}
+
+    async def enqueue(_inv):
+        state["running"] += 1
+
+    orch = _orchestrator()
+    orch._get_investigations_by_status = lambda status: list(assigned)
+    orch._update_investigation_status = MagicMock()
+    orch._enqueue_investigation = AsyncMock(side_effect=enqueue)
+    orch._running = lambda: state["running"]
+    return orch
+
+
+@pytest.mark.asyncio
+async def test_pickup_resumes_assigned_rows_that_fill_the_in_flight_cap():
+    # The three assigned rows are the whole in-flight count (cap 3) and
+    # nothing is running: on main the slot check reads them as full and
+    # pickup resumes none of them (#1874).
+    assigned = [{"investigation_id": f"inv-{n}"} for n in range(3)]
+    orch = _pickup_orchestrator(assigned)
+    orch._in_flight = MagicMock(return_value=3)
+
+    await orch._pickup_assigned_investigations(None)
+
+    assert orch._enqueue_investigation.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_pickup_resumes_at_most_the_free_running_slots():
+    assigned = [{"investigation_id": f"inv-{n}"} for n in range(3)]
+    orch = _pickup_orchestrator(assigned, running=2)
+
+    await orch._pickup_assigned_investigations(None)
+
+    assert orch._enqueue_investigation.await_count == 1

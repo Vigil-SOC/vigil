@@ -24,6 +24,19 @@ export interface FoldPolicy {
 // inside any provider's window and inside the gateway's own per-request ceiling.
 export const DEFAULT_FOLD: FoldPolicy = { head: 2, tail: 8, max_messages: 40, max_chars: 120_000 };
 
+// What a model's window lets the request weigh, in characters: the window less an
+// output reservation, at a chars-per-token that survives JSON-heavy tool results with
+// margin for wire growth the count understates. Only ever lowers DEFAULT_FOLD: an
+// absent or zero window (unknown) and any large one keep the flat ceiling.
+const OUTPUT_RESERVE_TOKENS = 4_096;
+const CHARS_PER_TOKEN = 2.7;
+
+export function windowCeiling(contextWindow?: number): number {
+  if (contextWindow === undefined || contextWindow <= 0) return DEFAULT_FOLD.max_chars;
+  const derived = Math.floor(Math.max(0, contextWindow - OUTPUT_RESERVE_TOKENS) * CHARS_PER_TOKEN);
+  return Math.min(DEFAULT_FOLD.max_chars, derived);
+}
+
 export function sizeOf(messages: readonly Message[]): number {
   return messages.reduce((total, message) => total + message.content.length, 0);
 }
@@ -176,6 +189,7 @@ export function assemble(
   working: string,
   summarise: Summarise,
   policy: FoldPolicy = DEFAULT_FOLD,
+  ceiling: number = policy.max_chars,
 ): { messages: Message[]; folded: number } {
   const intro = prefixMessages(prefix, task);
   const tail = transientTail(working);
@@ -184,11 +198,13 @@ export function assemble(
   const spent = sizeOf(intro) + sizeOf(tail) + JSON.stringify(prefix.tools).length;
   const room = Math.max(0, policy.max_chars - spent);
   // A question in history is never folded, so one the prefix leaves no room for cannot
-  // be answered. A task is the prefix's own and keeps the old behaviour.
+  // be answered. A task is the prefix's own and keeps the old behaviour. Judged against
+  // `policy`, not the window's `ceiling`: a small window gives up history, never a question.
   const question = history[pinnedAt(history)];
   if (question !== undefined && question.content.length > room) {
     throw new Error("This case has more than Ask can read at once. Ask about something more specific.");
   }
-  const { messages, folded } = foldHistory(history, summarise, { ...policy, max_chars: room });
+  const budget = Math.max(0, Math.min(policy.max_chars, ceiling) - spent);
+  const { messages, folded } = foldHistory(history, summarise, { ...policy, max_chars: budget });
   return { messages: [...intro, ...messages, ...tail], folded };
 }

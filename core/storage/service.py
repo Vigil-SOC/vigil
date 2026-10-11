@@ -36,15 +36,23 @@ _UNSET = object()
 _CONNECTION_ERRORS = (OperationalError, InterfaceError, PoolTimeoutError)
 
 
-def _first_line(e: Exception) -> str:
-    """The error's headline; SQLAlchemy appends the statement and parameters."""
-    return (str(e).strip().splitlines() or [type(e).__name__])[0]
-
-
 def _is_connection_error(e: Exception) -> bool:
     return isinstance(e, _CONNECTION_ERRORS) or bool(
         getattr(e, "connection_invalidated", False)
     )
+
+
+def _external_key(row: Dict[str, Any]) -> Optional[tuple]:
+    """The (data_source, external_id) identity of a finding row, or None.
+
+    Mirrors the uniq_findings_source_extid index: only a row carrying an
+    external id is keyed by it. Rows default their source to "imported"
+    at insert, so the key does the same.
+    """
+    external_id = row.get("external_id")
+    if not external_id:
+        return None
+    return (row.get("data_source", "imported"), external_id)
 
 
 def _numeric_prediction_items(mitre_predictions: Any) -> List[tuple[str, float]]:
@@ -171,10 +179,22 @@ class DatabaseService:
             return {"imported": 0, "skipped": 0}
 
         by_id = {r["finding_id"]: r for r in rows}
-        # Rows repeating a finding_id inside the batch are skipped either way.
-        in_batch_dupes = len(rows) - len(by_id)
+        # A re-uploaded file repeats (data_source, external_id) pairs under
+        # new finding_ids; the pair is unique in the table, so a repeat can
+        # never be inserted and is a skip, not an error (#1935).
+        deduped: List[Dict[str, Any]] = []
+        seen_external: set = set()
+        for r in by_id.values():
+            key = _external_key(r)
+            if key is not None:
+                if key in seen_external:
+                    continue
+                seen_external.add(key)
+            deduped.append(r)
+        # Rows repeating either key inside the batch are skipped either way.
+        in_batch_dupes = len(rows) - len(deduped)
         try:
-            imported = self._insert_new_findings(list(by_id.values()))
+            imported = self._insert_new_findings(deduped)
             return {"imported": imported, "skipped": len(rows) - imported}
         except Exception as e:
             if _is_connection_error(e):
@@ -183,17 +203,18 @@ class DatabaseService:
                     "imported": 0,
                     "skipped": 0,
                     "errors": len(rows),
-                    "first_error": f"Database unavailable: {_first_line(e)}",
+                    "first_error": "Database unavailable",
                 }
             logger.warning(
                 "Bulk insert of %d findings failed (%s); retrying row by row",
-                len(by_id),
+                len(deduped),
                 e,
             )
 
         imported = skipped = errors = 0
         first_error = None
-        for finding_id, r in by_id.items():
+        for r in deduped:
+            finding_id = r["finding_id"]
             try:
                 if self._insert_new_findings([r]):
                     imported += 1
@@ -201,10 +222,12 @@ class DatabaseService:
                     skipped += 1
             except Exception as e:
                 logger.error(f"Error creating finding {finding_id!r}: {e}")
-                first_error = first_error or f"Finding {finding_id}: {_first_line(e)}"
+                first_error = first_error or (
+                    f"Finding {finding_id} could not be saved"
+                )
                 if _is_connection_error(e):
                     # Count this row and every row not yet tried.
-                    errors += len(by_id) - imported - skipped - errors
+                    errors += len(deduped) - imported - skipped - errors
                     break
                 errors += 1
         result = {
@@ -217,9 +240,16 @@ class DatabaseService:
         return result
 
     def _insert_new_findings(self, rows: List[Dict[str, Any]]) -> int:
-        """Insert the rows whose finding_id is not stored yet, in one
-        transaction. Returns how many were inserted; raises on failure, and
-        the session scope rolls the whole transaction back."""
+        """Insert the rows that are not stored yet, in one transaction.
+
+        "Stored" is checked on both identities: finding_id, and the
+        (data_source, external_id) pair the uniq_findings_source_extid
+        index makes unique. A re-upload carries new finding_ids for
+        alerts whose external ids are already stored; those rows are
+        skips, and without this check they would fail the whole insert
+        on the index at flush (#1935). Returns how many were inserted;
+        raises on failure, and the session scope rolls the whole
+        transaction back."""
         ids = [r["finding_id"] for r in rows]
         with self.db_manager.session_scope() as session:
             existing = {
@@ -229,6 +259,34 @@ class DatabaseService:
                 )
             }
             new_rows = [r for r in rows if r["finding_id"] not in existing]
+            keys = {_external_key(r) for r in new_rows} - {None}
+            if keys:
+                stored_keys = {
+                    (data_source, external_id)
+                    for (data_source, external_id) in session.execute(
+                        select(Finding.data_source, Finding.external_id).where(
+                            or_(
+                                *(
+                                    and_(
+                                        Finding.data_source == data_source,
+                                        Finding.external_id == external_id,
+                                    )
+                                    for data_source, external_id in keys
+                                )
+                            )
+                        )
+                    )
+                }
+                kept = []
+                seen_keys: set = set()
+                for r in new_rows:
+                    key = _external_key(r)
+                    if key is not None:
+                        if key in stored_keys or key in seen_keys:
+                            continue
+                        seen_keys.add(key)
+                    kept.append(r)
+                new_rows = kept
             for r in new_rows:
                 finding = Finding(
                     finding_id=r["finding_id"],
@@ -264,6 +322,36 @@ class DatabaseService:
             finding = session.get(Finding, finding_id, options=_FINDING_READ_OPTIONS)
             if finding:
                 # Detach from session to avoid lazy loading issues
+                session.expunge(finding)
+            return finding
+
+    def get_finding_by_external_id(
+        self, data_source: str, external_id: str
+    ) -> Optional[Finding]:
+        """
+        Get a finding by its (data_source, external_id) pair — the second
+        identity the uniq_findings_source_extid index makes unique, and
+        the one a re-uploaded alert keeps when its finding_id changes.
+
+        Returns:
+            Finding object or None if not found
+        """
+        with self.db_manager.session_scope() as session:
+            finding = (
+                session.execute(
+                    select(Finding)
+                    .where(
+                        and_(
+                            Finding.data_source == data_source,
+                            Finding.external_id == external_id,
+                        )
+                    )
+                    .options(*_FINDING_READ_OPTIONS)
+                )
+                .scalars()
+                .first()
+            )
+            if finding:
                 session.expunge(finding)
             return finding
 

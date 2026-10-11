@@ -1368,10 +1368,6 @@
       "data_type": "text",
       "nullable": false
     },
-    "graph_layout": {
-      "data_type": "jsonb",
-      "nullable": false
-    },
     "is_active": {
       "data_type": "boolean",
       "nullable": false

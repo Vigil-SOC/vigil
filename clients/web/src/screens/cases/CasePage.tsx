@@ -12,13 +12,15 @@ import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
+import { useToast } from '../../shell/toast'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail } from './EvidenceTrail'
 import { EvidenceCard, IOCsCard } from './CaseSections'
 import { CaseSide } from './CaseSide'
-import { money, timeLeft, when } from './caseFormat'
+import { fmtCost } from '../../shared/cost'
+import { timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -81,12 +83,19 @@ function closedBy(closure: CaseClosureView | null): string {
   return time || who ? `Closed${time}${who}` : ''
 }
 
+/** The whole Closed line, shared by the header reason and the Summary: time, closer, category, closer kind. */
+function closedLine(closure: CaseClosureView | null): string {
+  return [closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 function clock(value: string | null | undefined): string {
   return utcClock(value) ?? '—'
 }
 
 function latency(ms: number | undefined): string {
-  return ms == null ? '—' : `${ms} ms`
+  return ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`
 }
 
 function detailOf(error: unknown, fallback: string): string {
@@ -159,8 +168,8 @@ function CaseNeeds({
   items: NeedsYouItem[]
   busy: boolean
   error: string | null
-  onApprove: (id: string) => void
-  onReject: (id: string, reason: string) => void
+  onApprove: (item: NeedsYouItem) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
 }) {
   if (items.length === 0) return null
   return (
@@ -181,8 +190,8 @@ function CaseNeed({
 }: {
   item: NeedsYouItem
   busy: boolean
-  onApprove: (id: string) => void
-  onReject: (id: string, reason: string) => void
+  onApprove: (item: NeedsYouItem) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
 }) {
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
@@ -208,11 +217,11 @@ function CaseNeed({
       </dl>
       <div className="needs-actions">
         {reversible ? (
-          <button type="button" className="btn" disabled={busy} onClick={() => onApprove(item.source_id)}>
+          <button type="button" className="btn" disabled={busy} onClick={() => onApprove(item)}>
             Approve
           </button>
         ) : (
-          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item.source_id)} />
+          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item)} />
         )}
         <button
           type="button"
@@ -231,7 +240,7 @@ function CaseNeed({
             event.preventDefault()
             const text = reason.trim()
             if (!text) return
-            onReject(item.source_id, text)
+            onReject(item, text)
           }}
         >
           <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
@@ -315,7 +324,7 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   return {
     Explanations: fold?.kind === 'hunt' ? (words.length ? words.map((w) => `${tally.get(w)} ${w.replace(/_/g, ' ')}`).join(' · ') : 'None yet') : fold ? 'Does not test explanations yet' : none,
     Evidence: evidence,
-    Checked: fold ? `${money(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
+    Checked: fold ? `${fold.costUsd == null ? '—' : fmtCost(fold.costUsd)} · ${plural(blind, 'gap')}` : none,
     'Memory and blind spots': recall?.unavailable ? 'Recall did not happen' : memory || (recall ? 'Recalled, no rows' : 'Nothing recalled'),
     Record: recordPhase === 'loading' ? 'Loading…' : recordPhase === 'error' ? 'Couldn’t load' : `${plural(rows.length, 'row')} · ${chained} chained`,
   }
@@ -537,6 +546,7 @@ export function CasePage({
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const decisionBusyRef = useRef<string | null>(null)
+  const { notifyUndoable, pending, settled } = useToast()
   const needsTicket = useRef(0)
   const seenCase = useRef(id)
   if (seenCase.current !== id) {
@@ -606,7 +616,8 @@ export function CasePage({
   }, [runId, loadRun, setRunPhase])
   const detail = runId && run.detail?.run_id === runId ? run.detail : null
   const fold = useMemo(() => readFold(detail), [detail])
-  const foldPhase: Phase = !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
+  // The run id is unknown until the case read returns, so the run is still loading, not absent.
+  const foldPhase: Phase = phase === 'loading' && !runId ? 'loading' : !runId || detail ? 'ready' : run.dphase === 'error' ? 'error' : 'loading'
 
   // Each re-read of a run that was in flight re-reads the case and the record too, the last one when it ends.
   const seen = useRef<{ runId: string; status: string } | null>(null)
@@ -645,8 +656,9 @@ export function CasePage({
       .getSLA(id)
       .then((res) => {
         if (cancelled) return
-        const due = res.data.resolution_due
-        const health = res.data.health_status
+        // null: the case has no SLA
+        const due = res.data?.resolution_due
+        const health = res.data?.health_status
         setSla(due ? { due, health: health || '' } : null)
       })
       .catch(() => {
@@ -687,6 +699,11 @@ export function CasePage({
   const gaps = visibilityGaps(fold)
   const recalled = recallEntityCalls(fold)
   const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind) === chip)
+  const chipCounts = useMemo(() => {
+    const counts: Record<RecordChip, number> = { agent: 0, human: 0, memory: 0, system: 0 }
+    for (const row of rows) counts[recordChip(row.kind)] += 1
+    return counts
+  }, [rows])
 
   const promptFor = (text?: string) => {
     const base = c
@@ -730,6 +747,38 @@ export function CasePage({
     }
   }
 
+  // a fused commit just landed or failed (maybe after this page was closed and reopened): refresh.
+  // onChanged is a fresh closure each render, so it is read through a ref, not an effect dependency.
+  const onChangedRef = useRef(onChanged)
+  onChangedRef.current = onChanged
+  const seenSettled = useRef(settled)
+  useEffect(() => {
+    if (seenSettled.current === settled) return
+    seenSettled.current = settled
+    void loadNeeds()
+    onChangedRef.current()
+  }, [settled, loadNeeds])
+
+  // Reversible approve and every reject commit through the toast's undo fuse, which owns the call
+  // and survives closing the case. A held (irreversible) approve commits at once via decide().
+  const fuse = (item: NeedsYouItem, verb: string, past: string, commit: () => Promise<unknown>) =>
+    notifyUndoable({
+      key: item.source_id,
+      text: `${verb}: ${item.title}`,
+      commit,
+      doneText: `${past}: ${item.title}`,
+      failText: (e) => detailOf(e, 'Could not update that decision'),
+    })
+
+  const approve = (item: NeedsYouItem) => {
+    const commit = () => approvalsApi.approve(item.source_id)
+    if (item.reversibility === 'reversible') fuse(item, 'Approving', 'Approved', commit)
+    else void decide(item.source_id, commit)
+  }
+
+  const reject = (item: NeedsYouItem, reason: string) =>
+    fuse(item, 'Rejecting', 'Rejected', () => approvalsApi.reject(item.source_id, reason))
+
   const decide = async (sourceId: string, act: () => Promise<unknown>) => {
     if (decisionBusyRef.current) return
     const forCase = id
@@ -765,27 +814,45 @@ export function CasePage({
     }
   }
 
+  // items whose fuse is running stay out of the block, the ask and the count, so a poll can't bring them back
+  const shownNeeds = needsItems.filter((it) => !pending.includes(it.source_id))
+  const needsShown = Math.max(0, needsCount - (needsItems.length - shownNeeds.length))
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
-  const stopped = closed || needsCount > 0 ? null : stoppedRun(fold)
+  const stopped = closed || needsShown > 0 ? null : stoppedRun(fold)
   const pillState = closed ? 'closed' : stopped?.state ?? pill
   // Only what exists: the live investigation's status, else the run's outcome.
   const runState = stopped?.state ?? (live[0]?.status || fold?.outcome || fold?.run.status || '').replace(/_/g, ' ')
+  // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
+  // else took the key (a menu or dialog is open, or a text field has focus).
+  useEffect(() => {
+    if (onExpand) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const t = e.target as HTMLElement | null
+      if (t?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return
+      onBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onExpand, onBack])
+
   const watch = <WatchLink runId={runId} onFollow={() => onExpand && onBack()} />
   const doors = <Doors counts={tabCounts} lines={doorLines(fold, foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
-  const tone = statePill(pillState, needsCount > 0).tone
+  const tone = statePill(pillState, needsShown > 0).tone
   const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? needsItems[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedBy(closure) : ''
+    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
   const needsBlock = (
     <CaseNeeds
-      items={needsItems}
+      items={shownNeeds}
       busy={decisionBusy !== null}
       error={decisionError}
-      onApprove={(sourceId) => void decide(sourceId, () => approvalsApi.approve(sourceId))}
-      onReject={(sourceId, reason) => void decide(sourceId, () => approvalsApi.reject(sourceId, reason))}
+      onApprove={approve}
+      onReject={reject}
     />
   )
 
@@ -795,19 +862,17 @@ export function CasePage({
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
           <span aria-hidden>›</span>
-          <span className="mono">Case {id}</span>
+          <span className="mono">{id.startsWith('case-') ? id : `Case ${id}`}</span>
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
             {onExpand && (
-              <>
-                <button type="button" className="btn ghost icon" aria-label="Expand" title="Expand" onClick={onExpand}>
-                  <Icon name="fit" size={15} />
-                </button>
-                <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onBack}>
-                  <Icon name="close" size={15} />
-                </button>
-              </>
+              <button type="button" className="btn ghost icon" aria-label="Expand" title="Expand" onClick={onExpand}>
+                <Icon name="fit" size={15} />
+              </button>
             )}
+            <button type="button" className="btn ghost icon" aria-label="Close" title="Close" onClick={onBack}>
+              <Icon name="close" size={15} />
+            </button>
           </div>
         </div>
         {phase === 'error' ? (
@@ -817,11 +882,11 @@ export function CasePage({
             <h2>{c.title}</h2>
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
-              <StatePill state={pillState} needs={needsCount > 0} />
+              <StatePill state={pillState} needs={needsShown > 0} />
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
             </div>
             <div className="dh-meta">
-              <span>{latest ? workflowNames[latest.workflow_id] || latest.workflow_id : 'No workflow'}</span>
+              {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_id}</span>}
               {c.findings > 0 && <span>Combined from {c.findings} {c.findings === 1 ? 'alert' : 'alerts'}</span>}
               <span>Opened {created}</span>
               <span>
@@ -847,7 +912,7 @@ export function CasePage({
         />
       </div>
 
-      {needsCount > 0 && tab !== 'Summary' && <NeedsStrip ask={needsItems[0]?.title} onDecide={() => setTab('Summary')} />}
+      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={shownNeeds[0]?.title} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
@@ -857,9 +922,7 @@ export function CasePage({
                 {needsBlock}
                 <section className="case-closed" aria-label="Closed summary">
                   <span className="case-closed-line">
-                    {[closedBy(closure), CLOSURE_CATEGORIES.find((item) => item.value === closure?.closure_category)?.label ?? closure?.closure_category, closure?.closed_by_kind]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    {closedLine(closure)}
                   </span>
                   <h3>{closure?.verdict || '—'}</h3>
                   <ClosedRows fold={fold} phase={foldPhase} />
@@ -934,25 +997,44 @@ export function CasePage({
           {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
 
           {tab === 'Checked' && (
-            !fold || fold.calls.length === 0 ? (
+            foldPhase === 'loading' ? (
+              <EmptyState loading compact icon="search" title="Loading the run…" />
+            ) : foldPhase === 'error' ? (
+              <EmptyState error compact icon="search" title="The run could not be read." />
+            ) : !fold || (fold.calls.length === 0 && gaps.length === 0) ? (
               <EmptyState compact icon="search" title="No questions asked yet" />
             ) : (
-              <div className="table-wrap">
-                <table className="tbl">
-                  <thead><tr><th>Question</th><th>Tool</th><th>Result size</th><th>Cost</th><th>Latency</th></tr></thead>
-                  <tbody>
-                    {fold.calls.map((call, i) => (
-                      <tr key={`${call.tool}-${i}`}>
-                        <td>{call.question || '—'}</td>
-                        <td>{call.tool || '—'}</td>
-                        <td>{call.result_length}</td>
-                        <td>{money(call.cost_usd)}</td>
-                        <td>{latency(call.duration_ms)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <section className="case-card case-checked">
+                <h3>
+                  What Vigil checked · {fold.calls.length} {fold.calls.length === 1 ? 'query' : 'queries'} · {fold.costUsd == null ? '—' : fmtCost(fold.costUsd)}
+                  <InfoTip
+                    label="About the cost"
+                    source="The run's total spend."
+                    calculation="Each row shows its turn's cost, so rows from one turn repeat the same figure and do not add up to the total."
+                  />
+                  {gaps.length > 0 && ` · ${gaps.length} with no source`}
+                </h3>
+                <ul className="case-stack">
+                  {fold.calls.map((call, i) => (
+                    <li key={`${call.tool}-${i}`}>
+                      <span className="clamp2" title={call.question}>{call.question || '—'}</span>
+                      <span className="src">{call.tool || '—'}</span>
+                      <span className="num">{`${call.result_length.toLocaleString()} ${call.result_length === 1 ? 'char' : 'chars'}`}</span>
+                      <span className="num">{fmtCost(call.cost_usd)}</span>
+                      <span className="num">{latency(call.duration_ms)}</span>
+                    </li>
+                  ))}
+                  {gaps.map((gap) => (
+                    <li key={gap.id} className="gap">
+                      <span className="clamp2" title={gap.text}>{gap.text}</span>
+                      <span className="src">No source</span>
+                      <span className="num">—</span>
+                      <span className="num">—</span>
+                      <span className="num">—</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )
           )}
 
@@ -974,7 +1056,7 @@ export function CasePage({
                 <div className="rec-chips" role="group" aria-label="Record source">
                   <FilterChip label={`All ${rows.length}`} active={chip === 'all'} onClick={() => setChip('all')} />
                   {RECORD_CHIPS.map((name) => (
-                    <FilterChip key={name} label={name[0].toUpperCase() + name.slice(1)} active={chip === name} onClick={() => setChip(name)} />
+                    <FilterChip key={name} label={`${name[0].toUpperCase() + name.slice(1)} ${chipCounts[name]}`} active={chip === name} onClick={() => setChip(name)} />
                   ))}
                   <InfoTip
                     label="About the record"
@@ -985,13 +1067,25 @@ export function CasePage({
                   />
                 </div>
                 <div className="rec-actions">
-                  {runId && (
+                  {runId ? (
                     <Link className="rec-btn" to={`/workflows?run=${encodeURIComponent(runId)}`} onClick={() => onExpand && onBack()}>
                       Replay
                     </Link>
+                  ) : (
+                    <>
+                      <button type="button" className="rec-btn" disabled>Replay</button>
+                      <InfoTip label="Why Replay is unavailable" text="This case has no run to replay." />
+                    </>
                   )}
                   {runId && <button type="button" className="rec-btn" onClick={verify} disabled={busy}>Verify chain</button>}
-                  {latest && <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>}
+                  {latest && (latest.investigation_id ? (
+                    <button type="button" className="rec-btn" onClick={download} disabled={busy}>Export audit</button>
+                  ) : (
+                    <>
+                      <button type="button" className="rec-btn" disabled>Export audit</button>
+                      <InfoTip label="Why Export audit is unavailable" text="This run has no investigation record to export." />
+                    </>
+                  ))}
                 </div>
               </div>
               {recordPhase === 'loading' && <EmptyState loading compact icon="clock" title="Loading the record…" />}

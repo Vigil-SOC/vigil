@@ -130,6 +130,21 @@ def _count_investigations_in_flight() -> int:
         )
 
 
+# Rows actually running. An `assigned` row is stranded or transient, never
+# enqueued and waiting, so it must not count against the slot it needs freed:
+# counting it deadlocks pickup once `assigned` rows fill the cap (#1874).
+RUNNING_INVESTIGATION_STATUSES = ("executing", "waiting_approval")
+
+
+def _count_investigations_running() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(Investigation)
+            .filter(Investigation.status.in_(RUNNING_INVESTIGATION_STATUSES))
+            .count()
+        )
+
+
 def _count_schedule_runs_in_flight() -> int:
     with get_db_manager().session_scope() as session:
         return (
@@ -635,7 +650,7 @@ class Orchestrator:
         if not self._hourly_budget_exhausted():
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if self._in_flight() >= self.config.max_concurrent_agents:
+                if self._running() >= self.config.max_concurrent_agents:
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
@@ -1064,7 +1079,7 @@ class Orchestrator:
             )
             if not inv_id:
                 continue
-            if self._in_flight() >= self.config.max_concurrent_agents:
+            if self._running() >= self.config.max_concurrent_agents:
                 return
 
             self._update_investigation_status(inv_id, "assigned")
@@ -1207,6 +1222,20 @@ class Orchestrator:
         except Exception as e:
             # Unknown reads as full: a failed count must not lift the cap.
             logger.error("Failed to count in-flight investigations: %s", e)
+            return self.config.max_concurrent_agents
+
+    def _running(self) -> int:
+        """Rows holding a slot by actually running, for admission checks.
+
+        `assigned` rows are excluded: resuming one does not change its
+        in-flight count, so gating pickup or intake on `_in_flight()` lets
+        stranded `assigned` rows hold every slot forever (#1874).
+        """
+        try:
+            return _count_investigations_running()
+        except Exception as e:
+            # Unknown reads as full: a failed count must not lift the cap.
+            logger.error("Failed to count running investigations: %s", e)
             return self.config.max_concurrent_agents
 
     # A run belongs to the worker, so nothing here stops one. The record is marked

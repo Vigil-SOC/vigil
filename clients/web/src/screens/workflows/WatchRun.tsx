@@ -315,7 +315,7 @@ function StepCard({ step, i, mark, error, selected, open, onPick, onToggle, card
   )
 }
 
-function Segments({ n, cursor, playing, onJump, labels }: { n: number; cursor: number; playing: boolean; onJump: (i: number) => void; labels: string[] }) {
+function Segments({ n, cursor, playing, ended, onJump, labels }: { n: number; cursor: number; playing: boolean; ended: boolean; onJump: (i: number) => void; labels: string[] }) {
   return (
     <div role="list" aria-label="Steps" className="grow min-w-0 flex items-center gap-1.5">
       {Array.from({ length: n }, (_, i) => {
@@ -334,7 +334,8 @@ function Segments({ n, cursor, playing, onJump, labels }: { n: number; cursor: n
             {/* keyed on the step so each one's fill starts over */}
             <span
               key={`${i}-${cursor}`} className="block h-[10px] rounded-full bg-[var(--ac)]"
-              style={{ width: i < cursor ? '100%' : current ? (playing ? '100%' : '35%') : '0%', animation: current && playing ? `wr-fill ${STEP_MS}ms linear both` : 'none' }}
+              // the newest step of a live run is part-way; the last step of a run that has ended is done
+              style={{ width: i < cursor ? '100%' : current ? (playing || (ended && i === n - 1) ? '100%' : '35%') : '0%', animation: current && playing ? `wr-fill ${STEP_MS}ms linear both` : 'none' }}
             />
           </button>
         )
@@ -397,7 +398,7 @@ function Replay({ steps, live, halt, note, panels }: { steps: Step[]; live: bool
         >
           <Icon name={playing ? 'pause' : 'play'} size={15} style={playing ? undefined : { fill: 'currentColor' }} />
         </button>
-        <Segments n={steps.length} cursor={at} playing={playing} onJump={jump} labels={steps.map((s, i) => `Step ${i + 1}: ${titled(s.action)}`)} />
+        <Segments n={steps.length} cursor={at} playing={playing} ended={!live} onJump={jump} labels={steps.map((s, i) => `Step ${i + 1}: ${titled(s.action)}`)} />
         {stopped
           ? <span className="min-w-0 max-w-[45%] truncate text-[12px] font-semibold text-[var(--tx1)]" title={haltCaption(halt)}>{haltCaption(halt)}</span>
           : <span className="text-[12px] font-semibold text-[var(--tx1)] whitespace-nowrap">{`Step ${at + 1} of ${steps.length} · ${titled(step.action)}`}</span>}

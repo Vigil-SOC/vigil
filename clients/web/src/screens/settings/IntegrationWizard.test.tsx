@@ -76,6 +76,36 @@ describe('IntegrationWizard drawer', () => {
     expect(test).toHaveBeenCalledTimes(2)
   })
 
+  it('shows the health the Connected table shows, even where nothing was ever tested', () => {
+    open({ health: 'good' })
+    expect(screen.getByText('Good')).toBeInTheDocument()
+    expect(screen.getByText(/never tested/)).toBeInTheDocument()
+  })
+
+  it('takes the table\'s level over the stored test, and its last-verified time', () => {
+    const at = new Date(Date.now() - 5 * 60_000).toISOString()
+    open({ health: 'poor', lastTest: { at, success: true, error: null } })
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+    expect(screen.getByText(/last read 5 min ago/)).toBeInTheDocument()
+  })
+
+  it('lists the URL and credentials check as its own row, and fails the test on it', async () => {
+    test.mockResolvedValue({
+      data: {
+        success: false,
+        message: 'HTTP 401: security_exception',
+        servers: [{ name: 'elastic', success: true }],
+        credentials: { success: false, message: 'HTTP 401: security_exception' },
+      },
+    } as never)
+    open()
+    fireEvent.click(screen.getByRole('button', { name: 'Save and verify' }))
+    expect(await screen.findByText('Saved URL and credentials')).toBeInTheDocument()
+    expect(screen.getByText('HTTP 401: security_exception')).toBeInTheDocument()
+    expect(screen.getByText('Connected')).toBeInTheDocument()
+    expect(screen.getByText('Poor')).toBeInTheDocument()
+  })
+
   it('error: a 400 says to save first; an unavailable MCP client is its own state', async () => {
     test.mockRejectedValueOnce({ response: { status: 400, data: { detail: 'Integration not configured' } } })
     open()

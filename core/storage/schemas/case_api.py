@@ -54,6 +54,8 @@ class CaseQueueItem(BaseModel):
     sla_seconds_left: Optional[float] = None
     health_status: Optional[str] = None
     needs_you: bool = False
+    description: Optional[str] = None
+    sla_paused: bool = False
 
 
 class CaseQueueStrip(BaseModel):

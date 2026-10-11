@@ -4,7 +4,7 @@ import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { PageHead } from '../../shared/PageHead'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { EmptyState } from '../../shared/ui'
+import { EmptyState, Toggle } from '../../shared/ui'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
@@ -110,6 +110,10 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
   }
 
+  // the row the drawer belongs to: a connected one first (Splunk has two servers)
+  const wizardRow = wizardFor
+    ? (rows.find((r) => r.integration?.id === wizardFor.id && r.connected) ?? rows.find((r) => r.integration?.id === wizardFor.id))
+    : undefined
   const ready = phase === 'ready'
   const tabs: [IntegrationsTab, string, number | null][] = [
     ['connected', 'Connected', ready ? connected.length : null],
@@ -291,7 +295,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
           secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
           lastTest={intCfg.last_test[wizardFor.id]}
-          category={categoryOf(rows.find((r) => r.integration?.id === wizardFor.id)?.name ?? '')}
+          health={wizardRow?.level}
+          category={categoryOf(wizardRow?.name ?? '')}
           onTested={reloadInt}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
@@ -329,11 +334,10 @@ function RowToggle({ row, busy, onMcp, onMaster }: {
   const { name, integration, isEnabled, masterOn, masterMixed, extConfigured } = row
   if (row.isExtension && integration) {
     return (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={masterMixed ? 'mixed' : masterOn}
-        aria-label={`Toggle ${name}`}
+      <Toggle
+        checked={masterOn}
+        mixed={masterMixed}
+        label={`Toggle ${name}`}
         title={
           !extConfigured
             ? 'Configure the connector first'
@@ -342,24 +346,9 @@ function RowToggle({ row, busy, onMcp, onMaster }: {
               : undefined
         }
         disabled={busy === name || !extConfigured}
-        className={`toggle${masterOn ? ' on' : ''}${masterMixed ? ' mixed' : ''}`}
-        onClick={() => onMaster(name, integration.id, !masterOn)}
-      >
-        <span className="toggle-knob" />
-      </button>
+        onChange={(v) => onMaster(name, integration.id, v)}
+      />
     )
   }
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isEnabled}
-      aria-label={`Toggle ${name}`}
-      disabled={busy === name}
-      className={`toggle${isEnabled ? ' on' : ''}`}
-      onClick={() => onMcp(name, !isEnabled)}
-    >
-      <span className="toggle-knob" />
-    </button>
-  )
+  return <Toggle checked={isEnabled} label={`Toggle ${name}`} disabled={busy === name} onChange={(v) => onMcp(name, v)} />
 }

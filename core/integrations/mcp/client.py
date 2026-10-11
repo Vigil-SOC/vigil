@@ -626,27 +626,6 @@ class MCPClient:
                 "content": [{"type": "text", "text": f"Error: {str(e)}"}],
             }
 
-    def get_tools_for_claude(self) -> List[Dict]:
-        """
-        Get all available tools formatted for Claude's tool use API.
-
-        Returns:
-            List of tool definitions in Claude's format
-        """
-        all_tools = []
-
-        for server_name, tools in self.tools_cache.items():
-            for tool in tools:
-                # Format tool for Claude API
-                claude_tool = {
-                    "name": f"{server_name}_{tool['name']}",
-                    "description": f"[{server_name}] {tool['description']}",
-                    "input_schema": tool.get("inputSchema", {}),
-                }
-                all_tools.append(claude_tool)
-
-        return all_tools
-
     async def disconnect_from_server(self, server_name: str) -> bool:
         """
         Disconnect from a specific MCP server.

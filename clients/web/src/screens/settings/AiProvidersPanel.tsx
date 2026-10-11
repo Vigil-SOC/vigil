@@ -9,7 +9,7 @@
    upstream when it accepts the write and reports the verdict as the key's
    `status`, so saving is testing.
    ============================================================ */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
@@ -60,7 +60,13 @@ function KeyHealth({ status, description, verdict }: {
   return <span className="chip" title={verdict ? description : status}>Unverified</span>
 }
 
-export default function AiProvidersPanel({ notify }: SectionProps) {
+interface AiProvidersPanelProps extends SectionProps {
+  /** the page head's Add provider asked for the dialog; the panel opens it once, then calls onAddProviderOpened */
+  addProviderRequested?: boolean
+  onAddProviderOpened?: () => void
+}
+
+export default function AiProvidersPanel({ notify, addProviderRequested, onAddProviderOpened }: AiProvidersPanelProps) {
   const {
     providers,
     keys,
@@ -77,6 +83,11 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
   // The header "Add key" picks the provider first when there is more than one.
   const [pickProvider, setPickProvider] = useState<string | null>(null)
   const [addingProvider, setAddingProvider] = useState(false)
+  useEffect(() => {
+    if (!addProviderRequested) return
+    setAddingProvider(true)
+    onAddProviderOpened?.()
+  }, [addProviderRequested, onAddProviderOpened])
   const [newProvider, setNewProvider] = useState('')
   const [confirmDel, setConfirmDel] = useState<
     { kind: 'key'; provider: string; key: BifrostKey } | { kind: 'provider'; provider: string } | null
@@ -129,14 +140,9 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
       title="Keys"
       desc="A provider can hold several keys; traffic is shared by weight and moves to another key if one is rejected. Saving a key tests it."
       actions={
-        <>
-          <button className="btn ghost" onClick={() => setAddingProvider(true)}>
-            <Icon name="plus" /> Add provider
-          </button>
-          <button className="btn ghost" disabled={providers.length === 0} onClick={addKey}>
-            <Icon name="plus" /> Add key
-          </button>
-        </>
+        <button className="btn ghost" disabled={providers.length === 0} onClick={addKey}>
+          <Icon name="plus" /> Add key
+        </button>
       }
     >
       {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading gateway config…" />}
