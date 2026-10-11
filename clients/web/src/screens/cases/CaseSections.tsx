@@ -6,12 +6,10 @@ import {
   type ReactNode,
 } from 'react'
 import { utcDay, utcDayClock } from '../../shared/utc'
-import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
-import type { CaseRow } from '../../data/data'
 
 const ME = 'SOC Analyst'
 
@@ -188,32 +186,6 @@ export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; t
   )
 }
 
-export interface ResolutionStep {
-  description?: string
-  action_taken?: string
-  result?: string
-}
-export function ResolutionStepsCard({ steps }: { steps: ResolutionStep[] }) {
-  return (
-    <SectionCard title="Resolution steps" count={`${steps.length}`}>
-      <div className="p-[18px] flex flex-col gap-3">
-        {steps.length === 0 && <MiniEmpty icon="check2" title="No resolution steps yet" body="Document actions taken and outcomes as this case moves toward closure." />}
-        {steps.map((s, i) => (
-          <div key={i} className="flex gap-2.5">
-            <span className="text-ok mt-[1px]">✓</span>
-            <div className="min-w-0">
-              <div className="text-[13px] text-tx">{s.description || '—'}</div>
-              <div className="text-xs text-tx-3 mt-[2px]">
-                Action: {s.action_taken || '—'} · Result: {s.result || 'Pending'}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </SectionCard>
-  )
-}
-
 const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } as const
 type TaskPriority = keyof typeof PRIO_ORDER
 const isTaskPriority = (v: string | undefined): v is TaskPriority =>
@@ -223,9 +195,6 @@ const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 
 type CaseTask = Schema<'CaseTaskSchema'>
 export function useTasks(caseId: string) {
   return useResource<CaseTask[]>(caseId, () => casesApi.getTasks(caseId).then((r) => r.data.tasks))
-}
-export function TasksCard({ caseId }: { caseId: string }) {
-  return <TasksView caseId={caseId} resource={useTasks(caseId)} />
 }
 export function TasksView({ caseId, resource: { data, phase, reload }, bare }: { caseId: string; resource: Resource<CaseTask[]>; bare?: boolean }) {
   const [adding, setAdding] = useState(false)
@@ -314,96 +283,6 @@ export function TasksView({ caseId, resource: { data, phase, reload }, bare }: {
   )
 }
 
-const SLA_HEALTH_CLASS: Record<string, string> = {
-  healthy: 'status open',
-  warning: 'sla warn',
-  critical: 'sla danger',
-  breached: 'sla danger',
-}
-function fmtCountdown(ms: number): string {
-  if (ms <= 0) return 'Overdue'
-  const s = Math.floor(ms / 1000)
-  const d = Math.floor(s / 86400)
-  const h = Math.floor((s % 86400) / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  return [d && `${d}d`, h && `${h}h`, m && `${m}m`, `${sec}s`].filter(Boolean).join(' ')
-}
-export function SLACard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<Schema<'CaseSLAStatusSchema'> | null>(caseId, () =>
-    casesApi.getSLA(caseId).then((r) => r.data ?? null).catch((e: { response?: { status?: number } }) => {
-      if (e.response?.status === 404) return null
-      throw e
-    }),
-  )
-  const met = Boolean(data?.response_completed && data?.resolution_completed)
-  const ticking = Boolean(data && !data.is_paused && !data.is_breached && !met)
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!ticking) return
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [ticking])
-
-  const act = async (fn: () => Promise<unknown>) => {
-    await fn()
-    reload()
-  }
-
-  let remainingTxt = '—'
-  let pct = 0
-  let barColor = 'bg-accent'
-  if (data) {
-    pct = Math.max(data.response_percent_elapsed, data.resolution_percent_elapsed)
-    if (data.is_breached) { remainingTxt = 'SLA breached'; pct = 100; barColor = 'bg-crit' }
-    else if (met) { remainingTxt = 'SLA met'; pct = 100; barColor = 'bg-ok' }
-    else if (data.is_paused) { remainingTxt = 'SLA paused'; barColor = 'bg-high' }
-    else {
-      const dues = [
-        !data.response_completed ? data.response_due : null,
-        !data.resolution_completed ? data.resolution_due : null,
-      ]
-        .filter((d): d is string => Boolean(d))
-        .map((d) => new Date(d).getTime())
-        .filter((t) => !Number.isNaN(t))
-      const due = dues.length ? Math.min(...dues) : NaN
-      if (pct > 80) barColor = 'bg-crit'
-      else if (pct > 60) barColor = 'bg-high'
-      remainingTxt = Number.isNaN(due) ? '—' : fmtCountdown(due - now)
-    }
-  }
-
-  return (
-    <SectionCard title="SLA">
-      <div className="p-[18px]">
-        {phase === 'loading' && <MiniLoading icon="clock" title="Loading SLA…" />}
-        {phase === 'ready' && !data && <MiniEmpty icon="clock" title="No SLA policy attached" body="Apply an SLA policy to track response and resolution timing." />}
-        {data && (
-          <>
-            <div className="flex items-center gap-2 mb-3">
-              {data.sla_policy_id && <span className="tag">{data.sla_policy_id}</span>}
-              <span className={SLA_HEALTH_CLASS[data.health_status] || 'status open'}>{data.health_status}</span>
-            </div>
-            <div className="text-[15px] font-mono mb-2">{remainingTxt}</div>
-            <div className="h-1.5 bg-bg-3 rounded-full overflow-hidden mb-3">
-              <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
-            </div>
-            <div className="kv">
-              <div className="row"><span className="k">Response due</span><span className="val">{fmtDT(data.response_due ?? undefined)}</span></div>
-              <div className="row"><span className="k">Resolution due</span><span className="val">{fmtDT(data.resolution_due ?? undefined)}</span></div>
-              {data.breach_type && <div className="row"><span className="k">Breach</span><span className="val text-crit">{data.breach_type}</span></div>}
-            </div>
-            <div className="flex gap-2 mt-3">
-              {!data.is_paused && !data.is_breached && !met && <button className="btn ghost" onClick={() => act(() => casesApi.pauseSLA(caseId))}><Icon name="pause" size={13} /> Pause</button>}
-              {data.is_paused && <button className="btn ghost" onClick={() => act(() => casesApi.resumeSLA(caseId))}><Icon name="play" size={13} /> Resume</button>}
-            </div>
-          </>
-        )}
-      </div>
-    </SectionCard>
-  )
-}
-
 export interface Comment {
   id: string
   author: string
@@ -479,9 +358,6 @@ export function useComments(caseId: string) {
 }
 /** Comments shown for a case, replies included. */
 export const commentCount = (data: Comment[] | null) => flatten(data || []).length
-export function CommentsCard({ caseId }: { caseId: string }) {
-  return <CommentsView caseId={caseId} resource={useComments(caseId)} />
-}
 export function CommentsView({ caseId, resource: { data, phase, reload }, bare }: { caseId: string; resource: Resource<Comment[]>; bare?: boolean }) {
   const [text, setText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -534,63 +410,6 @@ export function CommentsView({ caseId, resource: { data, phase, reload }, bare }
             <button className="btn primary" onClick={submit}><Icon name="send" size={13} /> {replyTo ? 'Reply' : 'Post'}</button>
           </div>
         </div>
-      </div>
-    </SectionCard>
-  )
-}
-
-interface Watcher {
-  user_id: string
-  created_at?: string | null
-}
-export function WatchersCard({ caseId }: { caseId: string }) {
-  const { data, phase, reload } = useResource<Watcher[]>(caseId, () =>
-    casesApi.getWatchers(caseId).then((r) =>
-      r.data.watchers.filter((w): w is Watcher => Boolean(w.user_id)),
-    ),
-  )
-  const [adding, setAdding] = useState(false)
-  const [val, setVal] = useState('')
-  const watchers = data || []
-
-  const add = async () => {
-    if (!val.trim()) return
-    await casesApi.addWatcher(caseId, val.trim())
-    setVal('')
-    setAdding(false)
-    reload()
-  }
-  const remove = async (uid: string) => {
-    await casesApi.removeWatcher(caseId, uid)
-    reload()
-  }
-
-  return (
-    <SectionCard
-      title="Watchers"
-      count={`${watchers.length}`}
-      action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
-    >
-      {adding && (
-        <div className="px-[18px] py-3 border-b border-line-soft flex gap-2.5">
-          <input className={inputCls} placeholder="analyst@example.com" value={val} onChange={(e) => setVal(e.target.value)} />
-          <button className="btn primary" onClick={add}>Add</button>
-        </div>
-      )}
-      <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <MiniLoading icon="eye" title="Loading watchers…" />}
-        {phase === 'ready' && watchers.length === 0 && <MiniEmpty icon="eye" title="No watchers yet" body="Add analysts who should receive updates for this case." />}
-        {watchers.map((w) => (
-          <div key={w.user_id} className="flex items-center gap-2.5">
-            <span className="avatar">{initials(w.user_id)}</span>
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] text-tx">{w.user_id}</div>
-              <div className="text-xs text-tx-faint">Watching since {fmtD(w.created_at ?? undefined)}</div>
-            </div>
-            <span className="watcher-active" title="Receiving notifications"><span className="wa-dot" />Active</span>
-            <button className="btn ghost icon" title="Remove" onClick={() => remove(w.user_id)}><Icon name="trash" size={14} /></button>
-          </div>
-        ))}
       </div>
     </SectionCard>
   )
@@ -660,109 +479,6 @@ export function IOCsCard({ caseId }: { caseId: string }) {
           })}
         </ul>
       )}
-    </SectionCard>
-  )
-}
-
-type CaseRelationship = Schema<'CaseRelationshipSchema'>
-const REL_LABEL = {
-  duplicate_of: 'Duplicate Of',
-  related_to: 'Related To',
-  caused_by: 'Caused By',
-  follows: 'Follows',
-  blocks: 'Blocks',
-} as const
-type RelationshipType = keyof typeof REL_LABEL
-const isRelationshipType = (v: string | undefined): v is RelationshipType =>
-  v !== undefined && Object.prototype.hasOwnProperty.call(REL_LABEL, v)
-export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; rows: CaseRow[]; onSelect: (id: string) => void }) {
-  const { data, phase, reload } = useResource<CaseRelationship[]>(caseId, () =>
-    casesApi.getLinkedCases(caseId).then((r) => r.data.relationships),
-  )
-  const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ relationship_type: 'related_to', related_case_id: '' })
-  const linked = data || []
-  const candidates = rows.filter((r) => r.id !== caseId)
-  const rowById = new Map(rows.map((r) => [r.id, r]))
-
-  const submit = async () => {
-    if (!form.related_case_id) return
-    await casesApi.linkCase(caseId, form.related_case_id, form.relationship_type)
-    setForm({ relationship_type: 'related_to', related_case_id: '' })
-    setAdding(false)
-    reload()
-  }
-
-  return (
-    <SectionCard
-      title="Related cases"
-      count={`${linked.length}`}
-      action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
-    >
-      {adding && (
-        <div className="px-[18px] py-3 border-b border-line-soft grid grid-cols-[140px_1fr] gap-2.5">
-          <select className={inputCls} value={form.relationship_type} onChange={(e) => setForm({ ...form, relationship_type: e.target.value })}>
-            {Object.entries(REL_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-          <select className={inputCls} value={form.related_case_id} onChange={(e) => setForm({ ...form, related_case_id: e.target.value })}>
-            <option value="">Select case…</option>
-            {candidates.map((c) => <option key={c.id} value={c.id}>{c.id} — {c.title}</option>)}
-          </select>
-          <button className="btn primary col-span-2 justify-self-start" onClick={submit}>Link case</button>
-        </div>
-      )}
-      <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <MiniLoading icon="link" title="Loading related cases…" />}
-        {phase === 'ready' && linked.length === 0 && <MiniEmpty icon="link" title="No related cases" body="Link duplicate, blocking, or related cases when investigations overlap." />}
-        {linked.map((l) => {
-          const relatedId = l.related_case_id || ''
-          const related = rowById.get(relatedId)
-          const rel = l.relationship_type ?? undefined
-          return (
-          <div key={l.relationship_id ?? relatedId} className="flex items-center gap-2.5 clickable" onClick={() => relatedId && onSelect(relatedId)}>
-            <span className="tag">{isRelationshipType(rel) ? REL_LABEL[rel] : rel || '—'}</span>
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] text-tx truncate">{related?.title || relatedId}</div>
-              <div className="flex items-center gap-2 mt-[2px]">
-                <span className="id-cell">{relatedId}</span>
-                {related?.status && <span className={`status ${related.status}`}>{related.status}</span>}
-                {related?.prio && <span className={`prio ${related.prio}`}>{related.prio}</span>}
-              </div>
-            </div>
-            <span className="text-xs text-tx-faint">{fmtD(l.created_at ?? undefined)}</span>
-          </div>
-          )
-        })}
-      </div>
-    </SectionCard>
-  )
-}
-
-export interface Activity {
-  description?: string
-  activity_type?: string
-  timestamp?: string
-  details?: Record<string, unknown>
-}
-export function ActivityCard({ activities }: { activities: Activity[] }) {
-  return (
-    <SectionCard title="Recent activity" count={`${activities.length}`}>
-      <div className="p-[18px] flex flex-col gap-3">
-        {activities.length === 0 && <MiniEmpty icon="clock" title="No recent activity" body="Case updates, comments, workflow events, and finding changes will appear here." />}
-        {activities.slice(0, 12).map((a, i) => {
-          // The run bridge writes run_id onto report/handoff activities; that id is the whole link.
-          const runId = typeof a.details?.run_id === 'string' ? a.details.run_id : null
-          return (
-            <div key={i} className="text-[13px]">
-              <div className="text-tx-2">{a.description || '—'}</div>
-              <div className="text-xs text-tx-faint mt-[2px]">
-                {a.activity_type || 'event'} · {fmtDT(a.timestamp)}
-                {runId && <> · <Link className="text-accent-2 hover:underline" aria-label={`Open run ${runId}`} to={`/workflows?run=${encodeURIComponent(runId)}`}>Open run</Link></>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
     </SectionCard>
   )
 }

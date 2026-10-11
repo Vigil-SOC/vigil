@@ -14,7 +14,7 @@ export class NotificationService {
     return NotificationService.instance
   }
 
-  public isSupported(): boolean {
+  private isSupported(): boolean {
     return 'Notification' in window
   }
 
@@ -122,24 +122,6 @@ export class NotificationService {
     })
   }
 
-  public notifyCaseUpdate(caseInfo: {
-    case_id: string
-    title: string
-    status?: string
-    priority?: string
-    message?: string
-  }): void {
-    const body = caseInfo.message || `Case status: ${caseInfo.status || 'updated'}`
-    const requireInteraction = caseInfo.priority === 'critical' || caseInfo.priority === 'high'
-
-    this.show(`Case Updated: ${caseInfo.title}`, {
-      body,
-      tag: `case-${caseInfo.case_id}`,
-      requireInteraction,
-      data: { type: 'case', id: caseInfo.case_id },
-    })
-  }
-
   public notifyInvestigationComplete(investigation: {
     finding_id?: string
     case_id?: string
@@ -158,36 +140,6 @@ export class NotificationService {
     })
   }
 
-  public notifyMcpServerStatus(server: {
-    name: string
-    status: string
-    error?: string
-  }): void {
-    const isError = server.status === 'error' || server.status === 'stopped'
-    this.show(`MCP Server: ${server.name}`, {
-      body: server.error || `Status: ${server.status}`,
-      tag: `mcp-${server.name}`,
-      requireInteraction: isError,
-      data: { type: 'mcp', server: server.name },
-    })
-  }
-
-  public notifyGeneric(
-    title: string,
-    message: string,
-    options?: {
-      severity?: 'info' | 'success' | 'warning' | 'error'
-      requireInteraction?: boolean
-      tag?: string
-    }
-  ): void {
-    this.show(title, {
-      body: message,
-      tag: options?.tag,
-      requireInteraction: options?.requireInteraction || options?.severity === 'error',
-      data: { type: 'generic', severity: options?.severity },
-    })
-  }
 }
 
 export const notificationService = NotificationService.getInstance()
