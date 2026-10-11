@@ -1,14 +1,13 @@
 """Case metrics — versioned contract surface (``/api/v1/cases/metrics``).
 
 Reporting numbers about cases (MTTR, MTTD, breach counts, breakdowns). Six are
-frozen; six composite/rollup reads are marked beta via ``openapi_extra`` and are
-excluded from the contract snapshot — their shape may change while the feature
-matures. Beta still ships and returns data; it is a "do not rely on this yet"
-label, not a hidden route.
+frozen; two are marked beta via ``openapi_extra`` and are excluded from the
+contract snapshot — their shape may change while the feature matures. Beta
+still ships and returns data; it is a "do not rely on this yet" label, not a
+hidden route.
 
 Frozen: by-priority, by-status, breached, mttr, mttd, summary.
-Beta:   dashboard, sla-compliance, velocity, analyst/{id}, analyst-performance,
-        calculate/{id} (a recompute action, not a read).
+Beta:   analyst-performance, calculate/{id} (a recompute action, not a read).
 """
 
 from datetime import datetime
@@ -181,64 +180,6 @@ class ByStatusResponse(BaseModel):
 metrics_service = CaseMetricsService()
 
 
-@router.get("/dashboard", **_BETA)
-def get_dashboard(
-    start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
-):
-    """
-    Get dashboard metrics.
-
-    Args:
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        Dashboard metrics
-    """
-    metrics = metrics_service.get_dashboard_metrics(start_date, end_date)
-    return metrics
-
-
-@router.get("/sla-compliance", **_BETA)
-def get_sla_compliance(
-    start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
-):
-    """
-    Get SLA compliance report.
-
-    Args:
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        SLA compliance statistics
-    """
-    sla_service = CaseSLAService()
-    report = sla_service.get_sla_compliance_report(start_date, end_date)
-    return report
-
-
-@router.get("/analyst/{analyst_id}", **_BETA)
-def get_analyst_performance(
-    analyst_id: str,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-):
-    """
-    Get analyst performance metrics.
-
-    Args:
-        analyst_id: Analyst user ID
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        Analyst performance metrics
-    """
-    metrics = metrics_service.get_analyst_performance(analyst_id, start_date, end_date)
-    return metrics
-
-
 @router.get("/mttr", response_model=MttrResponse)
 def get_mttr(
     session: UnitOfWorkSession,
@@ -322,21 +263,6 @@ def get_mttr(
         "trend_data": trend_data,
         "total_cases": total_cases,
     }
-
-
-@router.get("/velocity", **_BETA)
-def get_velocity(days: int = 30):
-    """
-    Get case velocity (opened vs closed).
-
-    Args:
-        days: Number of days to analyze
-
-    Returns:
-        Velocity data
-    """
-    velocity = metrics_service.get_case_velocity(days)
-    return velocity
 
 
 @router.post(

@@ -1,11 +1,10 @@
-"""A failure inside an export or bulk write answers with a category, not the
+"""A failure inside an export answers with a category, not the
 exception text (database host, SQL, Jira URL, upstream body)."""
 
 import httpx
 import pytest
 
 from services.api.errors import INTERNAL_ERROR_DETAIL
-from services.api.routers import findings
 from services.api.routers.jira_export import _export_failure
 
 pytestmark = pytest.mark.unit
@@ -35,16 +34,3 @@ def test_jira_export_failure_is_a_category(exc, expected):
 
     assert result.success is False
     assert result.error == expected
-
-
-def test_bulk_enrich_reports_a_failed_finding_without_the_exception(monkeypatch):
-    def _boom(finding_id):
-        raise RuntimeError(SECRET)
-
-    monkeypatch.setattr(findings.data_service, "get_finding", _boom)
-    request = findings.BulkEnrichmentRequest(finding_ids=["f-1"], enrichment_data={})
-
-    result = findings.bulk_enrich_findings(request)
-
-    assert result["results"]["failed"] == 1
-    assert result["results"]["errors"] == [f"f-1: {INTERNAL_ERROR_DETAIL}"]

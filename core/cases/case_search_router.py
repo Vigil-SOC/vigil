@@ -1,10 +1,8 @@
 """Advanced Case Search API endpoints."""
 
-from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from core.cases.case_search_service import CaseSearchService
 from core.routing import Auth, RouterMeta
@@ -17,53 +15,6 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 search_service = CaseSearchService()
-
-
-class AdvancedSearch(BaseModel):
-    """Advanced search request."""
-
-    query_text: Optional[str] = None
-    status: Optional[List[str]] = None
-    priority: Optional[List[str]] = None
-    assignee: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    mitre_techniques: Optional[List[str]] = None
-    created_after: Optional[datetime] = None
-    created_before: Optional[datetime] = None
-    updated_after: Optional[datetime] = None
-    updated_before: Optional[datetime] = None
-    has_sla_breach: Optional[bool] = None
-    limit: int = 100
-    offset: int = 0
-
-
-@router.post("/advanced")
-async def advanced_search(data: AdvancedSearch):
-    """
-    Perform advanced case search.
-
-    Args:
-        data: Search parameters
-
-    Returns:
-        Search results with pagination
-    """
-    results = search_service.search_cases(
-        query_text=data.query_text,
-        status=data.status,
-        priority=data.priority,
-        assignee=data.assignee,
-        tags=data.tags,
-        mitre_techniques=data.mitre_techniques,
-        created_after=data.created_after,
-        created_before=data.created_before,
-        updated_after=data.updated_after,
-        updated_before=data.updated_before,
-        has_sla_breach=data.has_sla_breach,
-        limit=data.limit,
-        offset=data.offset,
-    )
-    return results
 
 
 @router.get("/full-text")

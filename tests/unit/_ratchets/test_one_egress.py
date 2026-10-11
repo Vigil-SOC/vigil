@@ -29,9 +29,6 @@ ALLOWED_CONSTRUCTION = {
     "core/llm/providers/clients.py",
     # The one OpenAI-shaped egress: every dispatch and stream goes out here.
     "core/llm/router/router.py",
-    # Key validation has to reach the real upstream to verify a user-supplied
-    # credential, so it cannot go through the gateway. The documented exception.
-    "services/api/routers/llm_providers.py",
 }
 
 # A provider host named in a base_url. Reaching one directly is the bypass this
@@ -44,8 +41,6 @@ PROVIDER_HOSTS = (
 
 # Where naming a provider host is the point rather than a bypass.
 ALLOWED_HOSTS = {
-    # Validates a key against the real upstream before we store it.
-    "services/api/routers/llm_providers.py",
     # Describes providers to the UI; dials none of them.
     "core/llm/providers/registry.py",
     "core/llm/providers/discovery.py",

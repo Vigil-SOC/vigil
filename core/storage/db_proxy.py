@@ -35,11 +35,6 @@ logger = logging.getLogger(__name__)
 PROXY_TYPES_ALL = ("pgbouncer", "http", "socks5", "ssh_tunnel")
 PROXY_TYPES_NONE = ("", "none", None)
 
-# Subset offered for the platform metadata DB. http/socks5 are excluded
-# because the Postgres wire protocol isn't proxy-aware in
-# psycopg2/asyncpg — using a SOCKS proxy on the platform DB would be a
-# silent footgun.
-PROXY_TYPES_PLATFORM_DB = ("none", "pgbouncer", "ssh_tunnel")
 
 # Form-field names that are sensitive. Used by integration_secrets to
 # route the values through the encrypted store rather than the DB row.
@@ -301,7 +296,6 @@ __all__ = [
     "PROXY_SECRET_FIELDS",
     "PROXY_TYPES_ALL",
     "PROXY_TYPES_NONE",
-    "PROXY_TYPES_PLATFORM_DB",
     "ProxyConfig",
     "apply",
     "child_env_for_proxy",

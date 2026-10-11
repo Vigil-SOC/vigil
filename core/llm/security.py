@@ -220,23 +220,6 @@ def wrap_tool_result(
     )
 
 
-def scan_tool_schema(tool: dict) -> ScanResult:
-    """Scan an MCP tool's description and parameter descriptions for injection.
-
-    Call this at tool-load time (before the schema is passed to the LLM) to
-    catch poisoned tool descriptions from compromised or misconfigured MCP
-    servers.
-    """
-    combined = []
-    if desc := tool.get("description"):
-        combined.append(str(desc))
-    schema = tool.get("input_schema") or tool.get("inputSchema") or {}
-    for prop in (schema.get("properties") or {}).values():
-        if prop_desc := prop.get("description"):
-            combined.append(str(prop_desc))
-    return scan_for_injection("\n".join(combined))
-
-
 # ---------------------------------------------------------------------------
 # Convenience for API validator audit logging
 # ---------------------------------------------------------------------------

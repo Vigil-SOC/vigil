@@ -561,11 +561,6 @@ async def fetch_provider_models(row) -> List[str]:
     return _chat_models(provider_type, fallback)
 
 
-# Backward-compat alias — kept so existing imports don't break.
-# Prefer ``_FALLBACK_MODELS_BY_PROVIDER['anthropic']`` for new code.
-ANTHROPIC_STATIC_MODELS: Tuple[str, ...] = _FALLBACK_MODELS_BY_PROVIDER["anthropic"]
-
-
 # ---------------------------------------------------------------------------
 # ModelRegistry
 # ---------------------------------------------------------------------------
