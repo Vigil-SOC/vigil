@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import and_, or_
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from core.storage.case_repository import CaseRepository
@@ -216,103 +216,3 @@ class CaseSearchService:
             cases = session.query(Case).filter(Case.case_id.in_(case_ids)).all()
 
             return CaseSchema.dump_many(cases)
-
-    def get_related_cases(
-        self, case_id: str, max_results: int = 10, session: Optional[Session] = None
-    ) -> List[Dict]:
-        """
-        Find cases related to a given case.
-
-        Scores other cases on two signals:
-        - Shared IOCs (10 points per matching IOC row)
-        - Shared MITRE techniques (5 points per technique in common)
-
-        Args:
-            case_id: Case ID
-            max_results: Maximum results to return
-            session: Database session (optional)
-
-        Returns:
-            List of related cases with similarity scores
-        """
-        with unit_of_work(session) as session:
-            case = session.query(Case).filter(Case.case_id == case_id).first()
-            if not case:
-                return []
-
-            related_cases = {}
-
-            # Find cases with shared IOCs
-            case_iocs = session.query(CaseIOC).filter(CaseIOC.case_id == case_id).all()
-
-            ioc_values = [ioc.value for ioc in case_iocs]
-            if ioc_values:
-                shared_ioc_cases = (
-                    session.query(CaseIOC)
-                    .filter(
-                        and_(CaseIOC.value.in_(ioc_values), CaseIOC.case_id != case_id)
-                    )
-                    .all()
-                )
-
-                for ioc in shared_ioc_cases:
-                    if ioc.case_id not in related_cases:
-                        related_cases[ioc.case_id] = {"score": 0, "reasons": []}
-                    related_cases[ioc.case_id]["score"] += 10
-                    related_cases[ioc.case_id]["reasons"].append("shared_ioc")
-
-            # Find cases with same MITRE techniques
-            if case.mitre_techniques:
-                similar_technique_cases = (
-                    session.query(Case)
-                    .filter(
-                        and_(
-                            Case.case_id != case_id,
-                            # Generic ``sqlalchemy.ARRAY`` has no ``.overlap()``;
-                            # spell Postgres' array-overlap operator directly.
-                            Case.mitre_techniques.op("&&")(case.mitre_techniques),
-                        )
-                    )
-                    .all()
-                )
-
-                for similar_case in similar_technique_cases:
-                    if similar_case.case_id not in related_cases:
-                        related_cases[similar_case.case_id] = {
-                            "score": 0,
-                            "reasons": [],
-                        }
-
-                    # Calculate overlap score
-                    overlap = len(
-                        set(case.mitre_techniques) & set(similar_case.mitre_techniques)
-                    )
-                    related_cases[similar_case.case_id]["score"] += overlap * 5
-                    related_cases[similar_case.case_id]["reasons"].append(
-                        "shared_mitre_techniques"
-                    )
-
-            # Sort by score and get top results
-            sorted_cases = sorted(
-                related_cases.items(), key=lambda x: x[1]["score"], reverse=True
-            )[:max_results]
-
-            # Get full case data in one query, then emit in score order.
-            top_ids = [case_id_rel for case_id_rel, _ in sorted_cases]
-            rel_cases_by_id = {}
-            if top_ids:
-                rel_cases_by_id = {
-                    c.case_id: c
-                    for c in session.query(Case).filter(Case.case_id.in_(top_ids))
-                }
-
-            result = []
-            for case_id_rel, meta in sorted_cases:
-                rel_case = rel_cases_by_id.get(case_id_rel)
-                if rel_case:
-                    case_dict = CaseSchema.dump(rel_case)
-                    case_dict["similarity_score"] = meta["score"]
-                    case_dict["similarity_reasons"] = meta["reasons"]
-                    result.append(case_dict)
-
-            return result
