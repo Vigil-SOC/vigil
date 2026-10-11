@@ -1,30 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import '../../../../../docs/design/console/tokens/tokens.css'
-import '../../styles.css'
-import '../../shell/shell.css'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { bootstrapApi } from '../../services/api'
+import { bootstrapApi, passwordResetApi } from '../../services/api'
 import { Icon } from '../../shared/icons'
-import { VigilLogo } from '../../shared/VigilLogo'
-import { useColorScheme } from '../../contexts/ColorSchemeContext'
-
-const UNREACHABLE_MSG = "Can't reach the Vigil API. Is the backend running?"
-
-// No response, or a 5xx without a server `detail` (e.g. Vite's proxy answering
-// ECONNREFUSED with a 500), means the API never saw the request.
-function requestErrorMessage(err: any, fallback: string): string {
-  const status: number = err?.response?.status
-  const detail = err?.response?.data?.detail
-  const hasDetail = typeof detail === 'string' && detail.length > 0
-  if (!err?.response || (status >= 500 && !hasDetail)) return UNREACHABLE_MSG
-  return hasDetail ? detail : fallback
-}
+import AuthShell from './AuthShell'
+import { requestErrorMessage } from './requestErrorMessage'
 
 export default function LoginScreen() {
   const navigate = useNavigate()
   const { login } = useAuth()
-  const { scheme, setScheme } = useColorScheme()
+  // set by the reset screen after a successful password change
+  const notice = (useLocation().state as { notice?: string } | null)?.notice
 
   const [usernameOrEmail, setUsernameOrEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -40,6 +26,10 @@ export default function LoginScreen() {
   // account yet, so show first-account creation instead of sign-in.
   const [needsBootstrap, setNeedsBootstrap] = useState<boolean | null>(null)
   const [email, setEmail] = useState('')
+
+  const [forgot, setForgot] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetSent, setResetSent] = useState('')
 
   useEffect(() => {
     if (showMfa) setTimeout(() => mfaInputRef.current?.focus(), 80)
@@ -96,63 +86,56 @@ export default function LoginScreen() {
     }
   }
 
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const res = await passwordResetApi.request({ email: resetEmail })
+      setResetSent(res.data.message)
+    } catch (err: any) {
+      setError(requestErrorMessage(err, 'Could not request a reset. Please try again.'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const closeForgot = () => {
+    setForgot(false)
+    setResetSent('')
+    setError('')
+  }
+
   const backToCredentials = () => {
     setShowMfa(false)
     setMfaCode('')
     setError('')
   }
 
+  const forgotView = forgot && !needsBootstrap
+
   return (
-    <div
-      className={`soc-console auth-root ${scheme === 'light' ? 'vg-light' : 'vg-dark'}`}
-      data-theme={scheme}
+    <AuthShell
+      screenLabel="Sign in"
+      title={
+        needsBootstrap
+          ? 'Create your account'
+          : forgotView
+            ? 'Reset your password'
+            : showMfa
+              ? 'Two-factor authentication'
+              : 'Sign in'
+      }
+      subtitle={
+        needsBootstrap
+          ? 'No account exists yet. Set up the first administrator.'
+          : forgotView
+            ? 'Enter the email on your account to request a reset link.'
+            : showMfa
+              ? 'Confirm your identity to finish signing in.'
+              : 'Authenticate to access the operations console.'
+      }
     >
-      <div className="auth" data-screen-label="Sign in">
-        <button
-          className="auth-theme"
-          type="button"
-          onClick={() => setScheme(scheme === 'dark' ? 'light' : 'dark')}
-          aria-label={scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          <Icon name={scheme === 'dark' ? 'sun' : 'moon'} size={17} />
-        </button>
-
-        {/* ---------- brand panel ---------- */}
-        <section className="brand">
-          <div className="brand-top">
-            <VigilLogo className="auth-logo" />
-          </div>
-
-          <div className="brand-body">
-            <h1>Vigilant, Open, Trustworthy.</h1>
-            <p>
-              Open source and community built, Vigil stands watch beside
-              your analysts on the journey toward greater autonomy.
-            </p>
-          </div>
-        </section>
-
-        {/* ---------- form panel ---------- */}
-        <section className="auth-pane">
-          <div className="form-wrap">
-            <header>
-              <h2>
-                {needsBootstrap
-                  ? 'Create your account'
-                  : showMfa
-                    ? 'Two-factor authentication'
-                    : 'Sign in'}
-              </h2>
-              <p>
-                {needsBootstrap
-                  ? 'No account exists yet. Set up the first administrator.'
-                  : showMfa
-                    ? 'Confirm your identity to finish signing in.'
-                    : 'Authenticate to access the operations console.'}
-              </p>
-            </header>
-
             {error && (
               <div className={`auth-error${showMfa ? ' info' : ''}`} role="alert">
                 <Icon name={showMfa ? 'info' : 'alert'} size={15} />
@@ -160,7 +143,65 @@ export default function LoginScreen() {
               </div>
             )}
 
-            {needsBootstrap ? (
+            {notice && !error && !forgotView && !showMfa && !needsBootstrap && (
+              <div className="auth-error info" role="status">
+                <Icon name="info" size={15} />
+                <span>{notice}</span>
+              </div>
+            )}
+
+            {resetSent && forgotView && (
+              <div className="auth-error info" role="status">
+                <Icon name="info" size={15} />
+                <span>{resetSent}</span>
+              </div>
+            )}
+
+            {forgotView ? (
+              <form onSubmit={handleForgot} autoComplete="on" noValidate>
+                {!resetSent && (
+                  <>
+                    <div className="field">
+                      <label htmlFor="reset-email">Email</label>
+                      <div className="ctrl">
+                        <Icon name="send" className="lead" />
+                        <input
+                          id="reset-email"
+                          name="email"
+                          type="email"
+                          placeholder="you@company.com"
+                          autoComplete="email"
+                          autoFocus
+                          disabled={loading}
+                          value={resetEmail}
+                          onChange={(e) => setResetEmail(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      className="btn-signin"
+                      type="submit"
+                      disabled={loading || !resetEmail.trim()}
+                    >
+                      {loading ? (
+                        <span className="spin" aria-hidden="true" />
+                      ) : (
+                        <>
+                          Send reset link
+                          <Icon name="arrowR" />
+                        </>
+                      )}
+                    </button>
+                  </>
+                )}
+                <div className="mfa-back">
+                  <button type="button" className="link" onClick={closeForgot}>
+                    ← Back to sign in
+                  </button>
+                </div>
+              </form>
+            ) : needsBootstrap ? (
               <form onSubmit={handleBootstrap} autoComplete="on" noValidate>
                 <div className="field">
                   <label htmlFor="bs-user">Username</label>
@@ -298,13 +339,16 @@ export default function LoginScreen() {
                       </span>
                       Keep me signed in
                     </label>
-                    <a
+                    <button
+                      type="button"
                       className="link"
-                      href="#"
-                      onClick={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setError('')
+                        setForgot(true)
+                      }}
                     >
                       Forgot password?
-                    </a>
+                    </button>
                   </div>
                 </>
               ) : (
@@ -353,9 +397,6 @@ export default function LoginScreen() {
               </button>
             </form>
             )}
-          </div>
-        </section>
-      </div>
-    </div>
+    </AuthShell>
   )
 }

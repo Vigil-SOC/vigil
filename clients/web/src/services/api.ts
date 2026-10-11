@@ -1370,6 +1370,13 @@ export const triageApi = {
   get: (params: TriageQuery = {}) => api.get<TriagePayload>('/triage', { params }),
 }
 
+export const passwordResetApi = {
+  request: (payload: Schema<'PasswordResetRequest'>) =>
+    api.post<{ message: string }>('/auth/password-reset/request', payload),
+  confirm: (payload: Schema<'PasswordResetConfirm'>) =>
+    api.post<{ message: string }>('/auth/password-reset/confirm', payload),
+}
+
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),

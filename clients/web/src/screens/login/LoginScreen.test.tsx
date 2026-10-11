@@ -6,6 +6,7 @@ import LoginScreen from './LoginScreen'
 
 const login = vi.fn()
 const navigate = vi.fn()
+const requestReset = vi.fn()
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ login }),
@@ -18,6 +19,7 @@ vi.mock('../../services/api', () => ({
     setTheme: () => Promise.resolve({ data: {} }),
   },
   // unmocked, this throws inside the mount effect and fails every test here
+  passwordResetApi: { request: (p: unknown) => requestReset(p) },
   bootstrapApi: {
     status: () => Promise.resolve({ data: { required: false } }),
     create: () => Promise.resolve({ data: {} }),
@@ -42,6 +44,7 @@ function renderLogin() {
 beforeEach(() => {
   login.mockReset()
   navigate.mockReset()
+  requestReset.mockReset()
 })
 
 describe('LoginScreen', () => {
@@ -50,6 +53,20 @@ describe('LoginScreen', () => {
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
     expect(screen.getByLabelText('Username or email')).toBeInTheDocument()
     expect(screen.getByLabelText('Password')).toBeInTheDocument()
+  })
+
+  it('opens the reset request view and shows the server message', async () => {
+    const message = 'If that email matches an active account, a reset link has been sent.'
+    requestReset.mockResolvedValueOnce({ data: { message } })
+    renderLogin()
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }))
+    expect(screen.getByRole('heading', { name: 'Reset your password' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.co' } })
+    fireEvent.click(screen.getByRole('button', { name: /send reset link/i }))
+    await waitFor(() => expect(requestReset).toHaveBeenCalledWith({ email: 'a@b.co' }))
+    expect(await screen.findByText(message)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /back to sign in/i }))
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   })
 
   it('signs in and routes into the console', async () => {
