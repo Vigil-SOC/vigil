@@ -104,7 +104,6 @@ PUT /api/federation/settings
 PUT /api/kafka/config
 PUT /api/sla-policies/{policy_id}
 PUT /api/users/{user_id}
-PUT /api/users/{user_id}/role
 PUT /api/webhooks/{webhook_id}
 PUT /api/workflows/custom/{workflow_id}
 PUT /api/workflows/{workflow_id}/enabled

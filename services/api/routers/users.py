@@ -51,12 +51,6 @@ class UpdateUserRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
-class ChangeUserRoleRequest(BaseModel):
-    """Change user role request."""
-
-    role_id: str
-
-
 def _can_assign_role(current_user: User, target_role: Role, session: Session) -> bool:
     """Return True only if current_user holds every permission granted by target_role.
 
@@ -258,8 +252,9 @@ def create_user(
 
 def _apply_user_update(
     session: Session, current_user: User, user_id: str, request: UpdateUserRequest
-) -> tuple[User, bool, dict]:
-    """Sync half of update_user. Returns the user, whether its email changed, and the payload."""
+) -> tuple[User, Optional[str], dict]:
+    """Sync half of update_user. Returns the user, what made its existing
+    tokens stale (an email or role change, else None), and the payload."""
     if not AuthService.check_permission(current_user.user_id, "users.write"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -272,7 +267,7 @@ def _apply_user_update(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
-    email_changed = False
+    stale_reason = None
     if request.full_name is not None:
         user.full_name = request.full_name
 
@@ -289,7 +284,7 @@ def _apply_user_update(
             )
         user.email = request.email
         user.is_verified = False
-        email_changed = True
+        stale_reason = "Email changed"
 
     if request.role_id is not None:
         role = session.query(Role).filter(Role.role_id == request.role_id).first()
@@ -302,6 +297,8 @@ def _apply_user_update(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot assign a role with more privileges than your own",
             )
+        if request.role_id != user.role_id:
+            stale_reason = stale_reason or "Role changed"
         user.role_id = request.role_id
 
     if request.is_active is not None:
@@ -311,7 +308,7 @@ def _apply_user_update(
     # of work commits.
     session.flush()
     session.refresh(user)
-    return user, email_changed, UserSchema.dump(user)
+    return user, stale_reason, UserSchema.dump(user)
 
 
 @router.put("/{user_id}")
@@ -334,16 +331,19 @@ async def update_user(
         Updated user information
     """
     try:
-        user, email_changed, payload = await asyncio.to_thread(
+        user, stale_reason, payload = await asyncio.to_thread(
             _apply_user_update, session, current_user, user_id, request
         )
 
-        if email_changed:
+        # Sign the user out everywhere so their next session carries the new
+        # email or role, not the claims and permissions cached at login.
+        if stale_reason:
             try:
                 await revoke_all_for_user(user.user_id)
             except Exception as exc:
                 logger.error(
-                    "Email changed for %s but revoke_all_for_user failed: %s",
+                    "%s for %s but revoke_all_for_user failed: %s",
+                    stale_reason,
                     user.username,
                     exc,
                 )
@@ -411,95 +411,6 @@ def delete_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete user",
-        )
-
-
-def _apply_role_change(
-    session: Session, current_user: User, user_id: str, role_id: str
-) -> tuple[User, str, dict]:
-    """Sync half of change_user_role. Returns the user, its previous role id, and the payload."""
-    if not AuthService.check_permission(current_user.user_id, "users.write"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required",
-        )
-
-    user = session.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-
-    role = session.query(Role).filter(Role.role_id == role_id).first()
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
-        )
-
-    if not _can_assign_role(current_user, role, session):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot assign a role with more privileges than your own",
-        )
-
-    old_role_id = user.role_id
-    user.role_id = role_id
-    # Flush so the read-back sees server defaults; the request's unit
-    # of work commits.
-    session.flush()
-    session.refresh(user)
-    return user, old_role_id, UserSchema.dump(user)
-
-
-@router.put("/{user_id}/role")
-async def change_user_role(
-    user_id: str,
-    request: ChangeUserRoleRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-    session: UnitOfWorkSession,
-):
-    """
-    Change user role (requires users.write permission).
-
-    Args:
-        user_id: User ID
-        request: New role ID
-        current_user: Current authenticated user
-        session: Database session
-
-    Returns:
-        Updated user information
-    """
-    try:
-        user, old_role_id, payload = await asyncio.to_thread(
-            _apply_role_change, session, current_user, user_id, request.role_id
-        )
-
-        # Invalidate the target user's existing tokens so the new
-        # permissions take effect on their next request, not whenever their
-        # cached token happens to expire.
-        try:
-            await revoke_all_for_user(user.user_id)
-        except Exception as exc:
-            logger.error(
-                "Role changed for %s but revoke_all_for_user failed: %s. "
-                "Old tokens may remain valid until natural expiry.",
-                user.username,
-                exc,
-            )
-
-        logger.info(
-            f"User role changed by {current_user.username}: {user.username} from {old_role_id} to {request.role_id}"
-        )
-        return payload
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Change role error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to change user role",
         )
 
 
