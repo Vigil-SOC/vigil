@@ -24,6 +24,7 @@ vi.mock('../../services/api', () => ({
             mean_cost_usd: null,
             triggers: [],
             enabled: false,
+            blocked_by: ['triage'],
             tools_used: ['read_skill'],
           },
           {
@@ -53,6 +54,7 @@ vi.mock('../../services/api', () => ({
             success_level: 'fair',
             mean_cost_usd: 1.5,
             triggers: ['schedule'],
+            blocked_by: ['hunt_lead'],
           },
           {
             id: 'cloud-incident',
@@ -212,6 +214,7 @@ describe('workflow catalog cards', () => {
     expect(beacon).toHaveTextContent('Started by hand')
     expect(beacon).toHaveTextContent('Off · not running')
     expect(beacon.querySelector('.level-pill')).toBeNull()
+    expect(beacon).not.toHaveTextContent("Can't run")
 
     // a finished run that cost nothing is a real zero
     const ransom = card('Ransom reply')
@@ -224,7 +227,9 @@ describe('workflow catalog cards', () => {
     expect(hunt).toHaveTextContent('Nightly')
     expect(hunt).toHaveTextContent('/hunt')
     expect(hunt).toHaveTextContent('Ran 61 times this week · 91.3% succeeded · $1.50 per run')
-    expect(hunt.querySelector('.level-pill.fair')).toHaveTextContent('Fair')
+    // a needed agent is off: the card says so, in the agent's Agents-tab name, in place of the pill
+    expect(await within(hunt).findByText("Can't run · Hunt Lead is off")).toBeInTheDocument()
+    expect(hunt.querySelector('.level-pill')).toBeNull()
 
     // runs but none finished: em dashes and no badge; only a command's own workflow shows its chip
     const cloud = card('Cloud incident')
@@ -253,7 +258,7 @@ describe('workflow catalog cards', () => {
   it('names workflows whose listed agents recommend read_skill, and marks built-in skills read-only', async () => {
     vi.mocked(skillsApi.list).mockResolvedValueOnce([
       { name: 'executive-summary', description: 'Write the brief.', source_path: 'skills/executive-summary', bundled: true, file_count: 1 },
-      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 3 },
+      { name: 'desk-check', description: 'A copy.', source_path: 'skills/desk-check', bundled: false, file_count: 3, reads_7d: 4, agents_7d: 2 },
     ])
     render(
       <MemoryRouter>
@@ -276,14 +281,16 @@ describe('workflow catalog cards', () => {
     expect(screen.queryByText('Custom')).toBeNull()
     expect(screen.getByText('1 file')).toBeInTheDocument()
     expect(screen.getByText('3 files')).toBeInTheDocument()
-    // usage is not recorded yet: a placeholder per card, with its explanation
-    expect(screen.getAllByText('Used by · Not measured yet')).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: 'Skill reads are not recorded yet.' })).toHaveLength(2)
+    // usage is recorded now (#1560): the 7-day line per card, with its explanation
+    expect(screen.getAllByText('Not used in 7 days')).toHaveLength(1)
+    expect(screen.getByText('Used 4 times in 7 days · by 2 agents')).toBeInTheDocument()
+    const usageInfo = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
+    expect(screen.getAllByRole('button', { name: usageInfo })).toHaveLength(2)
     // each ⓘ opens a tooltip with its text
     fireEvent.click(screen.getByRole('button', { name: 'The grant offers the whole library.' }))
     expect(screen.getByRole('tooltip')).toHaveTextContent('The grant offers the whole library.')
-    fireEvent.mouseEnter(screen.getAllByRole('button', { name: 'Skill reads are not recorded yet.' })[0].parentElement!)
-    expect(screen.getAllByRole('tooltip').some((t) => t.textContent === 'Skill reads are not recorded yet.')).toBe(true)
+    fireEvent.mouseEnter(screen.getAllByRole('button', { name: usageInfo })[0].parentElement!)
+    expect(screen.getAllByRole('tooltip').some((x) => x.textContent === usageInfo)).toBe(true)
     expect(screen.getByText('Read-only')).toBeInTheDocument()
     expect(screen.queryByText('skills/executive-summary')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
@@ -301,6 +308,8 @@ describe('workflow catalog cards', () => {
       source_path: 'skills/executive-summary',
       bundled: true,
       file_count: 2,
+      reads_7d: 6,
+      agents_7d: 1,
       body: '# Brief\n',
       operator_root_set: true,
       version: 3,
@@ -329,7 +338,7 @@ describe('workflow catalog cards', () => {
     const name = await screen.findByDisplayValue('executive-summary')
     const editor = screen.getByRole('dialog', { name: 'Edit executive-summary' })
     expect(within(editor).getByText('Skill · executive-summary')).toBeInTheDocument()
-    expect(within(editor).getByText('Built in · version 3')).toBeInTheDocument()
+    expect(within(editor).getByText('Built in · version 3 · Used 6 times in 7 days · by 1 agent')).toBeInTheDocument()
     expect(within(editor).getByLabelText('Steps (SKILL.md)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save new version' })).toBeDisabled()
 

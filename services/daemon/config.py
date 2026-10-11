@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from core.config import DEFAULT_REDIS_URL, get_settings
+from core.config import get_settings
 from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
 from core.intent import INTENT_FIELDS
 from core.response.config import ResponseConfig  # re-exported for DaemonConfig
@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 class PollingConfig:
     splunk_interval: int = 300  # 5 minutes
     crowdstrike_interval: int = 60  # 1 minute
-    generic_interval: int = 120  # 2 minutes for other sources
     webhook_enabled: bool = True
     webhook_port: int = 8081
     webhook_token: str = ""  # required bearer for /ingest; empty = fail closed
@@ -97,15 +96,6 @@ class OrchestratorConfig:
 
 
 @dataclass
-class LLMQueueConfig:
-    redis_url: str = "redis://localhost:6379/0"
-    max_concurrent_llm_calls: int = 5
-    investigation_timeout: int = 180
-    chat_timeout: int = 120
-    session_ttl: int = 14400  # 4 hours
-
-
-@dataclass
 class DaemonConfig:
     polling: PollingConfig = field(default_factory=PollingConfig)
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
@@ -114,7 +104,6 @@ class DaemonConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
-    llm_queue: LLMQueueConfig = field(default_factory=LLMQueueConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
 
     # Logging
@@ -197,9 +186,6 @@ class DaemonConfig:
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
-
-        config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
-        config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent
 
         config.kafka.enabled = settings.kafka_enabled  # SystemConfig may override below
         config.kafka.bootstrap_servers = settings.kafka_bootstrap_servers

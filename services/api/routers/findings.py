@@ -5,19 +5,15 @@ and is mounted at both ``/api/v1/findings`` and (for now) ``/api/findings``.
 This module keeps the routes that are *not* part of that contract: AI
 enrichment generation and the destructive wipe. They remain under
 ``/api/findings`` only.
-
-``FindingUpdate`` is the contract schema, imported from the v1 module
-(services -> core, the allowed direction).
 """
 
 import logging
 from datetime import datetime
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from core.api.v1.findings_router import FindingUpdate
 from core.auth.permissions import permission_gate
 from core.config import vigil_path
 from core.findings.enrichment import (
@@ -31,7 +27,6 @@ from core.storage.config_service import get_config_service
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Finding, User
 from core.time import utcnow
-from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
 from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
@@ -46,13 +41,6 @@ logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
 
 EXPORT_FORMATS = DatabaseDataService.EXPORT_FORMATS
-
-
-class BulkEnrichmentRequest(BaseModel):
-    """Schema for bulk enrichment request."""
-
-    finding_ids: List[str]
-    enrichment_data: Dict[str, FindingUpdate]
 
 
 class NoiseMarkResponse(BaseModel):
@@ -74,62 +62,6 @@ def _finding_or_404(session: UnitOfWorkSession, finding_id: str) -> Finding:
     if finding is None:
         raise HTTPException(status_code=404, detail="Finding not found")
     return finding
-
-
-@router.post("/bulk-enrich")
-def bulk_enrich_findings(request: BulkEnrichmentRequest):
-    """
-    Bulk enrich multiple findings with MITRE ATT&CK and other data.
-
-    Args:
-        request: Bulk enrichment request with finding IDs and enrichment data
-
-    Returns:
-        Summary of enrichment results
-    """
-    results: Dict[str, object] = {
-        "total": len(request.finding_ids),
-        "updated": 0,
-        "failed": 0,
-        "not_found": 0,
-        "errors": [],
-    }
-
-    for finding_id in request.finding_ids:
-        try:
-            finding = data_service.get_finding(finding_id)
-            if not finding:
-                results["not_found"] += 1
-                results["errors"].append(f"{finding_id}: Not found")
-                continue
-
-            enrichment = request.enrichment_data.get(finding_id)
-            if not enrichment:
-                continue
-
-            updates = enrichment.model_dump(exclude_none=True)
-            if not updates:
-                continue
-
-            success = data_service.update_finding(finding_id, **updates)
-
-            if success:
-                results["updated"] += 1
-                logger.info(f"Enriched finding {finding_id}")
-            else:
-                results["failed"] += 1
-                results["errors"].append(f"{finding_id}: Update failed")
-
-        except Exception as e:
-            results["failed"] += 1
-            results["errors"].append(f"{finding_id}: {INTERNAL_ERROR_DETAIL}")
-            logger.error(f"Error enriching finding {finding_id}: {e}")
-
-    return {
-        "success": results["updated"] > 0,
-        "message": f"Updated {results['updated']} of {results['total']} findings",
-        "results": results,
-    }
 
 
 @router.post("/{finding_id}/enrich")

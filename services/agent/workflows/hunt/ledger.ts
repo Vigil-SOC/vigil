@@ -1,6 +1,5 @@
 import type { AgentEvent, CheckpointPayload, PatchPayload, ResolutionPayload } from "../../contracts/events.js";
 import type { Narrative } from "./narrative.js";
-import type { State } from "../../core/seams.js";
 import type {
   DecisionRecord,
   Directive,
@@ -175,8 +174,4 @@ export function fold(events: readonly HuntEvent[]): Projection {
     }
   }
   return view;
-}
-
-export async function projectionOf(state: State<HuntKinds>, runId: string): Promise<Projection> {
-  return fold(await state.read(runId));
 }

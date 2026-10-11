@@ -163,7 +163,7 @@ export function Popup({
   )
 }
 
-export interface DropOption {
+interface DropOption {
   value: string
   label: string
 }

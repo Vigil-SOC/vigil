@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InProcessState } from "../../core/state.js";
 import { asHarnessEvents, gunzipped, historicalRuns, renamedGolden } from "../support/historical.js";
-import { fold, LedgerError, projectionOf, type HuntKinds } from "../../workflows/hunt/ledger.js";
+import { fold, LedgerError, type HuntKinds } from "../../workflows/hunt/ledger.js";
 import { digestOf } from "../../workflows/hunt/config.js";
 import { buildDigest } from "../../workflows/hunt/digest.js";
 import { evidenceStrength } from "../../workflows/hunt/strength.js";
@@ -62,7 +62,7 @@ describe("the fold survives the move to the harness ledger", () => {
     const state = new InProcessState<HuntKinds>();
     await state.append(name, events.map(({ seq, ts, schema_version, ...rest }) => rest));
 
-    expect(comparable(await projectionOf(state, name))).toEqual(comparable(fold(events)));
+    expect(comparable(fold(await state.read(name)))).toEqual(comparable(fold(events)));
   });
 });
 

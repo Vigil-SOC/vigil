@@ -44,7 +44,23 @@ describe('mapApiSkill', () => {
       source: 'skills/triage',
       bundled: true,
       fileCount: 3,
+      reads7d: 0,
+      agents7d: 0,
     })
+  })
+
+  it('carries the 7-day usage counts, defaulting an older API to zero', () => {
+    const used = mapApiSkill({
+      name: 'triage',
+      description: 'Triage a finding.',
+      source_path: 'skills/triage',
+      bundled: true,
+      file_count: 3,
+      reads_7d: 5,
+      agents_7d: 2,
+    })
+    expect(used.reads7d).toBe(5)
+    expect(used.agents7d).toBe(2)
   })
 })
 

@@ -1535,7 +1535,7 @@ describe('case page', () => {
       const head = ((await screen.findByRole('heading', { name: 'Frame case' })).closest('.detail-head')) as HTMLElement
       expect(within(head).queryByText('No workflow')).not.toBeInTheDocument()
       expect(within(head).getByText(/Resolve by —/)).toBeInTheDocument()
-      expect(within(head).getByText('Open')).toHaveClass('idle')
+      expect(within(head).getByText('Idle')).toHaveClass('idle')
       expect(head.querySelector('.case-reason')).toBeNull()
     })
 

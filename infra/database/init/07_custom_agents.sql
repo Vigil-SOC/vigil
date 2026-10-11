@@ -1,6 +1,6 @@
 -- Custom SOC Agents Table
 -- Stores user-defined agents created via the Agent Builder UI.
--- Built-in agents remain hardcoded in services/soc_agents.py; this table
+-- Built-in agents are defined in core/agents/builtins.py; this table
 -- only holds custom agents. IDs are prefixed "custom-" to disambiguate.
 
 CREATE TABLE IF NOT EXISTS custom_agents (

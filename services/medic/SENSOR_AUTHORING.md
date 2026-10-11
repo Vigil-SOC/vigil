@@ -44,7 +44,7 @@ States: `ok` · `degraded` (some reads failed, or drops) · `blind` (3 failed cy
 1. **`collect()` is async and never blocks.** Use `httpx.AsyncClient` (with `trust_env=False`); wrap any unavoidable blocking call in `asyncio.to_thread`. A blocking call stalls every sensor.
 2. **Read-only.** No write clients, no POST/PUT/DELETE, no Docker/K8s verbs beyond get/list/watch (C3).
 3. **Don't read bodies you don't need, and cap the ones you do.** `http_ready` never reads the body.
-4. **No secrets in logs, and no `extra=` on log calls.** Log through the message with `%`-style args. Medic's record factory redacts the rendered message and any traceback; `extra` fields would skip it (a test enforces this).
+4. **No secrets in logs, and no `extra=` on log calls.** Log through the message with `%`-style args. `install_log_redaction`'s record factory redacts the rendered message and any traceback, and `extra` fields would skip it (a test enforces this). Medic's entry points don't install that factory yet, so nothing redacts logs today.
 5. **Labels, enum values and `instance` are passed raw.** The choke point redacts them and then applies D3's label rule (`label_safe`) **once**. Don't call `label_safe` yourself: it isn't idempotent, and hashing before redaction would put a hash of a secret in the store.
 6. **Time comes from the framework.** Don't stamp `observed_at`; put the source's own time in `Reading.source_ts` if it gives one.
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from typing import Awaitable, Callable, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,3 @@ def translate(error: BaseException) -> BaseException:
         message=body or "Bifrost reported the budget is spent",
         status_code=EXHAUSTED,
     )
-
-
-def is_exhausted(status_code: Optional[Any]) -> bool:
-    return status_code == EXHAUSTED

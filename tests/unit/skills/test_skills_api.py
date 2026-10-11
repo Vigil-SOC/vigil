@@ -84,6 +84,8 @@ def test_list_returns_loaded_skills_with_source_path(client):
         "source_path",
         "bundled",
         "file_count",
+        "reads_7d",
+        "agents_7d",
     }
 
 
@@ -463,6 +465,37 @@ def test_a_copy_leaves_hidden_files_behind_and_lists_what_it_copied(
         ["SKILL.md", "evals", "cases.json"]
     )
     assert [p.name for p in root.iterdir()] == ["wip-copy"]
+
+
+# Usage (#1560): the list and the detail carry the 7-day counts from the one
+# grouped query, joined in memory. The skills come from disk, so a usage
+# query that cannot run degrades to zeros rather than failing the list.
+
+
+def test_list_carries_usage_counts(client, monkeypatch):
+    monkeypatch.setattr(skills_router, "skill_usage", lambda: {"full-skill": (3, 2)})
+    by_name = {s["name"]: s for s in client.get("/api/skills").json()}
+    assert by_name["full-skill"]["reads_7d"] == 3
+    assert by_name["full-skill"]["agents_7d"] == 2
+    assert by_name["minimal-skill"]["reads_7d"] == 0
+    assert by_name["minimal-skill"]["agents_7d"] == 0
+
+
+def test_detail_carries_usage_counts(client, monkeypatch):
+    monkeypatch.setattr(skills_router, "skill_usage", lambda: {"full-skill": (1, 1)})
+    detail = client.get("/api/skills/full-skill").json()
+    assert detail["reads_7d"] == 1
+    assert detail["agents_7d"] == 1
+
+
+def test_list_survives_a_failed_usage_query(client, monkeypatch):
+    def _down():
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(skills_router, "skill_usage", _down)
+    resp = client.get("/api/skills")
+    assert resp.status_code == 200
+    assert {s["reads_7d"] for s in resp.json()} == {0}
 
 
 # --- POST /api/skills/{name}/test: the drawer's "Test with a sample" -----------

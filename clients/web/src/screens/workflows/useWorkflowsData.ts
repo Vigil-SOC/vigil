@@ -11,7 +11,7 @@ import {
 import { prettyHandle } from '../../data/appData'
 import type { Workflow, AgentTemplate, Skill } from '../../data/appData'
 
-export interface AgentGrant {
+interface AgentGrant {
   id: string
   recommended_tools: string[]
 }
@@ -101,7 +101,7 @@ export function useAgents() {
    sequence chips share a single request; unknown/custom ids fall back to a
    prettified handle + the accent color. Covers customs too, which the old
    built-ins-only map didn't. */
-export interface AgentMeta {
+interface AgentMeta {
   label: string
   color: string
 }

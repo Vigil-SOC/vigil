@@ -8,7 +8,7 @@ import { anyRoutableBifrostProvider } from '../services/bifrostApi'
 export const isProviderReady = (provider: LLMProvider): boolean =>
   provider.is_active && provider.is_default
 
-export type ProviderStatus = 'ready' | 'none' | 'unreachable'
+type ProviderStatus = 'ready' | 'none' | 'unreachable'
 
 /** Only a failed routability read is `unreachable`: a failed legacy list with
     a healthy gateway is still a gateway that answered. */

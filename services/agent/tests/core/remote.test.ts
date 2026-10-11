@@ -166,3 +166,20 @@ describe("the run's signal is not a place listeners accumulate", () => {
     expect((await inflight).ok).toBe(false);
   });
 });
+
+describe("the turn's agent", () => {
+  // The agent rides the call, not the dispatch options (#1560): one
+  // dispatch serves every phase of a compose run, each with its own agent.
+  // A call with no agent sends no field, and the far side records the read
+  // unattributed.
+  it("sends agent_id only when the call carries one", async () => {
+    const { fetch, sent } = answering({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "vigil" });
+    const dispatch = dispatchTo(fetch);
+    await dispatch.invoke(TOOL, {}, undefined, "triage-agent");
+    await dispatch.invoke(TOOL, {});
+
+    const [attributed, plain] = await Promise.all(sent.map((request) => request.json() as Promise<Record<string, unknown>>));
+    expect(attributed!["agent_id"]).toBe("triage-agent");
+    expect(plain).not.toHaveProperty("agent_id");
+  });
+});

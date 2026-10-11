@@ -72,7 +72,7 @@ Section 12 kept today's graph builder and deferred the board's loop to phase 2. 
 
 ### Skills tab
 
-- **AW-S1. Skill folders.** Every skill, built-in and the operator's own, with its description, file count, the workflows it is offered to, and "Built in" or "Yours". *The list and "Offered to" shipped (#1366) for built-in skills.* "Used by N agents" and the sources a skill touches are **Not measured yet**.
+- **AW-S1. Skill folders.** Every skill, built-in and the operator's own, with its description, file count, the workflows it is offered to, and "Built in" or "Yours". *The list and "Offered to" shipped (#1366) for built-in skills.* "Used by N agents" is measured (#1560: skill reads are recorded and counted over 7 days); the sources a skill touches are **Not measured yet**.
 - **AW-S1a. Import a skill.** "Import SKILL.md or zip" beside "Build a skill" takes a bare `SKILL.md` or a zipped skill folder (`SKILL.md` at its root, or inside one top-level folder) and opens the drawer on the result. The skill's `name` must be valid and unused: a taken name is refused, never overwritten, and the server's reason is shown beside the button.
 - **AW-S2. Skill drawer.** Name, when to use it, the steps, the files in the skill, Test with a sample, and Save new version.
   - The name and description limits the board states are enforced.

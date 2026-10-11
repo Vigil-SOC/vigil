@@ -36,7 +36,7 @@ function toRunStatus(s: string | undefined): RunStatus {
 }
 
 /** Join recent runs onto their workflow's declared run_kind and bucket by status. */
-export function bucketRunOutcomes(
+function bucketRunOutcomes(
   workflows: ApiWorkflow[],
   runsByWorkflow: Record<string, RunSummary[]>,
 ): RunKindOutcomes[] {
@@ -115,12 +115,12 @@ export const PROBE_OUTCOMES = ['hit', 'miss', 'silent'] as const
 export type ProbeOutcome = (typeof PROBE_OUTCOMES)[number]
 
 /** Three probes a day for a week is 21 rows; the route caps `limit` at 1000. */
-export const PROBE_ROW_LIMIT = 100
+const PROBE_ROW_LIMIT = 100
 export const PROBE_TALLY_DAYS = 7
 
 /** `entity_context.probe` as `services/daemon/probes.py` writes it; `score`
  *  lands an hour after the row is created and is never rewritten. */
-export interface ProbeBlock {
+interface ProbeBlock {
   name: string
   expected: { severity: string[]; recommended_action: string[] }
   score?: {

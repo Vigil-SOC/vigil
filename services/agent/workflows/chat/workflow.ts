@@ -16,6 +16,9 @@ export interface ChatOptions {
   spec: RunSpec;
   turns: readonly Turn[];
   started_by?: string;
+  // The agent this conversation belongs to, when it belongs to one (#1560):
+  // its skill reads are credited to it. Absent for a plain chat.
+  agent_id?: string;
 }
 
 export interface ChatReport {
@@ -82,6 +85,7 @@ function turnFor(options: ChatOptions, lead: RoleSpec): TurnConfig {
     run_id: options.run_id,
     run_kind: KIND,
     role: "lead",
+    ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
     system: lead.prompt,
     task,
     history,

@@ -36,7 +36,7 @@ export function fmtDuration(ms?: number | null): string {
   return `${Math.round(ms / 60000)}m`
 }
 
-export interface WfPhase {
+interface WfPhase {
   phase_id: string
   phase_order: number
   agent_id: string
@@ -93,7 +93,7 @@ export interface HuntGap {
   hypothesis_id?: string | null
 }
 /** One critic verdict. The text is model output, not a finding. */
-export interface HuntReview {
+interface HuntReview {
   iteration: number
   hypothesis_id: string
   survives: boolean
@@ -134,7 +134,7 @@ export interface HuntMove {
 }
 /** The account of the run, as data. next_steps arrive already normalised to
  *  strings, so this side never has two shapes to read. */
-export interface HuntNarrative {
+interface HuntNarrative {
   summary: string
   what_happened: string
   next_steps: string[]
@@ -178,7 +178,7 @@ export interface RecalledSighting extends RecalledFrom {
   attacker_influenceable: boolean
   window: RecalledWindow
 }
-export interface DroppedRows { per_key_cap: number; overall_cap: number }
+interface DroppedRows { per_key_cap: number; overall_cap: number }
 /** The journaled read. `unavailable` means it could not be served; empty lists mean
  *  it ran and found nothing, which is a fact about the entities rather than about
  *  memory. The panel must not render the two alike. */
@@ -207,13 +207,13 @@ export interface HuntStrength {
 }
 /** The derived deliverable. Null until the hunt writes one, so the panel reads
  *  the live fields until it exists and the report itself afterwards. */
-export interface HuntReport {
+interface HuntReport {
   gaps: HuntGap[]
   checkpoints: HuntCheckpoint[]
   hypotheses: { hypothesis_id: string; evidence_strength?: HuntStrength | null }[]
   unruled?: number
 }
-export interface HuntCall {
+interface HuntCall {
   question: string
   tool: string
   result_length: number
@@ -223,7 +223,7 @@ export interface HuntCall {
   /** How the call failed; absent when it did not, and from an older agent service. */
   failed?: CallFailure
 }
-export interface HuntBudgets {
+interface HuntBudgets {
   max_iterations: number
   max_cost_usd: number
 }
@@ -276,7 +276,7 @@ export interface WfRunDetail extends WfRun {
   projection?: unknown
 }
 
-export const RUN_POLL_MS = 5_000
+const RUN_POLL_MS = 5_000
 export const IN_FLIGHT = ['running', 'paused', 'pending']
 
 /** One run's detail, refreshed while it is in flight. Shared by the start modal and
@@ -341,18 +341,18 @@ export type RootCauseEntry =
 /** Absent on a ledger that predates the run event's budgets. */
 export interface RootCauseBudgets { max_calls?: number }
 
-export type ReplayRead =
+type ReplayRead =
   | { kind: 'pending' }
   | { kind: 'absent' }
   | { kind: 'failed'; message: string }
   | { kind: 'investigate'; decisions: InvestigateDecisionView[] }
   | { kind: 'root_cause'; entries: RootCauseEntry[]; budgets: RootCauseBudgets }
 
-export function statusOf(e: unknown): number | undefined {
+function statusOf(e: unknown): number | undefined {
   return (e as { response?: { status?: number } }).response?.status
 }
 
-export function decisionsOf(raw: unknown[]): InvestigateDecisionView[] {
+function decisionsOf(raw: unknown[]): InvestigateDecisionView[] {
   return raw.map((item, at) => {
     const row = (typeof item === 'object' && item !== null ? item : {}) as Partial<InvestigateDecisionView>
     return {
@@ -394,7 +394,7 @@ export function entriesOf(raw: unknown[]): RootCauseEntry[] {
   })
 }
 
-export function pullReplay(runId: string, live: () => boolean, setRead: (next: ReplayRead) => void) {
+function pullReplay(runId: string, live: () => boolean, setRead: (next: ReplayRead) => void) {
   workflowApi
     .replayRun(runId)
     .then((res) => {

@@ -1,6 +1,6 @@
 /** One level and one sentence from the four reads the shell already has. */
 
-export type StatusLevel = 'good' | 'fair' | 'poor'
+type StatusLevel = 'good' | 'fair' | 'poor'
 
 export interface StatusFold {
   level: StatusLevel

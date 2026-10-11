@@ -6,7 +6,7 @@ export type { Phase } from '../cases/useCases'
 
 export type TimeRange = '24h' | '7d' | '30d' | 'all'
 
-export interface AnalyticsMetrics {
+interface AnalyticsMetrics {
   totalFindings: number
   totalCases: number
   avgResponseTime: number
@@ -17,31 +17,31 @@ export interface AnalyticsMetrics {
   falsePositiveChange: number
 }
 
-export interface TimeSeriesPoint {
+interface TimeSeriesPoint {
   timestamp: string
   findings: number
   cases: number
   alerts: number
 }
 
-export interface SeverityBucket {
+interface SeverityBucket {
   name: string
   value: number
   color: string
 }
 
-export interface AlertSource {
+interface AlertSource {
   name: string
   count: number
 }
 
-export interface ResponseTimePoint {
+interface ResponseTimePoint {
   period: string
   avgTime: number
   target: number
 }
 
-export interface AffectedEntity {
+interface AffectedEntity {
   entity: string
   count: number
   critical: number
@@ -61,7 +61,7 @@ export interface HeatmapCell {
   intensity: number
 }
 
-export interface MitreTechnique {
+interface MitreTechnique {
   techniqueId: string
   techniqueName: string
   tactic: string
@@ -110,7 +110,7 @@ export function useAnalytics(timeRange: TimeRange) {
   return { data, phase, error, reload }
 }
 
-export interface ApiInsight {
+interface ApiInsight {
   id: string
   type: 'recommendation' | 'warning' | 'info' | 'anomaly'
   title: string
@@ -127,7 +127,7 @@ interface InsightsResponse {
   generating: boolean
 }
 
-export type InsightLevel = 'crit' | 'high' | 'ok' | 'med'
+type InsightLevel = 'crit' | 'high' | 'ok' | 'med'
 
 export function insightLevel(type: ApiInsight['type']): InsightLevel {
   switch (type) {

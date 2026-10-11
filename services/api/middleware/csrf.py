@@ -1,9 +1,9 @@
 """
 Double-submit cookie CSRF middleware.
 
-Disabled by default in this PR (`VIGIL_CSRF_ENABLED=false`). PR 4 flips it
-on once the frontend starts injecting the `X-CSRF-Token` header and uses
-HttpOnly auth cookies.
+On by default (`VIGIL_CSRF_ENABLED=true`), in report-only mode unless
+`VIGIL_CSRF_REPORT_ONLY=false` (as `env.example` sets it). The frontend echoes
+the `csrf_token` cookie back as the `X-CSRF-Token` header.
 
 How it works:
 

@@ -2,12 +2,14 @@ import './kit.css'
 
 export type PillTone = 'idle' | 'live' | 'needs' | 'closed'
 
+const IDLE_CASE = new Set(['new', 'open', 'investigating'])
 const LIVE = new Set(['assigned', 'executing', 'review_submitted'])
 
 /** Colour pair and word for a case's combined state; any state shows Needs you while a decision is pending. */
 export function statePill(state: string, needs = false): { tone: PillTone; label: string } {
   if (needs || state === 'waiting_approval') return { tone: 'needs', label: 'Needs you' }
   if (state === 'closed') return { tone: 'closed', label: 'Closed' }
+  if (IDLE_CASE.has(state)) return { tone: 'idle', label: 'Idle' }
   const word = state.replace(/_/g, ' ')
   return { tone: LIVE.has(state) ? 'live' : 'idle', label: word.charAt(0).toUpperCase() + word.slice(1) }
 }

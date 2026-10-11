@@ -13,7 +13,7 @@ export function Heading({ children }: { children: ReactNode }) {
   return <span className="text-[12px] font-semibold leading-[1.3] text-[var(--tx2)]">{children}</span>
 }
 const CARD = 'rounded-[12px] bg-[var(--bg1)] border border-[var(--ln0)]'
-export function NoData({ children }: { children: ReactNode }) {
+function NoData({ children }: { children: ReactNode }) {
   return <span className={`text-[12px] leading-[1.45] text-[var(--tx2)] px-3 py-2.5 ${CARD}`}>{children}</span>
 }
 

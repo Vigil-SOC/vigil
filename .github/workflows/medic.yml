@@ -10,6 +10,8 @@ on:
     paths:
       - "services/medic/**"
       - "infra/docker/Dockerfile.medic"
+      - "services/medic_gateway/**"
+      - "infra/docker/Dockerfile.medic-gateway"
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
@@ -17,6 +19,8 @@ on:
     paths:
       - "services/medic/**"
       - "infra/docker/Dockerfile.medic"
+      - "services/medic_gateway/**"
+      - "infra/docker/Dockerfile.medic-gateway"
       - ".importlinter"
       - ".dockerignore"
       - ".github/workflows/medic.yml"
@@ -109,4 +113,90 @@ jobs:
             sleep 1
           done
           docker logs medic
+          exit 1
+
+  # The read-only gateway (C3 §4.6): its own lock and its own gates, checks 10
+  # and 11 in its tests, then the image it ships in.
+  medic-gateway:
+    name: Medic gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      - name: Install the gateway's locked dev dependencies
+        run: uv sync --project services/medic_gateway --frozen
+
+      - name: Ruff
+        run: |
+          uv run --project services/medic_gateway --frozen ruff check services/medic_gateway
+          uv run --project services/medic_gateway --frozen ruff format --check services/medic_gateway
+
+      - name: Pytest
+        run: uv run --project services/medic_gateway --frozen pytest services/medic_gateway
+
+      - name: Import fence
+        run: uv run --project services/medic_gateway --frozen lint-imports
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/Dockerfile.medic-gateway
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.medic-gateway
+          push: false
+          load: true
+          tags: vigil-medic-gateway:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A credential in env: refuses to start (exit 2) and names it, not its value.
+      # (`if …; then exit 1` rather than `!`: set -e ignores a negated command.)
+      - name: Smoke test, credential in env
+        run: |
+          set +e
+          out=$(docker run --rm --read-only -e AGENT_INTERNAL_TOKEN=leak-me \
+            vigil-medic-gateway:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -eq 2
+          grep -q AGENT_INTERNAL_TOKEN <<<"$out"
+          if grep -q leak-me <<<"$out"; then exit 1; fi
+
+      # As it will run: read-only root, no capabilities, password as a file. No
+      # backend: the image's own HEALTHCHECK command must still go green.
+      - name: Smoke test, healthy
+        run: |
+          printf 'not-a-real-password' > pw && chmod 0644 pw
+          docker run -d --name gw --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            -v "$PWD/pw:/run/secrets/medic_viewer_password:ro" \
+            -e VIGIL_MEDIC_GATEWAY_BACKEND=backend.invalid:6987 \
+            -e VIGIL_MEDIC_GATEWAY_MEDIC=medic.invalid:8470 \
+            -e VIGIL_MEDIC_GATEWAY_OUT_BIND=127.0.0.1:8471 \
+            -e VIGIL_MEDIC_GATEWAY_IN_BIND=127.0.0.1:8470 \
+            -e VIGIL_MEDIC_GATEWAY_VIEWER_USER=medic-viewer \
+            vigil-medic-gateway:ci
+          for _ in $(seq 1 20); do
+            if docker exec gw python -m services.medic_gateway check; then
+              docker exec gw id -u | grep -qx 10002
+              # /tmp, not /app: uid 10002 can't write /app on any filesystem.
+              if docker exec gw touch /tmp/x; then exit 1; fi
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs gw
           exit 1

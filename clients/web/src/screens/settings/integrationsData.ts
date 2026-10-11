@@ -31,7 +31,7 @@ export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   'splunk-selfhosted': 'Splunk (Self-Hosted)',
 }))
 
-export interface McpCategory {
+interface McpCategory {
   label: string
   servers: string[]
 }

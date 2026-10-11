@@ -1,7 +1,7 @@
 import { IntegrationMetadata } from './integrationSchema'
 import { basePath } from './basePath'
 
-export const INTEGRATIONS: IntegrationMetadata[] = [
+const INTEGRATIONS: IntegrationMetadata[] = [
   {
     id: 'github',
     name: 'GitHub',

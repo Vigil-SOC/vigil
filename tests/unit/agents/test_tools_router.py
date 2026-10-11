@@ -494,3 +494,63 @@ class TestPrincipal:
         assert answer["ok"] is True
         assert recorded == ["nestor"]
         assert current_caller() is None
+
+
+class TestSkillReadRecording:
+    """A skill use is counted once, only when the body read succeeded (#1560)."""
+
+    @pytest.fixture
+    def recorded(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            tools_router,
+            "record_skill_read",
+            lambda name, agent_id: calls.append((name, agent_id)),
+        )
+        return calls
+
+    def _read(self, client, args, agent_id="agent-7"):
+        body = {
+            "tool": "read_skill",
+            "args": args,
+            "bounds": BOUNDS,
+            "agent_id": agent_id,
+        }
+        return client.post("/internal/tools/invoke", json=body, headers=AUTH)
+
+    def test_a_body_read_counts_once_with_its_agent(
+        self, client, monkeypatch, recorded
+    ):
+        _answers(monkeypatch, {"name": "triage", "body": "# Triage"})
+        response = self._read(client, {"name": "triage"})
+        assert response.json()["ok"] is True
+        assert recorded == [("triage", "agent-7")]
+
+    def test_a_supporting_file_read_does_not_count(self, client, monkeypatch, recorded):
+        _answers(monkeypatch, {"name": "triage", "file": "refs/x.md", "body": "..."})
+        response = self._read(client, {"name": "triage", "file": "refs/x.md"})
+        assert response.json()["ok"] is True
+        assert recorded == []
+
+    def test_a_failed_read_does_not_count(self, client, monkeypatch, recorded):
+        _answers(monkeypatch, {"error": "No skill named 'nope'"})
+        response = self._read(client, {"name": "nope"})
+        assert response.json()["ok"] is False
+        assert recorded == []
+
+    def test_an_unattributed_read_counts_with_no_agent(
+        self, client, monkeypatch, recorded
+    ):
+        _answers(monkeypatch, {"name": "triage", "body": "# Triage"})
+        response = self._read(client, {"name": "triage"}, agent_id=None)
+        assert response.json()["ok"] is True
+        assert recorded == [("triage", None)]
+
+    def test_a_recording_failure_never_fails_the_call(self, client, monkeypatch):
+        def _down(name, agent_id):
+            raise RuntimeError("database is down")
+
+        monkeypatch.setattr(tools_router, "record_skill_read", _down)
+        _answers(monkeypatch, {"name": "triage", "body": "# Triage"})
+        response = self._read(client, {"name": "triage"})
+        assert response.json()["ok"] is True

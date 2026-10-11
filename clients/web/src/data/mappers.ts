@@ -54,7 +54,7 @@ export function initials(name?: string): string {
   return (parts[0] || name).slice(0, 2).toUpperCase()
 }
 
-export function compactAge(iso?: string): string {
+function compactAge(iso?: string): string {
   if (!iso) return DASH
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return DASH
@@ -84,7 +84,7 @@ export function mapApiCase(c: ApiCase): CaseRow {
 }
 
 /** Queue row or a case record. Combined state is shown as given. */
-export interface QueueCase {
+interface QueueCase {
   case_id?: string | null
   title?: string | null
   description?: string | null
@@ -134,7 +134,7 @@ function slaText(seconds?: number | null, health?: string | null): string {
 }
 
 /** "22 h 50 min left"; paused clocks and cases with no running clock say so. */
-export function timeLeftText(seconds?: number | null, paused?: boolean | null): string {
+function timeLeftText(seconds?: number | null, paused?: boolean | null): string {
   if (paused) return 'Timer paused'
   if (seconds == null || Number.isNaN(seconds)) return DASH
   const mins = Math.round(Math.abs(seconds) / 60)
@@ -354,6 +354,8 @@ export interface ApiWorkflow {
   mean_cost_usd?: number | null
   /** what starts it: alerts, schedule, shadow; none means a person does */
   triggers?: string[]
+  /** turned-off agents the workflow needs; absent means none */
+  blocked_by?: string[]
   /** absent means on; only an explicit false is off */
   enabled?: boolean
   updated_at?: string
@@ -393,6 +395,7 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     successRate: typeof w.success_rate === 'number' ? w.success_rate : null,
     successLevel: w.success_level ?? null,
     triggers: w.triggers,
+    blockedBy: w.blocked_by ?? [],
     enabled: w.enabled !== false,
     meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
     updatedAt: w.updated_at,
@@ -451,5 +454,7 @@ export function mapApiSkill(s: ApiSkill): Skill {
     source: s.source_path,
     bundled: s.bundled,
     fileCount: s.file_count,
+    reads7d: s.reads_7d ?? 0,
+    agents7d: s.agents_7d ?? 0,
   }
 }

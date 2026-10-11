@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 _VIGIL_DIRNAME = ".vigil"
 _LEGACY_DIRNAME = ".deeptempo"
 
-REQUEST_TIMEOUT = 30
-STREAM_TIMEOUT = 120
 
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 DEFAULT_SANDBOX_FILE_TYPES = "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"

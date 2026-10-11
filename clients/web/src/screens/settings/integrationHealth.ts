@@ -30,7 +30,7 @@ export interface ServerRow {
   lastTest?: LastTest
 }
 
-export interface HealthInput {
+interface HealthInput {
   servers: string[]
   statuses: Record<string, string>
   enabled: Record<string, boolean>

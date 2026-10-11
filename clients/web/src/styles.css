@@ -2400,6 +2400,7 @@
    }
 
    .wfk-chip.acc { background: var(--ac-bg); color: var(--ac); }
+   .wfk-chip.warn { background: var(--high-dim); color: var(--high); max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 20px; }
 
    .wfk-line {
       font-size: 12px;

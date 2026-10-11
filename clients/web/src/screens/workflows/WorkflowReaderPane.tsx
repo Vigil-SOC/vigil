@@ -47,13 +47,13 @@ interface Definition {
   phases?: Phase[] | null
 }
 
-export interface DraftDefinition {
+interface DraftDefinition {
   name: string
   description?: string
   phases?: Phase[]
 }
 
-export interface ReaderActions {
+interface ReaderActions {
   /** Shown as "All workflows" when the pane stands alone; beside the card list it has none. */
   onBack?: () => void
   onHistory: () => void
@@ -65,7 +65,7 @@ export interface ReaderActions {
 }
 
 /** A draft's `onSave` resolves once the workflow exists and rejects with what the server said. */
-export type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void; onSave: () => Promise<unknown> }
+type ReaderProps = ({ wf: Workflow } & ReaderActions) | { draft: DraftDefinition; onBack?: () => void; onSave: () => Promise<unknown> }
 
 const DRAFT_MISSING = 'Shown once the workflow is saved.'
 const NOT_LOADED = 'Couldn’t load this.'

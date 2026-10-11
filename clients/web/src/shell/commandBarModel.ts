@@ -4,9 +4,9 @@ import type { IconName } from '../shared/icons'
 
 export type LiveCommandId = 'investigate' | 'hunt' | 'replay' | 'ask' | 'ticket'
 
-export type CommandId = LiveCommandId | 'hold' | 'isolate' | 'phish' | 'custom'
+type CommandId = LiveCommandId | 'hold' | 'isolate' | 'phish' | 'custom'
 
-export interface CommandDef {
+interface CommandDef {
   id: CommandId
   name: string
   hint: string
@@ -33,7 +33,7 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c) => !c.later)
 
-export type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask'
+type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask'
 
 export type Section =
   | 'Recent searches'
@@ -87,7 +87,7 @@ export interface PaletteRow {
   recent?: string
 }
 
-export interface JiraConfigRead {
+interface JiraConfigRead {
   enabled_integrations?: string[]
   integrations?: Record<string, { url?: string; username?: string; project_key?: string } | undefined>
   secrets_set?: Record<string, Record<string, boolean> | undefined>
@@ -98,7 +98,7 @@ export interface JiraReadiness {
   projectKey: string
 }
 
-export function recentsStorageKey(userId: string): string {
+function recentsStorageKey(userId: string): string {
   return `vigil.command.recents.${userId}`
 }
 
@@ -132,7 +132,7 @@ const HUNT_TITLE_MAX = 60
 
 /** What the server reads (core/documents/extract.py); the picker offers these. */
 export const ATTACH_TYPES = ['.pdf', '.docx', '.pptx', '.xlsx', '.png', '.jpg', '.jpeg', '.md', '.markdown', '.txt', '.text', '.html', '.htm']
-export const MAX_ATTACH_BYTES = 25 * 1024 * 1024
+const MAX_ATTACH_BYTES = 25 * 1024 * 1024
 export const PASTED_NAME = 'Pasted text'
 
 /** The hunt already on this document: its case when it has one, else its run. */

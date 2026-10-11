@@ -14,10 +14,11 @@ its own console route.
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy import func
 
+from core.agents.enablement import disabled_agent_ids
 from core.findings.overview import completion_level
 from core.llm import target
 from core.llm.providers.registry import get_registry, model_display_name
@@ -25,6 +26,7 @@ from core.storage.connection import get_db_manager
 from core.storage.models import WorkflowRun
 from core.time import utcnow
 from core.workflows.enablement import disabled_workflow_ids
+from core.workflows.playbook_resolver import disabled_phase_agents
 from core.workflows.routing import can_disable, triggers_for
 from core.workflows.workflows_service import (
     ROOT_CAUSE_RUN_KIND,
@@ -109,6 +111,22 @@ _NO_RUNS: Dict[str, Any] = {
 }
 
 
+def _blocked_by(
+    service: WorkflowsService, workflow_id: str, off_agents: Set[str]
+) -> List[str]:
+    """Phase agents that are off, where Run would be refused for naming them.
+
+    Every run kind but a root-cause trace resolves its phase agents and refuses
+    an off one; a trace has no phases.
+    """
+    if not off_agents:
+        return []
+    definition = service.get_workflow(workflow_id)
+    if definition is None or definition.run_kind == ROOT_CAUSE_RUN_KIND:
+        return []
+    return disabled_phase_agents(definition, off_agents)
+
+
 def listing(service: WorkflowsService) -> Dict[str, Any]:
     """Every available workflow, file-based and database-backed alike.
 
@@ -116,16 +134,19 @@ def listing(service: WorkflowsService) -> Dict[str, Any]:
     fraction), ``success_level`` (good/fair/poor, as on the Agents tab) and the
     mean cost of the finished runs. All four keys are present when nothing
     matches (0 and nulls). ``triggers`` says what starts it, ``can_disable``
-    whether it may be turned off, and ``enabled`` whether it is on.
+    whether it may be turned off, and ``enabled`` whether it is on. ``blocked_by``
+    lists the turned-off agents the workflow needs (empty when it can run).
     """
     workflows = service.list_workflows()
     stats = _week_run_stats(utcnow())
     disabled = disabled_workflow_ids()
+    off_agents = disabled_agent_ids()
     for row in workflows:
         row.update(stats.get(row["id"], _NO_RUNS))
         row["triggers"] = triggers_for(row["id"])
         row["can_disable"] = can_disable(row["id"])
         row["enabled"] = row["id"] not in disabled
+        row["blocked_by"] = _blocked_by(service, row["id"], off_agents)
     return {"workflows": workflows, "count": len(workflows)}
 
 

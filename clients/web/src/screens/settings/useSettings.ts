@@ -84,7 +84,7 @@ export function useGeneralSettings() {
 
 export type ProxyType = 'none' | 'pgbouncer' | 'ssh_tunnel'
 
-export interface PlatformDbForm {
+interface PlatformDbForm {
   proxy_type: ProxyType
   proxy_host: string
   proxy_port: number
@@ -356,7 +356,7 @@ export interface InvestigationProfile {
 
 export type InvestigationProfiles = Record<string, InvestigationProfile>
 
-export interface ForceManualApproval {
+interface ForceManualApproval {
   enabled: boolean
   environment_wins: boolean
 }
@@ -515,10 +515,10 @@ export function useForceManualApproval() {
   return { ...state, phase, save }
 }
 
-export interface StorageInfo {
+interface StorageInfo {
   backend?: string
 }
-export interface StorageHealthInfo {
+interface StorageHealthInfo {
   findings_count?: number
   cases_count?: number
 }
@@ -567,7 +567,7 @@ export function useStorage() {
   return { status, health, configured, phase, error, reload, reconnect, savePostgres }
 }
 
-export interface SplunkStatus {
+interface SplunkStatus {
   running?: boolean
   web_url?: string
   hec_url?: string
@@ -755,7 +755,7 @@ export function useBudgets() {
   return { settings, setSettings, quota, phase, reload, save }
 }
 
-export interface ToggleResult {
+interface ToggleResult {
   ok: boolean
   error?: string | null
 }
@@ -853,7 +853,7 @@ export function useMcpServers() {
 
 export type CostTimeRange = '24h' | '7d' | '30d' | 'all'
 
-export interface CostTotals {
+interface CostTotals {
   calls: number
   /** Calls stored with no cost (unpriced); `cost_usd` sums the rest (#1115). */
   unpriced_calls: number
@@ -865,7 +865,7 @@ export interface CostTotals {
   cache_hit_rate: number
 }
 
-export interface CostModelRow {
+interface CostModelRow {
   model: string
   provider_type: string
   pricing_source: 'exact' | 'zero' | 'unknown'
@@ -1079,7 +1079,7 @@ export interface KafkaConfig {
   session_timeout_ms: number
 }
 
-export interface KafkaStats {
+interface KafkaStats {
   connected: boolean
   messages_consumed: number
   messages_enqueued: number
@@ -1088,7 +1088,7 @@ export interface KafkaStats {
   last_error: string | null
 }
 
-export const KAFKA_DEFAULTS: KafkaConfig = {
+const KAFKA_DEFAULTS: KafkaConfig = {
   enabled: false,
   bootstrap_servers: 'localhost:9092',
   consumer_group: 'vigil-soc',
@@ -1226,7 +1226,7 @@ export interface DetectionSource {
   status: string
 }
 
-export interface DetectionStats {
+interface DetectionStats {
   total_rules: number
   sources_count: number
   by_format: Record<string, number>

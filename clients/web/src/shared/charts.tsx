@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 
-export interface DonutSeg {
+interface DonutSeg {
   v: number // fraction 0..1
   color: string
   label?: string
@@ -209,7 +209,7 @@ export function Trend({
   )
 }
 
-export interface GroupRow {
+interface GroupRow {
   label: string
   a: number
   b: number

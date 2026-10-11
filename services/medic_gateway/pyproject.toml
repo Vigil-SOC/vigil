@@ -1,0 +1,33 @@
+# The read-only gateway between Medic and the Vigil backend (C3 §4.6, A3-2). Its
+# own lock, like Medic's: it imports nothing from core, services.medic or any
+# other service (.importlinter), and it has no runtime dependencies at all, so
+# the one new security component has no dependency tree to audit (SP1 ⚑5).
+[project]
+name = "vigil-medic-gateway"
+version = "0.0.0"
+description = "Medic's read-only gateway to the Vigil backend"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "import-linter==2.15",
+    "pytest>=8",
+    "pyyaml>=6",
+    "ruff==0.16.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The repo root, so `services.medic_gateway` imports the way it does at runtime.
+pythonpath = ["../.."]
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint.isort]
+known-first-party = ["services"]

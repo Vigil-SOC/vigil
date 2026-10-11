@@ -9,7 +9,7 @@ to be smuggled through ``--url-query`` (see 2026-05 disclosure).
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.integrations.custom_integration_service import (
@@ -85,48 +85,6 @@ async def generate_custom_integration(
         )
 
     # Return the result as-is (let FastAPI handle the dict -> JSON conversion)
-    return result
-
-
-@router.post("/generate/upload")
-async def generate_from_file(
-    file: UploadFile = File(...),
-    integration_name: Optional[str] = Form(None),
-    category: Optional[str] = Form("Custom"),
-    current_user: User = Depends(get_current_active_user),
-):
-    """Generate a custom integration from an uploaded documentation file."""
-    require_integrations_admin(current_user)
-    # Read file content
-    content = await file.read()
-
-    # Try to decode as text
-    try:
-        documentation = content.decode("utf-8")
-    except UnicodeDecodeError:
-        try:
-            documentation = content.decode("latin-1")
-        except Exception as e:
-            logger.error(f"Failed to decode uploaded file: {e}")
-            raise HTTPException(
-                status_code=400,
-                detail="Unable to decode file. Please upload a text-based document.",
-            )
-
-    # Generate integration
-    service = CustomIntegrationService()
-    result = await service.generate_integration(
-        documentation=documentation,
-        integration_name=integration_name,
-        category=category,
-    )
-
-    if not result["success"]:
-        raise HTTPException(
-            status_code=500,
-            detail=result.get("error", "Failed to generate integration"),
-        )
-
     return result
 
 

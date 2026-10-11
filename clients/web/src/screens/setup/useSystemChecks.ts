@@ -11,7 +11,7 @@ import type { CheckRow } from './CheckTable'
 
 type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'federation' | 'mcp'
 
-export type SystemCheck = CheckRow & { id: CheckId }
+type SystemCheck = CheckRow & { id: CheckId }
 
 type Result = Pick<SystemCheck, 'phase' | 'detail'>
 

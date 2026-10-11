@@ -8,6 +8,7 @@ venv/
 env/
 ENV/
 .venv
+.venv-medic-gateway
 
 # Testing
 .pytest_cache/
@@ -124,3 +125,7 @@ services/medic/tests/
 services/medic/contracts/tests/
 services/medic/contracts/tools/
 services/medic/contracts/fixtures/
+services/medic_gateway/tests/
+services/medic_gateway/**/__pycache__/
+services/medic_gateway/**/.pytest_cache/
+services/medic_gateway/**/.ruff_cache/

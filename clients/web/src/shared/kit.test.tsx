@@ -129,8 +129,10 @@ describe('slaLevel', () => {
 
 describe('StatePill', () => {
   it('maps each state to its tone and never says Acting', () => {
-    expect(statePill('new')).toEqual({ tone: 'idle', label: 'New' })
-    expect(statePill('open')).toEqual({ tone: 'idle', label: 'Open' })
+    expect(statePill('new')).toEqual({ tone: 'idle', label: 'Idle' })
+    expect(statePill('open')).toEqual({ tone: 'idle', label: 'Idle' })
+    expect(statePill('investigating')).toEqual({ tone: 'idle', label: 'Idle' })
+    expect(statePill('paused')).toEqual({ tone: 'idle', label: 'Paused' })
     expect(statePill('assigned').tone).toBe('live')
     expect(statePill('executing').tone).toBe('live')
     expect(statePill('review_submitted')).toEqual({ tone: 'live', label: 'Review submitted' })
