@@ -279,7 +279,7 @@ describe('board grid', () => {
     expect(row.getByText('1 alert · step 4 · active 3h ago · age 2d')).toBeInTheDocument()
     expect(row.getByText('Hunt A')).toBeInTheDocument()
     expect(row.getByText('High')).toBeInTheDocument()
-    expect(row.getByText('Open')).toBeInTheDocument()
+    expect(row.getByText('Idle')).toBeInTheDocument()
     expect(row.getByText('analyst (you)')).toBeInTheDocument()
     expect(row.getByText('22 h 50 min left')).toBeInTheDocument()
     expect(row.getByText('Good')).toHaveClass('level-pill', 'good')
