@@ -1,14 +1,13 @@
 """Case metrics — versioned contract surface (``/api/v1/cases/metrics``).
 
 Reporting numbers about cases (MTTR, MTTD, breach counts, breakdowns). Six are
-frozen; six composite/rollup reads are marked beta via ``openapi_extra`` and are
-excluded from the contract snapshot — their shape may change while the feature
-matures. Beta still ships and returns data; it is a "do not rely on this yet"
-label, not a hidden route.
+frozen; two are marked beta via ``openapi_extra`` and are excluded from the
+contract snapshot — their shape may change while the feature matures. Beta
+still ships and returns data; it is a "do not rely on this yet" label, not a
+hidden route.
 
 Frozen: by-priority, by-status, breached, mttr, mttd, summary.
-Beta:   dashboard, sla-compliance, velocity, analyst/{id}, analyst-performance,
-        calculate/{id} (a recompute action, not a read).
+Beta:   analyst-performance, calculate/{id} (a recompute action, not a read).
 """
 
 from datetime import datetime
