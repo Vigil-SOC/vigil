@@ -23,7 +23,7 @@ import {
   ScriptedDecisionProvider,
   ScriptedDisconfirmationCritic,
   type ScriptedDecision,
-} from "../../workflows/hunt/scripted.js";
+} from "./scripted-hunt.js";
 import { NULL_CHECK_PROVENANCE, unclassified } from "../../workflows/hunt/strength.js";
 import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type EvidenceRecord, type LinkRelation } from "../../workflows/hunt/types.js";
 

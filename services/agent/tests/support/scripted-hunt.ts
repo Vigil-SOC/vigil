@@ -1,4 +1,4 @@
-import type { DecisionProvider, DisconfirmationCritic, WorkerDispatcher } from "./ports.js";
+import type { DecisionProvider, DisconfirmationCritic, WorkerDispatcher } from "../../workflows/hunt/ports.js";
 import type {
   Decision,
   DecisionResult,
@@ -7,7 +7,7 @@ import type {
   DispatchResult,
   NullCheckInput,
   NullCheckResult,
-} from "./types.js";
+} from "../../workflows/hunt/types.js";
 
 export const SCRIPTED_MODEL_ID = "scripted";
 

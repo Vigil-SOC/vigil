@@ -11,7 +11,7 @@ import {
   validateDecision,
 } from "../../workflows/hunt/controller.js";
 import type { DecisionProvider, WorkerDispatcher } from "../../workflows/hunt/ports.js";
-import { ScriptedDecisionProvider, ScriptedWorkerDispatcher } from "../../workflows/hunt/scripted.js";
+import { ScriptedDecisionProvider, ScriptedWorkerDispatcher } from "../support/scripted-hunt.js";
 import type {
   Decision,
   DecisionAction,

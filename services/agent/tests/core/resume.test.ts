@@ -5,7 +5,7 @@ import { UnrecoverableError } from "bullmq";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { RunJob } from "../../contracts/job.js";
 import { GatewayExhausted } from "../../core/limiter.js";
-import { InProcessLeases } from "../../core/leases.js";
+import { InProcessLeases } from "../support/in-process-leases.js";
 import { InProcessState } from "../../core/state.js";
 import { advance, handle, MAX_STALLED_RESUMES, resolveSpec, specOf } from "../../worker.js";
 import { SpecError } from "../../core/spec.js";

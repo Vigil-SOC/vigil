@@ -11,7 +11,7 @@ import { newId } from "../../workflows/hunt/ids.js";
 import type { HuntKinds } from "../../workflows/hunt/journal.js";
 import { huntProjection } from "../../workflows/hunt/projection.js";
 import { replay } from "../../workflows/hunt/replay.js";
-import { ScriptedDisconfirmationCritic, ScriptedWorkerDispatcher } from "../../workflows/hunt/scripted.js";
+import { ScriptedDisconfirmationCritic, ScriptedWorkerDispatcher } from "../support/scripted-hunt.js";
 import type { Decision } from "../../workflows/hunt/types.js";
 import { CONCLUDE, controllerFor, huntSpecFor, INVESTIGATE, provable, ruled, SEED_IP, validateOn } from "../support/hunt.js";
 

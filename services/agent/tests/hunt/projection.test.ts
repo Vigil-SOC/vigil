@@ -3,7 +3,7 @@ import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { AUTO_ACTOR, raiseCheckpoint, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
 import { EVIDENCE_SHOWN, huntProjection } from "../../workflows/hunt/projection.js";
-import { ScriptedDisconfirmationCritic } from "../../workflows/hunt/scripted.js";
+import { ScriptedDisconfirmationCritic } from "../support/scripted-hunt.js";
 import { replay } from "../../workflows/hunt/replay.js";
 import { controllerFor, evidenceOn, newLedger, provable, validateOn, type Started } from "../support/hunt.js";
 

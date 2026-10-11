@@ -7,7 +7,7 @@ import {
 } from "../../workflows/hunt/config.js";
 import { InvalidDecision, validateDecision } from "../../workflows/hunt/controller.js";
 import type { DisconfirmationCritic } from "../../workflows/hunt/ports.js";
-import { ScriptedDisconfirmationCritic } from "../../workflows/hunt/scripted.js";
+import { ScriptedDisconfirmationCritic } from "../support/scripted-hunt.js";
 import { evidenceStrength, isGap } from "../../workflows/hunt/strength.js";
 import type { Digest, NullCheckInput, NullCheckResult } from "../../workflows/hunt/types.js";
 import {

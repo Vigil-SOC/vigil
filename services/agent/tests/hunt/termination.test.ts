@@ -11,7 +11,7 @@ import { pendingCheckpoints } from "../../workflows/hunt/checkpoints.js";
 import { boundBy, boundReason, HuntParked } from "../../workflows/hunt/controller.js";
 import { steer } from "../../workflows/hunt/inbox.js";
 import type { DirectiveQueue } from "../../workflows/hunt/ports.js";
-import { ScriptedDecisionProvider } from "../../workflows/hunt/scripted.js";
+import { ScriptedDecisionProvider } from "../support/scripted-hunt.js";
 import type { Journal } from "../../workflows/hunt/journal.js";
 import { buildReport, renderReport } from "../../workflows/hunt/report.js";
 import { terminationVerdict } from "../../workflows/hunt/termination.js";

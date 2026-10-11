@@ -15,7 +15,7 @@ import { InProcessState } from "../../core/state.js";
 import { workerDispatcher } from "../../workflows/hunt/adapters.js";
 import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
 import type { HuntKinds } from "../../workflows/hunt/ledger.js";
-import { ScriptedDisconfirmationCritic } from "../../workflows/hunt/scripted.js";
+import { ScriptedDisconfirmationCritic } from "../support/scripted-hunt.js";
 import { openGaps } from "../../workflows/hunt/strength.js";
 import type { Decision } from "../../workflows/hunt/types.js";
 import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";

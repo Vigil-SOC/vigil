@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CheckpointPayload } from "../../contracts/events.js";
 import type { RunJob } from "../../contracts/job.js";
-import { InProcessLeases } from "../../core/leases.js";
+import { InProcessLeases } from "../support/in-process-leases.js";
 import { InProcessState } from "../../core/state.js";
 import { advance } from "../../worker.js";
 import { scriptedHarness } from "../support/scripted-harness.js";

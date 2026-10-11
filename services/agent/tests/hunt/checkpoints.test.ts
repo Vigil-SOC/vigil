@@ -17,7 +17,7 @@ import {
   ScriptedDisconfirmationCritic,
   ScriptedWorkerDispatcher,
   type ScriptedDecision,
-} from "../../workflows/hunt/scripted.js";
+} from "../support/scripted-hunt.js";
 import { evidenceStrength, openGaps } from "../../workflows/hunt/strength.js";
 import type { Decision, DispatchRequest, DispatchResult, Entity } from "../../workflows/hunt/types.js";
 import {
