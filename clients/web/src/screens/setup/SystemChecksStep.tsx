@@ -71,11 +71,23 @@ const readDatabase: Read = async ({ health }) => {
     : { phase: 'needs', detail: 'Not connected' }
 }
 
-const readStorage: Read = async ({ storage }) => {
-  const { backend, description } = await storage()
+const DATABASE_UNAVAILABLE: Result = { phase: 'needs', detail: 'Database unavailable' }
+
+const readStorage: Read = async ({ storage, health }) => {
+  let read: StorageRead
+  try {
+    read = await storage()
+  } catch (err) {
+    // Auth fails first when the database is down; the public health read says why.
+    // If health fails too, or says the database is up, this stays a failed read.
+    const db = (await health()).storage
+    if (!db?.demo_mode && db?.database_available === false) return DATABASE_UNAVAILABLE
+    throw err
+  }
+  if (!read.demo_mode && read.database_available === false) return DATABASE_UNAVAILABLE
   return {
     phase: 'passed',
-    detail: [backend || 'Unknown backend', description].filter(Boolean).join(' · '),
+    detail: [read.backend || 'Unknown backend', read.description].filter(Boolean).join(' · '),
   }
 }
 
