@@ -23120,7 +23120,10 @@ export interface operations {
     };
     get_api_workflows_runs_run_id: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Hunt evidence rows to return, newest first. */
+                evidence_limit?: number | null;
+            };
             header?: {
                 authorization?: string | null;
             };
