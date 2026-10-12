@@ -97,6 +97,12 @@ roles:
       decision that leaves any pair out is refused, because evidence that only
       ever accrues to the hypothesis it was gathered for is confirmation drift,
       and ruling against the null is what stops a hunt only looking one way.
+
+      A gap is not evidence. A record that says a query failed, timed out, was
+      unreachable or returned nothing is a visibility gap: it is recorded as a
+      blind spot, and you do not rule on it. A supports or weakens ruling on one
+      is refused, because not having looked says nothing for or against a claim.
+      Only what the estate actually returned can move a hypothesis.
     output_schema:
       type: object
       additionalProperties: false
@@ -205,6 +211,11 @@ roles:
     genuinely bears on one. Evidence that weakens a hypothesis is as valuable as
     evidence that supports it.
 
+    A query that failed, timed out, was refused or returned nothing is not a
+    finding. Report it as a row with query_failed set to true and say what could
+    not be reached. Never set supports or weakens on it: a failure to look is a
+    blind spot, and it bears on no hypothesis.
+
     Name what each finding rests on in rests_on, one entry per field or aggregate,
     and say who chose that value. `sensor` is what the telemetry counted or recorded
     and the adversary cannot rewrite without owning the sensor: connection counts,
@@ -263,6 +274,7 @@ roles:
                 payload: { type: string, description: "The rows or aggregates as a JSON object, serialised to a string." }
                 supports: { type: array, items: { type: string } }
                 weakens: { type: array, items: { type: string } }
+                query_failed: { type: boolean, description: "True when the query behind this row failed, timed out or returned nothing." }
                 attacker_influenceable: { type: boolean }
                 # What the finding rests on, and who chose each value. A verdict asks
                 # whether anything here was attested by the telemetry, so a record

@@ -255,7 +255,7 @@ describe("the argument has to be current", () => {
 });
 
 describe("gap lock", () => {
-  it("closes a blinded hypothesis inconclusive, never disproven", async () => {
+  it("leaves a blinded hypothesis at its earned status, never proven or disproven", async () => {
     const { ledger, hypothesisId } = await oneHypothesis();
     const citations = [
       evidenceOn(ledger, hypothesisId, { source: "cloudtrail" }),
@@ -270,8 +270,8 @@ describe("gap lock", () => {
     }).advanceIteration();
 
     const hypothesis = ledger.projection.hypotheses.get(hypothesisId)!;
-    expect(hypothesis.status).toBe("inconclusive");
-    expect(hypothesis.resolution_reason).toMatch(/gap-locked/);
+    expect(hypothesis.status).toBe("active");
+    expect(hypothesis.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
     expect(hypothesis.evidence_strength!.open_gaps).toBe(DEFAULT_VERDICTS.gap_lock_threshold);
   });
 
@@ -284,7 +284,7 @@ describe("gap lock", () => {
       critic: new ScriptedDisconfirmationCritic(false),
     }).advanceIteration();
 
-    expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("inconclusive");
+    expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
   });
 });
 

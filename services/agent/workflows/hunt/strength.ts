@@ -27,6 +27,17 @@ export function isGap(record: EvidenceRecord): boolean {
   return record.provenance === "tool_failure" || declaredGap(record);
 }
 
+// A worker's observation that says its own query came back empty or never ran. The
+// worker's flag is the contract; the wording is the net for a worker that wrote the
+// sentence and forgot the flag, because "could not look" ruled as evidence is what
+// turns a missing SIEM into a hypothesis weakened with nothing found against it.
+const FAILED_QUERY =
+  /\b(not retrieved|no records? (were |was )?(retrieved|returned)|timed? ?out|timeout|unreachable|source unavailable)\b/i;
+
+export function recordsFailedQuery(record: { summary: string; query_failed?: boolean }): boolean {
+  return record.query_failed === true || FAILED_QUERY.test(record.summary);
+}
+
 // What went unanswered, not how many times it failed: three retries of one query
 // are one blind spot. The intent is the key when no lead owns the dispatch.
 export function gapKey(dispatch: DispatchRecord): string {

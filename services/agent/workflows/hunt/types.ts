@@ -490,7 +490,13 @@ export interface DispatchRequest {
 export type WorkerEvidence = Omit<
   EvidenceRecord,
   "evidence_id" | "dispatch_id" | "iteration" | "entities" | "captured_at"
-> & { supports?: string[]; weakens?: string[] };
+> & {
+  supports?: string[];
+  weakens?: string[];
+  // The worker's own statement that the query behind this row failed or came back
+  // empty. Such a row is a blind spot, and the controller files it as one.
+  query_failed?: boolean;
+};
 
 // A tool call the environment could not answer (timeout or unavailable), kept by tool
 // id and kind rather than parsed back out of the rendered call text.

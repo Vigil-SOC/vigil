@@ -302,6 +302,7 @@ export function evidenceFrom(answer: WorkerAnswer): WorkerEvidence[] {
       salience: (record["salience"] ?? "routine") as WorkerEvidence["salience"],
       why_notable: String(record["why_notable"] ?? ""),
       payload: payloadOf(record["payload"]),
+      ...(record["query_failed"] === true ? { query_failed: true } : {}),
       ...(Array.isArray(record["supports"]) ? { supports: record["supports"] as string[] } : {}),
       ...(Array.isArray(record["weakens"]) ? { weakens: record["weakens"] as string[] } : {}),
       ...(typeof record["attacker_influenceable"] === "boolean"

@@ -140,6 +140,8 @@ function HuntExplanations({ hunt, iteration, last, recorded }: { hunt: HuntView;
   const ordered = [...standings].sort((a, b) => Number(a.row?.provenance === 'base_rate') - Number(b.row?.provenance === 'base_rate'))
   // the evidence list is capped; the newest step reads the full totals the projection counted
   const partial = !last && evidence.length < hunt.evidence_count
+  // shown beside each status, never folded into it: a blind spot is not evidence either way
+  const blind = huntSpots(hunt, iteration).length
   return (
     <>
       {ordered.map((h) => {
@@ -159,7 +161,7 @@ function HuntExplanations({ hunt, iteration, last, recorded }: { hunt: HuntView;
               >
                 {h.statement}
               </span>
-              <span className="text-[12px] font-bold whitespace-nowrap" style={{ color }}>{word}</span>
+              <span className="text-[12px] font-bold whitespace-nowrap" style={{ color }}>{word}{blind > 0 && <span className="font-normal text-[var(--tx2)]"> · {blind} blind spot{blind === 1 ? '' : 's'}</span>}</span>
             </span>
             <Bar pct={forN + against === 0 ? 0 : Math.max(4, share(forN, forN + against))} color={color} size={6} />
             <span className="flex justify-between gap-2 text-[11px] text-[var(--tx2)]">

@@ -55,6 +55,8 @@ import {
   UNDECLARED_SOURCE,
   sensorAttested,
   gapKey,
+  isGap,
+  recordsFailedQuery,
   unmetPredicates, pairKey, unclassified } from "./strength.js";
 import {
   ACTIONS_REQUIRING_CITATION,
@@ -234,6 +236,11 @@ function nullCheckInput(projection: Projection, hypothesis: Hypothesis): NullChe
   };
 }
 
+// Why a hypothesis could not be settled when the cause is what the hunt could not see.
+export function couldNotFinish(gaps: number): string {
+  return `could not finish: ${gaps} source${gaps === 1 ? "" : "s"} unreachable`;
+}
+
 // Evidence may only ever accrue to the hypothesis it was gathered for unless the
 // lead is made to rule on all of them, which is what confirmation drift is.
 function validateCoverage(decision: Decision, projection: Projection): void {
@@ -247,6 +254,21 @@ function validateCoverage(decision: Decision, projection: Projection): void {
       `against hypothesis ${first!.hypothesis_id}. Every active hypothesis needs supports, weakens or neither.`,
     missing,
   );
+}
+
+// A gap is not evidence. A row that records a query which failed or came back empty
+// says the hunt could not look, which is no reason to believe a claim and none to doubt
+// it, so a supports or weakens ruling on one is refused like any other invalid ruling.
+function validateRulings(decision: Decision, projection: Projection): void {
+  for (const relation of decision.evidence_relations ?? []) {
+    if (relation.relation === "neither") continue;
+    const record = projection.evidence.get(relation.evidence_id);
+    if (record === undefined || !isGap(record)) continue;
+    throw new InvalidDecision(
+      `evidence ${relation.evidence_id} records a query that failed or returned nothing, so it is a blind spot ` +
+        `and cannot be ruled ${relation.relation} against ${relation.hypothesis_id}; rule it neither`,
+    );
+  }
 }
 
 // The controller rejects anything outside the closed vocabulary, so the Hunt
@@ -282,6 +304,7 @@ export function validateDecision(decision: Decision, projection: Projection): vo
     }
   }
   validateFocus(decision, projection);
+  validateRulings(decision, projection);
   validateCoverage(decision, projection);
   if (decision.action === "ABANDON") validateAbandon(decision, projection);
 
@@ -1276,16 +1299,13 @@ export class HuntController {
     // inconclusive, on the numbers as they now stand — because not having been
     if (strength.open_gaps >= this.verdicts.gap_lock_threshold) {
       this.ledger.patch("hypothesis", hypothesisId, {
-        status: "inconclusive",
-        resolution_reason:
-          `gap-locked before the approved verdict landed: ${strength.open_gaps} open visibility gap(s) ` +
-          "bear on this hypothesis, so the hunt could not look rather than having cleared it",
+        resolution_reason: couldNotFinish(strength.open_gaps),
         evidence_strength: strength,
       });
       journalNote(
         this.ledger,
         `${directive.actor} approved the verdict on ${hypothesisId}, but ${strength.open_gaps} open gap(s) now ` +
-          "bear on it. It closes inconclusive rather than proven — the approval stands, the evidence moved.",
+          "bear on it. It is not proven and keeps the status its rulings earned — the approval stands, the evidence moved.",
       );
       return;
     }
@@ -1812,16 +1832,15 @@ export class HuntController {
     const strength = evidenceStrength(this.ledger.projection, hypothesisId);
 
     // Checked whichever way the critic argued: not having been able to look is
-    // never the same as having cleared it, so this closes inconclusive.
+    // never the same as having cleared it, so this never proves.
     if (strength.open_gaps >= this.verdicts.gap_lock_threshold) {
+      // Status is earned by rulings over real observations, so a blind spot does not
+      // move it: the hypothesis keeps what it has and says why it could not finish.
       this.ledger.patch("hypothesis", hypothesisId, {
-        status: "inconclusive",
-        resolution_reason:
-          `gap-locked: ${strength.open_gaps} open visibility gap(s) bear on this hypothesis, ` +
-          "so the hunt could not look rather than having cleared it",
+        resolution_reason: couldNotFinish(strength.open_gaps),
         evidence_strength: strength,
       });
-      return `${hypothesisId} inconclusive (gap-locked)`;
+      return `${hypothesisId} not proven (gap-locked): ${couldNotFinish(strength.open_gaps)}`;
     }
 
     const unmet = unmetPredicates(strength, this.verdicts, { projection: this.ledger.projection, hypothesisId });
@@ -2035,8 +2054,25 @@ export class HuntController {
     iteration: number,
     dispatchId: string | null,
   ): EvidenceRecord[] {
-    return records.map(sanitize).map(({ supports, weakens, ...record }) => {
+    return records.map(sanitize).map(({ supports, weakens, query_failed, ...observed }) => {
       const evidenceId = newId("ev");
+      // A worker row recording a query that failed or came back empty is a blind spot,
+      // filed the way a failed call is and never linked: it bears on no hypothesis.
+      const gap = observed.provenance === "worker" && recordsFailedQuery({ ...observed, query_failed });
+      const dispatch = dispatchId === null ? undefined : this.ledger.projection.dispatches.get(dispatchId);
+      const record: WorkerEvidence = gap
+        ? {
+            ...observed,
+            provenance: TOOL_FAILURE,
+            payload: {
+              ...observed.payload,
+              tool: observed.source_system,
+              kind: "empty",
+              ...(dispatch === undefined ? {} : { gap_key: gapKey(dispatch) }),
+            },
+            why_notable: "a blind spot in what this run could see, not a finding",
+          }
+        : observed;
       const stored: EvidenceRecord = {
         ...record,
         ...this.attributeSource(record),
@@ -2049,7 +2085,7 @@ export class HuntController {
         captured_at: new Date().toISOString(),
       };
       this.ledger.append({ kind: "evidence", payload: stored });
-      this.link(evidenceId, supports, weakens);
+      if (!gap) this.link(evidenceId, supports, weakens);
       return stored;
     });
   }
@@ -2227,6 +2263,13 @@ export class HuntController {
 
     for (const hypothesis of this.ledger.projection.hypotheses.values()) {
       if (hypothesis.status !== "active") continue;
+      // An ending that could not look keeps the status the rulings earned and says what
+      // was out of reach; overwriting it with inconclusive would read as evidence turning.
+      const gaps = evidenceStrength(this.ledger.projection, hypothesis.hypothesis_id).open_gaps;
+      if (gaps >= this.verdicts.gap_lock_threshold) {
+        this.ledger.patch("hypothesis", hypothesis.hypothesis_id, { resolution_reason: couldNotFinish(gaps) });
+        continue;
+      }
       this.ledger.patch("hypothesis", hypothesis.hypothesis_id, {
         status: "inconclusive",
         resolution_reason: `hunt ended (${outcome}) with the hypothesis unresolved`,

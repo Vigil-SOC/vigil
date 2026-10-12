@@ -94,12 +94,15 @@ describe("the predicate, not the recommendation", () => {
   it("ends data_starved rather than completed when a hypothesis was gap-locked", async () => {
     const { ledger, hypothesisIds } = await newLedger();
     await gapLock(ledger, hypothesisIds[0]!);
-    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("inconclusive");
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("active");
 
     const result = await controllerFor(ledger, [CONCLUDE]).advanceIteration();
 
-    // A hunt that could not see is not a hunt that finished.
+    // A hunt that could not see is not a hunt that finished, and it keeps the status
+    // its rulings earned rather than reading as if evidence had turned.
     expect(result.hunt_outcome).toBe("data_starved");
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.status).toBe("active");
+    expect(ledger.projection.hypotheses.get(hypothesisIds[0]!)!.resolution_reason).toMatch(/could not finish: 3 sources unreachable/);
     expect(finalized(ledger)[0]!.gaps).toHaveLength(DEFAULT_VERDICTS.gap_lock_threshold);
   });
 

@@ -151,7 +151,7 @@ describe("verdict review", () => {
     expect(seen(resumed)).toMatch(/no longer carries it.*VALIDATE it again/s);
   });
 
-  it("closes inconclusive when the operator declares a gap and then approves", async () => {
+  it("keeps its earned status when the operator declares a gap and then approves", async () => {
     const { started, hypothesisId, checkpointId } = await parkedOnVerdict();
 
     // A reviewer says the hunt is blind somewhere and approves in the same breath.
@@ -165,9 +165,9 @@ describe("verdict review", () => {
     await controllerFor(resumed, [INVESTIGATE]).advanceIteration();
 
     const hypothesis = resumed.projection.hypotheses.get(hypothesisId)!;
-    expect(hypothesis.status).toBe("inconclusive");
-    expect(hypothesis.resolution_reason).toMatch(/gap-locked before the approved verdict landed/);
-    // The numbers on the record are the ones that closed it, not the ones the
+    expect(hypothesis.status).toBe("active");
+    expect(hypothesis.resolution_reason).toBe("could not finish: 3 sources unreachable");
+    // The numbers on the record are the ones that stopped it, not the ones the
     // reviewer was shown — a verdict nobody can re-read is not auditable.
     expect(hypothesis.evidence_strength!.open_gaps).toBe(3);
   });
@@ -388,13 +388,13 @@ describe("the soft directive set", () => {
 
     expect(openGaps(started.ledger.projection, hypothesisId)).toBe(DEFAULT_VERDICTS.gap_lock_threshold);
 
-    // Enough blindness that the verdict closes inconclusive: the hunt could not
-    // look, which is never the same as having cleared it.
+    // Enough blindness that the verdict is not given: the hunt could not look,
+    // which is never the same as having cleared it, and it is not a ruling either.
     const result = await controllerFor(started.ledger, [validate(hypothesisId, citations)], {
       critic: new ScriptedDisconfirmationCritic(true),
     }).advanceIteration();
 
-    expect(started.ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("inconclusive");
+    expect(started.ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
     expect(result.note).toMatch(/gap-locked/);
   });
 
