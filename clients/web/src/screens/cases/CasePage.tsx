@@ -13,6 +13,7 @@ import { TabStrip } from '../../shared/TabStrip'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
+import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 import Chat from '../../shell/Chat'
@@ -103,6 +104,8 @@ function detailOf(error: unknown, fallback: string): string {
   if (typeof detail === 'string' && detail.trim()) return detail
   return (error as { message?: string })?.message || fallback
 }
+
+const decisionFailText = (error: unknown) => detailOf(error, 'Could not update that decision')
 
 /** How long a decision has waited: "4 min", "7 h", "3 d". Empty when the stamp doesn't parse. */
 function waiting(since: string): string {
@@ -217,7 +220,7 @@ function CaseNeed({
       </dl>
       <div className="needs-actions">
         {reversible ? (
-          <button type="button" className="btn" disabled={busy} onClick={() => onApprove(item)}>
+          <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item)}>
             Approve
           </button>
         ) : (
@@ -549,7 +552,7 @@ export function CasePage({
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const decisionBusyRef = useRef<string | null>(null)
-  const { notifyUndoable, pending, settled } = useToast()
+  const { pending, settled } = useToast()
   const needsTicket = useRef(0)
   const seenCase = useRef(id)
   if (seenCase.current !== id) {
@@ -777,25 +780,16 @@ export function CasePage({
     onChangedRef.current()
   }, [settled, loadNeeds])
 
-  // Reversible approve and every reject commit through the toast's undo fuse, which owns the call
-  // and survives closing the case. A held (irreversible) approve commits at once via decide().
-  const fuse = (item: NeedsYouItem, verb: string, past: string, commit: () => Promise<unknown>) =>
-    notifyUndoable({
-      key: item.source_id,
-      text: `${verb}: ${item.title}`,
-      commit,
-      doneText: `${past}: ${item.title}`,
-      failText: (e) => detailOf(e, 'Could not update that decision'),
-    })
+  // Reversible approve and every reject commit through the toast's undo fuse, the same path as
+  // Home's card, and survive closing the case. A held (irreversible) approve commits at once via decide().
+  const fused = useFusedDecision(decisionFailText)
 
   const approve = (item: NeedsYouItem) => {
-    const commit = () => approvalsApi.approve(item.source_id)
-    if (item.reversibility === 'reversible') fuse(item, 'Approving', 'Approved', commit)
-    else void decide(item.source_id, commit)
+    if (item.reversibility === 'reversible') fused.approve(item)
+    else void decide(item.source_id, () => approvalsApi.approve(item.source_id))
   }
 
-  const reject = (item: NeedsYouItem, reason: string) =>
-    fuse(item, 'Rejecting', 'Rejected', () => approvalsApi.reject(item.source_id, reason))
+  const reject = fused.reject
 
   const decide = async (sourceId: string, act: () => Promise<unknown>) => {
     if (decisionBusyRef.current) return

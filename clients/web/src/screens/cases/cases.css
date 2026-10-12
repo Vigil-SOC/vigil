@@ -150,8 +150,12 @@
 .case-needs .needs-actions .btn:disabled,
 .case-needs .needs-reject .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.case-needs .needs-actions .btn:not(.neutral) { border-color: var(--poor); color: var(--poor); }
-.case-needs .needs-actions .btn:not(.neutral):hover:not(:disabled) { background: var(--poor-bg); color: var(--poor); border-color: var(--poor); }
+/* Hold to approve is the irreversible one and stays red; a reversible Approve is the accent primary. */
+.case-needs .needs-actions .btn:not(.neutral):not(.primary) { border-color: var(--poor); color: var(--poor); }
+.case-needs .needs-actions .btn:not(.neutral):not(.primary):hover:not(:disabled) { background: var(--poor-bg); color: var(--poor); border-color: var(--poor); }
+
+.case-needs .needs-actions .btn.primary { background: var(--ac); border-color: var(--ac); color: var(--ac-tx); }
+.case-needs .needs-actions .btn.primary:hover:not(:disabled) { background: var(--ac); border-color: var(--ac); color: var(--ac-tx); filter: brightness(1.08); }
 
 .case-needs .needs-actions .home-hold { min-width: 136px; } /* "Keep holding…" must not shift Reject */
 .case-needs .needs-actions .home-hold .fill { background: var(--poor); opacity: 0.35; }

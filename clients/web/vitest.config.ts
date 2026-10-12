@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    // shell.css is read as text by CommandBar.test.tsx, which asserts the disabled treatment exists
+    css: { include: [/shell\.css/] },
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     // Don't pick up test files inside agent worktrees — those copies of

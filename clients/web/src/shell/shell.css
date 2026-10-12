@@ -1077,6 +1077,15 @@
   color: var(--tx0);
 }
 
+/* Disabled reads as placeholder text on a quiet fill (tx3), never as a live outlined button. */
+.vg-command-attach .btn:disabled,
+.vg-command-attach .btn:disabled:hover {
+  background: var(--bg3);
+  border-color: var(--ln1);
+  color: var(--tx3);
+  cursor: not-allowed;
+}
+
 .vg-command-file {
   display: inline-flex;
   align-items: baseline;

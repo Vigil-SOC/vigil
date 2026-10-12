@@ -1252,6 +1252,19 @@ describe('case page', () => {
     }
   })
 
+  it('Approve is the accent primary, not the destructive outline, and shows the undo toast at once', async () => {
+    testState.cases = [decCase]
+    queue(need())
+    renderCase('case-dec')
+    await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
+    const approve = screen.getByRole('button', { name: 'Approve' })
+    expect(approve).toHaveClass('btn', 'primary')
+    expect(approve).not.toHaveClass('danger')
+    fireEvent.click(approve)
+    expect(screen.getByText('Approving: Block 1.2.3.4')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+  })
+
   it('Undo sends nothing and brings the block back', async () => {
     testState.cases = [decCase]
     queue(need())
