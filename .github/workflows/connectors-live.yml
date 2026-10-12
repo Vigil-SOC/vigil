@@ -134,7 +134,7 @@ jobs:
         run: docker pull "$(python3 -c 'import json; a = json.load(open("mcp-config.json"))["mcpServers"]["okta"]["args"]; print(a[-1])')"
       - name: Log in to AWS
         if: env.LIVE_AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.LIVE_AWS_ROLE_ARN }}
           aws-region: us-east-1
@@ -163,7 +163,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: live-*
           merge-multiple: true
