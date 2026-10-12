@@ -67,7 +67,7 @@ const CARDS: { id: CardId; title: string; name: string; body: string; providers:
 ]
 
 export default function SetupProviderStep({ onRoutable }: { onRoutable: () => void }) {
-  const { providers, keys, verdicts, phase, error, reload, saveKey, addProvider } = useBifrostProviders()
+  const { providers, shown, keys, seeds, verdicts, phase, error, reload, saveKey, addProvider } = useBifrostProviders()
   const [picked, setPicked] = useState<CardId | null>(null)
   const [cloudPick, setCloudPick] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
@@ -101,7 +101,9 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routable])
 
-  const held = (name: string) => providers.some((p) => p.name === name)
+  // held: Bifrost lists it and it is not only holding unset seed keys (isUnsetSeed)
+  const held = (name: string) => shown.some((p) => p.name === name)
+  const exists = (name: string) => providers.some((p) => p.name === name)
   const keyOf = (name: string): BifrostKey | undefined => (keys[name] || [])[0] ?? written.current[name]
   const record = (name: string, o: Outcome) => setOutcomes((prev) => ({ ...prev, [name]: o }))
 
@@ -112,7 +114,7 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
   const provider = card ? (card.id === 'cloud' ? cloudProvider : card.providers[0]) : null
 
   const ensureProvider = async (name: string) => {
-    if (!held(name)) await addProvider(name)
+    if (!exists(name)) await addProvider(name)
   }
 
   /** Save (when `write` returns a key id) and then check the key; the field's value is never echoed. */
@@ -130,8 +132,9 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
   }
 
   const save = async (name: string, data: Parameters<typeof saveKey>[2]) => {
-    const existing = keyOf(name)
-    const saved = await saveKey(name, existing?.id ?? null, data)
+    // the first real key takes an unset seed's place instead of sitting beside it
+    const target = keyOf(name) ?? (seeds[name] || [])[0]
+    const saved = await saveKey(name, target?.id ?? null, data)
     if (saved) written.current[name] = saved
     return saved?.id
   }

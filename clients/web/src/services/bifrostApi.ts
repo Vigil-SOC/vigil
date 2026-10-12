@@ -14,10 +14,14 @@
 import api from './api'
 import type { Schema } from './apiTypes'
 
-interface BifrostSecret {
+export interface BifrostSecret {
   value: string
-  env_var: string
-  from_env: boolean
+  /** Bifrost < 1.6 */
+  env_var?: string
+  from_env?: boolean
+  /** Bifrost >= 1.6: `env.FOO` / `vault.…`, with `type` "env" or "vault" */
+  ref?: string
+  type?: string
 }
 
 export interface BifrostProvider {
