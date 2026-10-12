@@ -155,6 +155,27 @@ describe('Integrations: Connected table', () => {
     await waitFor(() => expect(row('Security Detections').getByText('Good')).toBeInTheDocument())
   })
 
+  it('lists a saved extension that is still off on Connected, with its toggle ready', async () => {
+    vi.mocked(configApi.getIntegrations).mockResolvedValue({
+      data: {
+        enabled_integrations: [],
+        integrations: { loglm: { connectorUrl: 'http://localhost:7991' } },
+        secrets_set: {},
+        last_test: { loglm: { at: iso(60_000), success: true, error: null } },
+      },
+    } as never)
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['loglm'] } } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: { statuses: [{ name: 'loglm', status: 'disconnected', enabled: false }] },
+    } as never)
+    renderSection()
+    expect(await screen.findByRole('tab', { name: 'Connected 1' })).toBeInTheDocument()
+    const toggle = screen.getByRole('switch', { name: 'Toggle loglm' })
+    expect(toggle).not.toBeChecked()
+    expect(toggle).toBeEnabled()
+    expect(within(toggle.closest('tr') as HTMLElement).getByText('Off')).toBeInTheDocument()
+  })
+
   it('shows a dash, not a level, where nothing was ever tested', async () => {
     vi.mocked(configApi.getIntegrations).mockResolvedValue({
       data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
