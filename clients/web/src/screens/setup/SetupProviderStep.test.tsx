@@ -83,6 +83,20 @@ describe('SetupProviderStep', () => {
     expect(screen.getByText(/Couldn’t check whether the gateway’s keys can route/)).toBeInTheDocument()
   })
 
+  it('does not pre-select a provider the gateway lists with no key', async () => {
+    gateway({ anthropic: [], openai: [], vertex: [] }, { anthropic: false, openai: false, vertex: false })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    expect(await screen.findByText(/Pick where AI runs/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Poor')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    paste('API key', 'sk-ant-real')
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }))
+    await waitFor(() => expect(bifrostApi.createKey).toHaveBeenCalledWith('anthropic', expect.objectContaining({ value: 'sk-ant-real' })))
+    expect(bifrostApi.createProvider).not.toHaveBeenCalled()
+  })
+
   it('treats a seeded key with an empty env var as not set up, and a first key replaces it', async () => {
     const seed = { id: 'seed1', name: 'default-anthropic-key', models: ['*'], weight: 1, value: { value: '', ref: 'env.ANTHROPIC_API_KEY', type: 'env' } }
     gateway({ anthropic: [seed] }, { anthropic: false })

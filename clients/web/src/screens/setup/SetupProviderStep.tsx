@@ -101,8 +101,10 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routable])
 
-  // held: Bifrost lists it and it is not only holding unset seed keys (isUnsetSeed)
-  const held = (name: string) => shown.some((p) => p.name === name)
+  // held: it has a key that isn't an unset seed (isUnsetSeed), or it routes without one (Ollama).
+  // The gateway config declares the hosted providers with no keys, so being listed isn't enough.
+  const held = (name: string) =>
+    shown.some((p) => p.name === name) && ((keys[name] || []).length > 0 || !!verdicts?.providers?.[name])
   const exists = (name: string) => providers.some((p) => p.name === name)
   const keyOf = (name: string): BifrostKey | undefined => (keys[name] || [])[0] ?? written.current[name]
   const record = (name: string, o: Outcome) => setOutcomes((prev) => ({ ...prev, [name]: o }))
