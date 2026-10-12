@@ -1375,4 +1375,15 @@ export const bootstrapApi = {
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
 }
 
+// Public password reset. `request` answers the same whether or not the email
+// matches an account; the emailed link lands on /reset-password?token=…
+export const authApi = {
+  requestPasswordReset: (email: string) =>
+    api.post<{ message: string }>('/auth/password-reset/request', {
+      email,
+    } satisfies Schema<'PasswordResetRequest'>),
+  confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
+    api.post<{ message: string }>('/auth/password-reset/confirm', payload),
+}
+
 export default api
