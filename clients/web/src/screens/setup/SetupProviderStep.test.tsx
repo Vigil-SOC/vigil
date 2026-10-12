@@ -150,6 +150,25 @@ describe('SetupProviderStep', () => {
     expect(bifrostApi.createProvider).toHaveBeenCalledWith('vertex')
   })
 
+  it('puts Another provider above the key form, and choosing it deselects the cards', async () => {
+    gateway({ openai: [key({ name: 'openai-key' })] }, { openai: true })
+    render(<SetupProviderStep onRoutable={() => {}} />)
+    const apiKey = await screen.findByLabelText('API key')
+    const another = screen.getByLabelText(/Another provider/)
+    expect(another.compareDocumentPosition(apiKey) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.focus(another)
+    for (const name of [/Anthropic/, /OpenAI/, /Your cloud account/, /Local \(Ollama\)/]) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false')
+    }
+    expect(screen.queryByLabelText('API key')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Pick where AI runs/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Anthropic/ }))
+    expect(screen.getByRole('button', { name: /Anthropic/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByLabelText('API key')).toBeInTheDocument()
+  })
+
   it('keeps Retry on a Bifrost read error and hides the cards', async () => {
     vi.mocked(bifrostApi.listProviders).mockRejectedValue(new Error('gateway down'))
     render(<SetupProviderStep onRoutable={() => {}} />)
