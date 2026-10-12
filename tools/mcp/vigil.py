@@ -161,11 +161,23 @@ async def list_completed_hunts(
 
 
 @mcp.tool()
-async def replay_hunt(run_id: str, decision_id: Optional[str] = None) -> str:
-    """Rebuild what each decision of a completed hunt was shown (rebuilt, recorded,
-    mismatch, recalled). ``decision_id`` narrows the report to one decision."""
+async def replay_hunt(
+    run_id: str,
+    decision_id: Optional[str] = None,
+    step: Optional[int] = None,
+    from_step: Optional[int] = None,
+    to_step: Optional[int] = None,
+) -> str:
+    """Summarise what the hunt lead did at a step or range of steps and whether the
+    digest it was shown rebuilds. Bounded: no digests, the latest few steps when
+    none is named. ``decision_id`` narrows the report to one decision."""
     return await _acall(
-        tool_registry.replay_hunt, run_id=run_id, decision_id=decision_id
+        tool_registry.replay_hunt,
+        run_id=run_id,
+        decision_id=decision_id,
+        step=step,
+        from_step=from_step,
+        to_step=to_step,
     )
 
 

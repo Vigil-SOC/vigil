@@ -547,8 +547,11 @@ DEEPTEMPO_FINDING_TOOLS = [
             "Replay a completed threat hunt: for each decision the hunt lead "
             "took, the digest it was shown is rebuilt from the ledger and "
             "compared with the one recorded (rebuilt, recorded, mismatch), "
-            "alongside what memory recalled for the hunt. Pass decision_id "
-            "to narrow the report to one decision."
+            "alongside what memory recalled for the hunt. Answers a bounded "
+            "summary, not the digests: pass step (or from_step and to_step) "
+            "for the steps you need, or decision_id for one decision; with "
+            "none it answers the latest few steps. What a run is doing now, "
+            "or why it stopped, is in the case brief, not here."
         ),
         "input_schema": {
             "type": "object",
@@ -560,6 +563,18 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "decision_id": {
                     "type": "string",
                     "description": "Replay only this decision",
+                },
+                "step": {
+                    "type": "integer",
+                    "description": "Replay only this step (iteration)",
+                },
+                "from_step": {
+                    "type": "integer",
+                    "description": "First step of a range",
+                },
+                "to_step": {
+                    "type": "integer",
+                    "description": "Last step of a range",
                 },
             },
             "required": ["run_id"],
