@@ -1,0 +1,73 @@
+"""POST /api/auth/change-password says why a reused password is refused (#2181)."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from core.auth.auth_service import AuthService
+from core.routing import request_unit_of_work
+from services.api.middleware.auth import get_current_active_user
+from services.api.middleware.rate_limit import limiter
+from services.api.routers import auth
+
+pytestmark = pytest.mark.unit
+
+CURRENT = "trombone-sunrise-ledger-88"
+OLD = "harbor-violet-compass-41"
+NEW = "glacier-thimble-orchard-73"
+
+
+@pytest.fixture(scope="module")
+def hashes():
+    # bcrypt is slow; hash once for the module.
+    return AuthService.hash_password(CURRENT), AuthService.hash_password(OLD)
+
+
+@pytest.fixture
+def user(hashes):
+    return SimpleNamespace(
+        user_id="u-1",
+        username="analyst",
+        email="a@example.com",
+        password_hash=hashes[0],
+        password_history=[hashes[1]],
+        password_changed_at=None,
+    )
+
+
+@pytest.fixture
+def client(user):
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.include_router(auth.router, prefix="/api/auth")
+    app.dependency_overrides[get_current_active_user] = lambda: user
+    app.dependency_overrides[request_unit_of_work] = lambda: MagicMock()
+    limiter.reset()
+    with patch.object(auth, "revoke_all_for_user", new=AsyncMock()):
+        yield TestClient(app)
+
+
+def _change(client, new):
+    return client.post(
+        "/api/auth/change-password",
+        json={"current_password": CURRENT, "new_password": new},
+    )
+
+
+@pytest.mark.parametrize("reused", [OLD, CURRENT])
+def test_reused_password_is_400_with_reason(client, user, reused):
+    before = user.password_hash
+    resp = _change(client, reused)
+    assert resp.status_code == 400
+    assert "last" in resp.json()["detail"] and "passwords" in resp.json()["detail"]
+    assert user.password_hash == before
+
+
+def test_fresh_password_still_changes(client, user):
+    resp = _change(client, NEW)
+    assert resp.status_code == 200
+    assert AuthService.verify_password(NEW, user.password_hash)
+    assert len(user.password_history) == 2

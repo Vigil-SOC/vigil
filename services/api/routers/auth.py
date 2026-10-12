@@ -670,6 +670,8 @@ async def change_password(
         logger.info(f"Password changed for user: {current_user.username}")
         return {"message": "Password changed successfully. Please log in again."}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Password change error: {e}")
         raise HTTPException(
