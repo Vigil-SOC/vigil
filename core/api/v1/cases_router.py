@@ -28,13 +28,13 @@ from core.cases import case_journal_service, case_records_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_state import detail_fields
+from core.cases.closure import ClosedByKind, ClosureCategory
+from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
     LINKED_SOURCE,
     finding_entities,
     linked_iocs,
 )
-from core.cases.closure import ClosedByKind, ClosureCategory
-from core.cases.combined_state import queue_item
 from core.deps import provide_workflows
 from core.findings.source_link import resolve_source_link
 from core.response.approval_service import needs_you
