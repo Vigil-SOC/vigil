@@ -55,13 +55,15 @@ def _note_read(ok: bool, message: str, *args: Any) -> None:
         logger.error(message, *args)
 
 
-async def _read_fold(run_id: str, view: str) -> Optional[Dict[str, Any]]:
+async def _read_fold(
+    run_id: str, view: str, params: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
     import httpx
 
     url = agent_route(f"/runs/{run_id}/{view}")
     try:
         async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
-            response = await client.get(url, headers=_headers())
+            response = await client.get(url, headers=_headers(), params=params)
     except Exception as exc:  # noqa: BLE001 — unreachable is not terminal
         _note_read(False, "could not read the %s for %s: %s", view, run_id, exc)
         return None
@@ -79,8 +81,12 @@ async def _read_fold(run_id: str, view: str) -> Optional[Dict[str, Any]]:
 
 # None means "nothing to report yet" and is not an error: a run enqueued a moment
 # ago has no ledger, and a supervisor must read that as still starting.
-async def read_projection(run_id: str) -> Optional[Dict[str, Any]]:
-    return await _read_fold(run_id, "projection")
+async def read_projection(
+    run_id: str, evidence_limit: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """``evidence_limit`` asks a hunt for more than its usual newest rows."""
+    params = {"evidence_limit": evidence_limit} if evidence_limit else None
+    return await _read_fold(run_id, "projection", params)
 
 
 # What episodic memory reads once a run has ended, folded on the side that owns

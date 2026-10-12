@@ -281,7 +281,7 @@ export const IN_FLIGHT = ['running', 'paused', 'pending']
 
 /** One run's detail, refreshed while it is in flight. Shared by the start modal and
  *  the history row so one run has one poller. */
-export function useRunDetail(runId: string, watching: boolean, seed?: string) {
+export function useRunDetail(runId: string, watching: boolean, seed?: string, evidenceLimit?: number) {
   const [detail, setDetail] = useState<WfRunDetail | null>(null)
   const [dphase, setDphase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
@@ -289,15 +289,14 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
   current.current = runId
   const load = useCallback(
     () =>
-      workflowApi
-        .getRun(runId)
+      (evidenceLimit ? workflowApi.getRun(runId, evidenceLimit) : workflowApi.getRun(runId))
         .then((res) => {
           if (current.current !== runId) return // a read for a run no longer shown
           setDetail(res.data as WfRunDetail)
           setDphase('ready')
         })
         .catch(() => setDphase((p) => (p === 'ready' ? p : 'error'))),
-    [runId],
+    [runId, evidenceLimit],
   )
 
   // Polls only while we know the run is in flight. A missing status is not

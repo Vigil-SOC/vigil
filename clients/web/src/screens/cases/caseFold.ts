@@ -24,6 +24,8 @@ export interface HypothesisRow {
   status: string
   supports: number
   weakens: number
+  /** Over every evidence row, like supports and weakens; null from a server that does not count it. */
+  neither: number | null
   resolution_reason: string | null
   provenance: string
 }
@@ -204,6 +206,9 @@ export function addedBy(provenance: string): string {
   return ADDED_BY[provenance] ?? provenance
 }
 
+/** How many more evidence rows each "Show older" asks the server for; it lists 50 by default. */
+export const EVIDENCE_PAGE = 50
+
 export type Stance = 'supports' | 'weakens' | 'neither'
 
 export const STANCE_WORD: Record<Stance, string> = { supports: 'Supports', weakens: 'Goes against', neither: 'Neither' }
@@ -215,28 +220,26 @@ export function relationWord(relation: string): string {
   return relation === 'supports' || relation === 'weakens' || relation === 'neither' ? STANCE_WORD[relation] : relation
 }
 
-const LEAD_ORDER = ['proven', 'standing', 'forming', 'weakened']
-
-/** The explanation the evidence is read against when none is picked: best status, then most net support, then first listed. */
-export function leadingExplanation(fold: HuntFold): HypothesisRow | null {
-  const rank = (h: HypothesisRow) => {
-    const i = LEAD_ORDER.indexOf(explanationWord(h.status, h.supports, h.weakens))
-    return i < 0 ? LEAD_ORDER.length : i
-  }
-  return [...fold.hypotheses].sort((a, b) => rank(a) - rank(b) || b.supports - b.weakens - (a.supports - a.weakens))[0] ?? null
-}
-
 /** A row bears on several explanations; it is counted once, by its link to this one (neither when it has none). */
 export function stanceOn(row: EvidenceRow, hypothesisId: string | undefined): Stance {
   const relation = row.bears_on.find((link) => link.hypothesis_id === hypothesisId)?.relation
   return relation === 'supports' || relation === 'weakens' ? relation : 'neither'
 }
 
-/** Totals over the rows shown, each row once; critic (not_evidence) rows are listed but not counted. */
-export function stanceTotals(fold: HuntFold, hypothesisId = leadingExplanation(fold)?.hypothesis_id): Record<Stance, number> {
-  const totals = { supports: 0, weakens: 0, neither: 0 }
-  for (const row of fold.evidence) if (row.source_tier !== 'not_evidence') totals[stanceOn(row, hypothesisId)]++
-  return totals
+/**
+ * The explanation the hunt was opened to test: the caller's own, else the definition's. The base rate
+ * and the deployment-gap check are never it, however they rank.
+ */
+export function huntHypothesis(fold: HuntFold): HypothesisRow | null {
+  const own = (provenance: string) => fold.hypotheses.find((h) => h.provenance === provenance)
+  return own('operator') ?? own('hunt_spec') ?? null
+}
+
+/** Totals over every row the run holds, not the slice listed, each row once; critic rows are listed but not counted. Null when there is no explanation to read against. */
+export function stanceTotals(fold: HuntFold, hypothesisId = huntHypothesis(fold)?.hypothesis_id): Record<Stance, number> | null {
+  const h = fold.hypotheses.find((x) => x.hypothesis_id === hypothesisId)
+  if (!h) return null
+  return { supports: h.supports, weakens: h.weakens, neither: h.neither ?? Math.max(0, fold.evidenceCount - h.supports - h.weakens) }
 }
 
 /** Who made the move at this iteration; null when it fell outside the capped list. */
@@ -348,6 +351,7 @@ function asHunt(raw: Record<string, unknown>, run: RunMeta): HuntFold {
           status: str(o.status),
           supports: num(o.supports) ?? 0,
           weakens: num(o.weakens) ?? 0,
+          neither: num(o.neither),
           resolution_reason: typeof o.resolution_reason === 'string' ? o.resolution_reason : null,
           provenance: str(o.provenance),
         }]

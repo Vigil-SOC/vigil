@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { InfoTip } from '../../shared/InfoTip'
 import { EmptyState } from '../../shared/ui'
-import { STANCE_WORD, TIER_WORD, leadingExplanation, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
+import { STANCE_WORD, TIER_WORD, huntHypothesis, relationWord, stanceOn, stanceTotals, workerAt, type RunFold, type Stance } from './caseFold'
 import type { Phase } from './useCases'
 
 interface TrailRow {
@@ -33,7 +33,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
     }))
   }
   const statements = new Map(fold.hypotheses.map((h) => [h.hypothesis_id, h.statement]))
-  const leading = leadingExplanation(fold)?.hypothesis_id
+  const against = huntHypothesis(fold)?.hypothesis_id
   return fold.evidence.map((row) => ({
     id: row.evidence_id,
     step: String(row.iteration),
@@ -47,7 +47,7 @@ function rowsOf(fold: RunFold): TrailRow[] {
     links: row.bears_on.map((link) => link.relation),
     source: row.source_system || DASH,
     tier: (row.source_tier && TIER_WORD[row.source_tier]) || DASH,
-    stance: stanceOn(row, leading),
+    stance: stanceOn(row, against),
     by: workerAt(fold, row.iteration) ?? DASH,
   }))
 }
@@ -56,19 +56,25 @@ function header(fold: RunFold): string {
   const count = fold.kind === 'hunt' ? fold.evidenceCount : fold.findings.length
   const head = `Evidence trail · ${count} ${count === 1 ? 'row' : 'rows'}`
   if (fold.kind !== 'hunt') return head
+  const shown = fold.evidence.length < count ? ` · showing ${fold.evidence.length} of ${count}` : ''
   const n = stanceTotals(fold)
-  return `${head} · ${n.supports} support · ${n.weakens} go against · ${n.neither} neither`
+  return n ? `${head}${shown} · ${n.supports} support · ${n.weakens} go against · ${n.neither} neither` : `${head}${shown}`
 }
 
 /** The ⓘ under the totals: a row is counted once, so which explanation it is read against is named. */
 function totalsNote(fold: RunFold): string | null {
   if (fold.kind !== 'hunt') return null
-  const leading = leadingExplanation(fold)
-  const name = leading && (leading.statement || leading.hypothesis_id)
-  return `Each row is counted once, by its stance on the leading explanation${name ? ` (${name.length > 70 ? `${name.slice(0, 70)}…` : name})` : ''}; a row that does not bear on it counts as neither. Totals cover the rows shown and leave out critic rows, which are listed but not counted. A row's stance on each explanation is under “bears on”.`
+  const against = huntHypothesis(fold)
+  if (!against) return null
+  const name = against.statement || against.hypothesis_id
+  const slice = fold.evidence.length < fold.evidenceCount ? ` The table lists the newest ${fold.evidence.length}; “Show older” loads more, and the totals already cover every row.` : ''
+  return `Each row is counted once, by its stance on the explanation this hunt set out to test (${name.length > 70 ? `${name.slice(0, 70)}…` : name}); a row that does not bear on it counts as neither. Totals cover every row the run holds and leave out critic rows, which are listed but not counted.${slice} A row's stance on each explanation is under “bears on”.`
 }
 
-export function EvidenceTrail({ fold, phase, focusId }: { fold: RunFold | null; phase: Phase; focusId: string | null }) {
+export function EvidenceTrail({ fold, phase, focusId, onShowOlder }: { fold: RunFold | null; phase: Phase; focusId: string | null; onShowOlder?: (shown: number) => void }) {
+  // The row count asked for, until a read answers it.
+  const [asked, setAsked] = useState<number | null>(null)
+  useEffect(() => setAsked(null), [fold])
   const focusRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const node = focusRef.current
@@ -130,6 +136,19 @@ export function EvidenceTrail({ fold, phase, focusId }: { fold: RunFold | null; 
             </div>
           ))}
         </div>
+        {fold.kind === 'hunt' && fold.evidence.length < fold.evidenceCount && onShowOlder && (
+          <button
+            type="button"
+            className="btn neutral"
+            disabled={asked === fold.evidence.length}
+            onClick={() => {
+              setAsked(fold.evidence.length)
+              onShowOlder(fold.evidence.length)
+            }}
+          >
+            {asked === fold.evidence.length ? 'Loading older rows…' : 'Show older'}
+          </button>
+        )}
       </div>
     </section>
   )

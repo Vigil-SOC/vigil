@@ -24,6 +24,7 @@ import { timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
+  EVIDENCE_PAGE,
   explanationWord,
   honestLine,
   moveTool,
@@ -312,7 +313,7 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
   let evidence = none
   if (fold?.kind === 'hunt') {
     const n = stanceTotals(fold)
-    evidence = fold.evidence.length ? `${n.supports} support · ${n.weakens} go against · ${n.neither} neither` : 'None shown'
+    evidence = !fold.evidence.length ? 'None shown' : !n ? plural(fold.evidenceCount, 'row') : `${n.supports} support · ${n.weakens} go against · ${n.neither} neither`
   } else if (fold) {
     evidence = 'Findings, no for or against'
   }
@@ -616,7 +617,9 @@ export function CasePage({
   const pill = combinedState || (phase === 'loading' ? '…' : c?.status || '—')
 
   // The newest run, re-read on Watch a run's interval while it is in flight.
-  const run = useRunDetail(runId ?? '', runId !== null)
+  const [evidenceLimit, setEvidenceLimit] = useState<number | undefined>(undefined)
+  useEffect(() => setEvidenceLimit(undefined), [runId])
+  const run = useRunDetail(runId ?? '', runId !== null, undefined, evidenceLimit)
   const { load: loadRun, setDphase: setRunPhase } = run
   useEffect(() => {
     if (!runId) return
@@ -1012,7 +1015,7 @@ export function CasePage({
             )
           )}
 
-          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} />}
+          {tab === 'Evidence' && <EvidenceTrail fold={fold} phase={foldPhase} focusId={focusEvidence} onShowOlder={(shown) => setEvidenceLimit(shown + EVIDENCE_PAGE)} />}
 
           {tab === 'Checked' && (
             foldPhase === 'loading' ? (

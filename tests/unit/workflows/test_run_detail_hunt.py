@@ -25,7 +25,7 @@ def _runs_for(workflow_id: str):
     return _Runs()
 
 
-async def _reads(_run_id):
+async def _reads(_run_id, _evidence_limit=None):
     return STANDING
 
 
@@ -46,7 +46,7 @@ async def test_a_hunt_run_carries_the_standing_of_its_hypotheses(monkeypatch):
 async def test_a_non_hunt_run_carries_the_fold_as_projection(monkeypatch):
     asked = []
 
-    async def _record(run_id):
+    async def _record(run_id, _evidence_limit=None):
         asked.append(run_id)
         return STANDING
 
@@ -78,7 +78,7 @@ async def test_a_hunt_run_stamps_each_evidence_row_with_its_source_tier(monkeypa
         ]
     }
 
-    async def _reads(_run_id):
+    async def _reads(_run_id, _evidence_limit=None):
         return fold
 
     monkeypatch.setattr(router, "read_projection", _reads)
@@ -94,7 +94,7 @@ async def test_a_hunt_run_stamps_each_evidence_row_with_its_source_tier(monkeypa
 
 @pytest.mark.asyncio
 async def test_a_hunt_run_with_no_fold_still_reads(monkeypatch):
-    async def _reads(_run_id):
+    async def _reads(_run_id, _evidence_limit=None):
         return None
 
     monkeypatch.setattr(router, "read_projection", _reads)

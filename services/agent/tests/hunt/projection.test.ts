@@ -139,6 +139,24 @@ describe("what the evidence actually says", () => {
     const standing = (await project(started)).hypotheses[0];
     expect(standing?.supports).toBe(0);
     expect(standing?.weakens).toBe(1);
+    expect(standing?.neither).toBe(1);
+  });
+
+  it("counts neither over every row, and returns more than the usual rows when asked", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const hypothesisId = started.hypothesisIds[0] as string;
+    for (let i = 0; i < EVIDENCE_SHOWN + 3; i += 1) evidenceOn(started.ledger, hypothesisId, { relation: "supports" });
+    for (let i = 0; i < EVIDENCE_SHOWN; i += 1) evidenceOn(started.ledger, hypothesisId, { relation: "neither" });
+    await started.ledger.flush();
+    const events = await started.state.read(started.runId);
+
+    const usual = huntProjection(started.runId, events);
+    expect(usual.evidence).toHaveLength(EVIDENCE_SHOWN);
+    expect(usual.hypotheses[0]?.neither).toBe(EVIDENCE_SHOWN);
+
+    const more = huntProjection(started.runId, events, { evidence_limit: 2 * EVIDENCE_SHOWN });
+    expect(more.evidence).toHaveLength(2 * EVIDENCE_SHOWN);
+    expect(more.evidence_count).toBe(2 * EVIDENCE_SHOWN + 3);
   });
 
   it("lists each call with the question, the tool, how much came back, and the iteration that asked", async () => {

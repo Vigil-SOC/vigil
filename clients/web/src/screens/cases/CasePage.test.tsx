@@ -360,7 +360,7 @@ describe('case page', () => {
         evidence_count: 7,
         evidence: [
           { ...HUNT.evidence[0] },
-          // Supports one explanation and weakens another: its stance on the leading one, each link named beneath.
+          // Supports one explanation and weakens another: its stance on the hunt's own explanation, each link named beneath.
           { ...base, evidence_id: 'e2', iteration: 3, source_system: 'okta', summary: 'new session', bears_on: [{ hypothesis_id: 'h2', relation: 'supports' }, { hypothesis_id: 'h1', relation: 'weakens' }] },
           { ...base, evidence_id: 'e3', iteration: 1, source_system: 'dns', summary: 'plain lookup', source_tier: 'not_evidence', bears_on: [] },
           // Gap row with no stamped tier, and an iteration the capped moves do not cover.
@@ -371,12 +371,12 @@ describe('case page', () => {
     renderCase('case-trail')
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
-    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · 2 support · 0 go against · 1 neither' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 7 rows · showing 4 of 7 · 0 support · 2 go against · 5 neither' })).toBeInTheDocument()
 
     const row = (id: string) => document.querySelector(`[data-evidence-id="${id}"]`) as HTMLElement
     const first = row('e1')
-    // Read against the leading explanation (Still forming), a row that only bears on the ruled-out one is neither.
-    expect(within(first).getByText('Neither')).toBeInTheDocument()
+    // Read against the hunt's own explanation (The host is owned), not whichever ranks first.
+    expect(within(first).getByText('Goes against')).toBeInTheDocument()
     expect(within(first).getByText('Telemetry')).toBeInTheDocument()
     expect(within(first).getByText('threat_hunter')).toBeInTheDocument()
     expect(within(first).getByText('The host is owned')).toBeInTheDocument()
@@ -395,6 +395,35 @@ describe('case page', () => {
     const act = within(first).getByRole('button', { name: 'Actions for this row' })
     expect(act).toBeDisabled()
     expect(act).toHaveAttribute('title', 'Coming in a later release')
+  })
+
+  it('totals the Evidence header over every row, against the hunt\'s own explanation, and pages older rows in', async () => {
+    testState.cases = [{ ...openCase('case-157'), combined_state: 'executing', investigations: [investigation('executing', true, 'run-157')] }]
+    const newest = Array.from({ length: 50 }, (_, i) => ({
+      evidence_id: `n${i}`, iteration: 9, source_system: 'elastic', summary: `row ${i}`, is_gap: false, gap_detail: null, source_tier: 'telemetry', bears_on: [],
+    }))
+    // 157 rows; the newest 50 are all neither, but the hypothesis has 95 supports and 3 weakens across the run.
+    const hunt157 = {
+        ...HUNT,
+        evidence_count: 157,
+        evidence: newest,
+        hypotheses: [
+          { hypothesis_id: 'h1', statement: 'The host is owned', status: 'inconclusive', supports: 95, weakens: 3, neither: 59, resolution_reason: null, provenance: 'operator' },
+          { hypothesis_id: 'hb', statement: 'The activity has a legitimate explanation', status: 'active', supports: 0, weakens: 24, neither: 133, resolution_reason: null, provenance: 'base_rate' },
+        ],
+    }
+    testState.runs['run-157'] = { hunt: hunt157 }
+    renderCase('case-157')
+
+    fireEvent.click(await screen.findByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 157 rows · showing 50 of 157 · 95 support · 3 go against · 59 neither' })).toBeInTheDocument()
+
+    testState.runs['run-157'] = {
+      hunt: { ...hunt157, evidence: [...newest, ...newest.map((row, i) => ({ ...row, evidence_id: `o${i}` }))] },
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    await waitFor(() => expect(workflowApi.getRun).toHaveBeenCalledWith('run-157', 100))
+    expect(await screen.findByRole('heading', { name: 'Evidence trail · 157 rows · showing 100 of 157 · 95 support · 3 go against · 59 neither' })).toBeInTheDocument()
   })
 
   it('shows loading, then a read error, instead of an empty evidence trail', async () => {
@@ -546,7 +575,7 @@ describe('case page', () => {
     const doors = screen.getByRole('region', { name: 'Audit doors' })
     expect(within(doors).getAllByRole('button')).toHaveLength(5)
     expect(within(doors).getByText('1 forming · 1 ruled out')).toBeInTheDocument()
-    expect(within(doors).getByText('0 support · 0 go against · 1 neither')).toBeInTheDocument()
+    expect(within(doors).getByText('0 support · 2 go against · 0 neither')).toBeInTheDocument()
     expect(within(doors).getByText('$0.20 · 0 gaps')).toBeInTheDocument()
     expect(within(doors).getByText('Nothing recalled')).toBeInTheDocument()
     await waitFor(() => expect(within(doors).getByText('2 rows · 1 chained')).toBeInTheDocument())

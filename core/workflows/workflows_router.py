@@ -1,9 +1,9 @@
 """Workflows API endpoints for SOC workflow management and execution."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_projection, read_replay, read_verify
@@ -488,6 +488,10 @@ async def get_workflow_run(
     run_id: str,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     workflows: WorkflowsService = Depends(provide_workflows),
+    evidence_limit: Annotated[
+        Optional[int],
+        Query(ge=1, description="Hunt evidence rows to return, newest first."),
+    ] = None,
 ):
     """Fetch a single workflow run by id.
 
@@ -500,7 +504,7 @@ async def get_workflow_run(
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     row["phases"] = run_service.list_phases(run_id)
-    folded = await read_projection(run_id)
+    folded = await read_projection(run_id, evidence_limit)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
         _stamp_source_tiers(folded)
         row["hunt"] = folded

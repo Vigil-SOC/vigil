@@ -290,8 +290,16 @@ describe("replaying what the hunt lead was shown", () => {
   it("leaves the other GET routes refusing a query string", async () => {
     await listen([]);
     await state.append(HUNT, recordedHunt());
-    expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(404);
-    expect((await get(`/runs/${HUNT}/projection`)).status).toBe(200);
+    expect((await get(`/runs/${HUNT}/distil?decision_id=x`)).status).toBe(404);
+    expect((await get(`/runs/${HUNT}/distil`)).status).toBe(200);
+  });
+
+  // The projection takes one query parameter, and ignores what it does not know.
+  it("reads the projection with an evidence_limit, and ignores any other query", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/projection?evidence_limit=100`)).status).toBe(200);
+    expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(200);
   });
 });
 

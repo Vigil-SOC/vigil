@@ -16,6 +16,7 @@ import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Pla
 import { chatEvents, sse } from "./workflows/chat/sse.js";
 import { runChat, type Turn } from "./workflows/chat/workflow.js";
 import { harnessFor, type HarnessFactory } from "./harness.js";
+import type { ProjectionOptions } from "./workflows/hunt/projection.js";
 import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
 import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
@@ -163,19 +164,19 @@ function fail(res: ServerResponse, status: number, route: string, runId: string,
 
 // A run folded by the workflow that owns it. The events stay ours: a reader gets
 // what the run decided or what it saw, never how either was written down.
-async function foldedBy(state: State, runId: string, view: "projection" | "distil"): Promise<unknown | null> {
+async function foldedBy(state: State, runId: string, view: "projection" | "distil", options?: ProjectionOptions): Promise<unknown | null> {
   const events = await state.read(runId);
   const opened = events[0];
   if (opened === undefined || !registeredKinds().includes(opened.run_kind)) return null;
 
   const project = archFor(opened.run_kind)[view];
-  return project === undefined ? null : project(runId, events);
+  return project === undefined ? null : project(runId, events, options);
 }
 
-async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse): Promise<void> {
+async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse, options?: ProjectionOptions): Promise<void> {
   let folded: unknown | null;
   try {
-    folded = await foldedBy(state, runId, view);
+    folded = await foldedBy(state, runId, view, options);
   } catch (error) {
     // A registered kind is not a foldable ledger: distil throws when the first event
     // is not the run event. Answered as 502, as readReplay does, so the caller retries.
@@ -300,9 +301,6 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
 
-      const run = req.method === "GET" ? PROJECTION.exec(url) : null;
-      if (run !== null) return readFold(state, run[1] as string, "projection", res);
-
       const distilled = req.method === "GET" ? DISTIL.exec(url) : null;
       if (distilled !== null) return readFold(state, distilled[1] as string, "distil", res);
 
@@ -318,6 +316,13 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       } catch {
         return refuse(res, 400, `not a request path: ${url}`);
       }
+      // GET /runs/<id>/projection[?evidence_limit=N]: more than the usual newest rows of a hunt.
+      const run = req.method === "GET" ? PROJECTION.exec(parsed.pathname) : null;
+      if (run !== null) {
+        const limit = Number(parsed.searchParams.get("evidence_limit"));
+        return readFold(state, run[1] as string, "projection", res, Number.isInteger(limit) && limit > 0 ? { evidence_limit: limit } : undefined);
+      }
+
       const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
       if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
 

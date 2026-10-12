@@ -38,7 +38,8 @@ export interface HuntProjection {
   hypotheses: HypothesisStanding[];
   evidence_count: number;
   // The records themselves, newest first, so a reader need not wait for the report.
-  // Capped; evidence_count above stays the untruncated total.
+  // Capped at EVIDENCE_SHOWN unless the reader asks for more; evidence_count above
+  // stays the untruncated total.
   evidence: EvidenceView[];
   // Every disconfirmation verdict the critic gave, in ledger order and uncapped:
   // the evidence list above is capped and a verdict is not worth losing to it.
@@ -168,9 +169,17 @@ export interface HypothesisStanding {
   // From the full link set, not the capped evidence list above.
   supports: number;
   weakens: number;
+  // Every row that is not a critic verdict and links to this belief neither way, over
+  // the full ledger: supports + weakens + neither is the evidence the run gathered.
+  neither: number;
 }
 
-export function huntProjection(runId: string, events: readonly HuntEvent[]): HuntProjection {
+// A reader may ask for more than EVIDENCE_SHOWN rows, to page back through a long hunt.
+export interface ProjectionOptions {
+  evidence_limit?: number;
+}
+
+export function huntProjection(runId: string, events: readonly HuntEvent[], options: ProjectionOptions = {}): HuntProjection {
   const view = fold(events);
   const answered = new Set(view.resolutions.map((resolution) => resolution.checkpoint_id));
   const open = [...view.checkpoints.values()].find((checkpoint) => !answered.has(checkpoint.checkpoint_id));
@@ -192,7 +201,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[]): Hun
     // millisecond.
     evidence: [...view.evidence.values()]
       .reverse()
-      .slice(0, EVIDENCE_SHOWN)
+      .slice(0, Math.max(EVIDENCE_SHOWN, options.evidence_limit ?? 0))
       .map((record) => evidenceView(record, view.links)),
     reviews: [...view.evidence.values()].filter((record) => record.provenance === NULL_CHECK_PROVENANCE).map(reviewView),
     open_checkpoint: open === undefined ? null : openCheckpoint(open),
@@ -316,6 +325,10 @@ function reviewView(record: EvidenceRecord): ReviewView {
 function standing(hypothesis: Hypothesis, view: Projection): HypothesisStanding {
   const { hypothesis_id, statement, status, attack_technique, resolution_reason, provenance } = hypothesis;
   const links = view.links.filter((link) => link.hypothesis_id === hypothesis_id);
+  const supports = links.filter((link) => link.relation === "supports");
+  const weakens = links.filter((link) => link.relation === "weakens");
+  const taken = new Set([...supports, ...weakens].map((link) => link.evidence_id));
+  const counted = [...view.evidence.values()].filter((record) => record.provenance !== NULL_CHECK_PROVENANCE);
   return {
     hypothesis_id,
     statement,
@@ -324,7 +337,8 @@ function standing(hypothesis: Hypothesis, view: Projection): HypothesisStanding 
     techniques_cited: citedTechniques(view, hypothesis_id),
     resolution_reason,
     provenance,
-    supports: links.filter((link) => link.relation === "supports").length,
-    weakens: links.filter((link) => link.relation === "weakens").length,
+    supports: supports.length,
+    weakens: weakens.length,
+    neither: counted.filter((record) => !taken.has(record.evidence_id)).length,
   };
 }
