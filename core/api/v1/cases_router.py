@@ -428,9 +428,7 @@ def get_case(case_id: str, session: UnitOfWorkSession):
     closure = session.get(CaseClosureInfo, case_id)
     runs = case_records_service.list_case_runs(session, case_id)
     steps = case_records_service.run_step_counts(session, [run.run_id for run in runs])
-    case.update(
-        detail_fields(case.get("status"), investigations, closure, runs, steps)
-    )
+    case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
     case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
     return case
 
