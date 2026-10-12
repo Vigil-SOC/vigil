@@ -1,0 +1,196 @@
+name: Live Connector Checks
+
+# Each connector we can run for free, run against a real instance: self-hosted
+# backends in Docker, free vendor tiers through repo secrets. Weekly rather than
+# per PR: a vendor's bad day must not turn someone's PR red. A probe whose
+# secret is not set skips as "not configured"; tests/live/ACCOUNTS.md lists the
+# accounts and secret names. The merged result is the connector matrix: the
+# job summary, and the connector-matrix artifact.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VIGIL_LIVE_CONNECTORS: "1"
+  NODE_VERSION: '20'
+
+jobs:
+  search-backends:
+    name: Search backends (Docker)
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LIVE_CONNECTORS_REPORT: live-search-backends.json
+      LIVE_ENV_FILE: tests/live/ci/.env.search_backends
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements.lock
+      - name: Start backends
+        # Splunk is the long pole: several minutes to first search.
+        timeout-minutes: 20
+        run: |
+          bash tests/live/ci/search_backends.sh up
+          cat "$LIVE_ENV_FILE" >> "$GITHUB_ENV"
+      - name: Run checks
+        run: pytest tests/live/test_search_backends.py --no-cov -p no:cacheprovider
+      - name: Stop backends
+        if: always()
+        run: bash tests/live/ci/search_backends.sh down
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: live-search-backends
+          path: live-search-backends.json
+          if-no-files-found: ignore
+
+  local:
+    name: Keyless connectors
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LIVE_CONNECTORS_REPORT: live-local.json
+      LIVE_ENV_FILE: tests/live/ci/.env.local
+      # The run's own token: public-repo reads are all the probe makes.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.lock
+      - name: Fetch detection rules
+        run: bash tests/live/ci/detection_rules.sh
+      - name: Start Cribl Stream
+        run: |
+          bash tests/live/ci/cribl.sh up
+          cat "$LIVE_ENV_FILE" >> "$GITHUB_ENV"
+      - name: Run checks
+        run: pytest tests/live/test_local.py --no-cov -p no:cacheprovider
+      - name: Stop Cribl Stream
+        if: always()
+        run: bash tests/live/ci/cribl.sh down
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: live-local
+          path: live-local.json
+          if-no-files-found: ignore
+
+  free-tier:
+    name: Free vendor tiers
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write  # OIDC for the AWS and GCP logins, no stored cloud keys
+    env:
+      LIVE_CONNECTORS_REPORT: live-free-tier.json
+      VIRUSTOTAL_API_KEY: ${{ secrets.LIVE_VIRUSTOTAL_API_KEY }}
+      SHODAN_API_KEY: ${{ secrets.LIVE_SHODAN_API_KEY }}
+      FIRECRAWL_API_KEY: ${{ secrets.LIVE_FIRECRAWL_API_KEY }}
+      PAGERDUTY_API_KEY: ${{ secrets.LIVE_PAGERDUTY_API_KEY }}
+      OKTA_DOMAIN: ${{ secrets.LIVE_OKTA_DOMAIN }}
+      OKTA_API_TOKEN: ${{ secrets.LIVE_OKTA_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.LIVE_CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.LIVE_CLOUDFLARE_ACCOUNT_ID }}
+      LIVE_GCP_SCC_PROJECT_ID: ${{ secrets.LIVE_GCP_SCC_PROJECT_ID }}
+      # `secrets` is not available in `if`, so the login inputs come through env.
+      LIVE_AWS_ROLE_ARN: ${{ secrets.LIVE_AWS_ROLE_ARN }}
+      LIVE_GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.LIVE_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: pip install -r requirements.lock
+      - name: Pull the Okta image
+        # Outside the probe's timeout; the entry runs it with `docker run`.
+        if: env.OKTA_API_TOKEN != ''
+        run: docker pull "$(python3 -c 'import json; a = json.load(open("mcp-config.json"))["mcpServers"]["okta"]["args"]; print(a[-1])')"
+      - name: Log in to AWS
+        if: env.LIVE_AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.LIVE_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Log in to Google Cloud
+        if: env.LIVE_GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.LIVE_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.LIVE_GCP_SERVICE_ACCOUNT }}
+      - name: Run checks
+        run: pytest tests/live/test_free_tier.py --no-cov -p no:cacheprovider
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: live-free-tier
+          path: live-free-tier.json
+          if-no-files-found: ignore
+
+  matrix:
+    name: Connector matrix
+    if: always() && github.repository == 'Vigil-SOC/vigil'
+    needs: [search-backends, local, free-tier]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: live-*
+          merge-multiple: true
+      - name: Merge results
+        run: |
+          python -m tests.live.matrix connector-matrix.json live-*.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: connector-matrix
+          path: connector-matrix.json
+
+  notify:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [search-backends, local, free-tier]
+    if: failure() && github.repository == 'Vigil-SOC/vigil'
+    # `secrets` is not available in `if`, so it comes through env to be tested.
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Notify Slack
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v4
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "⚠️ Live connector checks failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
