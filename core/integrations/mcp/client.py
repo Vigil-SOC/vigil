@@ -33,8 +33,25 @@ from core.secrets import get_secret
 logger = logging.getLogger(__name__)
 
 
+def _leaf(exc: BaseException) -> BaseException:
+    """The one real error inside anyio's exception groups, for a readable message."""
+    while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+        exc = exc.exceptions[0]
+    return exc
+
+
 class PersistentServerSession:
-    """Manages a persistent connection to an MCP server."""
+    """Manages a persistent connection to an MCP server.
+
+    The stdio child and its ClientSession are opened and closed by one task of
+    their own (``_hold``). Both open anyio cancel scopes, which must be exited by
+    the task that entered them. Entering them in the caller tied the connection
+    to whoever connected first, often an HTTP request: the request's task group
+    then raised on exit, and cancelling the request closed the child.
+    """
+
+    # How long disconnect waits for the child to close before cancelling it.
+    CLOSE_TIMEOUT_S = 10.0
 
     def __init__(self, server_name: str, server_params):
         self.server_name = server_name
@@ -42,75 +59,72 @@ class PersistentServerSession:
         self.session: Optional[ClientSession] = None
         self.read_stream = None
         self.write_stream = None
-        self.stdio_context = None
-        self.session_context = None
         self.is_connected = False
         self.last_error: Optional[str] = None
         self.lock = asyncio.Lock()
+        self._owner: Optional[asyncio.Task] = None
+        self._stop: Optional[asyncio.Event] = None
+        self._ready: Optional[asyncio.Future] = None
 
     async def connect(self) -> bool:
         """Establish persistent connection to the server."""
         async with self.lock:
             if self.is_connected and self.session:
                 return True
-
-            try:
-                # Create stdio client connection
-                self.stdio_context = stdio_client(self.server_params)
-                self.read_stream, self.write_stream = (
-                    await self.stdio_context.__aenter__()
+            if not await self._connect_internal():
+                logger.error(
+                    f"Failed to connect to {self.server_name}: {self.last_error}"
                 )
-
-                # Create session
-                self.session_context = ClientSession(
-                    self.read_stream, self.write_stream
-                )
-                self.session = await self.session_context.__aenter__()
-
-                # Initialize session
-                await self.session.initialize()
-
-                self.is_connected = True
-                logger.info(
-                    f"✓ Established persistent connection to {self.server_name}"
-                )
-                return True
-
-            except Exception as e:
-                self.last_error = f"{type(e).__name__}: {e}"
-                logger.error(f"Failed to connect to {self.server_name}: {e}")
-                await self._cleanup()
                 return False
+            logger.info(f"✓ Established persistent connection to {self.server_name}")
+            return True
 
     async def disconnect(self):
         """Disconnect from the server."""
         async with self.lock:
             await self._cleanup()
 
-    async def _cleanup(self):
-        """Internal cleanup method (must be called with lock held)."""
+    async def _hold(self, ready: asyncio.Future, stop: asyncio.Event) -> None:
+        """Open the connection, report back through ``ready``, keep it until ``stop``."""
         try:
-            if self.session_context:
-                try:
-                    await self.session_context.__aexit__(None, None, None)
-                except Exception:
-                    pass
-
-            if self.stdio_context:
-                try:
-                    await self.stdio_context.__aexit__(None, None, None)
-                except Exception:
-                    pass
-
+            async with stdio_client(self.server_params) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    self.read_stream, self.write_stream = read_stream, write_stream
+                    self.session = session
+                    self.is_connected = True
+                    ready.set_result(True)
+                    await stop.wait()
+        except asyncio.CancelledError:
+            if not ready.done():
+                ready.cancel()
+            raise
+        except BaseException as e:  # noqa: BLE001 — reported to the connecting caller
+            if not ready.done():
+                ready.set_exception(_leaf(e))
+            else:
+                logger.warning(f"MCP session for {self.server_name} ended: {_leaf(e)}")
+        finally:
             self.session = None
-            self.session_context = None
-            self.stdio_context = None
             self.read_stream = None
             self.write_stream = None
             self.is_connected = False
 
-        except Exception as e:
-            logger.debug(f"Error during cleanup of {self.server_name}: {e}")
+    async def _cleanup(self):
+        """Internal cleanup method (must be called with lock held)."""
+        owner, stop = self._owner, self._stop
+        self._owner = self._stop = self._ready = None
+        if stop is not None:
+            stop.set()
+        if owner is not None and not owner.done():
+            done, _ = await asyncio.wait({owner}, timeout=self.CLOSE_TIMEOUT_S)
+            if not done:
+                owner.cancel()
+                await asyncio.wait({owner}, timeout=self.CLOSE_TIMEOUT_S)
+        self.session = None
+        self.read_stream = None
+        self.write_stream = None
+        self.is_connected = False
 
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
@@ -159,21 +173,35 @@ class PersistentServerSession:
         return await self._connect_internal()
 
     async def _connect_internal(self) -> bool:
-        """Internal connect (must be called with lock held)."""
+        """Internal connect (must be called with lock held).
+
+        A caller cancelled while this waits (a browser that gave up on the
+        enable request) leaves the start running; the next caller finds it up.
+        """
+        if (
+            self._owner is not None
+            and not self._owner.done()
+            and self._ready is not None
+        ):
+            ready = (
+                self._ready
+            )  # a start is already under way: wait for it, don't race it
+        else:
+            ready = self._ready = asyncio.get_running_loop().create_future()
+            self._stop = asyncio.Event()
+            self._owner = asyncio.create_task(
+                self._hold(ready, self._stop), name=f"mcp-session:{self.server_name}"
+            )
         try:
-            self.stdio_context = stdio_client(self.server_params)
-            self.read_stream, self.write_stream = await self.stdio_context.__aenter__()
-
-            self.session_context = ClientSession(self.read_stream, self.write_stream)
-            self.session = await self.session_context.__aenter__()
-
-            await self.session.initialize()
-
-            self.is_connected = True
+            await asyncio.shield(ready)
             return True
-
+        except asyncio.CancelledError:
+            if ready.cancelled():  # the start itself was cancelled, not this caller
+                await self._cleanup()
+                return False
+            raise
         except Exception as e:
-            logger.error(f"Reconnect failed for {self.server_name}: {e}")
+            self.last_error = f"{type(e).__name__}: {e}"
             await self._cleanup()
             return False
 
