@@ -29,6 +29,7 @@ export interface TerminalResult {
   summary: string;
   cost_usd?: number;
   handoffs?: TerminalHandoff[];
+  severity?: string;
 }
 
 // Where a run stands while it is still open. paused is a run waiting on someone

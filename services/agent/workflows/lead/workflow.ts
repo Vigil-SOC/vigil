@@ -17,6 +17,7 @@ export interface Decision {
   rationale: string;
   worker_agent_id?: string | null;
   query_intent?: string;
+  severity?: string;
 }
 
 export interface DecisionPayload {
@@ -120,7 +121,7 @@ export async function runLead(harness: Harness<LeadKinds>, options: LeadOptions)
 
     // Termination is the arch's, not the model's: an action outside the halting
     // set keeps the run going however confident the rationale sounds.
-    if (options.halts.includes(decision.action)) return end(harness, options, "completed", decision.rationale);
+    if (options.halts.includes(decision.action)) return end(harness, options, "completed", decision.rationale, decision.severity);
     // The topology's own ending, which is a different claim: a swarm that has
     // gone quiet is finished whether or not anyone said so.
     if (topology.settled(rounds)) return end(harness, options, "completed", `the ${topology.id} went quiet`);
@@ -327,11 +328,13 @@ async function open(harness: Harness<LeadKinds>, options: LeadOptions): Promise<
   ]);
 }
 
-async function end(harness: Harness<LeadKinds>, options: LeadOptions, outcome: RunOutcome, reason: string): Promise<LeadReport> {
+async function end(harness: Harness<LeadKinds>, options: LeadOptions, outcome: RunOutcome, reason: string, severity?: string): Promise<LeadReport> {
   // The rationale is what a lead run leaves behind. A failure already lands in the
   // error column, which the console renders under a red heading, so it leaves the
-  // summary unset rather than repeating itself there.
-  const payload = outcome === "failed" ? { outcome, reason } : { outcome, reason, summary: reason };
+  // summary unset rather than repeating itself there. A severity rides along only
+  // when the lead concluded with one; the arch's own enum is what kept it in range.
+  const rated = typeof severity === "string" && severity !== "" ? { severity } : {};
+  const payload = outcome === "failed" ? { outcome, reason } : { outcome, reason, summary: reason, ...rated };
   await harness.state.append(options.run_id, [event(options, "terminal", payload)]);
   return { ...(await report(harness, options)), status: outcome, reason, pending: null };
 }

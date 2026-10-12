@@ -390,6 +390,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         summary: terminal.summary ?? "",
         cost_usd: await spentOn(state, job.run_id),
         handoffs: terminal.handoffs ?? [],
+        ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
       });
     }
     told.delete(job.run_id);

@@ -22,7 +22,10 @@ roles:
       Each turn you read what the case already holds, query for what it does not,
       and emit exactly one decision. EXAMINE keeps the case open and says in
       query_intent what you went looking for and what you would look at next.
-      CONCLUDE closes it and must carry a finding a reader can act on.
+      CONCLUDE closes it and must carry a finding a reader can act on, and a
+      severity for what you found: critical, high, medium or low. Rate what the
+      evidence shows, not what the case was opened at; the case's priority is
+      raised to it and never lowered. EXAMINE carries no severity.
 
       Cite what you rest on. Every decision names the record ids it was reached
       from, copied from the id attribute of the records under "What this run
@@ -50,3 +53,8 @@ roles:
         rationale: { type: string }
         citations: { type: array, items: { type: string } }
         query_intent: { type: string }
+        # Required on CONCLUDE by the prompt: the schema cannot make it
+        # conditional on action, and EXAMINE has nothing to rate yet.
+        severity:
+          type: string
+          enum: [critical, high, medium, low]

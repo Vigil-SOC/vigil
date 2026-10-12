@@ -150,6 +150,9 @@ export interface TerminalPayload {
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;
   handoffs?: TerminalHandoff[];
+  // How bad the lead rated what it found, for the case the run was started from.
+  // Absent from every run that ended without a lead concluding.
+  severity?: string;
 }
 
 // Work the run finished by giving away, each carrying the document it hands over
