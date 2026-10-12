@@ -1,5 +1,6 @@
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import {
+  EXPERIMENTAL_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
@@ -18,6 +19,7 @@ export interface CatalogEntry {
   category: string
   description: string
   connected: boolean
+  experimental: boolean
   integration?: IntegrationMetadata
 }
 
@@ -38,6 +40,7 @@ export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], 
       category: categoryOf(server),
       description: SERVER_DESCRIPTIONS.get(server) ?? i.description,
       connected: connectedIds.has(i.id) || !!rows.find((r) => r.name === server)?.connected,
+      experimental: EXPERIMENTAL_SERVERS.has(server),
       integration: i.fields?.length ? i : undefined,
     }
   })
@@ -51,6 +54,7 @@ export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], 
       category: categoryOf(r.name),
       description: SERVER_DESCRIPTIONS.get(r.name) ?? 'Custom MCP integration.',
       connected: r.connected,
+      experimental: EXPERIMENTAL_SERVERS.has(r.name),
     }))
   const rank = (e: CatalogEntry) => {
     const i = MCP_CATEGORIES.findIndex((c) => c.label === e.category)

@@ -375,7 +375,7 @@ describe('Integrations: Add integration tab', () => {
       data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
     } as never)
     vi.mocked(mcpApi.listServers).mockResolvedValue({
-      data: { servers: ['github', 'okta', 'virustotal', 'security-detections', 'slack'] },
+      data: { servers: ['github', 'okta', 'virustotal', 'security-detections', 'slack', 'crowdstrike'] },
     } as never)
     vi.mocked(mcpApi.getStatuses).mockResolvedValue({
       data: {
@@ -385,9 +385,16 @@ describe('Integrations: Add integration tab', () => {
           { name: 'virustotal', status: 'disconnected', enabled: false },
           { name: 'security-detections', status: 'disconnected', enabled: false },
           { name: 'slack', status: 'disconnected', enabled: false },
+          { name: 'crowdstrike', status: 'disconnected', enabled: false },
         ],
       },
     } as never)
+  })
+
+  it('marks a connector never run against a live instance as experimental', async () => {
+    await open()
+    expect(within(card('CrowdStrike Falcon')).getByText('Experimental')).toBeInTheDocument()
+    expect(within(card('Okta')).queryByText('Experimental')).not.toBeInTheDocument()
   })
 
   it('lists a chip per category without counts, marks connected cards and leaves WIP servers out', async () => {

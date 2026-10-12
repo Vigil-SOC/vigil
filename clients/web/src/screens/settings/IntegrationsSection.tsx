@@ -9,6 +9,8 @@ import { useExtensions } from '../../extensions/ExtensionProvider'
 import { basePath } from '../../config/basePath'
 import { getAllIntegrations } from '../../config/integrations'
 import {
+  EXPERIMENTAL_NOTE,
+  EXPERIMENTAL_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
@@ -240,6 +242,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                   <span className="int-name">
                     {displayName(r.name)}
                     {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
+                    {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
                   </span>
                   <span className="int-sub">{categoryOf(r.name)}</span>
                 </td>

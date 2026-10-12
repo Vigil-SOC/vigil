@@ -22,6 +22,16 @@ export const WIP_SERVERS = new Set([
   'microsoft-defender', 'azure-ad', 'microsoft-teams',
 ])
 
+/** Offered, but never run against a live instance: the vendor sells no free
+ *  tier the project can test on, so only the client side is covered. A server
+ *  leaves this set when it gains a live test, not on a user's say-so. */
+export const EXPERIMENTAL_SERVERS = new Set([
+  'crowdstrike', 'sentinelone', 'azure-sentinel', 'splunk',
+  'gcp-secops', 'gcp-threat-intel', 'joe-sandbox', 'vstrike',
+])
+
+export const EXPERIMENTAL_NOTE = 'Not yet tested against a live instance. It may not work; please report what you find.'
+
 /** Card-title overrides for `prettyServerName`. Fix casing/branding here rather
  *  than renaming the server id, which is load-bearing (mcp-config.json, backend
  *  registration, persisted enabled-state store). */

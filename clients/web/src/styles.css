@@ -4087,6 +4087,7 @@
    }
 
    .int-wip { color: var(--fair); font-size: 10px; }
+   .int-exp { color: var(--fair); font-size: 10px; flex-shrink: 0; }
 
    .int-sub {
       display: block;
