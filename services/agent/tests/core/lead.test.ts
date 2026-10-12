@@ -512,3 +512,48 @@ describe("each lead turn is shown what the run already holds", () => {
     expect(decisions.at(-1)?.payload).toEqual({ action: "CONCLUDE", rationale: "rests on it1.1", worker: null, duration_ms: expect.any(Number) });
   });
 });
+
+// The lead stays read-only: what it wants done rides out on the terminal, for the
+// backend to queue as approvals a person decides.
+describe("a conclusion proposes actions for a person to approve", () => {
+  const ISOLATE = { action_type: "isolate_host", target: "fin-ws-042", reason: "beaconing to 45.77.53.176", confidence: 0.9 };
+
+  it("declares proposed_actions on the investigate lead, typed to the approval queue's actions", () => {
+    const schema = specFor("investigate", "case.playbook.yaml", "case.config.yaml").roles.lead?.output_schema;
+    const properties = schema?.["properties"] as Record<string, { items?: { required?: string[]; properties?: Record<string, { enum?: string[] }> } }>;
+    const item = properties["proposed_actions"]?.items;
+    expect(item?.required).toEqual(["action_type", "target", "reason"]);
+    expect(item?.properties?.["action_type"]?.enum).toEqual(["isolate_host", "block_ip", "block_domain", "quarantine_file", "disable_user", "custom"]);
+    expect(schema?.["required"]).not.toContain("proposed_actions");
+  });
+
+  it("carries the concluding decision's proposals on the terminal", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const state = new InProcessState<LeadKinds>();
+    const script: ScriptedTurn[] = [STOP, { emit: { action: "CONCLUDE", rationale: "a host beaconing out", citations: [], proposed_actions: [ISOLATE] } }];
+
+    await runLead(harnessOf(spec, script, state), options("investigate", spec));
+
+    expect(await state.terminal(RUN)).toEqual({
+      outcome: "completed",
+      reason: "a host beaconing out",
+      summary: "a host beaconing out",
+      proposed_actions: [ISOLATE],
+    });
+  });
+
+  it("ignores proposals on a decision that keeps the case open", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const state = new InProcessState<LeadKinds>();
+    const script: ScriptedTurn[] = [
+      STOP,
+      { emit: { action: "EXAMINE", rationale: "one host so far", citations: [], proposed_actions: [ISOLATE] } },
+      STOP,
+      { emit: { action: "CONCLUDE", rationale: "benign backup traffic", citations: [] } },
+    ];
+
+    await runLead(harnessOf(spec, script, state), options("investigate", spec));
+
+    expect(await state.terminal(RUN)).not.toHaveProperty("proposed_actions");
+  });
+});

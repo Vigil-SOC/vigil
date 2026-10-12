@@ -39,6 +39,12 @@ roles:
       gap has to be named in the rationale rather than left out of it. A question
       none of your tools can answer is a gap to name in CONCLUDE, not a reason to
       EXAMINE again.
+
+      A CONCLUDE that confirms malicious activity may carry proposed_actions:
+      the containment a person should approve next, each naming the host, IP,
+      domain, file or account it acts on and why. You take none of them
+      yourself; each waits for an analyst. Propose nothing when the activity is
+      benign or you are not sure it is malicious, and nothing on EXAMINE.
     output_schema:
       type: object
       additionalProperties: false
@@ -50,3 +56,16 @@ roles:
         rationale: { type: string }
         citations: { type: array, items: { type: string } }
         query_intent: { type: string }
+        proposed_actions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [action_type, target, reason]
+            properties:
+              action_type:
+                type: string
+                enum: [isolate_host, block_ip, block_domain, quarantine_file, disable_user, custom]
+              target: { type: string }
+              reason: { type: string }
+              confidence: { type: number, minimum: 0, maximum: 1 }
