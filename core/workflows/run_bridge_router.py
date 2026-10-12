@@ -87,6 +87,11 @@ class StatusUpdate(BaseModel):
     cost_usd: Optional[float] = None
 
 
+class ProgressUpdate(BaseModel):
+    iteration: int = Field(..., ge=0)
+    max_cost_usd: float = Field(..., ge=0)
+
+
 class CheckpointRaised(BaseModel):
     checkpoint_id: str
     checkpoint_class: str
@@ -153,6 +158,21 @@ def record_status(
     authorise(authorization, "run status")
     run_service.set_status(
         run_id, update.status, reason=update.reason, cost_usd=update.cost_usd
+    )
+
+
+# How far a hunt has got, after each iteration whatever it left the run as. Its own
+# route because /status carries a state and a paused or ending iteration has no new one.
+@router.post("/{run_id}/progress", status_code=204)
+def record_progress(
+    run_id: str,
+    update: ProgressUpdate,
+    authorization: Optional[str] = Header(default=None),
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+) -> None:
+    authorise(authorization, "run progress")
+    run_service.set_progress(
+        run_id, iteration=update.iteration, max_cost_usd=update.max_cost_usd
     )
 
 

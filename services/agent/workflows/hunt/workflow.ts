@@ -55,6 +55,9 @@ export interface HuntOptions {
   // live run's cost follows it and a parked one that was woken reads as running
   // again. Fail-open like onHandoff: the ledger is the record.
   onCost?: (runId: string, cost_usd: number) => Promise<void>;
+  // Told which iteration the hunt has finished and the ceiling it runs under, after
+  // every iteration, including the one that parks or ends it. Fail-open like onCost.
+  onProgress?: (runId: string, iteration: number, max_cost_usd: number) => Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -168,6 +171,14 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
           await linkFindings(options.onFindings, run_id, ledger.projection, linked);
         } catch (error) {
           log.warn("hunt could not link the alerts it cites", { run_id, ...errorFields(error) });
+        }
+      }
+      if (options.onProgress) {
+        try {
+          const { iteration: finished, budgets } = ledger.projection.hunt;
+          await options.onProgress(run_id, finished, budgets.max_cost_usd);
+        } catch (error) {
+          log.warn("hunt could not report its progress", { run_id, ...errorFields(error) });
         }
       }
       // Only an iteration that leaves the hunt going: one that parked it reports

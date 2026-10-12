@@ -71,6 +71,7 @@ function recordingMirror(): Mirror & { terminals: TerminalResult[] } {
     status: async () => true,
     handoff: async () => true,
     findings: async () => true,
+    progress: async () => true,
     decisions: async () => [],
   };
 }

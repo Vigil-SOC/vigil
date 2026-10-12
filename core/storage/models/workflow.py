@@ -267,6 +267,11 @@ class WorkflowRun(Base):
     # this side finalized the run (a cancel, a queue that refused the job).
     outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # How far a hunt has got and the ceiling it runs under, as the agent layer last
+    # reported them. Null for a run that never has (compose, or a hunt before its first
+    # iteration lands), which the case list then reads from the trigger context.
+    iteration_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_cost_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True)
     # Set when an operator removes the run from History. The row and its ledger stay.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

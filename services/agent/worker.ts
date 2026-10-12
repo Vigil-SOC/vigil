@@ -132,6 +132,13 @@ function findingsFor(): (runId: string, findingIds: readonly string[]) => Promis
   return (runId, findingIds) => mirror.findings(runId, findingIds);
 }
 
+// How far a hunt has got, for the case list. Fail-open: a push that did not land is
+// overwritten by the next iteration's.
+function progressFor(): (runId: string, iteration: number, max_cost_usd: number) => Promise<void> {
+  const mirror = mirrorFor();
+  return async (runId, iteration, max_cost_usd) => void (await mirror.progress(runId, { iteration, max_cost_usd }));
+}
+
 // What the console was last told of each open run, so a sweep that finds a hunt
 // still parked, or an iteration that cost nothing, writes nothing. Per process: a
 // restart repeats one write, which the backend takes as the no-op it is.
@@ -201,7 +208,7 @@ async function drive(
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
     const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
-    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, signal });
+    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, onProgress: progressFor(), signal });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "rootcause") {

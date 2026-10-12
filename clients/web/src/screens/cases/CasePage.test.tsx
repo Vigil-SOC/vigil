@@ -844,8 +844,8 @@ describe('case page', () => {
       combined_state: 'executing',
       investigations: [investigation('executing', true, 'run-links')],
       linked_findings: [
-        { finding_id: 'f1', title: 'Beacon to rare host', description: 'console alert', source_link: 'https://example.test/alert/1' },
-        { finding_id: 'f2', description: 'no door', source_link: null },
+        { finding_id: 'f1', title: 'Beacon to rare host', description: 'console alert', source_link: 'https://example.test/alert/1', entities: ['web-1', 'alice'] },
+        { finding_id: 'f2', description: 'no door', source_link: null, entities: ['alice', 'db-2'] },
       ],
     }]
     testState.runs['run-links'] = { hunt: HUNT }
@@ -859,6 +859,8 @@ describe('case page', () => {
     // The title names the alert; a row without one keeps its description.
     expect(within(side).getByText('Beacon to rare host')).toBeInTheDocument()
     expect(within(side).queryByText('console alert')).not.toBeInTheDocument()
+    // The Entities row is what the linked alerts name, once each, while the run recalls none.
+    expect(within(side).getByText('web-1, alice, db-2')).toBeInTheDocument()
     expect(within(side).getByText('no door')).toBeInTheDocument()
     expect(within(side).queryByText('gone')).not.toBeInTheDocument()
     const link = within(side).getByRole('link', { name: 'Open in source' })

@@ -43,6 +43,14 @@ export interface StatusUpdate {
 
 // decisions is the only inbound direction: a human answers over there, and this
 // side journals what comes back, so the ledger keeps its single writer.
+// How far a hunt has got: the iteration it has finished and the cost ceiling it runs
+// under, extensions included, so a list of cases can say "step 8 of $15" without
+// reading the ledger.
+export interface ProgressUpdate {
+  iteration: number;
+  max_cost_usd: number;
+}
+
 export interface Mirror {
   // Whether a human can answer through this one. Losing progress does not change
   // a run; a gate nobody can see or answer stops it for good.
@@ -67,6 +75,9 @@ export interface Mirror {
   // handoff it answers whether it landed, and the backend is idempotent per finding,
   // so a caller that is unsure may ask again.
   findings(runId: string, findingIds: readonly string[]): Promise<boolean>;
+  // Where a hunt stands, after each iteration whatever it left the run as. Like
+  // findings it answers whether it landed; the backend overwrites, so asking again is safe.
+  progress(runId: string, update: ProgressUpdate): Promise<boolean>;
   decisions(runId: string): Promise<ResolutionPayload[]>;
 }
 
@@ -82,6 +93,7 @@ export const nullMirror: Mirror = {
   // re-asking a no-op on every iteration for the life of the run.
   handoff: async () => true,
   findings: async () => true,
+  progress: async () => true,
   decisions: async () => [],
 };
 
@@ -119,6 +131,7 @@ export function httpMirror(options: MirrorOptions): Mirror {
     status: (runId, update) => post(`/${encodeURIComponent(runId)}/status`, update),
     handoff: (runId, handoff) => post(`/${encodeURIComponent(runId)}/handoff`, handoff),
     findings: (runId, findingIds) => post(`/${encodeURIComponent(runId)}/findings`, { finding_ids: findingIds }),
+    progress: (runId, update) => post(`/${encodeURIComponent(runId)}/progress`, update),
     decisions: httpAnswers(options),
   };
 }

@@ -148,6 +148,23 @@ class TestBeginAndFinalize:
         assert row["status"] == "cancelled"
         assert float(row["total_cost_usd"] or 0) == 0
 
+    def test_set_progress_overwrites_and_does_not_reach_a_finished_run(
+        self, service, clean_runs
+    ):
+        def stored():
+            with get_db_manager().session_scope() as session:
+                row = session.get(WorkflowRun, run_id)
+                return row.iteration_count, float(row.max_cost_usd)
+
+        run_id = service.begin_run(workflow_id="test-wf-022", workflow_name="Test WF")
+        assert service.set_progress(run_id, iteration=3, max_cost_usd=15.0)
+        assert service.set_progress(run_id, iteration=8, max_cost_usd=15.0)
+        assert stored() == (8, 15.0)
+
+        service.finalize_run(run_id, status="completed")
+        assert service.set_progress(run_id, iteration=9, max_cost_usd=20.0) is False
+        assert stored() == (8, 15.0)
+
     def test_finalize_failure_records_error(self, service, clean_runs):
         run_id = service.begin_run(
             workflow_id="test-wf-003",

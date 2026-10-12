@@ -242,6 +242,20 @@ def add_workflow_run_outcome(conn):
     """))
 
 
+# How far a hunt has got, for the case list (#2202). Same arrangement as the step
+# above: 41_workflow_runs_progress.sql builds the columns on Helm, this covers a
+# database that init SQL never reached. No backfill: runs before this stay null.
+@migration("Add iteration_count and max_cost_usd to workflow_runs")
+def add_workflow_run_progress(conn):
+    if not _table_exists(conn, 'workflow_runs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE workflow_runs
+            ADD COLUMN IF NOT EXISTS iteration_count INTEGER,
+            ADD COLUMN IF NOT EXISTS max_cost_usd NUMERIC(10, 4);
+    """))
+
+
 # ---------------------------------------------------------------------------
 # New tables (create if missing via SQLAlchemy create_all)
 # ---------------------------------------------------------------------------

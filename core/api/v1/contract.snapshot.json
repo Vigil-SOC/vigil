@@ -1024,6 +1024,14 @@
             ],
             "title": "Description"
           },
+          "entities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
           "finding_id": {
             "title": "Finding Id",
             "type": "string"

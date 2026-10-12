@@ -433,6 +433,7 @@ dbInit:
     - 39_case_findings_finding_index.sql
     - 40_drop_custom_workflow_graph_layout.sql
     - 40_skill_reads.sql
+    - 41_workflow_runs_progress.sql
   resources:
     requests:
       cpu: 50m

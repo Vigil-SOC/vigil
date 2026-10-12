@@ -46,7 +46,8 @@ function levelOf(ratio: number): Level {
   return ratio >= 0.9 ? 'poor' : ratio >= 0.75 ? 'fair' : 'good'
 }
 
-function Details({ latest, workflowNames, sla, closed, fold, spend }: {
+function Details({ linked, latest, workflowNames, sla, closed, fold, spend }: {
+  linked: CaseLinkedFinding[]
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>
   sla: Sla
@@ -55,7 +56,9 @@ function Details({ latest, workflowNames, sla, closed, fold, spend }: {
   spend: Spend
 }) {
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
-  const entities = fold?.recall && !fold.recall.unavailable ? fold.recall.keys.join(', ') : ''
+  // What the run asked about, then what the linked alerts name: a hunt's case has alerts before it has recall.
+  const recalled = fold?.recall && !fold.recall.unavailable ? fold.recall.keys : []
+  const entities = [...new Set([...recalled, ...linked.flatMap((f) => f.entities)])].join(', ')
   return (
     <Block title="Details">
       <dl className="side-kv">
@@ -248,7 +251,7 @@ export function CaseSide({ caseId, linked, owner, latest, workflowNames, sla, cl
   const spend = spendOf(latest, latestFold)
   return (
     <>
-      <Details latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
+      <Details linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} spend={spend} />
       <Alerts items={linked} />
       <Cost spend={spend} />
       <Known fold={fold} />
