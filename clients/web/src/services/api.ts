@@ -18,6 +18,10 @@ const api = axios.create({
 // 0 to disable the timeout for the life of the SSE connection.
 export const LLM_TIMEOUT = 180_000
 
+// Switching an MCP server on starts it and waits for it. A first start of an
+// npx/uvx server downloads the package, which can take well over 15s.
+export const MCP_START_TIMEOUT = 180_000
+
 // The backend seeds csrf_token on any request lacking one, so after the first
 // /auth/me call it is always present.
 function readCookie(name: string): string | null {
@@ -427,7 +431,7 @@ export const mcpApi = {
   getStatuses: () => api.get('/mcp/servers/status'),
 
   setServerEnabled: (name: string, enabled: boolean) =>
-    api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+    api.put(`/mcp/servers/${name}/enabled`, { enabled }, { timeout: MCP_START_TIMEOUT }),
 
   // Vigil's own MCP surface: whether it listens, and what may open it.
   getSurface: () => api.get('/mcp/surface'),
