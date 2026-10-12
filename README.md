@@ -100,7 +100,7 @@ An integration is one of two things:
 
 What an integration can do depends on its server: some are read-only lookups, others can act (for example, Microsoft Defender isolation or Carbon Black quarantine). The integrations docs list each one's tools.
 
-Some integrations are marked **Experimental** in Settings. These are CrowdStrike Falcon, SentinelOne, Microsoft Sentinel, the official Splunk MCP server, Google SecOps, Google Threat Intelligence, Joe Sandbox and vStrike. The project has no free instance of these products to test against, so they have never been run against a live one. They may not work. If you run one, please open an issue saying whether it worked, with your Vigil version.
+Some integrations are marked **Experimental** in Settings. These are CrowdStrike Falcon, SentinelOne, Microsoft Sentinel, the official Splunk MCP server, Google SecOps, Google Threat Intelligence, Joe Sandbox, vStrike, Atomic Red Team and CAPE Sandbox. The project has no free instance of these to test against (Atomic Red Team runs an operator's own runner; CAPE needs a KVM host), so they have never been run against a live one. They may not work. If you run one, please open an issue saying whether it worked, with your Vigil version.
 
 Enable and configure integrations under **Settings → Integrations**, or generate one from API docs with the **Custom Integration Builder**. If you build an integration you find useful, someone else will too. Please contribute it.
 
