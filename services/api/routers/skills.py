@@ -1,8 +1,9 @@
 """Skills API — skills loaded from disk, and writes under the operator root.
 
 Skills are directories of ``SKILL.md`` under the bundled library and the
-optional ``VIGIL_SKILLS_PATH`` root; see ``core.skills.skill_library``. Writes
-go only to that operator root. The bundled library is never modified.
+operator root (``VIGIL_SKILLS_PATH``, else ``~/.vigil/skills``); see
+``core.skills.skill_library``. Writes go only to that operator root. The
+bundled library is never modified.
 """
 
 import logging

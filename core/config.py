@@ -145,8 +145,10 @@ class Settings(BaseSettings):
     vigil_frontend_url: str = ""
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
     vigil_intent_path: str = ""
-    # One extra root of SKILL.md directories, read alongside core/skills/library.
-    vigil_skills_path: str = ""
+    # One extra root of SKILL.md directories, read alongside core/skills/library
+    # and written by the skills API. Unset (None) is the State Directory's
+    # skills/ folder; empty turns operator skills off, as the Helm chart does.
+    vigil_skills_path: Optional[str] = None
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
     # agent and scripts/migrate_schema.py can keep it in the environment.

@@ -498,7 +498,7 @@ def _target_for(name: str, settings, bifrost_data: str | None) -> Path:
     if name == "orchestrator_workdir":
         return Path(settings.orchestrator_workdir).resolve()
     if name == "skills":
-        raw = settings.vigil_skills_path.strip()
+        raw = (settings.vigil_skills_path or "").strip()
         if not raw:
             raise BackupError("skills were backed up but VIGIL_SKILLS_PATH is unset")
         return Path(raw).resolve()

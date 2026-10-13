@@ -99,7 +99,19 @@ def test_list_marks_the_bundled_library(operator):
     assert by_name[BUNDLED]["bundled"] is True
 
 
-def test_unset_path_refuses_the_write(tmp_path, monkeypatch):
+def test_default_root_is_created_on_the_first_save(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "core.skills.skill_library.get_settings",
+        lambda: Settings(vigil_skills_path=None),
+    )
+    client = _app()
+    assert _write(client, "desk-check").status_code == 200
+    assert (tmp_path / "state" / "skills" / "desk-check" / "SKILL.md").is_file()
+    assert client.get("/api/skills/desk-check").json()["operator_root_set"] is True
+
+
+def test_empty_path_refuses_the_write(tmp_path, monkeypatch):
     missing = tmp_path / "not-created"
     monkeypatch.setattr(
         "core.skills.skill_library.get_settings",
