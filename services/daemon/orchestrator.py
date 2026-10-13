@@ -531,7 +531,9 @@ class Orchestrator:
             try:
                 from core.storage.database_data_service import DatabaseDataService
 
-                self._data_service = DatabaseDataService()
+                # Intake rows, the findings they name and the cases minted from
+                # them are all Postgres rows, so demo mode must not swap them out.
+                self._data_service = DatabaseDataService(demo=False)
                 logger.info("Orchestrator: Database service initialized")
             except Exception as e:
                 logger.error(f"Orchestrator: Failed to init data service: {e}")
