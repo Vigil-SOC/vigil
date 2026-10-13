@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.api.v1.approvals_router import router as approvals_router
+from core.response.approval_service import _row_to_pending
 from core.storage.models import (
     ApprovalAction,
     Case,
@@ -181,6 +182,22 @@ def test_needs_you_is_oldest_pending_approvals_only(client, seeded):
     assert direct["reason"] == "Paused at the isolate step"
     assert none["reason"] == "because"
     assert {item["source_id"] for item in mine}.isdisjoint({"ny-approved", "ny-auto"})
+    # The column is naive UTC; a zoneless string reads as local time in a browser.
+    assert direct["created_at"] == "2099-01-01T08:00:00+00:00"
+
+
+def test_row_to_pending_stamps_every_time_as_utc():
+    row = _approval(
+        "ny-row",
+        OLDER,
+        status="executed",
+        approved_at=OLDER + timedelta(minutes=1),
+        executed_at=OLDER + timedelta(minutes=2),
+    )
+    pending = _row_to_pending(row)
+    assert pending.created_at == "2099-01-01T08:00:00+00:00"
+    assert pending.approved_at == "2099-01-01T08:01:00+00:00"
+    assert pending.executed_at == "2099-01-01T08:02:00+00:00"
 
 
 def test_case_id_filter_uses_the_resolved_id(client, seeded):
