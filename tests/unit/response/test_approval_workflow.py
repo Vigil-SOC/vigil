@@ -10,6 +10,7 @@ from core.response.approval_service import (
     ActionType,
     ApprovalService,
     Reversibility,
+    assist_on,
 )
 from core.response.autonomous_response_service import AutonomousResponseService
 from core.response.config import ResponseConfig
@@ -224,6 +225,42 @@ class TestConfidenceThresholds:
         finally:
             get_settings.cache_clear()
         assert action.status == ActionStatus.PENDING.value
+
+
+class TestAssistOn:
+    """What a workflow's write tools are gated on: the console chip's reading."""
+
+    @pytest.mark.parametrize(
+        ("auto", "row", "expected"),
+        [
+            ("true", None, True),  # nobody has picked: Assist
+            ("true", {"enabled": False}, False),  # Settings picked Act
+            ("true", {"enabled": True}, True),
+            ("false", {"enabled": False}, True),  # auto-response off reads Assist
+        ],
+    )
+    def test_reads_like_the_console_chip(self, monkeypatch, auto, row, expected):
+        monkeypatch.delenv("DAEMON_FORCE_APPROVAL", raising=False)
+        monkeypatch.setenv("DAEMON_AUTO_RESPONSE", auto)
+        get_settings.cache_clear()
+        store = Mock()
+        store.read_system_config.return_value = row
+        try:
+            with patch(
+                "core.response.approval_service.get_config_service",
+                return_value=store,
+            ):
+                assert assist_on() is expected
+        finally:
+            get_settings.cache_clear()
+
+    def test_a_failed_read_is_assist(self):
+        store = Mock()
+        store.read_system_config.side_effect = RuntimeError("db down")
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            assert assist_on() is True
 
 
 class TestConfiguredBands:

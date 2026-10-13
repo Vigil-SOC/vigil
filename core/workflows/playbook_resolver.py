@@ -11,6 +11,7 @@ import yaml
 
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
+from core.llm.chat_layers import changes_for_tool
 from core.llm.defaults import DEFAULT_MODEL
 from core.skills.skill_library import READ_SKILL_TOOL
 
@@ -337,11 +338,20 @@ def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
             ]
 
 
-# Only ART execute is gated. The id must be one config.tools actually carries:
-# spec.ts refuses an approvals name that is not declared. Native and MCP-flattened
-# spellings both count; whichever resolved is the one that goes on the list.
+# ART execute is always gated. In Assist, so is a tool that changes something
+# outside Vigil on its own (block, isolate, revoke: see changes_for_tool), so the
+# call waits in the approvals inbox. Assist is read only when such a tool is
+# granted. The id must be one config.tools actually carries: spec.ts refuses an
+# approvals name that is not declared. Native and MCP-flattened spellings both
+# count; whichever resolved is the one that goes on the list.
 def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
-    return [tool["id"] for tool in tools if tool["id"] in EXECUTE_IDS]
+    from core.response.approval_service import assist_on
+
+    gated = [tool["id"] for tool in tools if tool["id"] in EXECUTE_IDS]
+    writes = [t["id"] for t in tools if changes_for_tool(t["id"]) == "on_its_own"]
+    if writes and assist_on():
+        gated += writes
+    return gated
 
 
 def resolve(
@@ -405,9 +415,10 @@ def resolve(
         ),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
-        # ART execute parks until a human approves. Other grants, and a compose
-        # that never received execute, stay ungated. A phase checkpoint is
-        # separate (approval_required on the step) and is not a substitute.
+        # ART execute, and in Assist a tool that changes something on its own,
+        # parks until a human approves. Other grants stay ungated. A phase
+        # checkpoint is separate (approval_required on the step) and is not a
+        # substitute.
         "approvals": _approvals_of(tools),
         "thresholds": {},
     }

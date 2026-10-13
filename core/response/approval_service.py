@@ -58,6 +58,22 @@ def stored_force_manual_approval(value: Optional[Dict[str, Any]]) -> bool:
     return env is not False
 
 
+def assist_on() -> bool:
+    """Whether Vigil runs in Assist, read the way the console chip reads it.
+
+    Approval is forced (env, a stored Assist, or nobody has picked yet), or
+    auto-response is off. A failed read of the row is Assist.
+    """
+    if not get_settings().daemon_auto_response:
+        return True
+    try:
+        value = get_config_service().read_system_config(APPROVAL_CONFIG_KEY)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Cannot read the approval setting; treating it as Assist: %s", e)
+        return True
+    return stored_force_manual_approval(value)
+
+
 _pending_gauge: Any = None
 
 
