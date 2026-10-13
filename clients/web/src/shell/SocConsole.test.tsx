@@ -939,14 +939,14 @@ describe('SocConsole', () => {
     renderConsole()
     clickScreen('AI Decisions')
     fireEvent.click(await screen.findByText('Cluster merge'))
-    fireEvent.change(screen.getByPlaceholderText('Your name / analyst ID'), {
-      target: { value: 'QA Analyst' },
-    })
+    // no name to type: the server records the signed-in user
+    expect(screen.queryByPlaceholderText('Your name / analyst ID')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
     expect(vi.mocked(aiDecisionsApi.submitFeedback)).toHaveBeenCalledWith(
       'd-4471',
-      expect.objectContaining({ human_reviewer: 'QA Analyst', human_decision: 'agree' }),
+      expect.objectContaining({ human_decision: 'agree' }),
     )
+    expect(vi.mocked(aiDecisionsApi.submitFeedback).mock.lastCall?.[1]).not.toHaveProperty('human_reviewer')
   })
 
   it('exports the visible timeline events as CSV', async () => {

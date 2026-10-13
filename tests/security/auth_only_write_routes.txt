@@ -21,7 +21,6 @@ POST /api/agents/custom
 POST /api/agents/custom/generate
 POST /api/agents/{source_agent_id}/fork
 POST /api/ai/decisions
-POST /api/ai/decisions/{decision_id}/feedback
 POST /api/analytics/estimate-cost
 POST /api/analytics/recalculate-cost
 POST /api/auth/bootstrap
