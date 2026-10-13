@@ -1231,7 +1231,7 @@ describe('case page', () => {
   const queue = (...items: NeedsYouItem[]) =>
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: items.length, items } } as never)
   const irreversible = () =>
-    need({ source_id: 'act-irr', title: 'Isolate host', reason: '', kind: 'checkpoint', reversibility: 'irreversible' })
+    need({ source_id: 'act-irr', title: 'Isolate host', reason: '', reversibility: 'irreversible' })
 
   it('shows a reversible and an irreversible ask with their own controls', async () => {
     testState.cases = [decCase]
@@ -1453,7 +1453,7 @@ describe('case page', () => {
     try {
       testState.cases = [{ case_id: 'case-dec', title: 'Decision case', status: 'open', priority: 'high', finding_ids: [], created_at: '2026-06-15T09:14:00Z', combined_state: 'open', investigations: [] }]
       vi.mocked(approvalsApi.needsYou).mockResolvedValue({
-        data: { count: 3, items: [need({ reason: '' }), need({ source_id: 'a2', title: 'Two', created_at: '2026-06-15T05:00:00Z' }), need({ source_id: 'a3', title: 'Three', created_at: 'garbage' })] },
+        data: { count: 3, items: [need({ reason: '', kind: 'checkpoint' }), need({ source_id: 'a2', title: 'Two', kind: 'checkpoint', created_at: '2026-06-15T05:00:00Z' }), need({ source_id: 'a3', title: 'Three', kind: 'checkpoint', created_at: 'garbage' })] },
       } as never)
       renderCase('case-dec')
       expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
@@ -1465,6 +1465,51 @@ describe('case page', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('gives a paused run the full block and collapses proposed actions into rows', async () => {
+    testState.cases = [decCase]
+    const proposals = ['Isolate WS-1', 'Isolate WS-2', 'Disable bob', 'Block 5.6.7.8', 'Disable eve'].map((title, i) =>
+      need({ source_id: `p${i}`, title, reversibility: i === 1 ? 'irreversible' : 'reversible' }),
+    )
+    queue(...proposals, need({ source_id: 'cp', kind: 'checkpoint', title: 'Proceed to containment?' }))
+    vi.mocked(approvalsApi.approve).mockResolvedValue({} as never)
+    renderCase('case-dec')
+
+    expect(await screen.findByRole('heading', { name: 'Proceed to containment?' })).toBeInTheDocument()
+    expect(document.querySelectorAll('.case-needs article')).toHaveLength(1)
+    const rows = screen.getByRole('list', { name: 'Proposed actions' })
+    expect(within(rows).getAllByRole('listitem')).toHaveLength(3)
+    expect(screen.getByText('+2 more proposed actions')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
+    expect(within(rows).getAllByRole('listitem')).toHaveLength(5)
+    expect(within(rows).getByRole('button', { name: /^Hold to approve Isolate WS-2\. Press and hold/ })).toBeInTheDocument()
+
+    // a row approves through the same fuse and leaves at once
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve Disable bob' }))
+      expect(screen.queryByText('Disable bob')).not.toBeInTheDocument()
+      await tick(8000)
+      expect(approvalsApi.approve).toHaveBeenCalledWith('p2')
+    } finally {
+      vi.useRealTimers()
+    }
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(document.querySelector('.case-needs-strip')?.textContent).toContain('Proceed to containment?')
+  })
+
+  it('names how many proposals wait when no run is paused', async () => {
+    testState.cases = [decCase]
+    queue(need(), need({ source_id: 'a2', title: 'Isolate WS-1' }), need({ source_id: 'a3', title: 'Disable bob' }))
+    renderCase('case-dec')
+
+    expect(await screen.findByRole('heading', { name: 'Block 1.2.3.4' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'More proposed actions · 2' })).toBeInTheDocument()
+    expect(document.querySelector('.case-reason')?.textContent).toBe('3 proposed actions')
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(document.querySelector('.case-needs-strip')?.textContent).toContain('3 proposed actions')
   })
 
   it('shows the error and renders nothing without items', async () => {

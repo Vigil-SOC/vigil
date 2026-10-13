@@ -150,6 +150,18 @@ function ExplanationRow({ row, rootCauseRunId }: { row: HypothesisRow; rootCause
   )
 }
 
+/** Paused-run checkpoints first, then proposed approvals, each kind in the order served. */
+function byWeight(items: NeedsYouItem[]): NeedsYouItem[] {
+  return [...items.filter((it) => it.kind === 'checkpoint'), ...items.filter((it) => it.kind !== 'checkpoint')]
+}
+
+/** What's waiting, in a line: a paused run's ask, else the one proposal, else how many there are. */
+function needsAsk(items: NeedsYouItem[]): string | undefined {
+  const checkpoint = items.find((it) => it.kind === 'checkpoint')
+  if (checkpoint || items.length < 2) return (checkpoint ?? items[0])?.title
+  return `${items.length} proposed actions`
+}
+
 /** Under the tabs on every tab but Summary while a decision waits; the decision itself is on Summary. */
 function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
   return (
@@ -161,6 +173,9 @@ function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
     </div>
   )
 }
+
+/** Compact rows shown before "+N more proposed actions". */
+const ROWS_SHOWN = 3
 
 function CaseNeeds({
   items,
@@ -175,32 +190,89 @@ function CaseNeeds({
   onApprove: (item: NeedsYouItem) => void
   onReject: (item: NeedsYouItem, reason: string) => void
 }) {
+  const [showAll, setShowAll] = useState(false)
   if (items.length === 0) return null
+  // Every paused run gets the full block; with none, the first proposal does. Other proposals wait without blocking, so they collapse.
+  const ordered = byWeight(items)
+  const full = Math.max(1, ordered.filter((it) => it.kind === 'checkpoint').length)
+  const rows = ordered.slice(full)
+  const visible = showAll ? rows : rows.slice(0, ROWS_SHOWN)
   return (
     <section className="case-needs" aria-label="Needs you">
       {error && <p role="alert">{error}</p>}
-      {items.map((item) => (
+      {ordered.slice(0, full).map((item) => (
         <CaseNeed key={item.source_id} item={item} busy={busy} onApprove={onApprove} onReject={onReject} />
       ))}
+      {rows.length > 0 && (
+        <div className="needs-more">
+          <h3>{ordered[0].kind === 'approval' ? 'More proposed actions' : 'Proposed actions'} · {rows.length}</h3>
+          <ul aria-label="Proposed actions">
+            {visible.map((item) => (
+              <CaseNeedRow key={item.source_id} item={item} busy={busy} onApprove={onApprove} onReject={onReject} />
+            ))}
+          </ul>
+          {rows.length > visible.length && (
+            <div className="needs-more-foot">
+              <span>+{rows.length - visible.length} more proposed actions</span>
+              <button type="button" className="btn neutral" onClick={() => setShowAll(true)}>Show all</button>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   )
 }
 
-function CaseNeed({
-  item,
-  busy,
-  onApprove,
-  onReject,
-}: {
+type NeedProps = {
   item: NeedsYouItem
   busy: boolean
   onApprove: (item: NeedsYouItem) => void
   onReject: (item: NeedsYouItem, reason: string) => void
-}) {
-  const [rejecting, setRejecting] = useState(false)
+}
+
+function ApproveButton({ item, busy, onApprove, label }: NeedProps & { label?: string }) {
+  return item.reversibility === 'reversible' ? (
+    <button type="button" className="btn primary" aria-label={label} disabled={busy} onClick={() => onApprove(item)}>
+      Approve
+    </button>
+  ) : (
+    <HoldButton label="Hold to approve" name={label && `Hold to approve ${item.title}`} disabled={busy} onConfirm={() => onApprove(item)} />
+  )
+}
+
+function RejectForm({ item, busy, onReject }: NeedProps) {
   const [reason, setReason] = useState('')
+  return (
+    <form
+      className="needs-reject"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const text = reason.trim()
+        if (!text) return
+        onReject(item, text)
+      }}
+    >
+      <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
+      <textarea
+        id={`reject-${item.source_id}`}
+        className="feedback-box"
+        aria-label="Rejection reason"
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        placeholder="Why is this being rejected?"
+        autoFocus
+      />
+      <button type="submit" className="btn neutral" disabled={busy || !reason.trim()}>
+        Confirm reject
+      </button>
+    </form>
+  )
+}
+
+function CaseNeed(props: NeedProps) {
+  const { item, busy } = props
+  const [rejecting, setRejecting] = useState(false)
   const waited = waiting(item.created_at)
-  const reversible = item.reversibility === 'reversible'
 
   return (
     <article>
@@ -217,16 +289,10 @@ function CaseNeed({
           </>
         )}
         <dt>Reversibility</dt>
-        <dd>{reversible ? 'Reversible' : 'Cannot be undone'}</dd>
+        <dd>{item.reversibility === 'reversible' ? 'Reversible' : 'Cannot be undone'}</dd>
       </dl>
       <div className="needs-actions">
-        {reversible ? (
-          <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item)}>
-            Approve
-          </button>
-        ) : (
-          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item)} />
-        )}
+        <ApproveButton {...props} />
         <button
           type="button"
           className="btn neutral"
@@ -237,32 +303,39 @@ function CaseNeed({
           Reject
         </button>
       </div>
-      {rejecting && (
-        <form
-          className="needs-reject"
-          onSubmit={(event) => {
-            event.preventDefault()
-            const text = reason.trim()
-            if (!text) return
-            onReject(item, text)
-          }}
-        >
-          <label htmlFor={`reject-${item.source_id}`}>Why? The reason goes back to the agents.</label>
-          <textarea
-            id={`reject-${item.source_id}`}
-            className="feedback-box"
-            aria-label="Rejection reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="Why is this being rejected?"
-            autoFocus
-          />
-          <button type="submit" className="btn neutral" disabled={busy || !reason.trim()}>
-            Confirm reject
-          </button>
-        </form>
-      )}
+      {rejecting && <RejectForm {...props} />}
     </article>
+  )
+}
+
+/** One proposed action as a row: title, reversibility, its own Approve and Reject. */
+function CaseNeedRow(props: NeedProps) {
+  const { item, busy } = props
+  const [rejecting, setRejecting] = useState(false)
+  const reversible = item.reversibility === 'reversible'
+  return (
+    <li>
+      <div className="needs-row">
+        <span className="needs-row-title">{item.title}</span>
+        <span className={reversible ? 'needs-row-rev' : 'needs-row-rev irreversible'}>
+          {reversible ? 'Reversible' : 'Cannot be undone'}
+        </span>
+        <div className="needs-actions">
+          <ApproveButton {...props} label={`Approve ${item.title}`} />
+          <button
+            type="button"
+            className="btn neutral"
+            aria-label={`Reject ${item.title}`}
+            aria-expanded={rejecting}
+            disabled={busy}
+            onClick={() => setRejecting((open) => !open)}
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+      {rejecting && <RejectForm {...props} />}
+    </li>
   )
 }
 
@@ -860,9 +933,10 @@ export function CasePage({
   const running = !closed && !stopped && tone !== 'needs'
   // Reason after the pill: the ask, where a live run stands (its directive is in the Now card), or who closed it.
   const reason =
-    tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
+    tone === 'needs' ? needsAsk(shownNeeds) : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
   const needsBlock = (
     <CaseNeeds
+      key={id} // Show all is per case
       items={shownNeeds}
       busy={decisionBusy !== null}
       error={decisionError}
@@ -927,7 +1001,7 @@ export function CasePage({
         />
       </div>
 
-      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={shownNeeds[0]?.title} onDecide={() => setTab('Summary')} />}
+      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={needsAsk(shownNeeds)} onDecide={() => setTab('Summary')} />}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>

@@ -174,6 +174,67 @@
 .case-needs .needs-reject label { font-size: 12px; color: var(--tx2); }
 .case-needs .needs-reject textarea { box-sizing: border-box; }
 
+/* Proposals after the first block: one card, a row each (card.md, row-stack.md) */
+.case-needs .needs-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--card-ln);
+  border-radius: var(--card-radius);
+}
+
+.case-needs .needs-more h3 { font-size: 13px; font-weight: 650; color: var(--tx0); }
+
+.case-needs .needs-more ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--stack-bg);
+  border-radius: var(--stack-radius);
+  overflow: hidden;
+}
+
+.case-needs .needs-more li {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--stack-row-bg);
+}
+
+.case-needs .needs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.case-needs .needs-row-title { flex: 1 1 200px; min-width: 0; color: var(--tx0); overflow-wrap: anywhere; }
+.case-needs .needs-row-rev { color: var(--tx2); font-size: 12px; }
+.case-needs .needs-row-rev.irreversible { color: var(--poor); }
+
+/* Row buttons are shorter than the block's; the hold button keeps its width so Reject doesn't shift. */
+.case-needs .needs-row .needs-actions .btn,
+.case-needs .needs-more li .needs-reject .btn { height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+.case-needs .needs-row .needs-actions .home-hold { min-width: 124px; }
+.case-needs .needs-more li .needs-reject { background: var(--bg1); }
+
+.case-needs .needs-more-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--tx1);
+}
+
+.case-needs .needs-more-foot .btn { height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+
 /* Checked tab: a card holding a row stack (card.md, row-stack.md) */
 .case-page .case-card {
   box-sizing: border-box;
