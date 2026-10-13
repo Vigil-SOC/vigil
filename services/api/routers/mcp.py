@@ -114,6 +114,10 @@ async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
             "status": "running" if is_up else "disconnected",
             "enabled": bool(enabled.get(name, False)),
         }
+        # Present, and false, only where the integration lacks the settings it
+        # needs: such a server may run, but answers every call "not configured".
+        if not mcp_service.is_configured(name):
+            row["configured"] = False
         if mcp_client and not is_up:
             missing = mcp_client.get_missing_credentials(name)
             if missing:

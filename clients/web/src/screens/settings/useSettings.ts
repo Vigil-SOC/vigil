@@ -766,6 +766,7 @@ export function useMcpServers() {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [missingCredentials, setMissingCredentials] = useState<Record<string, string[]>>({})
+  const [notSetUp, setNotSetUp] = useState<Record<string, boolean>>({})
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -782,6 +783,7 @@ export function useMcpServers() {
         const enabledDict: Record<string, boolean> = {}
         const errorDict: Record<string, string> = {}
         const missingDict: Record<string, string[]> = {}
+        const notSetUpDict: Record<string, boolean> = {}
         if (Array.isArray(statusList)) {
           statusList.forEach((item: {
             name?: string
@@ -789,6 +791,7 @@ export function useMcpServers() {
             enabled?: boolean
             error?: string
             missing_credentials?: string[]
+            configured?: boolean
           }) => {
             if (item.name && item.status) statusDict[item.name] = item.status
             if (item.name) enabledDict[item.name] = !!item.enabled
@@ -796,12 +799,14 @@ export function useMcpServers() {
             if (item.name && item.missing_credentials?.length) {
               missingDict[item.name] = item.missing_credentials
             }
+            if (item.name && item.configured === false) notSetUpDict[item.name] = true
           })
         }
         setStatuses(statusDict)
         setEnabled(enabledDict)
         setErrors(errorDict)
         setMissingCredentials(missingDict)
+        setNotSetUp(notSetUpDict)
         setPhase('ready')
       })
       .catch((e) => {
@@ -848,7 +853,7 @@ export function useMcpServers() {
     [fetchAll],
   )
 
-  return { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled }
+  return { servers, statuses, enabled, errors, missingCredentials, notSetUp, phase, error, reload, setServerEnabled }
 }
 
 export type CostTimeRange = '24h' | '7d' | '30d' | 'all'

@@ -36,6 +36,8 @@ interface HealthInput {
   enabled: Record<string, boolean>
   errors: Record<string, string>
   missingCredentials: Record<string, string[]>
+  /** the server says its integration lacks settings it needs (`configured: false`) */
+  notSetUp: Record<string, boolean>
   enabledIntegrations: string[]
   integrations: Record<string, Record<string, unknown>>
   lastTest: Record<string, LastTest>
@@ -60,9 +62,11 @@ export function buildRows(i: HealthInput): ServerRow[] {
       i.errors[name] || '',
       failedTest ? lastTest.error || 'Last test failed' : '',
     ].filter((n, idx, all) => n && all.indexOf(n) === idx && !(idx > 0 && repeatsMissing(n)))
+    // it may be running, but it answers every call "not configured": no level
+    const notSetUp = !!i.notSetUp[name]
     // a server nobody connected has no health to report
     const connected = isEnabled || configured
-    const level: Level = !connected ? null : notes.length ? 'poor' : isRunning ? 'good' : null
+    const level: Level = !connected || notSetUp ? null : notes.length ? 'poor' : isRunning ? 'good' : null
     return {
       name,
       integration,
@@ -75,7 +79,7 @@ export function buildRows(i: HealthInput): ServerRow[] {
       masterMixed: isExtension && configured !== isEnabled,
       connected,
       level,
-      word: level ? '' : isEnabled ? 'Not running' : integration && !configured ? 'Not set up' : 'Off',
+      word: level ? '' : notSetUp ? 'Not set up' : isEnabled ? 'Not running' : integration && !configured ? 'Not set up' : 'Off',
       note: notes.join(' — '),
       lastTest,
     }

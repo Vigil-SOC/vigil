@@ -35,7 +35,7 @@ async def _splunk() -> Outcome:
     from core.integrations.splunk.client import SplunkService
 
     config = resolve(SPLUNK)
-    absent = missing(config, "server_url", "username", "password")
+    absent = missing(config, *SPLUNK.required_fields)
     if absent:
         return _absent(absent)
     service = SplunkService(
@@ -57,8 +57,9 @@ async def _elastic() -> Outcome:
     from core.integrations.elastic.client import ElasticService
 
     config = resolve(ELASTIC)
-    if missing(config, "elasticsearch_url"):
-        return _absent(("elasticsearch_url",))
+    absent = missing(config, *ELASTIC.required_fields)
+    if absent:
+        return _absent(absent)
     verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
     service = ElasticService(
         elasticsearch_url=config["elasticsearch_url"],

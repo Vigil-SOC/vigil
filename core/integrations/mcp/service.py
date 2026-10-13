@@ -11,6 +11,7 @@ from typing import Dict, List, Mapping, Optional
 
 from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
+from core.integrations._base.config import server_configured
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.mcp.child_env import ca_bundle_env
 from core.integrations.mcp.packaged import installed_launch
@@ -162,6 +163,8 @@ class MCPService:
         # add-on. Safe to default-on: it declares no env placeholder (its config
         # comes from Settings via resolve(), #1113), so with nothing configured
         # it starts and answers "Splunk not configured", not failing a boot.
+        # Until it is configured (is_configured) its tools are not offered and
+        # Settings says it is not set up.
         "splunk-selfhosted",
     }
 
@@ -171,6 +174,20 @@ class MCPService:
             server_name,
             server_name in self._DEFAULT_ENABLED,
         )
+
+    def is_configured(self, server_name: str) -> bool:
+        """Whether a server has the settings it needs saved, in Settings or the env.
+
+        A server whose ``mcp-config.json`` entry names ``${VAR}`` placeholders is
+        held dormant until they resolve (``mcp_client.connect_to_server``): that
+        is its check, so the official Splunk server is not held to the Splunk
+        form. Any other server reads its settings through ``resolve()`` and
+        starts without them, so the fields its descriptor marks required decide.
+        """
+        server = self.servers.get(server_name)
+        if server is not None and server.required_env_vars:
+            return True
+        return server_configured(server_name)
 
     def set_server_enabled(self, server_name: str, enabled: bool) -> bool:
         """

@@ -113,6 +113,32 @@ describe('Integrations: Connected table', () => {
     expect(screen.getByRole('status')).toHaveTextContent('HTTP 403 from VirusTotal')
   })
 
+  it('a running server whose integration is not set up reads Not set up, not Good', async () => {
+    // Splunk (Self-Hosted) is on by default and runs with nothing saved
+    vi.mocked(configApi.getIntegrations).mockResolvedValue({
+      data: { enabled_integrations: ['github'], integrations: {}, secrets_set: {}, last_test: {} },
+    } as never)
+    vi.mocked(mcpApi.listServers).mockResolvedValue({ data: { servers: ['github', 'splunk-selfhosted'] } } as never)
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: {
+        statuses: [
+          { name: 'github', status: 'running', enabled: true },
+          { name: 'splunk-selfhosted', status: 'running', enabled: true, configured: false },
+        ],
+      },
+    } as never)
+    renderSection()
+    await screen.findByRole('tab', { name: 'Connected 2' })
+
+    const splunk = row('Splunk (Self-Hosted)')
+    expect(splunk.getByText('Not set up')).toBeInTheDocument()
+    expect(splunk.queryByText('Good')).not.toBeInTheDocument()
+    expect(splunk.getByRole('button', { name: 'Configure' })).toBeInTheDocument()
+    const tile = (k: string) => screen.getByText(k, { selector: '.int-tile-k' }).closest('.int-tile') as HTMLElement
+    expect(tile('Healthy')).toHaveTextContent('1')
+    expect(tile('Need attention')).toHaveTextContent('0')
+  })
+
   it('keeps unconnected servers off the table and offers them under Add integration', async () => {
     renderSection()
     await screen.findByRole('tab', { name: 'Connected 2' })

@@ -167,6 +167,45 @@ def test_an_investigation_marks_telemetry_search_unbound_when_nothing_provides_i
     assert "pricing" not in report
 
 
+# splunk-selfhosted is on by default and runs with nothing saved. A preflight that
+# counted it would tell the operator a hunt can search logs when every search
+# answers "Splunk not configured".
+@pytest.mark.parametrize("workflow_id", ["threat-hunt", "incident-response"])
+def test_a_running_siem_that_is_not_set_up_is_not_log_search(monkeypatch, workflow_id):
+    from core.integrations.mcp import client as mcp_client
+    from core.integrations.mcp.registry import MCPRegistry
+
+    set_up = {"splunk-selfhosted": False}
+
+    class _Catalog:
+        def is_configured(self, name):
+            return set_up.get(name, True)
+
+    class _Client:
+        mcp_service = _Catalog()
+        tools_cache = {
+            "splunk-selfhosted": [
+                {"name": "splunk_execute", "description": "Run SPL", "inputSchema": {}}
+            ]
+        }
+
+        def get_connection_status(self):
+            return {"splunk-selfhosted": True}
+
+    monkeypatch.setattr(mcp_client, "process_mcp_client", lambda: _Client())
+    ask = lambda: hunt_preflight.preflight(  # noqa: E731
+        WorkflowsService(), MCPRegistry(), workflow_id
+    )
+
+    report = ask()
+    assert "telemetry_search" in report["capabilities"]["unbound"]
+    rows = {r["name"]: r for r in report["permissions"]}
+    assert rows["telemetry_search"]["bound"] is False
+
+    set_up["splunk-selfhosted"] = True
+    assert "telemetry_search" in ask()["capabilities"]["bound"]
+
+
 def test_root_cause_is_given_its_turns_and_the_hunt_cost_and_wall():
     from core.workflows.playbook_resolver import HUNT_BUDGETS, ROOT_CAUSE_MAX_TURNS
 

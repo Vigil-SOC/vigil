@@ -66,6 +66,26 @@ def test_the_prompt_line_names_the_connected_servers(registry):
     assert "find_integration_tools" in line
 
 
+# Splunk is on by default and runs with nothing saved, answering every call "Splunk
+# not configured". Until it is set up the model is neither told of it nor finds it.
+def test_a_server_that_is_not_set_up_is_neither_named_nor_found(registry, monkeypatch):
+    class _Catalog:
+        def is_configured(self, name):
+            return name != SPLUNK
+
+    class _Client:
+        mcp_service = _Catalog()
+
+    monkeypatch.setattr(mcp_client, "process_mcp_client", lambda: _Client())
+    tools = mcp_registry.live_mcp_tools(registry)
+    line = integrations_line(tools, registry.tool_servers())
+
+    assert f"{SD}, vigil" in line and SPLUNK not in line
+    assert not [t for t in tools if t["name"].startswith(f"{SPLUNK}_")]
+    assert not find_integration_tools(registry, "splunk search", server=SPLUNK)
+    assert find_integration_tools(registry, "sigma rules for T1059")
+
+
 def test_find_returns_matching_tools_with_schemas_and_nothing_destructive(registry):
     matches = find_integration_tools(registry, "sigma rules for T1059")
     names = [m["name"] for m in matches]

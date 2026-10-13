@@ -44,7 +44,7 @@ def get_opensearch_service():
         return _opensearch_service
     try:
         config = resolve(OPENSEARCH)
-        if missing(config, "opensearch_url"):
+        if missing(config, *OPENSEARCH.required_fields):
             return None
         # resolve() always returns every declared field, so a .get(k, True)
         # default would never fire — verify_ssl is present-but-None when unset.

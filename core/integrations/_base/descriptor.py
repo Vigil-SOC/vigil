@@ -59,6 +59,9 @@ class IntegrationField:
     value_type: str = "str"
     # What an unset field resolves to; ``None`` leaves the caller to decide.
     default: Any = None
+    # The server answers nothing useful until this resolves, so the integration
+    # is not set up without it (``config.is_configured``).
+    required: bool = False
 
     def __post_init__(self) -> None:
         if self.value_type not in _COERCERS:
@@ -104,6 +107,10 @@ class IntegrationDescriptor:
     @property
     def field_names(self) -> Tuple[str, ...]:
         return tuple(f.name for f in self.fields)
+
+    @property
+    def required_fields(self) -> Tuple[str, ...]:
+        return tuple(f.name for f in self.fields if f.required)
 
 
 _REGISTRY: Dict[str, IntegrationDescriptor] = {}

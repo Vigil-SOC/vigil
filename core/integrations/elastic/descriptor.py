@@ -12,7 +12,7 @@ ELASTIC = register_descriptor(
         category="SIEM",
         mcp_server_names=("elastic",),
         fields=(
-            IntegrationField("elasticsearch_url"),
+            IntegrationField("elasticsearch_url", required=True),
             IntegrationField("api_key", secret=True),
             IntegrationField("username"),
             IntegrationField("password", secret=True),

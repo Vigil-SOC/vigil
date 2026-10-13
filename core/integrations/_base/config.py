@@ -12,17 +12,24 @@ to know the rule.
 
 ``resolve`` is the descriptor-driven entry point. ``resolve_fields`` takes an
 explicit field list for callers with no descriptor, such as a generated custom
-integration.
+integration. ``is_configured`` is the one "is it set up" answer built on it.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from core.config import get_integration_config
-from core.integrations._base.descriptor import IntegrationDescriptor, IntegrationField
+from core.integrations._base.descriptor import (
+    IntegrationDescriptor,
+    IntegrationField,
+    iter_descriptors,
+)
 from core.integrations.integration_secrets import env_var_for, secret_fields_for
 from core.secrets import get_secret
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve(
@@ -68,3 +75,36 @@ def resolve(descriptor: IntegrationDescriptor) -> Dict[str, Optional[Any]]:
 def missing(config: Mapping[str, Any], *required: str) -> tuple[str, ...]:
     """Which of ``required`` resolved to nothing — the 'not configured' check."""
     return tuple(name for name in required if not config.get(name))
+
+
+def is_configured(descriptor: IntegrationDescriptor) -> bool:
+    """Whether every field the descriptor marks required has a value.
+
+    Saved in Settings or set in the env: what ``resolve`` reads, so what the
+    server itself will read. Not whether the values work; ``credential_check``
+    logs in. A descriptor that marks nothing required needs nothing saved.
+    """
+    required = descriptor.required_fields
+    if not required:
+        return True
+    try:
+        return not missing(resolve(descriptor), *required)
+    except Exception as exc:  # noqa: BLE001
+        # The server reads through the same resolve(), so it cannot read its
+        # settings either. The class name only, as in the servers: a decrypt
+        # error can carry the value it choked on.
+        logger.warning(
+            "%s config could not be resolved (%s)", descriptor.id, type(exc).__name__
+        )
+        return False
+
+
+def server_configured(server_name: str) -> bool:
+    """``is_configured`` for the integration behind an MCP server.
+
+    True for a server no descriptor names: nothing says what it needs.
+    """
+    for descriptor in iter_descriptors():
+        if server_name in descriptor.mcp_server_names:
+            return is_configured(descriptor)
+    return True
