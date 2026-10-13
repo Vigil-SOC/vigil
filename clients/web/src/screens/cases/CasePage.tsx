@@ -49,8 +49,14 @@ import {
 import './cases.css'
 import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
 
-const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
+const TABS = ['Summary', 'Decisions', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
+type DoorTab = Exclude<Tab, 'Summary' | 'Decisions'>
+
+/** Decisions is a tab only while a proposed action waits. */
+function tabsFor(decisions: number): readonly Tab[] {
+  return decisions > 0 ? TABS : TABS.filter((name) => name !== 'Decisions')
+}
 const NEEDS_POLL_MS = 20_000
 
 const LATER = 'Later. Nothing writes this yet — it is the phase-2 Act contract.'
@@ -150,15 +156,120 @@ function ExplanationRow({ row, rootCauseRunId }: { row: HypothesisRow; rootCause
   )
 }
 
-/** Under the tabs on every tab but Summary while a decision waits; the decision itself is on Summary. */
-function NeedsStrip({ ask, onDecide }: { ask?: string; onDecide: () => void }) {
+/** Under the tabs while a decision waits and its home tab is not the one open. */
+function NeedsStrip({ ask, where, onDecide }: { ask?: string; where: 'Summary' | 'Decisions'; onDecide: () => void }) {
   return (
     <div className="case-needs-strip">
       <span className="strip-dot" aria-hidden="true" />
       <b>Needs you</b>
       {ask && <span className="strip-ask">{ask}</span>}
-      <button type="button" onClick={onDecide}>Decide on Summary</button>
+      <button type="button" onClick={onDecide}>{where === 'Summary' ? 'Decide on Summary' : 'Review decisions'}</button>
     </div>
+  )
+}
+
+/** On Summary: the actions a run proposed wait on their own tab, so the conclusion stays in view. */
+function DecisionsBanner({ count, onOpen }: { count: number; onOpen: () => void }) {
+  return (
+    <button type="button" className="case-decisions-banner" onClick={onOpen}>
+      <span className="needs-dot" aria-hidden="true" />
+      <b>{count === 1 ? '1 action waits for your decision' : `${count} actions wait for your decision`}</b>
+      <span className="case-decisions-go">Review ›</span>
+    </button>
+  )
+}
+
+/** The Decisions tab: one compact row per proposed action. */
+function DecisionList({
+  items,
+  busy,
+  error,
+  onApprove,
+  onReject,
+  onApproveAll,
+}: {
+  items: NeedsYouItem[]
+  busy: boolean
+  error: string | null
+  onApprove: (item: NeedsYouItem) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
+  onApproveAll: (items: NeedsYouItem[]) => void
+}) {
+  const reversible = items.filter((item) => item.reversibility === 'reversible')
+  if (items.length === 0) return <EmptyState compact icon="search" title="Nothing waits for a decision" />
+  return (
+    <section className="case-decisions" aria-label="Decisions">
+      <div className="case-decisions-head">
+        <div>
+          <b>{items.length === 1 ? '1 proposed action' : `${items.length} proposed actions`}</b>
+          <span className="muted">Nothing runs until you approve it. Rejections go back to the agents with your reason.</span>
+        </div>
+        {reversible.length > 1 && (
+          <button type="button" className="btn primary" disabled={busy} onClick={() => onApproveAll(reversible)}>
+            Approve all reversible ({reversible.length})
+          </button>
+        )}
+      </div>
+      {error && <p role="alert">{error}</p>}
+      <ul className="case-decision-rows">
+        {items.map((item) => (
+          <DecisionRow key={item.source_id} item={item} busy={busy} onApprove={onApprove} onReject={onReject} />
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function DecisionRow({
+  item,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  item: NeedsYouItem
+  busy: boolean
+  onApprove: (item: NeedsYouItem) => void
+  onReject: (item: NeedsYouItem, reason: string) => void
+}) {
+  const [rejecting, setRejecting] = useState(false)
+  const [reason, setReason] = useState('')
+  const reversible = item.reversibility === 'reversible'
+  return (
+    <li>
+      <div className="case-decision-main">
+        <b>{item.title}</b>
+        {item.reason && <span className="clamp2" title={item.reason}>{item.reason}</span>}
+      </div>
+      <span className={`case-decision-rev${reversible ? '' : ' poor'}`}>{reversible ? 'Reversible' : 'Cannot be undone'}</span>
+      <div className="case-decision-actions">
+        {reversible ? (
+          <button type="button" className="btn primary" disabled={busy} onClick={() => onApprove(item)}>Approve</button>
+        ) : (
+          <HoldButton label="Hold to approve" disabled={busy} onConfirm={() => onApprove(item)} />
+        )}
+        <button type="button" className="btn neutral" aria-expanded={rejecting} disabled={busy} onClick={() => setRejecting((open) => !open)}>Reject</button>
+      </div>
+      {rejecting && (
+        <form
+          className="case-decision-reject"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const text = reason.trim()
+            if (text) onReject(item, text)
+          }}
+        >
+          <textarea
+            className="feedback-box"
+            aria-label="Rejection reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why is this being rejected? The reason goes back to the agents."
+            autoFocus
+          />
+          <button type="submit" className="btn neutral" disabled={busy || !reason.trim()}>Confirm reject</button>
+        </form>
+      )}
+    </li>
   )
 }
 
@@ -273,12 +384,13 @@ function memoryRows(fold: RunFold | null): number {
   return opening + recallEntityCalls(fold).length + (recall?.gaps.length ?? 0) + visibilityGaps(fold).length
 }
 
-function counts(fold: RunFold | null, record: number): Record<Tab, number> {
+function counts(fold: RunFold | null, record: number, decisions: number): Record<Tab, number> {
   const calls = fold?.calls.length ?? 0
   const memory = memoryRows(fold)
   if (fold?.kind === 'hunt') {
     return {
       Summary: fold.hypotheses.length,
+      Decisions: decisions,
       Explanations: fold.hypotheses.length,
       Evidence: fold.evidenceCount,
       Checked: calls,
@@ -289,6 +401,7 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
   const findings = fold?.findings.length ?? 0
   return {
     Summary: findings,
+    Decisions: decisions,
     Explanations: 0,
     Evidence: findings,
     Checked: calls,
@@ -300,7 +413,7 @@ function counts(fold: RunFold | null, record: number): Record<Tab, number> {
 const DOOR_ORDER = ['proven', 'standing', 'weakened', 'forming', 'ruled out']
 
 /** The line under each door's count, from the fold already loaded. */
-function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<Exclude<Tab, 'Summary'>, string> {
+function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows: CaseRecordRow[], recordPhase: Phase): Record<DoorTab, string> {
   const none = foldPhase === 'loading' ? 'Loading…' : foldPhase === 'error' ? 'Couldn’t read the run' : hasRun ? 'Run started' : 'No run yet'
   const tally = new Map<string, number>()
   if (fold?.kind === 'hunt') {
@@ -335,14 +448,14 @@ function doorLines(fold: RunFold | null, foldPhase: Phase, hasRun: boolean, rows
 }
 
 /** Five doors into the audit tabs, in every mood. */
-function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; lines: Record<Exclude<Tab, 'Summary'>, string>; onOpen: (tab: Tab) => void }) {
+function Doors({ counts: n, lines, onOpen }: { counts: Record<Tab, number>; lines: Record<DoorTab, string>; onOpen: (tab: Tab) => void }) {
   return (
     <section className="case-doors" aria-label="Audit doors">
-      {TABS.filter((name) => name !== 'Summary').map((name) => (
+      {TABS.filter((name): name is DoorTab => name !== 'Summary' && name !== 'Decisions').map((name) => (
         <button key={name} type="button" className="case-door" onClick={() => onOpen(name)}>
           <span className="door-label">{name}<span aria-hidden="true">›</span></span>
           <span className="door-count">{n[name]}</span>
-          <span className="door-sub">{lines[name as Exclude<Tab, 'Summary'>]}</span>
+          <span className="door-sub">{lines[name]}</span>
         </button>
       ))}
     </section>
@@ -710,7 +823,7 @@ export function CasePage({
     }
   }, [id, recordKey])
 
-  const tabCounts = counts(fold, rows.length)
+  const tabCounts = counts(fold, rows.length, 0)
   const gaps = visibilityGaps(fold)
   const recalled = recallEntityCalls(fold)
   const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind, row.source) === chip)
@@ -794,6 +907,29 @@ export function CasePage({
 
   const reject = fused.reject
 
+  // One commit per action, in order; the list re-reads once at the end rather than per row.
+  const approveAll = async (items: NeedsYouItem[]) => {
+    if (decisionBusyRef.current) return
+    const forCase = id
+    decisionBusyRef.current = 'all'
+    setDecisionBusy('all')
+    setDecisionError(null)
+    let failed = 0
+    for (const item of items) {
+      try {
+        await approvalsApi.approve(item.source_id)
+      } catch {
+        failed += 1
+      }
+    }
+    decisionBusyRef.current = null
+    setDecisionBusy(null)
+    if (seenCase.current === forCase) {
+      if (failed > 0) setDecisionError(`${failed} of ${items.length} could not be approved.`)
+      await loadNeeds()
+      onChanged()
+    }
+  }
   const decide = async (sourceId: string, act: () => Promise<unknown>) => {
     if (decisionBusyRef.current) return
     const forCase = id
@@ -831,6 +967,11 @@ export function CasePage({
 
   // items whose fuse is running stay out of the block, the ask and the count, so a poll can't bring them back
   const shownNeeds = needsItems.filter((it) => !pending.includes(it.source_id))
+  // A paused run cannot go on until someone answers, so its question stays on Summary;
+  // the actions a run proposed wait on the Decisions tab.
+  const checkpointNeeds = shownNeeds.filter((it) => it.kind === 'checkpoint')
+  const actionNeeds = shownNeeds.filter((it) => it.kind !== 'checkpoint')
+  tabCounts.Decisions = actionNeeds.length
   const needsShown = Math.max(0, needsCount - (needsItems.length - shownNeeds.length))
   const hypotheses = fold?.kind === 'hunt' ? fold.hypotheses : []
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
@@ -863,7 +1004,7 @@ export function CasePage({
     tone === 'needs' ? shownNeeds[0]?.title : tone === 'live' ? runSentence(fold) : closed ? closedLine(closure) : ''
   const needsBlock = (
     <CaseNeeds
-      items={shownNeeds}
+      items={checkpointNeeds}
       busy={decisionBusy !== null}
       error={decisionError}
       onApprove={approve}
@@ -921,13 +1062,16 @@ export function CasePage({
         )}
         <TabStrip
           label="Case sections"
-          tabs={TABS.map((name) => ({ id: name, label: name, count: name === 'Summary' ? undefined : tabCounts[name] }))}
+          tabs={tabsFor(actionNeeds.length).map((name) => ({ id: name, label: name, count: name === 'Summary' ? undefined : tabCounts[name] }))}
           active={tab}
           onChange={setTab}
         />
       </div>
 
-      {needsShown > 0 && tab !== 'Summary' && <NeedsStrip ask={shownNeeds[0]?.title} onDecide={() => setTab('Summary')} />}
+      {checkpointNeeds.length > 0 && tab !== 'Summary' && <NeedsStrip ask={checkpointNeeds[0]?.title} where="Summary" onDecide={() => setTab('Summary')} />}
+      {checkpointNeeds.length === 0 && actionNeeds.length > 0 && tab !== 'Summary' && tab !== 'Decisions' && (
+        <NeedsStrip ask={actionNeeds.length === 1 ? actionNeeds[0]?.title : `${actionNeeds.length} proposed actions`} where="Decisions" onDecide={() => setTab('Decisions')} />
+      )}
 
       <div className="case-stage">
         <div className="detail-body" key={tab}>
@@ -935,6 +1079,7 @@ export function CasePage({
             closed ? (
               <>
                 {needsBlock}
+                {actionNeeds.length > 0 && <DecisionsBanner count={actionNeeds.length} onOpen={() => setTab('Decisions')} />}
                 <section className="case-closed" aria-label="Closed summary">
                   <span className="case-closed-line">
                     {closedLine(closure)}
@@ -956,6 +1101,7 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
+                {actionNeeds.length > 0 && <DecisionsBanner count={actionNeeds.length} onOpen={() => setTab('Decisions')} />}
                 {running && <NowCard fold={fold} phase={foldPhase} hasRun={runId !== null} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} watch={watch} />}
                 <section>
@@ -972,6 +1118,17 @@ export function CasePage({
                 {doors}
               </>
             )
+          )}
+
+          {tab === 'Decisions' && (
+            <DecisionList
+              items={actionNeeds}
+              busy={decisionBusy !== null}
+              error={decisionError}
+              onApprove={approve}
+              onReject={reject}
+              onApproveAll={approveAll}
+            />
           )}
 
           {tab === 'Explanations' && (
