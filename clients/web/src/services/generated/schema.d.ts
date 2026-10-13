@@ -2148,7 +2148,7 @@ export interface paths {
         };
         /**
          * Get Case Record
-         * @description The case record: the latest run's ledger, then this case's audit rows.
+         * @description The case record: the latest run's ledger, audit rows and activities.
          *
          *     Newest first. The agent returns the ledger with snapshots off. Audit rows
          *     are ``entity_type == case`` and ``entity_id`` this case — the table has no
