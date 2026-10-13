@@ -1,8 +1,9 @@
 """One newest-first read of a case's record.
 
 The run's ledger comes from the agent. ``case_audit_logs`` is read here, by
-``entity_type`` and ``entity_id``: the table has no ``case_id`` column, and
-nothing writes it. This view does not add one, and it does not query
+``entity_type`` and ``entity_id``: the table has no ``case_id`` column. The
+case's own history is ``cases.activities``, appended to by runs, analysts and
+merges; it is read off the case, not written here. This view does not query
 ``agent_events``.
 """
 
@@ -20,6 +21,30 @@ def _at(value: Optional[datetime]) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def _parse(value: Any) -> Optional[datetime]:
+    """A timestamp as an aware datetime; None when it is not one.
+
+    Writers disagree: runs send ``...123Z``, activities naive UTC plus ``Z``,
+    ``_at`` ``+00:00``. As strings they do not sort together.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+_NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _short(value: Any) -> str:
@@ -76,11 +101,14 @@ def audit_text(row: CaseAuditLog) -> str:
 
 
 def merge_record(
-    events: Sequence[Mapping[str, Any]], audits: Sequence[CaseAuditLog]
+    events: Sequence[Mapping[str, Any]],
+    audits: Sequence[CaseAuditLog],
+    activities: Sequence[Any] = (),
 ) -> list[dict]:
-    """Run rows and case-audit rows, newest first.
+    """Run rows, case-audit rows and case-activity rows, newest first.
 
-    Run rows are the chained ledger. Audit rows are not: the page says so.
+    Run rows are the chained ledger. Audit and activity rows are not: the page
+    says so.
     """
     rows: list[dict] = []
     for event in events:
@@ -115,7 +143,26 @@ def merge_record(
                 "_seq": 0,
             }
         )
-    rows.sort(key=lambda row: (row["at"], row["_seq"]), reverse=True)
+    # Activities have no id; the list is only appended to, so the index is stable.
+    for index, activity in enumerate(activities):
+        if not isinstance(activity, Mapping):
+            continue
+        at = _parse(activity.get("timestamp"))
+        if at is None:
+            continue
+        kind = str(activity.get("activity_type") or "")
+        rows.append(
+            {
+                "id": f"activity:{index}",
+                "at": _at(at),
+                "kind": kind,
+                "source": "case_activities",
+                "chained": False,
+                "text": _short(activity.get("description")) or kind,
+                "_seq": 0,
+            }
+        )
+    rows.sort(key=lambda row: (_parse(row["at"]) or _NEVER, row["_seq"]), reverse=True)
     for row in rows:
         row.pop("_seq", None)
     return rows

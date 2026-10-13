@@ -247,7 +247,16 @@ export function workerAt(fold: HuntFold, iteration: number): string | null {
   return fold.moves.find((move) => move.iteration === iteration)?.worker || null
 }
 
-export function recordChip(kind: string): RecordChip {
+/**
+ * Who wrote a record row. A case activity is typed by its own activity_type, never as the run-event
+ * kind it may share a name with: runs and findings are the agent's, a merge the system's, the rest
+ * an analyst's.
+ */
+export function recordChip(kind: string, source = 'run'): RecordChip {
+  if (source === 'case_activities') {
+    if (kind.startsWith('agent_run_') || kind === 'finding_added') return 'agent'
+    return kind === 'case_merged' ? 'system' : 'human'
+  }
   switch (kind) {
     case 'recall':
       return 'memory'

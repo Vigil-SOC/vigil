@@ -1002,7 +1002,7 @@ describe('case page', () => {
       testState.recordRows = rows
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit rows are not.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit and activity rows are not.')
     })
 
     it('Replay links to the run on Workflows, and closes the drawer', async () => {

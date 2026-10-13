@@ -713,10 +713,10 @@ export function CasePage({
   const tabCounts = counts(fold, rows.length)
   const gaps = visibilityGaps(fold)
   const recalled = recallEntityCalls(fold)
-  const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind) === chip)
+  const shown = chip === 'all' ? rows : rows.filter((row) => recordChip(row.kind, row.source) === chip)
   const chipCounts = useMemo(() => {
     const counts: Record<RecordChip, number> = { agent: 0, human: 0, memory: 0, system: 0 }
-    for (const row of rows) counts[recordChip(row.kind)] += 1
+    for (const row of rows) counts[recordChip(row.kind, row.source)] += 1
     return counts
   }, [rows])
 
@@ -1076,9 +1076,9 @@ export function CasePage({
                   <InfoTip
                     label="About the record"
                     align="start"
-                    source="The run’s journal and the case audit log, newest first."
+                    source="The run’s journal, the case audit log and the case’s activity history, newest first."
                     calculation="Each row is typed Agent, Human, Memory or System from what wrote it."
-                    limit="Only the run’s rows are hash-chained. Case audit rows are not."
+                    limit="Only the run’s rows are hash-chained. Case audit and activity rows are not."
                   />
                 </div>
                 <div className="rec-actions">
@@ -1128,7 +1128,7 @@ export function CasePage({
               {recordPhase === 'ready' && shown.length > 0 && (
                 <div className="rec-rows">
                   {shown.map((row) => {
-                    const type = recordChip(row.kind)
+                    const type = recordChip(row.kind, row.source)
                     return (
                       <div key={row.id} className="rec-row">
                         <span className="rec-time" title={when(row.at)}>{clock(row.at)}</span>
