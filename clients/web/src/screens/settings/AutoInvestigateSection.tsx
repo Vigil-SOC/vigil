@@ -308,7 +308,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <div className="toggle-row-text">
             <span className="toggle-row-label">Investigate new alerts automatically</span>
             <span className="toggle-row-hint">
-              When off, alerts still arrive and are grouped into cases, but no agent starts until someone asks.
+              When off, alerts still arrive and wait in the Triage queue; no case opens and no agent starts. Alerts waiting over 4 hours expire when it is turned back on.
             </span>
           </div>
           <Toggle
