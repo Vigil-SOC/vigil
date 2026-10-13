@@ -1507,3 +1507,55 @@
 
 .cases-pager-nav button:hover:not(:disabled) { background: var(--bg3); color: var(--tx0); }
 .cases-pager-nav button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Summary's pointer to the Decisions tab. */
+.case-page .case-decisions-banner {
+  display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box;
+  padding: 12px 16px; background: var(--poor-bg); border: 1px solid var(--poor-ln); border-radius: var(--card-radius);
+  color: var(--tx0); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.case-page .case-decisions-banner b { color: var(--poor); font-weight: 700; }
+.case-page .case-decisions-banner .needs-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--poor); animation: kit-blink 1.6s infinite; }
+.case-page .case-decisions-go { margin-left: auto; font-weight: 600; color: var(--ac); }
+.case-page .case-decisions-banner:hover .case-decisions-go { text-decoration: underline; }
+
+/* The Decisions tab: one row per proposed action. */
+.case-page .case-decisions { display: flex; flex-direction: column; gap: 12px; }
+.case-page .case-decisions > [role='alert'] { margin: 0; color: var(--poor); font-size: 13px; }
+.case-page .case-decisions-head { display: flex; align-items: center; gap: 16px; justify-content: space-between; }
+.case-page .case-decisions-head > div { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.case-page .case-decisions-head b { font-size: 15px; color: var(--tx0); }
+.case-page .case-decision-rows {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  background: var(--card-bg); border: 1px solid var(--card-ln); border-radius: var(--card-radius); overflow: hidden;
+}
+.case-page .case-decision-rows > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px;
+  padding: 12px 16px; border-top: 1px solid var(--card-ln);
+}
+.case-page .case-decision-rows > li:first-child { border-top: 0; }
+.case-page .case-decision-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.case-page .case-decision-main b { font-size: 13.5px; color: var(--tx0); overflow-wrap: anywhere; }
+.case-page .case-decision-main span { font-size: 12.5px; color: var(--tx2); }
+.case-page .case-decision-rev { font-size: 11.5px; color: var(--tx2); white-space: nowrap; }
+.case-page .case-decision-rev.poor { color: var(--poor); }
+.case-page .case-decision-actions { display: flex; gap: 6px; }
+.case-page .case-decision-reject { grid-column: 1 / -1; display: flex; gap: 8px; align-items: flex-start; }
+.case-page .case-decision-reject textarea { flex: 1; min-height: 56px; }
+@media (max-width: 720px) {
+  .case-page .case-decision-rows > li { grid-template-columns: minmax(0, 1fr); }
+  .case-page .case-decisions-head { flex-direction: column; align-items: flex-start; }
+}
+
+/* Decisions tab buttons: the needs card's, a size smaller to sit in a row. */
+.case-page .case-decisions .btn {
+  height: 32px; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9px; font-size: 12.5px; font-weight: 600; background: transparent;
+  border: 1px solid var(--ln2); color: var(--tx0); cursor: pointer; white-space: nowrap;
+}
+.case-page .case-decisions .btn:hover:not(:disabled) { background: var(--bg3); }
+.case-page .case-decisions .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.case-page .case-decisions .btn:not(.neutral):not(.primary) { border-color: var(--poor); color: var(--poor); }
+.case-page .case-decisions .btn.primary { background: var(--ac); border-color: var(--ac); color: var(--ac-tx); }
+.case-page .case-decisions .btn.primary:hover:not(:disabled) { background: var(--ac); filter: brightness(1.08); }
+.case-page .case-decisions .home-hold { min-width: 136px; }

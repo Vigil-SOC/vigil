@@ -145,9 +145,11 @@ function renderDetail(id: string, props: { onBack?: () => void; onExpand?: () =>
   return { ...view, showCase: (caseId: string) => view.rerender(ui(caseId)) }
 }
 
+// A paused run's question: the kind that keeps the full card on Summary. A proposed action is
+// `kind: 'approval'` and waits on the Decisions tab.
 function need(over: Partial<NeedsYouItem> = {}): NeedsYouItem {
   return {
-    kind: 'approval',
+    kind: 'checkpoint',
     source_id: 'act-1',
     title: 'Block 1.2.3.4',
     reason: 'beacon',
@@ -2174,5 +2176,112 @@ describe('watching a run, its cost and its agents', () => {
     const rows = within(screen.getByRole('table', { name: 'Agents' })).getAllByRole('row')
     expect(rows[1]).toHaveTextContent('who logged in')
     expect(screen.queryByText('ABANDON')).not.toBeInTheDocument()
+  })
+})
+
+describe('Decisions tab', () => {
+  const caseRow = {
+    case_id: 'case-dec',
+    title: 'Decision case',
+    status: 'open',
+    priority: 'high',
+    finding_ids: [],
+    created_at: '2026-06-15T09:14:00Z',
+    combined_state: 'open',
+    investigations: [],
+  }
+  const action = (over: Partial<NeedsYouItem> = {}) => need({ kind: 'approval', ...over })
+  const queue = (...items: NeedsYouItem[]) =>
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: items.length, items } } as never)
+
+  it('keeps proposed actions off Summary behind one banner, and lists them on their own tab', async () => {
+    testState.cases = [caseRow]
+    queue(action(), action({ source_id: 'act-2', title: 'Isolate host ws-1', reason: 'beaconing' }))
+    renderCase('case-dec')
+
+    const banner = await screen.findByRole('button', { name: /2 actions wait for your decision/ })
+    expect(screen.queryByRole('heading', { name: 'Block 1.2.3.4' })).not.toBeInTheDocument()
+    expect(document.querySelector('.case-needs')).toBeNull()
+    expect(screen.getByText('Findings so far')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^Decisions/ })).toHaveTextContent('2')
+
+    fireEvent.click(banner)
+    expect(screen.getByRole('tab', { name: /^Decisions/ })).toHaveAttribute('aria-selected', 'true')
+    const rows = within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toHaveTextContent('Isolate host ws-1')
+    expect(rows[1]).toHaveTextContent('beaconing')
+    expect(rows[1]).toHaveTextContent('Reversible')
+  })
+
+  it('has no Decisions tab while nothing is proposed', async () => {
+    testState.cases = [caseRow]
+    renderCase('case-dec')
+    expect(await screen.findByRole('heading', { name: 'Decision case' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /^Decisions/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /wait for your decision/ })).not.toBeInTheDocument()
+  })
+
+  it('approves a row through the same fuse as the card', async () => {
+    testState.cases = [caseRow]
+    queue(action())
+    renderCase('case-dec')
+    fireEvent.click(await screen.findByRole('button', { name: /1 action waits for your decision/ }))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      expect(screen.getByText('Approving: Block 1.2.3.4')).toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(7999) })
+      expect(approvalsApi.approve).not.toHaveBeenCalled()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(approvalsApi.approve).toHaveBeenCalledWith('act-1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('approves every reversible action at once and leaves the irreversible one', async () => {
+    testState.cases = [caseRow]
+    queue(action(), action({ source_id: 'act-2', title: 'Two' }), action({ source_id: 'act-3', title: 'Wipe host', reversibility: 'irreversible' }))
+    renderCase('case-dec')
+    fireEvent.click(await screen.findByRole('button', { name: /3 actions wait for your decision/ }))
+
+    queue(action({ source_id: 'act-3', title: 'Wipe host', reversibility: 'irreversible' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all reversible (2)' }))
+    await waitFor(() => expect(approvalsApi.approve).toHaveBeenCalledTimes(2))
+    expect(approvalsApi.approve).toHaveBeenCalledWith('act-1')
+    expect(approvalsApi.approve).toHaveBeenCalledWith('act-2')
+    expect(approvalsApi.approve).not.toHaveBeenCalledWith('act-3')
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(1))
+  })
+
+  it('says how many failed when approving all', async () => {
+    testState.cases = [caseRow]
+    queue(action(), action({ source_id: 'act-2', title: 'Two' }))
+    vi.mocked(approvalsApi.approve).mockResolvedValueOnce({} as never).mockRejectedValueOnce(new Error('gone'))
+    renderCase('case-dec')
+    fireEvent.click(await screen.findByRole('button', { name: /2 actions wait for your decision/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all reversible (2)' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 of 2 could not be approved.')
+  })
+
+  it('points the strip on another tab at Decisions, unless a paused run is asking', async () => {
+    testState.cases = [caseRow]
+    queue(action())
+    const view = renderCase('case-dec')
+    await screen.findByRole('button', { name: /1 action waits for your decision/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Review decisions' }))
+    expect(screen.getByRole('tab', { name: /^Decisions/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('button', { name: 'Review decisions' })).not.toBeInTheDocument()
+    view.unmount()
+
+    queue(action(), need({ source_id: 'cp-1', title: 'Permit the query?' }))
+    renderCase('case-dec')
+    expect(await screen.findByRole('heading', { name: 'Permit the query?' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /^Evidence/ }))
+    expect(await screen.findByRole('button', { name: 'Decide on Summary' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Review decisions' })).not.toBeInTheDocument()
   })
 })
