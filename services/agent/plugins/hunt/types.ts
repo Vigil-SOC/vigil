@@ -37,15 +37,6 @@ export const DECISION_ACTIONS = [
   "HANDOFF_IR",
 ] as const satisfies readonly DecisionAction[];
 
-// These rest on a judgement about existing evidence, so an uncited one is
-// unauditable. EXPAND is here for a different reason: it names what to read.
-export const ACTIONS_REQUIRING_CITATION: ReadonlySet<DecisionAction> = new Set([
-  "ABANDON",
-  "VALIDATE",
-  "PIVOT",
-  "EXPAND",
-]);
-
 // parked is the budget checkpoint: the hunt has stopped spending and waits on an
 // operator to extend, conclude or abort it. It advances nothing until then, so it
 export type HuntStatus = "pending_approval" | "active" | "parked" | "terminal";

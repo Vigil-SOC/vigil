@@ -30,12 +30,6 @@ export interface ComposeReport {
   pending: Outcome<unknown>["pending"];
 }
 
-// Deny-by-default per step, off the resolved playbook: a step may call what it was
-// granted, and no step sees another's. Keyed by step, since one agent may run two.
-export function grantsOf(spec: RunSpec): Record<string, readonly string[]> {
-  return Object.fromEntries(spec.phases.map((phase) => [phase.id, phase.tools]));
-}
-
 // Refused before the ledger opens. A step that stops for a human, on a deployment
 // with nowhere to ask, parks on its first gate and no answer can ever reach it.
 function assertAnswerable(spec: RunSpec, mirror: Mirror): void {

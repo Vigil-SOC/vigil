@@ -1,4 +1,3 @@
-import { GatewayExhausted } from "../../core/limiter.js";
 import type { Budget } from "../../contracts/budget.js";
 import { AUTO_ACTOR, DEFAULT_CHECKPOINTS, pendingCheckpoints, raiseCheckpoint, resolutionOf, resolveCheckpoint, type Checkpoint, type CheckpointClass, type Checkpoints, type Resolution } from "./checkpoints.js";
 import { DEFAULT_TERMINATION, verdictsOf, type Termination, type Verdicts } from "./config.js";
@@ -688,8 +687,4 @@ export class HuntBook {
     this.parkOnRefusal(boundBy(this.hunt) === null ? reason : boundReason(this.hunt));
     return "parked";
   }
-}
-
-export function isGatewayExhausted(error: unknown): boolean {
-  return error instanceof GatewayExhausted;
 }

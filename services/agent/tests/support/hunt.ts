@@ -24,7 +24,6 @@ import { DEFAULT_BUDGETS, type Budgets, type Decision, type Entity, type Evidenc
 export const SCRIPTED_MODEL_ID = "scripted";
 
 export const INVESTIGATE: Decision = { action: "INVESTIGATE", rationale: "look", query_intent: "baseline" };
-export const CONCLUDE: Decision = { action: "CONCLUDE", rationale: "nothing further to run" };
 export const SEED_IP: Entity = { type: "ip", value: "45.77.53.176" };
 
 const LEAD = { prompt: "lead", description: "the hunt lead", output_schema: {}, tools: [], needs: [] };

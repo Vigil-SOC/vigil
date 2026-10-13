@@ -14,16 +14,6 @@ export interface TallyPayload {
 // never imports it, which is what makes the domain-free requirement checkable.
 export type TallyKinds = { tally: TallyPayload };
 
-export const TALLY_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["verb", "note"],
-  properties: {
-    verb: { type: "string", enum: [...TALLY_VERBS] },
-    note: { type: "string", maxLength: 200 },
-  },
-};
-
 export const SYSTEM = [
   "You keep a running count and nothing else.",
   "Call bump to add to it. When the count has reached its target, emit HALT.",

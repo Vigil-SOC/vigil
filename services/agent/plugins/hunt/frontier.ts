@@ -145,7 +145,3 @@ export function scoredFrontier(projection: Projection, iteration: number): Score
           : b.score - a.score,
     );
 }
-
-export function rankFrontier(projection: Projection, iteration: number): OpenQuestion[] {
-  return scoredFrontier(projection, iteration).map((entry) => entry.question);
-}

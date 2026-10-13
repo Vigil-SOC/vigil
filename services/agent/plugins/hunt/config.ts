@@ -37,22 +37,6 @@ export const DEFAULT_TERMINATION: Termination = {
   hard_max_wall_ms: 2 * DEFAULT_BUDGETS.max_wall_ms,
 };
 
-export interface DigestPolicy {
-  evidence_window: number;
-  resurface: number;
-  rare_pairing_max: number;
-  graph_warmup: number;
-  contrarian_max: number;
-  entity_window: number;
-  pivot_candidates: number;
-  // The bound. evidence_window and resurface only ever add to what the lead sees,
-  // and the salience floor promotes most of a long ledger past them, so without a
-  // ceiling the digest grows with the hunt until it alone exceeds the request size.
-  evidence_max: number;
-  questions_max: number;
-  omitted_ids_max: number;
-}
-
 // The bound's keys alone: stamped into a new run's spec so its ledger says which
 // bound it ran under, and absent from a ledger written before there was one.
 export const DIGEST_BOUNDS = {
@@ -64,19 +48,6 @@ export const DIGEST_BOUNDS = {
   // a full list on a long hunt is the same unbounded growth in a different section.
   omitted_ids_max: 50,
 } as const;
-
-export const DEFAULT_DIGEST: DigestPolicy = {
-  evidence_window: 25,
-  resurface: 3,
-  rare_pairing_max: 1,
-  graph_warmup: 20,
-  contrarian_max: 3,
-  entity_window: 15,
-  pivot_candidates: 5,
-  ...DIGEST_BOUNDS,
-};
-
-const UNBOUNDED = { evidence_max: Infinity, questions_max: Infinity, omitted_ids_max: Infinity };
 
 // A bag the deployment left out keeps the default, key by key: a config naming
 // one threshold should not silently drop the rest.
@@ -133,14 +104,6 @@ export function budgetsOf(spec: RunSpec): Budgets {
     max_iterations: asked,
     max_calls: Math.max(spec.budgets.max_calls, asked * perTurn),
   };
-}
-
-// A ledger journaled before the digest was bounded names no evidence_max, and its
-// digests were built without one. It replays under the policy that built them, the
-// same way scorerOf keeps a pre-discrimination ledger on the scorer that ranked it.
-export function digestOf(spec: RunSpec): DigestPolicy {
-  const policy = over(DEFAULT_DIGEST, spec.digest);
-  return "evidence_max" in spec.digest ? policy : { ...policy, ...UNBOUNDED };
 }
 
 export interface EnrichmentChain {
