@@ -124,6 +124,25 @@ class TestTheCachedAnswer:
         forget_configured()  # what the Settings save does
         assert is_configured(SPLUNK) is True
 
+    def test_a_read_a_save_overtook_does_not_overwrite_it(self, saved, monkeypatch):
+        stored, secrets = saved
+
+        def _read_then_saved(integration_id):
+            before = dict(stored.get(integration_id, {}))
+            # the save lands while this read is in flight
+            stored["splunk"] = dict(SPLUNK_FORM)
+            secrets["SPLUNK_PASSWORD"] = "pw"
+            forget_configured()
+            return before
+
+        monkeypatch.setattr(resolver, "get_integration_config", _read_then_saved)
+        assert is_configured(SPLUNK) is False
+
+        monkeypatch.setattr(
+            resolver, "get_integration_config", lambda i: dict(stored.get(i, {}))
+        )
+        assert is_configured(SPLUNK) is True
+
     def test_an_expired_answer_is_read_again(self, saved, monkeypatch):
         stored, _ = saved
         monkeypatch.setattr(resolver, "CONFIGURED_TTL_S", 0.0)

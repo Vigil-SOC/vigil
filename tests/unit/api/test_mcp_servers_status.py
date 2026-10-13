@@ -111,3 +111,27 @@ def test_a_running_server_that_is_not_set_up_says_so(client):
         "configured": False,
     }
     assert rows["github"] == {"name": "github", "status": "running", "enabled": True}
+
+
+def test_a_set_up_check_that_cannot_run_leaves_the_row_as_it_was(client):
+    stub = SimpleNamespace(
+        get_connection_status=lambda: {"splunk-selfhosted": True},
+        get_last_error=lambda name: None,
+        get_missing_credentials=lambda name: None,
+    )
+    client.app.dependency_overrides[provide_mcp_client] = lambda: stub
+    with patch.object(
+        mcp_api.mcp_service, "list_servers", return_value=["splunk-selfhosted"]
+    ), patch.object(
+        mcp_api.mcp_service,
+        "get_all_enabled_states",
+        return_value={"splunk-selfhosted": True},
+    ), patch.object(
+        mcp_api.mcp_service, "is_configured", side_effect=ImportError("broken")
+    ):
+        response = client.get("/api/mcp/servers/status")
+
+    assert response.status_code == 200
+    assert response.json()["statuses"] == [
+        {"name": "splunk-selfhosted", "status": "running", "enabled": True}
+    ]

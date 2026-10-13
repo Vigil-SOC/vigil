@@ -86,6 +86,10 @@ CONFIGURED_TTL_S = 15.0
 # descriptor id -> (time.monotonic() when answered, answer)
 _answers: Dict[str, Tuple[float, bool]] = {}
 
+# Bumped by forget_configured. A read that started before a save keeps its answer
+# to itself rather than writing it back over the save.
+_generation = 0
+
 
 def is_configured(descriptor: IntegrationDescriptor) -> bool:
     """Whether every field the descriptor marks required has a value.
@@ -101,6 +105,7 @@ def is_configured(descriptor: IntegrationDescriptor) -> bool:
     last = _answers.get(descriptor.id)
     if last is not None and now - last[0] < CONFIGURED_TTL_S:
         return last[1]
+    generation = _generation
     try:
         answer = not missing(resolve(descriptor), *required)
     except Exception as exc:  # noqa: BLE001
@@ -112,12 +117,16 @@ def is_configured(descriptor: IntegrationDescriptor) -> bool:
             "%s config could not be resolved (%s)", descriptor.id, type(exc).__name__
         )
         answer = last[1] if last is not None else False
-    _answers[descriptor.id] = (now, answer)
+    if generation == _generation:
+        _answers[descriptor.id] = (now, answer)
     return answer
 
 
 def forget_configured() -> None:
-    """Drop every cached ``is_configured`` answer, so a save is read at once."""
+    """Drop every cached ``is_configured`` answer, so this process reads a save
+    at once. Other processes see it when their answer expires."""
+    global _generation
+    _generation += 1
     _answers.clear()
 
 
