@@ -50,14 +50,22 @@ class DatabaseDataService:
         # module that builds a module-level service opens no connection (#1456).
         # -inf, not 0.0: monotonic() can be under the interval on a fresh boot.
         self._last_reconnect_attempt = float("-inf")
-        self._demo_mode = is_demo_mode()
-        self._demo_service = None
+        self._demo_data = demo_data
 
-        if self._demo_mode:
-            logger.info("Demo mode enabled - using generated sample data")
+    # Read on every call, never cached at construction: demo mode is switched at
+    # runtime from setup, Home and Settings, and most callers hold a service built
+    # at import. It costs one small JSON read, as provide_demo_data does per request.
+    @property
+    def _demo_mode(self) -> bool:
+        return is_demo_mode()
+
+    @property
+    def _demo_service(self):
+        if self._demo_data is None:
             from core.platform.demo_data_service import DemoDataService
 
-            self._demo_service = demo_data or DemoDataService()
+            self._demo_data = DemoDataService()
+        return self._demo_data
 
     def _init_database(self):
         try:
@@ -91,10 +99,12 @@ class DatabaseDataService:
         at most once per `_RECONNECT_INTERVAL_SECONDS` so the service
         recovers automatically when Postgres becomes reachable again.
         """
-        if self._db_connected:
-            return True
+        # Demo first: a service that connected before demo mode was switched on
+        # must not mix real rows into it.
         if self._demo_mode:
             return False
+        if self._db_connected:
+            return True
         now = time.monotonic()
         if now - self._last_reconnect_attempt < self._RECONNECT_INTERVAL_SECONDS:
             return False

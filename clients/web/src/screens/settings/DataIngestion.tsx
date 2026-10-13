@@ -28,10 +28,8 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-// The data service, the API's demo set and the daemon all read demo mode when they
-// start, so turning it off takes effect after a restart.
-export const DEMO_OFF_RESTART =
-  'Demo data is off. Restart the Vigil backend and daemon to load your real data.'
+// The backend and the daemon read demo mode on every call, so turning it off applies at once.
+export const DEMO_OFF = 'Demo data is off. Vigil shows your own findings and cases now.'
 
 export function DemoDataClear({ notify }: SectionProps) {
   const [enabled, setEnabled] = useState(false)
@@ -80,7 +78,7 @@ export function DemoDataClear({ notify }: SectionProps) {
       await configApi.setDemoMode(false)
       setTurnedOff(true)
       setReport(null)
-      notify('ok', DEMO_OFF_RESTART)
+      notify('ok', DEMO_OFF)
     } catch (e) {
       notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Could not turn off demo data.')
     } finally {
@@ -114,14 +112,14 @@ export function DemoDataClear({ notify }: SectionProps) {
       {(report || turnedOff) && (
         <div className="settings-banner ok mt-3" role="status">
           <Icon name="check2" size={13} />
-          <span className="text-xs">{turnedOff ? DEMO_OFF_RESTART : report}</span>
+          <span className="text-xs">{turnedOff ? DEMO_OFF : report}</span>
         </div>
       )}
       <ConfirmDialog
         open={confirmOff}
         danger={false}
         title="Turn off demo data"
-        body="Vigil stops showing generated sample data and works on your real findings and cases. It takes effect once the Vigil backend and daemon restart."
+        body="Vigil stops showing the sample estate and works on your own findings and cases, starting now."
         confirmLabel="Turn off"
         busy={busy}
         onConfirm={turnOff}

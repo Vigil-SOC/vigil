@@ -211,12 +211,15 @@ def set_demo_mode(config: DemoModeConfig):
     with open(config_file, "w") as f:
         json.dump(existing, f, indent=2)
 
-    return {
-        "success": True,
-        "enabled": config.enabled,
-        "message": f"Demo mode {'enabled' if config.enabled else 'disabled'}. Restart the server for changes to take effect.",
-        "note": "Set DEMO_MODE=true environment variable for immediate effect without restart",
-    }
+    # The data services read the flag per call, so the saved value applies now,
+    # unless DEMO_MODE in the server's environment says otherwise.
+    if is_demo_mode() != config.enabled:
+        message = "Saved, but DEMO_MODE in the server's environment overrides it."
+    elif config.enabled:
+        message = "Demo mode is on. The sample estate's findings are on Dashboard now."
+    else:
+        message = "Demo mode is off. Vigil reads your own findings and cases now."
+    return {"success": True, "enabled": config.enabled, "message": message}
 
 
 @router.post("/demo-mode/reset", dependencies=_SETTINGS_WRITE)

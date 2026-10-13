@@ -156,7 +156,7 @@ describe('manual upload', () => {
     expect(configApi.resetDemoData).toHaveBeenCalledOnce()
   })
 
-  it('turns demo data off once confirmed, and says a restart is what applies it', async () => {
+  it('turns demo data off once confirmed, and says it applies at once', async () => {
     vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true, source: 'config' } } as never)
     vi.mocked(configApi.setDemoMode).mockResolvedValue({ data: { success: true, enabled: false } } as never)
     renderPanel()
@@ -166,7 +166,7 @@ describe('manual upload', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
 
     await waitFor(() => expect(configApi.setDemoMode).toHaveBeenCalledWith(false))
-    expect(await screen.findByRole('status')).toHaveTextContent('Restart the Vigil backend and daemon')
+    expect(await screen.findByRole('status')).toHaveTextContent('Vigil shows your own findings and cases now')
     expect(screen.queryByRole('button', { name: 'Clear demo data' })).not.toBeInTheDocument()
   })
 
