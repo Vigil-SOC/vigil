@@ -338,15 +338,15 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'password',
         required: true,
         helpText:
-          'Shared HMAC secret Vigil uses to request short-lived, user-scoped session tokens from the connector (matches the connector\'s CONNECTOR_BFF_SESSION_MINT_SECRET). Stored encrypted server-side; never sent to the browser.',
+          'Shared secret Vigil sends as a bearer token (Authorization: Bearer …) on the connector\'s POST /session to get short-lived, user-scoped session tokens. Must match the connector\'s CONNECTOR_BFF_SESSION_MINT_SECRET. Stored encrypted server-side; never sent to the browser.',
       },
       {
         name: 'mcp_token',
-        label: 'MCP Bearer Token',
+        label: 'Agent Access Token',
         type: 'password',
         required: true,
         helpText:
-          'Static bearer token the LogLM agent tools present to the connector\'s MCP endpoint (matches the connector\'s CONNECTOR_MCP_AUTH_TOKEN). Stored encrypted server-side; never sent to the browser.',
+          'Bearer token the LogLM agent tools present to the connector\'s MCP endpoint (/mcp/). Must match the connector\'s CONNECTOR_MCP_AUTH_TOKEN. Stored encrypted server-side; never sent to the browser.',
       },
     ],
     docs_url: 'https://docs.deeptempo.ai/loglm',
