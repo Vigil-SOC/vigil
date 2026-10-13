@@ -1,10 +1,8 @@
 import type { Projection } from "./ledger.js";
 import type { EvidenceRecord, LinkRelation, OpenQuestion, Salience } from "./types.js";
 
-// The hunt's frontier: open questions ranked by what answering them could move,
-// and the entities an operator has said to stop chasing. Both are folds over the
-// ledger, read by the termination predicate, the report and the agent's brief.
-// They outlived the digest they were first built for.
+// The hunt's frontier: open questions ranked by what answering could move, and entities an
+// operator said to stop chasing. Folds read by termination, the report and the brief.
 
 const RANK: Record<Salience, number> = { routine: 0, notable: 1, anomalous: 2 };
 

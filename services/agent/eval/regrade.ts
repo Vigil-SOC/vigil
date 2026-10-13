@@ -3,10 +3,8 @@ import { parseArgs } from "node:util";
 import OpenAI from "openai";
 import { grade, type GraderClient } from "./grade.js";
 
-// Grades the reports a run already left behind, again, without running a case:
-// for a grader that failed, or a change to the grader. Rewrites each file in place.
-//
-//   npx tsx eval/regrade.ts eval/results/baseline.jsonl eval/results/kernel.jsonl [--grader-model vertex/gemini-2.5-flash] [--failed-only]
+// Grades the reports a run already left behind again, in place, for a failed grader or a new one:
+// npx tsx eval/regrade.ts eval/results/baseline.jsonl eval/results/kernel.jsonl [--grader-model vertex/gemini-2.5-flash] [--failed-only]
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,

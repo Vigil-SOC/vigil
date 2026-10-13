@@ -5,11 +5,8 @@ import { canonical } from "./context.js";
 import type { Message } from "./provider.js";
 import { contentHash, type FrameSeen } from "./stream.js";
 
-// What each model call was shown, journaled before it is made. The frame holds
-// hashes; the bytes behind each hash go on the ledger once per run as a content
-// event. So a replay rebuilds a call's input from this ledger alone -- the calls
-// it carries, the recall it opened on, the content it names -- and checks the
-// rebuilt bytes hash to what the call was sent. Nothing is re-queried.
+// What each model call was shown, as hashes, the bytes once per run as content events,
+// so a replay rebuilds a call's input from this ledger alone. Nothing is re-queried.
 
 type Event = NewEvent<Record<never, never>>;
 
@@ -104,9 +101,8 @@ export function historyFrom(text: string): Message[] {
   return JSON.parse(text) as Message[];
 }
 
-// A child run's id, derived from its parent and what it was started for, so a
-// resumed parent finds the child it already started rather than starting another.
-// Shaped as a version-5-style UUID because the ledger keys runs by uuid.
+// A child run's id, from its parent and purpose, so a resumed parent finds the child it
+// started. Shaped as a version-5-style UUID because the ledger keys runs by uuid.
 export function childRunId(parentRunId: string, key: string): string {
   const hex = createHash("sha256").update(`${parentRunId}\n${key}`).digest("hex");
   const variant = ((parseInt(hex[16] as string, 16) & 0x3) | 0x8).toString(16);

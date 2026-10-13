@@ -61,16 +61,14 @@ export interface PluginManifest {
   // Tool turns across the whole run, resumes included. Absent takes the
   // deployment's runtime.max_turns.
   max_turns?: number;
-  // The hypothesis record (core/record.ts). available offers its tools; required
-  // also holds a guarded answer to it and makes the conclusion declare its gaps;
-  // off offers nothing, for a plugin with no beliefs to keep. Absent is available.
+  // The hypothesis record (core/record.ts): available offers its tools, required also
+  // holds a guarded answer to it and its gaps, off offers nothing. Absent is available.
   record?: RecordMode;
   // The results a run should gather before it may stop unasked. A run that stops
   // with fewer, and turns left, is asked once to keep going or confirm it is done.
   min_results?: number;
-  // How a structured answer is given. ask (the default): the agent stops calling
-  // tools and is then asked for it, a model call of its own. tool: the agent calls
-  // conclude with it, in the turn it decides, and that call ends the run.
+  // How a structured answer is given: ask (the default) stops and is asked, a model call of
+  // its own; tool has the agent call conclude in the turn it decides, ending the run.
   finish_with?: "ask" | "tool";
 }
 

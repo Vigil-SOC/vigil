@@ -3,15 +3,10 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
 
-// Scores one or more result files side by side.
-//
-//   npx tsx eval/score.ts eval/results/baseline.jsonl eval/results/kernel.jsonl [--md report.md]
-//
-// The costly error is a missed attack: one the run closed as benign. A run that
-// could not decide and held an attack for a person has not missed it; it is
-// counted as held, apart from both. Precision, recall and F1 treat "attack" as the
-// positive class, with undetermined counted as not-attack -- so holding everything
-// scores no recall, and a run cannot buy safety by refusing to answer unnoticed.
+// Scores result files side by side: npx tsx eval/score.ts eval/results/baseline.jsonl eval/results/kernel.jsonl [--md report.md]
+
+// The costly error is a missed attack, closed as benign; one held for a person is counted
+// apart. Undetermined counts as not-attack in precision and recall, so refusing earns nothing.
 
 interface Row {
   label: string;
@@ -188,10 +183,8 @@ function mark(row: Row | undefined): string {
 
 type Card = { input: number; output: number; cache_read: number; cache_write: number };
 
-// Every engine's cost from its own tokens, at one price list and one formula, so
-// the comparison does not rest on each engine's own arithmetic -- the engine the
-// kernel replaced billed a cache hit twice. input is the total, the cached share
-// included. A row without tokens keeps the cost its engine recorded.
+// Every engine's cost from its own tokens at one price list and formula (input includes
+// the cached share). A row without tokens keeps the cost its engine recorded.
 export function repriced(row: Row, prices: Readonly<Record<string, Card>>): Row {
   const bare = row.model.slice(row.model.lastIndexOf("/") + 1);
   const card = prices[bare];

@@ -175,10 +175,8 @@ export function agentReplay(runId: string, events: readonly Envelope[]): AgentRe
   };
 }
 
-// How long each of the agent's model calls took, by the turn it answered: its frame
-// is written the moment before the call and its spend the moment the provider
-// reports, so the two stamps bound it. The engines the kernel replaced journaled
-// this on each decision, and the console still reads it there.
+// How long each model call took, by turn: its frame is written just before the call and
+// its spend when the provider reports, so the two stamps bound it.
 export function modelMs(events: readonly Envelope[]): Map<number, number> {
   const held = new Map<number, number>();
   let open: { call: number; at: number } | null = null;

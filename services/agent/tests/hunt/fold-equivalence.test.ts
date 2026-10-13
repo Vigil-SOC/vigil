@@ -90,12 +90,9 @@ describe("a ledger that is not one", () => {
 
 // Every fold, not only the projection: what a hunt produces is derived, so a
 // port that folds to the same projection can still report something different.
-//
-// The goldens also carry the digest the controller built from each ledger. The
-// digest went with the controller -- a kernel run's replay rebuilds every model
-// call's input instead (tests/hunt/kernel-replay.test.ts) -- so that field has
-// nothing left to compare and is set aside; strength and the report, which a
-// kernel hunt still derives exactly this way, are compared in full.
+
+// The goldens' digest went with the controller (kernel replay rebuilds inputs instead),
+// so it is set aside; strength and the report are compared in full.
 function folds(name: string): unknown {
   const view = fold(asHarnessEvents(gunzipped(`${name}.jsonl.gz`), name));
   return JSON.parse(

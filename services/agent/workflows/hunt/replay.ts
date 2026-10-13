@@ -2,12 +2,8 @@ import { recalledNotesOf } from "../../contracts/memory.js";
 import { fold, type HuntEvent as LedgerEvent } from "./ledger.js";
 import type { DecisionRecord, Digest } from "./types.js";
 
-// Replay of a hunt the controller ran. Each decision is shown with the digest it
-// was presented, as journaled. It is no longer rebuilt: the digest builder went
-// with the controller, and a kernel run is replayed a different way -- every
-// model call's input rebuilt from the ledger and diffed against the hash it was
-// sent with (core/replay.ts). What a controller decision was shown is still
-// exactly what the ledger recorded, which is what a reader of one needs.
+// Replay of a controller hunt: each decision shown with the digest it was journaled with,
+// no longer rebuilt. Kernel runs are replayed call by call (core/replay.ts).
 
 export interface ReplayedDecision {
   decision_id: string;
@@ -30,9 +26,8 @@ export interface ReplayReport {
   decisions: ReplayedDecision[];
   reproduced: number;
   inexact: number;
-  // The recalled rows the run opened on, rendered from its own recall event and
-  // read off the log and nowhere else: asking a Memory would answer from a
-  // neighbourhood that has moved since the run.
+  // The recalled rows the run opened on, from its own recall event and nowhere else: a
+  // Memory would answer from a neighbourhood that has moved since.
   recalled: readonly string[];
 }
 

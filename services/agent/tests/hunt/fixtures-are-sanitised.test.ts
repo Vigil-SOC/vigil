@@ -92,10 +92,8 @@ const swept = [...files, PSEUDONYMS, ...replayed];
 
 const dirOf = (name: string): string => (replayed.includes(name) ? REPLAY : RUNS);
 
-// A kernel ledger names its own content by hash -- sha256:<hex> on every frame and
-// content event. That is an address into the ledger, not an observed digest, and
-// it is the one hash form nothing observed is ever written in, so it is set aside
-// and only it: a bare digest in the same file is still held to the allowlist.
+// A kernel ledger's sha256:<hex> names its own content, an address rather than an observed
+// digest, so it alone is set aside; a bare digest is still held to the allowlist.
 const ADDRESS = /sha256:[0-9a-f]{64}/g;
 
 const textOf = (name: string): string =>

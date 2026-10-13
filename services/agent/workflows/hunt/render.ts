@@ -6,9 +6,8 @@ import type { NullCheckInput } from "./types.js";
 const EVIDENCE_CAP = 4_000;
 const DIRECTIVE_CAP = 2_000;
 
-// Operator text is direction, but a model cannot tell a person's words from a
-// line forged to look like a section: so it is scrubbed, capped, and kept to one
-// line, which cannot open a heading of its own.
+// Operator text is direction, but a model cannot tell a person's words from a forged
+// section, so it is scrubbed, capped and kept to one line, which opens no heading.
 export function operatorLine(text: string): string {
   return scrub(text, DIRECTIVE_CAP).replace(/\s*\n\s*/g, " ");
 }

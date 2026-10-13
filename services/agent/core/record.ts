@@ -9,11 +9,8 @@ import type {
 } from "../contracts/events.js";
 import { isVisibilityGap } from "./security.js";
 
-// The hypothesis record: what a run believes, what bears on each belief, and what
-// it could not answer. Kept through three kernel tools so every plugin keeps it the
-// same way, and folded by one reader so every plugin's is read the same way. A
-// plugin whose record is richer supplies its own backend; the events
-// it writes carry every field the kernel's do, so this fold reads them too.
+// The hypothesis record: beliefs, what bears on each, and what the run could not answer.
+// Three kernel tools keep it and one fold reads it; a plugin may supply a richer backend.
 
 export const PROPOSE_TOOL = "propose_hypothesis";
 export const LINK_TOOL = "link_evidence";
@@ -99,9 +96,8 @@ export interface VisibilityGap {
   failure: string | null;
 }
 
-// What the run could not answer, declared rather than discovered by a reader:
-// questions it opened and never closed, what it said it could not settle, and
-// every call the estate failed to answer.
+// What the run could not answer, declared: questions never closed, what it said it could
+// not settle, and every call the estate failed to answer.
 export interface DeclaredGaps {
   open_questions: string[];
   declared: string[];
@@ -121,9 +117,8 @@ export function declaredGaps(
   };
 }
 
-// The record bears on a cited ref: some hypothesis has a supports or weakens link
-// to a call that was served. What a guarded answer must stand on when the plugin
-// requires a record.
+// The record bears on a cited ref: a supports or weakens link to a served call. What a
+// guarded answer must stand on when the plugin requires a record.
 export function grounded(events: readonly { kind: string; payload: unknown }[], calls: readonly CallPayload[], cited: readonly string[]): boolean {
   const served = new Set(calls.filter((call) => classOf(call) === "served").map((call) => call.ref));
   const wanted = new Set(cited);

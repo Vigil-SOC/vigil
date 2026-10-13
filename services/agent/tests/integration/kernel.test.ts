@@ -65,9 +65,8 @@ describe("investigate runs on the kernel", () => {
     expect(await verifyLedger(pool, runId)).toMatchObject({ ok: true });
   });
 
-  // get_finding has no implementation in this process, so the estate never answers
-  // it: r1 is a visibility gap, the record refuses it as evidence, and a dismissal
-  // resting on it is held for a person however firmly the reviewer upholds it.
+  // get_finding never answers here, so r1 is a gap the record refuses as evidence, and a
+  // dismissal resting on it is held for a person however the reviewer upholds it.
   it("runs the reviewer as a child run whose own chain verifies, and holds a dismissal over a blind call", async () => {
     // Room past the fixture's six calls: four turns, the ask to keep going, the answer and the review.
     await advance(ledger, leases, startJob(runId, { budgets: { max_calls: 12 } }), scriptedHarness([

@@ -119,11 +119,8 @@ describe("the fold and the replay are unmoved by it", () => {
     expect(fold(LOG)).toEqual(fold(LOG.filter((event) => event.kind !== "recall")));
   });
 
-  // A controller hunt is no longer rebuilt: the digest builder went with the
-  // controller. Every decision is still shown with the digest it was journaled
-  // against, and the replay says plainly that nothing was rebuilt -- it never
-  // claims a match it did not check. Kernel runs are rebuilt call by call
-  // (kernel-replay.test.ts).
+  // A controller hunt is no longer rebuilt, the digest builder gone with the controller:
+  // each decision shows its journaled digest and says nothing was rebuilt.
   it("shows every decision with the digest it recorded, and claims no rebuild", () => {
     const report = replay(LOG);
     const decisions = LOG.filter((event) => event.kind === "decision");

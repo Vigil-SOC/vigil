@@ -53,9 +53,8 @@ export function huntView(
     .map(({ call, at }) => moveOf(call, at, took.get(call.turn)))
     .reverse()
     .slice(0, MOVES_SHOWN);
-  // The Checked tab: what the hunt asked the estate, turn by turn, at each turn's
-  // cost. A controller hunt read these off its workers' dispatches; a kernel hunt
-  // has no workers, so they are its own calls, its bookkeeping left out.
+  // The Checked tab: what the hunt asked the estate, turn by turn, at each turn's cost. A
+  // kernel hunt has no workers, so these are its own calls, bookkeeping left out.
   const calls = callViews(
     agentReplay(runId, events).turns.map((turn) => ({
       iteration: turn.turn,
@@ -67,14 +66,8 @@ export function huntView(
   return { ...base, moves, calls, engine: "plugin", kernel: agentProjection(runId, events) };
 }
 
-// A kernel hunt's replay, in the shape the console reads a controller hunt's in:
-// one decision per move, keyed by the id the Moves tab sends. A controller move was
-// made against a digest; a kernel move against the board the agent's brief and
-// hunt_status render. So each decision carries the board as the ledger held it the
-// moment that move was made -- hypotheses, recent evidence, open questions, budget
-// left, what operators said -- folded from the ledger and nothing else. "Rebuilt"
-// means what it means for a kernel run: the model call that chose the move
-// reproduced exactly from the ledger (core/replay.ts).
+// A kernel hunt's replay in the controller's shape, one decision per move, each carrying
+// the board as the ledger held it then. "Rebuilt" means the model call replayed exactly.
 export function huntKernelReplay(runId: string, events: readonly Envelope[], decisionId: string | null = null): ReplayReport & { engine: "plugin"; kernel: AgentReplay } {
   const kernel = agentReplay(runId, events);
   const took = modelMs(events);

@@ -10,19 +10,13 @@ import { parse as parseYaml } from "yaml";
 import { estateDispatch, loadCases, type DispatchLike, type EvalCase } from "./estate.js";
 import { grade, keywordGrade, type Graded, type GraderClient } from "./grade.js";
 
-// Runs the labelled cases through one engine and writes a result line per case.
-//
-//   npx tsx eval/run.ts --engine <repo root> --label kernel --model anthropic/claude-sonnet-5-5
-//
-// The engine is loaded from the checkout it names, by path, so the same cases and
-// the same estate drive the kernel and the engine it replaced. Each case is one
-// investigate run started through that checkout's own worker.advance(), with only
-// three seams replaced: tools answer from the case (estate.ts), memory recalls
-// nothing, and prices come from prices.yaml instead of the backend. The model is
-// whatever the gateway serves under --model.
-//
-// --dry swaps the model for one that answers by schema and calls nothing: it
-// proves the wiring for an engine without a gateway, and measures nothing.
+// Runs the labelled cases through one engine, a result line per case:
+// npx tsx eval/run.ts --engine <repo root> --label kernel --model anthropic/claude-sonnet-5-5
+
+// The engine loads by path from the checkout named, each case one worker.advance() with tools
+// from the case (estate.ts), no recall and prices.yaml; the model is the gateway's --model.
+
+// --dry swaps in a model that answers by schema and calls nothing: wiring only, no measure.
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 

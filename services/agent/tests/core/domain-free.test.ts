@@ -35,10 +35,8 @@ function sources(dir: string): string[] {
 
 const FILES = sources(CORE);
 
-// The record the kernel keeps for every plugin: claims, what bears on them, and what
-// is unanswered. Its tools are named in the vocabulary of reasoning they share with
-// the hunt -- propose_hypothesis, link_evidence -- so this file, and only this file,
-// may use those two words. Every other word on the list still holds here.
+// The kernel's record shares its tool names (propose_hypothesis, link_evidence) with the
+// hunt, so this file alone may use those two words; every other word still holds.
 const RECORD = "record.ts";
 const RECORD_WORDS: ReadonlySet<string> = new Set([String.raw`\bhypothes\w*`, String.raw`\bevidence\b`]);
 

@@ -125,9 +125,8 @@ export class HuntBook {
     return named.length === 1 ? named[0]! : null;
   }
 
-  // A blind spot: a call the estate could not answer. openGaps counts it once per
-  // tool, on the hypothesis it names or on every claim when it names none, so it
-  // gap-locks the way a failed dispatch did.
+  // A blind spot: a call the estate could not answer. openGaps counts it once per tool,
+  // on the hypothesis it names or every claim, so it gap-locks as a failed dispatch did.
   appendGap(tool: string, kind: "timeout" | "unavailable" | "backend_error", hypothesisId: string | null): void {
     this.appendEvidence([
       {

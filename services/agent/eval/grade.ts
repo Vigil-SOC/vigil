@@ -1,9 +1,5 @@
-// What a run concluded, read off its final report the same way for every engine.
-// The engine being replaced ends on prose and the kernel on a structured answer,
-// so neither's own fields can be compared with the other's: one grader reads the
-// report each leaves behind -- the summary on its terminal -- and says which of
-// three things it concluded. It judges what the report says, never whether it is
-// right; the label is compared afterwards, in score.ts.
+// What a run concluded, read off its final report the same way for every engine. It judges
+// what the report says, never whether it is right: score.ts compares the label.
 
 export type Verdict = "attack" | "benign" | "undetermined";
 
@@ -59,9 +55,8 @@ export interface GraderClient {
 
 export class GradeFailed extends Error {}
 
-// Asked three times at most. A grader that cannot be parsed is an error on the
-// result, never a verdict: counted as undetermined it would read as a run that
-// held the case, which is a claim about the engine the engine never made.
+// Asked three times at most. An unparsable grade is an error, never a verdict: counted as
+// undetermined it would read as a run that held the case.
 export async function grade(client: GraderClient, report: string): Promise<Graded> {
   const user = `## Final report\n\n${report.trim() === "" ? "(the run left no report)" : report}`;
   let cost = 0;

@@ -7,15 +7,10 @@ import { recordOf } from "../../core/record.js";
 import { replayFrames, trajectoryOf } from "../../core/replay.js";
 import { fold, type HuntEvent } from "../../workflows/hunt/ledger.js";
 
-// The kernel replay gate. Its fixture is a hunt run on the kernel and recorded by
-// scripts/record-kernel-replay.ts, with every ledger it wrote: the hunt's own and
-// its two child runs. A replay rebuilds each model call's input from those ledgers
-// and nothing else -- every function here takes events, and no Memory, tool or
-// model is in reach -- and diffs it against the hash the call was sent with.
-//
-// This is what replaces the Digest diff: a controller hunt was replayed by
-// rebuilding the digest each decision was shown; a kernel run is replayed by
-// rebuilding the whole input each model call was shown.
+// The kernel replay gate: a recorded kernel hunt and its two child runs, each call's input
+// rebuilt from those ledgers alone and diffed against the hash it was sent with.
+
+// It replaces the Digest diff: a kernel run is replayed call by call, not digest by digest.
 
 const FIXTURE = join(import.meta.dirname, "..", "fixtures", "replay", "kernel-hunt.jsonl.gz");
 const RUN = "7d3c2d3e-0000-4000-8000-0000000c0001";

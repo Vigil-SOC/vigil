@@ -108,6 +108,7 @@ export async function narrateRun(
   // Empty recall_keys: the write-up recalls nothing. It runs after the terminal,
   // over a projection, and a keyed read there would be a read no decision was
   // made on.
+
   // The narrator is a judge of the run, so it runs as a child of it, on its own ledger.
   const parent = { harness: harness as unknown as Harness<AgentKinds>, options: { run_id: runId, run_kind: runKind } };
   const turn = async <T>(cfg: TurnConfig) => runChild<T>(parent, `${cfg.role}:${await childOrdinal(parent, cfg.role)}`, cfg);

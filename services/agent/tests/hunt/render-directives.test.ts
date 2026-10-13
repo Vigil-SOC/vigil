@@ -5,9 +5,8 @@ import { asHarnessEvents, gunzipped } from "../support/historical.js";
 
 const RUN = "hunt-462b6e9d6d56";
 
-// Operator text reaches the agent as direction, so it cannot be allowed to forge
-// the brief's own structure or arrive unbounded. The digest held this line once;
-// the brief the kernel agent works from holds it now.
+// Operator text reaches the agent as direction, so it may not forge the brief's structure
+// or arrive unbounded. The kernel agent's brief holds this line now, not the digest.
 describe("operator directives and notes in the brief", () => {
   it("are scrubbed, capped and kept to one line each", () => {
     const view = fold(asHarnessEvents(gunzipped(`${RUN}.jsonl.gz`), RUN));

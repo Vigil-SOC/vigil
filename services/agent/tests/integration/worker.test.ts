@@ -59,9 +59,8 @@ function resumeJob(id: string): RunJob {
   };
 }
 
-// The investigate plugin's answer: one turn that stops, then the conclusion.
-// Stopped twice: the second answers the kernel's ask to keep going, since the run
-// stops having looked at nothing.
+// The investigate plugin's answer, stopping twice: the second answers the kernel's ask to
+// keep going, since the run has looked at nothing.
 const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { calls: [] }, { emit: { summary: "nothing to pursue", disposition: "inconclusive", confidence: "low", citations: [], gaps: [], next_steps: [] } }];
 
 // investigate rather than hunt: what is under test is the worker -- opening a

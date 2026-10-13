@@ -43,9 +43,8 @@ export type StreamEvent<T = unknown> =
 
 export type TurnStream<T> = AsyncGenerator<StreamEvent<T>, Outcome<T>>;
 
-// One model call's input, in the parts it was assembled from. The transcript is
-// the caller's history then this stream's own calls, in order; a caller that holds
-// the ledger names those calls, and everything else here it hashes.
+// One model call's input, in its parts. The transcript is the caller's history then this
+// stream's calls; a caller holding the ledger names those calls and hashes the rest.
 export interface FrameSeen {
   role: string;
   model_id: string;
@@ -272,9 +271,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
     return this.gathered() < persist.min_results;
   }
 
-  // Results from tools outside this process: what the run has actually looked at.
-  // Loading a playbook or writing a record is not looking. A resumed run's own
-  // history is counted whole, which can only make it ask less.
+  // Results from tools outside this process: what the run has looked at. A playbook or a
+  // record write is not looking; a resumed run's history counts whole.
   private gathered(): number {
     const local = new Set(this.tools.filter((tool) => tool.local).map((tool) => tool.id));
     const prior = (this.cfg.history ?? []).filter((message) => message.role === "tool").length;
@@ -669,10 +667,8 @@ const FOLD_LADDER: readonly FoldPolicy[] = [
   { head: 1, tail: 1, max_messages: 4, max_chars: 40_000 },
 ];
 
-// What a run that stopped early is asked, with what it said when it stopped, so
-// it can see its own words. Its next answer, with or without tools, stands.
-// When the answer comes by tool (`by`), the ask is that tool's refusal instead, and
-// repeating the call is how the agent says it is sure.
+// What a run that stopped early is asked, quoting its own words; its next answer stands.
+// When the answer comes by tool (`by`), the ask is that tool's refusal instead.
 export function persistAsk(said: string, gathered: number, left: number | null, by?: string): string {
   return [
     said.trim() === "" ? "You stopped without saying anything." : `You stopped here, saying:\n\n${said.trim()}`,

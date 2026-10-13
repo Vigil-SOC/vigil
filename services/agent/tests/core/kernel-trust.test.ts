@@ -28,9 +28,8 @@ import { pluginFor } from "../../plugins/registry.js";
 import { quiet } from "../support/plugins.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
-// The five things the kernel owes every plugin so a run can be trusted and learned
-// from: a hypothesis record, a frame per model call, results classified, judges on
-// ledgers of their own, and a replay that reads the ledger and nothing else.
+// What the kernel owes every plugin: a hypothesis record, a frame per model call, classified
+// results, judges on their own ledgers, and a replay off the ledger alone.
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const RUN = "7d3c2d3e-0000-4000-8000-000000000b01";

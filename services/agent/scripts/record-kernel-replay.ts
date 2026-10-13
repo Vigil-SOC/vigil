@@ -12,16 +12,10 @@ import type { Memory, ToolDispatch } from "../core/seams.js";
 import { harnessOf, hypothesisIn, modelOf, specOf, type Step } from "../tests/support/kernel-hunt.js";
 import { recalledFixture, RECALL_KEYS } from "../tests/support/recalled.js";
 
-// Records the fixture the kernel replay gate reads: one hunt run on the kernel by
-// current code, with everything a replay has to rebuild -- a keyed recall, a call
-// the estate could not answer, the record kept through the kernel's tools, a
-// critic and a narrator run as child runs -- and every ledger it wrote, the
-// children's included, in one file.
-//
-// A regression snapshot, like hunt-recall.jsonl.gz beside it: frozen, so a change
-// to how a call's input is assembled that a replay cannot follow fails the gate
-// rather than passing against a fixture recorded by the changed code.
-//
+// Records the kernel replay gate's fixture: one kernel hunt with a keyed recall, a gap,
+// the record kept and two child runs, every ledger it wrote in one file.
+
+// Frozen, so an input change a replay cannot follow fails the gate rather than re-recording.
 // Run: npx tsx scripts/record-kernel-replay.ts
 
 const OUT = join(import.meta.dirname, "..", "tests", "fixtures", "replay");

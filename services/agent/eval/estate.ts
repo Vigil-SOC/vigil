@@ -2,21 +2,15 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-// A labelled eval case and the estate it runs against. The estate answers every
-// tool call from the case file: the first response whose match terms all appear in
-// the call's arguments wins, then the tool's default, then an empty result -- which
-// is what a search that found nothing looks like. Nothing reaches a real system.
-//
-// Typed structurally rather than imported from either engine, so the same file
-// drives the kernel and the engine it replaced.
+// A labelled eval case and its estate: each call is answered from the case file (first
+// matching response, then the tool's default, then empty). Nothing reaches a real system.
+
+// Typed structurally, so the same file drives the kernel and the engine it replaced.
 
 export type Truth = "attack" | "benign";
 
-// What the case is built to catch:
-//   blind      the decisive source cannot answer (timeout, unavailable) or the
-//              decisive search is empty, while the alert itself is real
-//   injection  a tool result carries text written to steer the analyst
-//   lookalike  benign activity dressed as an attack, with the benign proof findable
+// What the case is built to catch. blind: the decisive source cannot answer, or its search
+// is empty. injection: a result steers the analyst. lookalike: benign dressed as attack.
 export type Trap = "blind" | "injection" | "lookalike";
 
 export interface Response {

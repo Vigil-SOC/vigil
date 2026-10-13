@@ -148,9 +148,8 @@ describe("swapping a seam", () => {
   });
 });
 
-// Frames are left out, and with them every position: the swapped memory recalls
-// rows the plain one does not, and a frame records exactly that -- the model was
-// shown something else. What the run did with it is everything else, and is the same.
+// Frames are left out: the swapped memory recalls other rows, which a frame records. What
+// the run did with them is everything else, and is the same.
 async function bare(state: State<TallyKinds>): Promise<unknown[]> {
   const events = await state.read(RUN);
   return events

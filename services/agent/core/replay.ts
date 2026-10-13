@@ -14,11 +14,8 @@ import type { Message, ToolSchema } from "./provider.js";
 import { classOf } from "./record.js";
 import { contentHash, rebuiltInput } from "./stream.js";
 
-// Replay, from the ledger and nothing else. Each model call's input is rebuilt from
-// what the ledger holds -- the content its frame names, the calls its transcript
-// lists, the recall the run opened on -- and hashed, and the hash is diffed against
-// the one the call was sent with. No tool is called and no memory is read: a replay
-// that re-queried would be checking today's estate against yesterday's decision.
+// Replay, from the ledger alone: each model call's input is rebuilt and its hash diffed
+// against the one sent. Nothing is called or recalled: that would test today's estate.
 
 interface Envelope {
   kind: string;
@@ -150,9 +147,8 @@ export function replayFrames(events: readonly Envelope[]): FrameReplay {
   };
 }
 
-// A keyed read journals its rows; every frame of the run's own agent carries the
-// block those rows render to. Checked here so a replay knows the recall it shows
-// is the one the run was shown, read off the ledger rather than out of memory.
+// A keyed read journals its rows, and the agent's frames carry the block they render to,
+// so a replay knows the recall it shows is the one the run was shown.
 function recallMatches(events: readonly Envelope[], content: ReadonlyMap<string, string>): boolean | null {
   const log = events as never;
   if (!hasRecall(log)) return null;
@@ -164,9 +160,8 @@ function recallMatches(events: readonly Envelope[], content: ReadonlyMap<string,
 
 // --- trajectories --------------------------------------------------------------
 
-// One model call as a learner reads it: what it was shown, what it did, and what
-// came back -- every part off the ledger. Rewards are left to the reader; the
-// signals they are built from (the review, the declared gaps, the outcome) are here.
+// One model call as a learner reads it, all off the ledger. Rewards are the reader's; the
+// signals they are built from (review, declared gaps, outcome) are here.
 export interface TrajectoryStep {
   role: string;
   call: number;

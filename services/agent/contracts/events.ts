@@ -15,6 +15,7 @@ export const EVENT_SCHEMA_VERSION = 1;
 // one to how it got there. Same machinery, its own kind so it is never mislabelled.
 // adjudicate is the same loop again, framed as a shadow second opinion on a finding
 // intake already admitted: it proposes a workflow and executes nothing.
+
 // subagent is a child run: a judge or helper a run started under its own prompt,
 // journaled on a ledger of its own and linked to its parent. Never enqueued.
 export const RUN_KINDS = ["hunt", "root_cause", "adjudicate", "investigate", "compose", "chat", "tally", "subagent"] as const;
@@ -187,16 +188,13 @@ export interface TerminalHandoff {
   markdown: string;
 }
 
-// What a tool result was. served is an answer, empty or not. visibility_gap is the
-// estate failing to answer (timeout, unavailable, a backend error): a blind spot a
-// verdict must count. defect is the call being wrong (refused, invalid arguments):
-// the agent's own mistake, never recorded as a gap.
+// What a tool result was: served (an answer, empty or not), visibility_gap (the estate did
+// not answer: a blind spot) or defect (the call was wrong: never recorded as a gap).
 export const CALL_CLASSES = ["served", "visibility_gap", "defect"] as const;
 export type CallClass = (typeof CALL_CLASSES)[number];
 
-// One tool call, journaled the moment its result is in. A plugin run is one long
-// loop rather than a decision per iteration, so these are what a resume rebuilds
-// the transcript from and what a reader cites: ref is the id the model was shown.
+// One tool call, journaled the moment its result is in: what a resume rebuilds the
+// transcript from and what a reader cites. ref is the id the model was shown.
 export interface CallPayload {
   ref: string;
   // The model turn that asked for it, counted from 1 across resumes.
@@ -226,9 +224,8 @@ export interface ConclusionPayload {
   capped: boolean;
   turns: number;
   cost_usd: number;
-  // What the run could not settle, computed off the ledger when it concluded:
-  // the questions its record left open, what its answer said it could not settle,
-  // and every call the estate failed to answer. Absent on ledgers written before.
+  // What the run could not settle, off the ledger: open questions, what its answer said it
+  // could not settle, and every call the estate failed. Absent on older ledgers.
   declared_gaps?: {
     open_questions: string[];
     declared: string[];
@@ -276,9 +273,8 @@ export interface FramePayload {
   // before the run -- a conversation's own history -- are hashed in history.
   transcript: string[];
   history: string | null;
-  // How the transcript was trimmed: the fold policy in force and how many messages
-  // it folded away. Deterministic given the rest, so a replay folds the same.
-  // ceiling, when set, is the model window's lower bound on the fold (#2125).
+  // How the transcript was trimmed: the fold policy, how many messages it folded, and the
+  // model window's lower ceiling when set (#2125). Deterministic, so a replay folds the same.
   fold: { policy: Record<string, number> | null; folded: number; ceiling?: number };
   // The transient ask after the transcript, and the answer's schema, on an emission.
   tail: string | null;

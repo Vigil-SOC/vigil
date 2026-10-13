@@ -85,9 +85,8 @@ function adapters(ctx: PluginContext): AdapterOptions {
   };
 }
 
-// The kernel's record tools, writing the hunt's own record: a proposal is a
-// hypothesis on the board, a link is a ruling, a question joins the frontier. The
-// evidence a link names is a record from record_evidence, and neither is a ruling.
+// The kernel's record tools on the hunt's record: a proposal joins the board, a link is a
+// ruling on an evidence id record_evidence returned, a question joins the frontier.
 function huntRecord(ctx: PluginContext, ports: HuntPorts): RecordBackend {
   return {
     stances: ["supports", "weakens", "neither"],

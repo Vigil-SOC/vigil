@@ -4,12 +4,9 @@ import { gunzipSync } from "node:zlib";
 import { huntKernelReplay, huntView } from "../plugins/hunt/view.js";
 import { investigateKernelReplay, investigateView } from "../plugins/investigate/view.js";
 
-// Writes what the console receives for a kernel run -- the projection and the
-// replay, exactly as serve.ts answers them -- from two real kernel ledgers: the
-// recorded kernel hunt and one investigate run from the eval (Gemini 2.5 Pro). The
-// web client's KernelRuns test renders its real run-detail components on these, so
-// a change on either side that the other cannot read fails there.
-//
+// Writes the projection and replay serve.ts answers for two real kernel ledgers, which the
+// web client's KernelRuns test renders: a change either side cannot read fails there.
+
 // Run: npx tsx scripts/kernel-view-fixtures.ts
 
 const FIXTURES = join(import.meta.dirname, "..", "tests", "fixtures");
