@@ -16,7 +16,12 @@ class TokenError(Exception):
 
 
 def fetch_client_credentials_token(
-    label: str, tenant: str, client_id: str, client_secret: str, scope: str
+    label: str,
+    tenant: str,
+    client_id: str,
+    client_secret: str,
+    scope: str,
+    timeout: float = 30,
 ) -> str:
     """Exchange a client secret for an access token, or raise ``TokenError``.
 
@@ -32,7 +37,7 @@ def fetch_client_credentials_token(
                 "client_secret": client_secret,
                 "scope": scope,
             },
-            timeout=30,
+            timeout=timeout,
         )
     except httpx.HTTPError as exc:
         logger.error("%s token request failed: %s", label, type(exc).__name__)

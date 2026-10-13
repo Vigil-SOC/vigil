@@ -34,11 +34,11 @@ logger = logging.getLogger(__name__)
 # (success, one line safe to show: never a secret)
 Outcome = Tuple[bool, str]
 
-# The UI's Test request gives up after 15 s and the MCP probe runs first. The
-# clients' own timeouts are 30 s or more and the Azure SDK retries, so this is
-# what bounds a check.
+# The UI's Test request gives up after 15 s and the MCP probe runs first, so
+# the answer is not waited for longer than this. A sync client keeps running in
+# its worker thread after it, until its own timeouts end it: hence the short
+# per-request timeouts and no retries below.
 CHECK_TIMEOUT = 10.0
-# Each request a check makes itself, where the client lets it say so.
 _REQUEST_TIMEOUT = 5.0
 
 # The host the Defender adapter reads alerts from, and its token audience.
@@ -121,6 +121,7 @@ async def _opensearch() -> Outcome:
         password=config.get("password"),
         verify_ssl=verify,
         ca_cert_path=config.get("ca_cert_path"),
+        timeout=_REQUEST_TIMEOUT,
     )
     try:
         # GET / on OpenSearch (and /api/status on Dashboards when one is set)
@@ -156,6 +157,13 @@ async def _sentinel() -> Outcome:
             "azure-mgmt-securityinsight azure-identity"
         )
 
+    # azure-core's defaults are 300 s to connect and to read, and 10 retries.
+    pipeline = {
+        "connection_timeout": _REQUEST_TIMEOUT,
+        "read_timeout": _REQUEST_TIMEOUT,
+        "retry_total": 0,
+    }
+
     def read() -> None:
         # The client the Sentinel adapter builds, asked for one incident: a
         # token from Entra ID, then one read of the workspace.
@@ -163,8 +171,9 @@ async def _sentinel() -> Outcome:
             tenant_id=config["tenant_id"],
             client_id=config["client_id"],
             client_secret=config["client_secret"],
+            **pipeline,
         )
-        client = SecurityInsights(credential, config["subscription_id"])
+        client = SecurityInsights(credential, config["subscription_id"], **pipeline)
         try:
             incidents = client.incidents.list(
                 resource_group_name=config["resource_group"],
@@ -180,12 +189,19 @@ async def _sentinel() -> Outcome:
         await asyncio.to_thread(read)
     except HttpResponseError as exc:
         # Both messages name the app and tenant; only the codes are shown.
-        aadsts = _AADSTS.search(str(exc))
-        if isinstance(exc, ClientAuthenticationError) and (
-            aadsts or not exc.status_code
-        ):
-            suffix = f" ({aadsts.group(0)})" if aadsts else ""
-            return False, f"Microsoft Sentinel credential rejected by Entra ID{suffix}"
+        if isinstance(exc, ClientAuthenticationError):
+            aadsts = _AADSTS.search(str(exc))
+            if aadsts:
+                return False, (
+                    "Microsoft Sentinel credential rejected by Entra ID "
+                    f"({aadsts.group(0)})"
+                )
+            if not exc.status_code:
+                # azure-identity wraps a network failure the same way
+                cause = type(exc.__cause__ or exc).__name__
+                return False, (
+                    f"Microsoft Sentinel could not get a token from Entra ID ({cause})"
+                )
         code = getattr(getattr(exc, "error", None), "code", None)
         detail = f"HTTP {exc.status_code}" + (f", {code}" if code else "")
         if exc.status_code == 404:
@@ -277,6 +293,7 @@ async def _defender() -> Outcome:
             config["client_id"],
             config["client_secret"],
             f"{_DEFENDER_API}/.default",
+            timeout=_REQUEST_TIMEOUT,
         )
         return httpx.get(
             f"{_DEFENDER_API}/api/alerts",
@@ -315,6 +332,7 @@ async def _crowdstrike() -> Outcome:
         client_id=config["client_id"],
         client_secret=config["client_secret"],
         base_url=config.get("base_url") or "https://api.crowdstrike.com",
+        timeout=_REQUEST_TIMEOUT,
     )
 
     def read() -> Outcome:
