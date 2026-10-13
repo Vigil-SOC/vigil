@@ -370,9 +370,8 @@ function parseRoles(raw: unknown, handled: readonly string[]): Roles {
   return roles;
 }
 
-// The arch layer is a plugin's plugin.yaml: its roles, dispatch and digest, named
-// by the plugin's id. The plugin's own keys are the plugin registry's to read. A
-// file with no id is a bare arch, held to the arch layer's keys alone.
+// The arch layer is a plugin's plugin.yaml (roles, dispatch, digest), named by its id; the
+// rest is the plugin registry's. A file with no id is a bare arch, held to the arch keys.
 export function parseArch(text: string, handled: readonly string[]): ArchSpec {
   const parsed = asRecord(parseYaml(text), "document");
   const [front] =

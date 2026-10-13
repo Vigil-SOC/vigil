@@ -5,12 +5,8 @@ import { parse as parseYaml } from "yaml";
 import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
 
-// A plugin is a directory holding plugin.yaml. Its skills are named there and
-// read from the repo's one skill library, core/skills/library/<name>/SKILL.md,
-// the same folder the Python agents and the console's skills screen use. Shipped
-// with the worker, resolved against the package rather than the cwd, the same
-// way plugin.yaml is: the image copies the library to dist/skills; from
-// source it is three levels up.
+// A plugin is a directory holding plugin.yaml; its skills come from the repo's one library,
+// core/skills/library, resolved against the package: dist/skills in the image, else three levels up.
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const SKILLS = [new URL("../skills/", import.meta.url), new URL("../../../core/skills/library/", import.meta.url)]
   .map((url) => fileURLToPath(url))
