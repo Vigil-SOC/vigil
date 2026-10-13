@@ -105,7 +105,7 @@ class MCPRegistry:
 
         seen = set()
         for server_name in self.get_active_servers():
-            if not _configured(server_name):
+            if not is_set_up(server_name):
                 continue
             for tool in self._tools_cache.get(server_name, []):
                 # Prefix tool name with server name (matching ClaudeService
@@ -133,11 +133,19 @@ class MCPRegistry:
 # offered, so neither chat nor a playbook counts a search that cannot run. The
 # running catalog answers: it knows which servers a ${VAR} placeholder already
 # holds dormant. With no client no server runs, so there is nothing to gate.
-def _configured(server_name: str) -> bool:
+def is_set_up(server_name: str) -> bool:
     from core.integrations.mcp.client import process_mcp_client
 
-    service = getattr(process_mcp_client(), "mcp_service", None)
-    return service is None or service.is_configured(server_name)
+    try:
+        service = getattr(process_mcp_client(), "mcp_service", None)
+        return service is None or service.is_configured(server_name)
+    except Exception as exc:  # noqa: BLE001
+        # A check that cannot run (a descriptor that fails to import) must not
+        # take every MCP tool with it.
+        logger.warning(
+            "Could not tell whether %s is set up (%s)", server_name, type(exc).__name__
+        )
+        return True
 
 
 # Where the live MCP tool set comes from. This used to be a side effect of

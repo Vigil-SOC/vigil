@@ -11,7 +11,12 @@ from __future__ import annotations
 import pytest
 
 import core.integrations._base.config as resolver
-from core.integrations._base.config import is_configured, server_configured
+from core.integrations._base.config import (
+    forget_configured,
+    is_configured,
+    server_configured,
+)
+from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.service import MCPService
 from core.integrations.splunk.descriptor import SPLUNK
 from core.integrations.virustotal.descriptor import VIRUSTOTAL
@@ -21,14 +26,32 @@ pytestmark = pytest.mark.unit
 SPLUNK_FORM = {"server_url": "https://splunk.example.com:8089", "username": "svc"}
 
 
+@pytest.fixture(autouse=True)
+def _no_cached_answers():
+    # Answers are cached per process; each test starts and ends with none.
+    forget_configured()
+    yield
+    forget_configured()
+
+
 @pytest.fixture
 def saved(monkeypatch):
-    """The Settings rows and the secrets store (env included), empty to start."""
-    stored: dict = {}
+    """The Settings rows and the secrets store (env included), empty to start.
+
+    ``stored.reads`` counts the reads of the Settings rows.
+    """
+
+    class _Stored(dict):
+        reads = 0
+
+    stored = _Stored()
     secrets: dict = {}
-    monkeypatch.setattr(
-        resolver, "get_integration_config", lambda i: dict(stored.get(i, {}))
-    )
+
+    def _read(integration_id):
+        stored.reads += 1
+        return dict(stored.get(integration_id, {}))
+
+    monkeypatch.setattr(resolver, "get_integration_config", _read)
     monkeypatch.setattr(
         resolver, "get_secret", lambda key, default=None: secrets.get(key, default)
     )
@@ -85,6 +108,43 @@ def test_settings_that_cannot_be_read_are_not_configured(monkeypatch, caplog):
     assert "secret-looking text" not in caplog.text
 
 
+class TestTheCachedAnswer:
+    # The registry asks on every read of its tool list, inside async handlers.
+    def test_an_answer_stands_without_another_read(self, saved):
+        stored, _ = saved
+        assert is_configured(SPLUNK) is False
+        assert is_configured(SPLUNK) is False
+        assert stored.reads == 1
+
+    def test_a_save_is_read_at_once(self, saved):
+        stored, secrets = saved
+        assert is_configured(SPLUNK) is False
+        stored["splunk"] = dict(SPLUNK_FORM)
+        secrets["SPLUNK_PASSWORD"] = "pw"
+        forget_configured()  # what the Settings save does
+        assert is_configured(SPLUNK) is True
+
+    def test_an_expired_answer_is_read_again(self, saved, monkeypatch):
+        stored, _ = saved
+        monkeypatch.setattr(resolver, "CONFIGURED_TTL_S", 0.0)
+        is_configured(SPLUNK)
+        is_configured(SPLUNK)
+        assert stored.reads == 2
+
+    def test_a_failed_read_keeps_the_last_answer(self, saved, monkeypatch):
+        stored, secrets = saved
+        stored["splunk"] = dict(SPLUNK_FORM)
+        secrets["SPLUNK_PASSWORD"] = "pw"
+        assert is_configured(SPLUNK) is True
+
+        def _boom(_id):
+            raise RuntimeError("database is down")
+
+        monkeypatch.setattr(resolver, "CONFIGURED_TTL_S", 0.0)
+        monkeypatch.setattr(resolver, "get_integration_config", _boom)
+        assert is_configured(SPLUNK) is True
+
+
 class TestTheCatalog:
     def test_the_self_hosted_server_waits_for_the_splunk_form(self, saved):
         service = MCPService()
@@ -93,6 +153,7 @@ class TestTheCatalog:
         stored, secrets = saved
         stored["splunk"] = dict(SPLUNK_FORM)
         secrets["SPLUNK_PASSWORD"] = "pw"
+        forget_configured()
         assert service.is_configured("splunk-selfhosted") is True
 
     def test_a_placeholder_server_is_not_held_to_the_form(self, saved):
@@ -101,3 +162,24 @@ class TestTheCatalog:
         service = MCPService()
         assert service.servers["splunk"].required_env_vars == ["SPLUNK_MCP_URL"]
         assert service.is_configured("splunk") is True
+
+
+class TestTheRegistry:
+    def test_a_check_that_cannot_run_hides_nothing(self, monkeypatch, caplog):
+        # A descriptor that fails to import must not take every tool with it.
+        class _Catalog:
+            def is_configured(self, name):
+                raise ImportError("broken descriptor")
+
+        class _Client:
+            mcp_service = _Catalog()
+
+        monkeypatch.setattr(
+            "core.integrations.mcp.client.process_mcp_client", lambda: _Client()
+        )
+        registry = MCPRegistry()
+        registry.register_server(
+            "splunk-selfhosted", {}, [{"name": "splunk_execute", "description": "x"}]
+        )
+        assert registry.get_tool_names() == ["splunk-selfhosted_splunk_execute"]
+        assert "ImportError" in caplog.text

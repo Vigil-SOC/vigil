@@ -154,6 +154,54 @@ class TestReachingTheClient:
         assert raised.value.kind == UNAVAILABLE
 
 
+# A server whose integration is not set up is not offered (registry.is_set_up). A
+# call that names one anyway is a gap in what the deployment can see, not a tool
+# nothing implements.
+class TestAServerThatIsNotSetUp:
+    class _Registry:
+        def get_active_servers(self):
+            return ["splunk-selfhosted", "security-detections"]
+
+        def get_tool_names(self):
+            return []
+
+    def _catalog(self, monkeypatch):
+        import core.integrations.mcp.client as client
+
+        class _Catalog:
+            def is_configured(self, name):
+                return name != "splunk-selfhosted"
+
+        class _Client:
+            mcp_service = _Catalog()
+
+        monkeypatch.setattr(client, "process_mcp_client", lambda: _Client())
+
+    @pytest.mark.asyncio
+    async def test_is_unavailable_not_a_missing_tool(self, monkeypatch):
+        from core.agents.mcp_tools import UNAVAILABLE, MCPFailure, execute_mcp_tool
+
+        self._catalog(monkeypatch)
+        with pytest.raises(MCPFailure) as raised:
+            await execute_mcp_tool(
+                "splunk-selfhosted_splunk_execute", {}, 5.0, self._Registry()
+            )
+
+        assert raised.value.kind == UNAVAILABLE
+        assert "not set up" in raised.value.detail
+
+    @pytest.mark.asyncio
+    async def test_a_name_a_set_up_server_does_not_report_is_still_unhandled(
+        self, monkeypatch
+    ):
+        from core.agents.mcp_tools import execute_mcp_tool
+
+        self._catalog(monkeypatch)
+        assert await execute_mcp_tool(
+            "security-detections_no_such_tool", {}, 5.0, self._Registry()
+        ) == (None, False)
+
+
 # --- Vigil's own tools carry no prefix --------------------------------------
 #
 # They are the same tools an external caller reaches at /mcp. A tool that
