@@ -44,17 +44,9 @@ def client(monkeypatch):
             {"backend": "none", "database_available": False, "demo_mode": False}
         ),
     )
-    _processes(monkeypatch, {"agent_layer": "running", "daemon": "running"})
 
     with TestClient(app) as test_client:
         yield test_client
-
-
-def _processes(monkeypatch, states):
-    async def read():
-        return dict(states)
-
-    monkeypatch.setattr("services.api.main.read_process_health", read)
 
 
 def _backend(monkeypatch, info):
@@ -229,30 +221,3 @@ def test_health_probes_the_connection_before_reading_the_backend(client, monkeyp
     assert calls == ["probe", "read"]
     assert body["status"] == "degraded"
     assert body["storage"]["database_available"] is False
-
-
-def test_processes_are_reported_beside_status_and_never_change_it(client, monkeypatch):
-    """A stopped agent layer or daemon is said, not folded into the probe verdict."""
-    monkeypatch.setattr("core.config.is_demo_mode", lambda: False)
-    _backend(
-        monkeypatch,
-        {"backend": "postgresql", "database_available": True, "demo_mode": False},
-    )
-    stopped = {"agent_layer": "no_token", "daemon": "not_running"}
-    _processes(monkeypatch, stopped)
-
-    for route in ("/api/health", "/api/health/ready"):
-        response = client.get(route)
-        assert response.status_code == 200
-        assert response.json()["status"] == "healthy"
-        assert response.json()["processes"] == stopped
-
-
-def test_processes_are_reported_when_storage_fails(client, monkeypatch):
-    _boom(monkeypatch, RuntimeError(_LEAK))
-    _processes(monkeypatch, {"agent_layer": "running", "daemon": "unhealthy"})
-
-    body = client.get("/api/health").json()
-
-    assert body["status"] == "degraded"
-    assert body["processes"] == {"agent_layer": "running", "daemon": "unhealthy"}

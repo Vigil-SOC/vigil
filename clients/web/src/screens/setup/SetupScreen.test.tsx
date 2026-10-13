@@ -22,13 +22,10 @@ vi.mock('../../contexts/ColorSchemeContext', () => ({
 vi.mock('../../services/api', () => ({
   consoleApi: {
     getHealth: vi.fn(() =>
-      Promise.resolve({
-        data: {
-          status: 'healthy',
-          storage: { database_available: true },
-          processes: { agent_layer: 'running', daemon: 'running' },
-        },
-      }),
+      Promise.resolve({ data: { status: 'healthy', storage: { database_available: true } } }),
+    ),
+    getProcesses: vi.fn(() =>
+      Promise.resolve({ data: { agent_layer: 'running', daemon: 'running' } }),
     ),
   },
   storageApi: { getStatus: vi.fn(() => Promise.resolve({ data: { backend: 'none' } })) },
@@ -111,15 +108,12 @@ const source = (over: Record<string, unknown> = {}) => ({
 const listing = (sources: unknown[], enabled = true) =>
   ({ data: { sources, global: { enabled } } }) as never
 
-// what the backend reports when the agent layer and the SOC daemon are up
-const RUNNING = { agent_layer: 'running', daemon: 'running' }
-
 describe('SetupScreen', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'healthy', storage: { database_available: true }, processes: RUNNING },
+      data: { status: 'healthy', storage: { database_available: true } },
     } as never)
     auth.allowed = true
   })
@@ -192,7 +186,7 @@ describe('SetupScreen', () => {
       localStorage.setItem(SETUP_PROGRESS_KEY, JSON.stringify({ furthest, passed: [1] }))
     const unhealthy = (status: string) =>
       vi.mocked(consoleApi.getHealth).mockResolvedValue({
-        data: { status, storage: { database_available: true }, processes: RUNNING },
+        data: { status, storage: { database_available: true } },
       } as never)
     const first = () => rail().getByRole('button', { name: /Before you start/ })
 

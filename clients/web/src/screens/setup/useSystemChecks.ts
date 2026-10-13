@@ -6,6 +6,7 @@ import {
   stoppedMcpServer,
   type FederationRead,
   type McpRead,
+  type ProcessesRead,
 } from '../../shell/statusLine'
 import type { CheckRow } from './CheckTable'
 
@@ -25,13 +26,13 @@ interface StorageRead {
 interface HealthBody {
   status?: string
   storage?: { database_available?: boolean; demo_mode?: boolean }
-  processes?: { agent_layer?: string; daemon?: string }
 }
 
-/** One read each per run: Database, API health, Agent layer and SOC daemon share the health call, Database and Storage the storage call */
+/** One read each per run: Database and API health share the health call, Database and Storage the storage call, Agent layer and SOC daemon the processes call */
 interface Reads {
   storage: () => Promise<StorageRead>
   health: () => Promise<HealthBody>
+  processes: () => Promise<ProcessesRead>
 }
 type Read = (reads: Reads) => Promise<Result>
 
@@ -54,8 +55,8 @@ const readDatabase: Read = async ({ health }) => {
 
 // The console is served without either process, so these are the rows that say
 // whether chat, workflow runs and alert triage can happen at all.
-const readAgentLayer: Read = async ({ health }) => {
-  switch ((await health()).processes?.agent_layer) {
+const readAgentLayer: Read = async ({ processes }) => {
+  switch ((await processes()).agent_layer) {
     case 'running':
       return { phase: 'passed', detail: 'Running' }
     case 'no_token':
@@ -69,8 +70,8 @@ const readAgentLayer: Read = async ({ health }) => {
   }
 }
 
-const readDaemon: Read = async ({ health }) => {
-  switch ((await health()).processes?.daemon) {
+const readDaemon: Read = async ({ processes }) => {
+  switch ((await processes()).daemon) {
     case 'running':
       return { phase: 'passed', detail: 'Running' }
     case 'unhealthy':
@@ -189,6 +190,7 @@ export function useSystemChecks() {
     setFinished(false)
     let storageRead: Promise<StorageRead> | undefined
     let healthRead: Promise<HealthBody> | undefined
+    let processesRead: Promise<ProcessesRead> | undefined
     const health = () =>
       (healthRead ??= consoleApi.getHealth().then((res) => {
         if (!res.data) throw new Error('health has no body')
@@ -199,12 +201,17 @@ export function useSystemChecks() {
         if (!res.data) throw new Error('storage status has no body')
         return res.data as StorageRead
       }))
+    const processes = () =>
+      (processesRead ??= consoleApi.getProcesses().then((res) => {
+        if (!res.data) throw new Error('processes has no body')
+        return res.data as ProcessesRead
+      }))
     // one after another: only the current row shows Checking, the rest wait
     ;(async () => {
       for (const { id, read } of CHECKS) {
         if (!live) return
         patch(id, { phase: 'checking', detail: '' })
-        const result = await read({ storage, health }).catch(() => COULD_NOT_READ)
+        const result = await read({ storage, health, processes }).catch(() => COULD_NOT_READ)
         if (!live) return
         patch(id, result)
       }

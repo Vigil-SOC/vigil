@@ -6,6 +6,7 @@ const reads = (health: StatusReads['health']): StatusReads => ({
   federation: null,
   mcp: null,
   routability: null,
+  processes: null,
 })
 
 describe('foldStatus storage', () => {
@@ -33,8 +34,10 @@ describe('foldStatus storage', () => {
 })
 
 describe('foldStatus processes', () => {
-  const healthy = (processes: { agent_layer?: string; daemon?: string }) =>
-    reads({ status: 'healthy', storage: { database_available: true }, processes })
+  const healthy = (processes: StatusReads['processes']): StatusReads => ({
+    ...reads({ status: 'healthy', storage: { database_available: true } }),
+    processes,
+  })
 
   it.each([
     ['no_token', 'Agent layer has no internal token.'],
@@ -58,22 +61,18 @@ describe('foldStatus processes', () => {
     })
   })
 
-  it('says nothing when the backend does not report processes', () => {
-    expect(foldStatus(reads({ status: 'healthy', storage: { database_available: true } }))).toEqual({
-      level: 'good',
-      sentence: 'No problems reported.',
-    })
+  it('says nothing when the read failed or the state is unknown', () => {
+    for (const processes of [null, { agent_layer: 'unknown', daemon: 'unknown' }]) {
+      expect(foldStatus(healthy(processes))).toEqual({ level: 'good', sentence: 'No problems reported.' })
+    }
   })
 
   it('lets a Poor fact win, and outranks a stopped MCP server', () => {
     expect(
-      foldStatus(
-        reads({
-          status: 'degraded',
-          storage: { database_available: false, demo_mode: false },
-          processes: { agent_layer: 'not_running' },
-        }),
-      ),
+      foldStatus({
+        ...reads({ status: 'degraded', storage: { database_available: false, demo_mode: false } }),
+        processes: { agent_layer: 'not_running' },
+      }),
     ).toEqual({ level: 'poor', sentence: 'Database is unavailable.' })
     expect(
       foldStatus({

@@ -20,7 +20,8 @@ fi
 # already configured for the DEV_MODE bypass keeps it. The one edit is filling an
 # empty AGENT_INTERNAL_TOKEN, below.
 if [ ! -f "$REPO_ROOT/.env" ]; then
-    cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
+    # Owner-only: it is about to hold the agent layer's token.
+    (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
     echo "Created .env from env.example (authentication on; first run creates the admin)"
 fi
 # A fresh setup boots with auth on, which needs a JWT signing secret. Minted

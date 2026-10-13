@@ -35,7 +35,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.auth.token_blacklist import warn_if_redis_evicts
 from core.platform.monitoring import get_metrics_response, init_sentry
-from core.platform.process_health import read_process_health
 from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
@@ -429,6 +428,7 @@ def _build_services(app: FastAPI):
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
+    from core.platform.process_health import ProcessHealth
     from core.response.approval_service import ApprovalService, register_pending_gauge
     from core.storage.database_data_service import DatabaseDataService
     from core.workflows.custom_workflow_service import CustomWorkflowService
@@ -442,6 +442,8 @@ def _build_services(app: FastAPI):
     # Long-lived, so its reconnect throttle applies across health probes; a fresh
     # service per probe would re-run init_database(create_tables=True) each time.
     app.state.health_storage = DatabaseDataService()
+    # One HTTP client and one cached answer for every caller of GET /api/processes.
+    app.state.process_health = ProcessHealth()
 
     app.state.approvals = ApprovalService()
     register_pending_gauge(app.state.approvals)
@@ -696,6 +698,13 @@ async def _shutdown(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during shutdown cleanup: {e}")
 
+    try:
+        process_health = getattr(app.state, "process_health", None)
+        if process_health is not None:
+            await process_health.aclose()
+    except Exception as e:
+        logger.warning("Error closing the process health client: %s", e)
+
     # Flush and shut down OTEL providers
     try:
         from core.telemetry import shutdown_telemetry
@@ -730,8 +739,7 @@ async def _health_payload(request: Request) -> dict:
 
     Redis and the LLM gateway are deliberately not part of this status: Redis
     is shared, so failing readiness on it would eject every pod at once, and a
-    gateway outage does not stop findings or cases being served. The agent
-    layer and the SOC daemon are reported beside it, under ``processes``.
+    gateway outage does not stop findings or cases being served.
     """
     # Read first, and in both branches: schema drift severe enough to raise
     # UndefinedColumn is exactly what sends this handler down the except path,
@@ -757,8 +765,6 @@ async def _health_payload(request: Request) -> dict:
     except Exception:
         logger.exception("Health check could not read process flags")
 
-    # Started before the storage probe so the two waits overlap, not add up.
-    processes = asyncio.create_task(read_process_health())
     try:
         backend_info, state_dir = await asyncio.to_thread(
             _check_storage, request.app.state.health_storage
@@ -801,7 +807,6 @@ async def _health_payload(request: Request) -> dict:
         }
     if schema_block is not None:
         payload["schema"] = schema_block
-    payload["processes"] = await processes
     return payload
 
 
