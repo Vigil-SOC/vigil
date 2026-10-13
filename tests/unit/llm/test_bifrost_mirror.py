@@ -104,3 +104,32 @@ def test_disabled_key_is_never_routable():
         key_is_routable({"value": LITERAL, "status": "success", "enabled": False})
         is False
     )
+
+
+def test_prune_deletes_only_unresolved_placeholders():
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from core.llm.bifrost import mirror
+
+    keys = [
+        {"id": "p1", "name": "default-gemini-key", "value": UNRESOLVED_ENV},
+        {"id": "p2", "name": "legacy", "value": {"env_var": "X", "from_env": True}},
+        {"id": "r1", "name": "env-resolved", "value": RESOLVED_ENV},
+        {"id": "l1", "name": "plain", "value": LITERAL},
+        {"id": "s1", "name": "plain-str", "value": "sk-literal"},
+        {"id": "o1", "name": "ollama", "ollama_key_config": {"url": RESOLVED_ENV}},
+        {"id": "v1", "name": "verified", "value": UNRESOLVED_ENV, "status": "success"},
+    ]
+    client = MagicMock()
+    client.delete = AsyncMock(return_value=MagicMock(raise_for_status=MagicMock()))
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    with patch.object(mirror, "_get", AsyncMock(return_value={"keys": keys})), patch.object(
+        mirror.httpx, "AsyncClient", return_value=client
+    ):
+        removed = asyncio.run(mirror.prune_placeholder_keys("gemini"))
+
+    assert removed == ["default-gemini-key", "legacy"]
+    deleted = [c.args[0].rsplit("/", 1)[-1] for c in client.delete.call_args_list]
+    assert deleted == ["p1", "p2"]

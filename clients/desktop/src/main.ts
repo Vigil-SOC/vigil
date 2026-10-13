@@ -48,7 +48,7 @@ const composeArgs = (...rest: string[]): string[] => [
   ...rest,
 ];
 
-// The compose file's bind mounts (./initdb, ./db-init, ./bifrost-config.json)
+// The compose file's bind mounts (./initdb, ./db-init, ./bifrost-*)
 // resolve against its directory. Bundled inside an AppImage that directory is a
 // FUSE self-mount (/tmp/.mount_*) the Docker daemon cannot stat, so `up` dies on
 // "mkdir /tmp/.mount_… : file exists". Copy the tree into userData and run from

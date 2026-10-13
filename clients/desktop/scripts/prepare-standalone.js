@@ -58,5 +58,9 @@ fs.copyFileSync(
   path.join(repoRoot, "infra", "docker", "bifrost", "config.json"),
   path.join(outDir, "bifrost-config.json"),
 );
+fs.copyFileSync(
+  path.join(repoRoot, "infra", "docker", "bifrost", "bootstrap.sh"),
+  path.join(outDir, "bifrost-bootstrap.sh"),
+);
 
 console.log(`  • standalone: ${sql.length} schema files from ${image}`);

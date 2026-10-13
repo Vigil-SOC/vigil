@@ -219,6 +219,47 @@ async def _routable_keys(provider: str) -> List[Dict[str, Any]]:
     return [k for k in keys if key_is_routable(k, provider)]
 
 
+async def prune_placeholder_keys(provider: str) -> List[str]:
+    """Delete ``provider``'s keys whose credential is an unresolved env/vault ref.
+
+    Older bootstrap configs seeded a ``default-*`` key per provider whether or
+    not its env var was set. Bifrost load-balances across every key by weight,
+    so a placeholder beside a real key fails its share of requests (#2210). The
+    start-up filter beside config.json stops new ones; this clears the ones
+    existing stores already hold. Idempotent and best-effort: a failed delete is
+    logged and retried on the next reconcile. Returns the names deleted.
+    """
+    keys = (await _get(f"providers/{provider}/keys")).get("keys") or []
+    base = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}/keys"
+    removed: List[str] = []
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        for k in keys:
+            # A key Bifrost verified upstream works whatever its ref says.
+            if not k.get("id") or k.get("status") == "success" or not _cred_from_env(k):
+                continue
+            label = k.get("name") or k["id"]
+            try:
+                resp = await client.delete(f"{base}/{k['id']}")
+                resp.raise_for_status()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not delete placeholder key %s on %s: %s",
+                    label,
+                    provider,
+                    exc,
+                )
+                continue
+            removed.append(label)
+    if removed:
+        logger.info(
+            "Deleted %d unresolved placeholder key(s) on %s: %s",
+            len(removed),
+            provider,
+            ", ".join(removed),
+        )
+    return removed
+
+
 async def _apply(provider: str, *, routable: bool) -> None:
     if not routable:
         await asyncio.to_thread(_deactivate_row, provider)
@@ -280,6 +321,7 @@ async def reconcile_all() -> Optional[Dict[str, bool]]:
         if not name:
             continue
         try:
+            await prune_placeholder_keys(name)
             routable = bool(await _routable_keys(name))
             await _apply(name, routable=routable)
             verdicts[name] = routable

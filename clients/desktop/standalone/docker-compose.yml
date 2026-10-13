@@ -72,12 +72,15 @@ services:
     image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+    # Seeds only keys whose env var is set (#2210); see infra/docker/docker-compose.yml.
+    entrypoint: ["/bin/sh", "/app/bootstrap/bootstrap.sh"]
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. The app runs `compose down` on quit, so without it every
       # UI change (keys, virtual keys, budgets) lasted until the next quit.
       - bifrost_data:/app/data
-      - ./bifrost-config.json:/app/data/config.json:ro
+      - ./bifrost-config.json:/app/bootstrap/config.json:ro
+      - ./bifrost-bootstrap.sh:/app/bootstrap/bootstrap.sh:ro
     depends_on:
       redis:
         condition: service_healthy
