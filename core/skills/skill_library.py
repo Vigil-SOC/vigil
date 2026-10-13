@@ -48,6 +48,9 @@ _COMPATIBILITY_MAX = 500
 _FILES_MAX = 200
 UPLOAD_MAX = 5 * 1024 * 1024  # bytes read from an upload
 _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
+# Skill folders under the operator root. Each description is in every agent's
+# system prompt, so the count bounds what operators can add to it.
+OPERATOR_SKILLS_MAX = 100
 
 
 @dataclass(frozen=True)
@@ -66,7 +69,7 @@ class SkillNotFound(SkillError):
 
 
 class SkillConflict(SkillError):
-    """The write clashes with what is on disk: a stale version or a taken folder."""
+    """The write clashes with what is on disk: a stale version, a taken folder or a full root."""
 
 
 def _require_str(frontmatter: Dict[str, Any], key: str, limit: int) -> str:
@@ -349,7 +352,7 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
     settings = settings or get_settings()
     root = operator_skills_root(settings)
     if root is None:
-        raise SkillError("The skills path is unset")
+        raise SkillError("Operator skills are off (VIGIL_SKILLS_PATH is empty)")
     # Only the default is created, private like the State Directory it sits in.
     # A path the operator named that is missing is more likely a volume that
     # did not mount than a folder to make.
@@ -361,6 +364,20 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
     if not root.is_dir():
         raise SkillError(f"{root} is not a directory")
     return root.resolve()
+
+
+def _require_room(root: Path) -> None:
+    """Refuse a new skill once ``root`` holds ``OPERATOR_SKILLS_MAX`` folders.
+
+    Dot folders are skipped: they are the scratch copies a write leaves only
+    while it runs.
+    """
+    held = sum(1 for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    if held >= OPERATOR_SKILLS_MAX:
+        raise SkillConflict(
+            f"There are already {OPERATOR_SKILLS_MAX} custom skills, the most "
+            "allowed. Delete one before adding another."
+        )
 
 
 def _accepts_skill(name: str, content: str) -> None:
@@ -418,6 +435,8 @@ def write_operator_skill(
         raise SkillError(
             f"name {name!r} belongs to the bundled library; save it under a new name"
         )
+    if not skill_dir.exists():
+        _require_room(root)
     origin: Optional[Skill] = None
     if source is not None:
         if skill_dir.exists():
@@ -568,6 +587,7 @@ def install_uploaded_skill(
     moved into place whole, so a refused upload leaves nothing behind.
     """
     root = _require_operator_root(settings)
+    _require_room(root)  # an upload never overwrites, so it is always a new skill
     if len(data) > UPLOAD_MAX:
         raise SkillError(f"the file is larger than {UPLOAD_MAX // 1024} KB")
     if filename.lower().endswith(".zip") or data.startswith(b"PK\x03\x04"):
