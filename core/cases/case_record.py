@@ -2,8 +2,10 @@
 
 The run's ledger comes from the agent. ``case_audit_logs`` is read here, by
 ``entity_type`` and ``entity_id``: the table has no ``case_id`` column, and
-nothing writes it. This view does not add one, and it does not query
-``agent_events``.
+almost nothing writes it. This view does not add one, and it does not query
+``agent_events``. ``cases.activities`` is where a case's history actually
+accumulates — what runs, analysts and merges did to it — so its entries are
+rows here too.
 """
 
 from __future__ import annotations
@@ -65,6 +67,24 @@ def event_text(kind: str, payload: Any) -> str:
     return kind
 
 
+# Stamps come three ways: run events ``...Z`` with milliseconds, audit rows
+# ``+00:00``, activities naive UTC plus ``Z``. Rows sort by the instant, not
+# the string, or they interleave out of order.
+def _instant(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        at = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if at.tzinfo is None:
+        return at.replace(tzinfo=timezone.utc)
+    return at.astimezone(timezone.utc)
+
+
+_UNDATED = datetime.min.replace(tzinfo=timezone.utc)
+
+
 def audit_text(row: CaseAuditLog) -> str:
     summary = (row.change_summary or "").strip()
     if summary:
@@ -76,11 +96,14 @@ def audit_text(row: CaseAuditLog) -> str:
 
 
 def merge_record(
-    events: Sequence[Mapping[str, Any]], audits: Sequence[CaseAuditLog]
+    events: Sequence[Mapping[str, Any]],
+    audits: Sequence[CaseAuditLog],
+    activities: Sequence[Any] = (),
 ) -> list[dict]:
-    """Run rows and case-audit rows, newest first.
+    """Run rows, case-audit rows and case activities, newest first.
 
-    Run rows are the chained ledger. Audit rows are not: the page says so.
+    Run rows are the chained ledger. Audit and activity rows are not: the page
+    says so.
     """
     rows: list[dict] = []
     for event in events:
@@ -115,7 +138,29 @@ def merge_record(
                 "_seq": 0,
             }
         )
-    rows.sort(key=lambda row: (row["at"], row["_seq"]), reverse=True)
+    # The list is only ever appended to, so an entry's index is its id, and a
+    # later entry stamped in the same instant reads as the newer one.
+    for index, activity in enumerate(activities):
+        if not isinstance(activity, Mapping):
+            continue
+        at = _instant(activity.get("timestamp"))
+        if at is None:
+            continue
+        kind = str(activity.get("activity_type") or "")
+        rows.append(
+            {
+                "id": f"activity:{index}",
+                "at": _at(at),
+                "kind": kind,
+                "source": "case_activities",
+                "chained": False,
+                "text": _join(activity.get("description")) or kind,
+                "_seq": index,
+            }
+        )
+    rows.sort(
+        key=lambda row: (_instant(row["at"]) or _UNDATED, row["_seq"]), reverse=True
+    )
     for row in rows:
         row.pop("_seq", None)
     return rows
