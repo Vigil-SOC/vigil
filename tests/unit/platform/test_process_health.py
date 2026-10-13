@@ -97,6 +97,16 @@ def test_an_error_reads_as_unknown_and_never_raises(stack, monkeypatch):
     assert _read(stack) == {"agent_layer": "unknown", "daemon": "unknown"}
 
 
+def test_a_secrets_error_hides_only_the_agent_layer(stack, monkeypatch):
+    def broken(key):
+        raise OSError("secrets.enc unreadable")
+
+    monkeypatch.setattr(process_health, "get_secret", broken)
+    stack.answers.update({AGENT: 200, DAEMON: 503})
+    assert _read(stack) == {"agent_layer": "unknown", "daemon": "unhealthy"}
+    assert stack.seen == [DAEMON]
+
+
 def test_callers_share_one_read(stack):
     stack.answers.update({AGENT: 200, DAEMON: 200})
 

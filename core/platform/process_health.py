@@ -61,14 +61,17 @@ class ProcessHealth:
         await self._client.aclose()
 
     async def _read(self) -> Dict[str, str]:
-        try:
-            agent_layer, daemon = await asyncio.gather(
-                self._agent_layer(), self._daemon()
-            )
-            states = {"agent_layer": agent_layer, "daemon": daemon}
-        except Exception:  # noqa: BLE001 — a status read never fails its caller
-            logger.exception("Could not read the agent layer and daemon state")
-            states = dict(UNKNOWN)
+        # Each row on its own: a secrets error says nothing about the daemon.
+        # A status read never fails its caller; an error is that row's unknown.
+        results = await asyncio.gather(
+            self._agent_layer(), self._daemon(), return_exceptions=True
+        )
+        states = {}
+        for name, result in zip(("agent_layer", "daemon"), results):
+            if isinstance(result, BaseException):
+                logger.error("Could not read the %s state", name, exc_info=result)
+                result = UNKNOWN[name]
+            states[name] = result
         self._answer = (time.monotonic(), states)
         return states
 
