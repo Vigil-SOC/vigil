@@ -25,7 +25,14 @@ FINDING = {
 }
 
 
-def _orchestrator(overlapping, records, data_service) -> Orchestrator:
+@pytest.fixture
+def attach(monkeypatch):
+    fake = MagicMock(return_value=True)
+    monkeypatch.setattr("services.daemon.orchestrator._attach_finding", fake)
+    return fake
+
+
+def _orchestrator(overlapping, records) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
@@ -35,39 +42,32 @@ def _orchestrator(overlapping, records, data_service) -> Orchestrator:
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
-    orch._data_service = data_service
     return orch
 
 
-def _nothing_new_opened(orch, data_service):
+def _nothing_new_opened(orch):
     orch._create_investigation.assert_not_awaited()
-    if data_service is not None:
-        data_service.create_case.assert_not_called()
     assert orch.stats["dedup_prevented"] == 1
     # The old dedup_prevention decision row is gone; only the counter remains.
     orch._log_ai_decision.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_attaches_to_the_case_of_the_overlapping_investigation():
-    data_service = MagicMock()
-    data_service.add_finding_to_case.return_value = True
-    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}}, data_service)
+async def test_attaches_to_the_case_of_the_overlapping_investigation(attach):
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}})
 
     await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
 
-    data_service.add_finding_to_case.assert_called_once_with("case-1", "f-2")
+    attach.assert_called_once_with("case-1", "f-2")
     orch._decide_trigger.assert_called_once_with(
         9, state="merged", reason="overlaps_open_work", merged_into="case-1"
     )
-    _nothing_new_opened(orch, data_service)
+    _nothing_new_opened(orch)
 
 
 @pytest.mark.asyncio
-async def test_merged_into_is_a_case_id():
-    data_service = MagicMock()
-    data_service.add_finding_to_case.return_value = True
-    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}}, data_service)
+async def test_merged_into_is_a_case_id(attach):
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}})
 
     await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
 
@@ -75,57 +75,50 @@ async def test_merged_into_is_a_case_id():
 
 
 @pytest.mark.asyncio
-async def test_prefers_the_first_overlap_that_has_a_case():
-    data_service = MagicMock()
-    data_service.add_finding_to_case.return_value = True
+async def test_prefers_the_first_overlap_that_has_a_case(attach):
     orch = _orchestrator(
-        ["inv-1", "inv-2"],
-        {"inv-1": {"case_id": None}, "inv-2": {"case_id": "case-2"}},
-        data_service,
+        ["inv-1", "inv-2"], {"inv-1": {"case_id": None}, "inv-2": {"case_id": "case-2"}}
     )
 
     await orch._create_investigation_for_finding(FINDING, None)
 
-    data_service.add_finding_to_case.assert_called_once_with("case-2", "f-2")
-    _nothing_new_opened(orch, data_service)
+    attach.assert_called_once_with("case-2", "f-2")
+    _nothing_new_opened(orch)
 
 
 @pytest.mark.asyncio
-async def test_overlap_with_caseless_run_is_not_a_merge():
-    data_service = MagicMock()
-    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": None}}, data_service)
+async def test_overlap_with_caseless_run_is_not_a_merge(attach):
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": None}})
 
     await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
 
-    data_service.add_finding_to_case.assert_not_called()
+    attach.assert_not_called()
     orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_awaited_once()
     assert orch.stats["dedup_prevented"] == 0
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_overlapping_investigation_holds_the_row(caplog):
+async def test_an_unreadable_overlapping_investigation_holds_the_row(attach, caplog):
     """``check_overlap`` only names live rows, so a read that comes back empty
     is a failed read, not a caseless run. Launching on it would open a second
     run on an entity a Case already covers."""
-    data_service = MagicMock()
-    orch = _orchestrator(["inv-1"], {}, data_service)
+    orch = _orchestrator(["inv-1"], {})
 
     with caplog.at_level("WARNING"):
         await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
 
     assert any("would not read" in r.message for r in caplog.records)
-    data_service.add_finding_to_case.assert_not_called()
+    attach.assert_not_called()
     orch._create_investigation.assert_not_awaited()
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
 
 
 @pytest.mark.asyncio
-async def test_a_failed_attach_is_logged_and_does_not_raise(caplog):
-    data_service = MagicMock()
-    data_service.add_finding_to_case.return_value = False
-    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}}, data_service)
+async def test_a_failed_attach_is_logged_and_does_not_raise(attach, caplog):
+    attach.return_value = False
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}})
 
     with caplog.at_level("WARNING"):
         await orch._create_investigation_for_finding(FINDING, None)
@@ -133,14 +126,17 @@ async def test_a_failed_attach_is_logged_and_does_not_raise(caplog):
     assert any("could not be attached" in r.message for r in caplog.records)
     assert any("leaving queued" in r.message for r in caplog.records)
     orch._create_investigation.assert_not_awaited()
-    data_service.create_case.assert_not_called()
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
 
 
 @pytest.mark.asyncio
-async def test_no_data_service_reads_as_a_failed_attach(caplog):
-    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}}, None)
+async def test_a_database_error_reads_as_a_failed_attach(monkeypatch, caplog):
+    def boom():
+        raise RuntimeError("Database not initialized")
+
+    monkeypatch.setattr("core.storage.service.get_db_manager", boom)
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}})
 
     with caplog.at_level("WARNING"):
         await orch._create_investigation_for_finding(FINDING, None)

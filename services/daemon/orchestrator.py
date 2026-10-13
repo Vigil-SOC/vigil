@@ -418,6 +418,33 @@ def _mint_case(session, spec: CaseSpec) -> str:
     return case_id
 
 
+# Intake rows only ever name Postgres findings, so these read Postgres directly
+# rather than through DatabaseDataService, which answers from the demo service
+# in demo mode and would never see them (#2236).
+def _load_finding(finding_id: str) -> Optional[Dict]:
+    """The finding as ``FindingSchema`` dumps it, or None if missing or unreadable."""
+    from core.storage.schemas import FindingSchema
+    from core.storage.service import DatabaseService
+
+    try:
+        finding = DatabaseService().get_finding(finding_id)
+    except Exception as e:
+        logger.error(f"Failed to read finding {finding_id}: {e}")
+        return None
+    return FindingSchema.dump(finding) if finding else None
+
+
+def _attach_finding(case_id: str, finding_id: str) -> bool:
+    """Link the finding to the case. False on any failure, never raises."""
+    from core.storage.service import DatabaseService
+
+    try:
+        return bool(DatabaseService().add_finding_to_case(case_id, finding_id))
+    except Exception as e:
+        logger.error(f"Failed to attach finding {finding_id} to case {case_id}: {e}")
+        return False
+
+
 def _record_human_ask_document(
     session, case_id: Optional[str], document: Optional[str]
 ) -> None:
@@ -494,7 +521,6 @@ class Orchestrator:
         self.workdir = WorkdirManager(config.workdir_base)
         self.shared_intel = SharedIntelligence()
 
-        self._data_service = None
         self._hourly_paused = False
 
         self.stats = {
@@ -526,20 +552,9 @@ class Orchestrator:
         self._abandon_in_flight()
         logger.warning("Orchestrator KILLED - all agents stopped")
 
-    def _init_services(self):
-        if self._data_service is None:
-            try:
-                from core.storage.database_data_service import DatabaseDataService
-
-                self._data_service = DatabaseDataService()
-                logger.info("Orchestrator: Database service initialized")
-            except Exception as e:
-                logger.error(f"Orchestrator: Failed to init data service: {e}")
-
     async def run(self, shutdown_event: asyncio.Event):
         """Main orchestrator entry point, called by SOCDaemon."""
         self._shutdown_event = shutdown_event
-        self._init_services()
 
         if not self._enabled:
             logger.info(
@@ -850,11 +865,7 @@ class Orchestrator:
             case_id = investigation.get("case_id")
             if not case_id:
                 continue
-            # No data service reads as a failed attach: logged, never raised.
-            added = bool(self._data_service) and self._data_service.add_finding_to_case(
-                case_id, finding_id
-            )
-            if added:
+            if _attach_finding(case_id, finding_id):
                 logger.info(
                     f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
                 )
@@ -879,12 +890,7 @@ class Orchestrator:
         hypothesis = item.get("hypothesis")
         hypothesis_subjects = item.get("hypothesis_subjects")
 
-        findings = []
-        if self._data_service and finding_ids:
-            for fid in finding_ids:
-                f = self._data_service.get_finding(fid)
-                if f:
-                    findings.append(f)
+        findings = [f for f in map(_load_finding, finding_ids) if f]
 
         mint = None
         if not case_id and finding_ids:
@@ -2127,9 +2133,9 @@ class Orchestrator:
 
     def _hydrate_detection_finding(self, row: Dict) -> Optional[Dict]:
         finding_id = row.get("finding_id")
-        if not finding_id or not self._data_service:
+        if not finding_id:
             return None
-        finding = self._data_service.get_finding(finding_id)
+        finding = _load_finding(finding_id)
         return lift_ai_enrichment(finding) if finding else None
 
     def _decide_trigger(
