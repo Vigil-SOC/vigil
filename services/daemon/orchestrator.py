@@ -434,6 +434,22 @@ def _load_finding(finding_id: str) -> Optional[Dict]:
     return FindingSchema.dump(finding) if finding else None
 
 
+def _open_case_holding(finding_id: str) -> Optional[str]:
+    """The newest not-closed Case already linked to this finding, or None. Raises on a failed read."""
+    from sqlalchemy import select
+
+    from core.storage.models import Case, case_findings
+
+    with get_db_manager().session_scope() as session:
+        return session.execute(
+            select(Case.case_id)
+            .join(case_findings, case_findings.c.case_id == Case.case_id)
+            .where(case_findings.c.finding_id == finding_id, Case.status != "closed")
+            .order_by(Case.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+
 def _attach_finding(case_id: str, finding_id: str) -> bool:
     """Link the finding to the case. False on any failure, never raises."""
     from core.storage.service import DatabaseService
@@ -748,19 +764,40 @@ class Orchestrator:
 
         Overlap with only caseless live runs (hunts, legacy) is not a merge:
         False, so the row proceeds to Claim and opens its own Case.
+
+        A finding already on a not-closed Case merges into it even when that
+        Case's investigation has finished and ``check_overlap`` no longer
+        names it (#2245). A closed Case does not count: the finding reopens.
         """
+        finding_id = finding.get("finding_id", "unknown")
+        try:
+            holding = _open_case_holding(finding_id)
+        except Exception as e:
+            logger.error(
+                "Failed to read open cases for finding %s; leaving queued: %s",
+                finding_id,
+                e,
+            )
+            return True
+        if holding:
+            self._count_dedup_prevented()
+            self._decide_trigger(
+                trigger_id,
+                state="merged",
+                reason="finding_on_open_case",
+                merged_into=holding,
+            )
+            return True
+
         overlapping = self.shared_intel.check_overlap(finding)
         if not overlapping:
             return False
-        finding_id = finding.get("finding_id", "unknown")
         outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
         if outcome is _Overlap.LAUNCH:
             return False
         if outcome is _Overlap.HOLD:
             return True
-        self.stats["dedup_prevented"] += 1
-        if _dedup_prevented is not None:
-            _dedup_prevented.add(1)
+        self._count_dedup_prevented()
         self._decide_trigger(
             trigger_id,
             state="merged",
@@ -768,6 +805,11 @@ class Orchestrator:
             merged_into=merged_into,
         )
         return True
+
+    def _count_dedup_prevented(self) -> None:
+        self.stats["dedup_prevented"] += 1
+        if _dedup_prevented is not None:
+            _dedup_prevented.add(1)
 
     async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
         kind = row.get("kind")

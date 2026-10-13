@@ -145,3 +145,39 @@ async def test_a_database_error_reads_as_a_failed_attach(monkeypatch, caplog):
     orch._create_investigation.assert_not_awaited()
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
+
+
+# A finding already on a not-closed Case merges into it even once that Case's
+# investigation has finished and ``check_overlap`` no longer names it (#2245).
+
+
+@pytest.mark.asyncio
+async def test_a_finding_on_an_open_case_merges_into_it(attach, monkeypatch):
+    monkeypatch.setattr(
+        "services.daemon.orchestrator._open_case_holding", lambda _fid: "case-7"
+    )
+    orch = _orchestrator(None, {})
+
+    await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
+
+    attach.assert_not_called()  # the link already exists
+    orch.shared_intel.check_overlap.assert_not_called()
+    orch._decide_trigger.assert_called_once_with(
+        9, state="merged", reason="finding_on_open_case", merged_into="case-7"
+    )
+    _nothing_new_opened(orch)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_open_case_lookup_holds_the_row(attach, monkeypatch):
+    def boom(_fid):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("services.daemon.orchestrator._open_case_holding", boom)
+    orch = _orchestrator(None, {})
+
+    await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
+
+    orch._create_investigation.assert_not_awaited()
+    orch._decide_trigger.assert_not_called()
+    assert orch.stats["dedup_prevented"] == 0
