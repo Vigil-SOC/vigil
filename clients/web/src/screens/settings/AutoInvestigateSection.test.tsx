@@ -137,6 +137,13 @@ describe('Limits and autonomy', () => {
     expect(screen.getByText(/Custom limits in effect/)).toBeInTheDocument()
   })
 
+  it('says what happens to alerts while automatic investigation is off: they queue, no case is opened', () => {
+    state.config = { ...DEFAULTS }
+    render(<AutoInvestigateSection notify={notify} />)
+    expect(screen.getByText(/wait in the Triage queue, but no case is opened and no agent starts/)).toBeInTheDocument()
+    expect(screen.queryByText(/grouped into cases/)).not.toBeInTheDocument()
+  })
+
   it('tags rows Default or Changed against the served defaults, and has no Unlimited switch', () => {
     state.config = { ...DEFAULTS, max_iterations_per_agent: 80 }
     render(<AutoInvestigateSection notify={notify} />)
