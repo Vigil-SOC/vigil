@@ -72,7 +72,7 @@ describe('LimitsStep', () => {
     expect(screen.getAllByText('Recommended')).toHaveLength(2) // Balanced and Assist
     expect(screen.getByRole('button', { name: /^Assist Recommended/ })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: /^Act/ })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByText(/Every response waits for your approval/)).toBeInTheDocument()
+    expect(screen.getByText(/Every action in the approval queue waits for you/)).toBeInTheDocument()
     expect(configApi.setOrchestrator).not.toHaveBeenCalled()
     expect(configApi.setForceManualApproval).not.toHaveBeenCalled()
   })

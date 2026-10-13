@@ -206,6 +206,25 @@ class TestConfidenceThresholds:
         assert action.status == status.value
         store.set_system_config.assert_not_called()
 
+    def test_env_true_holds_a_stored_act_outside_the_daemon(self, monkeypatch):
+        # Only the daemon sets the in-process flag; an API-side service must
+        # still read DAEMON_FORCE_APPROVAL=true as Assist over a stored Act.
+        monkeypatch.setenv("DAEMON_FORCE_APPROVAL", "true")
+        get_settings.cache_clear()
+        store = Mock()
+        store.read_system_config.return_value = {"enabled": False}
+        try:
+            with patch(
+                "core.response.approval_service.get_config_service",
+                return_value=store,
+            ):
+                svc = ApprovalService(config=ResponseConfig())
+                assert svc.force_manual_approval is False
+                action = _create(svc, 0.99)
+        finally:
+            get_settings.cache_clear()
+        assert action.status == ActionStatus.PENDING.value
+
 
 class TestConfiguredBands:
     """Every other comparison reads the same ResponseConfig (#916)."""

@@ -156,8 +156,9 @@ VALUES (
 
 -- Approval workflow: approval.force_manual_approval is not seeded. No row
 -- means nobody has picked Assist or Act yet, which reads as Assist (every
--- response waits for a person) unless DAEMON_FORCE_APPROVAL=false. A row an
--- earlier version seeded stays, and keeps that database in Act.
+-- action in the approval queue waits for a person) unless
+-- DAEMON_FORCE_APPROVAL=false. A row an earlier version seeded stays, and
+-- keeps that database in Act.
 
 -- Theme defaults
 INSERT INTO system_config (key, value, description, config_type)

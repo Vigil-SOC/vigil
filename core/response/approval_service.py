@@ -46,12 +46,16 @@ APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
 def stored_force_manual_approval(value: Optional[Dict[str, Any]]) -> bool:
     """Assist (True) or Act (False) from the ``APPROVAL_CONFIG_KEY`` row.
 
-    No row means nobody has picked one in Settings yet. That is Assist,
-    unless DAEMON_FORCE_APPROVAL=false picked Act for the deployment.
+    DAEMON_FORCE_APPROVAL=true is Assist whatever the row says, in every
+    process. No row means nobody has picked one in Settings yet. That is
+    Assist, unless DAEMON_FORCE_APPROVAL=false picked Act for the deployment.
     """
+    env = get_settings().daemon_force_approval
+    if env is True:
+        return True
     if isinstance(value, dict) and "enabled" in value:
         return bool(value["enabled"])
-    return get_settings().daemon_force_approval is not False
+    return env is not False
 
 
 _pending_gauge: Any = None

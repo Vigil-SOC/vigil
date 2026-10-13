@@ -211,7 +211,7 @@ export default function LimitsStep() {
                 Assist <span className="chip">Recommended</span>
               </div>
               <span className="text-xs text-tx-3">
-                Every response waits for your approval. Switch to Act once you trust Vigil’s decisions on your data.
+                Every action in the approval queue waits for you. Switch to Act once you trust Vigil’s decisions on your data.
               </span>
             </button>
             <button

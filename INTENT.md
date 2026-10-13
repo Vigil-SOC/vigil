@@ -32,8 +32,8 @@ respond:
   critical_action_floor: 0.70
   # Investigate a high finding at or above this. (DAEMON_HIGH_ACTION_FLOOR)
   high_action_floor: 0.80
-  # Route every action through human approval regardless of confidence:
-  # Assist. A fresh install starts here; false is Act.
+  # Route every action in the approval queue through a person, whatever its
+  # confidence: Assist. A fresh install starts here; false is Act.
   # (DAEMON_FORCE_APPROVAL, or Settings -> Limits & autonomy in the UI)
   force_manual_approval: true
 
