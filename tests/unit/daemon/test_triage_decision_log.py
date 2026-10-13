@@ -206,3 +206,39 @@ def test_a_finding_queued_or_in_flight_is_not_spawned_again():
     asyncio.run(run())
     assert started == ["f-1", "f-2", "f-1"]
     assert processor._enrich_inflight == set()
+
+
+def test_a_spawn_cancelled_while_waiting_for_a_slot_can_be_offered_again():
+    processor = FindingProcessor(ProcessingConfig(enrich_max_inflight=1))
+    started = []
+
+    async def run():
+        release = asyncio.Event()
+
+        async def enrich(finding, source=None):
+            started.append(finding["finding_id"])
+            await release.wait()
+
+        with patch.object(processor, "_enrich_in_background", enrich):
+            await processor._spawn_enrich({"finding_id": "f-1"})
+            waiting = asyncio.create_task(
+                processor._spawn_enrich({"finding_id": "f-2"})
+            )
+            await asyncio.sleep(0)
+            assert "f-2" in processor._enrich_inflight
+
+            waiting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiting
+            assert processor._enrich_inflight == {"f-1"}
+
+            release.set()
+            await asyncio.gather(*processor._enrich_tasks)
+            await asyncio.sleep(0)
+            await processor._spawn_enrich({"finding_id": "f-2"})
+            await asyncio.gather(*processor._enrich_tasks)
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert started == ["f-1", "f-2"]
+    assert processor._enrich_inflight == set()

@@ -358,7 +358,13 @@ class FindingProcessor:
             if finding_id in self._enrich_inflight:
                 return
             self._enrich_inflight.add(finding_id)
-        await self._enrich_slots.acquire()
+        try:
+            await self._enrich_slots.acquire()
+        except BaseException:
+            # Cancelled while waiting for a slot: it never ran, so a later
+            # sweep may offer it again.
+            self._enrich_inflight.discard(finding_id)
+            raise
         task = asyncio.create_task(self._enrich_in_background(finding, source))
         self._enrich_tasks.add(task)
 
