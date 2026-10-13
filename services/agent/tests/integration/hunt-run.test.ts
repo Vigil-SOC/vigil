@@ -100,7 +100,7 @@ describe("a hunt started through the queue", () => {
     // Both halves: the contract's spec, which resume reads, and the hunt state
     // its projection folds. A run event with only one of them breaks the other.
     expect(first?.payload).toMatchObject({
-      spec: { arch: "threathunt" },
+      spec: { arch: "hunt" },
       started_by: "test",
       hunt: { name: expect.any(String), status: expect.any(String) },
     });
