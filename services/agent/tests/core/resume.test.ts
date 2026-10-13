@@ -426,3 +426,39 @@ describe("a run the gateway refuses because its budget is spent", () => {
     expect((caught as Error).message).toBe(REASON);
   });
 });
+
+describe("an investigation that concludes with proposals", () => {
+  it("hands them to the backend on the terminal it reports", async () => {
+    const proposal = { action_type: "block_ip", target: "45.77.53.176", reason: "the beacon's destination" };
+    const cfg = join(mkdtempSync(join(tmpdir(), "vigil-propose-")), "vigil.config.yaml");
+    copyFileSync(join(FIXTURES, "case.config.yaml"), cfg);
+    const job: RunJob = {
+      schema_version: 1,
+      run_id: RUN,
+      run_kind: "investigate",
+      tenant_id: null,
+      enqueued_at: new Date().toISOString(),
+      enqueued_by: "test",
+      reason: "start",
+      request: { arch: "", playbook: join(FIXTURES, "case.playbook.yaml"), config: cfg, prompt: "go" },
+    };
+    const script: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "beaconing", citations: [], proposed_actions: [proposal] } }];
+
+    const posted: { url: string; body: unknown }[] = [];
+    const real = globalThis.fetch;
+    process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (init?.body !== undefined) posted.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      return { ok: true, status: 200, json: async () => ({ decisions: [] }) } as Response;
+    }) as typeof globalThis.fetch;
+    try {
+      await advance(new InProcessState(), leases, job, scriptedHarness(script));
+    } finally {
+      globalThis.fetch = real;
+      delete process.env["VIGIL_RUNS_URL"];
+    }
+
+    const terminal = posted.find((one) => one.url.endsWith(`${RUN}/terminal`));
+    expect(terminal?.body).toMatchObject({ outcome: "completed", proposed_actions: [proposal] });
+  });
+});

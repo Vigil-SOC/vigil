@@ -150,6 +150,7 @@ export interface TerminalPayload {
   // what its deliverable is, and read from here by whoever reports the run out.
   summary?: string;
   handoffs?: TerminalHandoff[];
+  proposed_actions?: ProposedAction[];
 }
 
 // Work the run finished by giving away, each carrying the document it hands over
@@ -158,6 +159,15 @@ export interface TerminalHandoff {
   case_id: string;
   title: string;
   markdown: string;
+}
+
+// An action a run's conclusion asks a person to approve. The run takes none of
+// them; the backend files each as a pending approval on the run's case.
+export interface ProposedAction {
+  action_type: string;
+  target: string;
+  reason: string;
+  confidence?: number;
 }
 
 export interface RunEventPayloads {

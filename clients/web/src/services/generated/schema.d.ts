@@ -10995,6 +10995,8 @@ export interface components {
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */
             outcome: string;
+            /** Proposed Actions */
+            proposed_actions?: unknown[];
             /**
              * Reason
              * @default
