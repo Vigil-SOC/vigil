@@ -497,8 +497,8 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
               <div className="home-notready">
                 <h3>Not ready to connect yet?</h3>
                 <p>
-                  Load a day of demo data from a sample estate. Everything is labelled demo and can be cleared in
-                  one click.
+                  Load a day of demo data from a sample estate: a small fictional company with two attacks under
+                  way. It shows on Dashboard, and Settings › Data &amp; uploads turns it off.
                 </p>
                 <div className="home-notready-actions">
                   {!setup.demo_enabled && (

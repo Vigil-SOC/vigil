@@ -3,8 +3,10 @@
 import logging
 import random
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from core.platform.demo_estate import build_estate
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,10 @@ def generate_entity_context() -> Dict[str, Any]:
 
 
 class DemoDataService:
-    """Service that provides demo/sample data for demo mode."""
+    """The sample estate (``demo_estate``) that demo mode serves, held in memory.
+
+    The random helpers above are kept for ``scripts/generate_sample_data.py``.
+    """
 
     _instance = None
     _findings: List[Dict] = []
@@ -107,103 +112,16 @@ class DemoDataService:
             self._generate_demo_data()
             DemoDataService._initialized = True
 
-    def _generate_finding(self, days_back: int = 30) -> Dict[str, Any]:
-        timestamp = datetime.now(timezone.utc) - timedelta(
-            days=random.randint(0, days_back),
-            hours=random.randint(0, 23),
-            minutes=random.randint(0, 59),
+    def _generate_demo_data(self):
+        """Load the sample estate, timed back from now."""
+        findings, cases = build_estate(datetime.now(timezone.utc))
+        logger.info(
+            "Loading the demo sample estate: %d findings, %d cases",
+            len(findings),
+            len(cases),
         )
-        severity = random.choices(SEVERITIES, weights=SEVERITY_WEIGHTS)[0]
-        mitre_preds = generate_mitre_predictions()
-
-        techniques = list(mitre_preds.keys())
-        if techniques:
-            primary = techniques[0]
-            desc = f"Detected {MITRE_TECHNIQUES.get(primary, 'Unknown')} ({primary}) activity"
-        else:
-            desc = "Anomalous activity detected"
-
-        return {
-            "finding_id": f"f-{timestamp.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
-            "timestamp": timestamp.isoformat(),
-            "data_source": random.choice(DATA_SOURCES),
-            "anomaly_score": round(random.uniform(0.3, 0.99), 3),
-            "severity": severity,
-            "status": (
-                random.choice(["new", "investigating", "resolved"])
-                if random.random() > 0.3
-                else "new"
-            ),
-            "mitre_predictions": mitre_preds,
-            "predicted_techniques": [
-                {
-                    "technique_id": t,
-                    "confidence": c,
-                    "technique_name": MITRE_TECHNIQUES.get(t, ""),
-                }
-                for t, c in mitre_preds.items()
-            ],
-            "entity_context": generate_entity_context(),
-            "cluster_id": random.choice(CLUSTERS) if random.random() < 0.7 else None,
-            "description": desc,
-            "demo": True,
-        }
-
-    def _generate_case(self, findings: List[Dict]) -> Dict[str, Any]:
-        now = datetime.now(timezone.utc)
-        num_findings = min(random.randint(2, 5), len(findings))
-        selected = random.sample(findings, num_findings)
-        finding_ids = [f["finding_id"] for f in selected]
-
-        severities = [f["severity"] for f in selected]
-        if "critical" in severities:
-            priority = "critical"
-        elif "high" in severities:
-            priority = "high"
-        else:
-            priority = "medium"
-
-        clusters = [f.get("cluster_id") for f in selected if f.get("cluster_id")]
-        title_cluster = clusters[0] if clusters else "suspicious-activity"
-
-        return {
-            "case_id": f"case-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
-            "title": f"Investigation: {title_cluster.replace('c-', '').replace('-', ' ').title()}",
-            "description": f"Demo case with {num_findings} correlated findings",
-            "finding_ids": finding_ids,
-            "status": random.choice(["open", "investigating", "closed"]),
-            "priority": priority,
-            "assignee": (
-                generate_username() + "@company.com" if random.random() < 0.5 else ""
-            ),
-            "tags": [
-                "demo",
-                random.choice(
-                    ["malware", "lateral-movement", "exfiltration", "phishing"]
-                ),
-            ],
-            "notes": [],
-            "timeline": [
-                {"timestamp": now.isoformat(), "event": "Case created (demo mode)"}
-            ],
-            "activities": [],
-            "resolution_steps": [],
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-            "demo": True,
-        }
-
-    def _generate_demo_data(self, num_findings: int = 25, num_cases: int = 5):
-        """Generate demo findings and cases."""
-        logger.info(f"Generating demo data: {num_findings} findings, {num_cases} cases")
-        random.seed(42)  # Consistent demo data
-        DemoDataService._findings = [
-            self._generate_finding() for _ in range(num_findings)
-        ]
-        DemoDataService._cases = [
-            self._generate_case(DemoDataService._findings) for _ in range(num_cases)
-        ]
-        logger.info("Demo data generated successfully")
+        DemoDataService._findings = findings
+        DemoDataService._cases = cases
 
     def get_findings(self, limit: int = 10000) -> List[Dict]:
         return DemoDataService._findings[:limit]
@@ -293,7 +211,7 @@ class DemoDataService:
         return False
 
     def reset(self):
-        """Regenerate demo data."""
+        """Restore the sample estate, dropping demo edits and re-timing it to now."""
         DemoDataService._initialized = False
         self._generate_demo_data()
         DemoDataService._initialized = True
