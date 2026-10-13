@@ -26,9 +26,8 @@ import { HuntBook } from "./book.js";
 
 const log = logger("agent.hunt");
 
-// The hunt plugin's code: tools that keep the hunt's record, and the hooks that
-// open it, apply what operators say, and end it. The loop, parking and stopping
-// are the kernel's; the record is the one every fold over a hunt already reads.
+// The hunt plugin's code: the record's tools, and hooks that open it, apply what operators
+// say and end it. Loop, parking and stopping are the kernel's.
 
 export interface HuntPorts {
   queue: DirectiveQueue;
@@ -83,10 +82,8 @@ function adapters(ctx: PluginContext): AdapterOptions {
   };
 }
 
-// A single agent takes many more turns than the controller took decisions: it does
-// the workers' querying itself. So the hunt's turn budget is its iteration budget
-// times the fan-out it replaces, and the hard ceilings scale with it unless the
-// deployment pinned them.
+// One agent does the workers' querying itself, so its turn budget is the iteration
+// budget times the fan-out it replaces; hard ceilings scale too unless pinned.
 export function kernelSpec(spec: RunSpec): RunSpec {
   const asked = huntSpec(spec).budgets.max_iterations;
   const factor = spec.dispatch.max_workers + 2;
@@ -286,9 +283,8 @@ function outcomeOf(outcome: HuntOutcome | null): Ending["outcome"] {
   return "completed";
 }
 
-// The board: every hypothesis with its id and standing, and the open questions.
-// Rendered each time the hunt is picked up, so the agent always works from the
-// record rather than from memory of it.
+// The board: every hypothesis with its id and standing, and the open questions. Rendered
+// at each pick-up, so the agent works from the record rather than its memory of it.
 export function briefOf(projection: Projection): string {
   const hunt = projection.hunt;
   const operator = operatorOf(projection);
@@ -311,9 +307,8 @@ export function briefOf(projection: Projection): string {
     .join("\n\n");
 }
 
-// What an operator said, and what the hunt's own rules said back: a rejection's
-// reason, an entity cleared as known-benign, a correction to the premise. The agent
-// works from these the way the lead read them off its digest. Newest last, bounded.
+// What an operator said and the hunt's rules said back (a rejection, a cleared entity, a
+// corrected premise), as the lead read them off its digest. Newest last, bounded.
 const OPERATOR_SHOWN = 12;
 
 function operatorOf(projection: Projection): string[] {

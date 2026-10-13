@@ -10,9 +10,8 @@ import { narrativeOf } from "./render.js";
 import { DEPLOYMENT_GAP_PROVENANCE } from "./strength.js";
 import type { HuntState } from "./types.js";
 
-// How a hunt opens and is picked back up, and the names its record is written in.
-// Shared by every engine that runs a hunt, so the ledger a hunt opens on is the one
-// every fold over it -- projection, distil, report, replay -- was written against.
+// How a hunt opens and is picked back up, and the names its record is written in, so
+// the ledger a hunt opens on is the one every fold over it was written against.
 
 // Seeded at its base rate: most activity that looks like this is not an attack,
 // so the benign account starts as the hypothesis to beat rather than an objection.

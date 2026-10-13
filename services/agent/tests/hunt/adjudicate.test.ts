@@ -21,11 +21,8 @@ import { BASE_RATE_PROVENANCE, startHunt } from "../../workflows/hunt/opening.js
 import { runHunt } from "../../workflows/hunt/workflow.js";
 import { huntSpecFor } from "../support/hunt.js";
 
-// The kind is the hunt with a different caller: the agent is handed a finding intake
-// admitted and the workflow intake chose, both in the hypothesis text, and proposes a
-// workflow rather than starting one. The lead's decision schema (HANDOFF_IR refused
-// in its enum) went with the controller; the guard is now that handoff_ir is never
-// offered, and conclude_hunt demands proposed_workflow.
+// The hunt with a different caller: handed intake's finding and chosen workflow, the agent
+// proposes a workflow, never starts one. handoff_ir is never offered; conclude_hunt needs proposed_workflow.
 const INTAKE_LINE =
   "intake admitted finding f-4821 (10.128.0.5 beaconing to 198.51.100.7 every 300s) and chose incident-response;" +
   " the host is under command and control";

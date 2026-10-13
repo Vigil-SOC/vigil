@@ -74,10 +74,8 @@ export function openGaps(projection: Projection, hypothesisId: string): number {
 
   for (const record of projection.evidence.values()) {
     const { tool, gap_key } = record.payload;
-    // A call the agent made that the estate could not answer, on a kernel hunt: no
-    // dispatch to key on, so one blind spot per tool, on the hypothesis it names --
-    // or, naming none, on every claim, as an unattributed declared gap is. Never
-    // closed by a later answer: not having been able to look once is a fact.
+    // A kernel hunt's failed call has no dispatch: one blind spot per tool, on the hypothesis
+    // it names or every claim, never closed by a later answer, since not looking is a fact.
     if (record.provenance === "tool_failure" && record.dispatch_id === null && typeof tool === "string") {
       const bears = record.payload["hypothesis_id"];
       if (bears === null || bears === undefined || bears === hypothesisId) callGaps.add(`call\0${tool}`);

@@ -4,9 +4,8 @@ import { steer } from "../../workflows/hunt/inbox.js";
 import { Journal } from "../../workflows/hunt/journal.js";
 import { bookOf, newLedger } from "../support/hunt.js";
 
-// The lead that folded the durable ledger and parked on an open checkpoint is gone.
-// Every hunt tool now opens the stored ledger and flushes it (withBook), so what
-// must hold is that an approval, once applied, is on the durable record.
+// Every hunt tool opens the stored ledger and flushes it (withBook), so what must hold is
+// that an approval, once applied, is on the durable record.
 describe("an approval nobody can see is an approval that did not happen", () => {
   it("releases the start gate and leaves the answer on the durable ledger", async () => {
     const started = await newLedger({ checkpoints: { hypothesis_approval: "ask" } });

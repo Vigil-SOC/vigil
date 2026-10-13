@@ -3,10 +3,8 @@ import type { CallPayload } from "../../contracts/events.js";
 import type { HuntEvent } from "../../workflows/hunt/ledger.js";
 import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView, type ProjectionOptions } from "../../workflows/hunt/projection.js";
 
-// The console reads a hunt in the controller's shape. A kernel hunt writes the same
-// record, so the projection folds it unchanged; what it lacks is the controller's
-// decision events, so its moves are read off the agent's calls instead, under the
-// verbs the console already shows.
+// A kernel hunt writes the controller's record, so the projection folds it unchanged. It
+// has no decision events, so its moves are read off the agent's calls under the same verbs.
 
 const VERB: Readonly<Record<string, string>> = {
   record_evidence: "INVESTIGATE",

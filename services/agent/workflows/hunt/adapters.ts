@@ -17,9 +17,8 @@ import type {
   WorkerEvidence,
 } from "./types.js";
 
-// The hunt's model calls that are not the agent's own: the disconfirmation critic
-// and the narrator. They carry a question to a model and an answer back, and never
-// touch the ledger; the hunt plugin decides what to write.
+// The hunt's model calls that are not the agent's own, the critic and the narrator: a
+// question to a model and an answer back, never the ledger, which the plugin writes.
 export interface AdapterOptions {
   harness: Harness<HuntKinds>;
   spec: RunSpec;

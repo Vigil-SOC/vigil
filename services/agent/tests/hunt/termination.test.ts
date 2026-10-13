@@ -218,10 +218,8 @@ describe("the budget checkpoint", () => {
     expect(resumed.projection.hunt.status).toBe("parked");
   });
 
-  // The turn that crosses the cost ceiling is by definition the one the harness
-  // refused, so a counter patched at decision time always under-reported a hunt
-  // parked on cost -- and an extension compared against that stale figure could
-  // un-park a hunt the harness would refuse on its next call.
+  // The turn that crosses the cost ceiling is the one the harness refused, so a counter
+  // patched at decision time under-reported it, and an extension could un-park too early.
   it("parks on cost at what was actually spent, and an extension that buys nothing keeps it parked", async () => {
     const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
     const started = await newLedger({ budgets });
@@ -262,9 +260,8 @@ describe("the budget checkpoint", () => {
     expect(short.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/leaves no room .* stays parked/);
   });
 
-  // The park the issue describes: the pool refused a call partway through a turn,
-  // so nothing but the spend events says what it cost. The resume folds those, and
-  // extend() has to be measured against them.
+  // The park the issue describes: the pool refused a call mid-turn, so only the spend
+  // events say what it cost. The resume folds those, and extend() is measured against them.
   it("measures an extension against the spend of the turn that was refused", async () => {
     const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
     const started = await newLedger({ budgets });

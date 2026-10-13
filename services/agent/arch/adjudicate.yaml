@@ -281,6 +281,7 @@ roles:
                 payload: { type: string, description: "The rows or aggregates as a JSON object, serialised to a string." }
                 supports: { type: array, items: { type: string } }
                 weakens: { type: array, items: { type: string } }
+                query_failed: { type: boolean, description: "True when the query behind this row failed, timed out or returned nothing." }
                 attacker_influenceable: { type: boolean }
                 # What the finding rests on, and who chose each value. A verdict asks
                 # whether anything here was attested by the telemetry, so a record

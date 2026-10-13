@@ -44,9 +44,8 @@ function hypothesisIn(request: TurnRequest, status = "active"): string {
 
 type Step = (request: TurnRequest) => { tool: string; args: unknown } | { say: string } | { emit: unknown };
 
-// A model that answers what it is shown, the way a real one does: it reads the ids
-// off the board and the results rather than knowing them in advance. Asked for an
-// emission -- the critic's argument, the narrator's account -- it answers by schema.
+// A model that reads the ids off the board and results, as a real one does. Asked for an
+// emission (the critic's argument, the narrator's account) it answers by schema.
 function modelOf(steps: readonly Step[], answers: { critic?: unknown } = {}): Provider & { requests: TurnRequest[] } {
   const requests: TurnRequest[] = [];
   let at = 0;

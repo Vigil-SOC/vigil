@@ -56,10 +56,8 @@ export interface HuntReport {
   iterations: number;
 }
 
-// A hunt is the hunt plugin on the kernel: one agent queries the estate and keeps
-// the hunt's record through the plugin's tools, and the verdict rules, the
-// operator's directives and the ending are the plugin's hooks. Kept under this
-// name so every caller that runs a hunt runs the kernel.
+// A hunt is the hunt plugin on the kernel: one agent keeps the record through its tools,
+// the verdicts, directives and ending in its hooks. Kept under this name for every caller.
 export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions): Promise<HuntReport> {
   const id = options.run_kind === "adjudicate" ? "adjudicate" : "hunt";
   const { manifest } = loadPlugin(id);

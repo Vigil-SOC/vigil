@@ -266,9 +266,8 @@ describe("the verdict is the only writer", () => {
   // A kernel hunt always has its critic: validate_hypothesis builds it off the
   // harness, so "no critic configured" is not a state the hunt can be in.
 
-  // VALIDATE's target_hypothesis_id was a decision field the controller re-asked
-  // for; the tool's hypothesis_id is required by its schema, and an unknown one is
-  // refused below rather than re-asked.
+  // The tool's hypothesis_id is required by its schema, and an unknown one is refused
+  // below rather than re-asked as the controller's VALIDATE did.
 });
 
 // The critic is the agent's harness's own model call, so a failing one is driven

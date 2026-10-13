@@ -27,12 +27,8 @@ import {
   type WorkerEvidence,
 } from "../../workflows/hunt/types.js";
 
-// The hunt's record, kept by one agent through tools rather than by a controller
-// deciding each iteration. Every write here is one the controller made, to the
-// same events with the same fields, so every fold over a hunt ledger -- the
-// projection, the distil episodic memory reads, the report, the narrative -- reads
-// a kernel hunt exactly as it read a controller one. What is gone is the
-// iteration machinery: the digest, the frontier ranking, the decision vocabulary.
+// The hunt's record, kept by one agent through tools. Every write is one the controller
+// made, so every fold over a hunt ledger reads a kernel hunt exactly as a controller one.
 
 // Prefixes the park a raised checkpoint sets, so lifting one can never lift the
 // budget park, which takes a different set of answers entirely.
@@ -126,9 +122,8 @@ export class HuntBook {
     return named.length === 1 ? named[0]! : null;
   }
 
-  // A blind spot: a call the estate could not answer. openGaps counts it once per
-  // tool, on the hypothesis it names or on every claim when it names none, so it
-  // gap-locks the way a failed dispatch did.
+  // A blind spot: a call the estate could not answer. openGaps counts it once per tool,
+  // on the hypothesis it names or every claim, so it gap-locks as a failed dispatch did.
   appendGap(tool: string, kind: "timeout" | "unavailable", hypothesisId: string | null): void {
     this.appendEvidence([
       {
@@ -268,9 +263,8 @@ export class HuntBook {
     if (record === undefined) return { said: `${hypothesisId}: the critic's argument could not be recorded` };
 
     const strength = evidenceStrength(this.projection, hypothesisId);
-    // Checked whichever way the critic argued: not having been able to look is never
-    // the same as having cleared it, so this never proves. Status is earned by rulings
-    // over real observations, so the hypothesis keeps it and says why it could not finish.
+    // Whichever way the critic argued, not having looked never proves. Status is earned by
+    // rulings, so the hypothesis keeps it and says why it could not finish (#2207).
     if (strength.open_gaps >= this.verdicts.gap_lock_threshold) {
       this.ledger.patch("hypothesis", hypothesisId, {
         resolution_reason: couldNotFinish(strength.open_gaps),
@@ -366,9 +360,8 @@ export class HuntBook {
     this.ledger.patch("hunt", hunt.hunt_id, { status: "active", parked_at: null, parked_reason: null });
   }
 
-  // Answers that reached the ledger -- through the console, journaled by the kernel,
-  // or through a directive below -- applied once each. Idempotent on what the
-  // ledger already says, so a resume applies nothing twice.
+  // Answers on the ledger, from the console or a directive below, applied once each:
+  // idempotent on what the ledger already says, so a resume applies nothing twice.
   reconcile(): void {
     for (const checkpoint of this.projection.checkpoints.values()) {
       const answer = resolutionOf(this.projection, checkpoint.checkpoint_id);

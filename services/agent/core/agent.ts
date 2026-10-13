@@ -82,9 +82,8 @@ export interface PluginHooks {
   tools?(ctx: PluginContext): readonly RegisteredTool[];
   // Wraps how a call reaches its tool, to shape what comes back.
   dispatch?(ctx: PluginContext, inner: ToolDispatch): ToolDispatch;
-  // Once, when the run starts: writes the run event and whatever opens it. Absent
-  // writes the kernel's own. A plugin whose record lives beside the run event --
-  // state its fold reads first -- writes the opening itself from \`base\`.
+  // Once, when the run starts: writes the run event and whatever opens it, from `base`,
+  // for a plugin whose record rides beside the run event. Absent writes the kernel's own.
   open?(ctx: PluginContext, base: RunPayload): Promise<void>;
   // Each time the run is picked up, before the loop.
   before?(ctx: PluginContext): Promise<Early | null>;
@@ -93,10 +92,8 @@ export interface PluginHooks {
   // The run's tool-turn allowance, read each time it is picked up, for a plugin
   // whose allowance lives in its own record and an operator can extend.
   turns?(ctx: PluginContext): Promise<number>;
-  // Every event the loop yields, in order, after the kernel has journaled its own.
-  // "halt" ends the loop there: a plugin's own ending, which the model does not
-  // control, reached between two calls. `halted` then says how the run ends.
-  // A Parked stops the loop there to wait, typically on a question a tool just raised.
+  // Every event the loop yields, after the kernel journals its own. "halt" ends the loop
+  // between two calls on the plugin's terms (`halted` says how); a Parked waits there.
   observe?(ctx: PluginContext, seen: StreamEvent<unknown>): Promise<void | "halt" | Parked>;
   halted?(ctx: PluginContext): Promise<Ending | Parked>;
   // The gateway's own allowance refused a call: not this run failing, and nothing
@@ -131,9 +128,8 @@ export interface AgentOptions {
   // The entity keys the run's opening recall reads, when the caller knows them
   // better than the spec does. Absent reads the spec's recall_keys.
   recall_keys?: readonly string[];
-  // One turn of an open-ended exchange rather than a run that ends: the caller
-  // holds the transcript and sends it whole, and nothing writes a terminal,
-  // because the person may always say something else.
+  // One turn of an open-ended exchange: the caller sends the whole transcript, and no
+  // terminal is written, because the person may always say something else.
   conversation?: Conversation;
   // The Vigil agent this run's skill reads are credited to (#1560). Absent records
   // them unattributed.

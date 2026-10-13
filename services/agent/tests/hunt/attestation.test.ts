@@ -164,9 +164,8 @@ describe("what a verdict may rest on", () => {
 
 // The gate this flag was built for, and the one direction it was always right in: an
 // adversary must not be able to talk the hunt out of a branch by writing a benign value.
-// The gate now sits on the hunt agent's abandon_hypothesis tool, so it is driven
-// through a whole run: the model records a finding, then cites it to drop the branch.
 describe("what an ABANDON may rest on", () => {
+  // On the agent's abandon_hypothesis tool, through a whole run: record, then cite it.
   const abandonCiting = async (restsOn: unknown[]) => {
     const state = new InProcessState<HuntKinds>();
     const provider = modelOf([

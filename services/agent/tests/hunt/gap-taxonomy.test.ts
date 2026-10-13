@@ -3,10 +3,9 @@
 // dispatch shape instead, so a worker that could not format its answer, or one parked on
 // an approval, was recorded as a blind spot -- floored to anomalous, and three on distinct
 // leads gap-locked a hypothesis to inconclusive as though the hunt could not look (#1436).
-//
-// The worker cases (an emission the schema rejected, a worker parked on an approval)
-// went with the controller's worker dispatcher. What remains is the call itself: the
-// hunt agent queries the estate, and its observe hook decides what a failure was.
+
+// The worker cases went with the controller's dispatcher. What remains is the call itself:
+// the hunt agent queries the estate, and its observe hook decides what a failure was.
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
