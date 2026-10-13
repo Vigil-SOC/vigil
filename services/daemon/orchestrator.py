@@ -345,6 +345,13 @@ def shadow_run_id_for(investigation_id: str) -> str:
     return run_id_for(f"{investigation_id}-shadow")
 
 
+# A Wake starts a new run. The first run's id is already taken in the queue (its
+# jobId) and in workflow_runs, so re-enqueueing under it starts nothing. The
+# woken run's id is kept in the workdir state, beside the status the Wake writes.
+def woken_run_id_for(investigation_id: str, wake: int) -> str:
+    return run_id_for(f"{investigation_id}-wake-{wake}")
+
+
 def _shadow_hypothesis(findings: List[Dict]) -> str:
     """One line the adjudicator puts on its board: what intake read into the finding.
 
@@ -1289,9 +1296,27 @@ class Orchestrator:
             raise ValueError(f"{workflow_id} declares unknown run_kind {declared!r}")
         return str(declared)
 
+    def _run_id(self, inv_id: str) -> str:
+        """The investigation's current run: its first, or the one its last Wake started."""
+        try:
+            woken = self.workdir.read_state(inv_id).get("run_id")
+        except Exception:  # noqa: BLE001 — no readable state is a first run
+            woken = None
+        return woken if isinstance(woken, str) and woken else run_id_for(inv_id)
+
+    def wake(self, inv_id: str) -> str:
+        """Point the investigation at a fresh run and return its id."""
+        state = self.workdir.read_state(inv_id)
+        wakes = int(state.get("wakes") or 0) + 1
+        run_id = woken_run_id_for(inv_id, wakes)
+        state.update(status="executing", error_count=0, wakes=wakes, run_id=run_id)
+        state.pop("failure_reason", None)
+        self.workdir.write_state(inv_id, state)
+        return run_id
+
     async def _enqueue_investigation(self, inv_record: Dict) -> None:
         inv_id = inv_record["investigation_id"]
-        run_id = inv_record.get("run_id") or run_id_for(inv_id)
+        run_id = inv_record.get("run_id") or self._run_id(inv_id)
         # One per line, as the console's run modal sends them. Empty for a workflow
         # that walks phases and has no board to put them on.
         hypotheses = [
@@ -1472,7 +1497,7 @@ class Orchestrator:
     # The ledger is the record and this row is the copy an operator reads, so the
     # copy is reconciled from the projection rather than written alongside it.
     async def _reconcile(self, inv_id: str) -> None:
-        projection = await read_projection(run_id_for(inv_id))
+        projection = await read_projection(self._run_id(inv_id))
         if projection is None:
             return
 
@@ -1527,7 +1552,7 @@ class Orchestrator:
     def _raise_run_approval(self, inv_id: str, checkpoint: Dict[str, Any]) -> None:
         question = checkpoint.get("question") or "Approve this action?"
         raise_for_checkpoint(
-            run_id=run_id_for(inv_id),
+            run_id=self._run_id(inv_id),
             checkpoint_id=str(checkpoint.get("checkpoint_id")),
             title=f"Approval required: {inv_id}",
             description=question,

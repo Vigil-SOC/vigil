@@ -25,6 +25,7 @@ from services.daemon.orchestrator import (
     Orchestrator,
     _shadow_hypothesis,
     shadow_run_id_for,
+    woken_run_id_for,
 )
 from services.daemon.workdir import WorkdirManager
 
@@ -704,3 +705,74 @@ class TestReconcile:
         # check kills a run that is working.
         orch._record_progress.assert_called_once()
         assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+
+# A Wake has to start a run the queue has not seen: the first run's id is its
+# BullMQ jobId and its workflow_runs key, so re-enqueueing under it starts nothing.
+class TestWake:
+    def _woken(self, tmp_path: Path) -> Orchestrator:
+        orch = _orchestrator()
+        orch.workdir = WorkdirManager(str(tmp_path))
+        orch.workdir.create(INV)
+        orch.workdir.write_state(
+            INV, {"status": "failed", "failure_reason": "400", "error_count": 3}
+        )
+        return orch
+
+    def test_a_wake_points_the_investigation_at_a_new_run(self, tmp_path):
+        orch = self._woken(tmp_path)
+
+        first = orch.wake(INV)
+        second = orch.wake(INV)
+
+        assert first == woken_run_id_for(INV, 1)
+        assert second == woken_run_id_for(INV, 2)
+        assert len({run_id_for(INV), first, second}) == 3
+        state = orch.workdir.read_state(INV)
+        assert state["run_id"] == second
+        assert state["status"] == "executing"
+        assert state["error_count"] == 0
+        assert "failure_reason" not in state
+
+    @pytest.mark.asyncio
+    async def test_the_woken_run_is_enqueued_and_recorded_under_its_new_id(
+        self, tmp_path, _recorded_runs
+    ):
+        orch = self._woken(tmp_path)
+        run_id = orch.wake(INV)
+
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued:
+            # The pickup path: a row read back from the database carries no run id.
+            await orch._enqueue_investigation(_record(status="assigned"))
+
+        assert enqueued.await_args[0][0]["run_id"] == run_id
+        assert _recorded_runs.begin_run.call_args.kwargs["run_id"] == run_id
+
+    @pytest.mark.asyncio
+    async def test_reconcile_and_approvals_follow_the_woken_run(self, tmp_path):
+        orch = self._woken(tmp_path)
+        run_id = orch.wake(INV)
+
+        read = AsyncMock(return_value={"open_checkpoint": {"checkpoint_id": "c1"}})
+        with (
+            patch("services.daemon.orchestrator.read_projection", new=read),
+            patch("services.daemon.orchestrator.raise_for_checkpoint") as raised,
+        ):
+            await orch._reconcile(INV)
+
+        read.assert_awaited_once_with(run_id)
+        assert raised.call_args.kwargs["run_id"] == run_id
+
+    @pytest.mark.asyncio
+    async def test_an_investigation_never_woken_keeps_its_first_run(self, tmp_path):
+        orch = _orchestrator()
+        orch.workdir = WorkdirManager(str(tmp_path))
+        orch.workdir.create(INV)
+
+        read = AsyncMock(return_value=None)
+        with patch("services.daemon.orchestrator.read_projection", new=read):
+            await orch._reconcile(INV)
+
+        read.assert_awaited_once_with(run_id_for(INV))
