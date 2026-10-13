@@ -34,6 +34,13 @@ PINNED = [
     REPO / "core" / "workflows" / "run_bridge_router.py",
     REPO / "core" / "workflows" / "workflows_service.py",
 ]
+# Agent tools, reached by runs and by people in chat alike: each one follows demo
+# mode only with a person behind the call (follow_demo=current_caller() is not None).
+CALLER_AWARE = [
+    REPO / "core" / "agents" / "tool_registry.py",
+    REPO / "core" / "detections" / "tools.py",
+    REPO / "tools" / "mcp" / "vigil.py",
+]
 
 
 @pytest.fixture
@@ -49,25 +56,37 @@ def _connect(service: DatabaseDataService) -> MagicMock:
     return db
 
 
+def _follow_demo_arguments(path: Path):
+    """``(line, the follow_demo argument or None)`` per DatabaseDataService built."""
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == (
+            "DatabaseDataService"
+        ):
+            given = [k.value for k in node.keywords if k.arg == "follow_demo"]
+            yield node.lineno, given[0] if given else None
+
+
 def test_every_daemon_and_push_data_service_ignores_demo_mode():
-    unpinned = []
-    for path in PINNED:
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not (
-                isinstance(node, ast.Call)
-                and getattr(node.func, "id", None) == "DatabaseDataService"
-            ):
-                continue
-            pins = [
-                k
-                for k in node.keywords
-                if k.arg == "follow_demo"
-                and isinstance(k.value, ast.Constant)
-                and k.value.value is False
-            ]
-            if not pins:
-                unpinned.append(f"{path.relative_to(REPO)}:{node.lineno}")
+    unpinned = [
+        f"{path.relative_to(REPO)}:{line}"
+        for path in PINNED
+        for line, arg in _follow_demo_arguments(path)
+        if not (isinstance(arg, ast.Constant) and arg.value is False)
+    ]
     assert not unpinned
+
+
+def test_every_agent_tool_data_service_follows_the_caller():
+    """Not a constant: ``current_caller() is not None``, or a name bound to it."""
+    found, wrong = 0, []
+    for path in CALLER_AWARE:
+        for line, arg in _follow_demo_arguments(path):
+            found += 1
+            text = ast.unparse(arg) if arg is not None else ""
+            if text not in ("current_caller() is not None", "follow_demo"):
+                wrong.append(f"{path.relative_to(REPO)}:{line} {text!r}")
+    assert found >= len(CALLER_AWARE)
+    assert not wrong
 
 
 @pytest.mark.asyncio
@@ -141,3 +160,18 @@ def test_agent_tools_follow_demo_mode_only_with_a_person_behind_them(demo_on):
     with acting_as("analyst"):
         assert tool_registry._data().is_demo_mode() is True
         assert vigil_mcp.get_data_service().is_demo_mode() is True
+
+
+@pytest.mark.asyncio
+async def test_reconstruct_run_reads_postgres_for_a_run(demo_on, postgres):
+    from core.detections.tools import SecurityDetectionsTools
+
+    tools = object.__new__(SecurityDetectionsTools)  # no rule corpus needed
+    postgres.get_findings.return_value = []
+
+    await tools.reconstruct_run(steps=[])
+    assert postgres.get_findings.call_count == 1
+
+    with acting_as("analyst"):  # a person in chat sees the demo set instead
+        await tools.reconstruct_run(steps=[])
+    assert postgres.get_findings.call_count == 1

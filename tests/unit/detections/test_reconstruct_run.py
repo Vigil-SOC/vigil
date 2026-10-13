@@ -140,7 +140,9 @@ async def test_backend_tool_dispatches_reconstruct_run(monkeypatch):
         def get_findings(self, **_kwargs):
             return recorded["findings"]
 
-    monkeypatch.setattr("core.detections.tools.DatabaseDataService", lambda: _Store())
+    monkeypatch.setattr(
+        "core.detections.tools.DatabaseDataService", lambda **_: _Store()
+    )
 
     assert any(tool["name"] == "reconstruct_run" for tool in ALL_TOOLS)
 
@@ -160,7 +162,7 @@ async def test_backend_tool_dispatches_reconstruct_run(monkeypatch):
             return no_loglm
 
     monkeypatch.setattr(
-        "core.detections.tools.DatabaseDataService", lambda: _RulesOnly()
+        "core.detections.tools.DatabaseDataService", lambda **_: _RulesOnly()
     )
     result, handled = await execute_backend_tool(
         "reconstruct_run", {"steps": recorded["steps"]}
@@ -184,7 +186,9 @@ async def test_tool_reads_findings_in_the_trace_window(monkeypatch):
             seen.update(kwargs)
             return recorded["findings"]
 
-    monkeypatch.setattr("core.detections.tools.DatabaseDataService", lambda: _Store())
+    monkeypatch.setattr(
+        "core.detections.tools.DatabaseDataService", lambda **_: _Store()
+    )
     await SecurityDetectionsTools().reconstruct_run(steps=recorded["steps"])
     assert seen["timestamp_start"] == datetime(2026, 9, 10, 12, 0, 0)
     assert seen["timestamp_end"] == datetime(2026, 9, 10, 12, 22, 0)

@@ -411,18 +411,20 @@ def is_demo_mode() -> bool:
     if enabled is not None:
         return enabled
     global _demo_mode_read
+    # One read of the global: forget_demo_mode() may clear it from another thread.
+    read = _demo_mode_read
     now = time.monotonic()
-    if _demo_mode_read is None or now >= _demo_mode_read[0]:
+    if read is None or now >= read[0]:
         saved = _saved_demo_mode()
         if saved is not None:
-            _demo_mode_read = (now + _DEMO_MODE_TTL_SECONDS, saved, True)
-        elif _demo_mode_read is not None and _demo_mode_read[2]:
-            last = _demo_mode_read[1]
-            _demo_mode_read = (now + _DEMO_MODE_RETRY_SECONDS, last, True)
+            read = (now + _DEMO_MODE_TTL_SECONDS, saved, True)
+        elif read is not None and read[2]:
+            read = (now + _DEMO_MODE_RETRY_SECONDS, read[1], True)
         else:
             from_file = bool(get_general_config("demo_mode", False))
-            _demo_mode_read = (now + _DEMO_MODE_RETRY_SECONDS, from_file, False)
-    return _demo_mode_read[1]
+            read = (now + _DEMO_MODE_RETRY_SECONDS, from_file, False)
+        _demo_mode_read = read
+    return read[1]
 
 
 def forget_demo_mode() -> None:

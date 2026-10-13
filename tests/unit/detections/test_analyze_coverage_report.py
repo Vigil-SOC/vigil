@@ -205,7 +205,9 @@ async def test_analyze_coverage_steps_is_the_run_report_not_catalog(monkeypatch)
         def get_findings(self, **_kwargs):
             return recorded["findings"]
 
-    monkeypatch.setattr("core.detections.tools.DatabaseDataService", lambda: _Store())
+    monkeypatch.setattr(
+        "core.detections.tools.DatabaseDataService", lambda **_: _Store()
+    )
     tools = SecurityDetectionsTools()
     report = await tools.analyze_coverage(steps=recorded["steps"], limit=2)
 
@@ -234,7 +236,9 @@ async def test_analyze_coverage_run_id_asks_the_agent_layer(monkeypatch):
             ]
 
     monkeypatch.setattr("core.detections.tools.read_projection", fake_read)
-    monkeypatch.setattr("core.detections.tools.DatabaseDataService", lambda: _Store())
+    monkeypatch.setattr(
+        "core.detections.tools.DatabaseDataService", lambda **_: _Store()
+    )
 
     tools = SecurityDetectionsTools()
     report = await tools.analyze_coverage(run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -259,7 +263,9 @@ async def test_empty_steps_with_run_id_still_reads_projection(monkeypatch):
             return recorded["findings"]
 
     monkeypatch.setattr("core.detections.tools.read_projection", fake_read)
-    monkeypatch.setattr("core.detections.tools.DatabaseDataService", lambda: _Store())
+    monkeypatch.setattr(
+        "core.detections.tools.DatabaseDataService", lambda **_: _Store()
+    )
     report = await SecurityDetectionsTools().analyze_coverage(
         run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", steps=[]
     )
