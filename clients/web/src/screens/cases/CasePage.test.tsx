@@ -1002,7 +1002,57 @@ describe('case page', () => {
       testState.recordRows = rows
       await openRecord()
       fireEvent.click(await screen.findByRole('button', { name: 'About the record' }))
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit rows are not.')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('the case’s activity history')
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Only the run’s rows are hash-chained. Case audit and activity rows are not.')
+    })
+
+    it('lists case activities among the run rows, typed by their writer and counted under their chip', async () => {
+      const activity = (id: string, at: string, kind: string, text: string) => ({ id, at, kind, source: 'case_activities', chained: false, text })
+      testState.recordRows = [
+        activity('activity:3', '2026-06-15T10:12:00+00:00', 'agent_run_priority', 'Priority raised from unknown to critical by the investigation'),
+        rows[3],
+        activity('activity:2', '2026-06-15T10:10:00+00:00', 'case_merged', 'Merged case case-9 into this case'),
+        rows[2],
+        activity('activity:1', '2026-06-15T10:07:00+00:00', 'resolution', 'Analyst wrote a resolution note'),
+        rows[1],
+        activity('activity:0', '2026-06-15T10:02:00+00:00', 'finding_added', 'Hunt run-1 added alert f-1'),
+        rows[0],
+      ]
+      await openRecord()
+      expect(await screen.findByRole('button', { name: 'All 8' })).toBeInTheDocument()
+      const texts = Array.from(document.querySelectorAll('.rec-row .rec-text')).map((el) => el.firstChild?.textContent)
+      expect(texts).toEqual([
+        'Priority raised from unknown to critical by the investigation',
+        'Run started',
+        'Merged case case-9 into this case',
+        'M. Kaur closed the task',
+        'Analyst wrote a resolution note',
+        'Recalled 3 rows',
+        'Hunt run-1 added alert f-1',
+        'Lead started step 7',
+      ])
+      const row = (text: string) => screen.getByText(text).closest('.rec-row') as HTMLElement
+      expect(within(row('Priority raised from unknown to critical by the investigation')).getByText('Agent')).toBeInTheDocument()
+      expect(within(row('Hunt run-1 added alert f-1')).getByText('Agent')).toBeInTheDocument()
+      expect(within(row('Merged case case-9 into this case')).getByText('System')).toBeInTheDocument()
+      // An activity named like a run event is still typed by who wrote it.
+      expect(within(row('Analyst wrote a resolution note')).getByText('Human')).toBeInTheDocument()
+      expect(row('Priority raised from unknown to critical by the investigation')).not.toHaveTextContent('chained')
+      const time = row('Priority raised from unknown to critical by the investigation').querySelector('.rec-time')
+      expect(time).toHaveTextContent('10:12')
+      expect(time?.getAttribute('title')).toMatch(/10:12/)
+      for (const name of ['Agent 3', 'Human 2', 'Memory 1', 'System 2']) expect(screen.getByRole('button', { name })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Agent 3' }))
+      expect(screen.getByText('Priority raised from unknown to critical by the investigation')).toBeInTheDocument()
+      expect(screen.getByText('Hunt run-1 added alert f-1')).toBeInTheDocument()
+      expect(screen.queryByText('Merged case case-9 into this case')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Human 2' }))
+      expect(screen.getByText('Analyst wrote a resolution note')).toBeInTheDocument()
+      expect(screen.getByText('M. Kaur closed the task')).toBeInTheDocument()
+      expect(screen.queryByText('Lead started step 7')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'System 2' }))
+      expect(screen.getByText('Merged case case-9 into this case')).toBeInTheDocument()
+      expect(screen.getByText('Run started')).toBeInTheDocument()
     })
 
     it('Replay links to the run on Workflows, and closes the drawer', async () => {

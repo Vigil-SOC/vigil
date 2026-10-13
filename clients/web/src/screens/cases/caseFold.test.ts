@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actionWords, huntHypothesis, readFold, runSentence, stanceTotals, type RunFold } from './caseFold'
+import { actionWords, huntHypothesis, readFold, recordChip, runSentence, stanceTotals, type RunFold } from './caseFold'
 
 describe('actionWords', () => {
   it('has plain words for every hunt action', () => {
@@ -53,5 +53,18 @@ describe('stanceTotals', () => {
   it('derives neither from the row count when the server does not send it', () => {
     const fold = hunt([{ hypothesis_id: 'h1', statement: 'owned', status: 'active', supports: 95, weakens: 3, provenance: 'hunt_spec' }])
     expect(stanceTotals(fold)).toEqual({ supports: 95, weakens: 3, neither: 59 })
+  })
+})
+
+describe('recordChip', () => {
+  it('types a case activity by its writer, not by a run-event kind it happens to share', () => {
+    for (const kind of ['agent_run_report', 'agent_run_handoff', 'agent_run_priority', 'finding_added', 'actions_proposed']) {
+      expect(recordChip(kind, 'case_activities')).toBe('agent')
+    }
+    expect(recordChip('case_merged', 'case_activities')).toBe('system')
+    expect(recordChip('note', 'case_activities')).toBe('human')
+    expect(recordChip('recall', 'case_activities')).toBe('human')
+    expect(recordChip('recall', 'run')).toBe('memory')
+    expect(recordChip('decision')).toBe('agent')
   })
 })

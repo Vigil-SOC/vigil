@@ -247,7 +247,15 @@ export function workerAt(fold: HuntFold, iteration: number): string | null {
   return fold.moves.find((move) => move.iteration === iteration)?.worker || null
 }
 
-export function recordChip(kind: string): RecordChip {
+/** A case activity is typed by its writer: a run's own, a merge, or else a person through the API. */
+function activityChip(kind: string): RecordChip {
+  if (kind.startsWith('agent_run_') || kind === 'finding_added' || kind === 'actions_proposed') return 'agent'
+  if (kind === 'case_merged') return 'system'
+  return 'human'
+}
+
+export function recordChip(kind: string, source = 'run'): RecordChip {
+  if (source === 'case_activities') return activityChip(kind)
   switch (kind) {
     case 'recall':
       return 'memory'
