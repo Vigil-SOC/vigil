@@ -102,12 +102,13 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
 }
 
 const openCase = vi.fn()
+const setViewFull = vi.fn()
 
 function renderScreen(path = '/triage') {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={openCase} setViewFull={vi.fn()} />} />
+        <Route path="/triage" element={<TriageScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} openCase={openCase} setViewFull={setViewFull} />} />
         <Route path="/cases" element={<p>Cases page</p>} />
       </Routes>
     </MemoryRouter>,
@@ -387,5 +388,20 @@ describe('TriageScreen', () => {
     cleanup()
     renderScreen('/triage?kind=schedule')
     expect(await screen.findByText('Nothing in the queue matches these filters.')).toBeInTheDocument()
+  })
+})
+
+describe('queue scrolling', () => {
+  it('fills the view and keeps the table in a scroll box with its header inside, the tiles and chips outside', async () => {
+    vi.mocked(triageApi.get).mockResolvedValue({ data: payload() } as never)
+    renderScreen()
+
+    const box = await screen.findByTestId('triage-scroll')
+    expect(setViewFull).toHaveBeenCalledWith(true)
+    expect(box).toHaveClass('list-scroll')
+    expect(within(box).getByRole('table')).toBeInTheDocument()
+    expect(within(box).getAllByRole('columnheader').length).toBeGreaterThan(0)
+    expect(box).not.toContainElement(screen.getByRole('group', { name: 'Filters' }))
+    expect(box).not.toContainElement(screen.getByLabelText('Intake strip'))
   })
 })
