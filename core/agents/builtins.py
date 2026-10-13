@@ -46,6 +46,10 @@ class AgentId(str, Enum):
 ORCHESTRATOR_ACTOR = "orchestrator"
 ORCHESTRATION_DECISION_ID = "orchestration"
 
+# The daemon's auto-triage is not the triage agent, but it does triage work, so
+# its verdicts log under the triage agent's action id and share its filter.
+TRIAGE_DECISION_ID = "triage"
+
 
 def blank_model(value: object) -> Optional[str]:
     """A model id with surrounding whitespace removed. Blank is unset."""
@@ -91,7 +95,7 @@ class AgentProfile:
 BUILTIN_AGENTS = [
     {
         "id": "triage",
-        "decision_id": "triage",
+        "decision_id": TRIAGE_DECISION_ID,
         "component_category": "triage",
         "role": "Triage Agent specializing in rapid alert assessment",
         "name": "Triage agent",

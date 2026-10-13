@@ -4,8 +4,10 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.agents.builtins import TRIAGE_DECISION_ID
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
 from core.llm.outage import report_outage, report_recovered
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY_OUTAGE = "daemon-triage-gateway"
 _PROVIDER_OUTAGE = "daemon-triage-provider"
+_DECISION_LOG_OUTAGE = "daemon-triage-decision-log"
 
 # After this many consecutive failures (e.g. no provider key), pause enrichment
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
@@ -561,14 +564,17 @@ class FindingProcessor:
             prompt = self._build_triage_prompt(finding)
 
             # Get AI assessment with timeout
+            sent_to: Dict[str, Optional[str]] = {}
             response, error = await asyncio.wait_for(
-                self._get_ai_triage(prompt), timeout=self.config.triage_timeout
+                self._get_ai_triage(prompt, sent_to),
+                timeout=self.config.triage_timeout,
             )
 
             if response:
                 # Parse and apply AI assessment
                 finding = self._apply_triage_result(finding, response)
                 self.stats["triaged"] += 1
+                await self._log_triage_decision(finding, sent_to)
             else:
                 finding["ai_triage_error"] = error or "empty LLM response"
 
@@ -681,13 +687,18 @@ REASONING: [Brief explanation]
             provider, model, component_fallback("triage"), "triage"
         )
 
-    async def _get_ai_triage(self, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+    async def _get_ai_triage(
+        self, prompt: str, sent_to: Optional[Dict[str, Optional[str]]] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Get AI triage response via the LLM queue.
 
         Returns ``(content, error)``: exactly one is set. Errors are returned
         rather than swallowed so the caller can persist them on the finding —
         previously a worker failure came back as empty content and the finding
-        was stored indistinguishable from a triaged, unremarkable one."""
+        was stored indistinguishable from a triaged, unremarkable one.
+
+        ``sent_to``, when given, is filled with the provider and model the
+        prompt went to, for the decision log."""
         await self._ensure_gateway()
         if self._llm_gateway is None:
             return None, "LLM gateway unavailable"
@@ -701,6 +712,8 @@ REASONING: [Brief explanation]
             return None, "no LLM provider configured"
         report_recovered(logger, _PROVIDER_OUTAGE, "LLM provider configured")
         provider_id, model = target
+        if sent_to is not None:
+            sent_to.update(provider_id=provider_id, model=model)
         try:
             # The gateway's own default (90s) would otherwise cap the wait.
             result = await self._llm_gateway.submit(
@@ -778,6 +791,70 @@ REASONING: [Brief explanation]
         }
 
         return finding
+
+    async def _log_triage_decision(
+        self, finding: Dict[str, Any], sent_to: Dict[str, Optional[str]]
+    ) -> None:
+        """Record the triage verdict as an AI decision, so an analyst can review
+        and grade it beside the orchestrator's. One row per answered triage, so
+        a finding the backfill triages again gets a second row. Best-effort: a
+        failed write is logged and triage carries on."""
+        finding_id = finding.get("finding_id")
+        result = (finding.get("ai_triage") or {}).get("result") or {}
+        # A reply with no severity and no action left nothing to grade, and a
+        # probe is scored against its known answer, not by a person (#923).
+        if not finding_id or finding.get("data_source") == PROBE_DATA_SOURCE:
+            return
+        if not (result.get("severity") or result.get("recommended_action")):
+            return
+        try:
+            await asyncio.to_thread(
+                self._write_triage_decision, finding_id, result, sent_to
+            )
+        except Exception as e:  # noqa: BLE001 -- the verdict stands without its log
+            report_outage(
+                logger,
+                _DECISION_LOG_OUTAGE,
+                "Could not log the triage decision for %s, so it is missing "
+                "from AI Decisions: %s",
+                finding_id,
+                e,
+            )
+            return
+        report_recovered(logger, _DECISION_LOG_OUTAGE, "Triage decisions logged")
+
+    @staticmethod
+    def _write_triage_decision(
+        finding_id: str, result: Dict[str, Any], sent_to: Dict[str, Optional[str]]
+    ) -> None:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import AIDecisionLog
+
+        with get_db_manager().session_scope() as session:
+            session.add(
+                AIDecisionLog(
+                    # The whole uuid: at triage volume, eight hex digits (the
+                    # orchestrator's) would collide on the unique key.
+                    decision_id=f"triage-{uuid.uuid4().hex}",
+                    agent_id=TRIAGE_DECISION_ID,
+                    finding_id=finding_id,
+                    decision_type="triage",
+                    # The column needs a number; a reply without a usable
+                    # confidence is logged at 0, first in the review queue.
+                    confidence_score=result.get("confidence", 0.0),
+                    reasoning=result.get("reasoning") or "",
+                    recommended_action=result.get("recommended_action") or "",
+                    # Every key named even when empty, so a reader can rely on
+                    # the shape.
+                    decision_metadata={
+                        "source": "auto_triage",
+                        "severity": result.get("severity"),
+                        "category": result.get("category"),
+                        "provider_id": sent_to.get("provider_id"),
+                        "model": sent_to.get("model"),
+                    },
+                )
+            )
 
     async def _enrich_finding(self, finding: Dict[str, Any]) -> Dict[str, Any]:
         """Enrich finding with threat intelligence."""
