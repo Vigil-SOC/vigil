@@ -59,7 +59,7 @@ function resumeJob(id: string): RunJob {
   };
 }
 
-const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "nothing to pursue", citations: [] } }];
+const CONCLUDE: ScriptedTurn[] = [{ calls: [] }, { emit: { action: "CONCLUDE", rationale: "nothing to pursue", citations: [], proposed_actions: [] } }];
 
 // investigate rather than hunt: what is under test is the worker -- opening a
 // ledger, re-entering one, refusing a settled run. The hunt has its own file.
