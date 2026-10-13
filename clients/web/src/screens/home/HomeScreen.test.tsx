@@ -14,6 +14,7 @@ vi.mock('../../services/api', () => ({
   },
   configApi: {
     getSetupSteps: vi.fn(),
+    getDemoMode: vi.fn(),
     setDemoMode: vi.fn(),
   },
   triageApi: {
@@ -516,22 +517,37 @@ describe('Home', () => {
     expect(screen.getByRole('link', { name: 'Connect data' })).toBeInTheDocument()
   })
 
-  it('shows the demo-mode message and leaves the action once demo is on', async () => {
+  it('turns demo on and points at Dashboard, where the sample estate shows', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     vi.mocked(configApi.getSetupSteps).mockResolvedValue({
       data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
     } as never)
-    vi.mocked(configApi.setDemoMode).mockResolvedValue({
-      data: { message: "Demo mode is on. The sample estate's findings are on Dashboard now." },
-    } as never)
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false, source: 'config' } } as never)
+    vi.mocked(configApi.setDemoMode).mockResolvedValue({ data: { success: true } } as never)
     renderHome()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Explore with demo data' }))
+    expect(await screen.findByText('Demo data is on. Dashboard shows the sample estate.')).toBeInTheDocument()
     expect(configApi.setDemoMode).toHaveBeenCalledWith(true)
-    expect(
-      await screen.findByText("Demo mode is on. The sample estate's findings are on Dashboard now."),
-    ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Explore with demo data' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Dashboard' })).toHaveAttribute('href', '/dashboard')
+  })
+
+  it("leaves demo off when the server's environment sets DEMO_MODE=false", async () => {
+    vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
+    vi.mocked(configApi.getSetupSteps).mockResolvedValue({
+      data: { steps: doneSteps, alerts_exist: 0, demo_enabled: false },
+    } as never)
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({
+      data: { enabled: false, source: 'environment' },
+    } as never)
+    vi.mocked(configApi.setDemoMode).mockClear()
+    renderHome()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore with demo data' }))
+    expect(await screen.findByText("Demo mode is set by the server's environment")).toBeInTheDocument()
+    expect(configApi.setDemoMode).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Explore with demo data' })).toBeInTheDocument()
   })
 
   it('approves a reversible row after the 8 s fuse, not before', async () => {

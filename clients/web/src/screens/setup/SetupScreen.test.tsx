@@ -84,6 +84,7 @@ function renderSetup() {
         <Routes>
           <Route path="/setup" element={<SetupScreen />} />
           <Route path="/" element={<div>console-home</div>} />
+          <Route path="/dashboard" element={<div>console-dashboard</div>} />
         </Routes>
       </MemoryRouter>
     </StrictMode>,
@@ -281,14 +282,14 @@ describe('SetupScreen', () => {
     })
   })
 
-  describe('Skip setup and look around with demo data', () => {
+  describe('Skip setup and explore demo data on Dashboard', () => {
     const link = () =>
-      screen.getByRole('button', { name: 'Skip setup and look around with demo data' })
+      screen.getByRole('button', { name: 'Skip setup and explore demo data on Dashboard' })
 
-    it('turns demo mode on, dismisses and leaves', async () => {
+    it('turns demo mode on, dismisses and opens Dashboard', async () => {
       renderSetup()
       fireEvent.click(link())
-      expect(await screen.findByText('console-home')).toBeInTheDocument()
+      expect(await screen.findByText('console-dashboard')).toBeInTheDocument()
       expect(configApi.setDemoMode).toHaveBeenCalledWith(true)
       expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBe('1')
     })
@@ -298,7 +299,7 @@ describe('SetupScreen', () => {
       renderSetup()
       fireEvent.click(link())
       expect(await screen.findByRole('alert')).toHaveTextContent('Demo data could not be turned on')
-      expect(screen.queryByText('console-home')).not.toBeInTheDocument()
+      expect(screen.queryByText('console-dashboard')).not.toBeInTheDocument()
       expect(localStorage.getItem(SETUP_DISMISSED_KEY)).toBeNull()
     })
 

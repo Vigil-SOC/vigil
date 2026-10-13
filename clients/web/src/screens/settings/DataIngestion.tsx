@@ -28,7 +28,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-// The backend and the daemon read demo mode on every call, so turning it off applies at once.
+// Every server reads the saved switch within seconds, so turning it off needs no restart.
 export const DEMO_OFF = 'Demo data is off. Vigil shows your own findings and cases now.'
 
 export function DemoDataClear({ notify }: SectionProps) {
@@ -62,7 +62,7 @@ export function DemoDataClear({ notify }: SectionProps) {
     try {
       const res = await configApi.resetDemoData()
       const data = res.data as { findings_count?: number; cases_count?: number }
-      const text = `Regenerated ${data.findings_count} findings and ${data.cases_count} cases.`
+      const text = `Restored the sample estate: ${data.findings_count} findings and ${data.cases_count} cases.`
       setReport(text)
       notify('ok', text)
     } catch (e) {
@@ -90,7 +90,7 @@ export function DemoDataClear({ notify }: SectionProps) {
   return (
     <SettingsCard
       title="Demo data"
-      desc="Findings and cases on screen are generated sample data. Clearing them regenerates that set."
+      desc="Dashboard shows a fictional sample estate in place of your data; Overview, Triage and Cases keep your own. Clearing drops changes made to it and restores the estate as it started."
     >
       {!turnedOff && (
         <div className="flex flex-wrap gap-2.5">

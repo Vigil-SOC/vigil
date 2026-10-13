@@ -152,7 +152,7 @@ describe('manual upload', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Clear demo data' }))
 
-    expect(await screen.findByText('Regenerated 25 findings and 5 cases.')).toBeInTheDocument()
+    expect(await screen.findByText('Restored the sample estate: 25 findings and 5 cases.')).toBeInTheDocument()
     expect(configApi.resetDemoData).toHaveBeenCalledOnce()
   })
 
