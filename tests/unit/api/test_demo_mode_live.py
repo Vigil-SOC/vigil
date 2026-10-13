@@ -12,11 +12,19 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
+import core.api.v1.findings_router as v1_findings
 import services.api.routers.config as config_router
-from core.config import DEMO_MODE_CONFIG_KEY, forget_demo_mode, is_demo_mode
+from core.auth.current_user import get_current_user
+from core.config import DEMO_MODE_CONFIG_KEY, is_demo_mode
 from core.platform.demo_data_service import DemoDataService
 from core.storage.database_data_service import DatabaseDataService
+
+# The app is imported here, not under the fixtures below: a module imported while
+# get_config_service is patched would keep the fake for the rest of the session.
+from services.api.main import app
 from services.api.routers.config import DemoModeConfig, GeneralConfig, set_demo_mode
 
 pytestmark = pytest.mark.unit
@@ -118,19 +126,61 @@ def test_another_process_sees_the_switch_within_seconds(
     assert is_demo_mode() is True
 
 
-def test_the_row_beats_the_file_and_the_file_answers_without_a_database(
-    state_dir, database, monkeypatch
-):
-    (state_dir / "general_config.json").write_text(json.dumps({"demo_mode": True}))
-    database[DEMO_MODE_CONFIG_KEY] = {"enabled": False}
-    assert is_demo_mode() is False
-
+def _database_down(monkeypatch):
     def down(user_id: str = "system"):
         raise ConnectionError("postgres is down")
 
     monkeypatch.setattr("core.storage.config_service.get_config_service", down)
-    forget_demo_mode()
+    monkeypatch.setattr(config_router, "get_config_service", down)
+
+
+def test_the_row_beats_the_file(state_dir, database):
+    (state_dir / "general_config.json").write_text(json.dumps({"demo_mode": True}))
+    database[DEMO_MODE_CONFIG_KEY] = {"enabled": False}
+    assert is_demo_mode() is False
+
+
+def test_an_outage_keeps_the_last_answer_not_this_pods_file(
+    state_dir, database, monkeypatch
+):
+    clock = [1000.0]
+    monkeypatch.setattr("core.config.time.monotonic", lambda: clock[0])
+    database[DEMO_MODE_CONFIG_KEY] = {"enabled": False}
+    assert is_demo_mode() is False
+
+    (state_dir / "general_config.json").write_text(json.dumps({"demo_mode": True}))
+    _database_down(monkeypatch)
+    clock[0] += 5
+    assert is_demo_mode() is False
+
+
+def test_the_file_answers_until_the_database_first_has(state_dir, monkeypatch):
+    (state_dir / "general_config.json").write_text(json.dumps({"demo_mode": True}))
+    _database_down(monkeypatch)
     assert is_demo_mode() is True
+
+
+def test_a_switch_the_database_cannot_save_changes_nothing(
+    state_dir, database, monkeypatch
+):
+    (state_dir / "general_config.json").write_text(json.dumps({"demo_mode": False}))
+
+    class _Unwritable:
+        def __init__(self, user_id: str = "system"):
+            pass
+
+        def set_system_config(self, key, value, **_):
+            return False
+
+    monkeypatch.setattr(config_router, "get_config_service", _Unwritable)
+
+    with pytest.raises(HTTPException) as refused:
+        set_demo_mode(DemoModeConfig(enabled=True), USER)
+
+    assert refused.value.status_code == 503
+    saved = json.loads((state_dir / "general_config.json").read_text())
+    assert saved == {"demo_mode": False}
+    assert is_demo_mode() is False
 
 
 def test_the_environment_still_wins_and_the_reply_says_so(
@@ -166,12 +216,6 @@ def test_saving_general_settings_keeps_demo_mode_in_the_file(
 def test_the_console_routes_follow_the_switch(
     state_dir, database, fresh_estate, monkeypatch
 ):
-    from fastapi.testclient import TestClient
-
-    import core.api.v1.findings_router as v1_findings
-    from core.auth.current_user import get_current_user
-    from services.api.main import app
-
     db = MagicMock()
     db.count_findings.return_value = 0
     db.get_findings.return_value = []

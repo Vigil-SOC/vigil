@@ -1,8 +1,9 @@
-"""The daemon and integration pushes work on real records while demo mode is on.
+"""The daemon, the runs it launches and integration pushes work on real records.
 
-Demo mode swaps what the console reads. A triage written into the demo set is
-lost, a probe the demo set cannot find is re-queued every sweep, and a vStrike
-push is acknowledged and dropped.
+Demo mode swaps what the console reads. With it on, a triage written into the
+demo set is lost, a probe the demo set cannot find is re-queued every sweep, a
+vStrike push is acknowledged and dropped, and a run on a real case cannot find
+it and files its links and handoff case into the demo set.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.agents import tool_registry
+from core.integrations.mcp.surface import acting_as
 from core.storage.database_data_service import DatabaseDataService
 from services.daemon.config import ProcessingConfig, SchedulerConfig
 from services.daemon.probes import PROBES, inject_probes
@@ -28,6 +31,8 @@ PINNED = [
     *sorted((REPO / "services" / "daemon").glob("*.py")),
     REPO / "services" / "api" / "routers" / "vstrike.py",
     REPO / "core" / "cases" / "case_automation_service.py",
+    REPO / "core" / "workflows" / "run_bridge_router.py",
+    REPO / "core" / "workflows" / "workflows_service.py",
 ]
 
 
@@ -100,3 +105,39 @@ async def test_stored_probes_are_found_and_not_queued_again(demo_on):
     assert injected == 0
     assert queue.empty()
     assert db.get_finding.call_count == len(PROBES)
+
+
+@pytest.fixture
+def postgres(monkeypatch):
+    """Postgres as a mock that any newly built DatabaseDataService connects to."""
+    db = MagicMock()
+    healthy = MagicMock()
+    healthy.health_check.return_value = True
+    prefix = "core.storage.database_data_service"
+    monkeypatch.setattr(f"{prefix}.init_database", lambda **_: None)
+    monkeypatch.setattr(f"{prefix}.get_db_manager", lambda: healthy)
+    monkeypatch.setattr(f"{prefix}.DatabaseService", lambda: db)
+    monkeypatch.setattr(
+        f"{prefix}.FindingSchema.dump", lambda row, **_: {"finding_id": "f-real"}
+    )
+    return db
+
+
+def test_a_run_finds_and_links_a_real_finding(demo_on, postgres):
+    from core.workflows.run_bridge_router import _link_findings
+
+    postgres.get_finding.return_value = object()
+
+    _link_findings("case-real", "run-1", ["f-real"])
+
+    postgres.get_finding.assert_called_once_with("f-real")
+
+
+def test_agent_tools_follow_demo_mode_only_with_a_person_behind_them(demo_on):
+    from tools.mcp import vigil as vigil_mcp
+
+    assert tool_registry._data().is_demo_mode() is False
+    assert vigil_mcp.get_data_service().is_demo_mode() is False
+    with acting_as("analyst"):
+        assert tool_registry._data().is_demo_mode() is True
+        assert vigil_mcp.get_data_service().is_demo_mode() is True

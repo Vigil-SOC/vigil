@@ -94,9 +94,12 @@ def _findings_stats(data: Any, args: Args) -> Args:
 
 
 def _data():
+    """A person in chat sees what the console sees, demo mode included. A call
+    with no one behind it -- a hunt, a workflow run, the orchestrator -- reads
+    Postgres, where its cases and findings are."""
     from core.storage.database_data_service import DatabaseDataService
 
-    return DatabaseDataService()
+    return DatabaseDataService(follow_demo=current_caller() is not None)
 
 
 def _approvals():

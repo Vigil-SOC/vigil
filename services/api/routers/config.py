@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import threading
+import uuid
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -78,6 +80,11 @@ def _for_user(user: User):
     return get_config_service(user_id=str(user.user_id))
 
 
+# One read-merge-write at a time in this process, so two saves cannot drop each
+# other's keys.
+_MIRROR_LOCK = threading.Lock()
+
+
 def _mirror_to_file(
     filename: str, config_data: Dict[str, Any], *, merge: bool = False
 ) -> bool:
@@ -90,15 +97,16 @@ def _mirror_to_file(
     """
     try:
         target = vigil_path(filename, write=True)
-        data = dict(config_data)
-        source = vigil_path(filename)
-        if merge and source.exists():
-            with open(source) as f:
-                data = {**json.load(f), **config_data}
-        staged = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        with open(staged, "w") as f:
-            json.dump(data, f, indent=2)
-        os.replace(staged, target)
+        staged = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        with _MIRROR_LOCK:
+            data = dict(config_data)
+            source = vigil_path(filename)
+            if merge and source.exists():
+                with open(source) as f:
+                    data = {**json.load(f), **config_data}
+            with open(staged, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(staged, target)
         return True
     except (OSError, ValueError) as e:
         logger.warning(f"Could not mirror {filename} to the State Directory: {e}")
@@ -193,7 +201,7 @@ def get_demo_mode():
         return {
             "enabled": demo_enabled,
             "source": "environment" if env_set else "config",
-            "description": "Demo mode uses generated sample data instead of database",
+            "description": "Demo mode serves the sample estate to the console instead of the database",
         }
     except Exception as e:
         logger.error(f"Error getting demo mode: {e}")
@@ -208,16 +216,22 @@ def set_demo_mode(
     """Switch demo mode for every process, with no restart.
 
     The database row is what every process and replica reads, within a few
-    seconds. general_config.json keeps a copy, which answers when there is no
-    database. DEMO_MODE in the server's environment still wins.
+    seconds; general_config.json keeps a copy for a process that has not reached
+    the database yet. Nothing changes when the row cannot be written. DEMO_MODE
+    in the server's environment still wins.
     """
-    _for_user(current_user).set_system_config(
+    saved = _for_user(current_user).set_system_config(
         key=DEMO_MODE_CONFIG_KEY,
         value={"enabled": config.enabled},
         description="Demo mode: the console reads the sample estate",
         config_type="general",
         change_reason="Updated via Settings UI",
     )
+    if not saved:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not save demo mode: the database is unavailable",
+        )
     _mirror_to_file("general_config.json", {"demo_mode": config.enabled}, merge=True)
     forget_demo_mode()
 

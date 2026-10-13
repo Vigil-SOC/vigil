@@ -51,7 +51,7 @@ FROZEN_TOOLS = frozenset(
     }
 )
 
-_data_service = None
+_data_services: dict = {}  # follow_demo -> DatabaseDataService
 
 
 class _JsonEncoder(json.JSONEncoder):
@@ -103,16 +103,20 @@ async def _acall(fn, **kwargs) -> str:
 
 
 def get_data_service():
-    """Return the shared DatabaseDataService (demo mode or PostgreSQL)."""
-    global _data_service
-    if _data_service is None:
+    """The shared DatabaseDataService for this call.
+
+    A person behind the call (chat, the /mcp surface) sees what the console
+    sees, demo mode included. A call with no one behind it -- a hunt, a
+    workflow run -- reads Postgres, where its cases and findings are.
+    """
+    from core.integrations.mcp.surface import current_caller
+
+    follow_demo = current_caller() is not None
+    if follow_demo not in _data_services:
         from core.storage.database_data_service import DatabaseDataService
 
-        _data_service = DatabaseDataService()
-        backend_info = _data_service.get_backend_info()
-        logger.info(f"MCP vigil using backend: {backend_info['backend']}")
-
-    return _data_service
+        _data_services[follow_demo] = DatabaseDataService(follow_demo=follow_demo)
+    return _data_services[follow_demo]
 
 
 @mcp.tool()

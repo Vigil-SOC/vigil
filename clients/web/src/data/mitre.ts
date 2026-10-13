@@ -36,6 +36,7 @@ const TECHNIQUE_META: Record<string, Meta> = {
   'T1078.001': { name: 'Default Accounts', tactic: 'Initial Access' },
   'T1078.002': { name: 'Domain Accounts', tactic: 'Initial Access' },
   T1110: { name: 'Brute Force', tactic: 'Credential Access' },
+  'T1110.001': { name: 'Password Guessing', tactic: 'Credential Access' },
   'T1110.003': { name: 'Password Spraying', tactic: 'Credential Access' },
   T1133: { name: 'External Remote Services', tactic: 'Initial Access' },
   T1190: { name: 'Exploit Public-Facing Application', tactic: 'Initial Access' },
