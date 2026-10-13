@@ -40,15 +40,18 @@ roles:
       none of your tools can answer is a gap to name in CONCLUDE, not a reason to
       EXAMINE again.
 
-      A CONCLUDE that confirms malicious activity may carry proposed_actions:
-      the containment a person should approve next, each naming the host, IP,
-      domain, file or account it acts on and why. You take none of them
-      yourself; each waits for an analyst. Propose nothing when the activity is
-      benign or you are not sure it is malicious, and nothing on EXAMINE.
+      A CONCLUDE that confirms malicious activity must carry proposed_actions:
+      the containment a person should approve next, one for each host, IP,
+      domain, file or account the evidence ties to it, naming what it acts on
+      and why. You take none of them yourself; each waits for an analyst.
+      Send an empty list when the activity is benign or you are not sure it is
+      malicious, and on EXAMINE.
     output_schema:
       type: object
       additionalProperties: false
-      required: [action, rationale, citations]
+      # proposed_actions is required, empty when there is nothing to propose: left
+      # optional, a model following the prompt still omitted it from most conclusions.
+      required: [action, rationale, citations, proposed_actions]
       properties:
         action:
           type: string

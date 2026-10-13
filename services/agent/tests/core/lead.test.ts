@@ -93,9 +93,9 @@ const SWARM: ScriptedTurn[] = [
 
 const SINGLE: ScriptedTurn[] = [
   STOP,
-  { emit: { action: "EXAMINE", rationale: "the lockouts cluster inside one hour", citations: [] } },
+  { emit: { action: "EXAMINE", rationale: "the lockouts cluster inside one hour", citations: [], proposed_actions: [] } },
   STOP,
-  { emit: { action: "CONCLUDE", rationale: "a scheduled task holding a stale password", citations: [] } },
+  { emit: { action: "CONCLUDE", rationale: "a scheduled task holding a stale password", citations: [], proposed_actions: [] } },
 ];
 
 describe("an arch drives the loop", () => {
@@ -132,9 +132,9 @@ describe("an arch drives the loop", () => {
     const script: ScriptedTurn[] = [
       { calls: [{ tool: "get_finding", args: "{}" }] },
       STOP,
-      { emit: { action: "EXAMINE", rationale: "one finding", query_intent: "what the finding says", citations: [] } },
+      { emit: { action: "EXAMINE", rationale: "one finding", query_intent: "what the finding says", citations: [], proposed_actions: [] } },
       STOP,
-      { emit: { action: "CONCLUDE", rationale: "a scheduled task holding a stale password", citations: [] } },
+      { emit: { action: "CONCLUDE", rationale: "a scheduled task holding a stale password", citations: [], proposed_actions: [] } },
     ];
 
     const report = await runLead(harnessOf(spec, script, state), options("investigate", spec));
@@ -391,9 +391,9 @@ describe("each lead turn is shown what the run already holds", () => {
   const FIND: ScriptedTurn = { calls: [{ tool: "get_finding", args: "{}" }] };
   const examine = (rationale: string, query_intent = "next question"): ScriptedTurn[] => [
     STOP,
-    { emit: { action: "EXAMINE", rationale, query_intent, citations: [] } },
+    { emit: { action: "EXAMINE", rationale, query_intent, citations: [], proposed_actions: [] } },
   ];
-  const conclude: ScriptedTurn[] = [STOP, { emit: { action: "CONCLUDE", rationale: "done", citations: [] } }];
+  const conclude: ScriptedTurn[] = [STOP, { emit: { action: "CONCLUDE", rationale: "done", citations: [], proposed_actions: [] } }];
 
   function roomy(window = 40): RunSpec {
     const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
@@ -502,7 +502,7 @@ describe("each lead turn is shown what the run already holds", () => {
       FIND,
       ...examine("one"),
       STOP,
-      { emit: { action: "CONCLUDE", rationale: "rests on it1.1", citations: ["it1.1", "it99"] } },
+      { emit: { action: "CONCLUDE", rationale: "rests on it1.1", citations: ["it1.1", "it99"], proposed_actions: [] } },
     ];
     const state = new InProcessState<LeadKinds>();
     const report = await runLead(harnessOf(spec, script, state), options("investigate", spec));
@@ -524,7 +524,7 @@ describe("a conclusion proposes actions for a person to approve", () => {
     const item = properties["proposed_actions"]?.items;
     expect(item?.required).toEqual(["action_type", "target", "reason"]);
     expect(item?.properties?.["action_type"]?.enum).toEqual(["isolate_host", "block_ip", "block_domain", "quarantine_file", "disable_user", "custom"]);
-    expect(schema?.["required"]).not.toContain("proposed_actions");
+    expect(schema?.["required"]).toContain("proposed_actions");
   });
 
   it("carries the concluding decision's proposals on the terminal", async () => {
@@ -549,7 +549,7 @@ describe("a conclusion proposes actions for a person to approve", () => {
       STOP,
       { emit: { action: "EXAMINE", rationale: "one host so far", citations: [], proposed_actions: [ISOLATE] } },
       STOP,
-      { emit: { action: "CONCLUDE", rationale: "benign backup traffic", citations: [] } },
+      { emit: { action: "CONCLUDE", rationale: "benign backup traffic", citations: [], proposed_actions: [] } },
     ];
 
     await runLead(harnessOf(spec, script, state), options("investigate", spec));
