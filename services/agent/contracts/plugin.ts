@@ -1,9 +1,8 @@
-// What a plugin is: the files that tell one agent loop what kind of work this is.
-// The loop, the ledger, recall, budgets, parking and stopping are the kernel's
-// (core/agent.ts). A plugin says what the agent is, what it may need, which
-// playbooks it can load, and what shape it must finish in. A plugin that needs
-// code -- tools that write its own record, a gate before it starts, its own way
-// of ending -- ships hooks beside the manifest (core/agent.ts, PluginHooks).
+// What a plugin is: what the agent is, what it may need, the playbooks it loads and the
+// shape it finishes in. Loop, ledger, recall and parking are the kernel's (core/agent.ts).
+
+// A plugin that needs code (its own record's tools, a gate before it starts, its own
+// ending) ships hooks beside the manifest: PluginHooks in core/agent.ts.
 
 export interface SkillSpec {
   // What the agent names when it loads one, and the one line it reads to choose.
@@ -35,10 +34,8 @@ export function isStructured(conclusion: ConclusionSpec): conclusion is Structur
   return conclusion.schema !== null;
 }
 
-// A second look before a conclusion stands. When the answer's `field` holds one
-// of `guarded`, it stands only if the reviewer upholds it and at least one cited
-// ref is a real result; otherwise the run ends on `fallback`. The asymmetry is the
-// point: some answers are cheap to give and expensive to give wrongly.
+// A second look: a `guarded` value in `field` stands only if the reviewer upholds it over
+// a cited real result, else the run ends on `fallback`. Some answers are costly to give wrongly.
 export interface GuardSpec {
   field: string;
   guarded: string[];

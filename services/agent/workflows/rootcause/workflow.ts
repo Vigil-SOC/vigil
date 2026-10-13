@@ -29,9 +29,8 @@ export interface RootCauseReport {
   pending: Outcome<unknown>["pending"];
 }
 
-// A root-cause trace is the rootcause plugin on the kernel: one investigator, one
-// loop, the proof in the plugin's hooks. Kept under this name so every caller and
-// test that drives a trace drives the kernel.
+// A root-cause trace is the rootcause plugin on the kernel, the proof in its hooks. Kept
+// under this name so every caller and test that drives a trace drives the kernel.
 export async function runRootCause(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<RootCauseReport> {
   const { run_id, spec } = options;
   if (spec.roles.lead === undefined) throw new SpecError(`arch ${spec.arch} declares no lead, so it cannot trace a root cause`);

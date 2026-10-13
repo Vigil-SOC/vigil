@@ -44,9 +44,8 @@ export function conversationOf(turns: readonly Turn[]): { task: string; history:
   return { task: opening.content, history: rest.map(messageOf) };
 }
 
-// One turn of a conversation that is itself one run: the chat plugin on the
-// kernel, as a conversation. The ledger carries what the turn spent and called,
-// and the client carries what was said.
+// One turn of a conversation that is one run: the chat plugin on the kernel. The
+// ledger carries what the turn spent and called, the client what was said.
 export async function* runChat(harness: Harness, options: ChatOptions): AsyncGenerator<StreamEvent<string>, ChatReport> {
   const conversation = conversationOf(options.turns);
   const { manifest, hooks } = loadPlugin("chat");

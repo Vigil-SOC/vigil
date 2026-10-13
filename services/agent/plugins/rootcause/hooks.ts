@@ -145,9 +145,8 @@ async function noticeOnce(ctx: PluginContext, text: string): Promise<void> {
   await append(ctx, [{ run_id: ctx.options.run_id, run_kind: ctx.options.run_kind, kind: "notice", payload: { text } }]);
 }
 
-// Every search result goes on the ledger whole: the proof counts values across
-// results the run was shown, and the kernel's own record of a call is what the
-// model read, which the dispatch above has trimmed.
+// Every search result goes on the ledger whole: the proof counts values across them,
+// and the kernel's record of a call is only what the model read, trimmed above.
 async function journalRemote(ctx: PluginContext, seen: StreamEvent<unknown>): Promise<void> {
   if (seen.type !== "tool_result") return;
   if (OWN_TOOLS.has(seen.call.tool)) return;

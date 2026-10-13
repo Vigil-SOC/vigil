@@ -4,9 +4,8 @@ import { pluginFor } from "./registry.js";
 import { rootCauseHooks } from "./rootcause/hooks.js";
 import { tallyHooks } from "./tally/hooks.js";
 
-// The code a plugin ships beside its manifest, by plugin id. A plugin missing here
-// is files alone. Imported statically, so a plugin whose hooks do not compile is a
-// build error rather than a run that fails to load them.
+// The code a plugin ships beside its manifest, by id; one missing here is files alone.
+// Static imports, so hooks that do not compile fail the build, not a run.
 const HOOKS: Readonly<Record<string, PluginHooks>> = {
   rootcause: rootCauseHooks,
   tally: tallyHooks,

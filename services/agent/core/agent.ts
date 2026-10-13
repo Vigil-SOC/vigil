@@ -22,11 +22,8 @@ import type { ToolDispatch } from "./seams.js";
 import type { RunSpec, ToolSpec } from "./spec.js";
 import { drain, streamTurn, type StreamEvent } from "./stream.js";
 
-// The kernel: one agent loop, driven by a plugin rather than a workflow. The loop
-// is streamTurn's, unchanged. What this adds is what every plugin needs and none
-// should write: each call journaled as it happens, a transcript rebuilt from them
-// on resume, an answer in the plugin's shape, a second look before a guarded one
-// stands, an operator's stop honoured mid-call, and one way a run ends.
+// The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
+// journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
 
 export const AGENT_ROLE = "agent";
 export const REVIEW_ROLE = "reviewer";
@@ -60,9 +57,8 @@ export interface Ending {
   summary?: string | null;
 }
 
-// Code a plugin ships beside its manifest. Every hook is optional, and a plugin
-// with none is files alone. A hook holds the plugin's domain; the kernel holds
-// none, and calls them at fixed points so their order is never the plugin's to get wrong.
+// Code a plugin ships beside its manifest, every hook optional. A hook holds the plugin's
+// domain; the kernel calls them at fixed points, so their order is never the plugin's.
 export interface PluginHooks {
   // Tools that answer in this process: typically ones that write the plugin's own
   // record. Granted to the agent alongside what its needs bind to.
@@ -73,9 +69,8 @@ export interface PluginHooks {
   before?(ctx: PluginContext): Promise<Early | null>;
   // What the run is about, rendered each time it is picked up. Absent renders the playbook.
   brief?(ctx: PluginContext): Promise<string>;
-  // Every event the loop yields, in order, after the kernel has journaled its own.
-  // "halt" ends the loop there: a plugin's own ending, which the model does not
-  // control, reached between two calls. `halted` then says how the run ends.
+  // Every event the loop yields, after the kernel journals its own. "halt" ends the loop
+  // between two calls, on the plugin's terms rather than the model's; `halted` says how.
   observe?(ctx: PluginContext, seen: StreamEvent<unknown>): Promise<void | "halt">;
   halted?(ctx: PluginContext): Promise<Ending>;
   // How the run ends once the loop has answered or been refused. Null takes the
@@ -104,9 +99,8 @@ export interface AgentOptions {
   answers?: Answers;
   announce?: Announce;
   stop?: StopSource;
-  // One turn of an open-ended exchange rather than a run that ends: the caller
-  // holds the transcript and sends it whole, and nothing writes a terminal,
-  // because the person may always say something else.
+  // One turn of an open-ended exchange: the caller sends the whole transcript, and no
+  // terminal is written, because the person may always say something else.
   conversation?: Conversation;
   // The Vigil agent this run's skill reads are credited to (#1560). Absent records
   // them unattributed.
@@ -468,9 +462,8 @@ function openingKeys(spec: RunSpec): readonly string[] {
   return [...new Set(held.filter((key): key is string => typeof key === "string" && key !== ""))].sort();
 }
 
-// The transcript a resume continues from, rebuilt from the calls the ledger holds.
-// A call with no record was never answered -- the run parked on it -- so it is left
-// out, and the model asks again: an approved call is then served, not re-run.
+// The transcript a resume continues from. A call with no record parked the run and is
+// left out, so the model asks again and an approved call is served, not re-run.
 export function historyOf(calls: readonly CallPayload[]): Message[] {
   const turns = new Map<number, CallPayload[]>();
   for (const call of calls) turns.set(call.turn, [...(turns.get(call.turn) ?? []), call]);
@@ -493,9 +486,8 @@ export function callsIn(events: readonly { kind: string; payload: unknown }[]): 
 
 // --- steps a plugin runs itself ----------------------------------------------
 
-// One turn under a role, prompt and grants of the plugin's choosing: for a plugin
-// whose work is an authored sequence rather than one agent's judgement. Its calls
-// are journaled like the agent's, under its role, so every reader sees them.
+// One turn under a role, prompt and grants the plugin chooses, for authored sequences
+// rather than one agent's judgement. Its calls are journaled under its role like the agent's.
 export interface Subturn {
   role: string;
   system: string;
@@ -635,9 +627,8 @@ const REVIEW_RULES = [
 const REVIEW_CAP = 60_000;
 const RECORD_CAP = 6_000;
 
-// The second look. Refs are checked by counting, whatever the reviewer says. A
-// guarded answer stands only when the reviewer upholds it over at least one real
-// cited result; a reviewer that cannot answer is not one that agreed.
+// The second look. Refs are counted, whatever the reviewer says; a guarded answer needs
+// the reviewer to uphold it over a real cited result, and one that cannot answer did not agree.
 export async function reviewOf(ctx: PluginContext, conclusion: ConclusionPayload, calls: readonly CallPayload[]): Promise<ReviewPayload> {
   const { plugin } = ctx.options;
   const structured = isStructured(plugin.conclusion) ? plugin.conclusion : null;

@@ -132,9 +132,8 @@ export interface RunSpec extends Config, Omit<Playbook, "directives"> {
   // The job's, not a file's: the playbook says what this kind of run does and
   // this says which one. Journalled with the spec, so a resume still knows.
   prompt: string;
-  // The playbook's per-role prose, as written. An arch role gets it folded into its
-  // prompt above; a plugin's single agent reads it from here. Optional because a
-  // ledger journaled before it existed has none.
+  // The playbook's per-role prose, as written: folded into an arch role's prompt, read
+  // here by a plugin's agent. Optional, as a ledger journaled before it has none.
   directives?: Record<string, string>;
 }
 
