@@ -11,6 +11,8 @@ export interface HealthRead {
   status?: string
   storage?: { database_available?: boolean; demo_mode?: boolean }
   schema?: { state?: string }
+  /** running, unhealthy or not_running; the agent layer also no_token */
+  processes?: { agent_layer?: string; daemon?: string }
 }
 
 export interface FederationRead {
@@ -48,6 +50,13 @@ interface Fact {
   sentence: string
 }
 
+/** Each one stops chat and workflow runs. */
+const AGENT_LAYER_FACT: Partial<Record<string, string>> = {
+  no_token: 'Agent layer has no internal token.',
+  not_running: 'Agent layer is not running.',
+  unhealthy: 'Agent layer is not ready.',
+}
+
 /** Worst fact wins. Poor outranks Fair; within a level, earlier checks outrank later ones. */
 export function foldStatus(reads: StatusReads): StatusFold {
   const facts: Fact[] = []
@@ -65,6 +74,12 @@ export function foldStatus(reads: StatusReads): StatusFold {
     const state = health.schema?.state
     if (state === 'drifted' || state === 'empty') {
       facts.push({ level: 'poor', sentence: `Schema is ${state}.` })
+    }
+    const agentLayer = AGENT_LAYER_FACT[health.processes?.agent_layer ?? '']
+    if (agentLayer) facts.push({ level: 'fair', sentence: agentLayer })
+    // Not running is the foreground default (#902), not a fault; the setup checks say it.
+    if (health.processes?.daemon === 'unhealthy') {
+      facts.push({ level: 'fair', sentence: 'SOC daemon reports a stopped component.' })
     }
   }
 

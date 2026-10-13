@@ -19,6 +19,9 @@ vi.mock('../../routing/useSetupStatus', () => ({
 // the wizard owns the run and hands it down
 const Harness = () => <SystemChecksStep {...useSystemChecks()} />
 
+// what the backend reports when both processes are up
+const RUNNING = { agent_layer: 'running', daemon: 'running' }
+
 const row = (label: string) => screen.getByText(label).closest('[role="listitem"]') as HTMLElement
 const mark = (label: string) => within(row(label)).getByRole('img').getAttribute('aria-label')
 
@@ -26,7 +29,11 @@ describe('SystemChecksStep', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'healthy', storage: { database_available: true, demo_mode: false } },
+      data: {
+        status: 'healthy',
+        storage: { database_available: true, demo_mode: false },
+        processes: RUNNING,
+      },
     } as never)
     vi.mocked(storageApi.getStatus).mockResolvedValue({
       data: {
@@ -49,7 +56,7 @@ describe('SystemChecksStep', () => {
     } as never)
   })
 
-  it('passes all six checks with a detail line each, offers Check again, and shows no summary', async () => {
+  it('passes all eight checks with a detail line each, offers Check again, and shows no summary', async () => {
     render(<Harness />)
     expect(await screen.findByText('1 enabled server running')).toBeInTheDocument()
     for (const label of [
@@ -57,6 +64,8 @@ describe('SystemChecksStep', () => {
       'Model gateway',
       'Storage',
       'API health',
+      'Agent layer',
+      'SOC daemon',
       'Alert collection',
       'Tool servers',
     ]) {
@@ -81,7 +90,14 @@ describe('SystemChecksStep', () => {
     expect(await screen.findByText('Connected')).toBeInTheDocument()
     expect(mark('Database')).toBe('Passed')
     expect(mark('Model gateway')).toBe('Checking')
-    for (const label of ['Storage', 'API health', 'Alert collection', 'Tool servers']) {
+    for (const label of [
+      'Storage',
+      'API health',
+      'Agent layer',
+      'SOC daemon',
+      'Alert collection',
+      'Tool servers',
+    ]) {
       expect(mark(label)).toBe('Waiting')
     }
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
@@ -103,6 +119,7 @@ describe('SystemChecksStep', () => {
       data: {
         status: 'degraded',
         storage: { backend: 'none', database_available: false, demo_mode: false },
+        processes: RUNNING,
       },
     } as never)
     vi.mocked(storageApi.getStatus).mockResolvedValue({
@@ -118,7 +135,11 @@ describe('SystemChecksStep', () => {
   it('needs you, not Could not read, when the storage route fails because the database is down', async () => {
     vi.mocked(storageApi.getStatus).mockRejectedValue(new Error('500'))
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'degraded', storage: { database_available: false, demo_mode: false } },
+      data: {
+        status: 'degraded',
+        storage: { database_available: false, demo_mode: false },
+        processes: RUNNING,
+      },
     } as never)
     render(<Harness />)
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
@@ -174,6 +195,59 @@ describe('SystemChecksStep', () => {
     expect(
       await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
     ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['no_token', 'AGENT_INTERNAL_TOKEN is not set · chat and workflow runs fail'],
+    ['not_running', 'Not running · chat and workflow runs fail'],
+    ['unhealthy', 'Not ready · chat and workflow runs fail'],
+  ])('needs you, and counts a warning, when the agent layer is %s', async (agent_layer, detail) => {
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: {
+        status: 'healthy',
+        storage: { database_available: true },
+        processes: { agent_layer, daemon: 'running' },
+      },
+    } as never)
+    render(<Harness />)
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(mark('Agent layer')).toBe('Needs you')
+    expect(mark('API health')).toBe('Passed')
+    expect(
+      await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
+    ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['not_running', 'Not running · alerts are not polled or triaged'],
+    ['unhealthy', 'Running, but a component stopped'],
+  ])('needs you, and counts a warning, when the SOC daemon is %s', async (daemon, detail) => {
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: {
+        status: 'healthy',
+        storage: { database_available: true },
+        processes: { agent_layer: 'running', daemon },
+      },
+    } as never)
+    render(<Harness />)
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(mark('SOC daemon')).toBe('Needs you')
+    expect(mark('Agent layer')).toBe('Passed')
+    expect(
+      await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows Could not read for both processes when health does not report them', async () => {
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: { status: 'healthy', storage: { database_available: true } },
+    } as never)
+    render(<Harness />)
+    await screen.findByText('1 enabled server running')
+    expect(mark('Agent layer')).toBe('Needs you')
+    expect(mark('SOC daemon')).toBe('Needs you')
+    expect(screen.getAllByText('Could not read')).toHaveLength(2)
+    expect(consoleApi.getHealth).toHaveBeenCalledTimes(1)
   })
 
   it('names an enabled federation source that is erroring', async () => {
@@ -251,14 +325,14 @@ describe('SystemChecksStep', () => {
 
   it('Check again resets and reruns every check, and clears the summary', async () => {
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'degraded', storage: { database_available: true } },
+      data: { status: 'degraded', storage: { database_available: true }, processes: RUNNING },
     } as never)
     render(<Harness />)
     expect(
       await screen.findByText('1 warning. You can continue; fix them before you rely on alerts.'),
     ).toBeInTheDocument()
     vi.mocked(consoleApi.getHealth).mockResolvedValue({
-      data: { status: 'healthy', storage: { database_available: true } },
+      data: { status: 'healthy', storage: { database_available: true }, processes: RUNNING },
     } as never)
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
     for (const label of [
@@ -266,6 +340,8 @@ describe('SystemChecksStep', () => {
       'Model gateway',
       'Storage',
       'API health',
+      'Agent layer',
+      'SOC daemon',
       'Alert collection',
       'Tool servers',
     ]) {

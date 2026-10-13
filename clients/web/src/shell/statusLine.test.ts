@@ -31,3 +31,55 @@ describe('foldStatus storage', () => {
     ).toEqual({ level: 'poor', sentence: 'Health is degraded.' })
   })
 })
+
+describe('foldStatus processes', () => {
+  const healthy = (processes: { agent_layer?: string; daemon?: string }) =>
+    reads({ status: 'healthy', storage: { database_available: true }, processes })
+
+  it.each([
+    ['no_token', 'Agent layer has no internal token.'],
+    ['not_running', 'Agent layer is not running.'],
+    ['unhealthy', 'Agent layer is not ready.'],
+  ])('goes Fair when the agent layer is %s', (agent_layer, sentence) => {
+    expect(foldStatus(healthy({ agent_layer, daemon: 'running' }))).toEqual({ level: 'fair', sentence })
+  })
+
+  it('does not read a daemon that was never started as a fault', () => {
+    expect(foldStatus(healthy({ agent_layer: 'running', daemon: 'not_running' }))).toEqual({
+      level: 'good',
+      sentence: 'No problems reported.',
+    })
+  })
+
+  it('goes Fair when the daemon reports a stopped component', () => {
+    expect(foldStatus(healthy({ agent_layer: 'running', daemon: 'unhealthy' }))).toEqual({
+      level: 'fair',
+      sentence: 'SOC daemon reports a stopped component.',
+    })
+  })
+
+  it('says nothing when the backend does not report processes', () => {
+    expect(foldStatus(reads({ status: 'healthy', storage: { database_available: true } }))).toEqual({
+      level: 'good',
+      sentence: 'No problems reported.',
+    })
+  })
+
+  it('lets a Poor fact win, and outranks a stopped MCP server', () => {
+    expect(
+      foldStatus(
+        reads({
+          status: 'degraded',
+          storage: { database_available: false, demo_mode: false },
+          processes: { agent_layer: 'not_running' },
+        }),
+      ),
+    ).toEqual({ level: 'poor', sentence: 'Database is unavailable.' })
+    expect(
+      foldStatus({
+        ...healthy({ agent_layer: 'not_running', daemon: 'running' }),
+        mcp: { statuses: [{ name: 'splunk', status: 'stopped', enabled: true }] },
+      }),
+    ).toEqual({ level: 'fair', sentence: 'Agent layer is not running.' })
+  })
+})

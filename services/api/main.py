@@ -35,6 +35,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.auth.token_blacklist import warn_if_redis_evicts
 from core.platform.monitoring import get_metrics_response, init_sentry
+from core.platform.process_health import read_process_health
 from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
@@ -729,7 +730,8 @@ async def _health_payload(request: Request) -> dict:
 
     Redis and the LLM gateway are deliberately not part of this status: Redis
     is shared, so failing readiness on it would eject every pod at once, and a
-    gateway outage does not stop findings or cases being served.
+    gateway outage does not stop findings or cases being served. The agent
+    layer and the SOC daemon are reported beside it, under ``processes``.
     """
     # Read first, and in both branches: schema drift severe enough to raise
     # UndefinedColumn is exactly what sends this handler down the except path,
@@ -755,6 +757,8 @@ async def _health_payload(request: Request) -> dict:
     except Exception:
         logger.exception("Health check could not read process flags")
 
+    # Started before the storage probe so the two waits overlap, not add up.
+    processes = asyncio.create_task(read_process_health())
     try:
         backend_info, state_dir = await asyncio.to_thread(
             _check_storage, request.app.state.health_storage
@@ -797,6 +801,7 @@ async def _health_payload(request: Request) -> dict:
         }
     if schema_block is not None:
         payload["schema"] = schema_block
+    payload["processes"] = await processes
     return payload
 
 

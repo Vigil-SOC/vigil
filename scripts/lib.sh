@@ -279,6 +279,38 @@ ensure_jwt_secret() {
     export JWT_SECRET_KEY
 }
 
+# --- Agent layer token ---
+# The backend and the agent layer share AGENT_INTERNAL_TOKEN. env.example ships
+# it empty, and empty means scripts/agent_up.sh refuses to start, so no chat turn
+# or workflow run gets through. Unlike the JWT secret it goes in .env: agent_up.sh
+# and `docker compose --env-file .env` read it there. Fills an empty value once
+# (a value the caller exported, else a new one) and never replaces a set one.
+# Read as agent_up.sh reads it: the first line, quotes stripped.
+ensure_agent_token() {
+    local env="$REPO_ROOT/.env" current token
+    [ -f "$env" ] || return 0
+    current="$(sed -n 's/^AGENT_INTERNAL_TOKEN=//p' "$env" | head -1)"
+    current="${current%\"}"; current="${current#\"}"
+    current="${current%\'}"; current="${current#\'}"
+    [ -n "$current" ] && return 0
+    token="${AGENT_INTERNAL_TOKEN:-}"
+    [ -n "$token" ] || token="$(openssl rand -hex 32 2>/dev/null \
+        || od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+    # Rewritten in place (cat, not mv) so .env keeps its owner and mode.
+    if ! T="$token" awk '
+        !done && /^AGENT_INTERNAL_TOKEN=/ { print "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\""; done = 1; next }
+        { print }
+        END { if (!done) print "AGENT_INTERNAL_TOKEN=\"" ENVIRON["T"] "\"" }
+    ' "$env" > "$env.tmp.$$" || ! cat "$env.tmp.$$" > "$env"; then
+        rm -f "$env.tmp.$$"
+        echo "Warning: could not write AGENT_INTERNAL_TOKEN to $env" >&2
+        return 0
+    fi
+    rm -f "$env.tmp.$$"
+    export AGENT_INTERNAL_TOKEN="$token"
+    echo "Set AGENT_INTERNAL_TOKEN in .env (the agent layer's key to the API)"
+}
+
 # Is this venv the one .python-version asks for, on this machine's architecture?
 # Guards against a venv left behind by an earlier setup — a different pin, or an
 # interpreter that has since been upgraded or uninstalled out from under it.

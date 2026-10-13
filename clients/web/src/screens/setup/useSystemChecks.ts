@@ -9,7 +9,7 @@ import {
 } from '../../shell/statusLine'
 import type { CheckRow } from './CheckTable'
 
-type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'federation' | 'mcp'
+type CheckId = 'database' | 'provider' | 'storage' | 'health' | 'agent' | 'daemon' | 'federation' | 'mcp'
 
 type SystemCheck = CheckRow & { id: CheckId }
 
@@ -25,9 +25,10 @@ interface StorageRead {
 interface HealthBody {
   status?: string
   storage?: { database_available?: boolean; demo_mode?: boolean }
+  processes?: { agent_layer?: string; daemon?: string }
 }
 
-/** One read each per run: Database and API health share the health call, Database and Storage the storage call */
+/** One read each per run: Database, API health, Agent layer and SOC daemon share the health call, Database and Storage the storage call */
 interface Reads {
   storage: () => Promise<StorageRead>
   health: () => Promise<HealthBody>
@@ -49,6 +50,36 @@ const readDatabase: Read = async ({ health }) => {
   return read?.database_available
     ? { phase: 'passed', detail: 'Connected' }
     : { phase: 'needs', detail: 'Not connected' }
+}
+
+// The console is served without either process, so these are the rows that say
+// whether chat, workflow runs and alert triage can happen at all.
+const readAgentLayer: Read = async ({ health }) => {
+  switch ((await health()).processes?.agent_layer) {
+    case 'running':
+      return { phase: 'passed', detail: 'Running' }
+    case 'no_token':
+      return { phase: 'needs', detail: 'AGENT_INTERNAL_TOKEN is not set · chat and workflow runs fail' }
+    case 'unhealthy':
+      return { phase: 'needs', detail: 'Not ready · chat and workflow runs fail' }
+    case 'not_running':
+      return { phase: 'needs', detail: 'Not running · chat and workflow runs fail' }
+    default:
+      return COULD_NOT_READ
+  }
+}
+
+const readDaemon: Read = async ({ health }) => {
+  switch ((await health()).processes?.daemon) {
+    case 'running':
+      return { phase: 'passed', detail: 'Running' }
+    case 'unhealthy':
+      return { phase: 'needs', detail: 'Running, but a component stopped' }
+    case 'not_running':
+      return { phase: 'needs', detail: 'Not running · alerts are not polled or triaged' }
+    default:
+      return COULD_NOT_READ
+  }
 }
 
 const DATABASE_UNAVAILABLE: Result = { phase: 'needs', detail: 'Database unavailable' }
@@ -131,6 +162,8 @@ const CHECKS: { id: CheckId; label: string; read: Read }[] = [
   { id: 'provider', label: 'Model gateway', read: readProvider },
   { id: 'storage', label: 'Storage', read: readStorage },
   { id: 'health', label: 'API health', read: readHealth },
+  { id: 'agent', label: 'Agent layer', read: readAgentLayer },
+  { id: 'daemon', label: 'SOC daemon', read: readDaemon },
   { id: 'federation', label: 'Alert collection', read: readFederation },
   { id: 'mcp', label: 'Tool servers', read: readMcp },
 ]

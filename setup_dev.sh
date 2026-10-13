@@ -16,8 +16,9 @@ elif ! node -e "process.exit(parseInt(process.version.slice(1))>=20?0:1)" 2>/dev
 fi
 [ "$WARNINGS" -gt 0 ] && echo ""
 
-# Environment. Create-only: an existing .env is never rewritten, so an install
-# already configured for the DEV_MODE bypass keeps it.
+# Environment. Create-only: an existing .env is never replaced, so an install
+# already configured for the DEV_MODE bypass keeps it. The one edit is filling an
+# empty AGENT_INTERNAL_TOKEN, below.
 if [ ! -f "$REPO_ROOT/.env" ]; then
     cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
     echo "Created .env from env.example (authentication on; first run creates the admin)"
@@ -26,6 +27,8 @@ fi
 # here so the first ./start.sh finds it; a JWT_SECRET_KEY set in .env still
 # wins at start time (start.sh loads .env before calling this).
 ensure_jwt_secret
+# Without this token the agent layer refuses to start: no chat, no workflow runs.
+ensure_agent_token
 
 # Python
 ensure_venv

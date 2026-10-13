@@ -198,6 +198,10 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
+      # The daemon's /health and /status (setup checks, Kafka page). The default,
+      # localhost, is this container. Without --profile daemon the name doesn't
+      # resolve, which the checks report as not running.
+      DAEMON_HEALTH_HOST: soc-daemon
       # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
       # on; the OTLP push needs the collector from --profile observability.
       VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
