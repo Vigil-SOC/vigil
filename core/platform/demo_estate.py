@@ -53,7 +53,6 @@ TECHNIQUES = {
     "T1041": "Exfiltration Over C2 Channel",
     "T1046": "Network Service Discovery",
     "T1053.005": "Scheduled Task",
-    "T1056.003": "Web Portal Capture",
     "T1071.001": "Web Protocols",
     "T1071.004": "DNS",
     "T1078.002": "Domain Accounts",
@@ -66,6 +65,7 @@ TECHNIQUES = {
     "T1566.002": "Spearphishing Link",
     "T1567.002": "Exfiltration to Cloud Storage",
     "T1569.002": "Service Execution",
+    "T1598.003": "Spearphishing Link",
     "T1621": "Multi-Factor Authentication Request Generation",
 }
 
@@ -125,7 +125,7 @@ FINDINGS: Tuple[_Finding, ...] = (
         f"WS-FIN-07 posted a sign-in form to {LURE_DOMAIN}",
         "j.reyes opened the link 7 minutes after it arrived and submitted the form. "
         "The domain was first seen 2 days ago.",
-        {"T1566.002": 0.86, "T1056.003": 0.74},
+        {"T1566.002": 0.86, "T1598.003": 0.74},
         {"hostnames": ["WS-FIN-07"], "usernames": ["j.reyes"],
          "src_ips": [_ip("WS-FIN-07")], "dest_ips": [LURE_IP], "domains": [LURE_DOMAIN]},
     ),
@@ -189,8 +189,8 @@ FINDINGS: Tuple[_Finding, ...] = (
     _Finding(
         "f-demo-b3", 1170, "flow", "high", 0.87, "new", "c-beaconing",
         f"WS-ENG-12 calls {C2_IP} every 60 s over HTTPS",
-        f"Every 60 s with 2 s of jitter, kept up for hours with nobody signed in. "
-        f"{C2_IP} serves {C2_DOMAIN}.",
+        f"Every 60 s with 2 s of jitter, for hours without a break, under "
+        f"m.okafor's session. {C2_IP} serves {C2_DOMAIN}.",
         {"T1071.001": 0.89},
         {"hostnames": ["WS-ENG-12"], "usernames": ["m.okafor"],
          "src_ips": [_ip("WS-ENG-12")], "dest_ips": [C2_IP], "domains": [C2_DOMAIN]},

@@ -20,6 +20,9 @@ DOCUMENTATION_NETS = [
 ]
 IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 DOMAIN = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.example\b")
+# Anything shaped like a host name: dotted labels ending in a letter.
+NAME = re.compile(r"(?<![\w.-])(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*\b")
+FILE_EXTENSIONS = (".exe", ".dmp")
 
 
 @pytest.fixture(scope="module")
@@ -30,6 +33,19 @@ def estate():
 def _values(finding: dict, *keys: str) -> set:
     context = finding["entity_context"]
     return {value for key in keys for value in context.get(key, [])}
+
+
+def _strings(value):
+    """Every string in a finding or case: keys, values, nested lists."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(key)
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
 
 
 def _entities(finding: dict) -> set:
@@ -101,6 +117,24 @@ def test_entities_are_the_estates_own_and_reserved(estate):
         assert finding["demo"] is True
     for address in HOSTS.values():
         assert ipaddress.ip_address(address) in DOCUMENTATION_NETS[1]
+
+
+def test_no_text_anywhere_names_a_real_address_or_domain(estate):
+    """Titles, descriptions, assignees and timelines too, not only entity_context."""
+    findings, cases = estate
+    seen = set()
+    for text in _strings(findings + cases):
+        for address in IP.findall(text):
+            ip = ipaddress.ip_address(address)
+            assert any(ip in net for net in DOCUMENTATION_NETS), (address, text)
+            seen.add(address)
+        for name in NAME.findall(text.lower()):
+            seen.add(name)
+            if name in USERS or name.endswith(FILE_EXTENSIONS):
+                continue
+            assert name.endswith((".example", "example.com")), (name, text)
+    # the scan is not vacuous: it reads descriptions and assignees
+    assert {"203.0.113.45", "invoice-portal.example", "example.com"} <= seen
 
 
 def test_the_estate_is_the_last_day_and_cases_follow_their_findings(estate):
