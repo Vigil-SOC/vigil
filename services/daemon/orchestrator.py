@@ -429,7 +429,7 @@ def _load_finding(finding_id: str) -> Optional[Dict]:
     try:
         finding = DatabaseService().get_finding(finding_id)
     except Exception as e:
-        logger.error(f"Failed to read finding {finding_id}: {e}")
+        logger.error("Failed to read finding %s: %s", finding_id, e)
         return None
     return FindingSchema.dump(finding) if finding else None
 
@@ -441,7 +441,9 @@ def _attach_finding(case_id: str, finding_id: str) -> bool:
     try:
         return bool(DatabaseService().add_finding_to_case(case_id, finding_id))
     except Exception as e:
-        logger.error(f"Failed to attach finding {finding_id} to case {case_id}: {e}")
+        logger.error(
+            "Failed to attach finding %s to case %s: %s", finding_id, case_id, e
+        )
         return False
 
 
