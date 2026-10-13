@@ -734,7 +734,8 @@ config:
   DAEMON_MONITOR_THRESHOLD: "0.70"
   DAEMON_CRITICAL_ACTION_FLOOR: "0.70"
   DAEMON_HIGH_ACTION_FLOOR: "0.80"
-  DAEMON_FORCE_APPROVAL: "false"
+  # Blank: Assist until Settings picks Act. "true" keeps Assist; "false" is Act.
+  DAEMON_FORCE_APPROVAL: ""
   DAEMON_DRY_RUN: "false"
   DAEMON_ESCALATION_ENABLED: "true"
   DAEMON_ESCALATE_SEVERITIES: "critical,high"

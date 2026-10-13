@@ -177,6 +177,35 @@ class TestConfidenceThresholds:
             assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
         store.set_system_config.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("env", "status"),
+        [
+            (None, ActionStatus.PENDING),  # a fresh install is Assist
+            ("true", ActionStatus.PENDING),
+            ("false", ActionStatus.APPROVED),  # the deployment picked Act
+        ],
+    )
+    def test_no_stored_choice_is_assist_unless_env_picked_act(
+        self, monkeypatch, env, status
+    ):
+        if env is None:
+            monkeypatch.delenv("DAEMON_FORCE_APPROVAL", raising=False)
+        else:
+            monkeypatch.setenv("DAEMON_FORCE_APPROVAL", env)
+        get_settings.cache_clear()
+        store = Mock()
+        store.read_system_config.return_value = None
+        try:
+            with patch(
+                "core.response.approval_service.get_config_service",
+                return_value=store,
+            ):
+                action = _create(ApprovalService(config=ResponseConfig()), 0.99)
+        finally:
+            get_settings.cache_clear()
+        assert action.status == status.value
+        store.set_system_config.assert_not_called()
+
 
 class TestConfiguredBands:
     """Every other comparison reads the same ResponseConfig (#916)."""

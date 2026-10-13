@@ -34,7 +34,10 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.approval_service import APPROVAL_CONFIG_KEY
+from core.response.approval_service import (
+    APPROVAL_CONFIG_KEY,
+    stored_force_manual_approval,
+)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
@@ -1629,9 +1632,7 @@ def _environment_wins() -> bool:
 
 def _stored_force_manual(config_service) -> bool:
     value = config_service.read_system_config(APPROVAL_CONFIG_KEY)
-    if isinstance(value, dict):
-        return bool(value.get("enabled", False))
-    return False
+    return stored_force_manual_approval(value)
 
 
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
