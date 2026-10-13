@@ -42,7 +42,9 @@ class DatabaseDataService:
     # Minimum seconds between reconnection attempts when DB is unreachable.
     _RECONNECT_INTERVAL_SECONDS = 10.0
 
-    def __init__(self, demo_data=None):
+    def __init__(self, demo_data=None, *, demo: Optional[bool] = None):
+        """``demo`` overrides the configured demo mode. ``False`` is for callers
+        whose records always live in Postgres whatever the console shows."""
         self._db_service = None
         self._db_connected = False
         self._db_was_down = False
@@ -50,7 +52,7 @@ class DatabaseDataService:
         # module that builds a module-level service opens no connection (#1456).
         # -inf, not 0.0: monotonic() can be under the interval on a fresh boot.
         self._last_reconnect_attempt = float("-inf")
-        self._demo_mode = is_demo_mode()
+        self._demo_mode = is_demo_mode() if demo is None else demo
         self._demo_service = None
 
         if self._demo_mode:
