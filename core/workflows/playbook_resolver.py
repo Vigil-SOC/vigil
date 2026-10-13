@@ -338,12 +338,13 @@ def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
             ]
 
 
-# ART execute is always gated. In Assist, so is a tool that changes something
-# outside Vigil on its own (block, isolate, revoke: see changes_for_tool), so the
-# call waits in the approvals inbox. Assist is read only when such a tool is
-# granted. The id must be one config.tools actually carries: spec.ts refuses an
-# approvals name that is not declared. Native and MCP-flattened spellings both
-# count; whichever resolved is the one that goes on the list.
+# ART execute is always gated. In Assist, so is a containment tool (block,
+# isolate, disable, revoke: the verbs changes_for_tool rates on_its_own), so the
+# call waits in the approvals inbox. Sends and submits are not on that list.
+# Assist is read only when such a tool is granted. The id must be one
+# config.tools actually carries: spec.ts refuses an approvals name that is not
+# declared. Native and MCP-flattened spellings both count; whichever resolved
+# is the one that goes on the list.
 def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
     from core.response.approval_service import assist_on
 
@@ -415,10 +416,9 @@ def resolve(
         ),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
-        # ART execute, and in Assist a tool that changes something on its own,
-        # parks until a human approves. Other grants stay ungated. A phase
-        # checkpoint is separate (approval_required on the step) and is not a
-        # substitute.
+        # ART execute, and in Assist a containment tool, parks until a human
+        # approves. Other grants stay ungated. A phase checkpoint is separate
+        # (approval_required on the step) and is not a substitute.
         "approvals": _approvals_of(tools),
         "thresholds": {},
     }
