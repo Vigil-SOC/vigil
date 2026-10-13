@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field, create_model
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.auth.permissions import permission_gate
 from core.config import (
+    DEMO_MODE_CONFIG_KEY,
+    forget_demo_mode,
     get_settings,
     is_demo_mode,
     load_integrations_config,
@@ -75,17 +78,31 @@ def _for_user(user: User):
     return get_config_service(user_id=str(user.user_id))
 
 
-def _mirror_to_file(filename: str, config_data: Dict[str, Any]) -> None:
+def _mirror_to_file(
+    filename: str, config_data: Dict[str, Any], *, merge: bool = False
+) -> bool:
     """Copy config the database already owns, for backward compatibility.
 
     Best-effort: the database write has committed, so an unwritable State
-    Directory must not fail a request that succeeded.
+    Directory must not fail a request that succeeded. ``merge`` keeps the file's
+    other keys, for general_config.json, which General settings and demo mode
+    share. Written aside and renamed, so a reader never sees a half-written file.
     """
     try:
-        with open(vigil_path(filename, write=True), "w") as f:
-            json.dump(config_data, f, indent=2)
-    except OSError as e:
+        target = vigil_path(filename, write=True)
+        data = dict(config_data)
+        source = vigil_path(filename)
+        if merge and source.exists():
+            with open(source) as f:
+                data = {**json.load(f), **config_data}
+        staged = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        with open(staged, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(staged, target)
+        return True
+    except (OSError, ValueError) as e:
         logger.warning(f"Could not mirror {filename} to the State Directory: {e}")
+        return False
 
 
 class ClaudeConfig(BaseModel):
@@ -184,48 +201,44 @@ def get_demo_mode():
 
 
 @router.post("/demo-mode", dependencies=_SETTINGS_WRITE)
-def set_demo_mode(config: DemoModeConfig):
+def set_demo_mode(
+    config: DemoModeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Switch demo mode for every process, with no restart.
+
+    The database row is what every process and replica reads, within a few
+    seconds. general_config.json keeps a copy, which answers when there is no
+    database. DEMO_MODE in the server's environment still wins.
     """
-    Set demo mode configuration.
+    _for_user(current_user).set_system_config(
+        key=DEMO_MODE_CONFIG_KEY,
+        value={"enabled": config.enabled},
+        description="Demo mode: the console reads the sample estate",
+        config_type="general",
+        change_reason="Updated via Settings UI",
+    )
+    _mirror_to_file("general_config.json", {"demo_mode": config.enabled}, merge=True)
+    forget_demo_mode()
 
-    Note: Setting via API updates the config file. Environment variable takes precedence.
-
-    Args:
-        config: Demo mode configuration
-
-    Returns:
-        Success status
-    """
-    source_file = vigil_path("general_config.json")
-    config_file = vigil_path("general_config.json", write=True)
-
-    # Load existing config
-    existing = {}
-    if source_file.exists():
-        with open(source_file, "r") as f:
-            existing = json.load(f)
-
-    # Update demo_mode setting
-    existing["demo_mode"] = config.enabled
-
-    with open(config_file, "w") as f:
-        json.dump(existing, f, indent=2)
-
-    # The data services read the flag per call, so the saved value applies now,
-    # unless DEMO_MODE in the server's environment says otherwise.
-    if is_demo_mode() != config.enabled:
+    if is_demo_mode() == config.enabled:
+        message = (
+            "Demo mode is on. Dashboard shows the sample estate; Overview, Triage "
+            "and Cases keep your own data."
+            if config.enabled
+            else "Demo mode is off. Vigil reads your own findings and cases now."
+        )
+    elif get_settings().demo_mode is not None:
         message = "Saved, but DEMO_MODE in the server's environment overrides it."
-    elif config.enabled:
-        message = "Demo mode is on. The sample estate's findings are on Dashboard now."
     else:
-        message = "Demo mode is off. Vigil reads your own findings and cases now."
+        raise HTTPException(status_code=500, detail="Could not save demo mode")
     return {"success": True, "enabled": config.enabled, "message": message}
 
 
 @router.post("/demo-mode/reset", dependencies=_SETTINGS_WRITE)
 def reset_demo_data(demo_service=Depends(provide_demo_data)):
     """
-    Reset demo data to regenerate sample findings and cases.
+    Restore the sample estate as it started, re-timed to now.
 
     Returns:
         Success status
@@ -237,7 +250,7 @@ def reset_demo_data(demo_service=Depends(provide_demo_data)):
 
     return {
         "success": True,
-        "message": "Demo data regenerated",
+        "message": "Sample estate restored",
         "findings_count": len(demo_service.get_findings()),
         "cases_count": len(demo_service.get_cases()),
     }
@@ -1198,7 +1211,7 @@ def set_general_config(
             status_code=500, detail="Failed to save configuration to database"
         )
 
-    _mirror_to_file("general_config.json", config_data)
+    _mirror_to_file("general_config.json", config_data, merge=True)
 
     # Update the global secrets manager if keyring setting changed
     try:

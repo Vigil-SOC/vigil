@@ -2,9 +2,10 @@ import json
 import logging
 import os
 import sys
+import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Literal, Optional
+from typing import Annotated, Any, List, Literal, Optional, Tuple
 
 from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -386,11 +387,54 @@ def validate_settings_or_exit() -> Settings:
         sys.exit(os.EX_CONFIG)
 
 
+# The saved demo-mode switch: {"enabled": bool}. In the database rather than the
+# State Directory, so every process and replica reads the same answer.
+DEMO_MODE_CONFIG_KEY = "demo_mode.settings"
+# How long a process trusts its last read. Data services ask on every call.
+_DEMO_MODE_TTL_SECONDS = 5.0
+# After a failed database read the file answers for a minute, so a demo with
+# no Postgres logs one failed read a minute rather than one per request burst.
+_DEMO_MODE_RETRY_SECONDS = 60.0
+_demo_mode_read: Optional[Tuple[float, bool]] = None  # (expires at, value)
+
+
 def is_demo_mode() -> bool:
+    """Whether the console's data services serve the sample estate.
+
+    DEMO_MODE in the environment wins. Otherwise the saved switch: the
+    ``demo_mode.settings`` row, or ``demo_mode`` in general_config.json when
+    there is no row or no database. A process sees another's change within
+    ``_DEMO_MODE_TTL_SECONDS``.
+    """
     enabled = get_settings().demo_mode
     if enabled is not None:
         return enabled
-    return get_general_config("demo_mode", False)
+    global _demo_mode_read
+    now = time.monotonic()
+    if _demo_mode_read is None or now >= _demo_mode_read[0]:
+        value, from_db = _saved_demo_mode()
+        ttl = _DEMO_MODE_TTL_SECONDS if from_db else _DEMO_MODE_RETRY_SECONDS
+        _demo_mode_read = (now + ttl, value)
+    return _demo_mode_read[1]
+
+
+def forget_demo_mode() -> None:
+    """Drop this process's cached read, so the next call reads the saved switch."""
+    global _demo_mode_read
+    _demo_mode_read = None
+
+
+def _saved_demo_mode() -> Tuple[bool, bool]:
+    """``(enabled, whether the database answered)``."""
+    try:
+        from core.storage.config_service import get_config_service
+
+        row = get_config_service().read_system_config(DEMO_MODE_CONFIG_KEY)
+    except Exception:  # noqa: BLE001 - no database, or it is down: the file answers
+        return bool(get_general_config("demo_mode", False)), False
+    if isinstance(row, dict) and isinstance(row.get("enabled"), bool):
+        return row["enabled"], True
+    return bool(get_general_config("demo_mode", False)), True
 
 
 def _load_json_config(path: Path) -> dict:
