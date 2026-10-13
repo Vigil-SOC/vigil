@@ -5,9 +5,8 @@ import { parse as parseYaml } from "yaml";
 import type { ConclusionSpec, GuardSpec, PluginManifest, SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
 
-// A plugin is a directory: plugin.yaml, and a skills/ folder of SKILL.md files.
-// Shipped with the worker, resolved against the package rather than the cwd, the
-// same way the arch files are.
+// A plugin is a directory: plugin.yaml and a skills/ folder of SKILL.md files, shipped
+// with the worker and resolved against the package, not the cwd, as the arch files are.
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 
 const cache = new Map<string, PluginManifest>();

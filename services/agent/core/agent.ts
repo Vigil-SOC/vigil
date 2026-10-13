@@ -18,10 +18,8 @@ import { scrub } from "./security.js";
 import type { RunSpec, ToolSpec } from "./spec.js";
 import { drain, streamTurn } from "./stream.js";
 
-// The kernel: one agent loop, driven by a plugin rather than a workflow. The loop
-// is streamTurn's, unchanged. What this adds is what every plugin needs and none
-// should write: steps journaled as they happen, a transcript rebuilt from them on
-// resume, a structured answer at the end, and a second look before it stands.
+// The kernel: streamTurn's loop driven by a plugin. It adds what every plugin needs:
+// steps journaled as they happen, resume from them, a structured answer and a second look.
 
 export const AGENT_ROLE = "agent";
 export const REVIEW_ROLE = "reviewer";
@@ -262,9 +260,8 @@ function openingKeys(spec: RunSpec): readonly string[] {
   return [...new Set(held.filter((key): key is string => typeof key === "string" && key !== ""))].sort();
 }
 
-// The transcript a resume continues from, rebuilt from the steps the ledger holds.
-// A call with no step was never answered -- the run parked on it -- so it is left
-// out, and the model asks again: an approved call is then served, not re-run.
+// The transcript a resume continues from. A call with no step parked the run and is
+// left out, so the model asks again and an approved call is served, not re-run.
 export function historyOf(steps: readonly StepPayload[]): Message[] {
   const turns = new Map<number, StepPayload[]>();
   for (const step of steps) turns.set(step.turn, [...(turns.get(step.turn) ?? []), step]);
@@ -310,9 +307,8 @@ const REVIEW_RULES = [
 const REVIEW_CAP = 60_000;
 const RECORD_CAP = 6_000;
 
-// The second look. Refs are checked by counting, whatever the reviewer says. A
-// guarded answer stands only when the reviewer upholds it over at least one real
-// cited step; a reviewer that cannot answer is not one that agreed.
+// The second look. Refs are counted, whatever the reviewer says; a guarded answer needs
+// the reviewer to uphold it over a real cited step, and one that cannot answer did not agree.
 export async function reviewOf(
   harness: Harness<Kinds>,
   options: AgentOptions,

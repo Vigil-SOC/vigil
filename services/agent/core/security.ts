@@ -59,13 +59,11 @@ export function isVisibilityGap(failure: ToolFailure): boolean {
 
 // The one place a ToolResult becomes text a model reads. Rows serialise here and
 // nowhere else, so no caller can hand a model output that skipped the scan.
-//
-// ref, when given, is the id a reader cites this result by. It goes in the opener,
-// which the model reads and the result's own text cannot forge: the delimiter scrub
-// above keeps a body from opening a block of its own.
 export function wrap(toolId: string, result: ToolResult, scan: Scanner, cap: number, ref?: string): Wrapped {
   const body = scrub(result.ok ? renderRows(result) : renderFailure(result.failure), cap);
   const id = toolId.replace(/[^\w.-]/g, "");
+  // ref, the id a reader cites this result by, rides the opener: the scrub above keeps
+  // a body from opening a block of its own, so the result's text cannot forge it.
   const cited = ref === undefined ? "" : ` ref="${ref.replace(/[^\w.-]/g, "")}"`;
   return {
     text: `<vigil:tool_result tool="${id}"${cited}>\n${body}\n</vigil:tool_result>`,

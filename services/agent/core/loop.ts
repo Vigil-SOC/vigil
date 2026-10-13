@@ -59,9 +59,8 @@ export interface TurnConfig {
   // and means a run that recalls nothing: which keys a run is about is the
   // workflow's answer, and a harness that guessed would query on prose.
   recall_keys?: readonly string[];
-  // Numbers each result so the model can cite it: the nth call this turn makes is
-  // `${prefix}${offset + n}`. Absent leaves results unnumbered, as every workflow
-  // written before the kernel expects.
+  // Numbers each result so the model can cite it: the nth call is `${prefix}${offset + n}`.
+  // Absent leaves results unnumbered, as the workflows written before the kernel expect.
   refs?: { prefix: string; offset: number };
   // Lets this turn run against a ledger that already holds a terminal. Only for a turn
   // that describes a run rather than continues one -- never one that can reach a tool.

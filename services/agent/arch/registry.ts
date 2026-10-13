@@ -37,9 +37,8 @@ export interface ArchEntry {
   // itself says why it is not the projection. Absent means a run of this kind is
   // not distilled, which is the honest default rather than empty rows.
   distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
-  // The plugin that runs this kind on the kernel (core/agent.ts) instead of its
-  // workflow, when the deployment says so. Absent means the workflow is the only
-  // engine. A run keeps whichever engine opened it: the journaled spec says which.
+  // The plugin that runs this kind on the kernel (core/agent.ts) when the deployment
+  // says so; absent, the workflow is the only engine. A run keeps the engine that opened it.
   plugin?: string;
 }
 

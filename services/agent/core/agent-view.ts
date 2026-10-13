@@ -14,9 +14,8 @@ import {
 } from "../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../contracts/memory.js";
 
-// What a reader outside this process is told about a kernel run, and what each
-// turn of it was shown. One fold for every plugin: the events are the kernel's
-// own, so no plugin writes a projection or a replay of its own.
+// What a reader outside this process is told about a kernel run and what each turn
+// was shown. One fold for every plugin, since the events are the kernel's own.
 
 interface Envelope {
   kind: string;
@@ -132,9 +131,8 @@ export interface AgentReplay {
   review: ReviewPayload | null;
 }
 
-// What each turn was shown is the transcript up to it, and the transcript is the
-// steps before it: the kernel rebuilds a resume from exactly these, so a reader
-// rebuilding a turn reads what the model read.
+// What each turn was shown is the steps before it. A resume is rebuilt from exactly
+// these, so a reader rebuilding a turn reads what the model read.
 export function agentReplay(runId: string, events: readonly Envelope[]): AgentReplay {
   const turns: AgentReplayTurn[] = [];
   let pending = 0;

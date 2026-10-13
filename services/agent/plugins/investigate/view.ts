@@ -4,9 +4,8 @@ import { callViews } from "../../workflows/call-view.js";
 import type { LeadProjection } from "../../workflows/lead/projection.js";
 import type { InvestigateReplay } from "../../workflows/lead/replay.js";
 
-// The console reads an investigate run in the lead workflow's shape. A kernel run
-// answers in that same shape, so nothing that renders investigations has to know
-// which engine ran one, and carries the kernel's own fields beside it.
+// A kernel investigate run answers in the lead workflow's shape, with its own fields
+// beside it, so nothing that renders investigations has to know which engine ran one.
 
 interface Envelope {
   kind: string;
