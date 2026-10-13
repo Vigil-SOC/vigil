@@ -167,6 +167,28 @@ describe("an arch drives the loop", () => {
     });
   });
 
+  // The case's priority is raised from this on the far side, so it has to reach the
+  // terminal the run is reported out from, and only from the decision that ended it.
+  it("carries the severity the lead concluded with onto the terminal", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const state = new InProcessState<LeadKinds>();
+    const script: ScriptedTurn[] = [
+      STOP,
+      { emit: { action: "EXAMINE", rationale: "the lockouts cluster inside one hour", citations: [] } },
+      STOP,
+      { emit: { action: "CONCLUDE", rationale: "domain admin credentials taken", citations: [], severity: "critical" } },
+    ];
+
+    await runLead(harnessOf(spec, script, state), options("investigate", spec));
+
+    expect(await state.terminal(RUN)).toEqual({
+      outcome: "completed",
+      reason: "domain admin credentials taken",
+      summary: "domain admin credentials taken",
+      severity: "critical",
+    });
+  });
+
   it("leaves the summary unset when the run fails, so the error column is the only copy", async () => {
     const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
     const state = new InProcessState<LeadKinds>();

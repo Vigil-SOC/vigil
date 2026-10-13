@@ -151,6 +151,16 @@ describe("the shipped arches", () => {
     ]);
   });
 
+  // Rated in the case priorities' own names, so the far side applies it without a
+  // mapping. Optional in the schema: EXAMINE has nothing to rate yet.
+  it("lets the investigate lead rate what it concluded in case priorities", () => {
+    const spec = buildSpec(CASE, archFor("investigate").actions);
+    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
+    expect(properties["severity"]?.enum).toEqual(["critical", "high", "medium", "low"]);
+    expect(spec.roles.lead?.output_schema?.["required"]).not.toContain("severity");
+    expect(spec.roles.lead?.prompt).toContain("severity for what you found");
+  });
+
   it("generates the roster from the worker registry and narrows worker_agent_id to it", () => {
     const spec = huntSpec();
     const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
