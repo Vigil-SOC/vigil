@@ -154,7 +154,14 @@ async function bare(state: State<TallyKinds>): Promise<unknown[]> {
   const events = await state.read(RUN);
   return events
     .filter((event) => event.kind !== "frame" && event.kind !== "content")
-    .map(({ ts, seq, ...rest }: AgentEvent<TallyKinds>) => rest);
+    .map(({ ts, seq, ...rest }: AgentEvent<TallyKinds>) => ({ ...rest, payload: unclocked(rest.payload) }));
+}
+
+// A call's duration is the clock's, like ts, so two runs of the same thing differ in it.
+function unclocked(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || !("duration_ms" in payload)) return payload;
+  const { duration_ms, ...rest } = payload as Record<string, unknown>;
+  return rest;
 }
 
 async function approve(state: State<TallyKinds>, checkpoint_id: string): Promise<void> {
