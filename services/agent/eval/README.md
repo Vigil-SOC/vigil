@@ -36,13 +36,16 @@ answer its guard changed are recorded beside the grade.
 
 ## Running it
 
+The latest result is in `REPORT.md`. `investigate.config.yaml` routes the model through
+OpenRouter at high effort, so `--model` names it without the provider prefix.
+
 ```sh
 # once: the engine the kernel replaced, at the commit this branch forked from
 eval/setup-baseline.sh                          # -> ../vigil-eval-baseline
 
 # the gateway must serve the model: BIFROST_URL (default http://127.0.0.1:8080)
-npx tsx eval/run.ts --engine ../../../vigil-eval-baseline --label baseline --model anthropic/claude-sonnet-5-5
-npx tsx eval/run.ts --engine ../..                        --label kernel   --model anthropic/claude-sonnet-5-5
+npx tsx eval/run.ts --engine ../../../vigil-eval-baseline --label baseline --model anthropic/claude-haiku-5.5 --grader-model openrouter/anthropic/claude-haiku-5.5
+npx tsx eval/run.ts --engine ../..                        --label kernel   --model anthropic/claude-haiku-5.5 --grader-model openrouter/anthropic/claude-haiku-5.5
 npx tsx eval/score.ts eval/results/baseline.jsonl eval/results/kernel.jsonl --md eval/results/report.md
 ```
 

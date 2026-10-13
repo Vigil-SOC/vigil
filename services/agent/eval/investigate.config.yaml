@@ -1,6 +1,9 @@
 # The eval's deployment, shared by every engine under test. MODEL is replaced per
 # run with the model being evaluated; nothing else differs between engines.
 model: MODEL
+# Live LLM testing runs Haiku 5.5 through OpenRouter at high effort, for both engines.
+provider: openrouter
+effort: high
 
 budgets:
   max_calls: 40
