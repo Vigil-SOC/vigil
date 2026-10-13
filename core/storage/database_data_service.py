@@ -42,7 +42,12 @@ class DatabaseDataService:
     # Minimum seconds between reconnection attempts when DB is unreachable.
     _RECONNECT_INTERVAL_SECONDS = 10.0
 
-    def __init__(self, demo_data=None):
+    def __init__(self, demo_data=None, *, follow_demo: bool = True):
+        """``follow_demo=False`` pins the service to Postgres whatever demo mode says.
+
+        Demo mode swaps what the console and agents read. The daemon, ingest and
+        integration pushes handle real records, so they pass False.
+        """
         self._db_service = None
         self._db_connected = False
         self._db_was_down = False
@@ -51,13 +56,14 @@ class DatabaseDataService:
         # -inf, not 0.0: monotonic() can be under the interval on a fresh boot.
         self._last_reconnect_attempt = float("-inf")
         self._demo_data = demo_data
+        self._follow_demo = follow_demo
 
-    # Read on every call, never cached at construction: demo mode is switched at
+    # Asked on every call, never cached at construction: demo mode is switched at
     # runtime from setup, Home and Settings, and most callers hold a service built
-    # at import. It costs one small JSON read, as provide_demo_data does per request.
+    # at import. is_demo_mode keeps its own short-lived cache.
     @property
     def _demo_mode(self) -> bool:
-        return is_demo_mode()
+        return self._follow_demo and is_demo_mode()
 
     @property
     def _demo_service(self):

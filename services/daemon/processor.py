@@ -164,7 +164,9 @@ class FindingProcessor:
         try:
             from core.storage.database_data_service import DatabaseDataService
 
-            self._data_service = DatabaseDataService()
+            # Triage writes back to real findings; demo mode is for what the
+            # console reads.
+            self._data_service = DatabaseDataService(follow_demo=False)
             logger.info("Database service initialized")
         except Exception as e:
             logger.error(f"Failed to initialize database service: {e}")

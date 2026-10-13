@@ -48,7 +48,8 @@ ROUTER_META = RouterMeta(
 )
 authenticated_router = APIRouter(dependencies=[Depends(get_current_active_user)])
 logger = logging.getLogger(__name__)
-data_service = DatabaseDataService()
+# Pushes are real findings, so demo mode must not swallow them.
+data_service = DatabaseDataService(follow_demo=False)
 
 
 def _is_dev_mode() -> bool:

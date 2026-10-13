@@ -61,7 +61,7 @@ class SandboxPoller:
             try:
                 from core.storage.database_data_service import DatabaseDataService
 
-                self._data_service = DatabaseDataService()
+                self._data_service = DatabaseDataService(follow_demo=False)
             except Exception as e:
                 logger.warning(f"Sandbox poller could not init data service: {e}")
         if self._correlation is None:
