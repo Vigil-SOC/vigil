@@ -112,7 +112,7 @@
     },
     "confidence_score": {
       "data_type": "double precision",
-      "nullable": false
+      "nullable": true
     },
     "decision_id": {
       "data_type": "character varying(50)",

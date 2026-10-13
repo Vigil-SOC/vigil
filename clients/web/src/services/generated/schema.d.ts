@@ -307,8 +307,10 @@ export interface paths {
          * Get Pending Feedback Decisions
          * @description Get decisions that are awaiting human feedback.
          *
-         *     Returns decisions ordered by confidence (lowest first) since
-         *     low-confidence decisions benefit most from feedback.
+         *     Returns the newest ``limit`` of them ordered by confidence (lowest first)
+         *     since low-confidence decisions benefit most from feedback. Daemon triage
+         *     logs a decision per finding, so without ``agent_id`` its rows can fill the
+         *     window.
          */
         get: operations["get_api_ai_decisions_pending-feedback"];
         put?: never;
@@ -7272,7 +7274,7 @@ export interface components {
             /** Case Id */
             case_id: string | null;
             /** Confidence Score */
-            confidence_score: number;
+            confidence_score: number | null;
             /** Decision Id */
             decision_id: string;
             /** Decision Metadata */
@@ -12212,6 +12214,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Filter by agent ID */
+                agent_id?: string | null;
             };
             header?: {
                 authorization?: string | null;

@@ -512,6 +512,26 @@ def set_case_template_usage_count_default(conn):
     """))
 
 
+# A decision whose model gave no confidence stores NULL, not 0. Checked first:
+# ALTER needs the table's owner even when there is nothing to change, and
+# 42_ai_decision_confidence_nullable.sql may already have run as that owner.
+@migration("Make ai_decision_logs.confidence_score nullable")
+def make_ai_decision_confidence_nullable(conn):
+    if not _table_exists(conn, 'ai_decision_logs'):
+        return
+    nullable = conn.execute(text("""
+        SELECT is_nullable FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'ai_decision_logs'
+          AND column_name = 'confidence_score'
+    """)).scalar()
+    if nullable != 'NO':
+        return
+    conn.execute(text("""
+        ALTER TABLE ai_decision_logs ALTER COLUMN confidence_score DROP NOT NULL;
+    """))
+
+
 # ---------------------------------------------------------------------------
 # approval_actions table
 # ---------------------------------------------------------------------------

@@ -32,38 +32,55 @@ def _clean_outages():
 
 
 class _Db:
-    """Stands in for get_db_manager(): keeps what each session added."""
+    """Stands in for get_db_manager(): keeps what each session added, and
+    whether the processor still held its LLM slot while it wrote."""
 
-    def __init__(self):
+    def __init__(self, processor=None):
         self.added = []
+        self.slot_held = []
+        self._processor = processor
 
     @contextmanager
     def session_scope(self):
+        if self._processor is not None:
+            self.slot_held.append(self._processor._semaphore.locked())
         session = Mock()
         session.add.side_effect = self.added.append
         yield session
 
 
-def _processor(reply: str = REPLY) -> FindingProcessor:
-    processor = FindingProcessor(ProcessingConfig())
+def _processor(reply: str = REPLY, stored: bool = True) -> FindingProcessor:
+    processor = FindingProcessor(
+        ProcessingConfig(
+            auto_triage_enabled=True,
+            auto_enrich_enabled=False,
+            max_concurrent_tasks=1,
+        )
+    )
     gateway = Mock()
     gateway.submit = AsyncMock(return_value={"content": reply})
     processor._llm_gateway = gateway
+    # update_finding is False when no row took the update: a finding ingest
+    # skipped as an external-id duplicate (#1935).
+    processor._data_service = Mock()
+    processor._data_service.update_finding.return_value = stored
     return processor
 
 
-def _triage(processor, finding, db, target=("prov-1", "model-x")):
+def _enrich(processor, finding, db, target=("prov-1", "model-x")):
     with patch.object(
         FindingProcessor, "_resolve_triage_target", return_value=target
-    ), patch("core.storage.connection.get_db_manager", return_value=db):
-        return asyncio.run(processor._triage_finding(finding))
+    ), patch.object(FindingProcessor, "_evaluate_for_response", AsyncMock()), patch(
+        "core.storage.connection.get_db_manager", return_value=db
+    ):
+        asyncio.run(processor._enrich_in_background(finding))
 
 
 def test_an_answered_triage_logs_its_verdict_under_the_triage_filter():
-    db = _Db()
-    finding = _triage(_processor(), {"finding_id": "f-1", "data_source": "x"}, db)
+    processor = _processor()
+    db = _Db(processor)
+    _enrich(processor, {"finding_id": "f-1", "data_source": "x"}, db)
 
-    assert finding["severity"] == "high"
     [row] = db.added
     assert isinstance(row, AIDecisionLog)
     assert row.decision_id.startswith("triage-")
@@ -82,17 +99,19 @@ def test_an_answered_triage_logs_its_verdict_under_the_triage_filter():
         "provider_id": "prov-1",
         "model": "model-x",
     }
+    # Written after the LLM slot was given back.
+    assert db.slot_held == [False]
 
 
-def test_a_reply_without_a_confidence_is_logged_at_zero():
+def test_a_reply_without_a_confidence_is_logged_without_one():
     db = _Db()
-    _triage(
+    _enrich(
         _processor("SEVERITY: low\nRECOMMENDED_ACTION: monitor"),
         {"finding_id": "f-1"},
         db,
     )
     [row] = db.added
-    assert (row.confidence_score, row.reasoning) == (0.0, "")
+    assert (row.confidence_score, row.reasoning) == (None, "")
     assert row.decision_metadata["category"] is None
 
 
@@ -102,41 +121,88 @@ def test_a_failed_write_is_logged_once_and_triage_still_succeeds(caplog):
     processor = _processor()
     with caplog.at_level(logging.INFO, logger="services.daemon.processor"):
         for n in range(3):
-            finding = _triage(processor, {"finding_id": f"f-{n}"}, broken)
-            assert finding["ai_triage"]["result"]["recommended_action"] == "isolate"
-            assert "ai_triage_error" not in finding
-        _triage(processor, {"finding_id": "f-3"}, _Db())
+            _enrich(processor, {"finding_id": f"f-{n}"}, broken)
+        _enrich(processor, {"finding_id": "f-3"}, _Db())
 
     assert processor.stats["triaged"] == 4
+    assert processor.stats["errors"] == 0
+    # The verdict still reached the finding row each time.
+    for call in processor._data_service.update_finding.call_args_list:
+        assert call.kwargs["ai_enrichment"]["recommended_action"] == "isolate"
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1 and "f-0" in errors[0].getMessage()
     assert any("recovered after 3" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize(
-    "target,reply,error",
-    [
-        (None, REPLY, "no LLM provider configured"),
-        (("prov-1", "model-x"), "", "empty LLM response"),
-    ],
+    "target,reply",
+    [(None, REPLY), (("prov-1", "model-x"), "")],
+    ids=["no-provider", "empty-reply"],
 )
-def test_no_row_when_triage_got_no_answer(target, reply, error):
+def test_no_row_when_triage_got_no_answer(target, reply):
     db = Mock()
-    finding = _triage(_processor(reply), {"finding_id": "f-1"}, db, target=target)
-    assert finding["ai_triage_error"] == error
+    _enrich(_processor(reply), {"finding_id": "f-1"}, db, target=target)
     db.session_scope.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    "finding,reply",
+    "finding,reply,stored",
     [
-        ({"finding_id": "f-1", "data_source": PROBE_DATA_SOURCE}, REPLY),
-        ({"finding_id": "f-1"}, "I can't assess this alert."),
+        ({"finding_id": "f-1", "data_source": PROBE_DATA_SOURCE}, REPLY, True),
+        ({"finding_id": "f-1"}, "I can't assess this alert.", True),
+        ({"finding_id": "f-1"}, REPLY, False),
     ],
-    ids=["probe", "no-verdict"],
+    ids=["probe", "no-verdict", "row-not-updated"],
 )
-def test_no_row_for_a_probe_or_a_reply_with_no_verdict(finding, reply):
+def test_no_row_for_a_probe_a_reply_with_no_verdict_or_a_finding_with_no_row(
+    finding, reply, stored
+):
     db = Mock()
-    finding = _triage(_processor(reply), finding, db)
-    assert "ai_triage" in finding
+    processor = _processor(reply, stored=stored)
+    _enrich(processor, finding, db)
+    assert processor.stats["triaged"] == 1
     db.session_scope.assert_not_called()
+
+
+def test_a_finding_queued_or_in_flight_is_not_spawned_again():
+    """The backfill reads every row still missing ai_enrichment, including the
+    ones the ingest path has already queued or is triaging."""
+    processor = FindingProcessor(ProcessingConfig(enrich_max_inflight=1))
+    started = []
+
+    async def run():
+        release = asyncio.Event()
+
+        async def enrich(finding, source=None):
+            started.append(finding["finding_id"])
+            await release.wait()
+
+        with patch.object(processor, "_enrich_in_background", enrich):
+            await processor._spawn_enrich({"finding_id": "f-1"})
+            # f-2 waits for the one slot f-1 holds.
+            waiting = asyncio.create_task(
+                processor._spawn_enrich({"finding_id": "f-2"})
+            )
+            await asyncio.sleep(0)
+            # The backfill offers both again: one in flight, one queued. Each
+            # returns at once; a spawn would wait for the slot instead.
+            for finding_id in ("f-1", "f-2"):
+                await asyncio.wait_for(
+                    processor._spawn_enrich({"finding_id": finding_id}), timeout=1
+                )
+
+            release.set()
+            await waiting
+            while processor._enrich_tasks:
+                await asyncio.gather(*processor._enrich_tasks)
+                await asyncio.sleep(0)
+            assert started == ["f-1", "f-2"]
+
+            # Finished, so a later sweep may take it again.
+            await processor._spawn_enrich({"finding_id": "f-1"})
+            await asyncio.gather(*processor._enrich_tasks)
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert started == ["f-1", "f-2", "f-1"]
+    assert processor._enrich_inflight == set()

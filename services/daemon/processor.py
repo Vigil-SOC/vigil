@@ -96,6 +96,9 @@ class FindingProcessor:
         # backpressure propagates to the poller.
         self._enrich_slots = asyncio.Semaphore(config.enrich_max_inflight)
         self._enrich_tasks = set()
+        # Finding ids queued for or in enrichment, so the backfill, which reads
+        # every row still missing ai_enrichment, does not triage one twice.
+        self._enrich_inflight: set = set()
         self._enrich_failures = 0
         self._enrich_paused_until = 0.0
         self._enrich_breaker_tripped = False
@@ -348,7 +351,13 @@ class FindingProcessor:
         """Acquire an in-flight slot (blocks when the cap is reached → backpressure),
         then run enrichment in the background. Bounds pending enrich tasks so a burst
         or backfill can't pile up unbounded coroutines. Single choke point shared by
-        the ingest path and the backfill sweeper."""
+        the ingest path and the backfill sweeper. A finding already queued or in
+        flight is skipped, so it is triaged once."""
+        finding_id = finding.get("finding_id")
+        if finding_id:
+            if finding_id in self._enrich_inflight:
+                return
+            self._enrich_inflight.add(finding_id)
         await self._enrich_slots.acquire()
         task = asyncio.create_task(self._enrich_in_background(finding, source))
         self._enrich_tasks.add(task)
@@ -356,6 +365,7 @@ class FindingProcessor:
         def _done(t: asyncio.Task) -> None:
             self._enrich_tasks.discard(t)
             self._enrich_slots.release()
+            self._enrich_inflight.discard(finding_id)
 
         task.add_done_callback(_done)
 
@@ -366,6 +376,9 @@ class FindingProcessor:
         is capped by the semaphore and short-circuited by the breaker; response
         evaluation always runs on whatever severity we have."""
         finding_id = finding.get("finding_id", "unknown")
+        # What triage decided on this pass and which model decided it.
+        decision: Dict[str, Any] = {}
+        persisted = False
 
         want_llm = self.config.auto_triage_enabled or self.config.auto_enrich_enabled
         if want_llm and time.monotonic() >= self._enrich_paused_until:
@@ -373,7 +386,7 @@ class FindingProcessor:
                 try:
                     triaged_ok = True
                     if self.config.auto_triage_enabled:
-                        finding = await self._triage_finding(finding)
+                        finding = await self._triage_finding(finding, decision)
                         # _triage_finding sets ai_triage only when the gateway answered.
                         triaged_ok = bool(finding.get("ai_triage"))
 
@@ -381,7 +394,7 @@ class FindingProcessor:
                         finding = await self._enrich_finding(finding)
 
                     if self._data_service:
-                        await self._update_finding(finding)
+                        persisted = await self._update_finding(finding)
 
                     # Count "enriched" once, only when enrichment actually
                     # produced data (the sole increment — _enrich_finding no
@@ -404,8 +417,8 @@ class FindingProcessor:
                     self.stats["errors"] += 1
 
         # A known-answer probe stops here (#923): it exists to exercise the
-        # triage path and must never reach the responder or the orchestrator,
-        # whatever triage did or failed to do above.
+        # triage path and must never reach the responder, the orchestrator or
+        # AI Decisions, whatever triage did or failed to do above.
         if finding.get("data_source") == PROBE_DATA_SOURCE:
             return
 
@@ -415,6 +428,11 @@ class FindingProcessor:
         except Exception as e:
             logger.error(f"Response evaluation failed for {finding_id}: {e}")
             self.stats["errors"] += 1
+
+        # Last, outside the LLM slot. Only a verdict the finding row now holds:
+        # a finding ingest skipped as a duplicate (#1935) has no row to point at.
+        if persisted and decision.get("result"):
+            await self._log_triage_decision(finding_id, decision)
 
     def _note_enrich_failure(self, finding_id: str) -> None:
         """Trip the breaker after a run of enrichment failures."""
@@ -526,15 +544,15 @@ class FindingProcessor:
             logger.error(f"Failed to store finding: {e}")
             return False
 
-    async def _update_finding(self, finding: Dict[str, Any]):
+    async def _update_finding(self, finding: Dict[str, Any]) -> bool:
         """Persist only what triage/enrich produced — severity, status, and the
         cached AI analysis. This is a targeted partial update: the in-memory copy
         carries transient, source-derived keys (raw_event, entity context, etc.)
         that shouldn't be written back over the stored row, so only the
-        whitelisted fields are sent."""
+        whitelisted fields are sent. True when the row took the update."""
         finding_id = finding.get("finding_id")
         if not finding_id or not self._data_service:
-            return
+            return False
 
         updates: Dict[str, Any] = {}
         if finding.get("severity"):
@@ -546,7 +564,7 @@ class FindingProcessor:
             updates["ai_enrichment"] = ai_enrichment
 
         if not updates:
-            return
+            return False
         # update_finding reports failure by returning False rather than raising.
         if not self._data_service.update_finding(finding_id, **updates):
             logger.error(
@@ -555,18 +573,22 @@ class FindingProcessor:
                 finding_id,
             )
             self.stats["errors"] += 1
+            return False
+        return True
 
-    async def _triage_finding(self, finding: Dict[str, Any]) -> Dict[str, Any]:
-        """Use AI to triage and classify finding."""
+    async def _triage_finding(
+        self, finding: Dict[str, Any], decision: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Use AI to triage and classify finding. ``decision``, when given, gets
+        the provider and model asked and, once answered, the parsed result."""
 
         try:
             # Build triage prompt
             prompt = self._build_triage_prompt(finding)
 
             # Get AI assessment with timeout
-            sent_to: Dict[str, Optional[str]] = {}
             response, error = await asyncio.wait_for(
-                self._get_ai_triage(prompt, sent_to),
+                self._get_ai_triage(prompt, decision),
                 timeout=self.config.triage_timeout,
             )
 
@@ -574,7 +596,8 @@ class FindingProcessor:
                 # Parse and apply AI assessment
                 finding = self._apply_triage_result(finding, response)
                 self.stats["triaged"] += 1
-                await self._log_triage_decision(finding, sent_to)
+                if decision is not None:
+                    decision["result"] = finding["ai_triage"]["result"]
             else:
                 finding["ai_triage_error"] = error or "empty LLM response"
 
@@ -688,7 +711,7 @@ REASONING: [Brief explanation]
         )
 
     async def _get_ai_triage(
-        self, prompt: str, sent_to: Optional[Dict[str, Optional[str]]] = None
+        self, prompt: str, decision: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[str], Optional[str]]:
         """Get AI triage response via the LLM queue.
 
@@ -697,8 +720,8 @@ REASONING: [Brief explanation]
         previously a worker failure came back as empty content and the finding
         was stored indistinguishable from a triaged, unremarkable one.
 
-        ``sent_to``, when given, is filled with the provider and model the
-        prompt went to, for the decision log."""
+        ``decision``, when given, gets the provider and model the prompt went
+        to, for the decision log."""
         await self._ensure_gateway()
         if self._llm_gateway is None:
             return None, "LLM gateway unavailable"
@@ -712,8 +735,8 @@ REASONING: [Brief explanation]
             return None, "no LLM provider configured"
         report_recovered(logger, _PROVIDER_OUTAGE, "LLM provider configured")
         provider_id, model = target
-        if sent_to is not None:
-            sent_to.update(provider_id=provider_id, model=model)
+        if decision is not None:
+            decision.update(provider_id=provider_id, model=model)
         try:
             # The gateway's own default (90s) would otherwise cap the wait.
             result = await self._llm_gateway.submit(
@@ -793,24 +816,18 @@ REASONING: [Brief explanation]
         return finding
 
     async def _log_triage_decision(
-        self, finding: Dict[str, Any], sent_to: Dict[str, Optional[str]]
+        self, finding_id: str, decision: Dict[str, Any]
     ) -> None:
         """Record the triage verdict as an AI decision, so an analyst can review
-        and grade it beside the orchestrator's. One row per answered triage, so
-        a finding the backfill triages again gets a second row. Best-effort: a
-        failed write is logged and triage carries on."""
-        finding_id = finding.get("finding_id")
-        result = (finding.get("ai_triage") or {}).get("result") or {}
-        # A reply with no severity and no action left nothing to grade, and a
-        # probe is scored against its known answer, not by a person (#923).
-        if not finding_id or finding.get("data_source") == PROBE_DATA_SOURCE:
-            return
+        and grade it beside the orchestrator's. One row per answered triage the
+        finding row took. Best-effort: a failed write is logged and triage
+        carries on."""
+        result = decision["result"]
+        # A reply with no severity and no action left nothing to grade.
         if not (result.get("severity") or result.get("recommended_action")):
             return
         try:
-            await asyncio.to_thread(
-                self._write_triage_decision, finding_id, result, sent_to
-            )
+            await asyncio.to_thread(self._write_triage_decision, finding_id, decision)
         except Exception as e:  # noqa: BLE001 -- the verdict stands without its log
             report_outage(
                 logger,
@@ -824,12 +841,11 @@ REASONING: [Brief explanation]
         report_recovered(logger, _DECISION_LOG_OUTAGE, "Triage decisions logged")
 
     @staticmethod
-    def _write_triage_decision(
-        finding_id: str, result: Dict[str, Any], sent_to: Dict[str, Optional[str]]
-    ) -> None:
+    def _write_triage_decision(finding_id: str, decision: Dict[str, Any]) -> None:
         from core.storage.connection import get_db_manager
         from core.storage.models import AIDecisionLog
 
+        result = decision["result"]
         with get_db_manager().session_scope() as session:
             session.add(
                 AIDecisionLog(
@@ -839,9 +855,8 @@ REASONING: [Brief explanation]
                     agent_id=TRIAGE_DECISION_ID,
                     finding_id=finding_id,
                     decision_type="triage",
-                    # The column needs a number; a reply without a usable
-                    # confidence is logged at 0, first in the review queue.
-                    confidence_score=result.get("confidence", 0.0),
+                    # None when the reply gave no usable confidence.
+                    confidence_score=result.get("confidence"),
                     reasoning=result.get("reasoning") or "",
                     recommended_action=result.get("recommended_action") or "",
                     # Every key named even when empty, so a reader can rely on
@@ -850,8 +865,8 @@ REASONING: [Brief explanation]
                         "source": "auto_triage",
                         "severity": result.get("severity"),
                         "category": result.get("category"),
-                        "provider_id": sent_to.get("provider_id"),
-                        "model": sent_to.get("model"),
+                        "provider_id": decision.get("provider_id"),
+                        "model": decision.get("model"),
                     },
                 )
             )

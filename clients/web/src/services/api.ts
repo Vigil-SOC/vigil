@@ -137,8 +137,8 @@ export const aiDecisionsApi = {
     days?: number
   }) => api.get('/ai/decisions/stats', { params }),
   
-  getPendingFeedback: (limit?: number) =>
-    api.get('/ai/decisions/pending-feedback', { params: { limit } }),
+  getPendingFeedback: (limit?: number, agentId?: string) =>
+    api.get('/ai/decisions/pending-feedback', { params: { limit, agent_id: agentId } }),
 }
 
 export interface NeedsYouItem {

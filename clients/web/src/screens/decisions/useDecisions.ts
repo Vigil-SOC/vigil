@@ -77,7 +77,7 @@ export function useDecisions(agentId: string, status: DecisionStatus) {
   return { rows, phase, error, reload }
 }
 
-export function usePendingDecisions() {
+export function usePendingDecisions(agentId: string) {
   const [rows, setRows] = useState<Decision[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -89,7 +89,7 @@ export function usePendingDecisions() {
     setPhase('loading')
     setError(null)
     aiDecisionsApi
-      .getPendingFeedback(50)
+      .getPendingFeedback(50, agentId === 'all' ? undefined : agentId)
       .then((res) => {
         if (cancelled) return
         const list = (res.data || []) as ApiDecision[]
@@ -104,7 +104,7 @@ export function usePendingDecisions() {
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [agentId, reloadKey])
 
   return { rows, phase, error, reload }
 }

@@ -856,6 +856,31 @@ describe('SocConsole', () => {
     expect(screen.getByRole('tab', { name: 'Pending Approvals (0)' })).toHaveAttribute('aria-selected', 'false')
   })
 
+  // Triage logs a decision per finding, so the agent filter narrows Pending
+  // too; a decision the model gave no confidence for reads as a dash, not 0%.
+  it('filters Pending by agent and shows a missing confidence as a dash', async () => {
+    const pending = vi.spyOn(aiDecisionsApi, 'getPendingFeedback').mockImplementation(((_limit?: number, agentId?: string) =>
+      Promise.resolve({
+        data: agentId === 'triage'
+          ? [{ decision_id: 'd-t1', agent_id: 'triage', decision_type: 'triage', confidence_score: null, reasoning: '', recommended_action: 'monitor', timestamp: '2026-06-14T17:42:00Z' }]
+          : [],
+      })) as never)
+    try {
+      renderConsole()
+      clickScreen('AI Decisions')
+      await screen.findByRole('tab', { name: 'Pending (0)' })
+      fireEvent.click(screen.getByRole('button', { name: /^Agent:/ }))
+      fireEvent.click(await screen.findByRole('option', { name: 'Triage' }))
+
+      const row = (await screen.findByText('monitor')).closest('tr')!
+      expect(pending).toHaveBeenLastCalledWith(50, 'triage')
+      expect(row.querySelector('.confmeter')).toBeNull()
+      expect(within(row).queryByText(/\d%/)).toBeNull()
+    } finally {
+      pending.mockRestore()
+    }
+  })
+
   // The detail view returns before the tab list renders, so a badged click
   // while a decision was open used to change only which list the detail read
   // from -- losing the open decision and never showing the approvals queue.
