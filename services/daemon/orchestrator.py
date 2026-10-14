@@ -473,9 +473,8 @@ def _record_human_ask_document(
     hashed, which is wrong for a URL and worse for a path a caller chose.
 
     Written straight onto the launch session rather than through
-    ``CaseEvidenceService``: that service's constructor mkdirs an evidence
-    directory, and this path stores no file. A mkdir that fails would take the
-    launch down with it, and the row is the same either way.
+    ``CaseEvidenceService``: this path stores no file, so it has no use for the
+    evidence store, and the row is the same either way.
     """
     if not case_id or not document:
         return

@@ -120,6 +120,9 @@ services:
       # named volume inherits that; a volume from before #701 does not, and has
       # to be recreated.
       - vigil_home:/home/vigil/.vigil
+      # Detection rule repositories, fetched from Settings. Pre-created by the
+      # image like the State Directory, and kept out of it.
+      - detection_rules:/home/vigil/security-detections
     # logs/ is workdir-relative and /app is root-owned, so tmpfs is the only
     # mount that can carry the right owner. Keep uid/gid in step with
     # Dockerfile.backend.
@@ -215,6 +218,7 @@ volumes:
   postgres_data:
   redis_data:
   vigil_home:
+  detection_rules:
   bifrost_data:
 
 networks:

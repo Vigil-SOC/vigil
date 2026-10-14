@@ -185,6 +185,39 @@ class MCPService:
         logger.info(f"Server '{server_name}' {'enabled' if enabled else 'disabled'}")
         return True
 
+    # The server that answers from detection rules the install has to fetch
+    # first. ``POST /api/detection-rules/update-all`` is that fetch.
+    DETECTIONS_SERVER = "security-detections"
+    FETCH_RULES = "fetch_detection_rules"
+    _NO_RULES = "No detection rules have been fetched on this install yet."
+
+    def setup_required(self, server_name: str) -> Optional[str]:
+        """Why ``server_name`` cannot start yet, or None when nothing stops it.
+
+        Not a failure and not a missing credential: security-detections
+        searches rule repositories, and a fresh install has none until they are
+        fetched (#2291). Started anyway it indexes nothing and answers every
+        search with nothing. Read fresh on each call, so a fetch made by another
+        worker counts here too; the server's env takes the paths it found.
+        """
+        if server_name != self.DETECTIONS_SERVER:
+            return None
+        try:
+            env = self._detection_rules.saved_mcp_env_vars()
+        except Exception as exc:  # noqa: BLE001 - a status read must not raise
+            logger.warning("Could not read the detection rule sources: %s", exc)
+            env = {}
+        if not env:
+            return self._NO_RULES
+        server = self.servers.get(server_name)
+        if server is not None:
+            server.env = {**(server.env or {}), **env}
+        return None
+
+    def setup_action(self, server_name: str) -> Optional[str]:
+        """The one action that sets ``server_name`` up, for a client to offer."""
+        return self.FETCH_RULES if server_name == self.DETECTIONS_SERVER else None
+
     def get_all_enabled_states(self) -> Dict[str, bool]:
         """Return a dict of server_name -> enabled for every known server."""
         return {name: self.is_server_enabled(name) for name in self.servers}

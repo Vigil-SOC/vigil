@@ -520,9 +520,9 @@ export default function HomeScreen({ openCase, startTour, fillCommand }: Console
           </div>
             </>
           )}
+          {/* The headline already says "Board clear." (HM-P1); this says what that means. */}
           {boardClear && (
             <div className="home-clear">
-              <h3>Board clear</h3>
               <p>Nothing waits on you. The fleet runs inside its limits; anything irreversible waits for a person.</p>
             </div>
           )}

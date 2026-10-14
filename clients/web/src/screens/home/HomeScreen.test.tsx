@@ -209,10 +209,12 @@ describe('Home', () => {
     expect(within(card).getByRole('link', { name: 'Open case' })).toHaveClass('primary')
   })
 
-  it('says the board is clear when nothing is waiting', async () => {
+  it('says the board is clear when nothing is waiting, once', async () => {
     vi.mocked(approvalsApi.needsYou).mockResolvedValue({ data: { count: 0, items: [] } } as never)
     renderHome()
     expect(await screen.findByText('Board clear.')).toBeInTheDocument()
+    expect(await screen.findByText(/Nothing waits on you\./)).toBeInTheDocument()
+    expect(screen.getAllByText(/board clear/i)).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Needs your attention' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Cases →' })).toHaveAttribute('href', '/cases')
     expect(screen.getByRole('heading', { name: 'Get more from Vigil' })).toBeInTheDocument()
@@ -228,10 +230,9 @@ describe('Home', () => {
     vi.mocked(approvalsApi.needsYou).mockReturnValue(new Promise((r) => { resolve = r }) as never)
     renderHome()
     await screen.findByRole('heading', { name: 'Needs your attention' })
-    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument() // loading
+    expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument() // loading
     await act(async () => resolve({ data: { count: 0, items: [] } } as never))
-    expect(await screen.findByRole('heading', { name: 'Board clear' })).toBeInTheDocument()
-    expect(screen.getByText(/Nothing waits on you\./)).toBeInTheDocument()
+    expect(await screen.findByText(/Nothing waits on you\./)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'How Needs your attention is calculated' }))
     expect(screen.getByRole('tooltip')).toHaveTextContent('Source Pending approvals and checkpoints (B1)')
     expect(screen.getByRole('tooltip')).toHaveTextContent('Calculation Oldest first, top four shown')
@@ -241,7 +242,7 @@ describe('Home', () => {
     vi.mocked(approvalsApi.needsYou).mockRejectedValue(new Error('queue down'))
     renderHome()
     expect(await screen.findByRole('alert')).toHaveTextContent('queue down')
-    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
     expect(screen.queryByText('Board clear.')).not.toBeInTheDocument()
   })
 
@@ -249,7 +250,7 @@ describe('Home', () => {
     mockQueue([item()])
     renderHome()
     await screen.findByRole('heading', { name: 'Block 1.2.3.4' })
-    expect(screen.queryByRole('heading', { name: 'Board clear' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Nothing waits on you\./)).not.toBeInTheDocument()
   })
 
   it('hides a step for this tab when alerts exist, and keeps Get more from Vigil', async () => {

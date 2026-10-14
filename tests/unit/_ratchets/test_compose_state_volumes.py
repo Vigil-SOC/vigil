@@ -23,6 +23,9 @@ COMPOSE_PATH = REPO / "infra" / "docker" / "docker-compose.yml"
 # Dockerfile.daemon); a named volume mounted anywhere else comes up root-owned.
 STATE_DIR = "/home/vigil/.vigil"
 INVESTIGATIONS_DIR = "/app/data/investigations"
+# Every service that reads detection_sources.json rescans the repos it names, and
+# saves them as not cloned if it cannot see them (#2291).
+DETECTION_RULES_DIR = "/home/vigil/security-detections"
 
 
 def _compose() -> dict:
@@ -70,6 +73,7 @@ def _named_volume_at(compose: dict, service: str, target: str) -> str | None:
     [
         (STATE_DIR, ("backend", "soc-daemon", "llm-worker", "backup")),
         (INVESTIGATIONS_DIR, ("backend", "soc-daemon", "backup")),
+        (DETECTION_RULES_DIR, ("backend", "soc-daemon", "llm-worker")),
     ],
 )
 def test_services_share_one_named_volume(target: str, services: tuple) -> None:
