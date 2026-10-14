@@ -346,3 +346,97 @@ class PulseWork(Contract):
     rows: list[PulseWorkRow]
     queue: PulseQueue
     info: str
+
+
+SettingsSection = Literal[
+    "ai-config",
+    "services",
+    "integrations",
+    "users",
+    "sla",
+    "autoinvestigate",
+    "federation",
+    "system",
+    "general",
+    "dev",
+    "data",
+]
+
+
+class DecidedDay(Contract):
+    """Cases closed on one day (UTC), by who made the call."""
+
+    day: str = Field(description="ISO date.")
+    agents_alone: int = Field(description="Closed by agents with no person asked.")
+    approved_by_person: Optional[int] = Field(
+        description=(
+            "Closed by agents after a person approved. None until approved "
+            "closes are recorded apart from agent closes."
+        )
+    )
+    by_person: int = Field(description="Closed by a person.")
+
+
+class WhoDecided(Contract):
+    days: list[DecidedDay] = Field(
+        description="The last 7 days, oldest first; the last is today."
+    )
+    approved_unmeasured_reason: Optional[str] = Field(
+        default=None, description="Why approved_by_person is None, when it is."
+    )
+    info: str
+
+
+class StopReason(Contract):
+    """Why an agent stopped to ask a person.
+
+    Open decision: the classification. Runs record a free-text parked reason
+    today; the reads need a fixed set of keys (cannot_be_undone,
+    budget_reached, scope_reached, idle_too_long, stuck, low_trust_source,
+    blind_spot, tool_not_working) recorded when the run parks.
+    """
+
+    key: str
+    label: str
+
+
+class StopKind(Contract):
+    workflow_id: str
+    name: str = Field(description="Short column label.")
+
+
+class StopsGrid(Contract):
+    """Each stop today, by reason (rows) and kind of work (columns)."""
+
+    reasons: list[StopReason]
+    kinds: list[StopKind]
+    counts: list[list[int]] = Field(
+        description="counts[reason][kind]; same order as reasons and kinds."
+    )
+    median_minutes: Optional[float] = Field(
+        default=None,
+        description="Median minutes from asked to answered today; None when none was answered.",
+    )
+    expired: int = Field(
+        description="Asked today, not answered in time, and followed their default."
+    )
+    info: str
+
+
+class DecisionSuggestion(Contract):
+    """One change that would save decisions, derived from the stops. Never invented."""
+
+    text: str
+    action: str = Field(description="The button label.")
+    settings_section: SettingsSection = Field(
+        description="Where the setting is changed."
+    )
+
+
+class PulseDecisions(Contract):
+    """``GET /api/pulse/decisions``: who decided, and why agents stopped to ask."""
+
+    now: str
+    who: WhoDecided
+    stops: StopsGrid
+    suggestion: Optional[DecisionSuggestion] = None

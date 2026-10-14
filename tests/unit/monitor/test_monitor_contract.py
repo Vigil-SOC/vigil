@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from core.monitor import fixtures
 from core.monitor.models import (
     FleetWallPayload,
+    PulseDecisions,
     PulseSummary,
     PulseThroughput,
     PulseWork,
@@ -26,6 +27,7 @@ READS = [
     ("/api/pulse/summary", PulseSummary),
     ("/api/pulse/throughput", PulseThroughput),
     ("/api/pulse/work", PulseWork),
+    ("/api/pulse/decisions", PulseDecisions),
 ]
 
 
@@ -94,3 +96,15 @@ def test_an_unknown_cell_state_is_refused(monkeypatch):
     drifted["bands"][0]["cells"][0]["state"] = "deferred"
     monkeypatch.setattr(monitor, "wall_payload", lambda **_: drifted)
     assert client.get("/api/fleet-wall").status_code == 500
+
+
+def test_the_stop_grid_has_one_count_per_reason_and_kind():
+    stops = fixtures.decisions().stops
+    assert len(stops.counts) == len(stops.reasons)
+    assert all(len(row) == len(stops.kinds) for row in stops.counts)
+
+
+def test_who_decided_covers_seven_days_ending_today():
+    payload = fixtures.decisions()
+    assert len(payload.who.days) == 7
+    assert payload.who.days[-1].day == payload.now[:10]

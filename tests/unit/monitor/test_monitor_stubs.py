@@ -35,6 +35,7 @@ def client(monkeypatch):
         "/api/pulse/summary",
         "/api/pulse/throughput",
         "/api/pulse/work",
+        "/api/pulse/decisions",
     ],
 )
 def test_unimplemented_reads_answer_501_with_a_fixed_message(client, path):

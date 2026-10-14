@@ -16,11 +16,12 @@ from core.monitor import fixtures
 from core.monitor.common import NotImplementedYet
 from core.monitor.models import (
     FleetWallPayload,
+    PulseDecisions,
     PulseSummary,
     PulseThroughput,
     PulseWork,
 )
-from core.monitor.pulse import summary, throughput, work
+from core.monitor.pulse import decisions, summary, throughput, work
 from core.monitor.wall import JUST_CLOSED_MINUTES, wall_payload
 from core.routing import Auth, RouterMeta
 
@@ -78,3 +79,9 @@ def get_pulse_throughput():
 def get_pulse_work():
     """Pulse Paused and stuck: what waits, by age."""
     return _read(work, fixtures.work, _PULSE_UNBUILT)
+
+
+@router.get("/pulse/decisions", response_model=PulseDecisions)
+def get_pulse_decisions():
+    """Pulse Decisions: who decided, and why agents stopped to ask."""
+    return _read(decisions, fixtures.decisions, _PULSE_UNBUILT)

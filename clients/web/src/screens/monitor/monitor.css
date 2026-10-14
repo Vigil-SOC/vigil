@@ -204,3 +204,27 @@
 .mn-select-grid dd { margin: 2px 0 0; font-weight: 600; color: var(--tx0); font-family: var(--font-mono); }
 .mn-select-grid dd.good { color: var(--good); } .mn-select-grid dd.fair { color: var(--fair); } .mn-select-grid dd.poor { color: var(--poor); }
 .mn-select-grid dd.sev.critical { color: var(--sev-crit); } .mn-select-grid dd.sev.high { color: var(--sev-high); } .mn-select-grid dd.sev.medium { color: var(--sev-med); } .mn-select-grid dd.sev.low { color: var(--sev-low); }
+
+/* Pulse Decisions */
+.mn-decisions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .mn-decisions { grid-template-columns: minmax(0, 1fr); } }
+.mn-decided-bar { display: flex; gap: 2px; height: 12px; border-radius: var(--radius-round); overflow: hidden; margin-top: 10px; background: var(--bg4); }
+.mn-decided-bar .seg, .mn-decided-day .seg { display: block; flex: none; }
+.seg.agents_alone, .key.agents_alone { background: var(--good); }
+.seg.approved_by_person, .key.approved_by_person { background: var(--fair); }
+.seg.by_person, .key.by_person { background: var(--ac); }
+.mn-decided-keys { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin-top: 8px; font-size: 12px; color: var(--tx1); }
+.mn-decided-keys > span { display: inline-flex; align-items: center; gap: 6px; }
+.mn-decided-keys b { color: var(--tx0); }
+.mn-decided-keys .key { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.mn-decided-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; height: 84px; margin-top: 16px; }
+.mn-decided-day { display: flex; flex-direction: column; gap: 2px; border-radius: 4px; overflow: hidden; background: var(--bg4); }
+.mn-decided-day:hover { outline: 1.5px solid var(--tx2); outline-offset: 1px; }
+.mn-decided-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--tx2); }
+.mn-stops { width: 100%; border-collapse: separate; border-spacing: 4px; margin-top: 6px; font-size: 12px; table-layout: fixed; }
+.mn-stops thead th { font-weight: 600; color: var(--tx2); text-align: center; padding-bottom: 2px; }
+.mn-stops thead th:first-child { width: 150px; }
+.mn-stops tbody th { text-align: left; font-weight: 500; color: var(--tx1); white-space: nowrap; padding-right: 8px; }
+.mn-stops td { height: 26px; text-align: center; border-radius: 5px; background: var(--bg2); color: var(--tx3); }
+.mn-stops td.on { background: color-mix(in oklab, var(--fair) var(--heat), var(--bg2)); color: var(--tx0); font-weight: 650; }
+.mn-suggest { display: flex; align-items: center; gap: 14px; justify-content: space-between; margin-top: 14px; padding: 12px 14px; border-radius: var(--radius-card-inner); border: 1px solid var(--ac-ln); background: var(--ac-bg); font-size: 13px; color: var(--tx0); }

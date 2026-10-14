@@ -1308,12 +1308,15 @@ export type PulseSummary = Schema<'PulseSummary'>
 export type PulseThroughput = Schema<'PulseThroughput'>
 export type PulseWorkRow = Schema<'PulseWorkRow'>
 export type PulseWork = Schema<'PulseWork'>
+export type PulseDecisions = Schema<'PulseDecisions'>
+export type DecidedDay = Schema<'DecidedDay'>
 
 export const monitorApi = {
   wall: () => api.get<FleetWallPayload>('/fleet-wall'),
   summary: () => api.get<PulseSummary>('/pulse/summary'),
   throughput: () => api.get<PulseThroughput>('/pulse/throughput'),
   work: () => api.get<PulseWork>('/pulse/work'),
+  decisions: () => api.get<PulseDecisions>('/pulse/decisions'),
 }
 
 

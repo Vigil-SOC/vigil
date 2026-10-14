@@ -257,6 +257,7 @@ vi.mock('../services/api', () => ({
     summary: () => new Promise(() => {}),
     throughput: () => new Promise(() => {}),
     work: () => new Promise(() => {}),
+    decisions: () => new Promise(() => {}),
   },
   overviewApi: {
     get: () => Promise.resolve({

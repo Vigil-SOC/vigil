@@ -6,7 +6,7 @@ import { NotMeasured } from '../../shared/NotMeasured'
 import { TabStrip } from '../../shared/TabStrip'
 import { EmptyState } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { monitorApi, type PulseGauge, type PulseSummary, type PulseThroughput, type PulseWork } from '../../services/api'
+import { monitorApi, type PulseGauge, type DecidedDay, type PulseDecisions, type PulseSummary, type PulseThroughput, type PulseWork } from '../../services/api'
 import { DayChart, KindsTable, Measured, MetricTip, QueueChart } from './parts'
 import { count, hhmm, minutes, money, pct, usePoll } from './format'
 import './monitor.css'
@@ -24,12 +24,11 @@ const TABS: { id: Tab; label: string }[] = [
 
 // The tabs this release does not build yet: their frame, and what they will show.
 const LATER: Partial<Record<Tab, string>> = {
-  decisions: 'Who decided, why agents stopped to ask, agreement with your decisions per workflow, and incidents declared.',
   sources: 'Intake by source with each source’s share, trust against its floor and lag; where memory pays off.',
   system: 'Provider latency and errors, tool availability, memory reads that could not be served, on-demand spend and reverts.',
 }
 
-export default function PulseScreen({ go, openCase, setViewFull }: ConsoleScreenProps) {
+export default function PulseScreen({ go, goSettings, openCase, setViewFull }: ConsoleScreenProps) {
   const [params, setParams] = useSearchParams()
   const asked = params.get('tab') as Tab | null
   const tab: Tab = TABS.some((t) => t.id === asked) ? (asked as Tab) : 'summary'
@@ -49,6 +48,7 @@ export default function PulseScreen({ go, openCase, setViewFull }: ConsoleScreen
       <TabStrip tabs={TABS} active={tab} onChange={show} label="Pulse" className="mn-tabs" />
       {tab === 'summary' && <Summary show={show} go={go} />}
       {tab === 'throughput' && <Throughput />}
+      {tab === 'decisions' && <Decisions goSettings={goSettings} />}
       {tab === 'work' && <Work openCase={openCase} />}
       {LATER[tab] && (
         <section className="mn-card mn-later">
@@ -241,6 +241,117 @@ function Work({ openCase }: { openCase: (id: string) => void }) {
           {data.queue.high_water ? `Above ${data.queue.high_water} queued alerts, the daemon stops launching new work until the queue drains.` : 'No high-water mark is set.'} No alert is dropped by score yet.
         </p>
         <QueueChart hours={data.queue.hours} queued={data.queue.queued} highWater={data.queue.high_water} />
+      </section>
+    </div>
+  )
+}
+
+const DECIDER = [
+  { key: 'agents_alone', label: 'Agents alone' },
+  { key: 'approved_by_person', label: 'Agents, approved by you' },
+  { key: 'by_person', label: 'You decided' },
+] as const
+
+function shares(day: DecidedDay) {
+  const total = day.agents_alone + (day.approved_by_person ?? 0) + day.by_person
+  return DECIDER.map(({ key }) => (total ? (day[key] ?? 0) / total : 0))
+}
+
+function Decisions({ goSettings }: { goSettings: ConsoleScreenProps['goSettings'] }) {
+  const { data, phase, reload } = usePoll<PulseDecisions>(monitorApi.decisions)
+  if (!data) return <Loading phase={phase} what="decisions" reload={reload} />
+  const { who, stops, suggestion } = data
+  const today = who.days[who.days.length - 1]
+  const todayShares = today ? shares(today) : [0, 0, 0]
+  const top = Math.max(1, ...stops.counts.flat())
+  const asked = stops.counts.flat().reduce((a, b) => a + b, 0)
+  return (
+    <div className="mn-decisions">
+      <section className="mn-card">
+        <header className="mn-card-head">
+          <h2>Who decided</h2>
+          <InfoTip label="How who decided is calculated" calculation={who.info} source={who.approved_unmeasured_reason ?? undefined} />
+        </header>
+        <p className="mn-sub">Of the cases closed today, who made the call. The trend shows whether agents handle more alone as they learn from your decisions.</p>
+        {today ? (
+          <>
+            <div className="mn-decided-bar" role="img" aria-label={DECIDER.map((d, i) => `${d.label} ${pct(todayShares[i])}`).join(', ')}>
+              {DECIDER.map((d, i) => <span key={d.key} className={`seg ${d.key}`} style={{ width: `${todayShares[i] * 100}%` }} />)}
+            </div>
+            <div className="mn-decided-keys">
+              {DECIDER.map((d, i) => (
+                <span key={d.key}>
+                  <i className={`key ${d.key}`} aria-hidden="true" />
+                  {d.label}{' '}
+                  {d.key === 'approved_by_person' && today.approved_by_person == null ? (
+                    <NotMeasured tip={who.approved_unmeasured_reason ?? 'Not recorded apart yet.'} />
+                  ) : (
+                    <b className="num">{pct(todayShares[i])}</b>
+                  )}
+                </span>
+              ))}
+            </div>
+            <div className="mn-decided-days" role="list" aria-label="Who decided, each of the last 7 days">
+              {who.days.map((day) => {
+                const parts = shares(day)
+                const line = `${day.day}: ${DECIDER.map((d, i) => `${d.label.toLowerCase()} ${pct(parts[i])}`).join(', ')}`
+                return (
+                  <div key={day.day} className="mn-decided-day" role="listitem" aria-label={line} title={line}>
+                    {DECIDER.map((d, i) => <span key={d.key} className={`seg ${d.key}`} style={{ height: `${parts[i] * 100}%` }} />)}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="mn-decided-axis"><span>7 days ago</span><span>Today</span></div>
+          </>
+        ) : (
+          <p className="mn-empty">No case closed in the last 7 days.</p>
+        )}
+      </section>
+
+      <section className="mn-card">
+        <header className="mn-card-head">
+          <h2>Why agents stopped to ask you</h2>
+          <InfoTip label="How why agents stopped is calculated" calculation={stops.info} />
+        </header>
+        <p className="mn-sub">
+          Each stop today, by reason and kind of work.
+          {stops.median_minutes != null ? ` Median time to decide: ${minutes(stops.median_minutes)}.` : ' None answered yet today.'}
+          {stops.expired ? ` ${count(stops.expired)} expired and followed their default.` : ''}
+        </p>
+        {asked === 0 ? (
+          <p className="mn-empty">No agent stopped to ask today.</p>
+        ) : (
+          <table className="mn-stops">
+            <thead>
+              <tr>
+                <th scope="col" aria-label="Reason" />
+                {stops.kinds.map((k) => <th key={k.workflow_id} scope="col">{k.name}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {stops.reasons.map((reason, r) => (
+                <tr key={reason.key}>
+                  <th scope="row">{reason.label}</th>
+                  {stops.kinds.map((kind, k) => {
+                    const n = stops.counts[r]?.[k] ?? 0
+                    return (
+                      <td key={kind.workflow_id} className={n ? 'on' : ''} style={n ? { ['--heat' as string]: `${Math.round(25 + (n / top) * 75)}%` } : undefined} title={`${reason.label} · ${kind.name}: ${n}`}>
+                        {n ? <span className="num">{n}</span> : <span className="mn-dash" aria-label="none">·</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {suggestion && (
+          <div className="mn-suggest">
+            <span>{suggestion.text}</span>
+            <button type="button" className="mn-primary" onClick={() => goSettings(suggestion.settings_section)}>{suggestion.action}</button>
+          </div>
+        )}
       </section>
     </div>
   )

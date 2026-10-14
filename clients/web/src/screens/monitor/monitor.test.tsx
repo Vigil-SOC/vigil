@@ -3,10 +3,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import FleetWallScreen from './FleetWallScreen'
 import PulseScreen from './PulseScreen'
-import { monitorApi, type FleetWallPayload, type MonitorMetric, type PulseDay, type PulseSummary, type PulseWork, type WallCell } from '../../services/api'
+import { monitorApi, type FleetWallPayload, type MonitorMetric, type PulseDay, type PulseDecisions, type PulseSummary, type PulseWork, type WallCell } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
-  monitorApi: { wall: vi.fn(), summary: vi.fn(), throughput: vi.fn(), work: vi.fn() },
+  monitorApi: { wall: vi.fn(), summary: vi.fn(), throughput: vi.fn(), work: vi.fn(), decisions: vi.fn() },
 }))
 
 afterEach(() => {
@@ -134,6 +134,27 @@ function work(): PulseWork {
   }
 }
 
+function decisions(): PulseDecisions {
+  const day = (d: string, alone: number, approved: number | null, person: number) => ({ day: d, agents_alone: alone, approved_by_person: approved, by_person: person })
+  return {
+    now: '2026-10-11T14:22:00Z',
+    who: {
+      days: ['05', '06', '07', '08', '09', '10', '11'].map((d) => day(`2026-10-${d}`, 87, 9, 4)),
+      approved_unmeasured_reason: null,
+      info: 'per day',
+    },
+    stops: {
+      reasons: [{ key: 'budget_reached', label: 'Budget reached' }, { key: 'stuck', label: 'Stuck' }],
+      kinds: [{ workflow_id: 'full-investigation', name: 'Investig.' }, { workflow_id: 'phishing-triage', name: 'Phishing' }],
+      counts: [[4, 0], [0, 2]],
+      median_minutes: 6,
+      expired: 2,
+      info: 'asked today',
+    },
+    suggestion: { text: 'Budget stops were extended 6 of 7 times this week.', action: 'Change the default budget', settings_section: 'ai-config' },
+  }
+}
+
 const props = () => ({ openChat: vi.fn(), go: vi.fn(), goSettings: vi.fn(), openCase: vi.fn(), setViewFull: vi.fn() })
 
 describe('Fleet Wall', () => {
@@ -205,5 +226,19 @@ describe('Pulse', () => {
     render(<MemoryRouter initialEntries={['/pulse?tab=system']}><PulseScreen {...props()} /></MemoryRouter>)
     expect(await screen.findByText(/Provider latency and errors/)).toBeInTheDocument()
     expect(monitorApi.summary).not.toHaveBeenCalled()
+  })
+
+  it('shows who decided today and over 7 days, each stop by reason and kind, and opens the suggested setting', async () => {
+    vi.mocked(monitorApi.decisions).mockResolvedValue({ data: decisions() } as never)
+    const p = props()
+    render(<MemoryRouter initialEntries={['/pulse?tab=decisions']}><PulseScreen {...p} /></MemoryRouter>)
+    expect(await screen.findByRole('heading', { name: 'Who decided' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Agents alone 87%, Agents, approved by you 9%, You decided 4%' })).toBeInTheDocument()
+    expect(within(screen.getByRole('list', { name: /last 7 days/ })).getAllByRole('listitem')).toHaveLength(7)
+    expect(screen.getByText(/Median time to decide: 6 min\. 2 expired/)).toBeInTheDocument()
+    const grid = screen.getByRole('table')
+    expect(within(grid).getByRole('row', { name: /Budget reached/ })).toHaveTextContent('4')
+    fireEvent.click(screen.getByRole('button', { name: 'Change the default budget' }))
+    expect(p.goSettings).toHaveBeenCalledWith('ai-config')
   })
 })
