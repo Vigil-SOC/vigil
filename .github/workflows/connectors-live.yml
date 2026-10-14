@@ -128,10 +128,6 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install dependencies
         run: pip install -r requirements.lock
-      - name: Pull the Okta image
-        # Outside the probe's timeout; the entry runs it with `docker run`.
-        if: env.OKTA_API_TOKEN != ''
-        run: docker pull "$(python3 -c 'import json; a = json.load(open("mcp-config.json"))["mcpServers"]["okta"]["args"]; print(a[-1])')"
       - name: Log in to AWS
         if: env.LIVE_AWS_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v5

@@ -1,7 +1,7 @@
 {
   "$schema": "https://github.com/anthropics/anthropic-quickstarts/blob/main/mcp/config-schema.json",
 
-  "_comment_overview": "MCP Server Modernization: Official/community servers replace legacy tools/* where available. Tier 4 tools (no replacement) remain as custom implementations. Set env vars in .env or shell before starting. Runtime-fetched servers (npx/uvx/docker) pin an exact version or digest so launch does not resolve registry HEAD.",
+  "_comment_overview": "MCP Server Modernization: Official/community servers replace legacy tools/* where available. Tier 4 tools (no replacement) remain as custom implementations. Set env vars in .env or shell before starting. Runtime-fetched servers (npx/uvx) pin an exact version or git tag so launch does not resolve registry HEAD.",
 
   "mcpServers": {
 
@@ -113,14 +113,12 @@
     },
 
     "okta": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm",
-        "-e", "OKTA_CLIENT_ORGURL=https://${OKTA_DOMAIN}",
-        "-e", "OKTA_API_TOKEN=${OKTA_API_TOKEN}",
-        "mcp/okta-mcp-fctr@sha256:8d6cd51e1836802e18bfc12ae772962f4ce3fdec667f472eec66bba811e4a27c"
-      ],
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/fctr-id/okta-mcp-server.git@02.0-beta", "python", "-m", "okta_mcp.server"],
       "env": {
-        "_setup_note": "Docker Hub only publishes latest for this image; the digest pins the multi-arch index so launch does not float. The image reads OKTA_CLIENT_ORGURL, a full URL; Settings stores the bare domain."
+        "OKTA_CLIENT_ORGURL": "https://${OKTA_DOMAIN}",
+        "OKTA_API_TOKEN": "${OKTA_API_TOKEN}",
+        "_setup_note": "Upstream's console script points at a module that does not exist, so this runs okta_mcp.server under the tool's python. The server reads OKTA_CLIENT_ORGURL, a full URL; Settings stores the bare domain."
       }
     },
 

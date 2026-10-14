@@ -98,7 +98,7 @@ def _pagerduty_me(payload: Any) -> str:
 
 # ---------------------------------------------------------------------------
 # Okta. Any org has at least the admin who minted the token, so a one-user
-# listing is never empty. The image answers a failed call with an error string
+# listing is never empty. The server answers a failed call with an error string
 # rather than {"users": [...]}, which the shape check turns into a failure.
 # ---------------------------------------------------------------------------
 
@@ -164,7 +164,7 @@ PROBES = [
         timeout=90.0,
     ),
     Probe("pagerduty", "get_user_data", {}, expect=_pagerduty_me),
-    # Needs OKTA_DOMAIN and OKTA_API_TOKEN, and docker.
+    # Needs OKTA_DOMAIN and OKTA_API_TOKEN; the first uvx fetch clones and installs.
     Probe("okta", "list_okta_users", {"max_results": 1}, expect=_okta_users, timeout=120.0),
     Probe(
         "gcp-scc",
