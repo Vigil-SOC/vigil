@@ -114,6 +114,18 @@ async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
             "status": "running" if is_up else "disconnected",
             "enabled": bool(enabled.get(name, False)),
         }
+        # Present, and false, only where the integration lacks the settings it
+        # needs: such a server may run, but answers every call "not configured".
+        # A check that cannot run leaves the row as it was, as is_set_up does.
+        try:
+            set_up = mcp_service.is_configured(name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not tell whether %s is set up (%s)", name, type(exc).__name__
+            )
+            set_up = True
+        if not set_up:
+            row["configured"] = False
         if mcp_client and not is_up:
             missing = mcp_client.get_missing_credentials(name)
             if missing:

@@ -160,3 +160,19 @@ def test_a_first_time_url_with_no_stored_credential_is_saved():
     )
 
     assert result["success"] is True
+
+
+# Readiness caches whether an integration is set up. A save is seen at once, also
+# one that failed part way, since what was written is still read.
+@pytest.mark.parametrize("secret_written", [True, False])
+def test_a_save_drops_cached_readiness(secret_written):
+    from services.api.routers import config as config_module
+
+    with patch.object(config_module, "forget_configured") as forget:
+        if secret_written:
+            _run(_payload(), set_secret=MagicMock(return_value=True))
+        else:
+            with pytest.raises(HTTPException):
+                _run(_payload(), set_secret=MagicMock(return_value=False))
+
+    forget.assert_called_once_with()

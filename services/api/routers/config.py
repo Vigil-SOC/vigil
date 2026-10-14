@@ -22,6 +22,7 @@ from core.deps import (
     provide_mcp_client,
 )
 from core.detections.detection_rules_service import DetectionRulesService
+from core.integrations._base.config import forget_configured
 from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.credential_check import check_credentials
 from core.integrations.extension import session_service as extension_sessions
@@ -888,6 +889,9 @@ def set_integrations_config(
         if not success:
             logger.error(f"Failed to save integration '{integration_id}'")
             not_stored.append(f"integration '{integration_id}' config")
+
+    # Whatever was written, readiness reads it now rather than after the TTL.
+    forget_configured()
 
     if not_stored:
         raise HTTPException(

@@ -610,6 +610,43 @@ class TestTheCapabilityReport:
         registry = MCPRegistry()
         assert "telemetry_search" in capability_report(registry)["bound"]
 
+    def test_does_not_bind_a_running_server_that_is_not_set_up(self, monkeypatch):
+        # splunk-selfhosted is on by default and runs with nothing saved; bound,
+        # every search a hunt planned on it would answer "Splunk not configured".
+        from core.integrations.mcp.registry import MCPRegistry
+        from core.workflows.playbook_resolver import capability_report
+
+        set_up = {"splunk-selfhosted": False}
+
+        class _Catalog:
+            def is_configured(self, name):
+                return set_up.get(name, True)
+
+        class _LiveClient:
+            mcp_service = _Catalog()
+            tools_cache = {
+                "splunk-selfhosted": [
+                    {
+                        "name": "splunk_execute",
+                        "description": "Execute SPL",
+                        "inputSchema": {},
+                    }
+                ]
+            }
+
+            def get_connection_status(self):
+                return {"splunk-selfhosted": True}
+
+        monkeypatch.setattr(
+            "core.integrations.mcp.client.process_mcp_client", lambda: _LiveClient()
+        )
+
+        registry = MCPRegistry()
+        assert "telemetry_search" in capability_report(registry)["unbound"]
+
+        set_up["splunk-selfhosted"] = True
+        assert "telemetry_search" in capability_report(registry)["bound"]
+
 
 class TestATurnedOffPhaseAgent:
     # Compose refuses a turned-off phase agent, so a hunt that names one must too:

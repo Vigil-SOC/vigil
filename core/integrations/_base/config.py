@@ -12,17 +12,25 @@ to know the rule.
 
 ``resolve`` is the descriptor-driven entry point. ``resolve_fields`` takes an
 explicit field list for callers with no descriptor, such as a generated custom
-integration.
+integration. ``is_configured`` is the one "is it set up" answer built on it.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Mapping, Optional
+import logging
+import time
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from core.config import get_integration_config
-from core.integrations._base.descriptor import IntegrationDescriptor, IntegrationField
+from core.integrations._base.descriptor import (
+    IntegrationDescriptor,
+    IntegrationField,
+    iter_descriptors,
+)
 from core.integrations.integration_secrets import env_var_for, secret_fields_for
 from core.secrets import get_secret
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve(
@@ -68,3 +76,66 @@ def resolve(descriptor: IntegrationDescriptor) -> Dict[str, Optional[Any]]:
 def missing(config: Mapping[str, Any], *required: str) -> tuple[str, ...]:
     """Which of ``required`` resolved to nothing — the 'not configured' check."""
     return tuple(name for name in required if not config.get(name))
+
+
+# How long an is_configured answer stands. The MCP registry asks on every read of
+# its tool list, several times a chat turn and inside async handlers, and a fresh
+# answer is a database read. A save in Settings drops it (forget_configured).
+CONFIGURED_TTL_S = 15.0
+
+# descriptor id -> (time.monotonic() when answered, answer)
+_answers: Dict[str, Tuple[float, bool]] = {}
+
+# Bumped by forget_configured. A read that started before a save keeps its answer
+# to itself rather than writing it back over the save.
+_generation = 0
+
+
+def is_configured(descriptor: IntegrationDescriptor) -> bool:
+    """Whether every field the descriptor marks required has a value.
+
+    Saved in Settings or set in the env: what ``resolve`` reads, so what the
+    server itself will read. Not whether the values work; ``credential_check``
+    logs in. A descriptor that marks nothing required needs nothing saved.
+    """
+    required = descriptor.required_fields
+    if not required:
+        return True
+    now = time.monotonic()
+    last = _answers.get(descriptor.id)
+    if last is not None and now - last[0] < CONFIGURED_TTL_S:
+        return last[1]
+    generation = _generation
+    try:
+        answer = not missing(resolve(descriptor), *required)
+    except Exception as exc:  # noqa: BLE001
+        # The class name only, as in the servers: a decrypt error can carry the
+        # value it choked on. A read that failed says nothing new about what is
+        # saved, so the last answer stands; with none, the server reads through
+        # the same resolve() and cannot read its settings either.
+        logger.warning(
+            "%s config could not be resolved (%s)", descriptor.id, type(exc).__name__
+        )
+        answer = last[1] if last is not None else False
+    if generation == _generation:
+        _answers[descriptor.id] = (now, answer)
+    return answer
+
+
+def forget_configured() -> None:
+    """Drop every cached ``is_configured`` answer, so this process reads a save
+    at once. Other processes see it when their answer expires."""
+    global _generation
+    _generation += 1
+    _answers.clear()
+
+
+def server_configured(server_name: str) -> bool:
+    """``is_configured`` for the integration behind an MCP server.
+
+    True for a server no descriptor names: nothing says what it needs.
+    """
+    for descriptor in iter_descriptors():
+        if server_name in descriptor.mcp_server_names:
+            return is_configured(descriptor)
+    return True

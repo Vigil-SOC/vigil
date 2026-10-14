@@ -46,7 +46,7 @@ def get_elastic_service():
         return _elastic_service
     try:
         config = resolve(ELASTIC)
-        if missing(config, "elasticsearch_url"):
+        if missing(config, *ELASTIC.required_fields):
             return None
         # resolve() always returns every declared field, so a .get(k, True)
         # default would never fire — verify_ssl is present-but-None when unset.

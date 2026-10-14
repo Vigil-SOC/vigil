@@ -105,6 +105,8 @@ class MCPRegistry:
 
         seen = set()
         for server_name in self.get_active_servers():
+            if not is_set_up(server_name):
+                continue
             for tool in self._tools_cache.get(server_name, []):
                 # Prefix tool name with server name (matching ClaudeService
                 # convention). Vigil's own tools are not prefixed: they are the
@@ -124,6 +126,26 @@ class MCPRegistry:
     def get_tool_names(self) -> List[str]:
         """Get all tool names (server-prefixed) from active servers."""
         return [t["name"] for t in self.get_all_tools()]
+
+
+# A server whose integration is not set up still starts -- splunk-selfhosted is
+# on by default -- and answers every call "not configured". Its tools are not
+# offered, so neither chat nor a playbook counts a search that cannot run. The
+# running catalog answers: it knows which servers a ${VAR} placeholder already
+# holds dormant. With no client no server runs, so there is nothing to gate.
+def is_set_up(server_name: str) -> bool:
+    from core.integrations.mcp.client import process_mcp_client
+
+    try:
+        service = getattr(process_mcp_client(), "mcp_service", None)
+        return service is None or service.is_configured(server_name)
+    except Exception as exc:  # noqa: BLE001
+        # A check that cannot run (a descriptor that fails to import) must not
+        # take every MCP tool with it.
+        logger.warning(
+            "Could not tell whether %s is set up (%s)", server_name, type(exc).__name__
+        )
+        return True
 
 
 # Where the live MCP tool set comes from. This used to be a side effect of

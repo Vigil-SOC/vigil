@@ -66,7 +66,7 @@ def get_splunk_service():
         # reads as "search failed" rather than "not configured". The old
         # ${SPLUNK_*} placeholders held the server dormant until all three were
         # set; this keeps that line now that Settings can supply them.
-        absent = missing(config, "server_url", "username", "password")
+        absent = missing(config, *SPLUNK.required_fields)
         if absent:
             # DEBUG, not INFO: an unconfigured install reaches here on every
             # call. Field names only, never what was found.

@@ -12,7 +12,7 @@ OPENSEARCH = register_descriptor(
         category="SIEM",
         mcp_server_names=("opensearch",),
         fields=(
-            IntegrationField("opensearch_url"),
+            IntegrationField("opensearch_url", required=True),
             IntegrationField("username"),
             IntegrationField("password", secret=True),
             IntegrationField("dashboards_url"),

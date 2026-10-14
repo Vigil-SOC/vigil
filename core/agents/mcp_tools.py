@@ -117,6 +117,14 @@ async def execute_mcp_tool(
     # Checked against what the server actually reports, so a name that merely
     # looks right does not open a call the far side will refuse.
     if tool_name not in registry.get_tool_names():
+        from core.integrations.mcp.registry import is_set_up
+
+        # Not offered because its integration is not set up: a gap in what this
+        # deployment can see, not a tool nothing implements.
+        if not is_set_up(server):
+            raise MCPFailure(
+                UNAVAILABLE, f"{server} is not set up: its settings are not saved"
+            )
         return None, False
 
     from core.integrations.mcp.surface import VIGIL_SERVER
