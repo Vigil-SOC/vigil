@@ -175,7 +175,14 @@ def main() -> None:
     if not token:
         logger.error("MCP_RUNNER_TOKEN is empty: every route answers 503")
     app = create_app(token, Catalog(APP_ROOT))
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
+    # Reached by service name over mcp-network, so it binds every interface;
+    # the bearer gates it and compose publishes no port.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",  # nosec B104 - containers must bind all interfaces
+        port=PORT,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":
